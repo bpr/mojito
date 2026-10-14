@@ -1932,16 +1932,19 @@ impl MirInstr {
     /// an attribute, which upstream's `SCCP` asks.
     ///
     /// Only a built-in operator, a literal materialization to `Int`, `UInt`,
-    /// `Float64`, or a one-lane SIMD type, and a forwarded copy fold, and
-    /// only over scalars whose constant kind is the one their register's type
-    /// names. A materialization folds to the lane the VM materializes
+    /// `Float64`, or a one-lane SIMD type, a one-lane `simd.make` of a
+    /// literal, and a forwarded copy fold, and only over values whose constant
+    /// kind is the one their register's type names. A materialization or a
+    /// one-lane `simd.make` folds to the lane the VM materializes
     /// (`CtValue::materialize_as`), a `UInt` or SIMD one to a `Const::Value`.
-    /// An operator folds only over `Int`, `Float64`, `Bool`, `IntLiteral`,
-    /// and `FloatLiteral` operands. The fold is the
-    /// compile-time folder's; where it and the VM could disagree (a zero
-    /// divisor, an out-of-range shift, an overflowing `**`, a NaN or infinite
-    /// comparison, `Float64` `//`, `%`, `**`, and `Bool` operators other
-    /// than `==`/`!=`), nothing folds and the run-time operation stays.
+    /// An operator over `UInt` or SIMD lanes folds by the VM's own lane rule
+    /// (`mojito_types::ct::int_lane_binop` and its siblings), and a lane
+    /// comparison folds to a `bool` mask. The fold is the compile-time
+    /// folder's; where it and the VM could disagree (a zero scalar divisor,
+    /// an out-of-range shift, an overflowing `**`, a NaN or infinite scalar
+    /// comparison, `Float64` `//`, `%`, `**`, float-lane `//`, `%`, `**`, and
+    /// `Bool` operators other than `==`/`!=`), nothing folds and the run-time
+    /// operation stays.
     pub fn folded_constant(
         &self,
         constant: impl Fn(Reg) -> Option<Const>,
@@ -1949,9 +1952,6 @@ impl MirInstr {
     ) -> Option<Const> {
         use mojito_types::param_expr::fold::{fold_infix, fold_invert, fold_neg};
         let operand = |reg: Reg| const_ct_value(&constant(reg)?, reg_types.get(&reg.0)?);
-        let scalar_operand = |reg: Reg| {
-            operand(reg).filter(|value| !matches!(value, CtValue::UInt(_) | CtValue::Simd { .. }))
-        };
         let (dest, value) = match self {
             Self::BinOp {
                 op,
@@ -1961,7 +1961,7 @@ impl MirInstr {
                 resolved: None,
                 raises: None,
             } => {
-                let (left, right) = (scalar_operand(*a)?, scalar_operand(*b)?);
+                let (left, right) = (operand(*a)?, operand(*b)?);
                 let bool_operands = matches!(left, CtValue::Bool(_));
                 if bool_operands && !matches!(op, InfixOp::Eq | InfixOp::Ne) {
                     return None;
@@ -1974,7 +1974,7 @@ impl MirInstr {
                 a,
                 raises: None,
             } => {
-                let value = scalar_operand(*a)?;
+                let value = operand(*a)?;
                 let folded = match (op, value) {
                     (PrefixOp::Neg, value) => fold_neg(&value).ok()?,
                     (PrefixOp::Invert, value) => fold_invert(&value).ok()?,
@@ -1999,6 +1999,21 @@ impl MirInstr {
                 }
                 let materialized = literal.materialize_as(target)?;
                 (dest, materialized)
+            }
+            Self::MakeSimd {
+                dest,
+                dtype: mojito_types::types::SimdDtype::Known(_),
+                width: mojito_types::types::SimdWidth::Known(1),
+                elems,
+            } => {
+                let [element] = elems.as_slice() else {
+                    return None;
+                };
+                let literal = operand(*element)?;
+                if !matches!(literal, CtValue::IntLiteral(_) | CtValue::FloatLiteral(_)) {
+                    return None;
+                }
+                (dest, literal.materialize_as(reg_types.get(&dest.0)?)?)
             }
             Self::CopyValue { dest, .. } => (dest, operand(self.forwarded_operand(reg_types)?)?),
             _ => return None,
@@ -2550,16 +2565,122 @@ mod tests {
         );
 
         let uint = Const::Value(CtValue::UInt(1));
-        assert!(
+        assert!(matches!(
             binary(
                 InfixOp::Add,
                 uint.clone(),
                 uint.clone(),
                 TyKind::UInt,
                 TyKind::UInt
+            ),
+            Some(Const::Value(CtValue::UInt(2)))
+        ));
+        assert!(
+            binary(
+                InfixOp::FloorDiv,
+                Const::Value(CtValue::UInt(7)),
+                Const::Value(CtValue::UInt(0)),
+                TyKind::UInt,
+                TyKind::UInt
             )
             .is_none()
         );
+
+        let lanes = |op, a: Const, b: Const, operand: Ty, dest: Ty| {
+            let right = match &b {
+                Const::IntLiteral(_) => ty(TyKind::IntLiteral),
+                Const::FloatLiteral(_) => ty(TyKind::FloatLiteral),
+                _ => operand.clone(),
+            };
+            let reg_types = HashMap::from([(0, operand), (1, right), (2, dest)]);
+            MirInstr::BinOp {
+                op,
+                dest: Reg(2),
+                a: Reg(0),
+                b: Reg(1),
+                resolved: None,
+                raises: None,
+            }
+            .folded_constant(
+                |reg| [a.clone(), b.clone()].get(reg.0 as usize).cloned(),
+                &reg_types,
+            )
+        };
+        let byte = |value| simd(Dtype::UInt8, CtLane::Int(value));
+        assert!(matches!(
+            lanes(InfixOp::Add, byte(250), literal(10), lane(Dtype::UInt8), lane(Dtype::UInt8)),
+            Some(Const::Value(CtValue::Simd { lanes, .. })) if lanes == [CtLane::Int(4)]
+        ));
+        assert!(matches!(
+            lanes(InfixOp::FloorDiv, byte(7), byte(0), lane(Dtype::UInt8), lane(Dtype::UInt8)),
+            Some(Const::Value(CtValue::Simd { lanes, .. })) if lanes == [CtLane::Int(0)]
+        ));
+        assert!(matches!(
+            lanes(InfixOp::Lt, byte(3), byte(4), lane(Dtype::UInt8), lane(Dtype::Bool)),
+            Some(Const::Value(CtValue::Simd { dtype: Dtype::Bool, lanes }))
+                if lanes == [CtLane::Bool(true)]
+        ));
+        assert!(
+            lanes(
+                InfixOp::Lt,
+                byte(3),
+                byte(4),
+                lane(Dtype::UInt8),
+                ty(TyKind::Bool)
+            )
+            .is_none()
+        );
+        assert!(
+            lanes(
+                InfixOp::Shl,
+                byte(1),
+                byte(9),
+                lane(Dtype::UInt8),
+                lane(Dtype::UInt8)
+            )
+            .is_none()
+        );
+        let single = |value: f64| simd(Dtype::Float32, CtLane::Float(value.to_bits()));
+        assert!(matches!(
+            lanes(
+                InfixOp::Mul,
+                single(1.5),
+                Const::FloatLiteral(mojito_common::literal::FloatLiteral::from_int(
+                    &IntLiteral::from(2i64)
+                )),
+                lane(Dtype::Float32),
+                lane(Dtype::Float32)
+            ),
+            Some(Const::Value(CtValue::Simd { lanes, .. }))
+                if lanes == [CtLane::Float(3.0f64.to_bits())]
+        ));
+        assert!(
+            lanes(
+                InfixOp::FloorDiv,
+                single(7.5),
+                single(2.0),
+                lane(Dtype::Float32),
+                lane(Dtype::Float32)
+            )
+            .is_none()
+        );
+
+        let make = |width: i64| {
+            let target = mojito_types::types::canonical_simd_ty(Dtype::UInt8, width);
+            let reg_types = HashMap::from([(0, ty(TyKind::IntLiteral)), (1, target)]);
+            MirInstr::MakeSimd {
+                dest: Reg(1),
+                dtype: mojito_types::types::SimdDtype::Known(Dtype::UInt8),
+                width: mojito_types::types::SimdWidth::Known(width),
+                elems: vec![Reg(0); width as usize],
+            }
+            .folded_constant(|_| Some(literal(7)), &reg_types)
+        };
+        assert!(matches!(
+            make(1),
+            Some(Const::Value(CtValue::Simd { lanes, .. })) if lanes == [CtLane::Int(7)]
+        ));
+        assert!(make(4).is_none());
         let reg_types = HashMap::from([(0, ty(TyKind::UInt)), (1, ty(TyKind::UInt))]);
         assert!(matches!(
             MirInstr::CopyValue {

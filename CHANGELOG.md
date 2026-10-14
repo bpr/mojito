@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `sccp` now folds operators over `UInt` and one-lane SIMD constants
+  (R846), and a one-lane `simd.make` of a literal, as upstream's `SCCP`
+  folds `pop` arithmetic on `#pop.simd` attributes. Lanes fold by one rule
+  the VM's `simd_binop` now shares (`ct::int_lane_binop`,
+  `float_lane_binop`, `lane_compare`, `bool_lane_binop`): an integer lane's
+  zero divisor gives a zero lane, a narrow float lane rounds once, and a
+  comparison folds to a `bool` mask. An out-of-range lane shift and
+  float-lane `//`, `%`, and `**` stay unfolded. The same folder now accepts
+  compile-time operators over sized scalars the pin accepts
+  (`comptime b = a * 2` over a `Float32`, `y * 2` over a
+  `Scalar[DType.float32]` parameter), and Pliron lowers a folded float lane
+  from its bits, so an infinite or NaN lane no longer panics.
+
 - `sccp` now folds a literal materialized to `UInt` or a one-lane SIMD
   type (R841) to a typed `Const::Value`, upstream's `kgen.param.constant`
   over a typed attribute, using one literal-to-lane rule

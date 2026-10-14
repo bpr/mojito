@@ -381,12 +381,12 @@ impl FnLowering<'_> {
                     target,
                     dest,
                 ),
-                CtLane::Float(bits) => self.materialize_pending(
-                    ctx,
-                    &PendingLiteral::Float(f64::from_bits(*bits).into()),
-                    target,
-                    dest,
-                ),
+                // A float lane is already rounded to its dtype, and may be
+                // an infinity or a NaN a folded operator produced.
+                CtLane::Float(bits) if dtype.is_narrow_float() => {
+                    Ok(self.narrow_float_constant(ctx, dtype, f64::from_bits(*bits)))
+                }
+                CtLane::Float(bits) => Ok(self.float_constant(ctx, f64::from_bits(*bits))),
                 CtLane::Bool(lane) => Ok(self.bool_constant(ctx, *lane)),
             })
             .collect()

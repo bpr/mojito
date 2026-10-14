@@ -1,0 +1,237 @@
+mojito-mir 1.53
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("cases.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: mask, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Bool, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: single_sum, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: simd { dtype: float32, width: 1 }, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: unsigned_wrap, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: UInt, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: unsigned_zero_divisor, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: UInt, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: wide_shift, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: simd { dtype: uint8, width: 1 }, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: wrapped_add, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: simd { dtype: uint8, width: 1 }, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: zero_divisor, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: simd { dtype: uint8, width: 1 }, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: wrapped_add,
+        registers: 4,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(simd { dtype: uint8, width: 1 }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: simd { dtype: uint8, width: 1 } }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: simd { dtype: uint8, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 45, end: 48, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 39, end: 49, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 52, end: 54, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 39, end: 54, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(250) },
+              simd.make { dest: %r1, dtype: uint8, width: 1, elems: [%r0] },
+              const { dest: %r2, value: int_literal(10) },
+              binary { op: add, dest: %r3, a: %r1, b: %r2, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r3) }
+          }
+        ]
+      },
+      fn {
+        name: zero_divisor,
+        registers: 5,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(simd { dtype: uint8, width: 1 }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: simd { dtype: uint8, width: 1 } }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: simd { dtype: uint8, width: 1 } }, reg_type { reg: %r4, type: simd { dtype: uint8, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 102, end: 103, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 96, end: 104, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 114, end: 115, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 108, end: 116, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 96, end: 116, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(7) },
+              simd.make { dest: %r1, dtype: uint8, width: 1, elems: [%r0] },
+              const { dest: %r2, value: int_literal(0) },
+              simd.make { dest: %r3, dtype: uint8, width: 1, elems: [%r2] },
+              binary { op: floor_div, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r4) }
+          }
+        ]
+      },
+      fn {
+        name: single_sum,
+        registers: 5,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(simd { dtype: float32, width: 1 }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: FloatLiteral }, reg_type { reg: %r1, type: simd { dtype: float32, width: 1 } }, reg_type { reg: %r2, type: FloatLiteral }, reg_type { reg: %r3, type: simd { dtype: float32, width: 1 } }, reg_type { reg: %r4, type: simd { dtype: float32, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 166, end: 169, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 158, end: 170, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 181, end: 184, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 173, end: 185, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 158, end: 185, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: float_literal(1/10) },
+              simd.make { dest: %r1, dtype: float32, width: 1, elems: [%r0] },
+              const { dest: %r2, value: float_literal(1/5) },
+              simd.make { dest: %r3, dtype: float32, width: 1, elems: [%r2] },
+              binary { op: add, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r4) }
+          }
+        ]
+      },
+      fn {
+        name: mask,
+        registers: 6,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(Bool),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: simd { dtype: uint8, width: 1 } }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: simd { dtype: uint8, width: 1 } }, reg_type { reg: %r4, type: simd { dtype: bool, width: 1 } }, reg_type { reg: %r5, type: Bool }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 224, end: 225, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 218, end: 226, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 235, end: 236, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 229, end: 237, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 218, end: 237, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 218, end: 237, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(3) },
+              simd.make { dest: %r1, dtype: uint8, width: 1, elems: [%r0] },
+              const { dest: %r2, value: int_literal(4) },
+              simd.make { dest: %r3, dtype: uint8, width: 1, elems: [%r2] },
+              binary { op: lt, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent },
+              call { dest: %r5, func: Bool, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r5) }
+          }
+        ]
+      },
+      fn {
+        name: wide_shift,
+        registers: 5,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(simd { dtype: uint8, width: 1 }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: simd { dtype: uint8, width: 1 } }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: simd { dtype: uint8, width: 1 } }, reg_type { reg: %r4, type: simd { dtype: uint8, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 283, end: 284, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 277, end: 285, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 295, end: 296, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 289, end: 297, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 277, end: 297, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(1) },
+              simd.make { dest: %r1, dtype: uint8, width: 1, elems: [%r0] },
+              const { dest: %r2, value: int_literal(9) },
+              simd.make { dest: %r3, dtype: uint8, width: 1, elems: [%r2] },
+              binary { op: shl, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r4) }
+          }
+        ]
+      },
+      fn {
+        name: unsigned_zero_divisor,
+        registers: 6,
+        vars: 1,
+        var_names: [a],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: UInt }],
+        return_type: present(UInt),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: UInt }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: UInt }, reg_type { reg: %r5, type: UInt }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 340, end: 360, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 340, end: 360, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 372, end: 373, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 377, end: 378, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 377, end: 378, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 372, end: 378, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(7) },
+              literal.materialize { dest: %r1, value: %r0, target: UInt },
+              var.store { var: $v0, src: %r1, binding_type: present(UInt), in_place: false },
+              drop.var { var: $v0 },
+              const { dest: %r3, value: int_literal(0) },
+              literal.materialize { dest: %r4, value: %r3, target: UInt },
+              const { dest: %r2, value: int_literal(7) },
+              binary { op: floor_div, dest: %r5, a: %r2, b: %r4, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r5) }
+          }
+        ]
+      },
+      fn {
+        name: unsigned_wrap,
+        registers: 6,
+        vars: 1,
+        var_names: [a],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: UInt }],
+        return_type: present(UInt),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: UInt }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: UInt }, reg_type { reg: %r5, type: UInt }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 413, end: 433, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 413, end: 433, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 445, end: 446, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 449, end: 450, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 449, end: 450, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 445, end: 450, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(7) },
+              literal.materialize { dest: %r1, value: %r0, target: UInt },
+              var.store { var: $v0, src: %r1, binding_type: present(UInt), in_place: false },
+              drop.var { var: $v0 },
+              const { dest: %r3, value: int_literal(8) },
+              literal.materialize { dest: %r4, value: %r3, target: UInt },
+              const { dest: %r2, value: int_literal(7) },
+              binary { op: sub, dest: %r5, a: %r2, b: %r4, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r5) }
+          }
+        ]
+      }
+  ]
+}

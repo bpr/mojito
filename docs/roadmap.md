@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R849**.
+Next free ID: **R856**.
 
 ## Ordered Work
 
@@ -56,24 +56,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R846 Operators over `UInt` and scalar SIMD constants are not
-  folded**
-
-  `sccp` folds a literal materialized to `UInt` or a one-lane SIMD type, but
-  not an operator over two such constants (`b + 10` on a `UInt8`), where
-  upstream's `SCCP` folds `pop` arithmetic on constants.
-  - `MirInstr::folded_constant` reads its operator operands through
-    `scalar_operand`, which refuses `UInt` and SIMD constants.
-  - `fold_infix` handles both kinds, but nobody has checked it against the
-    VM's `UInt` and SIMD operators: a zero integer divisor gives a zero lane
-    in the VM, a narrow float rounds per lane, and a SIMD comparison gives a
-    mask.
-  - Audit those three, then let the operands through where the two agree.
-  - Done when a `UInt8` and a `Float32` probe fold and print the same with
-    the pipeline on and off, and natively.
-  - Depends on R841.
-  - Model: Opus, Not Planned.
-
 - [ ] **R847 A literal splatted to a multi-lane SIMD type is not folded**
 
   `sccp` leaves a literal materialized to a SIMD type of width above one
@@ -87,6 +69,35 @@ which names the upstream pass each one follows. Each is measured by the
   - Done when such a splat folds and the native differential is clean on a
     probe.
   - Depends on R841.
+  - Model: Opus, Not Planned.
+
+- [ ] **R854 A `UInt(7)` constructor call is not folded**
+
+  `sccp` folds `UInt8(7) + 1`, but not `UInt(7) // 2`, because `UInt(7)`
+  lowers to a `call` of `UInt`, not to a literal materialization.
+  - Upstream inlines the always-inline `UInt.__init__(IntLiteral)` before
+    its `SCCP`, so the operator sees a constant.
+  - Either the checker spells a `UInt` construction from a literal as a
+    `literal.materialize`, as it spells `UInt8(7)` as a one-lane `simd.make`,
+    or an inliner runs first.
+  - Probe: `print(UInt(7) // 2, UInt(7) > 3)`, whose `binary` survives
+    `emit-mir`.
+  - Found while landing R846 (2026-10-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R855 A multi-lane `simd.make` of literals is not folded**
+
+  `sccp` folds a one-lane `simd.make` of a literal, but leaves
+  `SIMD[DType.int32, 4](1, 2, 3, 4)`, where upstream folds the construction
+  to one constant vector.
+  - `MirInstr::folded_constant` could build each lane with
+    `CtLane::of_int_literal` or `of_float_literal` and write a
+    `CtValue::Simd`, as R847's splat does.
+  - Done when such a construction folds and the native differential is
+    clean on a probe.
+  - Found while landing R846 (2026-10-14).
+  - Depends on R847 (the same lane-vector constant).
   - Model: Opus, Not Planned.
 
 - [ ] **R836 Generic bodies carry empty pass-through blocks into every
@@ -317,6 +328,17 @@ Track: `native`.
 
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
+
+- [ ] **R852 Natively, `~` on a `UInt` is unsupported**
+
+  Problem: `var u: UInt = 5; print(~u)` prints `18446744073709551610` on
+  the VM and at the pin, while the native backend reports "unsupported
+  operator `Invert` on `UInt` operand".
+  - The VM's `apply_prefix` has a `UInt` arm, and Pliron's unary lowering
+    has none.
+  - Found while landing R846 (2026-10-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R433 Natively, a struct pack element's `write_to` takes the
   reflective default**
@@ -2756,6 +2778,22 @@ Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
+- [ ] **R849 A `comptime if` over a scalar SIMD value parameter takes the
+  wrong arm**
+
+  Problem: `def g[x: Scalar[DType.uint8]](): comptime if x < 10: ...` takes
+  the `else` arm for `g[3]()`, and so does `comptime if x == 3`; the pin
+  takes the `then` arm.
+  - The elaborator's `constraint_holds`
+    (`crates/mojito-native/src/native/mono/availability.rs`) compares
+    through `integer_value`, which reads only `Int`, `UInt`, and
+    `IntLiteral` and answers `false` for anything else.
+  - It should decide through `param_expr::fold`, the one folder, which now
+    folds lane comparisons to a `bool` mask, or fail.
+  - Found while landing R846 (2026-10-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R527 An explicitly specialized generic `def` converts to a plain function type**
 
   Problem: `apply(ident[Int], 1)` against `cb: def(Int) -> Int` checks, then fails at run time with "'ident' is not callable"; the pin rejects the conversion.
@@ -4698,6 +4736,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R853 A function-body `comptime` binding of a sized-scalar
+  construction is refused**
+
+  Problem: `comptime d = UInt8(250)` in a function body fails with "a
+  compile-time call of 'UInt8' is not evaluated above the check", while the
+  pin prints `250`.
+  - `comptime d = UInt8(250) + 10` and `comptime c = UInt8(7) // UInt8(0)`
+    fail the same way.
+  - A `comptime a: UInt8 = 250` binding already works, and its operators
+    now fold.
+  - R518 is a different shape (a generic alias body).
+  - Found while landing R846 (2026-10-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
 Track: `divergences`.
@@ -5727,6 +5780,19 @@ retained on purpose and re-probed rather than fixed; they are listed in
     fixture and bundled module that spells it bare.
   - Probe: `conformance/probes/set_without_import.mojo`.
   - Found while landing R774 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R851 A constant out-of-range shift runs instead of failing to
+  compile**
+
+  Problem: `print(UInt8(128) >> UInt8(9))` prints `64` in Mojito, while the
+  pin fails to compile with "could not simplify operator shr(128, 9)".
+  - The VM masks a lane shift amount to the lane width.
+  - `param_expr::fold` refuses the shift, so `sccp` leaves it to the VM.
+  - Matching the pin needs a compile-time diagnostic when a shift's
+    constant amount is outside the lane width.
+  - Found while landing R846 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7695,6 +7761,17 @@ residue found inside a task moves to the task that owns its fix.
   - Upstream's table destroys entries in slot order.
   - `Int` keys happened to match insertion order in every probe.
   - Found while landing R694 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R850 Float SIMD `//` and `%` are rejected**
+
+  Problem: `Float32(7.5) // Float32(2.0)` fails with "operator '//' is not
+  defined for Float32 and Float32", while the pin prints `3.0`, and `%`
+  prints `1.5`.
+  - Once the VM computes them, add them to `ct::float_lane_binop`, so
+    `sccp` folds them too.
+  - Found while landing R846 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

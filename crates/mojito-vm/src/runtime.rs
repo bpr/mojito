@@ -9,7 +9,9 @@ use std::fmt;
 use std::io::{self, Write};
 
 use mojito_ast::ast::{Dtype, InfixOp, PrefixOp, Type};
-use mojito_types::ct::CtLane;
+use mojito_types::ct::{
+    CtLane, bool_lane_binop, float_lane_binop, int_lane_binop, lane_compare, wrap_lane,
+};
 use mojito_types::types::{Ty, canonical_simd_ty};
 
 /// A runtime value produced by evaluating an expression.
@@ -591,7 +593,7 @@ pub fn apply_prefix(op: PrefixOp, value: Value) -> Result<Value, RuntimeError> {
         (PrefixOp::Invert, Value::Simd { dtype, lanes }) => match lanes {
             SimdLanes::Int(v) => Ok(simd_value(
                 dtype,
-                SimdLanes::Int(v.into_iter().map(|x| wrap(dtype, !x)).collect()),
+                SimdLanes::Int(v.into_iter().map(|x| wrap_lane(dtype, !x)).collect()),
             )),
             SimdLanes::Bool(v) => Ok(simd_value(
                 dtype,
@@ -608,7 +610,7 @@ pub fn apply_prefix(op: PrefixOp, value: Value) -> Result<Value, RuntimeError> {
                 dtype,
                 SimdLanes::Int(
                     v.into_iter()
-                        .map(|x| wrap(dtype, x.wrapping_neg()))
+                        .map(|x| wrap_lane(dtype, x.wrapping_neg()))
                         .collect(),
                 ),
             )),
@@ -1154,7 +1156,7 @@ pub fn set_simd_lane(
 /// precision. Comparisons yield a `bool` mask. (The checker guarantees
 /// dtype/width agreement and operator validity.)
 pub fn simd_binop(op: InfixOp, l: &Value, r: &Value) -> Result<Value, RuntimeError> {
-    use InfixOp::{BitAnd, BitOr, BitXor, Eq, Ge, Gt, Le, Lt, Ne};
+    use InfixOp::{Eq, Ge, Gt, Le, Lt, Ne};
     // The result takes the wider operand's width: a width-1 SIMD operand (a
     // `Int32`-typed scalar) splats exactly like a bare scalar.
     let (dtype, width) = match (simd_shape(l), simd_shape(r)) {
@@ -1174,22 +1176,10 @@ pub fn simd_binop(op: InfixOp, l: &Value, r: &Value) -> Result<Value, RuntimeErr
             let out: Vec<bool> = xs
                 .iter()
                 .zip(&ys)
-                .map(|(a, b)| match op {
-                    Eq => a == b,
-                    Ne => a != b,
-                    // `False` orders below `True`, as the `i1` unsigned
-                    // predicates the native backend uses do. Only the
-                    // `SIMD.lt`/`le`/`gt`/`ge` methods reach these: the
-                    // checker rejects the infix operators on bool lanes.
-                    Lt => !*a && *b,
-                    Le => !*a || *b,
-                    Gt => *a && !*b,
-                    Ge => *a || !*b,
-                    BitAnd => *a && *b,
-                    BitOr => *a || *b,
-                    BitXor => *a ^ *b,
-                    _ => false, // checker rejects other ops on bool lanes
-                })
+                // Only the `SIMD.lt`/`le`/`gt`/`ge` methods reach the ordered
+                // comparisons: the checker rejects the infix operators, and
+                // every other operator on bool lanes.
+                .map(|(a, b)| bool_lane_binop(op, *a, *b).unwrap_or(false))
                 .collect();
             Ok(Value::Simd {
                 dtype: Dtype::Bool,
@@ -1203,7 +1193,7 @@ pub fn simd_binop(op: InfixOp, l: &Value, r: &Value) -> Result<Value, RuntimeErr
                 let out = xs
                     .iter()
                     .zip(&ys)
-                    .map(|(a, b)| float_cmp(op, *a, *b))
+                    .map(|(a, b)| lane_compare(op, *a, *b).unwrap_or(false))
                     .collect();
                 Ok(Value::Simd {
                     dtype: Dtype::Bool,
@@ -1213,7 +1203,7 @@ pub fn simd_binop(op: InfixOp, l: &Value, r: &Value) -> Result<Value, RuntimeErr
                 let out: Vec<f64> = xs
                     .iter()
                     .zip(&ys)
-                    .map(|(a, b)| dtype.round_lane(float_arith(op, *a, *b)))
+                    .map(|(a, b)| float_lane_binop(op, dtype, *a, *b).unwrap_or(0.0))
                     .collect();
                 Ok(Value::Simd {
                     dtype,
@@ -1228,7 +1218,7 @@ pub fn simd_binop(op: InfixOp, l: &Value, r: &Value) -> Result<Value, RuntimeErr
                 let out = xs
                     .iter()
                     .zip(&ys)
-                    .map(|(a, b)| int_cmp(op, *a, *b))
+                    .map(|(a, b)| lane_compare(op, *a, *b).unwrap_or(false))
                     .collect();
                 Ok(Value::Simd {
                     dtype: Dtype::Bool,
@@ -1238,7 +1228,7 @@ pub fn simd_binop(op: InfixOp, l: &Value, r: &Value) -> Result<Value, RuntimeErr
                 let out: Vec<i128> = xs
                     .iter()
                     .zip(&ys)
-                    .map(|(a, b)| wrap(d, int_arith(op, d, *a, *b)))
+                    .map(|(a, b)| int_lane_binop(op, d, *a, *b).unwrap_or(0))
                     .collect();
                 Ok(Value::Simd {
                     dtype: d,
@@ -1638,7 +1628,7 @@ fn value_to_int_lane(v: &Value, dtype: Dtype) -> Result<i128, RuntimeError> {
                 .ok_or_else(|| literal_materialization_error(value, &format!("{dtype:?}")))
         };
     }
-    Ok(wrap(dtype, value_to_int(v)?))
+    Ok(wrap_lane(dtype, value_to_int(v)?))
 }
 
 /// A scalar value's floating content, for building a float SIMD lane.
@@ -1790,13 +1780,17 @@ pub fn simd_cast(target: Dtype, value: &Value) -> Result<Value, RuntimeError> {
         }
     };
     let cast = match (&lanes, target.is_float()) {
-        (SimdLanes::Int(v), false) => SimdLanes::Int(v.iter().map(|x| wrap(target, *x)).collect()),
+        (SimdLanes::Int(v), false) => {
+            SimdLanes::Int(v.iter().map(|x| wrap_lane(target, *x)).collect())
+        }
         (SimdLanes::Int(v), true) => {
             SimdLanes::Float(v.iter().map(|x| target.round_lane(*x as f64)).collect())
         }
-        (SimdLanes::Float(v), false) => {
-            SimdLanes::Int(v.iter().map(|x| wrap(target, x.trunc() as i128)).collect())
-        }
+        (SimdLanes::Float(v), false) => SimdLanes::Int(
+            v.iter()
+                .map(|x| wrap_lane(target, x.trunc() as i128))
+                .collect(),
+        ),
         (SimdLanes::Float(v), true) => {
             SimdLanes::Float(v.iter().map(|x| target.round_lane(*x)).collect())
         }
@@ -1986,8 +1980,8 @@ fn simd_reduce(dtype: Dtype, lanes: &SimdLanes, method: &str) -> Result<Value, R
             let mut acc = v[0];
             for x in &v[1..] {
                 acc = match method {
-                    "reduce_add" => wrap(dtype, acc.wrapping_add(*x)),
-                    "reduce_mul" => wrap(dtype, acc.wrapping_mul(*x)),
+                    "reduce_add" => wrap_lane(dtype, acc.wrapping_add(*x)),
+                    "reduce_mul" => wrap_lane(dtype, acc.wrapping_mul(*x)),
                     "reduce_min" => acc.min(*x),
                     _ => acc.max(*x),
                 };
@@ -2337,91 +2331,6 @@ fn value_to_int(v: &Value) -> Result<i128, RuntimeError> {
     }
 }
 
-fn int_arith(op: InfixOp, dtype: Dtype, a: i128, b: i128) -> i128 {
-    match op {
-        InfixOp::Add => a + b,
-        InfixOp::Sub => a - b,
-        // Two 64-bit lanes can overflow the i128 product; the caller wraps to
-        // the dtype width, which the wrapped product preserves.
-        InfixOp::Mul => a.wrapping_mul(b),
-        // Upstream's integer `SIMD.__floordiv__`/`__mod__`: floor semantics,
-        // and a zero divisor selects a zero lane rather than trapping.
-        InfixOp::FloorDiv if b == 0 => 0,
-        InfixOp::FloorDiv => {
-            let q = a.wrapping_div(b);
-            if (a % b != 0) && ((a < 0) != (b < 0)) {
-                q - 1
-            } else {
-                q
-            }
-        }
-        InfixOp::Mod if b == 0 => 0,
-        InfixOp::Mod => {
-            let r = a.wrapping_rem(b);
-            if r != 0 && ((r < 0) != (b < 0)) {
-                r + b
-            } else {
-                r
-            }
-        }
-        InfixOp::BitAnd => a & b,
-        InfixOp::BitOr => a | b,
-        InfixOp::BitXor => a ^ b,
-        InfixOp::Shl => {
-            let bits = integer_dtype_bits(dtype).map_or(128, |(bits, _)| bits);
-            a << ((b as u32) & (bits - 1))
-        }
-        InfixOp::Shr => {
-            let (bits, signed) = integer_dtype_bits(dtype).unwrap_or((128, true));
-            let amount = (b as u32) & (bits - 1);
-            if signed {
-                a >> amount
-            } else {
-                ((a as u128) >> amount) as i128
-            }
-        }
-        _ => 0, // checker rejects other arithmetic on SIMD ints
-    }
-}
-
-const fn int_cmp(op: InfixOp, a: i128, b: i128) -> bool {
-    match op {
-        InfixOp::Eq => a == b,
-        InfixOp::Ne => a != b,
-        InfixOp::Lt => a < b,
-        InfixOp::Gt => a > b,
-        InfixOp::Le => a <= b,
-        InfixOp::Ge => a >= b,
-        _ => false,
-    }
-}
-
-fn float_arith(op: InfixOp, a: f64, b: f64) -> f64 {
-    match op {
-        InfixOp::Add => a + b,
-        InfixOp::Sub => a - b,
-        InfixOp::Mul => a * b,
-        InfixOp::Div => a / b,
-        _ => 0.0,
-    }
-}
-
-#[allow(
-    clippy::float_cmp,
-    reason = "exact comparison is the semantics of Mojo `==` on Float64"
-)]
-fn float_cmp(op: InfixOp, a: f64, b: f64) -> bool {
-    match op {
-        InfixOp::Eq => a == b,
-        InfixOp::Ne => a != b,
-        InfixOp::Lt => a < b,
-        InfixOp::Gt => a > b,
-        InfixOp::Le => a <= b,
-        InfixOp::Ge => a >= b,
-        _ => false,
-    }
-}
-
 // --- Collections / indexing ---
 
 /// Convert a signed index into a bounds-checked `usize`, or a runtime error.
@@ -2435,23 +2344,6 @@ pub fn bounds_check(idx: i64, len: usize, what: &str) -> Result<usize, RuntimeEr
 }
 
 // --- SIMD ---
-
-/// Wrap an integer to a dtype's bit width (bit-accurate overflow), storing the
-/// post-wrap mathematical value (non-negative for unsigned dtypes).
-const fn wrap(dtype: Dtype, v: i128) -> i128 {
-    match dtype {
-        Dtype::Int => v as i64 as i128,
-        Dtype::Int8 => v as i8 as i128,
-        Dtype::Int16 => v as i16 as i128,
-        Dtype::Int32 => v as i32 as i128,
-        Dtype::Int64 => v as i64 as i128,
-        Dtype::UInt8 => v as u8 as i128,
-        Dtype::UInt16 => v as u16 as i128,
-        Dtype::UInt32 => v as u32 as i128,
-        Dtype::UInt64 => v as u64 as i128,
-        Dtype::Float16 | Dtype::Float32 | Dtype::Float64 | Dtype::Bool => v,
-    }
-}
 
 // --- Shared numeric/utility built-ins (value level) -------------------------
 //

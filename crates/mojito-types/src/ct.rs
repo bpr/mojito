@@ -113,6 +113,117 @@ pub fn wrap_lane(dtype: mojito_ast::ast::Dtype, value: i128) -> i128 {
     }
 }
 
+/// One integer lane of `op` over two lanes of `dtype`, as upstream's `pop`
+/// arithmetic computes it.
+///
+/// `None` is an operator integer lanes do not define. `+ - *` wrap, `//`
+/// and `%` floor and give a zero lane for a zero divisor, and a shift masks
+/// its amount to the lane width (a logical right shift for an unsigned
+/// lane). The VM's `simd_binop` and the compile-time
+/// fold both compute lanes through this one rule.
+pub fn int_lane_binop(
+    op: mojito_ast::ast::InfixOp,
+    dtype: mojito_ast::ast::Dtype,
+    a: i128,
+    b: i128,
+) -> Option<i128> {
+    use mojito_ast::ast::InfixOp;
+    let lane = match op {
+        InfixOp::Add => a.wrapping_add(b),
+        InfixOp::Sub => a.wrapping_sub(b),
+        // Two 64-bit lanes can overflow the i128 product; wrapping to the
+        // dtype width preserves the wrapped product.
+        InfixOp::Mul => a.wrapping_mul(b),
+        // Upstream's integer `SIMD.__floordiv__`/`__mod__`: floor semantics,
+        // and a zero divisor selects a zero lane rather than trapping.
+        InfixOp::FloorDiv | InfixOp::Mod if b == 0 => 0,
+        InfixOp::FloorDiv => {
+            let q = a.wrapping_div(b);
+            if (a % b != 0) && ((a < 0) != (b < 0)) {
+                q - 1
+            } else {
+                q
+            }
+        }
+        InfixOp::Mod => {
+            let r = a.wrapping_rem(b);
+            if r != 0 && ((r < 0) != (b < 0)) {
+                r + b
+            } else {
+                r
+            }
+        }
+        InfixOp::BitAnd => a & b,
+        InfixOp::BitOr => a | b,
+        InfixOp::BitXor => a ^ b,
+        InfixOp::Shl | InfixOp::Shr => {
+            let amount = (b as u32) & (dtype.bit_width() - 1);
+            match op {
+                InfixOp::Shl => a << amount,
+                _ if dtype.is_unsigned() => ((a as u128) >> amount) as i128,
+                _ => a >> amount,
+            }
+        }
+        _ => return None,
+    };
+    Some(wrap_lane(dtype, lane))
+}
+
+/// One float lane of `op` over two lanes of `dtype`, or `None` for an
+/// operator other than `+ - * /`.
+///
+/// The lane is computed at double precision and rounded once to the lane,
+/// which is exact IEEE arithmetic at `float32` and `float16`.
+pub fn float_lane_binop(
+    op: mojito_ast::ast::InfixOp,
+    dtype: mojito_ast::ast::Dtype,
+    a: f64,
+    b: f64,
+) -> Option<f64> {
+    use mojito_ast::ast::InfixOp;
+    let lane = match op {
+        InfixOp::Add => a + b,
+        InfixOp::Sub => a - b,
+        InfixOp::Mul => a * b,
+        InfixOp::Div => a / b,
+        _ => return None,
+    };
+    Some(dtype.round_lane(lane))
+}
+
+/// A lane comparison, or `None` for an operator that is not one. An
+/// unordered pair (a `NaN` lane) compares unequal and nothing else.
+pub fn lane_compare<T: PartialOrd + Copy>(
+    op: mojito_ast::ast::InfixOp,
+    a: T,
+    b: T,
+) -> Option<bool> {
+    use mojito_ast::ast::InfixOp;
+    use std::cmp::Ordering::{Equal, Greater, Less};
+    let order = a.partial_cmp(&b);
+    Some(match op {
+        InfixOp::Eq => order == Some(Equal),
+        InfixOp::Ne => order != Some(Equal),
+        InfixOp::Lt => order == Some(Less),
+        InfixOp::Gt => order == Some(Greater),
+        InfixOp::Le => matches!(order, Some(Less | Equal)),
+        InfixOp::Ge => matches!(order, Some(Greater | Equal)),
+        _ => return None,
+    })
+}
+
+/// One `bool` lane of `op`, or `None` for an operator `bool` lanes do not
+/// define. `False` orders below `True`, as the `i1` unsigned predicates do.
+pub fn bool_lane_binop(op: mojito_ast::ast::InfixOp, a: bool, b: bool) -> Option<bool> {
+    use mojito_ast::ast::InfixOp;
+    match op {
+        InfixOp::BitAnd => Some(a & b),
+        InfixOp::BitOr => Some(a | b),
+        InfixOp::BitXor => Some(a ^ b),
+        _ => lane_compare(op, a, b),
+    }
+}
+
 /// A compile-time value.
 ///
 /// Scalar values drive folding; `Tuple`/`List` let `comptime for` iterate
@@ -1097,5 +1208,44 @@ mod tests {
                 f64::from(2f32.powi(60) + 2f32.powi(37)).to_bits()
             ))
         );
+    }
+
+    #[test]
+    fn lane_operators_follow_the_pop_semantics() {
+        use super::{bool_lane_binop, float_lane_binop, int_lane_binop, lane_compare};
+        use mojito_ast::ast::InfixOp;
+        assert_eq!(int_lane_binop(InfixOp::Add, Dtype::UInt8, 250, 10), Some(4));
+        assert_eq!(
+            int_lane_binop(InfixOp::FloorDiv, Dtype::UInt8, 7, 0),
+            Some(0)
+        );
+        assert_eq!(
+            int_lane_binop(InfixOp::FloorDiv, Dtype::Int8, -7, 2),
+            Some(-4)
+        );
+        assert_eq!(int_lane_binop(InfixOp::Mod, Dtype::Int8, -7, 2), Some(1));
+        assert_eq!(
+            int_lane_binop(InfixOp::FloorDiv, Dtype::Int8, -128, -1),
+            Some(-128)
+        );
+        assert_eq!(int_lane_binop(InfixOp::Pow, Dtype::Int8, 2, 2), None);
+        assert_eq!(
+            float_lane_binop(
+                InfixOp::Add,
+                Dtype::Float32,
+                f64::from(0.1f32),
+                f64::from(0.2f32)
+            ),
+            Some(f64::from(0.1f32 + 0.2f32))
+        );
+        assert_eq!(
+            float_lane_binop(InfixOp::FloorDiv, Dtype::Float32, 7.5, 2.0),
+            None
+        );
+        assert_eq!(lane_compare(InfixOp::Eq, f64::NAN, f64::NAN), Some(false));
+        assert_eq!(lane_compare(InfixOp::Ne, f64::NAN, f64::NAN), Some(true));
+        assert_eq!(lane_compare(InfixOp::Lt, f64::NAN, f64::NAN), Some(false));
+        assert_eq!(bool_lane_binop(InfixOp::Lt, false, true), Some(true));
+        assert_eq!(bool_lane_binop(InfixOp::Add, false, true), None);
     }
 }

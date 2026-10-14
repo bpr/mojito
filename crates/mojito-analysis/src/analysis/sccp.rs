@@ -11,7 +11,9 @@
 //! that folds ([`MirInstr::folded_constant`]) over constant operands is the
 //! folded constant, one with an unknown operand stays unknown, and every
 //! other result is overdefined. A literal materialized to `UInt` or a scalar
-//! SIMD type folds to a `Const::Value`. A parameter read (`Const::Param`) and
+//! SIMD type, a one-lane `simd.make` of a literal, and an operator over
+//! `UInt` or one-lane SIMD constants fold to a `Const::Value`, lanes by the
+//! VM's own lane rule. A parameter read (`Const::Param`) and
 //! an aggregate `Const::Value` are overdefined: the first is the
 //! elaborator's to fold, per instance.
 //!
@@ -199,6 +201,7 @@ fn fold_operands(instruction: &MirInstr) -> Vec<Reg> {
     match instruction {
         MirInstr::BinOp { a, b, .. } => vec![*a, *b],
         MirInstr::UnOp { a, .. } => vec![*a],
+        MirInstr::MakeSimd { elems, .. } => elems.clone(),
         MirInstr::MaterializeLiteral { value, .. } | MirInstr::CopyValue { value, .. } => {
             vec![*value]
         }

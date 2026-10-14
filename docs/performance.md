@@ -1423,3 +1423,17 @@ so `pre_elaboration.sccp.folded_constants` stays 23; the per-instance
 `concrete_instructions` from 15 905 to 15 904 (debug binary, `--timings`).
 The corpus-wide `scripts/instantiation-report` rerun is left to the
 nightly gate.
+
+## Operators over `UInt` and scalar SIMD constants fold (2026-10-14, R846)
+
+`sccp` now folds operators over `UInt` and one-lane SIMD constants, by the
+lane rule the VM's `simd_binop` shares, and a one-lane `simd.make` of a
+literal (`docs/architecture.md` §Pre-Elaboration Pipeline). On a probe of
+twelve scalar operator expressions (`UInt8(250) + 10`, `Float32(0.1) +
+Float32(0.2)`, `UInt8(3) < UInt8(4)`, …) `pre_elaboration.sccp.folded_constants`
+rises from 6 to 44, and `main` keeps no `binary`, `unary`, or `simd.make`
+but the three over `UInt(7)`, a constructor call. On `collections_many` it
+rises from 23 to 51, the post-elaboration count stays 4, and
+`concrete_instructions` falls from 15 904 (R841's figure) to 15 857 (debug
+binary, `--timings`). The corpus-wide `scripts/instantiation-report` rerun is
+left to the nightly gate.

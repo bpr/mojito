@@ -13,10 +13,18 @@
 //! (`assets/ok/param_expr_arithmetic.mojo`,
 //! `param_expr_overflow.mojo`). A literal beside a machine operand converts
 //! to the machine type first.
+//!
+//! SIMD lanes follow the VM's own lane rule ([`int_lane_binop`],
+//! [`float_lane_binop`], [`lane_compare`], [`bool_lane_binop`]): a literal or
+//! a width-1 operand beside a lane splats through
+//! [`CtLane::of_int_literal`]/[`CtLane::of_float_literal`], and a comparison
+//! gives a `bool` mask.
 
 use super::ParamError;
-use crate::ct::{CtLane, CtValue, wrap_lane};
-use mojito_ast::ast::InfixOp;
+use crate::ct::{
+    CtLane, CtValue, bool_lane_binop, float_lane_binop, int_lane_binop, lane_compare, wrap_lane,
+};
+use mojito_ast::ast::{Dtype, InfixOp};
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 
 /// Fold `left op right` over two concrete values.
@@ -53,42 +61,15 @@ pub fn fold_infix(op: InfixOp, left: &CtValue, right: &CtValue) -> Result<CtValu
                 _ => Err(unsupported("unsupported compile-time Bool operator")),
             };
         }
+        (CtValue::Simd { .. }, _) | (_, CtValue::Simd { .. }) => {
+            return fold_lanes(op, left, right);
+        }
         _ => {}
     }
     if matches!(op, Eq | Ne | Lt | Gt | Le | Ge) {
         return compare(op, left, right).map(CtValue::Bool);
     }
     match (left, right) {
-        (
-            CtValue::Simd { dtype, lanes: a },
-            CtValue::Simd {
-                dtype: other,
-                lanes: b,
-            },
-        ) if dtype == other && a.len() == b.len() => a
-            .iter()
-            .zip(b)
-            .map(|(x, y)| match (x, y) {
-                (CtLane::Int(x), CtLane::Int(y)) => {
-                    let value = match op {
-                        InfixOp::BitXor => x ^ y,
-                        InfixOp::BitAnd => x & y,
-                        InfixOp::BitOr => x | y,
-                        InfixOp::Add => x.wrapping_add(*y),
-                        InfixOp::Sub => x.wrapping_sub(*y),
-                        InfixOp::Mul => x.wrapping_mul(*y),
-                        _ => return None,
-                    };
-                    Some(CtLane::Int(wrap_lane(*dtype, value)))
-                }
-                _ => None,
-            })
-            .collect::<Option<Vec<_>>>()
-            .map(|lanes| CtValue::Simd {
-                dtype: *dtype,
-                lanes,
-            })
-            .ok_or_else(|| unsupported("unsupported compile-time SIMD operator")),
         (CtValue::Int(a), CtValue::Int(b)) => fold_int(op, *a, *b).map(CtValue::Int),
         (CtValue::UInt(a), CtValue::UInt(b)) => fold_uint(op, *a, *b).map(CtValue::UInt),
         (CtValue::IntLiteral(a), CtValue::IntLiteral(b)) => fold_int_literal(op, a, b),
@@ -141,6 +122,12 @@ pub fn fold_neg(value: &CtValue) -> Result<CtValue, ParamError> {
         CtValue::IntLiteral(value) => Ok(CtValue::IntLiteral(value.neg())),
         CtValue::FloatLiteral(value) => Ok(CtValue::FloatLiteral(value.neg())),
         CtValue::Float(bits) => Ok(CtValue::Float((-f64::from_bits(*bits)).to_bits())),
+        CtValue::Simd { dtype, lanes } => map_lanes(*dtype, lanes, |lane| match lane {
+            CtLane::Int(x) => Some(CtLane::Int(wrap_lane(*dtype, x.wrapping_neg()))),
+            CtLane::Float(bits) => Some(CtLane::Float((-f64::from_bits(*bits)).to_bits())),
+            CtLane::Bool(_) => None,
+        })
+        .ok_or_else(|| unsupported("unary '-' expects numeric SIMD lanes")),
         _ => Err(unsupported("unary '-' expects a comptime numeric value")),
     }
 }
@@ -155,6 +142,12 @@ pub fn fold_invert(value: &CtValue) -> Result<CtValue, ParamError> {
             value.neg().sub(&IntLiteral::from(1i64)),
         )),
         CtValue::Bool(value) => Ok(CtValue::Bool(!value)),
+        CtValue::Simd { dtype, lanes } => map_lanes(*dtype, lanes, |lane| match lane {
+            CtLane::Int(x) => Some(CtLane::Int(wrap_lane(*dtype, !x))),
+            CtLane::Bool(x) => Some(CtLane::Bool(!x)),
+            CtLane::Float(_) => None,
+        })
+        .ok_or_else(|| unsupported("unary '~' expects integer or bool SIMD lanes")),
         _ => Err(unsupported("unary '~' expects a comptime integer value")),
     }
 }
@@ -198,6 +191,90 @@ pub fn integer_value(value: &CtValue) -> Option<IntLiteral> {
         CtValue::IntLiteral(value) => Some(value.clone()),
         _ => None,
     }
+}
+
+/// Fold `left op right` lane by lane, as the VM's `simd_binop` computes it:
+/// a width-1 SIMD operand or a literal splats to the other operand's shape,
+/// and a comparison gives a `bool` mask. A shift whose amount is outside the
+/// lane width is refused, since the pinned Mojo rejects it as a constant.
+fn fold_lanes(op: InfixOp, left: &CtValue, right: &CtValue) -> Result<CtValue, ParamError> {
+    use InfixOp::{Eq, Ge, Gt, Le, Lt, Ne, Shl, Shr};
+    let shape = |value: &CtValue| match value {
+        CtValue::Simd { dtype, lanes } => Some((*dtype, lanes.len())),
+        _ => None,
+    };
+    let (dtype, width) = match (shape(left), shape(right)) {
+        (Some((dtype, a)), Some((_, b))) => (dtype, a.max(b)),
+        (Some(shape), None) | (None, Some(shape)) => shape,
+        (None, None) => return Err(unsupported("SIMD folding expects a SIMD operand")),
+    };
+    let is_compare = matches!(op, Eq | Ne | Lt | Gt | Le | Ge);
+    let in_width = |amount: &i128| (0..i128::from(dtype.bit_width())).contains(amount);
+    splat(left, dtype, width)
+        .zip(splat(right, dtype, width))
+        .and_then(|(xs, ys)| {
+            xs.iter()
+                .zip(&ys)
+                .map(|pair| match pair {
+                    (CtLane::Int(a), CtLane::Int(b)) if is_compare => {
+                        lane_compare(op, a, b).map(CtLane::Bool)
+                    }
+                    (CtLane::Int(_), CtLane::Int(b)) if matches!(op, Shl | Shr) && !in_width(b) => {
+                        None
+                    }
+                    (CtLane::Int(a), CtLane::Int(b)) => {
+                        int_lane_binop(op, dtype, *a, *b).map(CtLane::Int)
+                    }
+                    (CtLane::Float(a), CtLane::Float(b)) => {
+                        let (a, b) = (f64::from_bits(*a), f64::from_bits(*b));
+                        if is_compare {
+                            lane_compare(op, a, b).map(CtLane::Bool)
+                        } else {
+                            float_lane_binop(op, dtype, a, b).map(|x| CtLane::Float(x.to_bits()))
+                        }
+                    }
+                    (CtLane::Bool(a), CtLane::Bool(b)) => {
+                        bool_lane_binop(op, *a, *b).map(CtLane::Bool)
+                    }
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()
+        })
+        .map(|lanes| CtValue::Simd {
+            dtype: if is_compare { Dtype::Bool } else { dtype },
+            lanes,
+        })
+        .ok_or_else(|| unsupported("unsupported compile-time SIMD operator"))
+}
+
+/// One operand of a lane operator as `width` lanes of `dtype`: a SIMD value
+/// of that shape, a width-1 SIMD value or a literal splatted, as the VM
+/// splats them; `None` for any other operand.
+fn splat(value: &CtValue, dtype: Dtype, width: usize) -> Option<Vec<CtLane>> {
+    let lane = match value {
+        CtValue::Simd { dtype: own, lanes } if *own == dtype && lanes.len() == width => {
+            return Some(lanes.clone());
+        }
+        CtValue::Simd { dtype: own, lanes } if *own == dtype && lanes.len() == 1 => {
+            lanes[0].clone()
+        }
+        CtValue::IntLiteral(literal) => CtLane::of_int_literal(literal, dtype)?,
+        CtValue::FloatLiteral(literal) => CtLane::of_float_literal(literal, dtype)?,
+        _ => return None,
+    };
+    Some(vec![lane; width])
+}
+
+fn map_lanes(
+    dtype: Dtype,
+    lanes: &[CtLane],
+    lane: impl Fn(&CtLane) -> Option<CtLane>,
+) -> Option<CtValue> {
+    lanes
+        .iter()
+        .map(lane)
+        .collect::<Option<Vec<_>>>()
+        .map(|lanes| CtValue::Simd { dtype, lanes })
 }
 
 fn exact(value: &CtValue) -> Option<FloatLiteral> {
@@ -355,4 +432,46 @@ fn arithmetic(message: &str) -> ParamError {
 
 fn unsupported(message: &str) -> ParamError {
     ParamError::Unsupported(message.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fold_infix;
+    use crate::ct::{CtLane, CtValue};
+    use mojito_ast::ast::{Dtype, InfixOp};
+    use mojito_common::literal::{FloatLiteral, IntLiteral};
+
+    fn lane(dtype: Dtype, lane: CtLane) -> CtValue {
+        CtValue::Simd {
+            dtype,
+            lanes: vec![lane],
+        }
+    }
+
+    #[test]
+    fn lanes_fold_by_the_vm_rule() {
+        let byte = |value| lane(Dtype::UInt8, CtLane::Int(value));
+        let ten = CtValue::IntLiteral(IntLiteral::from(10i64));
+        assert_eq!(
+            fold_infix(InfixOp::Add, &byte(250), &ten).ok(),
+            Some(byte(4))
+        );
+        assert_eq!(
+            fold_infix(InfixOp::Add, &ten, &byte(250)).ok(),
+            Some(byte(4))
+        );
+        assert_eq!(
+            fold_infix(InfixOp::Lt, &byte(3), &byte(4)).ok(),
+            Some(lane(Dtype::Bool, CtLane::Bool(true)))
+        );
+        assert!(fold_infix(InfixOp::Shl, &byte(1), &byte(9)).is_err());
+        let single = |value: f64| lane(Dtype::Float32, CtLane::Float(value.to_bits()));
+        let two = CtValue::FloatLiteral(FloatLiteral::from_int(&IntLiteral::from(2i64)));
+        assert_eq!(
+            fold_infix(InfixOp::Mul, &single(1.5), &two).ok(),
+            Some(single(3.0))
+        );
+        assert!(fold_infix(InfixOp::FloorDiv, &single(7.5), &two).is_err());
+        assert!(fold_infix(InfixOp::Add, &byte(1), &two).is_err());
+    }
 }

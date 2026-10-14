@@ -4880,23 +4880,30 @@ second runs `SCCP` and a `Canonicalizer` again, so `PIPELINE` is
   an operand is, and overdefined otherwise. The fold covers built-in
   operators with no checker-selected dunder and no `raises`, `not`, `-`,
   and `~`, a literal materialized to `Int`, `UInt`, `Float64`, or a
-  one-lane SIMD type, and an identity copy, over scalars whose constant kind
-  is the one their register's type names. A materialization folds to the
-  value `CtValue::materialize_as` gives, whose lane rule
-  (`CtLane::of_int_literal`, `CtLane::of_float_literal`) is the VM's own
-  `runtime::materialize_literal`; a `UInt` or SIMD result is a
-  `Const::Value`, upstream's `kgen.param.constant` over a typed attribute.
-  Operators fold only over `Int`, `Float64`, `Bool`, and literal operands,
-  never over `UInt` or SIMD constants. The operator fold is
-  `param_expr::fold`, the one compile-time folder, and folds
-  nothing where that folder and the VM could disagree (a zero divisor, a
-  shift of 64 or more, an overflowing `**`, a NaN or infinite comparison,
-  `Float64` `//`, `%`, and `**`, `Bool` operators but `==` and `!=`).
+  one-lane SIMD type, a one-lane `simd.make` of a literal (upstream's
+  `SIMD.__init__(IntLiteral)`), and an identity copy, over values whose
+  constant kind is the one their register's type names. A materialization
+  or a one-lane `simd.make` folds to the value `CtValue::materialize_as`
+  gives, whose lane rule (`CtLane::of_int_literal`,
+  `CtLane::of_float_literal`) is the VM's own `runtime::materialize_literal`;
+  a `UInt` or SIMD result is a `Const::Value`, upstream's
+  `kgen.param.constant` over a typed attribute. The operator fold is
+  `param_expr::fold`, the one compile-time folder. Over SIMD lanes it
+  computes by the VM's own lane rule (`ct::{int_lane_binop,
+  float_lane_binop, lane_compare, bool_lane_binop}`, which `simd_binop`
+  calls), as upstream's `pop` ops fold their `#pop.simd` attributes: a
+  literal or a one-lane operand splats, an integer lane's zero divisor
+  gives a zero lane, a narrow float lane rounds once, and a comparison
+  folds to a `bool` mask. It folds nothing where that folder and the VM
+  could disagree (a zero scalar divisor, a scalar shift of 64 or more, a
+  lane shift outside the lane width, an overflowing `**`, a NaN or
+  infinite scalar comparison, `Float64` `//`, `%`, and `**`, float-lane
+  `//`, `%`, and `**`, `Bool` operators but `==` and `!=`).
   The rewrite replaces each instruction that folds over the final lattice
   by a `const` of the same register, which keeps its type and span; the
   pass never rewrites a terminator, which the `canonicalize` after it does.
-  A literal splatted to a multi-lane SIMD type is not folded. Its
-  `--timings` counter is `folded_constants`.
+  A literal splatted to a multi-lane SIMD type, and a multi-lane
+  `simd.make`, are not folded. Its `--timings` counter is `folded_constants`.
 - **Two seams, once per body.** `CompiledProgram::elaborated_mir` runs
   `pre_elaborate_program` over the program's own bodies after
   `elaborate_drops_program` (the `pre_elaboration` `--timings` span), and an
