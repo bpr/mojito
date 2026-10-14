@@ -638,17 +638,16 @@ impl<'a> Flatten<'a> {
                 self.contains_call(node, *op, operand(value)?, operand(container)?)
             }
             CheckedOp::Infix(op, a, b) => self.infix_op(node, *op, operand(a)?, operand(b)?),
-            // Ternary `a if cond else b` — a value-producing branch (like the
-            // short-circuit lowering, but both arms assign the result).
+            // Ternary `a if cond else b`: an `if` whose arms produce the result.
             CheckedOp::IfExpr {
                 cond,
                 then_branch,
                 else_branch,
             } => self.ternary(
+                node,
                 operand(cond)?,
                 operand(then_branch)?,
                 operand(else_branch)?,
-                node.location(),
             ),
             // Chained comparison `a < b < c` — each operand evaluated once, folded
             // into short-circuiting `and`s.

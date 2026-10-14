@@ -582,6 +582,17 @@ impl<'a> Node<'a> {
         })
     }
 
+    /// Whether this conditional expression's result is proven
+    /// register-passable, so its `if` yields the value.
+    pub(super) fn register_passable_result(self) -> bool {
+        self.adjustments().iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::RegisterPassableResult
+            )
+        })
+    }
+
     pub(super) fn literal_materialization(self) -> Option<Ty> {
         if !matches!(
             self.ty().as_ref().map(Ty::kind),

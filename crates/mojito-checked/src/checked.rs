@@ -911,6 +911,11 @@ pub enum SemanticAdjustment {
     /// is a `Boolable` struct: MIR converts it through `Bool(x)`, i.e. the
     /// struct's `__bool__`.
     Truthiness,
+    /// A conditional expression whose result type is proven
+    /// register-passable: lowering yields it from its `if` as a value, as
+    /// upstream's `mergeCValuesAcrossIfLikeOp` does. Any other result is
+    /// stored into a result slot by each arm.
+    RegisterPassableResult,
     /// A `comptime if` condition the checker compiled as a constraint over
     /// the binders in scope: MIR carries it on the branch, and the elaborator
     /// decides it. A condition with no such record is lowered as a thunk.
@@ -5078,6 +5083,9 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
     if facts.truthiness_condition {
         adjustments.push(SemanticAdjustment::Truthiness);
     }
+    if facts.register_passable_result {
+        adjustments.push(SemanticAdjustment::RegisterPassableResult);
+    }
     if let Some(assertion) = &facts.rebind_assertion
         && assertion.operand != assertion.dest
     {
@@ -5349,6 +5357,7 @@ node_facts! {
         forwarded_argument,
         implicitly_copied_consuming_receiver,
         truthiness_condition,
+        register_passable_result,
     }
 }
 

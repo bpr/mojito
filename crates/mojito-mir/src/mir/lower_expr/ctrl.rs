@@ -86,12 +86,11 @@ impl<'a> Flatten<'a> {
         dest
     }
 
-    /// Lower `a and b` / `a or b` into control flow so the right operand is only
-    /// evaluated when needed (Python/Mojo short-circuit semantics). The result is
-    /// carried in a synthetic variable across the branch and read back in the
-    /// merge block. (Preserving the short-circuit — vs an eager `BinOp` — matters
-    /// both for observable side effects and for Stage 6 ownership, where a moved
-    /// operand on the not-taken side must not count as moved.)
+    /// Lower `a and b` / `a or b` as upstream's `hlcf.if` on `a`: for `and`
+    /// the then arm evaluates and yields `b` and the else arm yields `a`;
+    /// `or` swaps the arms. The right operand is evaluated only when needed,
+    /// which matters for observable side effects and for ownership, where a
+    /// moved operand on the not-taken side must not count as moved.
     pub(in crate::mir) fn short_circuit(
         &mut self,
         op: InfixOp,
@@ -100,90 +99,75 @@ impl<'a> Flatten<'a> {
         span: SourceSpan,
     ) -> Reg {
         let ra = self.expr(a);
-        let result = self.fresh_var();
-        // Seed the result with the left operand's value: for `and` a false `ra`
-        // is the answer; for `or` a true `ra` is. The rhs block overwrites it.
-        self.emit(MirInstr::DefVar {
-            var: result,
-            src: ra,
-            binding_ty: None,
-            in_place: false,
-        });
-
-        let rhs_blk = self.new_block();
-        let merge_blk = self.new_block();
-        // `and`: evaluate rhs only when `ra` is true; `or`: only when false.
-        let (then_b, else_b) = match op {
-            InfixOp::And => (rhs_blk, merge_blk),
-            _ => (merge_blk, rhs_blk),
+        let rhs = self.region(|this| MirTerm::Yield(vec![this.expr(b)]));
+        let lhs = self.region(|_| MirTerm::Yield(vec![ra]));
+        let (then, orelse) = match op {
+            InfixOp::And => (rhs, lhs),
+            _ => (lhs, rhs),
         };
-        self.f.blocks[self.cur].term = MirTerm::Branch {
-            cond: ra,
-            then_b,
-            else_b,
-        };
-
-        self.cur = rhs_blk;
-        let rb = self.expr(b); // may itself split blocks (nested and/or)
-        self.emit(MirInstr::DefVar {
-            var: result,
-            src: rb,
-            binding_ty: None,
-            in_place: false,
-        });
-        self.f.blocks[self.cur].term = MirTerm::Jump(merge_blk);
-
-        self.cur = merge_blk;
         let d = self.fresh(span, None);
-        self.emit(MirInstr::UseVar {
-            dest: d,
-            var: result,
-            mode: UseMode::Copy,
+        self.emit(MirInstr::If {
+            results: vec![d],
+            cond: ra,
+            then,
+            elifs: Vec::new(),
+            orelse,
         });
         d
     }
 
-    /// Lower a ternary `then_e if cond else else_e` to a value: branch on `cond`,
-    /// each arm initializing the owned result temporary (a `^` arm by a move,
-    /// a place arm by a copy, a temporary arm as it stands), which the merge
-    /// forwards to the consumer without an initializer.
+    /// Lower a ternary `then_e if cond else else_e` as upstream's `hlcf.if`
+    /// on `cond`, each arm producing the owned result (a `^` arm by a move,
+    /// a place arm by a copy, a temporary arm as it stands). A result the
+    /// checker proved register-passable is yielded by the arms as the op's
+    /// value; any other is stored by each arm into a result slot, which the
+    /// op's consumer receives as a forward, as upstream stores a memory-only
+    /// result into its destination buffer.
     pub(in crate::mir) fn ternary(
         &mut self,
+        node: Node<'a>,
         cond: Node<'a>,
         then_e: Node<'a>,
         else_e: Node<'a>,
-        sp: SourceSpan,
     ) -> Reg {
+        let sp = node.location();
         let rc = self.expr(cond);
         let rc = self.truthiness(cond, rc);
+        if node.register_passable_result() {
+            let then = self.region(|this| MirTerm::Yield(vec![this.expr(then_e)]));
+            let orelse = self.region(|this| MirTerm::Yield(vec![this.expr(else_e)]));
+            let d = self.fresh(sp, None);
+            self.emit(MirInstr::If {
+                results: vec![d],
+                cond: rc,
+                then,
+                elifs: Vec::new(),
+                orelse,
+            });
+            return d;
+        }
         let result = self.fresh_var();
-        let then_blk = self.new_block();
-        let else_blk = self.new_block();
-        let merge_blk = self.new_block();
-        self.f.blocks[self.cur].term = MirTerm::Branch {
-            cond: rc,
-            then_b: then_blk,
-            else_b: else_blk,
+        let arm = |this: &mut Self, value: Node<'a>| {
+            this.region(|this| {
+                let src = this.expr(value);
+                this.emit(MirInstr::DefVar {
+                    var: result,
+                    src,
+                    binding_ty: None,
+                    in_place: false,
+                });
+                MirTerm::Yield(Vec::new())
+            })
         };
-        self.cur = then_blk;
-        let rt = self.expr(then_e);
-        self.emit(MirInstr::DefVar {
-            var: result,
-            src: rt,
-            binding_ty: None,
-            in_place: false,
+        let then = arm(self, then_e);
+        let orelse = arm(self, else_e);
+        self.emit(MirInstr::If {
+            results: Vec::new(),
+            cond: rc,
+            then,
+            elifs: Vec::new(),
+            orelse,
         });
-        self.f.blocks[self.cur].term = MirTerm::Jump(merge_blk);
-        self.cur = else_blk;
-        let re = self.expr(else_e);
-        self.emit(MirInstr::DefVar {
-            var: result,
-            src: re,
-            binding_ty: None,
-            in_place: false,
-        });
-        self.f.blocks[self.cur].term = MirTerm::Jump(merge_blk);
-        self.cur = merge_blk;
         let d = self.fresh(sp, None);
         self.emit(MirInstr::UseVar {
             dest: d,
@@ -193,86 +177,26 @@ impl<'a> Flatten<'a> {
         d
     }
 
-    /// Lower chained comparison `chain`, `a op1 b op2 c …`, to a `Bool`.
-    /// Each operand is evaluated **once**, left to right, inside its link's
-    /// block; a false link short-circuits the rest (the remaining operands
-    /// are not evaluated). The result variable holds the last comparison
-    /// evaluated (which is `false` on the link that failed). Each link is
-    /// the call of the dunder the checker recorded for it, reading its
-    /// operands in place at its own setup, as a lone operator does. Right
-    /// after the first link, before its branch, the first middle operand
-    /// becomes an owned temporary for the second link (a place is copied, a
-    /// temporary or `^` is moved), which dies after that link or on the
-    /// first link's false edge. A later middle is read in place by both of
-    /// its links; a temporary there is held in a slot likewise.
+    /// Lower chained comparison `chain`, `a op1 b op2 c …`, to a `Bool`, as
+    /// upstream's nested `hlcf.if`s: each link after the first is evaluated
+    /// in the then arm of an `if` on the previous comparison, whose else arm
+    /// yields that comparison, so a false link short-circuits the rest.
+    /// Each operand is evaluated **once**, left to right. Each link is the
+    /// call of the dunder the checker recorded for it, reading its operands
+    /// in place at its own setup, as a lone operator does. Right after the
+    /// first link, before its `if`, the first middle operand becomes an
+    /// owned temporary for the second link (a place is copied, a temporary
+    /// or `^` is moved), which dies after that link or on the first link's
+    /// false arm. A later middle is read in place by both of its links; a
+    /// temporary there is held in a slot likewise.
     pub(in crate::mir) fn compare_chain(
         &mut self,
         chain: Node<'a>,
         first: Node<'a>,
         rest: &[(InfixOp, Node<'a>)],
     ) -> Reg {
-        let sp = chain.location();
         let links = chain.compare_links();
-        let result = self.fresh_var();
-        let merge_blk = self.new_block();
-        let mut prev = None;
-        for (i, (op, operand)) in rest.iter().enumerate() {
-            self.open_call_setup();
-            let left = match prev.take() {
-                None => self.lower_operator_operand(first),
-                Some(ChainMiddle::Read(value)) => value,
-                Some(ChainMiddle::Place(place)) => self.lower_operator_operand(place),
-                Some(ChainMiddle::Slot(variable, ty)) => {
-                    let read = self.fresh_typed(sp.clone(), Some(variable), ty.clone());
-                    self.emit(MirInstr::LoadPlace {
-                        dest: read,
-                        place: MirPlace::root(variable, Some(ty)),
-                    });
-                    read
-                }
-            };
-            let cur = self.lower_operator_operand(*operand);
-            self.close_call_setup(None);
-            let link = links.get(i);
-            let resolved = link.and_then(|link| link.target.clone());
-            // A link records no effect of its own: a dispatched link raises
-            // what the chain does.
-            let dispatch = OperatorDispatch {
-                raises: resolved.as_ref().and_then(|_| chain.raises()),
-                resolved,
-                negated_equality: link.is_some_and(|link| link.negated_equality),
-            };
-            let cmp = self.emit_comparison(sp.clone(), *op, left, cur, dispatch);
-            self.emit(MirInstr::DefVar {
-                var: result,
-                src: cmp,
-                binding_ty: None,
-                in_place: false,
-            });
-            if i + 1 == rest.len() {
-                self.f.blocks[self.cur].term = MirTerm::Jump(merge_blk);
-            } else {
-                let middle = self.chain_middle(*operand, cur, i == 0);
-                // A false link is the answer (result is already it); a true link
-                // continues to the next comparison.
-                let next_blk = self.new_block();
-                self.f.blocks[self.cur].term = MirTerm::Branch {
-                    cond: cmp,
-                    then_b: next_blk,
-                    else_b: merge_blk,
-                };
-                self.cur = next_blk;
-                prev = Some(middle);
-            }
-        }
-        self.cur = merge_blk;
-        let d = self.fresh(sp, None);
-        self.emit(MirInstr::UseVar {
-            dest: d,
-            var: result,
-            mode: UseMode::Copy,
-        });
-        d
+        self.chain_link(chain, links, first, rest, 0, None)
     }
 
     /// Install the caller-side loans a callee's transfer effects imply at
@@ -534,17 +458,20 @@ impl<'a> Flatten<'a> {
                 let condition = plan.operand(*condition);
                 let value = self.expr(condition);
                 let condition = self.truthiness(condition, value);
-                let body = self.new_block();
-                let continuation = self.new_block();
-                self.f.blocks[self.cur].term = MirTerm::Branch {
+                let then = self.region(|this| {
+                    this.comprehension_clauses(plan, index + 1);
+                    MirTerm::Yield(Vec::new())
+                });
+                self.emit(MirInstr::If {
+                    results: Vec::new(),
                     cond: condition,
-                    then_b: body,
-                    else_b: continuation,
-                };
-                self.cur = body;
-                self.comprehension_clauses(plan, index + 1);
-                self.f.blocks[self.cur].term = MirTerm::Jump(continuation);
-                self.cur = continuation;
+                    then,
+                    elifs: Vec::new(),
+                    orelse: vec![MirBlock {
+                        instrs: Vec::new(),
+                        term: MirTerm::Yield(Vec::new()),
+                    }],
+                });
             }
             CheckedComprehensionClause::For { var, iter, .. } => {
                 let iter = plan.operand(*iter);
@@ -616,9 +543,6 @@ impl<'a> Flatten<'a> {
                 };
                 self.normalize_iterator(iterator, iterator_object, &protocol);
 
-                let header = self.new_block();
-                let body = self.new_block();
-                let exit = self.new_block();
                 let binding_index = plan.clauses[..index]
                     .iter()
                     .filter(|clause| matches!(clause, CheckedComprehensionClause::For { .. }))
@@ -633,58 +557,67 @@ impl<'a> Flatten<'a> {
                 );
                 let element_value =
                     self.fresh_typed(iter.location(), Some(iterator_object), yield_ty);
-                self.f.blocks[self.cur].term = MirTerm::Jump(header);
-                self.cur = header;
-                let has_next = self.fresh(iter.location(), Some(iterator_object));
-                if let Some(exhaustion) = protocol.exhaustion.clone() {
-                    self.emit(MirInstr::TryNext {
-                        dest: element_value,
-                        yielded: has_next,
-                        iter: iterator_object,
-                        call: Box::new(
-                            *protocol
-                                .next
-                                .clone()
-                                .expect("raising iterator has checked __next__ contract"),
-                        ),
-                        exhaustion,
+                // `emitForStmt` after `LowerSemanticCF`: `__has_next__`, an
+                // `if` that breaks when it fails, `__next__`, the body, and
+                // `continue`.
+                let body = self.region(|this| {
+                    let has_next = this.fresh(iter.location(), Some(iterator_object));
+                    if let Some(exhaustion) = protocol.exhaustion.clone() {
+                        this.emit(MirInstr::TryNext {
+                            dest: element_value,
+                            yielded: has_next,
+                            iter: iterator_object,
+                            call: Box::new(
+                                *protocol
+                                    .next
+                                    .clone()
+                                    .expect("raising iterator has checked __next__ contract"),
+                            ),
+                            exhaustion,
+                        });
+                    } else {
+                        this.emit_has_next(has_next, iterator_object);
+                    }
+                    this.emit(MirInstr::If {
+                        results: Vec::new(),
+                        cond: has_next,
+                        then: vec![MirBlock {
+                            instrs: Vec::new(),
+                            term: MirTerm::Yield(Vec::new()),
+                        }],
+                        elifs: Vec::new(),
+                        orelse: vec![MirBlock {
+                            instrs: Vec::new(),
+                            term: MirTerm::Break { label: None },
+                        }],
                     });
-                } else {
-                    self.emit_has_next(has_next, iterator_object);
-                }
-                self.f.blocks[self.cur].term = MirTerm::Branch {
-                    cond: has_next,
-                    then_b: body,
-                    else_b: exit,
-                };
-
-                self.cur = body;
-                if protocol.exhaustion.is_none() {
-                    self.emit_next(element_value, iterator_object);
-                }
-                let binding_var = self.var(&format!("$comp{}${}", var, binding.owner.0));
-                // Retain the raw `__next__` result in a compiler-owned slot, then
-                // adapt it to the comprehension target with the same checked
-                // matrix the statement path uses via `BindIteration`.
-                let raw_var = self.var(&format!("$compyield{}${}", var, binding.owner.0));
-                self.var_types
-                    .insert(raw_var, binding.plan.yielded_ty.clone());
-                self.emit(MirInstr::DefVar {
-                    var: raw_var,
-                    src: element_value,
-                    binding_ty: Some(binding.plan.yielded_ty.clone()),
-                    in_place: false,
+                    if protocol.exhaustion.is_none() {
+                        this.emit_next(element_value, iterator_object);
+                    }
+                    let binding_var = this.var(&format!("$comp{}${}", var, binding.owner.0));
+                    // Retain the raw `__next__` result in a compiler-owned slot, then
+                    // adapt it to the comprehension target with the same checked
+                    // matrix the statement path uses via `BindIteration`.
+                    let raw_var = this.var(&format!("$compyield{}${}", var, binding.owner.0));
+                    this.var_types
+                        .insert(raw_var, binding.plan.yielded_ty.clone());
+                    this.emit(MirInstr::DefVar {
+                        var: raw_var,
+                        src: element_value,
+                        binding_ty: Some(binding.plan.yielded_ty.clone()),
+                        in_place: false,
+                    });
+                    this.bind_iteration_result(
+                        &binding.plan,
+                        raw_var,
+                        binding_var,
+                        iterator_object,
+                        binding.owner,
+                    );
+                    this.comprehension_clauses(plan, index + 1);
+                    MirTerm::Continue { label: None }
                 });
-                self.bind_iteration_result(
-                    &binding.plan,
-                    raw_var,
-                    binding_var,
-                    iterator_object,
-                    binding.owner,
-                );
-                self.comprehension_clauses(plan, index + 1);
-                self.f.blocks[self.cur].term = MirTerm::Jump(header);
-                self.cur = exit;
+                self.emit(MirInstr::Loop { label: None, body });
                 if split_source && !borrowed && protocol.source_retained {
                     // An owned temporary source is used only by `GetIter` before
                     // the loop, so when the iterator may refer to its storage a
@@ -723,6 +656,29 @@ impl<'a> Flatten<'a> {
         };
         self.comprehension_clauses(&plan, 0);
         self.finish_nominal_collection(node, collection, &target)
+    }
+
+    /// Lower `build` as a region of its own: one block, ended by the
+    /// terminator `build` returns, sharing this frame's registers and slots.
+    /// An enclosing operand's pending setup read is set aside while it
+    /// builds, so a read never starts inside the region.
+    fn region(&mut self, build: impl FnOnce(&mut Self) -> MirTerm) -> Vec<MirBlock> {
+        let outer = std::mem::replace(
+            &mut self.f.blocks,
+            vec![MirBlock {
+                instrs: Vec::new(),
+                term: MirTerm::Unreachable,
+            }],
+        );
+        let cur = std::mem::replace(&mut self.cur, 0);
+        let reference = self.setup_reference.take();
+        let setups = self.call_setups.len();
+        let term = build(self);
+        debug_assert_eq!(self.call_setups.len(), setups);
+        self.f.blocks[self.cur].term = term;
+        self.setup_reference = reference;
+        self.cur = cur;
+        std::mem::replace(&mut self.f.blocks, outer)
     }
 
     /// What a chain's next link reads for middle operand `operand`, whose
@@ -772,6 +728,73 @@ impl<'a> Flatten<'a> {
             in_place: false,
         });
         ChainMiddle::Slot(variable, ty)
+    }
+
+    /// Lower link `index` of chain `chain` and every link after it, the
+    /// left operand read from `prev` (`first` for the first link): the
+    /// comparison, and for a link before the last an `if` on it whose then
+    /// arm yields the rest of the chain and whose else arm yields it.
+    fn chain_link(
+        &mut self,
+        chain: Node<'a>,
+        links: &[mojito_checked::checked::CheckedCompareLink],
+        first: Node<'a>,
+        rest: &[(InfixOp, Node<'a>)],
+        index: usize,
+        prev: Option<ChainMiddle<'a>>,
+    ) -> Reg {
+        let sp = chain.location();
+        let (op, operand) = rest[index];
+        self.open_call_setup();
+        let left = match prev {
+            None => self.lower_operator_operand(first),
+            Some(ChainMiddle::Read(value)) => value,
+            Some(ChainMiddle::Place(place)) => self.lower_operator_operand(place),
+            Some(ChainMiddle::Slot(variable, ty)) => {
+                let read = self.fresh_typed(sp.clone(), Some(variable), ty.clone());
+                self.emit(MirInstr::LoadPlace {
+                    dest: read,
+                    place: MirPlace::root(variable, Some(ty)),
+                });
+                read
+            }
+        };
+        let cur = self.lower_operator_operand(operand);
+        self.close_call_setup(None);
+        let link = links.get(index);
+        let resolved = link.and_then(|link| link.target.clone());
+        // A link records no effect of its own: a dispatched link raises
+        // what the chain does.
+        let dispatch = OperatorDispatch {
+            raises: resolved.as_ref().and_then(|_| chain.raises()),
+            resolved,
+            negated_equality: link.is_some_and(|link| link.negated_equality),
+        };
+        let cmp = self.emit_comparison(sp.clone(), op, left, cur, dispatch);
+        if index + 1 == rest.len() {
+            return cmp;
+        }
+        let middle = self.chain_middle(operand, cur, index == 0);
+        let then = self.region(|this| {
+            MirTerm::Yield(vec![this.chain_link(
+                chain,
+                links,
+                first,
+                rest,
+                index + 1,
+                Some(middle),
+            )])
+        });
+        let orelse = self.region(|_| MirTerm::Yield(vec![cmp]));
+        let d = self.fresh(sp, None);
+        self.emit(MirInstr::If {
+            results: vec![d],
+            cond: cmp,
+            then,
+            elifs: Vec::new(),
+            orelse,
+        });
+        d
     }
 }
 

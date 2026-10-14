@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR lowering builds `and`/`or`, conditional expressions, comparison
+  chains, and comprehensions as upstream's `hlcf.if`/`loop` region ops
+  (R871), each region one block, and ends every body with
+  `lower-control-flow`. A conditional expression yields a result the
+  checker proved register-passable and stores any other into a result
+  slot, as upstream does; a comparison chain nests one `if` per link.
+  Package format 56. No program's output changes.
 - MIR has upstream's structured `hlcf` region ops beside `try` (R870):
   `If`, `Loop`, `ComptimeIf`, and `ComptimeFor`, with their region
   terminators, MIR text 1.54 (package format 55), verifier rules for each

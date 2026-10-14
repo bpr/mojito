@@ -83,6 +83,24 @@ pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
     )
 }
 
+/// [`lower_cfg`] before `lower-control-flow`: expression control flow is
+/// still the structured region ops lowering built.
+pub fn lower_cfg_structured(cfg: &Cfg) -> MirFunction {
+    lower_cfg_body(
+        cfg,
+        HashMap::new(),
+        &HashMap::new(),
+        &std::sync::Arc::default(),
+        false,
+        &[],
+        &[],
+        &[],
+        None,
+        &EnclosingBinders::default(),
+        &mut ComptimeThunks::default(),
+    )
+}
+
 /// A whole program's worth of lowered functions, keyed by name.
 ///
 /// The synthetic `__toplevel__` holds module initialization and explicit
@@ -3590,20 +3608,12 @@ impl<'a> Flatten<'a> {
     }
 
     /// Intern a fresh synthetic variable (a `$`-prefixed name never produced by
-    /// the parser), used to carry a short-circuit result across CFG blocks.
+    /// the parser), used to hold a conditional expression's memory-only
+    /// result.
     fn fresh_var(&mut self) -> VarId {
         let id = self.vars.len();
         self.vars.push(format!("$sc{id}"));
         id as VarId
-    }
-
-    /// Append a new empty basic block (placeholder terminator) and return its id.
-    fn new_block(&mut self) -> MirBlockId {
-        self.f.blocks.push(MirBlock {
-            instrs: Vec::new(),
-            term: MirTerm::Return(None),
-        });
-        self.f.blocks.len() - 1
     }
 }
 
@@ -3635,9 +3645,44 @@ struct NestedInfo {
 /// nested `def` statement lowers to nothing. `declared` types the slots the
 /// frame's declaration binds before its body runs (parameters, value
 /// parameters, a named result); every other slot is typed by the op that
-/// declares it as the body lowers.
+/// declares it as the body lowers. Lowering ends with `lower-control-flow`,
+/// so the body's expression region ops are blocks before its registers are
+/// typed.
 #[allow(clippy::too_many_arguments)]
 fn lower_cfg_nested(
+    cfg: &Cfg,
+    declared: HashMap<VarId, Ty>,
+    nested: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
+    overloads: &std::sync::Arc<mojito_checked::package::ProgramOverloads>,
+    returns_reference: bool,
+    reference_parameters: &[bool],
+    capture_bindings: &[mojito_types::origin::OwnerId],
+    receiver_value_parameters: &[(String, Ty)],
+    static_receiver: Option<&Ty>,
+    enclosing_binders: &EnclosingBinders,
+    comptime_thunks: &mut ComptimeThunks,
+) -> MirFunction {
+    let mut mir = lower_cfg_body(
+        cfg,
+        declared,
+        nested,
+        overloads,
+        returns_reference,
+        reference_parameters,
+        capture_bindings,
+        receiver_value_parameters,
+        static_receiver,
+        enclosing_binders,
+        comptime_thunks,
+    );
+    lower_control_flow(&mut mir);
+    mir
+}
+
+/// [`lower_cfg_nested`]'s body, its expression control flow still the
+/// `if`/`loop` region ops the builders emit.
+#[allow(clippy::too_many_arguments)]
+fn lower_cfg_body(
     cfg: &Cfg,
     declared: HashMap<VarId, Ty>,
     nested: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
@@ -3743,7 +3788,7 @@ fn lower_cfg_nested(
         }
         fl.f.n_regs = fl.next_reg;
         // The MIR flattener may intern additional locals beyond the HIR's set
-        // (short-circuit / iterator temporaries), so take the final interner.
+        // (conditional-result / iterator temporaries), so take the final interner.
         fl.f.n_vars = fl.vars.len();
         fl.f.var_names.clone_from(&fl.vars);
         fl.f.var_tys.clone_from(&fl.var_types);

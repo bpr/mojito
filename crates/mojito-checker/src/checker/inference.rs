@@ -3,6 +3,7 @@
 //! list/tuple/variant construction inference. Extracted from `checker.rs`;
 //! see `docs/symbol-map.md`.
 
+use super::traits::RegisterPassability;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::FuncTy;
@@ -1323,11 +1324,18 @@ impl Checker {
                         self.record_at(arm.source_span()).copy_place_value_use = true;
                     }
                 }
-                common_branch_ty(&tt, &et).ok_or_else(|| TypeError::TypeMismatch {
+                let ty = common_branch_ty(&tt, &et).ok_or_else(|| TypeError::TypeMismatch {
                     expected: tt.to_string(),
                     found: et.to_string(),
                     context: "conditional-expression branches".to_string(),
-                })
+                })?;
+                // A result only possibly register-passable (a parameter, a
+                // conditional conformance) is stored, as upstream's
+                // parse-time `isRegisterPassable` does in a generator.
+                if self.register_passability(&ty) == RegisterPassability::Proven {
+                    self.record_at(expr.source_span()).register_passable_result = true;
+                }
+                Ok(ty)
             }
             // Chained comparison `a < b < c`: each link is a comparison; the
             // result is `Bool`.

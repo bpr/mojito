@@ -74,8 +74,9 @@ pub const ELABORATE_DROPS: BodyPass = BodyPass {
 
 /// Structured control flow lowered to blocks: upstream's `LowerControlFlow`.
 ///
-/// Upstream lowers `hlcf` as it reaches LLVM. The pipeline does not list it:
-/// lowering still builds a CFG, so no pipeline body holds a region op.
+/// Upstream lowers `hlcf` as it reaches LLVM. MIR lowering ends each body
+/// with this pass, so the pipeline does not list it: no lowered body holds a
+/// region op.
 pub const LOWER_CONTROL_FLOW: BodyPass = BodyPass {
     name: "lower-control-flow",
     run: |_, function, _| mojito_mir::mir::lower_control_flow(function),

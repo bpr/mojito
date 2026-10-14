@@ -1,7 +1,7 @@
 # Structured Control Flow Above the Waist: Staged Plan
 
-**Status:** plan recorded 2026-10-14 (R859); stage 1 landed 2026-10-14
-(R870). The scheduled tasks are on
+**Status:** plan recorded 2026-10-14 (R859); stages 1 (R870) and 2
+(R871) landed 2026-10-14. The scheduled tasks are on
 [`docs/roadmap.md`](roadmap.md) track `pmir`, one entry per stage below.
 This document is their design record and is updated as stages land. It is
 the structured-control part of
@@ -82,12 +82,14 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
   `Branch`, `ComptimeBranch`, `ComptimeFor`, `Return`, `ReturnWithCleanup`,
   `FallOff`, and `EscapeJump`.
   - The region ops are `MirInstr::Try` and, since stage 1, `If`, `Loop`,
-    `ComptimeIf`, and `ComptimeFor`, which nothing produces yet. Each
+    `ComptimeIf`, and `ComptimeFor`. Each
     region is a `Vec<MirBlock>` sharing the function's registers and
     slots, walked by `instruction_regions`/`instruction_regions_mut` and
     `block_successors`. A `try` part is left through `EscapeJump`/`FallOff`.
   - `lower_expr/ctrl.rs` builds `short_circuit`, `ternary`, `compare_chain`,
-    and `comprehension_clauses` as blocks.
+    and `comprehension_clauses` as `If`/`Loop` region ops (stage 2), and
+    MIR lowering ends each body with `lower-control-flow`, so every phase
+    below it still sees blocks.
 - **The analyses work on edges.** Ownership, borrow, and initialization
   checks are dataflow over blocks; `analysis/drops.rs` puts drops on edges
   and splits critical edges.
@@ -180,9 +182,26 @@ last producer. Every stage keeps program output unchanged; the
      part lowers to today's unsupported boundary.
    - The structured mode still lets a `try` part complete by `FallOff`
      until stage 5 replaces it.
-2. **Expressions.** `short_circuit`, `ternary`, `compare_chain`, and
-   `comprehension_clauses` emit `If` with results (a comprehension also a
-   `Loop`) inside today's blocks.
+2. **Expressions.** *Landed (R871).* `short_circuit`, `ternary`,
+   `compare_chain`, and `comprehension_clauses` emit `If` (a comprehension
+   also a `Loop`) inside today's blocks, each region one block built by
+   `Flatten::region`, so MIR lowering creates no block of its own.
+   - `and`/`or` yield `Bool` (Mojito accepts no other operand). A ternary
+     the checker proved register-passable (`RegisterPassableResult`)
+     yields its value; any other result is stored by each arm into a
+     result slot forwarded after a result-less `If`, upstream's
+     destination buffer.
+   - A comparison chain nests one `If` per link inside the previous link's
+     then arm, its else arm yielding the previous comparison, as
+     `ChainedCmpOpNode::emitNextCmp` does.
+   - A comprehension `for` clause is a `Loop` whose body tests
+     `__has_next__`, breaks in the `If`'s else arm, calls `__next__`, runs
+     the rest of the clauses, and continues; an `if` clause is a
+     result-less `If` (`emitForStmt`, `emitIfClause`).
+   - `lower_cfg_nested` ends with `lower_control_flow`, before
+     `close_register_types` types the result registers through the pass's
+     `$yield` slots; `mir::lower_cfg_structured` returns the structured
+     form for phase tests.
 3. **Statements.** HIR's `Cfg` becomes a region tree: `if`/`elif` are `If`;
    `while`/`for` are a `Loop` with an `If` on the condition or has-next and
    the loop `else` on the normal exit; `break`/`continue` are labelled.

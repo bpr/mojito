@@ -3789,7 +3789,9 @@ nearest enclosing loop carrying it), `ComptimeYield`, `ComptimeBreak`/
 a fixed order, and `prune_unreachable_blocks`, `block_successors`, the
 analyses, and the elaborator's slot renumbering walk through them.
 
-Nothing produces the four ops yet. `mir::lower_control_flow` (upstream's
+MIR lowering builds `and`/`or`, conditional expressions, comparison
+chains, and comprehensions as `If`/`Loop`, each region one block, and
+`lower_cfg_nested` ends every body with `mir::lower_control_flow` (upstream's
 `LowerControlFlow`) lowers them to blocks and the CFG terminators: a
 region's blocks are appended to its list, the rest of the block moves to a
 join, an op's results go through one slot each, stored at a `yield` and
@@ -5045,8 +5047,8 @@ second runs `SCCP` and a `Canonicalizer` again, so `PIPELINE` is
   registry does: every `PIPELINE` pass, plus `ELABORATE_DROPS`
   (`elaborate-drops`), drop elaboration run on request, and
   `LOWER_CONTROL_FLOW` (`lower-control-flow`), the transitional lowering of
-  structured region ops to blocks, which nothing in the pipeline calls
-  yet. `analysis::opt`,
+  structured region ops to blocks, which MIR lowering calls at the end of
+  each body. `analysis::opt`,
   the `mlir-opt` analogue behind `mojito opt [--pass NAME]… [FILE]`, loads a
   MIR artifact, runs the named passes in order (a program pass over the
   program, a body pass over every body but `__toplevel__`), and verifies the

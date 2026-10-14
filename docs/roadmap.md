@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R887**.
+Next free ID: **R889**.
 
 ## Ordered Work
 
@@ -63,24 +63,6 @@ CFG. The entries that close that gap are staged in
 producers first, then the CFG lowering point moving down one consumer at a
 time.
 
-
-- [ ] **R871 Short-circuit, ternary, comparison-chain, and comprehension
-  control flow is built as blocks where upstream emits `hlcf.if` with
-  results**
-
-  Upstream's parser emits `and`, `or`, and a ternary as an `hlcf.if` whose
-  arms yield the value (`ExprNodes.cpp`), and Mojito's MIR lowering builds
-  them as branches and join blocks.
-  - Stage 2 of `docs/structured-control-flow-plan.md`.
-  - The lever is `lower_expr/ctrl.rs`: `short_circuit`, `ternary`,
-    `compare_chain`, and `comprehension_clauses` (a comprehension also
-    emits a `Loop`).
-  - The region ops sit inside today's statement blocks.
-  - After it lands, `lower-control-flow` runs right after MIR lowering.
-  - Done when those four builders emit region ops and program output is
-    unchanged.
-  - Depends on R870.
-  - Model: Opus, Planned.
 
 - [ ] **R872 HIR lowers run-time `if`/`while`/`for`/`break`/`continue` to a
   CFG where upstream emits `hlcf.if` and labelled loops**
@@ -115,6 +97,21 @@ time.
     `comptime for … else`.
   - Depends on R872.
   - Model: Opus, Planned.
+
+- [ ] **R887 A conditional expression whose condition is a parameter value
+  is a run-time `if` where upstream emits `hlcf.comptime.if`**
+
+  `1 if flag else 2` in `def pick[flag: Bool]()` lowers to a run-time `If`
+  on the parameter's value, so the elaborator checks and lowers both arms.
+  - Upstream (`ExprNodes.cpp`, around line 4629) emits `hlcf.comptime.if`
+    for a parameter-valued condition and keeps only the live arm, so a dead
+    arm is never elaborated.
+  - The lever is `Flatten::ternary` in `lower_expr/ctrl.rs`, which would
+    emit `ComptimeIf` on the checker's constraint for the condition, as a
+    `comptime if` statement carries one.
+  - Found while landing R871 (2026-10-14).
+  - Depends on R873.
+  - Model: Opus, Not Planned.
 
 - [ ] **R885 A `comptime for` region op leaves its loop implicitly when
   its sequence runs out, where upstream's body tests `has_next` itself**
@@ -5006,6 +5003,25 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `conformance/assets-mojo-errors.tsv` row.
   - Unverified on the pin: the pin env was missing when R735 landed.
   - Found while landing R735 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R888 A conditional expression over two places copies the chosen
+  place where upstream yields a reference to it**
+
+  `show(a if c else b)`, with `a` and `b` named `ImplicitlyCopyable`
+  values and `show` taking a `read` argument, prints only `show 1` on the
+  pin, and Mojito prints `copy 1`, `show 1`, `del 1`.
+  - Upstream's `mergeCValuesAcrossIfLikeOp` (`IREmitter.cpp`, around line
+    1565) yields a common reference from `handleTwoMValues` when both arms
+    are lvalues that dominate the `if`, so nothing is copied.
+  - `var r = a if c else b` copies once on both, so only a borrowing
+    consumer differs.
+  - Lever: the checker's `ExprKind::IfExpr` arm stops marking place arms
+    `copy_place_value_use` when both arms are places, and
+    `Flatten::ternary` yields `MakeRef` handles from its `If`.
+  - Found while landing R871 (2026-10-14), probe on the pin
+    `mojo-2026092105`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

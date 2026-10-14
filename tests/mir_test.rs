@@ -5,7 +5,8 @@
 use mojito::hir::Cfg;
 use mojito::mir::{
     MirBlock, MirDeclarations, MirFunction, MirInstr, MirPlace, MirProgram, MirSubscriptArg,
-    MirTerm, Proj, Reg, SpanTable, UseMode, lower_cfg, lower_program,
+    MirTerm, Proj, Reg, SpanTable, UseMode, has_structured_control_flow, lower_cfg,
+    lower_cfg_structured, lower_program,
 };
 use mojito::types::TyKind;
 use mojito::{Compiler, SemanticAdjustment, Ty, parse};
@@ -557,8 +558,76 @@ fn binder_slot_ty<'a>(function: &'a MirFunction, name: &str) -> Option<&'a TyKin
     function.var_tys.get(&var).map(Ty::kind)
 }
 
+#[test]
+fn structured_expression_control_flow_builds_region_ops() {
+    let source = r#"
+def main():
+    var xs: List[Int] = [1, -2, 3]
+    var c = len(xs) > 1
+    var both = c and len(xs) == 3
+    var n = 1 if c else 2
+    var s = String("a") if c else String("b")
+    var chained = 0 < n < 3 < 4
+    var ys = [x for x in xs if x > 0]
+    print(both, n, s, chained, len(ys))
+"#;
+    let (cfg, mir) = checked_main_with(source, lower_cfg_structured);
+    assert_eq!(
+        mir.blocks.len(),
+        cfg.g.node_count(),
+        "no expression adds a block"
+    );
+    let mut ops = Vec::new();
+    region_ops(&mir.blocks, &mut ops);
+    // `and`, the `Int` ternary, the `String` ternary (stored, not yielded),
+    // the chain's two nested `if`s, then the comprehension loop with its
+    // `__has_next__` test and its filter.
+    assert_eq!(
+        ops,
+        [
+            "if 1", "if 1", "if 0", "if 1", "if 1", "loop", "if 0", "if 0"
+        ]
+    );
+    let (_, lowered) = checked_main(source);
+    assert!(!has_structured_control_flow(&lowered));
+}
+
+/// Push a description of each `if` (its result count) and `loop` region op
+/// in `blocks`, outermost first, asserting each region is one block.
+fn region_ops(blocks: &[MirBlock], ops: &mut Vec<String>) {
+    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+        let regions: Vec<&Vec<MirBlock>> = match instruction {
+            MirInstr::If {
+                results,
+                then,
+                elifs,
+                orelse,
+                ..
+            } => {
+                assert!(elifs.is_empty());
+                ops.push(format!("if {}", results.len()));
+                vec![then, orelse]
+            }
+            MirInstr::Loop { body, .. } => {
+                ops.push("loop".to_string());
+                vec![body]
+            }
+            _ => continue,
+        };
+        for region in regions {
+            assert_eq!(region.len(), 1, "an expression region is one block");
+            region_ops(region, ops);
+        }
+    }
+}
+
 /// Compile `src` and lower its `main`'s checked CFG to MIR.
 fn checked_main(src: &str) -> (Cfg, MirFunction) {
+    checked_main_with(src, lower_cfg)
+}
+
+/// Compile `src` and lower its `main`'s checked CFG with `lower`.
+fn checked_main_with(src: &str, lower: fn(&Cfg) -> MirFunction) -> (Cfg, MirFunction) {
     let compiled = Compiler::default()
         .compile_source(src, Path::new("mir_test.mojo"))
         .expect("compile");
@@ -579,7 +648,7 @@ fn checked_main(src: &str) -> (Cfg, MirFunction) {
         })
         .expect("main");
     let cfg = Cfg::build_checked_fn(checked, &params, &body);
-    let mir = lower_cfg(&cfg);
+    let mir = lower(&cfg);
     (cfg, mir)
 }
 

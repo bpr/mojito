@@ -249,8 +249,8 @@ impl<'a> Flatten<'a> {
     /// [`Self::setup_reference`] whose lowering materialized one
     /// ([`Self::materialize_reference_result_place`]), or everything after
     /// the elements of a `bound` [`Self::setup_display`]
-    /// ([`Self::display_elements`]). A read that split the block stays where
-    /// written. Otherwise an operand whose lowering ends in a `UseVar`
+    /// ([`Self::display_elements`]); an operand's region ops stay where
+    /// written while its read defers. Otherwise an operand whose lowering ends in a `UseVar`
     /// forward (a `^` transfer or a [`Self::bind_forwarded_temporary`]
     /// slot) defers that forward to the frame's transfers; the slot it
     /// empties is defined where written, which dominates the call.
@@ -279,14 +279,13 @@ impl<'a> Flatten<'a> {
             reference.and_then(|reference| reference.read_start)
         };
         if let Some((block, start)) = read_start
-            && self.cur == block
             && let Some(setup) = self.call_setups.last_mut()
         {
             let instrs = self.f.blocks[block].instrs.drain(start..).collect();
             setup.reads.push((source, instrs));
-        } else if (self.cur != block || self.f.blocks[block].instrs.len() > start)
+        } else if self.f.blocks[block].instrs.len() > start
             && matches!(
-                self.f.blocks[self.cur].instrs.last(),
+                self.f.blocks[block].instrs.last(),
                 Some(MirInstr::UseVar {
                     mode: UseMode::Forward,
                     ..
@@ -294,7 +293,7 @@ impl<'a> Flatten<'a> {
             )
             && let Some(setup) = self.call_setups.last_mut()
         {
-            let forward = self.f.blocks[self.cur].instrs.pop().into_iter().collect();
+            let forward = self.f.blocks[block].instrs.pop().into_iter().collect();
             setup.forwards.push((source, forward));
         }
         lowered
