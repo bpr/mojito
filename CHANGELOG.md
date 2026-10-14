@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The overnight gate ratchets the instantiated program's size (R773):
+  `scripts/instantiation-report --check` fails when the concrete-instruction
+  total over the fixtures elaborated in both runs grows past, or shrinks
+  below, the committed `benchmarks/instantiation.tsv`, or when a fixture
+  stops elaborating, so expansion moves only when a change commits a new
+  baseline.
 - `scripts/instantiation-report` records the elaborator's size counters
   over the corpus (R772): it runs every `assets/ok` and `benchmarks/compile`
   fixture and writes one row per fixture plus a `total` row to the committed

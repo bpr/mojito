@@ -2,6 +2,7 @@
 """Record the elaborator's instantiation counters over the whole corpus.
 
 Usage: scripts/instantiation-report [--bin PATH] [--jobs N] [--out PATH]
+                                    [--check [--baseline PATH]]
 
 Runs `BIN run --timings FILE` on every `assets/ok/*.mojo` and
 `benchmarks/compile/*.mojo` fixture (only commands that elaborate report the
@@ -20,6 +21,21 @@ Status column: `elaborated` when the counters were reported (whatever the
 exit code: a runtime trap does not change the elaboration), `timeout` when
 the child was killed, `failed` otherwise; failures are also listed on stderr
 with their first diagnostic line. The exit status is 0 even with failed rows.
+
+--check is the ratchet the overnight gate runs: it writes the fresh report to
+target/instantiation.tsv (unless --out says otherwise; never the baseline) and
+compares it with the baseline (default benchmarks/instantiation.tsv). The
+compared quantity is the concrete-instruction total over the fixtures
+elaborated in both runs; the raw `total` row would grow with every new fixture
+and shrink with every fixture that breaks. It fails (exit 1) when
+  - lost: a fixture elaborated in the baseline no longer elaborates;
+  - growth: the shared total exceeds the baseline's;
+  - stale: the shared total is below the baseline's, so a win is not locked in.
+Fixtures on one side only, or newly elaborated, are printed as an inventory
+note and do not fail. Exit 2 is a setup error (no binary, unreadable
+baseline). A deliberate increase, a locked-in win, or an inventory change is
+fixed the same way: rerun without --check and commit
+benchmarks/instantiation.tsv in the same change.
 """
 
 import argparse
@@ -42,12 +58,21 @@ COUNTER_PATH = re.compile(r"(?:^|\.)elaborate\.(" + "|".join(COUNTERS) + r")$")
 INPUTS = ("assets/ok/*.mojo", "benchmarks/compile/*.mojo")
 TIMEOUT_SECONDS = 120
 SCRUBBED_ENV = ("MOJITO_STD_PACKAGE", "MOJITO_TIMING_NOTES")
+HEADER = ("fixture", "status") + COUNTERS
+LARGEST_DELTAS = 10
 
 
 def main():
     args = parse_args()
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     os.chdir(root)
+    baseline = None
+    if args.check:
+        try:
+            baseline = read_baseline(args.baseline)
+        except (OSError, ValueError) as error:
+            print(f"instantiation-report: {error}", file=sys.stderr)
+            return 2
     binary = args.bin or build_default()
     if not os.access(binary, os.X_OK):
         print(f"instantiation-report: no executable at {binary}", file=sys.stderr)
@@ -56,7 +81,7 @@ def main():
     env = {k: v for k, v in os.environ.items() if k not in SCRUBBED_ENV}
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
         rows = list(pool.map(lambda f: measure(binary, f, env), fixtures))
-    lines = ["\t".join(("fixture", "status") + COUNTERS)]
+    lines = ["\t".join(HEADER)]
     lines += [format_row(row) for row in rows]
     lines.append(format_total(rows))
     text = "\n".join(lines) + "\n"
@@ -68,7 +93,9 @@ def main():
     for fixture, status, _counts, cause in rows:
         if status != "elaborated":
             print(f"{status}: {fixture}: {cause}", file=sys.stderr)
-    return 0
+    if baseline is None:
+        return 0
+    return 1 if compare(baseline, rows, args.baseline, args.out) else 0
 
 
 def parse_args():
@@ -77,13 +104,124 @@ def parse_args():
     parser.add_argument("--jobs", type=int, default=8, help="parallel fixtures (default 8)")
     parser.add_argument(
         "--out",
+        help="output TSV, or - for stdout (default benchmarks/instantiation.tsv; "
+        "target/instantiation.tsv with --check)",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="compare with the baseline and fail on growth, shrink, or a lost fixture",
+    )
+    parser.add_argument(
+        "--baseline",
         default="benchmarks/instantiation.tsv",
-        help="output TSV, or - for stdout (default benchmarks/instantiation.tsv)",
+        help="baseline TSV for --check (default benchmarks/instantiation.tsv)",
     )
     args = parser.parse_args()
     if args.jobs < 1:
         parser.error("--jobs must be at least 1")
+    if args.out is None:
+        args.out = "target/instantiation.tsv" if args.check else "benchmarks/instantiation.tsv"
+    if args.check and args.out != "-" and same_file(args.out, args.baseline):
+        parser.error("--check must not write its report over the baseline it compares with")
     return args
+
+
+def read_baseline(path):
+    with open(path, encoding="utf-8") as handle:
+        lines = handle.read().splitlines()
+    if not lines or tuple(lines[0].split("\t")) != HEADER:
+        raise ValueError(f"{path}: header is not {' '.join(HEADER)!r}")
+    baseline = {}
+    for number, line in enumerate(lines[1:], start=2):
+        fields = line.split("\t")
+        if len(fields) != len(HEADER):
+            raise ValueError(f"{path}:{number}: expected {len(HEADER)} columns")
+        if fields[0] == "total":
+            continue
+        counts = None
+        if fields[1] == "elaborated":
+            counts = {c: int(v) for c, v in zip(COUNTERS, fields[2:])}
+        baseline[fields[0]] = (fields[1], counts)
+    return baseline
+
+
+def compare(baseline, rows, baseline_path, out_path):
+    """Print the ratchet's verdict; return whether it failed."""
+    fresh = {fixture: (status, counts, cause) for fixture, status, counts, cause in rows}
+    shared = sorted(
+        f
+        for f, (status, _counts) in baseline.items()
+        if status == "elaborated" and f in fresh and fresh[f][0] == "elaborated"
+    )
+    lost = sorted(
+        f
+        for f, (status, _counts) in baseline.items()
+        if status == "elaborated" and f in fresh and fresh[f][0] != "elaborated"
+    )
+    added = sorted(set(fresh) - set(baseline))
+    removed = sorted(set(baseline) - set(fresh))
+    recovered = sorted(
+        f
+        for f, (status, _counts, _cause) in fresh.items()
+        if status == "elaborated" and f in baseline and baseline[f][0] != "elaborated"
+    )
+
+    print(f"instantiation ratchet: {baseline_path} -> {out_path}")
+    print(f"shared elaborated fixtures: {len(shared)}")
+    totals = {}
+    for counter in COUNTERS:
+        before = sum(baseline[f][1][counter] for f in shared)
+        after = sum(fresh[f][1][counter] for f in shared)
+        totals[counter] = (before, after)
+        print(f"  {counter}: {before} -> {after} ({after - before:+d})")
+    deltas = [
+        (fresh[f][1]["concrete_instructions"] - baseline[f][1]["concrete_instructions"], f)
+        for f in shared
+    ]
+    deltas = sorted((d for d in deltas if d[0]), key=lambda d: (-abs(d[0]), d[1]))
+    if deltas:
+        print(f"largest concrete_instructions deltas ({len(deltas)} fixtures moved):")
+        for delta, fixture in deltas[:LARGEST_DELTAS]:
+            print(f"  {delta:+d}\t{fixture}")
+
+    failed = False
+    for fixture in lost:
+        status, _counts, cause = fresh[fixture]
+        print(f"FAIL lost: {fixture} stopped elaborating ({status}: {cause})")
+        failed = True
+    before, after = totals["concrete_instructions"]
+    if after != before:
+        percent = 100.0 * (after - before) / before if before else 0.0
+        if after > before:
+            print(f"FAIL growth: grew by {after - before} instructions ({percent:+.2f}%)")
+        else:
+            print(
+                f"FAIL stale: shrank by {before - after} instructions ({percent:+.2f}%); "
+                "commit the lower baseline"
+            )
+        failed = True
+    for label, fixtures in (
+        ("not in the baseline", added),
+        ("missing from this run", removed),
+        ("newly elaborated", recovered),
+    ):
+        for fixture in fixtures:
+            print(f"note: {label}: {fixture}")
+    if added or removed or recovered:
+        print("note: refresh the baseline (rerun without --check) and commit it")
+    if failed:
+        print(
+            "fix: a change that meant this reruns scripts/instantiation-report and "
+            "commits benchmarks/instantiation.tsv; otherwise fix the regression"
+        )
+    else:
+        print("PASS")
+    return failed
+
+
+def same_file(left, right):
+    return os.path.realpath(left) == os.path.realpath(right)
 
 
 def build_default():

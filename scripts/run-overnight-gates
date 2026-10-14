@@ -84,6 +84,15 @@ run_step assets-mojo-extensions scripts/sweep-assets-mojo \
 run_step assets-mojo-errors scripts/sweep-assets-mojo \
     --mojo-pixi-manifest "${MOJO_PIXI_MANIFEST}" --errors
 
+# The instantiation ratchet: the concrete-instruction total over the fixtures
+# elaborated both here and in benchmarks/instantiation.tsv must equal the
+# committed one, and no fixture may stop elaborating, so no change grows the
+# instantiated program (or gives back a pass's win) without committing it.
+# It sits last because conformance has by then restored the featureless
+# target/debug/mojito the baseline was recorded with. The fresh report lands
+# in target/instantiation.tsv.
+run_step instantiation-ratchet env RUSTC_WRAPPER= scripts/instantiation-report --check
+
 # RESULTS.md: the morning entry point.
 {
     echo "# Overnight gate run — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -126,6 +135,14 @@ run_step assets-mojo-errors scripts/sweep-assets-mojo \
     echo "  inventory and ratchet drift in seconds) or a real native change."
     echo "  An 'excluded' row appearing is a capability loss — fix it rather"
     echo "  than ratcheting the count up; it only ever ratchets down."
+    echo "- instantiation-ratchet: 'growth' is a regression unless the change"
+    echo "  meant it, and then that change commits the refreshed baseline;"
+    echo "  'stale' is a shrink nobody committed — rerun"
+    echo "  scripts/instantiation-report and commit benchmarks/instantiation.tsv;"
+    echo "  'lost' is a fixture that stopped elaborating, triaged like any corpus"
+    echo "  failure. Inventory notes (fixtures added or removed) do not fail but"
+    echo "  also want a refresh. diff target/instantiation.tsv against the"
+    echo "  committed file to see which fixtures moved."
     exit "${overall}"
 } | tee "${RESULTS}"
 overall=${PIPESTATUS[0]}

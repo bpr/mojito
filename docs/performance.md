@@ -822,9 +822,26 @@ environment) and the debug binary, the script's default; each fixture is
 executed with `run`, the command that reaches the elaborator, with stdin
 from `/dev/null`, and a runtime trap keeps its row; and a summed
 `generators` is not a count of distinct templates, since every fixture
-recounts the std generators it reaches. The rows are the record; the totals
-serve the diff and R773's ratchet. The whole sweep takes about 15 s at the
-default 8 jobs.
+recounts the std generators it reaches. The rows are the record. The whole
+sweep takes about 15 s at the default 8 jobs.
+
+The ratchet (R773) is `scripts/instantiation-report --check`, the overnight
+gate's last step (`scripts/run-overnight-gates`, after conformance restores
+the featureless debug binary the baseline was recorded with). It writes the
+fresh report to `target/instantiation.tsv` and compares the
+`concrete_instructions` total over the fixtures **elaborated in both** runs
+with the committed baseline's. It fails on *growth* (the shared total went
+up), on a *stale* baseline (it went down and the lower number was not
+committed, so a later change could give the win back), and on a *lost*
+fixture (elaborated in the baseline, `failed` or `timeout` now). Fixtures on
+one side only, or newly elaborated, are an inventory note and do not fail.
+The raw `total` row is not the compared quantity: it grows with every added
+fixture or fixed failure, and shrinks whenever a fixture breaks, so it would
+both fail on harmless changes and let a regression pay for real growth.
+Per-fixture moves that leave the shared total equal pass, so a pass may shift
+instructions between fixtures. The check prints all six shared totals and the
+ten largest per-fixture deltas; a change that means to move the total reruns
+the script without `--check` and commits `benchmarks/instantiation.tsv`.
 
 ### 4. Profile the dominant measured phase *(done for Hello World: `scripts/sample-stacks`)*
 

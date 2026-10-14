@@ -76,7 +76,8 @@ counters to stderr — the benchmark drivers' channel (`scripts/bench-compile`
 times the compiler over `benchmarks/compile/`; `scripts/bench-pliron` runs
 the native corpus under `benchmarks/native/`; `scripts/instantiation-report`
 records the elaborator's size counters per fixture in
-`benchmarks/instantiation.tsv`; see
+`benchmarks/instantiation.tsv`, and with `--check` compares a fresh run with
+it, as the overnight gate does; see
 [`docs/performance.md`](performance.md)). Executables link the `mojito-runtime`
 static archive, discovered in a fixed order: `--runtime-lib PATH`, then
 `MOJITO_RUNTIME_LIB`, then an installation bundle's `lib/`, then the

@@ -206,16 +206,6 @@ which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
 
-- [ ] **R773 Nothing stops a change from growing the instantiated program**
-
-  No gate notices when the corpus's concrete instruction total grows, so a
-  later change can give back what a pass won without anyone deciding to.
-  - Add a ratchet to the overnight gate (`scripts/run-overnight-gates`)
-    that fails when the total exceeds the committed baseline.
-  - A deliberate increase updates the baseline in the same change.
-  - Depends on R772.
-  - Model: Opus, Not Planned.
-
 - [ ] **R814 Nothing checks `benchmarks/compile` against the pinned Mojo**
 
   `scripts/sweep-assets-mojo` sweeps only `assets/` folders, so a compile
