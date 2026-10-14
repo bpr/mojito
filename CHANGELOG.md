@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `canonicalize` now forwards an identity copy's operand to its readers
+  (R780), as upstream's `Canonicalizer` applies a fold that returns an
+  operand: a `value.copy` of a scalar, pointer, `None`, or SIMD lane, typed
+  alike on both sides, is removed and its readers name the source. Copies
+  of structs, aggregates, and type parameters stay. Corpus concrete
+  instructions fall by 1.8 %; `benchmarks/instantiation.tsv` is rerun.
+
 - The pre-elaboration pipeline's second pass is `canonicalize` (R779),
   upstream's `Canonicalizer`: it erases blocks the entry does not reach and
   instructions whose results nothing reads when

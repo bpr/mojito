@@ -1804,7 +1804,8 @@ impl MirInstr {
     /// As in MLIR, an instruction that does not declare itself free of
     /// effects has them. These stay:
     /// - a copy (`var.use` in copy mode, `value.copy`): it may run
-    ///   `__copyinit__`, which only an instance decides;
+    ///   `__copyinit__`, which only an instance decides; a `value.copy` that
+    ///   is the identity is folded instead ([`Self::forwarded_operand`]);
     /// - a move, forward, or place move: each ends a slot;
     /// - an operator: a generic operand's becomes a dunder call per instance,
     ///   and built-in division traps;
@@ -1889,6 +1890,23 @@ impl MirInstr {
             | Self::Next { .. }
             | Self::TryNext { .. } => false,
         }
+    }
+
+    /// The operand this instruction's result always equals, when it folds to
+    /// one: MLIR's `fold` returning an operand, after which upstream's
+    /// `Canonicalizer` replaces the result's uses with it.
+    ///
+    /// Only a `value.copy` folds, and only when its source and destination are
+    /// typed alike by a type whose copy is the identity
+    /// ([`copy_is_identity`]). A widening copy changes its readers' operand
+    /// type, and a `rebind` is an assertion the elaborator judges per
+    /// instance.
+    pub fn forwarded_operand(&self, reg_types: &HashMap<u32, Ty>) -> Option<Reg> {
+        let Self::CopyValue { dest, value } = self else {
+            return None;
+        };
+        let source = reg_types.get(&value.0)?;
+        (reg_types.get(&dest.0) == Some(source) && copy_is_identity(source)).then_some(*value)
     }
 }
 
@@ -2166,5 +2184,49 @@ mod tests {
         assert!(borrow.would_be_trivially_dead());
         assert!(!copy.would_be_trivially_dead());
         assert!(!MirInstr::DropVar { var: 0 }.would_be_trivially_dead());
+    }
+
+    #[test]
+    fn forwarded_operand_folds_only_an_identity_copy() {
+        let lane = |width| {
+            Ty::new(TyKind::Simd {
+                dtype: mojito_types::types::SimdDtype::Known(Dtype::Int32),
+                width: mojito_types::types::SimdWidth::Known(width),
+            })
+        };
+        let param = Ty::new(TyKind::Param {
+            binder: mojito_types::param_expr::ParamRef::unbound("T"),
+            bounds: Vec::new(),
+            callable_bound: None,
+        });
+        let folds = |source: Ty, dest: Ty| {
+            let reg_types = HashMap::from([(0, source), (1, dest)]);
+            MirInstr::CopyValue {
+                dest: Reg(1),
+                value: Reg(0),
+            }
+            .forwarded_operand(&reg_types)
+        };
+        assert_eq!(
+            folds(Ty::new(TyKind::Int), Ty::new(TyKind::Int)),
+            Some(Reg(0))
+        );
+        assert_eq!(folds(lane(1), lane(1)), Some(Reg(0)));
+        assert_eq!(folds(param.clone(), param), None);
+        let string = Ty::new(TyKind::Struct("String".into(), Vec::new()));
+        assert_eq!(folds(string.clone(), string), None);
+        assert_eq!(folds(lane(4), lane(4)), None);
+        let literal = Ty::new(TyKind::StringLiteral);
+        assert_eq!(folds(literal.clone(), literal), None);
+        assert_eq!(
+            folds(Ty::new(TyKind::IntLiteral), Ty::new(TyKind::Int)),
+            None
+        );
+        let reg_types = HashMap::from([(0, Ty::new(TyKind::Int)), (1, Ty::new(TyKind::Int))]);
+        let rebind = MirInstr::Rebind {
+            dest: Reg(1),
+            value: Reg(0),
+        };
+        assert_eq!(rebind.forwarded_operand(&reg_types), None);
     }
 }

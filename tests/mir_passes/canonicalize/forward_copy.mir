@@ -1,0 +1,102 @@
+mojito-mir 1.53
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("cases.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+    struct { name: Holder, fields: [field { name: n, type: Int }, field { name: lane, type: simd { dtype: int32, width: 1 } }, field { name: wide, type: simd { dtype: int32, width: 4 } }, field { name: inner, type: struct_type { name: Inner, arguments: [] } }], mut_self_methods: [], fieldwise_init: true, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [] },
+    struct { name: Inner, fields: [field { name: k, type: Int }], mut_self_methods: [], fieldwise_init: true, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [conformance { trait: ImplicitlyCopyable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [] }
+  ],
+  decls: [
+    decl { lowered_name: count, param_names: [h], param_types: [struct_type { name: Holder, arguments: [] }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: guarded, param_names: [h], param_types: [struct_type { name: Holder, arguments: [] }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: true, error_type: present(Error), ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: lane, param_names: [h], param_types: [struct_type { name: Holder, arguments: [] }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: simd { dtype: int32, width: 1 }, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: count,
+        registers: 3,
+        vars: 1,
+        var_names: [h],
+        params: 1,
+        param_types: [struct_type { name: Holder, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Holder, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 351, end: 354, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 351, end: 354, origin: present($v0) }) }, reg_loc { reg: %r2, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Holder, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } },
+              value.copy { dest: %r1, value: %r0 },
+              value.copy { dest: %r2, value: %r1 }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      },
+      fn {
+        name: lane,
+        registers: 2,
+        vars: 1,
+        var_names: [h],
+        params: 1,
+        param_types: [struct_type { name: Holder, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Holder, arguments: [] } }],
+        return_type: present(simd { dtype: int32, width: 1 }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: simd { dtype: int32, width: 1 } }, reg_type { reg: %r1, type: simd { dtype: int32, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 413, end: 419, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 413, end: 419, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Holder, arguments: [] }), projections: [projection { op: field(lane), type: simd { dtype: int32, width: 1 } }], type: present(simd { dtype: int32, width: 1 }), through: absent } },
+              value.copy { dest: %r1, value: %r0 }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: guarded,
+        registers: 13,
+        vars: 3,
+        var_names: [h, k, e],
+        params: 1,
+        param_types: [struct_type { name: Holder, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Holder, arguments: [] } }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: Error }],
+        return_type: present(Int),
+        raises: true,
+        error_type: present(Error),
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Bool }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: StringLiteral }, reg_type { reg: %r8, type: Error }, reg_type { reg: %r9, type: Error }, reg_type { reg: %r10, type: None }, reg_type { reg: %r11, type: IntLiteral }, reg_type { reg: %r12, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 485, end: 488, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 485, end: 488, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 500, end: 501, origin: present($v1) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 504, end: 505, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 504, end: 505, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 500, end: 505, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 553, end: 554, origin: present($v1) }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 531, end: 536, origin: absent }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 525, end: 537, origin: absent }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 583, end: 584, origin: present($v2) }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 577, end: 585, origin: absent }) }, reg_loc { reg: %r11, location: present(loc { file: file0, start: 597, end: 598, origin: absent }) }, reg_loc { reg: %r12, location: present(loc { file: file0, start: 597, end: 598, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              try { body: [bb0 { instructions: [place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Holder, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } }, value.copy { dest: %r1, value: %r0 }, var.store { var: $v1, src: %r1, binding_type: present(Int), in_place: false }, const { dest: %r3, value: int_literal(3) }, literal.materialize { dest: %r4, value: %r3, target: Int }, var.use { dest: %r2, var: $v1, mode: copy }, binary { op: gt, dest: %r5, a: %r2, b: %r4, resolved: absent, raises: absent }], terminator: branch { condition: %r5, then: bb2, else: bb3 } }, bb1 { instructions: [var.use { dest: %r6, var: $v1, mode: copy }, drop.var { var: $v1 }], terminator: return { value: present(%r6) } }, bb2 { instructions: [const { dest: %r7, value: string("big") }, call { dest: %r8, func: Error, raises: absent, args: [%r7], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, raise { src: %r8 }], terminator: jump { target: bb1 } }, bb3 { instructions: [], terminator: jump { target: bb1 } }], handler: present(handler { error_var: present($v2), blocks: [bb0 { instructions: [var.use { dest: %r9, var: $v2, mode: copy }, drop.var { var: $v2 }, call { dest: %r10, func: print, raises: absent, args: [%r9], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: falloff {} }] }), orelse: absent, finalbody: absent, cleanup: [$v1] },
+              const { dest: %r11, value: int_literal(0) },
+              literal.materialize { dest: %r12, value: %r11, target: Int }
+            ],
+            terminator: return { value: present(%r12) }
+          }
+        ]
+      }
+  ]
+}

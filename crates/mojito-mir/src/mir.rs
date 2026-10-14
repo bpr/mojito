@@ -41,7 +41,8 @@ use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{ParamContext, ParamExpr};
 use mojito_types::types::TyKind;
 use mojito_types::types::{
-    ConstraintOperand, GenericConstraint, ParamDecl, Ty, TyArg, dict_elements, tuple_elements,
+    ConstraintOperand, GenericConstraint, ParamDecl, Ty, TyArg, copy_is_identity, dict_elements,
+    tuple_elements,
 };
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 

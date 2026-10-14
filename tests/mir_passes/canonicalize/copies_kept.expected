@@ -1,0 +1,83 @@
+  functions: [
+      fn {
+        name: widen,
+        registers: 2,
+        vars: 1,
+        var_names: [h],
+        params: 1,
+        param_types: [struct_type { name: Holder, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Holder, arguments: [] } }],
+        return_type: present(simd { dtype: int32, width: 4 }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: simd { dtype: int32, width: 4 } }, reg_type { reg: %r1, type: simd { dtype: int32, width: 4 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 658, end: 664, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 658, end: 664, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Holder, arguments: [] }), projections: [projection { op: field(wide), type: simd { dtype: int32, width: 4 } }], type: present(simd { dtype: int32, width: 4 }), through: absent } },
+              value.copy { dest: %r1, value: %r0 }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: inner,
+        registers: 2,
+        vars: 1,
+        var_names: [h],
+        params: 1,
+        param_types: [struct_type { name: Holder, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Holder, arguments: [] } }],
+        return_type: present(struct_type { name: Inner, arguments: [] }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: Inner, arguments: [] } }, reg_type { reg: %r1, type: struct_type { name: Inner, arguments: [] } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 709, end: 716, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 709, end: 716, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Holder, arguments: [] }), projections: [projection { op: field(inner), type: struct_type { name: Inner, arguments: [] } }], type: present(struct_type { name: Inner, arguments: [] }), through: absent } },
+              value.copy { dest: %r1, value: %r0 }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: pick,
+        registers: 2,
+        vars: 1,
+        var_names: [p],
+        params: 1,
+        param_types: [struct_type { name: Pair, arguments: [type_arg(param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent })] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Pair, arguments: [type_arg(param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent })] } }],
+        return_type: present(param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent } }, reg_type { reg: %r1, type: param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 793, end: 796, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 793, end: 796, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Pair, arguments: [type_arg(param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent })] }), projections: [projection { op: field(a), type: param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent } }], type: present(param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }), through: absent } },
+              value.copy { dest: %r1, value: %r0 }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      }
+  ]

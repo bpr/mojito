@@ -2727,6 +2727,32 @@ pub const fn builtin_copy_is_value_read(ty: &TyKind) -> bool {
     )
 }
 
+/// Whether a copy of a value of this type is its operand.
+///
+/// The value is a scalar, pointer, `None`, or one SIMD lane, held whole in
+/// one register on both backends, so copying it is a bit copy and no
+/// `__copyinit__` runs. A lane's dtype may still be a parameter; every instance closes it to a
+/// scalar. Aggregates are excluded even when trivially copyable: MIR reads
+/// an aggregate place shallowly, and the copy is the read's snapshot.
+pub const fn copy_is_identity(ty: &TyKind) -> bool {
+    matches!(
+        ty,
+        TyKind::Int
+            | TyKind::UInt
+            | TyKind::Bool
+            | TyKind::Float64
+            | TyKind::Dtype
+            | TyKind::IntLiteral
+            | TyKind::FloatLiteral
+            | TyKind::None
+            | TyKind::Pointer { .. }
+            | TyKind::Simd {
+                width: SimdWidth::Known(1),
+                ..
+            }
+    )
+}
+
 /// Recover the monomorphic or generic callable contract carried either directly
 /// by a function type or indirectly by a callable-bounded type parameter.
 pub fn callable_contract_ty(ty: &Ty) -> Option<&Ty> {

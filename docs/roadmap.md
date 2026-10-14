@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R838**.
+Next free ID: **R840**.
 
 ## Ordered Work
 
@@ -55,19 +55,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md),
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
-
-- [ ] **R780 Register copies lowering introduces survive into every
-  instance**
-
-  A register copied only to be read elsewhere is kept as a copy in each
-  instance, where upstream's canonicalizer forwards the source to its
-  readers once.
-  - Only a copy of a register, never a slot's move or copy construction,
-    which ownership has already decided.
-  - Done when the pass runs at both seams, keeps the differential clean, and
-    its corpus effect is recorded.
-  - Depends on R779.
-  - Model: Opus, Not Planned.
 
 - [ ] **R781 Constants that do not depend on a parameter are folded per
   instance instead of once**
@@ -97,6 +84,42 @@ which names the upstream pass each one follows. Each is measured by the
   - Done when the pattern runs at both seams, the differential is clean, and
     the corpus block and instruction counts are recorded.
   - Depends on R779.
+  - Model: Opus, Not Planned.
+
+- [ ] **R838 A copy of a trivially copyable aggregate survives into every
+  instance**
+
+  `canonicalize` cannot forward a copy of a vector SIMD, `StringLiteral`,
+  tuple of scalars, or `TrivialRegisterPassable` struct, where upstream's
+  loads produce values and such a copy is the SSA value itself.
+  - MIR reads an aggregate place shallowly, and the copy is the read's
+    snapshot: Pliron's `collect_aliased_load_regs` (`lower/support.rs`)
+    aliases a load whose consumers all borrow, so a forwarded copy would
+    show a later store to the place.
+  - It needs a load that snapshots whenever its register outlives a store
+    to the place, or a fold that proves no such store lies between the copy
+    and its readers (`analysis/register_loans.rs` reasons about the same).
+  - `MirDeclarations` must also answer `TrivialRegisterPassable` for a
+    struct, which it does not record today.
+  - Done when such copies fold, with the native differential clean on a
+    probe that stores to the place after the copy.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R839 A copy typed by a type parameter stays a copy in an instance
+  that makes it trivial**
+
+  A `value.copy` typed `T`, and a `ConstructTypeParam` with `copy=` that
+  `native::mono::substitute` turns into one, stays a copy in an instance
+  where `T` is `Int`, since `canonicalize` runs on the generator only.
+  - Nine of the copies in the std bodies `collections_many.mojo` reaches are
+    typed by a parameter.
+  - First find out whether upstream's post-elaboration pipeline folds them;
+    if it does, apply `MirInstr::forwarded_operand` to each instance the
+    same way.
+  - Done when the answer is recorded and, if upstream folds, the instance
+    counters show the fold.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R782 Instances that differ only in a parameter their body never

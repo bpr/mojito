@@ -1283,3 +1283,42 @@ absorbs that. The pass's program-seam counters are
 `pre_elaboration.canonicalize.erased_blocks` and `.erased_instructions`;
 package bodies are finished on the elaborator's thread, so their counts do
 not reach `--timings`.
+
+## Canonicalize forwards identity copies (2026-10-14, R780)
+
+`canonicalize` now folds a `value.copy` whose source and destination are
+typed alike by a scalar, pointer, `None`, or SIMD-lane type
+(`MirInstr::forwarded_operand`, `types::copy_is_identity`), so its readers
+name the source and the copy is gone from every instance.
+`scripts/instantiation-report` over all 1 020 fixtures, debug binary;
+*before* is R779's committed baseline:
+
+| | before | after | change |
+|---|---:|---:|---:|
+| corpus `concrete_instructions` | 888 654 | 872 283 | −16 371 (−1.84 %) |
+| corpus `generator_instructions` | 239 094 | 233 791 | −5 303 (−2.22 %) |
+| corpus `generator_instance_instructions` | 392 282 | 383 656 | −8 626 (−2.20 %) |
+| `collections_many` instance instructions | 15 982 | 15 784 | −198 |
+| `nested_generics` instance instructions | 3 092 | 3 029 | −63 |
+| `stdlib_heavy` instance instructions | 2 761 | 2 718 | −43 |
+| `trait_defaults` instance instructions | 1 161 | 1 143 | −18 |
+
+**Copies were the commonest slack lowering leaves.** Nearly every value
+read (`place.load`, `ref.read`, `field.get`, `index.get`) is followed by a
+`value.copy` at the copy-lifecycle boundary, and every one of them has a
+single reader. `collections_many`'s concrete MIR (`emit-mir`, source-mode
+std) holds 190 copies with the pass off and 35 with it on. The concrete
+total falls further than the instance total because the pass also runs on
+the program's and the package's concrete bodies.
+
+**What stays.** A copy of a struct or of a type parameter may run
+`__copyinit__`, so it stays on the generator; a type-parameter copy an
+instance makes trivial is R839. A copy of a trivially copyable aggregate
+(vector SIMD, `StringLiteral`, tuples) stays because an aggregate place read
+is shallow and the copy is its snapshot (R838). A widening copy
+(`IntLiteral` into `Int`) stays because forwarding it would change its
+readers' operand type.
+
+The program-seam counter is `pre_elaboration.canonicalize.forwarded_copies`
+(4 on a small probe); package bodies are finished on the elaborator's
+thread, so their counts do not reach `--timings`.
