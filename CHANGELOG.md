@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An instance now keeps its substituted generic register and slot types
+  (R865), as upstream's elaborator does, instead of re-deriving them from
+  one another after substitution, and the concrete MIR verifier rejects a
+  reference slot read as its handle. No program's output changes.
+
 - A generic `value.copy()` whose receiver is read through a `ref` binding
   to a built-in (`for value in values: value.copy()` over a variadic
   collector) is now a value copy in its instance too (R864): the instance

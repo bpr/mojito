@@ -702,7 +702,6 @@ impl<'a> Specializer<'a> {
         self.rewrite_blocks(&key.template, &mut function, &mut blocks)?;
         function.blocks = blocks;
         retire_forwarded_packs(&mut function);
-        repair_storage_result_types(&mut function);
         erase_specialized_generic_callable_storage(&mut function);
 
         if let Some(declaration) = self.declarations.get(key.template.as_str()) {

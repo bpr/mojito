@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R866**.
+Next free ID: **R868**.
 
 ## Ordered Work
 
@@ -57,21 +57,19 @@ which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
 
-- [ ] **R865 An instance retypes loads and uses from variable types, not
-  from the generic register types**
+- [ ] **R866 An instance keeps its origin parameters**
 
-  `native::mono::substitute::repair_storage_result_types` rebuilds each
-  whole-root `LoadPlace` and `UseVar` result type from its variable's
-  type, where the generic MIR already types those registers and upstream
-  only substitutes them.
-  - Its `UseVar` arm keeps the reference blind spot R864 closed for
-    `LoadPlace`: a non-moving `UseVar` of a `ref` variable reads through on
-    the VM yet is typed as the handle.
-  - The fix substitutes the generic register type and drops the
-    variable-driven repair for both arms.
-  - A MIR verifier rule then pins it: in concrete MIR, a whole-root
-    `LoadPlace` of a `Ref`-typed root never defines a `Ref`-typed register.
-  - Found while landing R864 (2026-10-14).
+  `native::mono::substitute::substitute_arg` clones each `TyArg::Origin`,
+  so an instance's register types keep `Origin(Param(..))`, as in
+  `Span$mono$TInt[Int, Origin(Param(2))]`, where upstream's elaborator
+  substitutes origin parameters with the rest of a generator's parameters.
+  - Visible since R865 stopped copying slot origins over register types;
+    both backends erase origins and the verifier admits them, so no output
+    depends on it.
+  - The fix carries origin arguments in the instance bindings and
+    substitutes them; the concrete verifier then rejects an origin
+    parameter.
+  - Found while landing R865 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -5838,6 +5836,24 @@ below is a candidate port toward Mojo's shape, and a port is preferred over any
 new bridge (2026-09-07 direction). The ports are independent of each other, and
 an entry that waits on another names it. Four runtime services are
 deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
+
+- [ ] **R867 A conditional's literal arm reaches its carrier
+  unmaterialized**
+
+  `x if c else 1` stores an `IntLiteral` register into an `Int` carrier
+  slot (`$scN`), where upstream converts the arm to the expression's type
+  at the arm.
+  - Seen in `String.__init__(capacity_bytes=)`
+    (`stdlib/std/string.mojo`), `StringSpan._split_on`, and `_atof_scan`.
+  - Until R865 the instance's after-the-fact retyping flipped such slots
+    between `Int` and `IntLiteral` by store order; now they keep the
+    generic slot type and the mismatch stays in the stored register.
+  - The fix is a `MaterializeLiteral` on the literal arm in lowering; a
+    structural verifier rule that a `DefVar` source matches its slot type
+    then pins it.
+  - Found while landing R865 (2026-10-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R607 The bundled publics keep bare linked names the compiler
   recognizes by spelling**

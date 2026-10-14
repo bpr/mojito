@@ -7,14 +7,15 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use crate::mir::{Const, MirParamArg, MirSubscriptCall};
+use crate::mir::{Const, MirParamArg, MirSubscriptCall, UseMode, VarId};
 use mojito_types::types::TyKind;
 
 /// The concreteness findings for one function body.
 ///
 /// A finding is a symbolic type in its signature, slots, registers, places,
 /// or instructions, a compile-time parameter an instruction still declares,
-/// or a compile-time argument slot a call still carries.
+/// a compile-time argument slot a call still carries, or a reference slot
+/// read as its handle.
 pub fn concrete_function_findings(name: &str, function: &MirFunction) -> Vec<String> {
     let mut errors = Vec::new();
     let head = format!("MIR function '{name}'");
@@ -37,7 +38,7 @@ pub fn concrete_function_findings(name: &str, function: &MirFunction) -> Vec<Str
     for (register, ty) in registers {
         require_concrete(&head, &format!("register r{register}"), ty, &mut errors);
     }
-    concrete_blocks(name, &function.blocks, &mut errors);
+    concrete_blocks(name, function, &function.blocks, &mut errors);
     errors
 }
 
@@ -142,7 +143,12 @@ fn require_no_parameter_slots(head: &str, slots: &[MirParamArg], errors: &mut Ve
     }
 }
 
-fn concrete_blocks(name: &str, blocks: &[MirBlock], errors: &mut Vec<String>) {
+fn concrete_blocks(
+    name: &str,
+    function: &MirFunction,
+    blocks: &[MirBlock],
+    errors: &mut Vec<String>,
+) {
     for (index, block) in blocks.iter().enumerate() {
         let head = format!("MIR function '{name}' block {index}");
         for instruction in &block.instrs {
@@ -159,11 +165,12 @@ fn concrete_blocks(name: &str, blocks: &[MirBlock], errors: &mut Vec<String>) {
                     .chain(orelse.iter())
                     .chain(finalbody.iter());
                 for region in regions {
-                    concrete_blocks(name, region, errors);
+                    concrete_blocks(name, function, region, errors);
                 }
                 continue;
             }
             concrete_instruction(&head, instruction, errors);
+            reference_read(&head, function, instruction, errors);
         }
         match &block.term {
             MirTerm::ComptimeBranch { cond, .. } => errors.push(format!(
@@ -365,4 +372,122 @@ fn concrete_subscript(head: &str, call: &MirSubscriptCall, errors: &mut Vec<Stri
     }
     require_no_parameters(head, &call.param_decls, errors);
     require_no_parameter_slots(head, &call.param_arg_regs, errors);
+}
+
+/// A reference slot is read by a whole-root `LoadPlace`, which yields its
+/// referent, as lowering types it and both backends execute it. An instance
+/// keeps the generic register types, so a load typed as the handle, or a
+/// `UseVar` copy of the handle, is a type re-derived from the slot rather
+/// than substituted. A referent that is itself a reference loads a handle
+/// legitimately; a move transfers the handle and a borrow addresses the
+/// slot, so neither is a read.
+fn reference_read(
+    head: &str,
+    function: &MirFunction,
+    instruction: &MirInstr,
+    errors: &mut Vec<String>,
+) {
+    let referent_of = |slot: &VarId| {
+        function.var_tys.get(slot).and_then(|ty| match ty.kind() {
+            TyKind::Ref(reference) => Some(reference.referent.clone()),
+            _ => None,
+        })
+    };
+    match instruction {
+        MirInstr::LoadPlace { dest, place }
+            if place.proj.is_empty()
+                && referent_of(&place.root)
+                    .is_some_and(|referent| !matches!(referent.kind(), TyKind::Ref(_)))
+                && function
+                    .reg_types
+                    .get(&dest.0)
+                    .is_some_and(|ty| matches!(ty.kind(), TyKind::Ref(_))) =>
+        {
+            errors.push(format!(
+                "{head} loads the handle of reference slot ${} instead of its referent",
+                place.root
+            ));
+        }
+        MirInstr::UseVar {
+            var,
+            mode: UseMode::Copy,
+            ..
+        } if referent_of(var).is_some() => errors.push(format!(
+            "{head} copies reference slot ${var} by `UseVar`; a reference binding is read by `LoadPlace`"
+        )),
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mir::{MirPlace, MirTerm, Reg};
+    use mojito_types::origin::{Mutability, Origin, RefTy};
+
+    fn ref_int() -> Ty {
+        TyKind::Ref(RefTy {
+            referent: Ty::int(),
+            origin: Origin::Untracked { mutable: true },
+            mutability: Mutability::Mutable,
+        })
+        .into()
+    }
+
+    fn function_with(instruction: MirInstr, dest_ty: Ty) -> MirFunction {
+        MirFunction {
+            blocks: vec![MirBlock {
+                instrs: vec![instruction],
+                term: MirTerm::FallOff,
+            }],
+            n_regs: 1,
+            n_vars: 1,
+            var_names: vec!["r".to_string()],
+            n_params: 0,
+            param_types: Vec::new(),
+            owned_params: Vec::new(),
+            deinit_params: Vec::new(),
+            ref_params: Vec::new(),
+            returns_reference: false,
+            var_tys: HashMap::from([(0, ref_int())]),
+            ret_ty: Some(Ty::none()),
+            raises: false,
+            error_ty: None,
+            spans: crate::mir::SpanTable(HashMap::new()),
+            reg_types: HashMap::from([(0, dest_ty)]),
+        }
+    }
+
+    fn load(dest_ty: Ty) -> Vec<String> {
+        let instruction = MirInstr::LoadPlace {
+            dest: Reg(0),
+            place: MirPlace::root(0, Some(ref_int())),
+        };
+        concrete_function_findings("f", &function_with(instruction, dest_ty))
+    }
+
+    fn use_var(mode: UseMode) -> Vec<String> {
+        let instruction = MirInstr::UseVar {
+            dest: Reg(0),
+            var: 0,
+            mode,
+        };
+        concrete_function_findings("f", &function_with(instruction, ref_int()))
+    }
+
+    #[test]
+    fn whole_root_load_of_reference_slot_reads_referent() {
+        assert!(load(Ty::int()).is_empty());
+        let findings = load(ref_int());
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(findings[0].contains("loads the handle of reference slot $0"));
+    }
+
+    #[test]
+    fn reference_slot_is_never_copied_by_use_var() {
+        let findings = use_var(UseMode::Copy);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(findings[0].contains("copies reference slot $0 by `UseVar`"));
+        assert!(use_var(UseMode::Move).is_empty());
+    }
 }

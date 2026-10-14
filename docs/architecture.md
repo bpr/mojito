@@ -3072,7 +3072,10 @@ parametric MIR may carry (`verify/concrete.rs`) — a symbolic type in any
 signature, slot, register, place, instruction, or declaration; a compile-time
 parameter a declaration or a call contract still declares; a layout query
 (`SizeOf`), which the elaborator answers under the compilation's native
-target; and a `ConstructTypeParam`. A copy-reference result adapter survives elaboration
+target; a `ConstructTypeParam`; and a reference slot read as its handle,
+a whole-root `LoadPlace` of a slot typed `ref T` (`T` not itself a
+reference) whose register is a reference, or a `UseVar` copy of such a
+slot. A copy-reference result adapter survives elaboration
 only on a `__next__` step that returns a reference, where it copies the
 element out; the elaborator drops it from a step that returns the element.
 `native::mono` verifies its output in the concrete mode, and asks
@@ -5023,8 +5026,12 @@ elaborator writes it as `value.copy`
 (`mono/substitute.rs:copy_builtin_receivers`), as `Copyable.copy`'s body
 `Self(copy=self)` is at that `Self`. A receiver read through a `ref`
 binding (`for value in values: value.copy()`) folds the same way: the
-instance types a whole-root load of a reference root by its referent
-(`repair_storage_result_types`), as lowering and both backends read it.
+instance keeps the substituted generic register type, which types a
+whole-root load of a reference root by its referent, as lowering and both
+backends read it. An instance's register and slot types are the generic
+MIR's types with its bindings substituted, never re-derived from one
+another, as upstream's elaborator substitutes a generator body's types; the
+concrete verifier rejects a reference slot read as its handle.
 
 - **The seam.** `analysis::post_elaborate_program` runs each pass over
   every concrete function but `__toplevel__`, on the driver thread after
