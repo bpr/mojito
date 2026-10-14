@@ -246,13 +246,14 @@ impl FnLowering<'_> {
                 value,
                 target,
             } => self.lower_materialize(ctx, *dest, *value, target),
-            MirInstr::UnOp { op, dest, a } => self.lower_unop(ctx, *op, *dest, *a),
+            MirInstr::UnOp { op, dest, a, .. } => self.lower_unop(ctx, *op, *dest, *a),
             MirInstr::BinOp {
                 op,
                 dest,
                 a,
                 b,
                 resolved,
+                ..
             } => self.lower_binop(ctx, *op, *dest, *a, *b, resolved.as_deref()),
             MirInstr::UseVar { dest, var, mode } => self.lower_use_var(ctx, *dest, *var, *mode),
             MirInstr::DefVar { var, src, .. } => self.lower_def_var(ctx, *var, *src),

@@ -764,12 +764,18 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("in_place", in_place.to_string()),
             ],
         ),
-        MirInstr::UnOp { op, dest, a } => record(
+        MirInstr::UnOp {
+            op,
+            dest,
+            a,
+            raises,
+        } => record(
             tag,
             &[
                 ("op", prefix(*op).into()),
                 ("dest", reg_value(*dest)),
                 ("a", reg_value(*a)),
+                ("raises", option(raises.as_ref().map(ty_value))),
             ],
         ),
         MirInstr::BinOp {
@@ -778,6 +784,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
             a,
             b,
             resolved,
+            raises,
         } => record(
             tag,
             &[
@@ -786,6 +793,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("a", reg_value(*a)),
                 ("b", reg_value(*b)),
                 ("resolved", option(resolved.as_ref().map(|v| symbol(v)))),
+                ("raises", option(raises.as_ref().map(ty_value))),
             ],
         ),
         MirInstr::Call {

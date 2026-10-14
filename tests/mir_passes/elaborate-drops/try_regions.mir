@@ -93,7 +93,7 @@ artifact {
               const { dest: %r1, value: int_literal(0) },
               literal.materialize { dest: %r2, value: %r1, target: Int },
               var.use { dest: %r0, var: $v0, mode: copy },
-              binary { op: gt, dest: %r3, a: %r0, b: %r2, resolved: absent }
+              binary { op: gt, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent }
             ],
             terminator: branch { condition: %r3, then: bb2, else: bb3 }
           },
@@ -152,17 +152,17 @@ artifact {
               const { dest: %r6, value: int_literal(2) },
               literal.materialize { dest: %r7, value: %r6, target: Int },
               var.use { dest: %r5, var: $v1, mode: copy },
-              binary { op: lt, dest: %r8, a: %r5, b: %r7, resolved: absent }
+              binary { op: lt, dest: %r8, a: %r5, b: %r7, resolved: absent, raises: absent }
             ],
             terminator: branch { condition: %r8, then: bb2, else: bb3 }
           },
           bb2 {
             instructions: [
-              try { body: [bb0 { instructions: [var.use { dest: %r9, var: $v1, mode: copy }, call { dest: %r10, func: fail, raises: present(Error), args: [%r9], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: falloff {} }], handler: present(handler { error_var: present($v2), blocks: [bb0 { instructions: [const { dest: %r11, value: int_literal(10) }, literal.materialize { dest: %r12, value: %r11, target: Int }, var.use { dest: %r13, var: $v1, mode: copy }, binary { op: add, dest: %r14, a: %r12, b: %r13, resolved: absent }, call { dest: %r15, func: Res, raises: absent, args: [%r14], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, var.store { var: $v3, src: %r15, binding_type: present(struct_type { name: Res, arguments: [] }), in_place: true }, const { dest: %r16, value: string("caught") }, place.load { dest: %r17, place: place { root: $v3, root_type: present(struct_type { name: Res, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } }, call { dest: %r18, func: print, raises: absent, args: [%r16, %r17], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: falloff {} }] }), orelse: absent, finalbody: absent, cleanup: [] },
+              try { body: [bb0 { instructions: [var.use { dest: %r9, var: $v1, mode: copy }, call { dest: %r10, func: fail, raises: present(Error), args: [%r9], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: falloff {} }], handler: present(handler { error_var: present($v2), blocks: [bb0 { instructions: [const { dest: %r11, value: int_literal(10) }, literal.materialize { dest: %r12, value: %r11, target: Int }, var.use { dest: %r13, var: $v1, mode: copy }, binary { op: add, dest: %r14, a: %r12, b: %r13, resolved: absent, raises: absent }, call { dest: %r15, func: Res, raises: absent, args: [%r14], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, var.store { var: $v3, src: %r15, binding_type: present(struct_type { name: Res, arguments: [] }), in_place: true }, const { dest: %r16, value: string("caught") }, place.load { dest: %r17, place: place { root: $v3, root_type: present(struct_type { name: Res, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } }, call { dest: %r18, func: print, raises: absent, args: [%r16, %r17], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: falloff {} }] }), orelse: absent, finalbody: absent, cleanup: [] },
               var.use { dest: %r19, var: $v1, mode: copy },
               const { dest: %r20, value: int_literal(1) },
               literal.materialize { dest: %r21, value: %r20, target: Int },
-              binary { op: add, dest: %r22, a: %r19, b: %r21, resolved: absent },
+              binary { op: add, dest: %r22, a: %r19, b: %r21, resolved: absent, raises: absent },
               interiors.invalidate { base: interior_origin { root: $v1, path: [] }, except: absent, include_base_generation: false, marker: %r23 },
               var.store { var: $v1, src: %r22, binding_type: absent, in_place: false }
             ],

@@ -1,7 +1,7 @@
 # A raise inside a `try` destroys the body's live values in reverse
-# declaration order: an operator, method, free, or constructor call over
-# temporaries, a named local beside them, and a local declared before it
-# is initialized.
+# declaration order: an infix or prefix operator, method, free, or
+# constructor call over temporaries, a named local beside them, and a local
+# declared before it is initialized.
 
 
 struct S(Movable):
@@ -14,6 +14,11 @@ struct S(Movable):
         if other.v > 5:
             raise Error("big")
         return S(self.v + other.v)
+
+    def __neg__(self) raises -> S:
+        if self.v > 0:
+            raise Error("neg")
+        return S(-self.v)
 
     def add(self, other: S) raises -> S:
         if other.v > 5:
@@ -100,5 +105,11 @@ def main():
         a = S(1)
         var x = a + S(9)
         print(b.v, x.v)
+    except e:
+        print("caught", e)
+    try:
+        var c = S(2)
+        var d = -S(3)
+        print(c.v, d.v)
     except e:
         print("caught", e)

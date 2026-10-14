@@ -825,11 +825,13 @@ fn instruction_families_reprint_byte_identically() {
             op: PrefixOp::Neg,
             dest: Reg(7),
             a: Reg(6),
+            raises: Some(Ty::error()),
         },
         MirInstr::UnOp {
             op: PrefixOp::Not,
             dest: Reg(8),
             a: Reg(7),
+            raises: None,
         },
         MirInstr::BinOp {
             op: InfixOp::FloorDiv,
@@ -837,6 +839,7 @@ fn instruction_families_reprint_byte_identically() {
             a: Reg(7),
             b: Reg(8),
             resolved: Some("Tuple::__contains__".into()),
+            raises: Some(Ty::error()),
         },
         MirInstr::Call {
             dest: Reg(10),

@@ -8,8 +8,14 @@
 //! (walked as the ownership analysis walks them), and the escape edges a
 //! region's `break`/`continue` takes to the function's blocks. Anything that
 //! names a slot revives it: over-reviving hides a finding, never invents one.
-//! The implicit ends of a `return`'s, an escape's, and a `try`'s cleanup
-//! list are not modelled, which under-approximates "ended" and stays sound.
+//!
+//! The three cleanup lists end what they name where they run, and a listed
+//! slot every path has already ended is the same finding. A `try`'s list
+//! runs on its body's raise edge, before the handler or the `finally`; an
+//! escape's runs at the `break`/`continue`, before the `finally` blocks it
+//! crosses; a return's runs after the last `finally` it crosses, as the
+//! function is left. A `finally` that returns itself overrides a pending
+//! return, whose list it then runs unchecked here.
 
 use super::{MirBlock, MirFunction, MirInstr, MirTerm};
 use crate::mir::{MirBlockId, MirCaptureMode, VarId, instruction_slots, terminator_targets};
@@ -26,7 +32,10 @@ pub(super) fn verify_slot_ends(name: &str, function: &MirFunction, errors: &mut 
         refills,
         findings: Vec::new(),
     };
-    walk.region(&vec![false; function.n_vars], &function.blocks, true, true);
+    let flow = walk.region(&vec![false; function.n_vars], &function.blocks, true, true);
+    for (index, cleanup, state) in flow.returns {
+        walk.end_listed(index, "return.cleanup", &mut state.clone(), cleanup, true);
+    }
     errors.extend(walk.findings);
 }
 
@@ -35,20 +44,24 @@ type Ended = Vec<bool>;
 
 /// The states a region (or one block) leaves by: falling off, raising,
 /// leaving the function, and escaping to a function block.
+/// A return carrying a cleanup list is also kept apart, with its block and
+/// list, until it leaves the function.
 #[derive(Default)]
-struct Flow {
+struct Flow<'a> {
     normal: Option<Ended>,
     raises: Option<Ended>,
     exits: Option<Ended>,
     escapes: Vec<(MirBlockId, Ended)>,
+    returns: Vec<(usize, &'a [VarId], Ended)>,
 }
 
-impl Flow {
+impl Flow<'_> {
     /// Join `other`'s abnormal channels into this flow.
     fn absorb(&mut self, other: Self) {
         meet(&mut self.raises, other.raises.as_ref());
         meet(&mut self.exits, other.exits.as_ref());
         self.escapes.extend(other.escapes);
+        self.returns.extend(other.returns);
     }
 }
 
@@ -61,11 +74,17 @@ struct Walk<'a> {
     findings: Vec<String>,
 }
 
-impl Walk<'_> {
+impl<'a> Walk<'a> {
     /// Iterate `blocks` to a fixpoint from `entry`, then, when `report`, make
     /// one reporting pass over the reached blocks. At the function's `top`
     /// level the escapes of its regions feed their target blocks.
-    fn region(&mut self, entry: &Ended, blocks: &[MirBlock], top: bool, report: bool) -> Flow {
+    fn region(
+        &mut self,
+        entry: &Ended,
+        blocks: &'a [MirBlock],
+        top: bool,
+        report: bool,
+    ) -> Flow<'a> {
         let mut predecessors = vec![Vec::new(); blocks.len()];
         for (index, block) in blocks.iter().enumerate() {
             for target in terminator_targets(&block.term) {
@@ -115,11 +134,19 @@ impl Walk<'_> {
             };
             match (&block.term, out.normal.as_ref()) {
                 (MirTerm::FallOff, normal) => meet(&mut flow.normal, normal),
+                (MirTerm::ReturnWithCleanup { cleanup, .. }, Some(state))
+                    if !cleanup.is_empty() =>
+                {
+                    meet(&mut flow.exits, Some(state));
+                    flow.returns.push((index, cleanup, state.clone()));
+                }
                 (MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. }, exits) => {
                     meet(&mut flow.exits, exits);
                 }
-                (MirTerm::EscapeJump { target, .. }, Some(state)) if !top => {
-                    flow.escapes.push((*target, state.clone()));
+                (MirTerm::EscapeJump { target, cleanup }, Some(state)) if !top => {
+                    let mut state = state.clone();
+                    self.end_listed(index, "escape cleanup", &mut state, cleanup, report);
+                    flow.escapes.push((*target, state));
                 }
                 _ => {}
             }
@@ -132,11 +159,17 @@ impl Walk<'_> {
     /// One block from `state`: its normal channel is the state after its
     /// terminator's own effect, and its raises, exits, and escapes are those
     /// of its raise points and the regions it holds.
-    fn block(&mut self, index: usize, mut state: Ended, block: &MirBlock, report: bool) -> Flow {
+    fn block(
+        &mut self,
+        index: usize,
+        mut state: Ended,
+        block: &'a MirBlock,
+        report: bool,
+    ) -> Flow<'a> {
         let mut flow = Flow::default();
         for instruction in &block.instrs {
             if matches!(instruction, MirInstr::Try { .. }) {
-                let mut regions = self.try_regions(state, instruction, report);
+                let mut regions = self.try_regions(index, state, instruction, report);
                 let normal = regions.normal.take();
                 flow.absorb(regions);
                 match normal {
@@ -146,7 +179,7 @@ impl Walk<'_> {
                 continue;
             }
             self.step(index, &mut state, instruction, report);
-            if matches!(instruction, MirInstr::Raise { .. }) || instruction.call_error().is_some() {
+            if instruction.is_raise_point() {
                 meet(&mut flow.raises, Some(&state));
             }
             if matches!(instruction, MirInstr::Raise { .. }) {
@@ -161,16 +194,23 @@ impl Walk<'_> {
     }
 
     /// A `try` from `entry`, as the ownership analysis walks it: the handler
-    /// starts from the body's raises, `orelse` from its normal fall-off, and
-    /// `finally` runs on every channel. An escape leaves through the normal
-    /// fall-off of the `finally` it crosses.
-    fn try_regions(&mut self, entry: Ended, instruction: &MirInstr, report: bool) -> Flow {
+    /// starts from the body's raises past the raise-edge cleanup, `orelse`
+    /// from its normal fall-off, and `finally` runs on every channel. An
+    /// escape or a return leaves through the normal fall-off of the
+    /// `finally` it crosses.
+    fn try_regions(
+        &mut self,
+        index: usize,
+        entry: Ended,
+        instruction: &'a MirInstr,
+        report: bool,
+    ) -> Flow<'a> {
         let MirInstr::Try {
             body,
             handler,
             orelse,
             finalbody,
-            ..
+            cleanup,
         } = instruction
         else {
             return Flow {
@@ -180,10 +220,14 @@ impl Walk<'_> {
         };
         let mut body_flow = self.region(&entry, body, false, report);
         let body_normal = body_flow.normal.take();
-        let body_raises = body_flow.raises.take();
+        let body_raises = body_flow.raises.take().map(|mut state| {
+            self.end_listed(index, "try.cleanup", &mut state, cleanup, report);
+            state
+        });
         let mut flow = Flow {
             exits: body_flow.exits,
             escapes: body_flow.escapes,
+            returns: body_flow.returns,
             ..Flow::default()
         };
         match orelse {
@@ -219,6 +263,9 @@ impl Walk<'_> {
             for (_, state) in &flow.escapes {
                 meet(&mut all, Some(state));
             }
+            for (_, _, state) in &flow.returns {
+                meet(&mut all, Some(state));
+            }
             if let Some(all) = all {
                 self.region(&all, finalbody, false, true);
             }
@@ -238,11 +285,54 @@ impl Walk<'_> {
             .into_iter()
             .filter_map(|(target, state)| Some((target, through(self, Some(state))?)))
             .collect();
+        let returns: Vec<_> = flow
+            .returns
+            .into_iter()
+            .filter_map(|(block, cleanup, state)| {
+                Some((block, cleanup, through(self, Some(state))?))
+            })
+            .collect();
         out.normal = normal;
         meet(&mut out.raises, raises.as_ref());
         meet(&mut out.exits, exits.as_ref());
         out.escapes.extend(escapes);
+        out.returns.extend(returns);
         out
+    }
+
+    /// A cleanup list's run: each listed slot ends, and one every path has
+    /// already ended is reported when `report`.
+    fn end_listed(
+        &mut self,
+        index: usize,
+        list: &str,
+        state: &mut Ended,
+        cleanup: &[VarId],
+        report: bool,
+    ) {
+        for &var in cleanup {
+            if report && state.get(var as usize) == Some(&true) {
+                self.report(index, list, var);
+            }
+            set(state, var, true);
+        }
+    }
+
+    /// Record one finding: `what` ends slot `var`, which every path reaching
+    /// it has already ended.
+    fn report(&mut self, index: usize, what: &str, var: VarId) {
+        let slot_name = self
+            .function
+            .var_names
+            .get(var as usize)
+            .map_or("?", String::as_str);
+        let finding = format!(
+            "MIR function '{}' block {index}: {what} of slot $v{var} ('{slot_name}') that every path has already ended",
+            self.name
+        );
+        if !self.findings.contains(&finding) {
+            self.findings.push(finding);
+        }
     }
 
     /// One instruction's effect, reporting a drop or consume of a slot
@@ -255,18 +345,7 @@ impl Walk<'_> {
                 } else {
                     "var.consume"
                 };
-                let slot_name = self
-                    .function
-                    .var_names
-                    .get(*var as usize)
-                    .map_or("?", String::as_str);
-                let finding = format!(
-                    "MIR function '{}' block {index}: {spelling} of slot $v{var} ('{slot_name}') that every path has already ended",
-                    self.name
-                );
-                if !self.findings.contains(&finding) {
-                    self.findings.push(finding);
-                }
+                self.report(index, spelling, *var);
             }
             set(state, *var, true);
             return;

@@ -1,6 +1,7 @@
 //! Control-flow expressions: short-circuit/ternary/compare chains,
 //! collection plans, and comprehensions.
 
+use super::expr::OperatorDispatch;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_checked::checked::{
@@ -233,14 +234,15 @@ impl<'a> Flatten<'a> {
             let cur = self.lower_operator_operand(*operand);
             self.close_call_setup(None);
             let link = links.get(i);
-            let cmp = self.emit_comparison(
-                sp.clone(),
-                *op,
-                left,
-                cur,
-                link.and_then(|link| link.target.clone()),
-                link.is_some_and(|link| link.negated_equality),
-            );
+            let resolved = link.and_then(|link| link.target.clone());
+            // A link records no effect of its own: a dispatched link raises
+            // what the chain does.
+            let dispatch = OperatorDispatch {
+                raises: resolved.as_ref().and_then(|_| chain.raises()),
+                resolved,
+                negated_equality: link.is_some_and(|link| link.negated_equality),
+            };
+            let cmp = self.emit_comparison(sp.clone(), *op, left, cur, dispatch);
             self.emit(MirInstr::DefVar {
                 var: result,
                 src: cmp,

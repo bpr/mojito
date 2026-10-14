@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.52
+# Mojito Textual MIR Format, Version 1.53
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.52 is implemented end to end for inspection and loading: canonical
+Version 1.53 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.52
+mojito-mir 1.53
 ```
 
-The writer emits 1.52. The reader accepts 1.0 through 1.52; *Schema 1.0*
+The writer emits 1.53. The reader accepts 1.0 through 1.53; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -833,7 +833,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `ParamListAddress` | `param_list.address` (schema 1.34: `{ dest, values }`, `values` a parameter or closed-tuple constant) |
 | `UseVar` / `DefVar` | `var.use` / `var.store` (schema 1.49: `var.store` adds `in_place`, true when the slot is the preceding non-raising call's result storage) |
 | `MovePlace` / `LoadPlace` | `place.move` / `place.load` |
-| `UnOp` / `BinOp` | `unary` / `binary` |
+| `UnOp` / `BinOp` | `unary` / `binary` (schema 1.53: both add `raises: option<type>`, the error type of the operator method's call, as a call's `raises`) |
 | `Call` / `CallIndirect` / `MethodCall` | `call` / `call.indirect` / `call.method` |
 | `PointerStorageTake` / `PointerStorageDestroy` | `pointer.take` / `pointer.destroy` |
 | `UninitStorage` / `UninitStorageTake` / `UninitStorageDestroy` | `uninit.make` / `uninit.take` / `uninit.destroy` |
@@ -860,7 +860,11 @@ subscripts are `tuple_storage`, `variadic_storage`, `simd`, `pointer`, and
 `copy_iterator_reference`.
 
 For `Try`, `body`, `handler`, `orelse`, and `finalbody` contain lists of local
-blocks. Handler absence differs from a present empty handler. All call fields,
+blocks. Handler absence differs from a present empty handler. Its `cleanup`
+runs on the body's raise edge only, before the handler or the `finally`, and
+names the slots some raise in the body still holds (schema 1.53; before, it
+ran on every exit of the body). A list naming a slot every raise path has
+already ended fails verification at load. All call fields,
 including caller places, capture accesses, compile-time arguments, instantiated
 contracts, reference-result ABI, and checked subscript contracts, are required
 as explicit options/lists. Backends must not reconstruct omitted selections.
@@ -874,9 +878,9 @@ as explicit options/lists. Backends must not reconstruct omitted selections.
 | `ComptimeBranch` | `comptime_branch { condition: <constraint>, then: bbN, else: bbN }` — a `comptime if` on a parameter expression over the function's binders (the `availability` constraint grammar), decided by the elaborator; concrete MIR carries none |
 | `ComptimeFor` | `comptime_for { binder: <binder>, slot: $vN, start: <param_expr>, stop: <param_expr>, step: <param_expr>, body: bbN, exit: bbN }` for a `range`, `comptime_for.elements { binder: <binder>, slot: $vN, elements: <param_expr>, body: bbN, exit: bbN }` for any other sequence the built-in rule serves, `comptime_for.iterator { binder: <binder>, slot: $vN, initial: <param_expr>, has_next: <param_expr>, next_iter: <param_expr>, body: bbN, exit: bbN }` for upstream's iterator protocol — a `comptime for` header: a loop whose variable is the binder `binder`, read by the body through the slot `slot`, over the integers the three parameter expressions span as `range` does, or over the elements the `elements` value yields (a list's or a set's elements, a dictionary's keys); the iterator form's binder is the iterator, starting at `initial` (the application of the iterable's lifted `__iter__()` call) and replaced by `next_iter` while `has_next` holds, both applications of the `paramfor_*` stubs over the binder, the body reading its element as `paramfor_next_value` over it and nothing reading the slot; the body's back edge jumps to the header, the elaborator unrolls it, and concrete MIR carries none (schema 1.16; the `elements` form and the field name `binder`, `index` before, schema 1.25; the `iterator` form, schema 1.52) |
 | `Return` | `return { value: option<reg> }` |
-| `ReturnWithCleanup` | `return.cleanup { value: option<reg>, cleanup: [var...] }` |
+| `ReturnWithCleanup` | `return.cleanup { value: option<reg>, cleanup: [var...] }` — drop elaboration writes it on a return that crosses a `finally`: `cleanup` names what the return still holds after the last `finally` it crosses, and runs there (schema 1.53; before, it named loop-owned values) |
 | `FallOff` | `falloff {}` |
-| `EscapeJump` | `escape { target: bbN, cleanup: [var...] }` |
+| `EscapeJump` | `escape { target: bbN, cleanup: [var...] }` — `cleanup` runs at the escape, before the `finally` blocks it crosses |
 
 Unknown terminators and instructions are fatal for schema major version 1.
 

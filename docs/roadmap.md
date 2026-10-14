@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R828**.
+Next free ID: **R834**.
 
 ## Ordered Work
 
@@ -186,21 +186,6 @@ How much generic instantiation multiplies a program, and proof that a pass
 which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
-
-- [ ] **R826 Cleanup lists name slots every path already ended**
-
-  A `return.cleanup`, an `escape`, and a `try`'s cleanup list may name a
-  slot every path reaching the edge already dropped or moved, and only the
-  VM's no-op teardown of a vacated slot keeps that from destroying it twice.
-  - Upstream's destructor insertion destroys each value once; it has no
-    idempotent backstop to lean on.
-  - The R825 verifier rule (`verify/drops.rs`) skips these implicit ends,
-    which keeps it sound but lets such a list pass.
-  - Fix: drop elaboration lists only slots live on the edge, then the rule
-    reports a listed slot that is ended on every path.
-  - Found while landing R825 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 ### Native Backend
 
@@ -360,6 +345,24 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R832 Native drops are flag-guarded, and every return sweeps the
+  flagged slots**
+
+  Problem: native lowering guards every `drop.var` with a dynamic drop
+  flag and drops every still-flagged slot at each return, where upstream
+  inserts static destructors with no flags.
+  - `lower_drop_var` (`lower/drops.rs`) checks the flag, and
+    `lower_return` (`lower/term.rs`) sweeps the flagged slots.
+  - The MIR verifier holds every drop and every cleanup list to a slot
+    some path still holds, so a slot's state is static wherever no two
+    paths disagree.
+  - Fix: drop the flag where the slot's state is static, and file what
+    remains (the sweep's comment names compiler-private `StringDict`
+    shells).
+  - Found while landing R826 (2026-10-14).
+  - Depends on R831 (one list over several raise points needs the flag).
+  - Model: Fable, Planned.
+
 - [ ] **R18 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
 
@@ -491,6 +494,84 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Found while landing R723 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R833 A raising operator destroys its left operand after values
+  declared later**
+
+  Problem: in `assets/ok/try_raise_edge_drop_order.mojo`, `var x = a +
+  S(9)` raising in a body that declared `a`, then `b`, prints `del 9`,
+  `del 2`, `del 1`, where the pin prints `del 9`, `del 1`, `del 2`.
+  - `a`'s last use is the raising `+`, and the pin destroys it on that
+    raise edge before the slots still live past it.
+  - Mojito's raise-edge cleanup list drops every held slot in reverse
+    declaration order.
+  - Found while landing R826 (2026-10-14).
+  - Depends on R831 (a raise edge per raising instruction orders its own
+    drops).
+  - Model: Opus, Not Planned.
+
+- [ ] **R829 A value a `return` holds past an inner `finally` is destroyed
+  after the outermost one**
+
+  Problem: a return crossing `try: try: return i finally: print("inner",
+  s.tag)` inside `try: ... finally: print("outer")` prints `outer` before
+  `drop 2`, where the pin prints `inner`, `drop 2`, `outer`.
+  - A return's cleanup list runs once, after every `finally` it crosses.
+  - The pin destroys the value on the edge after the last `finally` that
+    reads it.
+  - Field drops (`field_drops.rs`) still seed a region's returns with the
+    `finally`'s normal-path liveness.
+  - Found while landing R826 (2026-10-14).
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R828 A `for` loop's iterator outlives its last `__next__` on a
+  `return` path**
+
+  Problem: `for x in Tracked(1): try: if x == 2: return x finally: ...`
+  prints `returning 2`, `iter dropped at 3`, where the pin destroys the
+  iterator first.
+  - HIR lists the loop's binding, iterator, and owned source on the return
+    (`Cfg::ret`), and MIR keeps them alive to it with `lifetime.keep_alive`
+    (`lower_stmt.rs`).
+  - Removing the keep-alives breaks every `Dict` fixture: a reference the
+    loop yields holds no loan on the loop's source, so `Dict._find_index`
+    reads a dead `List`.
+  - Fix: the loop binding's reference establishes a loan on the iterator's
+    roots, then the keep-alives and HIR's loop-owned list go.
+  - Found while landing R826 (2026-10-14).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R830 An escape's cleanup list runs before the `finally` it
+  crosses**
+
+  Problem: a `break` out of a `try` whose `finally` reads `s`, with `t`
+  read only in the body, prints `breaking`, `drop 3`, `finally 2`, where
+  the pin destroys `t` before `breaking`.
+  - Escape lists are filled from the `try`'s entry liveness
+    (`fill_escape_cleanups`), not from the liveness at the escape.
+  - A value the `finally` reads and the target does not survives the
+    escape, and dies only where the target block happens to drop it.
+  - Fix: an escape-channel seed like the return channel's `return_live`,
+    with the list run after the crossed `finally` blocks.
+  - Found while landing R826 (2026-10-14).
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R831 A `try`'s raise-edge cleanup list serves every raise point of
+  its body**
+
+  Problem: a slot ended before one raising call but held at another stays
+  listed, and the VM's empty-slot no-op or the native drop flag absorbs its
+  teardown when the first call raises.
+  - Upstream destroys on each raise edge what that edge holds.
+  - The MIR verifier accepts the list, since some raise path holds each
+    entry.
+  - Lever: an explicit raise edge per raising instruction in a `try` body.
+  - Found while landing R826 (2026-10-14).
+  - Depends on nothing.
+  - Model: Fable, Planned.
 
 - [ ] **R718 A struct prefix operator's operand lives as long as its
   result**

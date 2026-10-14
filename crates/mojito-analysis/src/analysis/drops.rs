@@ -13,8 +13,9 @@ use super::*;
 /// drops first (see [`InPlaceDeaths`]). Values that
 /// die on control-flow edges drop on the edge (splitting critical edges), and
 /// `try` region interiors get the same per-instruction and edge elaboration
-/// through [`elaborate_try_interior`], leaving the region cleanup lists as
-/// raise-edge/scope-exit backstops.
+/// through [`elaborate_try_interior`], leaving cleanup lists only where MIR
+/// has no block for the drop: a `try`'s raise edge, and a return or escape
+/// crossing a `finally`.
 #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
 pub(super) fn elaborate_drops(
     function: MirFunction,
@@ -178,25 +179,35 @@ pub(super) fn elaborate_drops(
                     droppable,
                 );
                 // Elaborate per-instruction/edge drops inside the regions,
-                // seeded from this walk's liveness at the `try`.
-                let body_entry_live = elaborate_try_interior(
+                // seeded from this walk's liveness at the `try`. Nothing runs
+                // after a top-level return, so its channel holds nothing.
+                let none = HashSet::new();
+                let interior = elaborate_try_interior(
                     &region_ctx,
                     cloned,
                     point.ordinary_after,
-                    &HashSet::new(),
+                    &Enclosing {
+                        raise: &none,
+                        return_live: &none,
+                        return_ended: &none,
+                    },
                     point.generation_before,
                     &register_loan_before_try[&(b, point.index)],
                 );
                 // Entry-edge deaths: a value live into the `try` that no
                 // region path can observe (an unconditional silent rebind
                 // precedes every potential raise) dies immediately before it.
-                point
+                let entry_dead = point
                     .live_before
                     .iter()
                     .copied()
-                    .filter(|v| droppable(*v) && !rmov.contains(v) && !body_entry_live.contains(v))
-                    .collect()
+                    .filter(|v| {
+                        droppable(*v) && !rmov.contains(v) && !interior.entry_live.contains(v)
+                    })
+                    .collect();
+                (entry_dead, interior.raise_held)
             },
+            None,
         );
         if empty_exit {
             // A CFG may funnel live reference-bearing aggregates into an empty
@@ -290,9 +301,13 @@ pub(super) fn elaborate_drops(
         }
     }
 
-    // Fill each `try`'s exceptional-edge cleanup (the body-local values to destroy
-    // when the body is left), recursing into nested regions.
-    set_try_cleanups(&mut blocks, &function_defs);
+    // A top-level return crosses no `finally`: the keep-alives and their
+    // spliced drops end what it held, so its terminator lists nothing.
+    for block in &mut blocks {
+        if let MirTerm::ReturnWithCleanup { value, .. } = &mut block.term {
+            block.term = MirTerm::Return(value.take());
+        }
+    }
 
     // A `deinit` parameter is *consumed*, not destroyed: the spliced teardown
     // for it must skip the value's whole-value `__deinit__` (its resources already
@@ -353,49 +368,71 @@ pub(super) struct RegionSeeds<'a> {
     /// Live at every potentially-raising instruction: what the raise edge's
     /// observer (handler, `finally`, or an enclosing handler) may still read.
     raise: &'a HashSet<VarId>,
-    /// Live through `Return`/`ReturnWithCleanup`/`EscapeJump` exits — the
-    /// `finally` still runs after those edges leave the region.
+    /// Live through `EscapeJump` exits — the `finally` still runs after
+    /// those edges leave the region.
     finally_live: &'a HashSet<VarId>,
+    /// Live through `Return`/`ReturnWithCleanup` exits: what the `finally`
+    /// blocks a return crosses, and those beyond them, still read.
+    return_live: &'a HashSet<VarId>,
+    /// The slots of `return_live` those crossed `finally` blocks end; a
+    /// return's cleanup list destroys the rest after the last of them.
+    return_ended: &'a HashSet<VarId>,
     /// Top-level effective live-in sets, bounding `EscapeJump` targets.
     effective_live_in: &'a [HashSet<VarId>],
 }
 
+/// The channels of the region holding a `try`, as its interior sees them.
+pub(super) struct Enclosing<'a> {
+    /// What the enclosing raise observer reads ([`RegionSeeds::raise`]).
+    raise: &'a HashSet<VarId>,
+    /// [`RegionSeeds::return_live`] of the enclosing region.
+    return_live: &'a HashSet<VarId>,
+    /// [`RegionSeeds::return_ended`] of the enclosing region.
+    return_ended: &'a HashSet<VarId>,
+}
+
+/// What a `try`'s interior elaboration reports to the walk holding it.
+pub(super) struct TryInterior {
+    /// The body region's effective entry liveness.
+    entry_live: HashSet<VarId>,
+    /// The slots a raise leaving the `try` still holds, once its own
+    /// raise-edge cleanup and `finally` have run.
+    raise_held: HashSet<VarId>,
+}
+
 /// Elaborate per-instruction and edge drops inside all four regions of one
 /// `Try` (in place), seeding each region's liveness from the enclosing walk's
-/// state at the instruction. Returns the body region's effective entry
-/// liveness so the caller can drop values no region path observes immediately
-/// before the `try`.
+/// state at the instruction, and set the `try`'s raise-edge cleanup to the
+/// candidates a raise in the body still holds. Returns the body's entry
+/// liveness, so the caller can drop values no region path observes
+/// immediately before the `try`, and what a raise leaving the `try` holds.
 pub(super) fn elaborate_try_interior(
     ctx: &RegionDropCtx,
     try_instr: &mut MirInstr,
     after: &HashSet<VarId>,
-    enclosing_raise: &HashSet<VarId>,
+    enclosing: &Enclosing,
     entry_generations: &LoanGenerationState,
     entry_registers: &RegisterLoanState,
-) -> HashSet<VarId> {
+) -> TryInterior {
     let MirInstr::Try {
         body,
         handler,
         orelse,
         finalbody,
-        ..
+        cleanup,
     } = try_instr
     else {
-        return HashSet::new();
+        return TryInterior {
+            entry_live: HashSet::new(),
+            raise_held: HashSet::new(),
+        };
     };
 
-    // The VM tears a crossing return's cleanup values down *after* the
-    // `finally`, so the `finalbody` region treats them as live-through.
-    let mut return_cleanup: HashSet<VarId> = HashSet::new();
-    collect_return_cleanups(body, &mut return_cleanup);
+    // The seeded outer candidates are never held at the handler's entry:
+    // the raise edge ends those a raise holds, and no raise holds the rest.
+    // So no escape out of the handler destroys them again.
     if let Some((_, h)) = handler {
-        collect_return_cleanups(h, &mut return_cleanup);
-    }
-    if let Some(e) = orelse {
-        collect_return_cleanups(e, &mut return_cleanup);
-    }
-    if let Some(fb) = finalbody {
-        collect_return_cleanups(fb, &mut return_cleanup);
+        strip_escape_cleanups(h, cleanup);
     }
 
     // Handler/`else`/`finally` run after an arbitrary body prefix, so their
@@ -414,9 +451,10 @@ pub(super) fn elaborate_try_interior(
 
     // Regions elaborate in dependency order: `finally` first (its entry
     // liveness seeds every other exit), then handler/`else`, then the body.
-    let fin_live = if let Some(fb) = finalbody {
-        let mut fall_off = after.clone();
-        fall_off.extend(return_cleanup.iter().copied());
+    // A return crossing the `finally` holds what the `finally` reads on the
+    // return channel, less what the `finally` ends on the way through.
+    let mut return_ended = enclosing.return_ended.clone();
+    let (fin_live, return_live, fin_held, fin_ended) = if let Some(fb) = finalbody {
         let mut fin_entry = body_any.clone();
         if let Some(state) = &handler_any {
             fin_entry = join_loan_generation_states(fin_entry, state);
@@ -424,30 +462,64 @@ pub(super) fn elaborate_try_interior(
         if let Some(state) = &orelse_any {
             fin_entry = join_loan_generation_states(fin_entry, state);
         }
-        let seeds = RegionSeeds {
-            fall_off: &fall_off,
-            raise: enclosing_raise,
-            finally_live: &fall_off,
+        let return_seeds = RegionSeeds {
+            fall_off: enclosing.return_live,
+            raise: enclosing.raise,
+            finally_live: enclosing.return_live,
+            return_live: enclosing.return_live,
+            return_ended: enclosing.return_ended,
             effective_live_in: ctx.effective_live_in,
         };
-        elaborate_region_drops(ctx, fb, &seeds, &fin_entry, &RegisterLoanState::default())
+        let return_live = region_live_in(
+            ctx,
+            fb,
+            &return_seeds,
+            &fin_entry,
+            &RegisterLoanState::default(),
+        );
+        let seeds = RegionSeeds {
+            fall_off: after,
+            raise: enclosing.raise,
+            finally_live: after,
+            return_live: enclosing.return_live,
+            return_ended: enclosing.return_ended,
+            effective_live_in: ctx.effective_live_in,
+        };
+        let (fin_live, fin_held) =
+            elaborate_region_drops(ctx, fb, &seeds, &fin_entry, &RegisterLoanState::default());
+        // The `finally` ends, on every path through it, what it holds live
+        // that its fall-off does not need.
+        let fin_ended: HashSet<VarId> = fin_live
+            .iter()
+            .copied()
+            .filter(|v| !after.contains(v) && ctx.droppable(*v))
+            .collect();
+        return_ended.extend(fin_ended.iter().copied());
+        (fin_live, return_live, fin_held, fin_ended)
     } else {
-        after.clone()
+        (
+            after.clone(),
+            enclosing.return_live.clone(),
+            HashSet::new(),
+            HashSet::new(),
+        )
     };
 
     // A raise inside the handler or `else` is not caught by this `try`; it
     // runs the `finally` and then propagates to the enclosing observer.
     let mut outward_raise = fin_live.clone();
-    outward_raise.extend(enclosing_raise.iter().copied());
+    outward_raise.extend(enclosing.raise.iter().copied());
 
     let handler_live = handler.as_mut().map(|(binding, h)| {
         let seeds = RegionSeeds {
             fall_off: &fin_live,
             raise: &outward_raise,
             finally_live: &fin_live,
+            return_live: &return_live,
+            return_ended: &return_ended,
             effective_live_in: ctx.effective_live_in,
         };
-        let mut live = elaborate_region_drops(
+        let (mut live, held) = elaborate_region_drops(
             ctx,
             h,
             &seeds,
@@ -464,13 +536,15 @@ pub(super) fn elaborate_try_interior(
         {
             entry.instrs.insert(0, MirInstr::DropVar { var: *bound });
         }
-        live
+        (live, held)
     });
     let orelse_live = orelse.as_mut().map(|e| {
         let seeds = RegionSeeds {
             fall_off: &fin_live,
             raise: &outward_raise,
             finally_live: &fin_live,
+            return_live: &return_live,
+            return_ended: &return_ended,
             effective_live_in: ctx.effective_live_in,
         };
         elaborate_region_drops(
@@ -485,69 +559,103 @@ pub(super) fn elaborate_try_interior(
     // Body: a raise lands in the handler when there is one (it catches every
     // error), otherwise it runs the `finally` and propagates outward. Normal
     // completion continues into `else` when present.
-    let body_raise = handler_live.unwrap_or(outward_raise);
-    let body_fall_off = orelse_live.unwrap_or_else(|| fin_live.clone());
+    let (body_raise, handler_held) =
+        handler_live.map_or((outward_raise, None), |(live, held)| (live, Some(held)));
+    let (body_fall_off, orelse_held) = orelse_live.map_or_else(
+        || (fin_live.clone(), None),
+        |(live, held)| (live, Some(held)),
+    );
     let seeds = RegionSeeds {
         fall_off: &body_fall_off,
         raise: &body_raise,
         finally_live: &fin_live,
+        return_live: &return_live,
+        return_ended: &return_ended,
         effective_live_in: ctx.effective_live_in,
     };
-    elaborate_region_drops(ctx, body, &seeds, entry_generations, entry_registers)
+    let (entry_live, body_held) =
+        elaborate_region_drops(ctx, body, &seeds, entry_generations, entry_registers);
+
+    // The raise edge destroys the body's locals and the seeded outer values
+    // a raise in the body still holds; nothing else runs it.
+    let mut listed = region_cleanup_vars(body, ctx.function_defs);
+    for v in cleanup.drain(..) {
+        if !listed.contains(&v) {
+            listed.push(v);
+        }
+    }
+    listed.retain(|v| body_held.contains(v) && ctx.droppable(*v));
+    listed.sort_unstable_by(|a, b| b.cmp(a));
+    *cleanup = listed;
+
+    // What a raise leaving the `try` holds: an uncaught body raise past the
+    // raise edge, a raise out of the handler or `else`, each past what the
+    // `finally` ends, and a raise out of the `finally` itself.
+    let mut raise_held: HashSet<VarId> = match &handler_held {
+        Some(_) => HashSet::new(),
+        None => body_held
+            .into_iter()
+            .filter(|v| !cleanup.contains(v))
+            .collect(),
+    };
+    raise_held.extend(handler_held.into_iter().flatten());
+    raise_held.extend(orelse_held.into_iter().flatten());
+    raise_held.retain(|v| !fin_ended.contains(v));
+    raise_held.extend(fin_held);
+    TryInterior {
+        entry_live,
+        raise_held,
+    }
+}
+
+/// A region's effective entry liveness under `seeds`, its blocks left
+/// untouched: the liveness half of [`elaborate_region_drops`].
+pub(super) fn region_live_in(
+    ctx: &RegionDropCtx,
+    blocks: &[MirBlock],
+    seeds: &RegionSeeds,
+    entry_generations: &LoanGenerationState,
+    entry_registers: &RegisterLoanState,
+) -> HashSet<VarId> {
+    let Some(liveness) = region_liveness(ctx, blocks, seeds, entry_generations, entry_registers)
+    else {
+        return seeds.fall_off.clone();
+    };
+    effective_drop_liveness(
+        liveness.live_in[0].clone(),
+        &liveness.generation_entries[0],
+        ctx.loan_roots,
+    )
 }
 
 /// Run the ordinary death/`DropVar` elaboration over one region's mini-CFG —
 /// the same backward liveness, loan-aware death rule, and edge splitting the
 /// function's top-level blocks get — with live-outs seeded per exit kind and
-/// the raise seed applied at every potentially-raising instruction. Returns
-/// the region's effective entry liveness.
+/// the raise seed applied at every potentially-raising instruction, then
+/// list on each return what it holds past the `finally` blocks it crosses.
+/// Returns the region's effective entry liveness and the slots some raise
+/// leaving the region still holds.
 pub(super) fn elaborate_region_drops(
     ctx: &RegionDropCtx,
     blocks: &mut Vec<MirBlock>,
     seeds: &RegionSeeds,
     entry_generations: &LoanGenerationState,
     entry_registers: &RegisterLoanState,
-) -> HashSet<VarId> {
+) -> (HashSet<VarId>, HashSet<VarId>) {
     let f = ctx.f;
     let nb = blocks.len();
-    if nb == 0 {
-        return seeds.fall_off.clone();
-    }
-
-    let generation_entries =
-        loan_generation_entries_over(blocks, entry_generations, ctx.generation_dests);
-    let RegisterLoans {
-        uses: register_uses,
-        before_try: register_before_try,
-    } = register_loan_uses_over(
-        blocks,
-        &generation_entries,
-        entry_registers,
-        ctx.loan_roots,
-        ctx.generation_dests,
-        &f.reg_types,
-        ctx.passing,
-    );
-
-    let predecessors = block_predecessors(blocks);
-    let mut live_in: Vec<HashSet<VarId>> = vec![HashSet::new(); nb];
-    let mut worklist = Worklist::backward(blocks);
-    while let Some(b) = worklist.pop() {
-        let live_out = region_block_live_out(blocks, b, &live_in, seeds);
-        let new_in = transfer_region_drop_liveness(
-            &blocks[b].instrs,
-            &register_uses[b],
-            live_out,
-            seeds,
-            ctx.function_defs,
-        );
-        if new_in != live_in[b] {
-            live_in[b] = new_in;
-            for predecessor in &predecessors[b] {
-                worklist.push(*predecessor);
-            }
-        }
-    }
+    let Some(RegionLiveness {
+        generation_entries,
+        registers:
+            RegisterLoans {
+                uses: register_uses,
+                before_try: register_before_try,
+            },
+        live_in,
+    }) = region_liveness(ctx, blocks, seeds, entry_generations, entry_registers)
+    else {
+        return (seeds.fall_off.clone(), HashSet::new());
+    };
 
     let generation_exits: Vec<LoanGenerationState> = blocks
         .iter()
@@ -565,6 +673,7 @@ pub(super) fn elaborate_region_drops(
         effective_drop_liveness(live_in[0].clone(), &generation_entries[0], ctx.loan_roots);
 
     // Block-internal drops: the top-level rebuild, over the region CFG.
+    let mut raise_held = DenseSet::default();
     for b in 0..nb {
         let live_out = region_block_live_out(blocks, b, &live_in, seeds);
         let instrs = std::mem::take(&mut blocks[b].instrs);
@@ -600,24 +709,30 @@ pub(super) fn elaborate_region_drops(
                     seeds.effective_live_in,
                     |v| ctx.droppable(v),
                 );
-                let nested_entry = elaborate_try_interior(
+                let nested = elaborate_try_interior(
                     ctx,
                     cloned,
                     point.ordinary_after,
-                    seeds.raise,
+                    &Enclosing {
+                        raise: seeds.raise,
+                        return_live: seeds.return_live,
+                        return_ended: seeds.return_ended,
+                    },
                     point.generation_before,
                     &register_before_try[&(b, point.index)],
                 );
                 let moved = try_moved_vars(point.instr);
-                point
+                let entry_dead = point
                     .live_before
                     .iter()
                     .copied()
                     .filter(|v| {
-                        ctx.droppable(*v) && !moved.contains(v) && !nested_entry.contains(v)
+                        ctx.droppable(*v) && !moved.contains(v) && !nested.entry_live.contains(v)
                     })
-                    .collect()
+                    .collect();
+                (entry_dead, nested.raise_held)
             },
+            Some(&mut raise_held),
         );
     }
 
@@ -682,7 +797,87 @@ pub(super) fn elaborate_region_drops(
         }
     }
 
-    effective_entry
+    // Each return holds its live-out once the `finally` blocks it crosses
+    // have run; it destroys what those `finally` blocks leave.
+    let mut held: Vec<VarId> = seeds
+        .return_live
+        .iter()
+        .copied()
+        .filter(|v| ctx.droppable(*v) && !seeds.return_ended.contains(v))
+        .collect();
+    held.sort_unstable_by(|a, b| b.cmp(a));
+    for block in blocks.iter_mut() {
+        if let MirTerm::Return(value) | MirTerm::ReturnWithCleanup { value, .. } = &mut block.term {
+            let value = value.take();
+            block.term = if held.is_empty() {
+                MirTerm::Return(value)
+            } else {
+                MirTerm::ReturnWithCleanup {
+                    value,
+                    cleanup: held.clone(),
+                }
+            };
+        }
+    }
+
+    (effective_entry, raise_held.iter().collect())
+}
+
+/// One region's drop liveness: the loan generations entering each block,
+/// the register-loan uses of each instruction, and each block's live-in.
+struct RegionLiveness {
+    generation_entries: Vec<LoanGenerationState>,
+    registers: RegisterLoans,
+    live_in: Vec<HashSet<VarId>>,
+}
+
+/// The backward drop liveness of a region's mini-CFG under `seeds`; `None`
+/// for a region with no blocks.
+fn region_liveness(
+    ctx: &RegionDropCtx,
+    blocks: &[MirBlock],
+    seeds: &RegionSeeds,
+    entry_generations: &LoanGenerationState,
+    entry_registers: &RegisterLoanState,
+) -> Option<RegionLiveness> {
+    if blocks.is_empty() {
+        return None;
+    }
+    let generation_entries =
+        loan_generation_entries_over(blocks, entry_generations, ctx.generation_dests);
+    let registers = register_loan_uses_over(
+        blocks,
+        &generation_entries,
+        entry_registers,
+        ctx.loan_roots,
+        ctx.generation_dests,
+        &ctx.f.reg_types,
+        ctx.passing,
+    );
+    let predecessors = block_predecessors(blocks);
+    let mut live_in: Vec<HashSet<VarId>> = vec![HashSet::new(); blocks.len()];
+    let mut worklist = Worklist::backward(blocks);
+    while let Some(b) = worklist.pop() {
+        let live_out = region_block_live_out(blocks, b, &live_in, seeds);
+        let new_in = transfer_region_drop_liveness(
+            &blocks[b].instrs,
+            &registers.uses[b],
+            live_out,
+            seeds,
+            ctx.function_defs,
+        );
+        if new_in != live_in[b] {
+            live_in[b] = new_in;
+            for predecessor in &predecessors[b] {
+                worklist.push(*predecessor);
+            }
+        }
+    }
+    Some(RegionLiveness {
+        generation_entries,
+        registers,
+        live_in,
+    })
 }
 
 /// A region block's live-out, per terminator kind: local `Jump`/`Branch`
@@ -707,15 +902,7 @@ pub(super) fn region_block_live_out(
             out
         }
         MirTerm::FallOff => seeds.fall_off.clone(),
-        MirTerm::Return(_) => seeds.finally_live.clone(),
-        // The crossing return's cleanup values are torn down by the return
-        // flow itself (after the `finally`): keep them live to the terminator
-        // so no earlier death splices a competing drop.
-        MirTerm::ReturnWithCleanup { cleanup, .. } => {
-            let mut out = seeds.finally_live.clone();
-            out.extend(cleanup.iter().copied());
-            out
-        }
+        MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. } => seeds.return_live.clone(),
         MirTerm::EscapeJump { target, cleanup } => {
             let mut out = seeds.finally_live.clone();
             out.extend(cleanup.iter().copied());
@@ -746,37 +933,6 @@ pub(super) fn transfer_region_drop_liveness(
         }
     }
     live
-}
-
-/// Union every `ReturnWithCleanup.cleanup` variable below `blocks` (deep
-/// through nested `try`s).
-pub(super) fn collect_return_cleanups(blocks: &[MirBlock], out: &mut HashSet<VarId>) {
-    for block in blocks {
-        for instr in &block.instrs {
-            if let MirInstr::Try {
-                body,
-                handler,
-                orelse,
-                finalbody,
-                ..
-            } = instr
-            {
-                collect_return_cleanups(body, out);
-                if let Some((_, h)) = handler {
-                    collect_return_cleanups(h, out);
-                }
-                if let Some(e) = orelse {
-                    collect_return_cleanups(e, out);
-                }
-                if let Some(fb) = finalbody {
-                    collect_return_cleanups(fb, out);
-                }
-            }
-        }
-        if let MirTerm::ReturnWithCleanup { cleanup, .. } = &block.term {
-            out.extend(cleanup.iter().copied());
-        }
-    }
 }
 
 /// The `^`-moved variables of a `try`'s regions (deep), excluded from the
@@ -1061,42 +1217,36 @@ pub(super) fn fill_escape_cleanups(
     }
 }
 
-/// Recursively fill every `MirInstr::Try`'s `cleanup` with the body's local
-/// variables (dropped when the body is left, normally or via a raise);
-/// `function_defs` is the function-wide def count that locality is judged
-/// against. A cleanup seeded earlier (the liveness-guarded unobservable
-/// rebound variables from `elaborate_drops`) is kept. The list is stored in
-/// reverse declaration order, the order of every shared death point.
-pub(super) fn set_try_cleanups(blocks: &mut [MirBlock], function_defs: &HashMap<VarId, usize>) {
-    for b in blocks.iter_mut() {
-        for instr in &mut b.instrs {
+/// Remove `ended` from every `EscapeJump.cleanup` under `blocks`, deep
+/// through nested `try`s.
+pub(super) fn strip_escape_cleanups(blocks: &mut [MirBlock], ended: &[VarId]) {
+    if ended.is_empty() {
+        return;
+    }
+    for block in blocks {
+        for instr in &mut block.instrs {
             if let MirInstr::Try {
                 body,
                 handler,
                 orelse,
                 finalbody,
-                cleanup,
+                ..
             } = instr
             {
-                let mut vars = region_cleanup_vars(body, function_defs);
-                for v in cleanup.drain(..) {
-                    if !vars.contains(&v) {
-                        vars.push(v);
-                    }
-                }
-                vars.sort_unstable_by(|a, b| b.cmp(a));
-                *cleanup = vars;
-                set_try_cleanups(body, function_defs);
+                strip_escape_cleanups(body, ended);
                 if let Some((_, h)) = handler {
-                    set_try_cleanups(h, function_defs);
+                    strip_escape_cleanups(h, ended);
                 }
                 if let Some(e) = orelse {
-                    set_try_cleanups(e, function_defs);
+                    strip_escape_cleanups(e, ended);
                 }
                 if let Some(fb) = finalbody {
-                    set_try_cleanups(fb, function_defs);
+                    strip_escape_cleanups(fb, ended);
                 }
             }
+        }
+        if let MirTerm::EscapeJump { cleanup, .. } = &mut block.term {
+            cleanup.retain(|v| !ended.contains(v));
         }
     }
 }
@@ -1227,14 +1377,18 @@ impl BlockReplay<'_> {
     /// alive retires there, and it is dead after it. `seed` adds what else an
     /// instruction keeps live (escape-edge and raise-edge observers), and
     /// `at_try` elaborates a `try`'s regions in place, returning the
-    /// variables to drop just before it. A `try`'s regions own the deaths of
-    /// what it uses, so a `try` is no death point.
+    /// variables to drop just before it and those a raise leaving it holds.
+    /// A `try`'s regions own the deaths of what it uses, so a `try` is no
+    /// death point. `raise_held`, when given, collects every slot a raise
+    /// out of the block still holds: the effective liveness entering each
+    /// raising instruction, which the elaboration leaves held.
     fn elaborate(
         self,
         live_out: HashSet<VarId>,
         seed: impl Fn(&MirInstr, &mut Vec<VarId>),
         droppable: impl Fn(VarId) -> bool,
-        mut at_try: impl FnMut(&TryPoint, &mut MirInstr) -> Vec<VarId>,
+        mut at_try: impl FnMut(&TryPoint, &mut MirInstr) -> (Vec<VarId>, HashSet<VarId>),
+        mut raise_held: Option<&mut DenseSet>,
     ) -> Vec<MirInstr> {
         // The generation state before each instruction, as an index into the
         // distinct states the block passes through: most instructions leave
@@ -1309,7 +1463,11 @@ impl BlockReplay<'_> {
                         ordinary_after: &ordinary_after,
                         generation_before,
                     };
-                    at_try(&point, elaborated)
+                    let (entry_dead, held) = at_try(&point, elaborated);
+                    if let Some(raise_held) = raise_held.as_deref_mut() {
+                        raise_held.extend(held);
+                    }
+                    entry_dead
                 }
                 None => Vec::new(),
             };
@@ -1363,6 +1521,16 @@ impl BlockReplay<'_> {
                 })
                 .collect();
             dying.retain(|v| !loaded.contains(v));
+            if let Some(raise_held) = raise_held.as_deref_mut()
+                && instr.is_raise_point()
+            {
+                let mut held = live.clone();
+                held.union(&extra_before);
+                for v in vars_moved(&instr).into_iter().chain(loaded.iter().copied()) {
+                    held.remove(v);
+                }
+                raise_held.union(&held);
+            }
             if let Some(held) = pending.take() {
                 // The slot's previous value dying at the producer must drop
                 // before the binding overwrites it, so that death point stays.
@@ -1481,8 +1649,8 @@ const fn teardown(instr: &MirInstr) -> Option<VarId> {
 /// The variables an instruction reads, for drop liveness: [`var_uses`], less
 /// the locals of a `try`'s regions. A slot only a `try`'s regions define —
 /// the handler's error binding included — is scoped to the `try`: its
-/// region's elaboration and the body's `Try.cleanup` end it on every exit,
-/// so nothing outside observes it. Counting it as read would make it live
+/// region's elaboration ends it on every exit but a raise, and the body's
+/// `Try.cleanup` on the raise edge, so nothing outside observes it. Counting it as read would make it live
 /// with no def, held round a loop's back edge and up to the function entry.
 fn drop_liveness_uses(instr: &MirInstr, function_defs: &HashMap<VarId, usize>) -> Vec<VarId> {
     let uses = var_uses(instr).into_iter().map(|(v, _)| v);
@@ -1535,7 +1703,7 @@ fn push_drops_reversed(reversed: &mut Vec<MirInstr>, mut vars: Vec<VarId>) {
     reversed.extend(vars.into_iter().map(|var| MirInstr::DropVar { var }));
 }
 
-/// Seed a `try`'s scope-exit cleanup with the outer variables a raise in
+/// Seed a `try`'s raise-edge cleanup with the outer variables a raise in
 /// its body must destroy: the per-instruction region drops place each
 /// death on the *normal* path, so an outer value the body uses or rebinds
 /// would leak when a raise lands before its in-region death. A candidate is
@@ -1545,7 +1713,8 @@ fn push_drops_reversed(reversed: &mut Vec<MirInstr>, mut vars: Vec<VarId>) {
 /// handler, `else`, `finally`, and the enclosing raise and exit observers
 /// in `observed`, dead at every escape target, and not consumed in place by
 /// the body (a `UseVar` move empties its slot, which a cleanup skips).
-/// `set_try_cleanups` keeps this seed beside the body-locals.
+/// [`elaborate_try_interior`] keeps this seed beside the body-locals and
+/// cuts both to what a raise holds.
 fn seed_raise_cleanup(
     cloned: &mut MirInstr,
     point: &TryPoint,

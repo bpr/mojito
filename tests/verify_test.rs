@@ -2181,6 +2181,135 @@ fn verifier_rejects_a_drop_of_an_ended_slot() {
     assert_eq!(slot_end_findings(escaping).len(), 1);
 }
 
+/// A `try` whose raise edge, an escape, or a return runs a cleanup list
+/// over `x` once, after `x` ended or before something ends it again.
+fn listed_try(
+    body: Vec<MirBlock>,
+    handler: Option<Vec<MirBlock>>,
+    finalbody: Option<Vec<MirBlock>>,
+) -> MirInstr {
+    MirInstr::Try {
+        body,
+        handler: handler.map(|blocks| (None, blocks)),
+        orelse: None,
+        finalbody,
+        cleanup: vec![0],
+    }
+}
+
+/// A cleanup list naming a slot every path reaching it already ended
+/// destroys its value twice, as a second `drop.var` does: a `try`'s
+/// raise-edge list, a return's, and an escape's, and a drop after any of
+/// them.
+#[test]
+fn verifier_rejects_a_cleanup_list_naming_an_ended_slot() {
+    let top = |region: MirInstr| {
+        vec![block(
+            [define_x(), vec![region]].concat(),
+            MirTerm::Return(None),
+        )]
+    };
+    let body = vec![block(vec![DROP_X, raising_call()], MirTerm::FallOff)];
+    let raised = top(listed_try(body, Some(Vec::new()), None));
+    assert_eq!(
+        slot_end_findings(raised),
+        [
+            "MIR function 'test' block 0: try.cleanup of slot $v0 ('x') that every path has already ended"
+        ]
+    );
+    let body = vec![block(vec![raising_call()], MirTerm::FallOff)];
+    let handler = vec![block(vec![DROP_X], MirTerm::FallOff)];
+    let findings = slot_end_findings(top(listed_try(body, Some(handler), None)));
+    assert!(findings[0].contains("drop.var of slot $v0"), "{findings:?}");
+    let returned = vec![block(
+        [define_x(), vec![DROP_X]].concat(),
+        MirTerm::ReturnWithCleanup {
+            value: None,
+            cleanup: vec![0],
+        },
+    )];
+    let findings = slot_end_findings(returned);
+    assert!(
+        findings[0].contains("return.cleanup of slot $v0"),
+        "{findings:?}"
+    );
+    let body = vec![block(
+        Vec::new(),
+        MirTerm::ReturnWithCleanup {
+            value: None,
+            cleanup: vec![0],
+        },
+    )];
+    let finalbody = vec![block(vec![DROP_X], MirTerm::FallOff)];
+    let findings = slot_end_findings(top(try_region_finally(body, finalbody)));
+    assert!(
+        findings[0].contains("return.cleanup of slot $v0"),
+        "{findings:?}"
+    );
+    let body = vec![block(
+        vec![DROP_X],
+        MirTerm::EscapeJump {
+            target: 1,
+            cleanup: vec![0],
+        },
+    )];
+    let escaping = vec![
+        block(
+            [define_x(), vec![try_region(body, None)]].concat(),
+            MirTerm::Jump(1),
+        ),
+        block(Vec::new(), MirTerm::Return(None)),
+    ];
+    let findings = slot_end_findings(escaping);
+    assert!(
+        findings[0].contains("escape cleanup of slot $v0"),
+        "{findings:?}"
+    );
+}
+
+/// A cleanup list naming a slot some path still holds where it runs is
+/// no finding: a raise-edge list over a slot one raise point holds, and a
+/// return's over a slot the `finally` it crosses reads but leaves held.
+#[test]
+fn verifier_accepts_a_cleanup_list_naming_a_held_slot() {
+    let top = |region: MirInstr| {
+        vec![block(
+            [define_x(), vec![region]].concat(),
+            MirTerm::Return(None),
+        )]
+    };
+    let body = vec![block(
+        vec![raising_call(), DROP_X, raising_call()],
+        MirTerm::FallOff,
+    )];
+    let raised = top(listed_try(body, Some(Vec::new()), None));
+    assert_eq!(slot_end_findings(raised), Vec::<String>::new());
+    let body = vec![block(
+        Vec::new(),
+        MirTerm::ReturnWithCleanup {
+            value: None,
+            cleanup: vec![0],
+        },
+    )];
+    let finalbody = vec![block(
+        vec![MirInstr::KeepAlive { var: 0 }],
+        MirTerm::FallOff,
+    )];
+    let returned = top(try_region_finally(body, finalbody));
+    assert_eq!(slot_end_findings(returned), Vec::<String>::new());
+}
+
+/// A `try` around `body` with no handler and `finalbody` as its `finally`.
+const fn try_region_finally(body: Vec<MirBlock>, finalbody: Vec<MirBlock>) -> MirInstr {
+    MirInstr::Try {
+        body,
+        handler: None,
+        orelse: None,
+        finalbody: Some(finalbody),
+        cleanup: Vec::new(),
+    }
+}
+
 /// A slot ended on some paths only, re-stored, or still live where a
 /// region escapes or raises is not ended on every path.
 #[test]

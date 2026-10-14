@@ -435,6 +435,7 @@ impl<'a> Flatten<'a> {
             a: index,
             b: length,
             resolved: None,
+            raises: None,
         });
     }
 
@@ -471,6 +472,7 @@ impl<'a> Flatten<'a> {
             a: index,
             b: one,
             resolved: None,
+            raises: None,
         });
         self.emit(MirInstr::DefVar {
             var: cursor.index,
@@ -1014,6 +1016,7 @@ impl<'a> Flatten<'a> {
                             a: current,
                             b: rhs,
                             resolved: None,
+                            raises: None,
                         });
                         result
                     };
@@ -1072,6 +1075,7 @@ impl<'a> Flatten<'a> {
                         a: current,
                         b: rhs,
                         resolved: None,
+                        raises: None,
                     });
                     result
                 };
@@ -1192,6 +1196,7 @@ impl<'a> Flatten<'a> {
                             a: current,
                             b: rhs,
                             resolved: None,
+                            raises: None,
                         });
                         result
                     };
@@ -1236,6 +1241,7 @@ impl<'a> Flatten<'a> {
                         a: current,
                         b: rhs,
                         resolved: None,
+                        raises: None,
                     });
                     result
                 };
@@ -1417,6 +1423,7 @@ impl<'a> Flatten<'a> {
                             a: current,
                             b: rhs,
                             resolved: None,
+                            raises: None,
                         });
                         result
                     };
@@ -1459,6 +1466,7 @@ impl<'a> Flatten<'a> {
                         a: current,
                         b: rhs,
                         resolved: None,
+                        raises: None,
                     });
                     result
                 };
@@ -2489,6 +2497,7 @@ impl<'a> Flatten<'a> {
                         a: cur,
                         b: rhs,
                         resolved: None,
+                        raises: None,
                     });
                     self.emit_interior_invalidations(place, None);
                     if self.runtime_aliases.contains(&var) && !self.pointer_valued_slot(var) {
@@ -2539,6 +2548,7 @@ impl<'a> Flatten<'a> {
                         a: cur,
                         b: rhs,
                         resolved: None,
+                        raises: None,
                     });
                     self.emit_interior_invalidations(place, None);
                     self.emit(MirInstr::Store {
@@ -2564,6 +2574,7 @@ impl<'a> Flatten<'a> {
                         a: cur,
                         b: rhs,
                         resolved: None,
+                        raises: None,
                     });
                     self.emit_interior_invalidations(place, None);
                     self.emit(MirInstr::WriteRef {
@@ -2594,6 +2605,7 @@ impl<'a> Flatten<'a> {
                         a: cur,
                         b: rhs,
                         resolved: None,
+                        raises: None,
                     });
                     self.emit_interior_invalidations(place, None);
                     self.emit(MirInstr::WriteRef {
@@ -2617,6 +2629,7 @@ impl<'a> Flatten<'a> {
                         a: cur,
                         b: rhs,
                         resolved: None,
+                        raises: None,
                     });
                     self.emit_interior_invalidations(place, None);
                     self.emit(MirInstr::Store { place: p, src: res });
@@ -3397,16 +3410,15 @@ impl<'a> Flatten<'a> {
                 let value = value.as_ref().map(|e| self.lower_return_value(e));
                 self.flush_argument_anchors();
                 for var in cleanup {
-                    // Keep the cleanup root live into this return block. Without
-                    // this marker, edge-based last-use elaboration can destroy a
-                    // loop iterator at block entry (before the return value and
-                    // the current yielded element have been handled).
+                    // Keep the loop-owned root live into this return block.
+                    // Without this marker, edge-based last-use elaboration can
+                    // destroy a loop iterator at block entry (before the return
+                    // value and the current yielded element have been handled).
+                    // Drop elaboration ends it after the marker, and lists on
+                    // the return only what it holds past a crossed `finally`.
                     self.emit(MirInstr::KeepAlive { var: *var });
                 }
-                MirTerm::ReturnWithCleanup {
-                    value,
-                    cleanup: cleanup.clone(),
-                }
+                MirTerm::Return(value)
             }
             Terminator::FallOff => MirTerm::FallOff,
             // An outward `break`/`continue`: the target is an enclosing-function

@@ -1883,6 +1883,7 @@ impl<'a> Specializer<'a> {
                     func,
                     args,
                     kwargs,
+                    raises,
                     ..
                 } = instruction
                 {
@@ -1907,13 +1908,25 @@ impl<'a> Specializer<'a> {
                             Some(TyKind::Struct(..))
                         )
                     {
-                        *instruction = dunder_method_call(*dest, args[0], method, None, Vec::new());
+                        *instruction = dunder_method_call(
+                            *dest,
+                            args[0],
+                            method,
+                            None,
+                            raises.take(),
+                            Vec::new(),
+                        );
                     }
                 }
                 // A prefix `-`/`~` on a nominal operand is the VM's dunder
                 // dispatch (`apply_prefix` → `__neg__`/`__invert__`); `not`
                 // arrives already converted through `Bool(x)` by MIR.
-                if let MirInstr::UnOp { op, dest, a } = instruction
+                if let MirInstr::UnOp {
+                    op,
+                    dest,
+                    a,
+                    raises,
+                } = instruction
                     && matches!(
                         op,
                         mojito_ast::ast::PrefixOp::Neg | mojito_ast::ast::PrefixOp::Invert
@@ -1923,7 +1936,9 @@ impl<'a> Specializer<'a> {
                         Some(TyKind::Struct(..))
                     )
                 {
-                    *instruction = dunder_method_call(*dest, *a, op.dunder(), None, Vec::new());
+                    let raises = raises.take();
+                    *instruction =
+                        dunder_method_call(*dest, *a, op.dunder(), None, raises, Vec::new());
                 }
                 // A comparison through a bound names its requirement; the
                 // builtin an instance binds answers it itself.
@@ -1950,6 +1965,7 @@ impl<'a> Specializer<'a> {
                     a,
                     b,
                     resolved,
+                    raises,
                 } = instruction
                     && let Some(method) = op.dunder()
                     && !matches!(
@@ -1979,12 +1995,15 @@ impl<'a> Specializer<'a> {
                                 op: mojito_ast::ast::PrefixOp::Not,
                                 dest: *dest,
                                 a: equal,
+                                raises: None,
                             },
                         ));
-                        *instruction = dunder_method_call(equal, *a, "__eq__", None, vec![*b]);
+                        *instruction =
+                            dunder_method_call(equal, *a, "__eq__", None, raises.take(), vec![*b]);
                     } else {
-                        let resolved = resolved.take();
-                        *instruction = dunder_method_call(*dest, *a, method, resolved, vec![*b]);
+                        let (resolved, raises) = (resolved.take(), raises.take());
+                        *instruction =
+                            dunder_method_call(*dest, *a, method, resolved, raises, vec![*b]);
                     }
                 }
                 // A comparison a template typed `Bool` through its bound

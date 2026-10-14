@@ -1509,6 +1509,7 @@ fn method_call_spread_expands_into_the_bound_pack_elements() {
         Reg(1),
         "tagged",
         Some("Sink.tagged".into()),
+        None,
         vec![Reg(2), Reg(0)],
     );
     if let MirInstr::MethodCall {

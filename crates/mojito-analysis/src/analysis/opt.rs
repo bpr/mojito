@@ -79,6 +79,8 @@ pub fn opt(
 #[cfg(test)]
 mod tests {
     use super::{BodyPass, OptError, opt};
+    use crate::analysis::ELABORATE_DROPS;
+    use mojito_mir::mir::text::disassemble_functions;
     use mojito_mir::mir::{MirDeclarations, MirFunction, MirInstr};
 
     /// A pass that drops every dropped slot twice.
@@ -114,5 +116,29 @@ mod tests {
                 .contains("drop.var of slot $v1 ('b') that every path has already ended")),
             "{findings:?}"
         );
+    }
+
+    /// A return that crosses no `finally` holds nothing past its own
+    /// block: elaboration ends a listed slot at its last use and leaves a
+    /// plain `return`.
+    #[test]
+    fn a_top_level_return_lists_nothing() {
+        let input =
+            include_str!("../../../../tests/mir_passes/elaborate-drops/already_elaborated.mir")
+                .replace("drop.var { var: $v2 },\n              binary", "binary")
+                .replace(
+                    "return { value: present(%r5) }",
+                    "return.cleanup { value: present(%r5), cleanup: [$v2] }",
+                );
+        assert!(input.contains("return.cleanup"));
+        let program = opt(
+            input.as_bytes(),
+            "already_elaborated.mir",
+            &[&ELABORATE_DROPS],
+        )
+        .expect("the listed slot is held at the return");
+        let printed = disassemble_functions(&program).expect("prints");
+        assert!(!printed.contains("return.cleanup"), "{printed}");
+        assert!(printed.contains("drop.var { var: $v2 }"), "{printed}");
     }
 }

@@ -42,7 +42,7 @@ artifact {
               literal.materialize { dest: %r4, value: %r3, target: Int },
               var.use { dest: %r2, var: $v2, mode: copy },
               drop.var { var: $v2 },
-              binary { op: add, dest: %r5, a: %r2, b: %r4, resolved: absent }
+              binary { op: add, dest: %r5, a: %r2, b: %r4, resolved: absent, raises: absent }
             ],
             terminator: return { value: present(%r5) }
           }

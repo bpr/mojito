@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A cleanup list names only what is still held where it runs (R826). A
+  `try`'s list runs on its body's raise edge alone, on both backends, and
+  keeps the slots some raise point there holds. A return drops in-region
+  what nothing after it reads and lists only what it holds past the
+  `finally` blocks it crosses, so a value the loop after a `try` needed, or
+  one its `finally` read, is no longer leaked by a return through the `try`
+  (`assets/ok/try_return_destroys_held_values.mojo`). A handler's escapes
+  skip what its raise edge ended. The MIR verifier now models all three
+  lists and rejects one naming a slot every path already ended. `UnOp` and
+  `BinOp` record a raising operator's error type (MIR 1.53), mono keeps it
+  on the method call it rewrites them to, and the checker now rejects a
+  raising prefix operator outside `try` or a `raises` function, as the pin
+  does (`assets/type_error/raising_prefix_operator_unhandled.mojo`).
+
 - The MIR verifier rejects a `drop.var` or `var.consume` of a slot that
   every path reaching it already dropped, consumed, or moved (R825), so
   `mojito opt`, `run_pipeline`, package body finish, and concrete MIR all

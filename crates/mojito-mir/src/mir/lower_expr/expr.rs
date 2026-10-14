@@ -8,6 +8,15 @@ use mojito_checked::checked::{
 };
 use mojito_types::types::TyKind;
 
+/// What the checker dispatched one operator to: the selected dunder's
+/// lowered symbol (`None` for a built-in operator), the error type its call
+/// raises, and whether it is Equatable's default `!=`.
+pub(in crate::mir) struct OperatorDispatch {
+    pub(in crate::mir) resolved: Option<String>,
+    pub(in crate::mir) raises: Option<Ty>,
+    pub(in crate::mir) negated_equality: bool,
+}
+
 impl<'a> Flatten<'a> {
     /// Lower `node` without its adjustments, by the family its op names:
     /// each reads its operands off the handle.
@@ -234,6 +243,7 @@ impl<'a> Flatten<'a> {
                 op: PrefixOp::Not,
                 dest,
                 a: contains,
+                raises: None,
             });
             dest
         } else {
@@ -270,22 +280,31 @@ impl<'a> Flatten<'a> {
                 mojito_checked::checked::SemanticAdjustment::NegatedEquality
             )
         });
-        self.emit_comparison(node.location(), op, ra, rb, resolved, negated_equality)
+        let dispatch = OperatorDispatch {
+            resolved,
+            raises: node.raises(),
+            negated_equality,
+        };
+        self.emit_comparison(node.location(), op, ra, rb, dispatch)
     }
 
     /// Emit one dispatched operator over `a` and `b`: `BinOp.resolved`
     /// names the dunder the checker selected, so the operator is that
-    /// method's call. Equatable's default `__ne__` (`negated_equality`)
-    /// dispatches `__eq__` and negates its result.
+    /// method's call, raising what it raises. Equatable's default `__ne__`
+    /// (`negated_equality`) dispatches `__eq__` and negates its result.
     pub(in crate::mir) fn emit_comparison(
         &mut self,
         location: SourceSpan,
         op: InfixOp,
         a: Reg,
         b: Reg,
-        resolved: Option<String>,
-        negated_equality: bool,
+        dispatch: OperatorDispatch,
     ) -> Reg {
+        let OperatorDispatch {
+            resolved,
+            raises,
+            negated_equality,
+        } = dispatch;
         if op == InfixOp::Ne && negated_equality {
             let equal = self.fresh_typed(location.clone(), None, Ty::bool());
             self.emit(MirInstr::BinOp {
@@ -294,12 +313,14 @@ impl<'a> Flatten<'a> {
                 a,
                 b,
                 resolved,
+                raises,
             });
             let dest = self.fresh_typed(location, None, Ty::bool());
             self.emit(MirInstr::UnOp {
                 op: PrefixOp::Not,
                 dest,
                 a: equal,
+                raises: None,
             });
             return dest;
         }
@@ -310,6 +331,7 @@ impl<'a> Flatten<'a> {
             a,
             b,
             resolved,
+            raises,
         });
         d
     }
@@ -689,7 +711,12 @@ impl<'a> Flatten<'a> {
             ra
         };
         let d = self.fresh(node.location(), None);
-        self.emit(MirInstr::UnOp { op, dest: d, a: ra });
+        self.emit(MirInstr::UnOp {
+            op,
+            dest: d,
+            a: ra,
+            raises: node.raises(),
+        });
         d
     }
 

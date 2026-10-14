@@ -9,7 +9,12 @@ use mojito_symbol::symbol::TRAIT_DISPATCH;
 use mojito_types::types::TyKind;
 
 impl Checker {
-    pub(super) fn infer_prefix(&self, op: PrefixOp, operand: &Expr) -> Result<Ty, TypeError> {
+    pub(super) fn infer_prefix(
+        &self,
+        span: SourceSpan,
+        op: PrefixOp,
+        operand: &Expr,
+    ) -> Result<Ty, TypeError> {
         let t = self.infer(operand)?;
         match (op, t.kind()) {
             // Negation preserves the (possibly literal) numeric type, except UInt.
@@ -51,12 +56,18 @@ impl Checker {
             });
         }
         // A user struct routes through the operator's dunder (`-x` →
-        // `x.__neg__() -> Self`, `not x` → `not x.__bool__() -> Bool`).
+        // `x.__neg__() -> Self`, `not x` → `not x.__bool__() -> Bool`),
+        // raising what it raises.
         if let Some(result) = self.struct_dunder(&t, op.dunder(), &[]) {
             let ret = result?;
-            let convention = self
+            let signature = self
                 .struct_dunder_signature_for(&t, op.dunder(), &[])
-                .map(|(_, sig, _)| sig.self_convention);
+                .map(|(_, sig, _)| sig);
+            if let Some(error) = signature.and_then(dunder_error) {
+                self.record_call_effect(span, error.clone());
+                self.require_error(format!("raising operator '{}'", prefix_symbol(op)), error)?;
+            }
+            let convention = signature.map(|sig| sig.self_convention);
             if convention.is_some_and(reads) {
                 self.borrow_operator_operand(operand, &t);
                 self.record_read_temporary_argument(operand);

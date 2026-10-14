@@ -1244,6 +1244,9 @@ pub enum MirInstr {
         op: PrefixOp,
         dest: Reg,
         a: Reg,
+        /// The checked error type the operator method's call raises, as a
+        /// call's `raises`; `None` for a built-in or non-raising operator.
+        raises: Option<Ty>,
     },
     BinOp {
         op: InfixOp,
@@ -1254,6 +1257,9 @@ pub enum MirInstr {
         /// resolution was required (notably a concrete Tuple membership
         /// overload). Backends must not reselect it by name/arity.
         resolved: Option<String>,
+        /// The checked error type the operator call raises, as a call's
+        /// `raises`; `None` for a built-in or non-raising operator.
+        raises: Option<Ty>,
     },
     /// A free-function / constructor / builtin call. `args` are the flattened
     /// positional arguments; `kwargs` the keyword arguments (`name = value`). The
@@ -1780,8 +1786,15 @@ impl MirInstr {
                 call.as_ref().and_then(|call| call.raises.as_ref())
             }
             Self::MultiSet { call, .. } => call.raises.as_ref(),
+            Self::UnOp { raises, .. } | Self::BinOp { raises, .. } => raises.as_ref(),
             _ => None,
         }
+    }
+
+    /// Whether the instruction is a raise point: a `raise`, or a call
+    /// declared `raises`.
+    pub fn is_raise_point(&self) -> bool {
+        matches!(self, Self::Raise { .. }) || self.call_error().is_some()
     }
 }
 

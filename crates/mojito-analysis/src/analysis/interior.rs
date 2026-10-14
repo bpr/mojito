@@ -494,7 +494,7 @@ pub(super) fn check_interior_instruction_uses(
 }
 
 pub(super) fn interior_instruction_directly_raises(instr: &MirInstr) -> bool {
-    matches!(instr, MirInstr::Raise { .. }) || instr.call_error().is_some()
+    instr.is_raise_point()
 }
 
 pub(super) fn summarize_interior_try(

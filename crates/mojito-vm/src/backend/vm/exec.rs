@@ -298,7 +298,7 @@ impl VmBackend {
                     }
                 }
             }
-            MirInstr::UnOp { op, dest, a } => {
+            MirInstr::UnOp { op, dest, a, .. } => {
                 regs[dest.0 as usize] = self.apply_prefix(prog, *op, regs[a.0 as usize].clone())?;
             }
             MirInstr::BinOp {
@@ -307,6 +307,7 @@ impl VmBackend {
                 a,
                 b,
                 resolved,
+                ..
             } => {
                 let l = regs[a.0 as usize].clone();
                 let r = regs[b.0 as usize].clone();
@@ -1943,9 +1944,9 @@ impl VmBackend {
     }
 
     /// Execute a `try`/`except`/`else`/`finally` region. Each sub-part runs as a
-    /// mini-CFG in the current frame; a raise in
-    /// the body unwinds to `handler` (after running the `cleanup` drops), `else` runs
-    /// on normal completion, and `finally` always runs (its raise wins).
+    /// mini-CFG in the current frame; a raise in the body runs the raise-edge
+    /// `cleanup` drops, then unwinds to `handler`, `else` runs on normal
+    /// completion, and `finally` always runs (its raise wins).
     pub(super) fn exec_try(
         &mut self,
         prog: &Prog,
@@ -1967,9 +1968,8 @@ impl VmBackend {
             variables: vars,
         } = frame;
         let outcome = match self.run_region(prog, scope, body, regs, vars) {
-            // The body raised: run the exceptional-edge cleanup (destroy the body's
-            // locals as they go out of scope), then dispatch to the handler or
-            // re-propagate.
+            // The body raised: run the raise-edge cleanup (destroy what the raise
+            // still holds), then dispatch to the handler or re-propagate.
             Err(RuntimeError::Raised(error)) => {
                 self.run_cleanup(prog, cleanup, vars)?;
                 match handler {
@@ -1987,19 +1987,15 @@ impl VmBackend {
             }
             // A non-raised runtime error propagates untouched.
             Err(other) => Err(other),
-            // The body completed (normally, or via a `return` that crossed out): its
-            // locals go out of scope here too. `else` runs only on *normal*
-            // completion; a `return` from the body skips `else` and carries out.
-            Ok(flow) => {
-                self.run_cleanup(prog, cleanup, vars)?;
-                match flow {
-                    Flow::Normal => match orelse {
-                        Some(eblocks) => self.run_region(prog, scope, eblocks, regs, vars),
-                        None => Ok(Flow::Normal),
-                    },
-                    ret => Ok(ret),
-                }
-            }
+            // The body completed (normally, or via a `return` or escape that
+            // crossed out), having ended its own locals. `else` runs only on
+            // *normal* completion; a `return` from the body skips `else` and
+            // carries out.
+            Ok(Flow::Normal) => match orelse {
+                Some(eblocks) => self.run_region(prog, scope, eblocks, regs, vars),
+                None => Ok(Flow::Normal),
+            },
+            Ok(flow) => Ok(flow),
         };
         // `finally` always runs; if it raises or itself transfers control
         // (`return`/`break`/`continue`), that outcome wins over the pending one
@@ -2042,9 +2038,9 @@ impl VmBackend {
         outcome
     }
 
-    /// Destroy a `try` body's local variables as they leave scope — a `DropVar` on
-    /// each cleanup slot (a no-op on an already-emptied/`None` slot, so it is safe
-    /// whether or not the value was already dropped before a raise).
+    /// Run one cleanup list — a `try`'s raise edge, a return's, or an escape's:
+    /// a `DropVar` on each listed slot. Drop elaboration lists only slots the
+    /// edge still holds; a vacated slot is a no-op to drop.
     pub(super) fn run_cleanup(
         &mut self,
         prog: &Prog,

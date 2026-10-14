@@ -57,9 +57,8 @@ impl FnLowering<'_> {
         }
     }
 
-    /// A return terminator: with no finalbody in the way, enclosing
-    /// `Try.cleanup` lists run inner to outer, then the return's own carried
-    /// roots, then the value returns. Crossing a finalbody (or overriding
+    /// A return terminator: with no finalbody in the way, the return's own
+    /// carried roots drop, then the value returns. Crossing a finalbody (or overriding
     /// one's pending outcome) instead stages the value, registers an exit
     /// site, and routes outward through the pending machinery.
     pub(super) fn lower_return_edge(

@@ -521,11 +521,11 @@ pub(super) fn substitute_instruction(
     bindings: &Bindings,
 ) -> Result<(), MonoError> {
     use MirInstr::{
-        Call, CallIndirect, Const, ConstructTypeParam, ConsumePlace, DefVar, DropPlace,
+        BinOp, Call, CallIndirect, Const, ConstructTypeParam, ConsumePlace, DefVar, DropPlace,
         EstablishLoans, Index, LoadPlace, MakeClosure, MakeRef, MakeSimd, MakeTuple, MakeVariant,
         MarkDestroyed, MarkInitialized, MaterializeLiteral, MethodCall, MovePlace, MultiIndex,
         MultiSet, PointerStorageDestroy, PointerStorageTake, SimdBitcast, SimdCast, SimdShuffle,
-        SizeOf, Slice, Store, StoreRef, Try, TryNext, TypeName, UninitStorageDestroy,
+        SizeOf, Slice, Store, StoreRef, Try, TryNext, TypeName, UnOp, UninitStorageDestroy,
         UninitStorageTake, VariantReplace, VariantSet, VariantSetInitWith,
     };
     close_instruction_variant_indices(instruction, bindings)?;
@@ -736,6 +736,7 @@ pub(super) fn substitute_instruction(
                 *arg = substitute_arg(arg, bindings)?;
             }
         }
+        UnOp { raises, .. } | BinOp { raises, .. } => sub_opt_ty(raises.as_mut(), bindings)?,
         MethodCall {
             raises,
             reference_result,

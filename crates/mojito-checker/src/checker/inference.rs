@@ -1109,7 +1109,7 @@ impl Checker {
                     .map(|ty| self.bake_value_transfer_effects(name, ty))
                     .ok_or_else(|| TypeError::UndefinedVariable(name.clone()))
             }
-            ExprKind::Prefix(op, operand) => self.infer_prefix(*op, operand),
+            ExprKind::Prefix(op, operand) => self.infer_prefix(expr.source_span(), *op, operand),
             ExprKind::Infix(op, left, right) => {
                 self.infer_infix(Some(expr.source_span()), *op, left, right)
             }

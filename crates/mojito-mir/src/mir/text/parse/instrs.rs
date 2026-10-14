@@ -300,6 +300,7 @@ impl Decoder {
                 op: self.req(value, fields, "op", Self::prefix_op)?,
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 a: self.req(value, fields, "a", Self::reg)?,
+                raises: self.req(value, fields, "raises", |d, v| Some(d.option_ty(Some(v))))?,
             }),
             "binary" => Some(MirInstr::BinOp {
                 op: self.req(value, fields, "op", Self::infix_op)?,
@@ -307,6 +308,7 @@ impl Decoder {
                 a: self.req(value, fields, "a", Self::reg)?,
                 b: self.req(value, fields, "b", Self::reg)?,
                 resolved: self.req(value, fields, "resolved", |d, v| Some(d.option_symbol(v)))?,
+                raises: self.req(value, fields, "raises", |d, v| Some(d.option_ty(Some(v))))?,
             }),
             "call" => Some(MirInstr::Call {
                 dest: self.req(value, fields, "dest", Self::reg)?,

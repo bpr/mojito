@@ -197,6 +197,7 @@ pub(super) fn dunder_method_call(
     recv: Reg,
     method: &str,
     resolved: Option<String>,
+    raises: Option<Ty>,
     args: Vec<Reg>,
 ) -> MirInstr {
     let arg_places = vec![None; args.len()];
@@ -205,7 +206,7 @@ pub(super) fn dunder_method_call(
         recv,
         method: method.to_string(),
         resolved,
-        raises: None,
+        raises,
         reference_result: None,
         result_adapter: None,
         args,

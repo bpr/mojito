@@ -3482,6 +3482,7 @@ impl<'a> Flatten<'a> {
                     op: PrefixOp::Neg,
                     dest,
                     a,
+                    raises: None,
                 });
                 return Some(dest);
             }
@@ -3498,6 +3499,7 @@ impl<'a> Flatten<'a> {
                 a: accumulated,
                 b,
                 resolved: None,
+                raises: None,
             });
             accumulated = dest;
         }
@@ -3984,7 +3986,7 @@ fn close_register_types(
                     MirInstr::CopyValue { dest, value } => {
                         Some((dest, reg_types.get(&value.0).cloned()))
                     }
-                    MirInstr::UnOp { op, dest, a } => Some((
+                    MirInstr::UnOp { op, dest, a, .. } => Some((
                         dest,
                         match op {
                             PrefixOp::Not => Some(Ty::bool()),

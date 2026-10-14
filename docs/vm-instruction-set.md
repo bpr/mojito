@@ -189,7 +189,7 @@ stored handle and operating on its referent.
 | `jump` | `Jump` | Unconditional block transfer |
 | `branch` | `Branch` | Conditional block transfer |
 | `return` | `Return` | Return from a function or structured region |
-| `return.cleanup` | `ReturnWithCleanup` | Return after pending `finally` regions, then destroy retained loop owners |
+| `return.cleanup` | `ReturnWithCleanup` | Return after pending `finally` regions, then destroy what the return still holds |
 | `falloff` | `FallOff` | Complete a try sub-region normally |
 | `escape` | `EscapeJump` | Leave a try region for an enclosing loop target |
 
@@ -824,8 +824,9 @@ registers and variable slots.
 Semantics:
 
 1. Execute `body`.
-2. If `body` raises and an `except` region exists, drop the body-local cleanup
-   slots, optionally bind the error, and execute the handler.
+2. If `body` raises, drop the `cleanup` slots (what the raise still holds;
+   nothing else runs this list), then, when an `except` region exists,
+   optionally bind the error and execute the handler.
 3. Execute `else` only if the body completed normally.
 4. Execute `finally` on normal completion, raise, return, break, or continue.
 5. A non-normal result from `finally` overrides the pending result.
@@ -907,10 +908,10 @@ return.cleanup %value, [$v3, $v2]
 Ends the current function and returns a register value or `None`.
 
 Within a try sub-region, `return` becomes a non-normal flow value. It propagates
-through enclosing regions so cleanup and `finally` execute before the function
-actually returns. `return.cleanup` additionally retains the listed loop-owned
-variables while the return value is materialized, carries them through every
-pending `finally`, then destroys them in the recorded inner-to-outer order.
+through enclosing regions so every pending `finally` executes before the
+function actually returns. `return.cleanup`, which drop elaboration writes on a
+return crossing a `finally`, carries the listed variables through every pending
+`finally`, then destroys them in the recorded order.
 
 ### `falloff` — Complete Region
 
@@ -930,7 +931,7 @@ escape bb_target cleanup [$v3, $v4]
 
 Represents `break` or `continue` leaving a try sub-region for a loop block in the
 enclosing function. Before propagating the jump, the VM destroys the listed
-region-local variables. Every intervening `finally` executes before control
+variables, those dead at the target. Every intervening `finally` executes before control
 reaches `bb_target`.
 
 ## Call ABI and Function Metadata

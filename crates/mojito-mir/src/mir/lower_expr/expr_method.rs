@@ -671,6 +671,7 @@ impl<'a> Flatten<'a> {
                 a: pointer,
                 b: offset,
                 resolved: None,
+                raises: None,
             });
             return Some(dest);
         }

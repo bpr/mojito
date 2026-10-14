@@ -8,10 +8,10 @@ use mojito_types::types::TyKind;
 impl FnLowering<'_> {
     /// A structurally lowered `try`: flatten the region mini-CFGs into this
     /// function's flat block list with explicit edges. The body lowers with a
-    /// fresh landing block as its raise-edge target; every body exit (normal
-    /// completion, raise, return, escape) runs the flag-guarded `cleanup`
-    /// drops exactly like the VM's `exec_try`; the handler binds the staged
-    /// error; `orelse` runs only on normal completion.
+    /// fresh landing block as its raise-edge target; the raise edge runs the
+    /// flag-guarded `cleanup` drops exactly like the VM's `exec_try`; the
+    /// handler binds the staged error; `orelse` runs only on normal
+    /// completion.
     pub(super) fn lower_try(
         &mut self,
         ctx: &mut Context,
@@ -62,7 +62,6 @@ impl FnLowering<'_> {
         // Body: raises inside it land on this try's landing block.
         self.try_frames.push(TryFrame {
             landing,
-            cleanup: cleanup.to_vec(),
             finally: finally_idx,
             pends_error: handler.is_none() && finally_idx.is_some(),
         });
@@ -74,11 +73,9 @@ impl FnLowering<'_> {
 
         // Handler and `else` regions lower under a pseudo-frame when a
         // `finally` exists: their raises stage the pending error and their
-        // returns/escapes still pend on this finalbody, but the body-edge
-        // cleanup does not run twice.
+        // returns/escapes still pend on this finalbody.
         let pseudo_frame = finally_idx.map(|idx| TryFrame {
             landing: self.finally_states[idx].error_entry,
-            cleanup: Vec::new(),
             finally: Some(idx),
             pends_error: true,
         });
@@ -140,7 +137,6 @@ impl FnLowering<'_> {
                 if let Some(frame) = pseudo_frame.as_ref() {
                     self.try_frames.push(TryFrame {
                         landing: frame.landing,
-                        cleanup: Vec::new(),
                         finally: frame.finally,
                         pends_error: true,
                     });
@@ -164,18 +160,14 @@ impl FnLowering<'_> {
             }
         }
 
-        // Normal completion: cleanup drops, then `orelse` (only here), then
-        // the finalbody or the continuation.
+        // Normal completion: `orelse` (only here), then the finalbody or
+        // the continuation.
         self.current = Some(normal_exit);
-        for &var in cleanup {
-            self.lower_drop_var(ctx, var)?;
-        }
         let normal_target = match orelse {
             Some(orelse_blocks) => {
                 if let Some(frame) = pseudo_frame.as_ref() {
                     self.try_frames.push(TryFrame {
                         landing: frame.landing,
-                        cleanup: Vec::new(),
                         finally: frame.finally,
                         pends_error: true,
                     });
@@ -314,36 +306,25 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    /// Route exit-site `code` outward from the current frame context: run
-    /// each enclosing frame's cleanup drops inner to outer; the first
-    /// `finally`-bearing frame records the code as pending and enters its
-    /// finalbody; with none left, the site's terminal runs.
+    /// Route exit-site `code` outward from the current frame context: the
+    /// innermost `finally`-bearing frame records the code as pending and
+    /// enters its finalbody; with none left, the site's terminal runs.
     pub(super) fn emit_exit_crossing(
         &mut self,
         ctx: &mut Context,
         code: u32,
     ) -> Result<(), PlironError> {
-        let frames: Vec<(Vec<u32>, Option<usize>)> = self
-            .try_frames
-            .iter()
-            .rev()
-            .map(|frame| (frame.cleanup.clone(), frame.finally))
-            .collect();
-        for (cleanup, finally) in frames {
-            for var in cleanup {
-                self.lower_drop_var(ctx, var)?;
+        let finally = self.try_frames.iter().rev().find_map(|frame| frame.finally);
+        if let Some(idx) = finally {
+            if !self.finally_states[idx].codes.contains(&code) {
+                self.finally_states[idx].codes.push(code);
             }
-            if let Some(idx) = finally {
-                if !self.finally_states[idx].codes.contains(&code) {
-                    self.finally_states[idx].codes.push(code);
-                }
-                let tag = self.tag_constant(ctx, code);
-                let store = StoreOp::new(ctx, tag, self.finally_states[idx].kind_slot);
-                self.append(ctx, store.get_operation(), None);
-                let jump = BrOp::new(ctx, self.finally_states[idx].entry, vec![]);
-                self.append(ctx, jump.get_operation(), None);
-                return Ok(());
-            }
+            let tag = self.tag_constant(ctx, code);
+            let store = StoreOp::new(ctx, tag, self.finally_states[idx].kind_slot);
+            self.append(ctx, store.get_operation(), None);
+            let jump = BrOp::new(ctx, self.finally_states[idx].entry, vec![]);
+            self.append(ctx, jump.get_operation(), None);
+            return Ok(());
         }
         let terminal = self.site_terminal(ctx, code)?;
         let jump = BrOp::new(ctx, terminal, vec![]);
@@ -640,26 +621,14 @@ impl FnLowering<'_> {
         result.map(|()| entry)
     }
 
-    /// Drops crossing a return or escape edge: each enclosing `try`'s
-    /// cleanup list (inner to outer — the VM runs `Try.cleanup` whenever a
-    /// body region is left), then the edge's own carried cleanup roots. All
-    /// drops are flag-guarded, so listings that already died are no-ops.
+    /// Drops crossing a return or escape edge: the edge's own carried
+    /// cleanup roots, flag-guarded. A `try`'s own list runs on its raise
+    /// edge alone.
     pub(super) fn emit_scope_exit_cleanups(
         &mut self,
         ctx: &mut Context,
         edge_cleanup: &[u32],
     ) -> Result<(), PlironError> {
-        let frames: Vec<Vec<u32>> = self
-            .try_frames
-            .iter()
-            .rev()
-            .map(|frame| frame.cleanup.clone())
-            .collect();
-        for cleanup in frames {
-            for var in cleanup {
-                self.lower_drop_var(ctx, var)?;
-            }
-        }
         for &var in edge_cleanup {
             self.lower_drop_var(ctx, var)?;
         }

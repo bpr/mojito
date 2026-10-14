@@ -226,8 +226,7 @@ pub(super) fn place_loan_uses(place: &MirPlace, reg: Reg) -> Vec<(VarId, Reg)> {
 /// The variables **local** to a `try` region's blocks — those whose every
 /// def site (`DefVar` or `DeclareVar`) in the whole function lies within the
 /// region (at any nesting), excluding those [`consumed_in_place`] — the
-/// body-local values to destroy when the body is left (the exceptional-edge /
-/// scope-exit cleanup). A local a `UseVar` transfers stays listed: the
+/// body-local candidates of the `try`'s raise-edge cleanup. A local a `UseVar` transfers stays listed: the
 /// transfer empties its slot, which the cleanup then skips. A variable declared outside the region — a
 /// `DeclareVar` or a `DefVar` beyond it — has a def site there and survives
 /// the exit, however many of its stores lie inside; `function_defs` supplies
@@ -392,12 +391,12 @@ pub(super) const fn may_raise(instr: &MirInstr) -> bool {
     )
 }
 
-/// Whether this instruction is a checked raise point: a `raise`, a call
-/// whose callee is declared `raises`, or a nested `try` whose regions may
-/// raise outward. Drop elaboration seeds a handler's live set only here, as
+/// Whether this instruction is a checked raise point
+/// ([`MirInstr::is_raise_point`]) or a nested `try` whose regions may raise
+/// outward. Drop elaboration seeds a handler's live set only here, as
 /// upstream's CFG has raise edges only at raising operations.
 pub(super) fn raises_to_handler(instr: &MirInstr) -> bool {
-    matches!(instr, MirInstr::Try { .. }) || interior::interior_instruction_directly_raises(instr)
+    matches!(instr, MirInstr::Try { .. }) || instr.is_raise_point()
 }
 
 /// Visit every instruction under `blocks`, recursing into `try` sub-regions.

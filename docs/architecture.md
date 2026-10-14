@@ -2500,9 +2500,9 @@ A `for` header branches on the `Bool` slot its iterator protocol wrote
 (`BranchOnSlot`), which no checked node computes.
 
 Iterator-driven loops use `ReturnWithCleanup` when a source `return` bypasses
-their common exit. The return expression is materialized first, then the current
-loop binding and synthetic iterator owners are destroyed from the innermost
-loop outward.
+their common exit. The return expression is materialized first, then MIR keeps
+the current loop binding and synthetic iterator owners alive into the return's
+block, where drop elaboration ends them.
 
 The core invariant is:
 
@@ -2965,9 +2965,11 @@ pub enum MirTerm {
 
 Function bodies should not normally end with `FallOff`; that is for try
 sub-regions. `EscapeJump` is for a `break`/`continue` inside a try region whose
-target belongs to the enclosing function. `ReturnWithCleanup` carries
-loop-owned cleanup through structured regions; the VM runs every pending
-`finally` before destroying those owners and completing the return.
+target belongs to the enclosing function. Drop elaboration writes
+`ReturnWithCleanup` on a return that crosses a `finally`, listing what the
+return still holds once the crossed `finally` blocks have run; the VM runs
+every pending `finally` before destroying those values and completing the
+return.
 
 The continuation-driven VM frame path binds reference parameters directly to
 caller frame/slot handles. Structured `try` sub-regions execute calls
@@ -4684,15 +4686,19 @@ Region interiors get the same per-instruction and edge drop elaboration as
 top-level blocks: each of a `try`'s four regions is a mini-CFG whose liveness
 is seeded from the enclosing walk at the instruction, per exit kind — the
 normal `FallOff` continuation (`else` entry, then `finally` entry, then the
-code after the block), `Return`/`ReturnWithCleanup`/`EscapeJump` edges (the
-`finally` still runs after them, and a crossing return's cleanup values are
-torn down after it), and `EscapeJump` targets bounded by the enclosing
-effective live-in. Because a raising operation transfers control to the
+code after the block), `EscapeJump` edges (the `finally` still runs after
+them), the return channel (`RegionSeeds::return_live`: what the `finally`
+blocks a return crosses, and those beyond them, still read — the `finally`'s
+entry liveness computed against the enclosing return channel by
+`region_live_in`, empty at the function's top level), and `EscapeJump`
+targets bounded by the enclosing effective live-in. Because a raising operation transfers control to the
 raise edge's observer (the handler, or the `finally` and the enclosing
 handler when there is none), a **raise seed** — that observer's entry
 liveness — is unioned into the live set at every checked raise point
-(`scan::raises_to_handler`: a `raise`, a call whose callee is declared
-`raises`, or a nested `try`), as upstream's CFG has raise edges only at
+(`scan::raises_to_handler`: `MirInstr::is_raise_point` — a `raise`, a call
+whose callee is declared `raises`, or an operator whose dunder raises, which
+`UnOp`/`BinOp.raises` records as a call's `raises` — or a nested `try`), as
+upstream's CFG has raise edges only at
 raising operations and as the move analysis reads them. Backward propagation
 therefore places each normal-flow drop after the last raise point preceding
 the death: a handler can never observe a vacated slot, and an outer variable
@@ -4717,14 +4723,24 @@ the entry edge, the cleanup lists, and the `EscapeJump` cleanups cover the
 rest. A `try` region's entry block has no predecessors (the verifier rejects
 a branch to it), so a drop at its head runs once per entry.
 
-Per-instruction drops own all *normal-flow* deaths inside regions. The raise
-edge cannot host per-instruction drops, so the scope-exit cleanup lists remain
-and act as raise-edge/scope-exit backstops. The VM's `DropVar` and cleanup
-teardown on an already-vacated (`None`) slot are no-ops, and that idempotency
-is load-bearing: a value may legitimately be listed on a cleanup edge it
-already died before. That idempotency is the VM's, not the program's: the
-verifier rejects a `drop.var` or `var.consume` of a slot every path reaching
-it already ended (`mir::verify`'s slot-end rule), so no pass may emit one.
+Per-instruction drops own all *normal-flow* deaths inside regions, and a
+return's too: a value nothing after the return reads dies in-region before
+it. A cleanup list stays only where MIR has no block to hold the drop, and
+names only what is still held where it runs. A `try`'s list runs on its
+body's raise edge alone and keeps the candidates (below) that some raise
+point in the body holds — the effective liveness entering each raise point,
+and what a nested `try`'s raise carries out past its own list and `finally`
+(`TryInterior::raise_held`). A return crossing a `finally` lists what it holds
+once those `finally` blocks have run: its live-out less what each crossed
+`finally` ends on every path through it (`RegionSeeds::return_ended`); a
+return that crosses none lists nothing and is a plain `return`. An escape's
+list runs at the `break`/`continue`, before the `finally`, and a handler's
+escapes skip the outer values its `try`'s raise edge already ended. One list
+over several raise points may still name a slot one of them already ended
+(R831); the VM's no-op teardown of a vacated (`None`) slot and the native drop
+flag absorb that. The verifier rejects a `drop.var` or `var.consume` of a slot
+every path reaching it already ended, and a cleanup list naming one
+(`mir::verify`'s slot-end rule), so no pass may emit either.
 A `for` loop's yielded slot is in no cleanup list, since the binding always
 consumes it.
 
@@ -4732,8 +4748,7 @@ consumes it.
 
 Try regions need cleanup for the values only the body can still observe. The
 drop elaboration pass fills `MirInstr::Try.cleanup` so the VM can destroy them
-when the body exits through normal completion, raise, return, break, or
-continue. The set holds the body's *locals* — variables whose every def site
+when a raise leaves the body. Its candidates are the body's *locals* — variables whose every def site
 (`DefVar` or `DeclareVar`) in the function lies within the body region (a
 reassignment is also a `DefVar`, and a `var x: T` declaration is a
 `DeclareVar`, so an outer variable merely rebound or first assigned inside the
@@ -4742,7 +4757,8 @@ variables the body rebinds or uses that cannot be observed after the body is
 left: dead on the normal continuation, unused by the handler/`else`/`finally`
 regions and by an enclosing region's raise and exit observers, and dead at
 every escape target (`seed_raise_cleanup`, for a top-level `try` and a nested
-one alike). That second set is the raise-edge backstop for outer values whose
+one alike); the list keeps those some raise point of the body holds. That
+second set covers the raise edge for outer values whose
 per-instruction death sits on the normal path: a raise landing before a
 rebound value's drop, or before the last use of a value used later in the
 body (an owned call operand the call has not yet consumed), would otherwise
@@ -4758,7 +4774,7 @@ a `try`'s regions define is scoped to the `try`, so the outer drop liveness
 does not count a `try` as reading the locals of any of its regions: their
 slots are empty whenever the `try` is entered, so a loop's back edge does not
 hold them live, and they die at their last use inside their region, the list
-being only a backstop. The handler's error binding is one of them: it is a
+the raise edge ending them only when a raise leaves before that. The handler's error binding is one of them: it is a
 def site at the handler's entry, where the caught error arrives as the entry
 block's argument, and an unread binding dies there.
 
@@ -4767,10 +4783,12 @@ hidden try-region exits explicit enough for the VM to run destructors before
 jumping to the enclosing loop target.
 
 Iterator-driven loops also place an explicit drop at their common exhaustion or
-`break` exit. A `return` cannot reach that block, so HIR and MIR retain its
-current binding and iterator owners on `ReturnWithCleanup`; this preserves
-return-value evaluation order and carries destruction through nested
-`try/finally` regions.
+`break` exit. A `return` cannot reach that block, so HIR lists its current
+binding and iterator owners on `ReturnWithCleanup`, and MIR keeps each alive
+into the return's block (`KeepAlive`) after the return value is evaluated;
+drop elaboration then ends them there, or lists them on the return when a
+`finally` it crosses reads them (R828 moves their death to the last
+`__next__`).
 
 ### Pre-Elaboration Pipeline
 

@@ -352,15 +352,12 @@ struct RuntimeStr {
 }
 
 /// One enclosing `try` during lowering: the landing block its raise edge
-/// jumps to, the body-local cleanup variables the VM drops whenever the
-/// body region is left (raise, normal completion, return, or escape), and
-/// the pending-outcome state when the try has a `finally` region. Handler
-/// and `else` regions lower under a pseudo-frame (empty cleanup — it
-/// already ran on the body edge) so their raises and returns still route
-/// through the `finally`.
+/// jumps to (which runs the `try`'s raise-edge cleanup), and the
+/// pending-outcome state when the try has a `finally` region. Handler and
+/// `else` regions lower under a pseudo-frame so their raises and returns
+/// still route through the `finally`.
 struct TryFrame {
     landing: Ptr<BasicBlock>,
-    cleanup: Vec<u32>,
     /// Index into `FnLowering::finally_states` when this try has `finally`.
     finally: Option<usize>,
     /// Whether a raise landing on this frame pends an error on its
@@ -528,9 +525,7 @@ struct FnLowering<'a> {
     /// `EscapeJump` targets enclosing-function blocks.
     function_blocks: Vec<Ptr<BasicBlock>>,
     /// Enclosing `try` frames, innermost last: a raise edge jumps to the
-    /// innermost landing block, and a return or escape crossing a body
-    /// region runs each enclosing frame's cleanup drops (inner to outer —
-    /// the VM runs `Try.cleanup` whenever the body region is left).
+    /// innermost landing block.
     try_frames: Vec<TryFrame>,
     /// Pending-outcome state of each `finally`-bearing try (arena — frames
     /// and sites refer by index).
