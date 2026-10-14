@@ -119,11 +119,14 @@ impl ImportedDeclarations {
 impl MirDeclarations {
     /// A package's own declarations, which its bodies were lowered against.
     pub fn of_package(package: Arc<PackageDeclarations>) -> Self {
+        Self::of_package_noting(package, ReachedFailures::default())
+    }
+
+    /// A package's own declarations, each record a lookup reaches that does
+    /// not decode noted in `reached`.
+    pub fn of_package_noting(package: Arc<PackageDeclarations>, reached: ReachedFailures) -> Self {
         Self {
-            imported: Some(ImportedDeclarations {
-                package,
-                reached: ReachedFailures::default(),
-            }),
+            imported: Some(ImportedDeclarations { package, reached }),
             ..Self::default()
         }
     }

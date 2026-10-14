@@ -570,6 +570,17 @@ impl<'a> Specializer<'a> {
         bindings: &Bindings,
     ) -> Result<(), MonoError> {
         let name = self.instance_name(key).to_string();
+        // A package record the body's materialization reached that does
+        // not decode outranks the symptom its miss caused, as the program's
+        // own view's does in `run`.
+        let reached = self.functions.reached(&key.template);
+        if !reached.is_empty() {
+            return Err(MonoError {
+                kind: MonoErrorKind::Decode,
+                function: Some(key.template.clone()),
+                construct: reached.join("; "),
+            });
+        }
         let findings = self.functions.findings(&key.template);
         let template = self.functions.get(key.template.as_str()).ok_or_else(|| {
             let reason = if findings.is_empty() {

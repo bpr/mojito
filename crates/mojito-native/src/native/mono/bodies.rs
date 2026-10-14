@@ -49,6 +49,17 @@ impl<'a> Bodies<'a> {
         }
     }
 
+    /// Why each package declaration the package body of `name` reached
+    /// when its importer lowered and finished it does not decode; empty for
+    /// the program's own, whose view its driver refuses before the
+    /// elaboration.
+    pub(super) fn reached(&self, name: &str) -> &'a [String] {
+        match self.package {
+            Some(package) if !self.resident.contains_key(name) => package.reached(name),
+            _ => &[],
+        }
+    }
+
     pub(super) fn contains_key(&self, name: &str) -> bool {
         self.resident.contains_key(name)
             || self.package.is_some_and(|package| package.contains(name))

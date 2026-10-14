@@ -10,7 +10,10 @@
 //! importer resolves a declaration from bytecode on first lookup), a
 //! module's link record when its link reaches the module, and a unit only
 //! when the elaborator first reaches one of its functions: it lowers the
-//! unit then (HIR CFG, MIR) and inserts the reached body's drops. Upstream's
+//! unit then (HIR CFG, MIR) and inserts the reached body's drops. Each
+//! unit's lowering and each body's finish read the package's declarations
+//! through a view of their own, so a record one of them reaches that does
+//! not decode is that body's verdict, never another's. Upstream's
 //! precompiled package likewise holds each body's IR as its parser wrote it
 //! and its semantic checks validated it, and its importer lowers its
 //! semantic control flow and runs its lifetime pass on each body it
@@ -97,13 +100,9 @@ pub struct PackageBodies {
     /// The package's declarations, whose function table places each
     /// function's unit.
     package: Arc<PackageDeclarations>,
-    /// The package's own declarations, which its bodies were lowered
-    /// against, resolved through the same lookups an importer's are.
-    declarations: MirDeclarations,
-    /// The overload sets and module constants of the package alone, which
-    /// a unit's lowering reads.
-    overloads: Arc<ProgramOverloads>,
-    constants: Arc<ProgramConstants>,
+    /// Every module of the package, which a unit's lowering reaches, as
+    /// its build's did.
+    modules: Arc<[bool]>,
     /// Each unit lowered so far, by where its record starts.
     units: Mutex<HashMap<usize, Arc<OnceLock<LoweredUnit>>>>,
     /// Each function table row's body, once finished.
@@ -132,12 +131,21 @@ impl PackageBodies {
     }
 
     /// What made the body of `name` unusable, finishing it on first use:
-    /// why its unit does not lower, or its finish's and the verifier's
-    /// findings. Empty when it verified or the package has no such
-    /// function.
+    /// why each package declaration its unit's lowering, its finish, or its
+    /// verify reached does not decode, then why its unit does not lower, or
+    /// its finish's and the verifier's findings. Empty when it verified or
+    /// the package has no such function.
     pub fn findings(&self, name: &str) -> &[String] {
         self.finished(name)
             .map_or(&[], |finished| finished.findings.as_slice())
+    }
+
+    /// Why each package declaration the body of `name` reached does not
+    /// decode, finishing it on first use: its unit's lowering's, its
+    /// finish's, and its verify's, in package order.
+    pub fn reached(&self, name: &str) -> &[String] {
+        self.finished(name)
+            .map_or(&[], |finished| finished.reached.as_slice())
     }
 
     /// The body of `name` as its unit lowers to it, before it is finished.
@@ -145,31 +153,15 @@ impl PackageBodies {
     /// # Errors
     ///
     /// When the package has no such function, or its unit does not decode
-    /// or lower, or lowers to no such function.
+    /// or lower, or lowers to no such function, or its lowering reached a
+    /// package declaration that does not decode.
     pub fn lowered(&self, name: &str) -> Result<MirFunction, String> {
-        let row = self
-            .package
-            .body_row(name)
-            .ok_or_else(|| "the package has no such function".to_string())?;
-        let range = self
-            .package
-            .body_range(row)
-            .ok_or_else(|| "the package holds no unit for it".to_string())?;
-        let cell = Arc::clone(
-            self.units
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .entry(range.start)
-                .or_default(),
-        );
-        let functions = cell.get_or_init(|| self.lower(&range));
-        functions
-            .as_ref()
-            .map_err(Clone::clone)?
-            .iter()
-            .find(|(lowered, _)| lowered == name)
-            .map(|(_, function)| function.clone())
-            .ok_or_else(|| "its unit does not lower to it".to_string())
+        let (function, reached) = self.unit_body(name);
+        if reached.is_empty() {
+            function
+        } else {
+            Err(reached.join("; "))
+        }
     }
 
     /// Finish every body with `finish` as it is lowered, and verify it.
@@ -251,56 +243,145 @@ impl PackageBodies {
 
     /// Lower the body of `name`, finish it, and verify it.
     fn finish_body(&self, name: &str) -> FinishedBody {
-        let function = match self.lowered(name) {
+        let (function, mut reached) = self.unit_body(name);
+        let function = match function {
             Ok(function) => function,
             Err(error) => {
+                let findings =
+                    std::iter::once(format!("package body `{name}` does not lower: {error}"))
+                        .chain(reached.iter().cloned())
+                        .collect();
                 return FinishedBody {
                     function: None,
-                    findings: vec![format!("package body `{name}` does not lower: {error}")],
+                    reached,
+                    findings,
                 };
             }
         };
-        let Some(finish) = self.finish else {
-            return FinishedBody {
-                function: Some(function),
-                findings: Vec::new(),
-            };
-        };
         let mut findings = Vec::new();
-        let function = {
-            let _finish = timing::span("package.body.finish");
-            finish(name, function, &self.declarations, &mut findings)
+        let function = match self.finish {
+            Some(finish) => {
+                let view = self.view();
+                let function = {
+                    let _finish = timing::span("package.body.finish");
+                    finish(name, function, &view.declarations, &mut findings)
+                };
+                let _verify = timing::span("package.body.verify");
+                findings.extend(crate::mir::verify::verify_function_in(
+                    name,
+                    &function,
+                    &view.declarations,
+                ));
+                for message in view.reached.messages(&self.package) {
+                    if !reached.contains(&message) {
+                        reached.push(message);
+                    }
+                }
+                function
+            }
+            None => function,
         };
-        let _verify = timing::span("package.body.verify");
-        findings.extend(crate::mir::verify::verify_function_in(
-            name,
-            &function,
-            &self.declarations,
-        ));
         FinishedBody {
             function: Some(function),
-            findings,
+            findings: reached.iter().cloned().chain(findings).collect(),
+            reached,
         }
     }
 
-    /// Decode the unit at `range` of the payload and lower it.
+    /// The body of `name` as its unit lowers to it, or why it does not,
+    /// and why each package declaration the unit's lowering reached does
+    /// not decode.
+    fn unit_body(&self, name: &str) -> (Result<MirFunction, String>, Vec<String>) {
+        let Some(range) = self
+            .package
+            .body_row(name)
+            .map(|row| self.package.body_range(row))
+        else {
+            return (
+                Err("the package has no such function".to_string()),
+                Vec::new(),
+            );
+        };
+        let Some(range) = range else {
+            return (
+                Err("the package holds no unit for it".to_string()),
+                Vec::new(),
+            );
+        };
+        let cell = Arc::clone(
+            self.units
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .entry(range.start)
+                .or_default(),
+        );
+        let unit = cell.get_or_init(|| self.lower(&range));
+        let function = unit
+            .functions
+            .as_ref()
+            .map_err(Clone::clone)
+            .and_then(|functions| {
+                functions
+                    .iter()
+                    .find(|(lowered, _)| lowered == name)
+                    .map(|(_, function)| function.clone())
+                    .ok_or_else(|| "its unit does not lower to it".to_string())
+            });
+        (function, unit.reached.clone())
+    }
+
+    /// Decode the unit at `range` of the payload and lower it, through a
+    /// view of the package of its own.
     fn lower(&self, range: &Range<usize>) -> LoweredUnit {
         let unit = {
             let _decode = timing::span("package.unit.decode");
             self.payload
-                .decoding(|| CheckedUnit::decode(self.payload.get(range), &self.root))?
+                .decoding(|| CheckedUnit::decode(self.payload.get(range), &self.root))
+        };
+        let unit = match unit {
+            Ok(unit) => unit,
+            Err(error) => {
+                return LoweredUnit {
+                    functions: Err(error),
+                    reached: Vec::new(),
+                };
+            }
         };
         let _lower = timing::span("package.unit.lower");
+        let view = self.view();
         let program = unit.program(
-            Arc::clone(&self.overloads),
-            Arc::clone(&self.constants),
+            Arc::new(ProgramOverloads::importing(Some(view.scope.clone()))),
+            Arc::new(ProgramConstants::importing(Some(view.scope.clone()))),
             &|name| {
-                self.declarations
+                view.declarations
                     .structure(name)
                     .map(|declaration| declaration.param_decls.clone())
             },
         );
-        crate::mir::lower_package_unit(&program, &self.declarations)
+        let functions = crate::mir::lower_package_unit(&program, &view.declarations);
+        LoweredUnit {
+            functions,
+            reached: view.reached.messages(&self.package),
+        }
+    }
+
+    /// A fresh view of the package's own declarations, for one unit's
+    /// lowering or one body's finish: every lookup through it notes a
+    /// record that does not decode in its own set.
+    fn view(&self) -> PackageView {
+        let reached = ReachedFailures::default();
+        PackageView {
+            declarations: MirDeclarations::of_package_noting(
+                Arc::clone(&self.package),
+                reached.clone(),
+            ),
+            scope: PackageScope::new(
+                Arc::clone(&self.package),
+                Arc::clone(&self.modules),
+                reached.clone(),
+            ),
+            reached,
+        }
     }
 }
 
@@ -507,13 +588,7 @@ pub fn read_package(bytes: PackageBytes, root: &LibraryRoot) -> Result<Package, 
         PackageDeclarations::read(payload.clone(), &directory.declarations, Some(root))
             .map_err(PackageError)?,
     );
-    // A unit's lowering reads the package's own declarations, as its
-    // build's did: every module of it.
-    let scope = PackageScope::new(
-        Arc::clone(&declarations),
-        vec![true; declarations.modules().len()].into(),
-        ReachedFailures::default(),
-    );
+    let modules = vec![true; declarations.modules().len()].into();
     Ok(Package {
         header: directory.header,
         declarations: Arc::clone(&declarations),
@@ -523,9 +598,7 @@ pub fn read_package(bytes: PackageBytes, root: &LibraryRoot) -> Result<Package, 
             decoded: (0..declarations.body_count())
                 .map(|_| OnceLock::new())
                 .collect(),
-            declarations: MirDeclarations::of_package(Arc::clone(&declarations)),
-            overloads: Arc::new(ProgramOverloads::importing(Some(scope.clone()))),
-            constants: Arc::new(ProgramConstants::importing(Some(scope))),
+            modules,
             units: Mutex::new(HashMap::new()),
             package: declarations,
             finish: None,
@@ -538,12 +611,31 @@ pub fn read_package(bytes: PackageBytes, root: &LibraryRoot) -> Result<Package, 
 struct FinishedBody {
     /// `None` when its unit does not lower.
     function: Option<MirFunction>,
-    /// Why it does not lower, or its finish's and the verifier's findings.
+    /// Why each package declaration its unit's lowering, its finish, or its
+    /// verify reached does not decode, in the order they were reached.
+    reached: Vec<String>,
+    /// Those, then why it does not lower, or its finish's and the
+    /// verifier's findings.
     findings: Vec<String>,
 }
 
-/// The functions a unit lowers to, or why it does not lower.
-type LoweredUnit = Result<Vec<(String, MirFunction)>, String>;
+/// A unit as its importer lowered it.
+#[derive(Debug)]
+struct LoweredUnit {
+    /// The functions it lowers to, or why it does not lower.
+    functions: Result<Vec<(String, MirFunction)>, String>,
+    /// Why each package declaration its lowering reached does not decode,
+    /// in package order.
+    reached: Vec<String>,
+}
+
+/// One view of a package's own declarations, its MIR lookups and its
+/// checked ones noting into one set.
+struct PackageView {
+    declarations: MirDeclarations,
+    scope: PackageScope,
+    reached: ReachedFailures,
+}
 
 /// Where every record of a package lies in its payload.
 #[derive(serde::Serialize, serde::Deserialize)]

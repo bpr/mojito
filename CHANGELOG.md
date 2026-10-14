@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A package body whose lowering, finish, or verify reached a package
+  declaration that does not decode now says so in its own verdict (R821):
+  each unit's lowering and each body's finish read the package through a
+  view of their own (`PackageBodies::reached`, leading
+  `PackageBodies::findings`), and the elaborator refuses such a body as
+  `MonoErrorKind::Decode`. A body that reached one used to verify clean,
+  lowered as if the struct had no parameters.
 - A package declaration that does not decode fails only a compilation whose
   lookups reach it (R820): its verdict lives in its own record's cell
   (`PackageDeclarations::decode`), each compilation's view notes the failed

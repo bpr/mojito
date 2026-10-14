@@ -312,7 +312,12 @@ import (every compilation that links the bundled library):
   lookups) is refused after the check (`InstalledInterfaces::failures`);
   MIR's (`ImportedDeclarations`) is a program verifier finding
   (`mir::verify`), and the elaborator's reach through it is
-  `MonoErrorKind::Decode`, which outranks the miss's own symptom.
+  `MonoErrorKind::Decode`, which outranks the miss's own symptom. A
+  package body's materialization has a view of its own: its unit's
+  lowering, its finish, and its verify each note what they reach, into
+  that body's verdict (`PackageBodies::reached`, led into
+  `PackageBodies::findings`), and the elaborator refuses a body whose
+  verdict names one as `MonoErrorKind::Decode`, naming the body.
 - **Above the waist no package body or declaration is prepared,
   elaborated, or checked again.** The driver partitions the link into the
   package's traits, borrowed, and the program's own statements
@@ -407,7 +412,9 @@ package body it materializes whose finish or verify left findings
 body's own, so a body no compilation reaches fails none, as upstream's
 importer fails only the compilation that materializes a bad body. A package
 declaration that does not decode is judged the same way: the elaborator
-refuses one its lookups reached (`MonoErrorKind::Decode`), and only
+refuses one its lookups reached (`MonoErrorKind::Decode`), or one a package
+body it materializes reached while it was lowered or finished
+(`PackageBodies::reached`), and only
 `drop_elaborated_mir`, whose artifact holds the whole package, reports every
 record that does not decode (`PackageDeclarations::failures`).
 

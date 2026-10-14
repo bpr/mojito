@@ -846,6 +846,51 @@ mod tests {
         assert_eq!(execution.output, "1\n");
     }
 
+    #[test]
+    fn a_package_body_whose_lowering_reaches_an_undecodable_declaration_names_it() {
+        let (package, _) = undecodable_declaration("List");
+        let bodies = package
+            .bodies
+            .finishing(crate::analysis::finish_package_body);
+        let undecodable = "package declaration `List` does not decode";
+        // `List.__len__` verifies clean without its struct's parameters;
+        // `List.clear` carries the symptoms too.
+        for name in ["List.__len__", "List.clear"] {
+            assert!(bodies.reached(name)[0].contains(undecodable), "{name}");
+            assert!(bodies.findings(name)[0].contains(undecodable), "{name}");
+        }
+        let error = bodies
+            .lowered("List.__len__")
+            .expect_err("its lowering reached `List`");
+        assert!(error.contains("`List`"), "{error}");
+        // A body reaching no `List` is not charged with another body's
+        // reach.
+        let unreaching = "__module$std$algorithms$next_pow2";
+        assert!(bodies.findings(unreaching).is_empty(), "{unreaching}");
+        assert!(bodies.reached(unreaching).is_empty(), "{unreaching}");
+    }
+
+    #[test]
+    fn the_elaboration_refuses_a_package_body_whose_materialization_reached_an_undecodable_declaration()
+     {
+        let (package, _) = undecodable_declaration("List");
+        let bodies = package
+            .bodies
+            .finishing(crate::analysis::finish_package_body);
+        // The program's own view links the process's clean package, so only
+        // a body's verdict names the record.
+        let compiled = Compiler::default()
+            .compile_source(
+                "def main():\n    var xs: List[Int] = [1]\n    print(len(xs))\n",
+                Path::new("main.mojo"),
+            )
+            .expect("compiles");
+        let error = elaborate_against(&compiled, &bodies).expect_err("a reached body fails");
+        assert_eq!(error.kind, crate::native::mono::MonoErrorKind::Decode);
+        assert!(error.function.is_some(), "{error}");
+        assert!(error.construct.contains("`List`"), "{error}");
+    }
+
     /// A private copy of the bundled package whose declaration record
     /// `name` does not decode, and that record's entry.
     fn undecodable_declaration(name: &str) -> (crate::mir::text::package::Package, usize) {
