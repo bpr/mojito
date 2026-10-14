@@ -155,7 +155,8 @@ import (every compilation that links the bundled library):
   tables (`DiscoveryResult::units`, which builds each unit's nodes from
   the check's facts as the whole program's are): its expression and
   statement nodes, each carrying its own op, type, and attributes as
-  upstream's ops do, and its declarations, beside the facts of the unit's
+  upstream's ops do and encoding only the attributes it has, behind an
+  encoding mask, as an MLIR bytecode op does, and its declarations, beside the facts of the unit's
   own declaration sites. A member's struct's parameter list is not in its
   record: the importer gives it from the struct's declaration record. The
   encoding numbers each occurrence densely within the unit and the

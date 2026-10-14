@@ -12,6 +12,8 @@ use mojito_types::types::{SimdDtype, SimdWidth, Ty};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+mod encoding;
+
 /// Stable identity within one checked program. Unlike a source span this remains
 /// unique for synthesized nodes and for multiple semantic nodes at one location.
 #[derive(
@@ -1229,16 +1231,17 @@ pub struct CheckedTupleUnpackElement {
 /// A node holds its own operation, as an upstream op does: its opcode and
 /// attributes, with each operand the node of a child expression, never a
 /// copy of the child's syntax. Its location is its own occurrence.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+///
+/// It encodes as an MLIR bytecode op does: an encoding mask naming the
+/// attributes it holds, then its operation and location, then those
+/// attributes alone (see `encoding`).
+#[derive(Debug, Clone)]
 pub struct CheckedExpr {
     /// Its index in its tables, which an encoding leaves to its position.
-    #[serde(skip)]
     pub id: CheckedNodeId,
     pub op: CheckedOp,
     pub span: Span,
-    #[serde(with = "mojito_ast::ast::statement_module")]
     pub source: Option<String>,
-    #[serde(with = "mojito_common::token::node_syntax")]
     pub syntax_id: SyntaxId,
     pub ty: Option<Ty>,
     /// Type physically stored at this place. For a reference-valued field this
@@ -1630,17 +1633,15 @@ pub enum CheckedTStringPart {
 /// A statement is an op too: it holds its own operation, with each child
 /// expression its node and each body a list of statement nodes, so control
 /// flow stays structured as upstream's `hlcf` keeps it. Its location is its
-/// own occurrence.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+/// own occurrence. It encodes as [`CheckedExpr`] does, behind an encoding
+/// mask.
+#[derive(Debug, Clone)]
 pub struct CheckedStmt {
     /// Its index in its tables, which an encoding leaves to its position.
-    #[serde(skip)]
     pub id: CheckedStmtId,
     pub op: CheckedStmtOp,
     pub span: Span,
-    #[serde(with = "mojito_ast::ast::statement_module")]
     pub module: Option<String>,
-    #[serde(with = "mojito_common::token::node_syntax")]
     pub syntax_id: SyntaxId,
     /// The binding the statement introduces, or the one an assignment to a
     /// name writes.
@@ -2134,10 +2135,11 @@ pub enum CheckedDeclKind {
     CompileTime,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+/// A declaration the check made. It encodes as [`CheckedExpr`] does,
+/// behind an encoding mask.
+#[derive(Debug, Clone)]
 pub struct CheckedDeclaration {
     /// Its index in its tables, which an encoding leaves to its position.
-    #[serde(skip)]
     pub id: CheckedDeclId,
     pub kind: CheckedDeclKind,
     pub name: String,
@@ -4708,14 +4710,11 @@ fn sorted<V: serde::Serialize, S: serde::Serializer>(
 
 macro_rules! node_facts {
     (
-        facts { $($(#[$doc:meta])* $field:ident: $value:ty => $variant:ident,)* }
-        flags { $($(#[$flag_doc:meta])* $flag:ident => $flag_variant:ident,)* }
+        facts { $($(#[$doc:meta])* $field:ident: $value:ty,)* }
+        flags { $($(#[$flag_doc:meta])* $flag:ident,)* }
     ) => {
         /// Every fact the check recorded at one occurrence, as an op holds
         /// its own attributes.
-        ///
-        /// It encodes as the list of the facts present, so an occurrence
-        /// holding one fact costs that fact alone.
         #[derive(Debug, Clone, Default)]
         pub struct NodeFacts {
             $($(#[$doc])* pub $field: Option<$value>,)*
@@ -4735,108 +4734,72 @@ macro_rules! node_facts {
                 true $(&& self.$field.is_none())* $(&& !self.$flag)*
             }
         }
-
-        /// One fact of a [`NodeFacts`], as it encodes.
-        #[derive(serde::Serialize)]
-        enum NodeFactRef<'a> {
-            $($variant(&'a $value),)*
-            $($flag_variant,)*
-        }
-
-        /// One fact of a [`NodeFacts`], as it decodes.
-        #[derive(serde::Deserialize)]
-        enum NodeFact {
-            $($variant($value),)*
-            $($flag_variant,)*
-        }
-
-        impl serde::Serialize for NodeFacts {
-            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-                let facts = std::iter::empty()
-                    $(.chain(self.$field.as_ref().map(NodeFactRef::$variant)))*
-                    $(.chain(self.$flag.then_some(NodeFactRef::$flag_variant)))*;
-                serializer.collect_seq(facts.collect::<Vec<_>>())
-            }
-        }
-
-        impl<'de> serde::Deserialize<'de> for NodeFacts {
-            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-                let mut facts = Self::default();
-                for fact in <Vec<NodeFact> as serde::Deserialize>::deserialize(deserializer)? {
-                    match fact {
-                        $(NodeFact::$variant(value) => facts.$field = Some(value),)*
-                        $(NodeFact::$flag_variant => facts.$flag = true,)*
-                    }
-                }
-                Ok(facts)
-            }
-        }
     };
 }
 
 node_facts! {
     facts {
         /// The callable a call or name resolved to.
-        overload_target: String => OverloadTarget,
+        overload_target: String,
         /// The base type a `$contextual` leading-dot sentinel resolved to.
-        contextual_base: String => ContextualBase,
-        generic_instantiation: GenericInstantiation => GenericInstantiation,
-        method_instantiation: MethodInstantiation => MethodInstantiation,
+        contextual_base: String,
+        generic_instantiation: GenericInstantiation,
+        method_instantiation: MethodInstantiation,
         /// Caller-substituted loan transfers of a call.
-        call_transfers: Vec<CheckedCallTransfer> => CallTransfers,
-        implicit_conversion: String => ImplicitConversion,
+        call_transfers: Vec<CheckedCallTransfer>,
+        implicit_conversion: String,
         /// The converted-to type of an implicit conversion.
-        implicit_conversion_type: Ty => ImplicitConversionType,
-        conversion_source_borrow: bool => ConversionSourceBorrow,
-        conversion_raises: Ty => ConversionRaises,
-        ty: Ty => Type,
-        binding: mojito_types::origin::OwnerId => Binding,
+        implicit_conversion_type: Ty,
+        conversion_source_borrow: bool,
+        conversion_raises: Ty,
+        ty: Ty,
+        binding: mojito_types::origin::OwnerId,
         /// The binding a declaring statement introduces.
-        statement_binding: mojito_types::origin::OwnerId => StatementBinding,
+        statement_binding: mojito_types::origin::OwnerId,
         /// A nested declaration's explicit captures.
-        captures: Vec<CheckedCapture> => Captures,
-        comprehension_bindings: Vec<CheckedComprehensionBinding> => ComprehensionBindings,
-        place_ty: Ty => PlaceType,
-        binding_ty: Ty => BindingType,
-        effects: EffectFacts => Effects,
-        selected_call: Box<CheckedCallContract> => SelectedCall,
-        subscript_descriptor: (Vec<Option<mojito_types::types::SliceKind>>, bool) => SubscriptDescriptor,
-        iteration_protocol: Box<IterationProtocol> => IterationProtocol,
-        simd_construction: (SimdDtype, SimdWidth) => SimdConstruction,
+        captures: Vec<CheckedCapture>,
+        comprehension_bindings: Vec<CheckedComprehensionBinding>,
+        place_ty: Ty,
+        binding_ty: Ty,
+        effects: EffectFacts,
+        selected_call: Box<CheckedCallContract>,
+        subscript_descriptor: (Vec<Option<mojito_types::types::SliceKind>>, bool),
+        iteration_protocol: Box<IterationProtocol>,
+        simd_construction: (SimdDtype, SimdWidth),
         /// The one operation record of the occurrence.
-        adjustment: Box<SemanticAdjustment> => Adjustment,
-        parameterized_method_call: Vec<mojito_types::types::ParamDecl> => ParameterizedMethodCall,
-        tuple_unpack_plan: Vec<CheckedTupleUnpackElement> => TupleUnpackPlan,
-        interior_reference: mojito_types::origin::OriginPlace => InteriorReference,
-        interior_invalidations: Vec<InteriorInvalidation> => InteriorInvalidations,
+        adjustment: Box<SemanticAdjustment>,
+        parameterized_method_call: Vec<mojito_types::types::ParamDecl>,
+        tuple_unpack_plan: Vec<CheckedTupleUnpackElement>,
+        interior_reference: mojito_types::origin::OriginPlace,
+        interior_invalidations: Vec<InteriorInvalidation>,
         /// A reference read as a value: whether it is writable.
-        reference_value_use: bool => ReferenceValueUse,
-        rebind_assertion: RebindAssertion => RebindAssertion,
+        reference_value_use: bool,
+        rebind_assertion: RebindAssertion,
         /// What each bracket argument of a call or type application
         /// resolved to, in source order: `Some` for a type-shaped one or a
         /// value-shaped one the check bound to a type or an origin
         /// ([`CheckedParamArg::Attribute`]), `None` for a value-shaped one
         /// that is a run-time value, which is a node of its own.
-        parameter_attributes: Vec<Option<mojito_types::types::TyArg>> => ParameterAttributes,
+        parameter_attributes: Vec<Option<mojito_types::types::TyArg>>,
         /// The type or origin a value-shaped bracket argument resolved to
         /// when the check bound it, which the call's `parameter_attributes`
         /// carries in its place.
-        argument_attribute: mojito_types::types::TyArg => ArgumentAttribute,
+        argument_attribute: mojito_types::types::TyArg,
         /// The type a type in value position resolved to.
-        type_operand: Ty => TypeOperand,
+        type_operand: Ty,
         /// The dunder each link of a chained comparison selected, in link
         /// order.
-        compare_links: Vec<CheckedCompareLink> => CompareLinks,
+        compare_links: Vec<CheckedCompareLink>,
     }
     flags {
-        explicit_destroy_call => ExplicitDestroyCall,
-        copy_place_value_use => CopyPlaceValueUse,
-        call_place_use => CallPlaceUse,
-        borrowed_read_call_place => BorrowedReadCallPlace,
-        read_temporary_argument => ReadTemporaryArgument,
-        forwarded_argument => ForwardedArgument,
-        implicitly_copied_consuming_receiver => ImplicitlyCopiedConsumingReceiver,
-        truthiness_condition => TruthinessCondition,
+        explicit_destroy_call,
+        copy_place_value_use,
+        call_place_use,
+        borrowed_read_call_place,
+        read_temporary_argument,
+        forwarded_argument,
+        implicitly_copied_consuming_receiver,
+        truthiness_condition,
     }
 }
 

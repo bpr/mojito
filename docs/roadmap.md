@@ -5692,20 +5692,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R762.
   - Model: Fable, Not Planned.
 
-- [ ] **R632 A package unit's node encodes every attribute slot, where
-  upstream's op encodes only the attributes it has**
-
-  Each `CheckedExpr` writes all its attribute fields, empty or not, so
-  the std package's units are 1.04 MB, from 0.88 MB when a unit wrote
-  only the facts present.
-  - The lever: a node encodes its attributes as the list of those
-    present, as `NodeFacts` does.
-  - Done when the units are no larger than 0.88 MB and decoding all of
-    them is no slower.
-  - Found while landing R616 (2026-10-11).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R624 The check writes fact records for a later pass to gather into
   nodes, where upstream's parser emits typed ops as it checks**
 

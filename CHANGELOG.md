@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Each checked expression, statement, and declaration node in a package
+  unit encodes as an MLIR bytecode op does: an encoding mask naming the
+  attributes it holds, then its parts, then those attributes alone,
+  rather than every attribute slot, empty or not (R632). The std
+  package's units shrink from 1.04 MB to 0.87 MB (the package 1.33 →
+  1.16 MB) and decode in 19.5 ms rather than 21 ms. `NodeFacts` loses its
+  unused encoding. The bundled package format is 49.
 - A package unit no longer records its struct's `Origin` and `OriginSet`
   parameter names, and the checked program no longer collects them
   (`CheckedProgram::origin_parameters_at`, `origin_parameter_names`), since

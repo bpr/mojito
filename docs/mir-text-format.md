@@ -924,10 +924,10 @@ lowering unit, one record per library declaration, and one module table
 holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 48`.
+MLIR bytecode throughout. The format line is `mojito-package 49`.
 
 ```text
-mojito-package 48
+mojito-package 49
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode, then the type section>
@@ -1054,7 +1054,7 @@ mojito-package 48
   and every checked site's and default wrapper's module, is a file id)
   and of its `checked_unit::CheckedUnit`. That holds the lowering unit's
   kind (a struct method's with its position and the symbol it lowers
-  to), a member's struct's `Origin`/`OriginSet` parameter names, a
+  to), a
   wrapper's or trait default's declaration less its body, and the unit's
   `CheckedTables` (format 37): its checked expression and statement
   nodes and its declarations, each node holding its own op, type, and
@@ -1064,7 +1064,20 @@ mojito-package 48
   it. The nodes are a module `def`, a trait default's declaration, a
   module constant, or a struct shell holding only its name and the one
   method (none for a wrapper). A node's identity is its position, given
-  back on decode. No statement or expression is encoded as syntax: a
+  back on decode. Each expression, statement, and declaration node
+  encodes as an MLIR bytecode op does behind its `OpEncodingMask`
+  (`checked::encoding`, format 49): an encoding mask (a `u16` varint),
+  then its always-present parts, then only the attributes the mask
+  names, in the mask's bit order; an absent attribute (`None`, empty, or
+  default effects) writes nothing. An expression's parts are its op,
+  span, source, and syntax id; mask bits 0–1 hold its value category,
+  and bits 2–10 name `ty`, `place_ty`, `binding`, `adjustments`,
+  `binding_ty`, `effects`, `contextual_base`, `comprehension_bindings`,
+  and `call_transfers`, most frequent first, so a common node's mask is
+  one byte. A statement's parts are its op, span, module, and syntax id,
+  bits 0–2 naming `binding`, `declaration`, and `binding_ty`; a
+  declaration's are its kind, name, and location, bits 0–3 naming
+  `binding`, `children`, `ty`, and `captures`. No statement or expression is encoded as syntax: a
   declaration op encodes its symbol, its registered name for a method,
   and its checked signature (its compile-time parameters, each declared
   parameter's type, its result type, and its effect), and a struct shell
