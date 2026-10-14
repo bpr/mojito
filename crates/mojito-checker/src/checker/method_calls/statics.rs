@@ -14,19 +14,21 @@ impl Checker {
     /// allocation spelling, so user code allocates through `std.memory`.
     pub(in crate::checker) fn infer_static_method(
         &self,
+        receiver: &SourceSpan,
         tyname: &str,
         targs: &[mojito_ast::ast::ParamArg],
         method: &str,
         args: &[Expr],
-        source: Option<&str>,
     ) -> Result<Ty, TypeError> {
+        let source = receiver.source.as_deref();
         if !matches!(tyname, "UnsafePointer" | "Pointer") {
             return Err(TypeError::NoSuchMethod {
                 object_type: format!("{tyname}[…]"),
                 method: method.to_string(),
             });
         }
-        let ptr_ty = self.pointer_type(tyname, targs)?;
+        let (ptr_ty, attributes) = self.pointer_type(tyname, targs)?;
+        self.record_bracket_attributes(receiver.clone(), attributes);
         match method {
             "alloc" | "alloc_aligned" => {
                 // Sourceless expressions come from the stage-composed test
@@ -101,8 +103,11 @@ impl Checker {
     pub(in crate::checker) fn infer_type_receiver_instance_call(
         &self,
         span: SourceSpan,
-        sname: &str,
-        struct_targs: &[mojito_ast::ast::ParamArg],
+        (sname, struct_targs, application): (
+            &str,
+            &[mojito_ast::ast::ParamArg],
+            Option<SourceSpan>,
+        ),
         method: &str,
         call: MethodCallArguments<'_>,
     ) -> Result<Ty, TypeError> {
@@ -127,7 +132,15 @@ impl Checker {
                 self.partition_struct_origin_args(sname, &info.source_params, struct_targs)?;
             self.resolve_use_params(sname, &info.decls, &partitioned.forwarded, &[], &[])
                 .ok()
-                .map(|(_, tyargs)| Self::struct_instance_type(sname, tyargs))
+                .map(|bound| {
+                    if let Some(application) = application {
+                        self.record_bracket_attributes(
+                            application,
+                            partitioned.brackets.scatter(bound.attributes),
+                        );
+                    }
+                    Self::struct_instance_type(sname, bound.arguments)
+                })
         };
         let compatible = match (actual.kind(), expected.as_ref().map(Ty::kind)) {
             (TyKind::Struct(name, _), None) => name == sname,
@@ -191,10 +204,23 @@ impl Checker {
             .partition_struct_origin_args(sname, &info.source_params, struct_targs)
             .and_then(|partitioned| {
                 self.resolve_use_params(sname, &info.decls, &partitioned.forwarded, &[], &[])
+                    .map(|bound| (bound, partitioned.brackets))
             });
-        if let Ok((_, arguments)) = instance
-            && !arguments.is_empty()
-        {
+        let Ok((
+            BoundParameters {
+                arguments,
+                attributes,
+                ..
+            },
+            brackets,
+        )) = instance
+        else {
+            return;
+        };
+        if matches!(object.kind, ExprKind::TypeApply { .. }) {
+            self.record_bracket_attributes(object.source_span(), brackets.scatter(attributes));
+        }
+        if !arguments.is_empty() {
             self.record_at(object.source_span()).ty =
                 Some(TyKind::Struct(sname.to_string(), arguments).into());
         }
@@ -279,17 +305,23 @@ impl Checker {
                 .kw_variadic
                 .as_ref()
                 .map(|ty| substitute_at(ty, info, &tyargs));
-            let Ok((params, variadic, kw_variadic, method_subst, method_arguments)) = self
-                .instantiate_method_generics(
-                    &format!("{sname}.{method}"),
-                    sig,
-                    &receiver_params,
-                    receiver_variadic.as_ref(),
-                    receiver_kw_variadic.as_ref(),
-                    param_args,
-                    args,
-                    kwargs,
-                )
+            let Ok((
+                params,
+                variadic,
+                kw_variadic,
+                method_subst,
+                method_arguments,
+                bracket_attributes,
+            )) = self.instantiate_method_generics(
+                &format!("{sname}.{method}"),
+                sig,
+                &receiver_params,
+                receiver_variadic.as_ref(),
+                receiver_kw_variadic.as_ref(),
+                param_args,
+                args,
+                kwargs,
+            )
             else {
                 continue;
             };
@@ -378,6 +410,7 @@ impl Checker {
                     declared_return: None,
                     declared_params: sig.params.clone(),
                     nested_origins: sig.nested_origins,
+                    bracket_attributes,
                 });
             }
         }
@@ -398,6 +431,7 @@ impl Checker {
                 }
                 .to_string(),
             })?;
+        self.record_bracket_attributes(span.clone(), selected.bracket_attributes.clone());
         if parameterized_syntax {
             self.record_at(span.clone()).parameterized_method_call =
                 Some(selected.param_decls.clone());
@@ -410,7 +444,7 @@ impl Checker {
                     self.structs.get(sname).and_then(|info| {
                         self.resolve_use_params(sname, &info.decls, forwarded, &[], &[])
                             .ok()
-                            .map(|(_, tyargs)| tyargs)
+                            .map(|bound| bound.arguments)
                     })
                 })
                 .flatten()
@@ -443,8 +477,9 @@ impl Checker {
         // An explicit receiver instance (`Dict[String, Int].fromkeys(...)`)
         // records its instantiation.
         if !struct_targs.is_empty()
-            && let Ok((_, tyargs)) =
-                self.resolve_use_params(sname, &info.decls, forwarded, &[], &[])
+            && let Ok(BoundParameters {
+                arguments: tyargs, ..
+            }) = self.resolve_use_params(sname, &info.decls, forwarded, &[], &[])
         {
             self.record_struct_instantiation(sname, &tyargs, span.source.as_deref());
         }
@@ -678,8 +713,8 @@ impl Checker {
                 actuals.push(self.infer(&kwargs[position].value)?);
             }
         }
-        let (_, tyargs) =
-            self.resolve_use_params(sname, decls, struct_targs, &patterns, &actuals)?;
-        Ok(tyargs)
+        Ok(self
+            .resolve_use_params(sname, decls, struct_targs, &patterns, &actuals)?
+            .arguments)
     }
 }

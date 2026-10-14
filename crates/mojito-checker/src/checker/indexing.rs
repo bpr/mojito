@@ -853,7 +853,7 @@ impl Checker {
                 .as_ref()
                 .map(|parameter| substitute(parameter, &receiver_substitution));
             for (value_keyword, arguments, keywords) in shapes {
-                let Ok((params, variadic, kw_variadic, _, method_arguments)) = self
+                let Ok((params, variadic, kw_variadic, _, method_arguments, _)) = self
                     .instantiate_method_generics(
                         &format!("{name}.__setitem__"),
                         signature,
@@ -2096,7 +2096,7 @@ impl Checker {
         param_args: &[mojito_ast::ast::ParamArg],
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
-    ) -> Option<Result<ParamExpr, TypeError>> {
+    ) -> Option<Result<(ParamExpr, BracketAttributes), TypeError>> {
         let ExprKind::Member { object, field } = &callee.kind else {
             return None;
         };
@@ -2123,6 +2123,7 @@ impl Checker {
             }));
         }
         Some(self.dtype_from_arg(argument).and_then(|dtype| {
+            let attributes = vec![dtype_attribute(argument, &dtype)];
             let dtype = match dtype {
                 SimdDtype::Known(dtype) => self
                     .param_context
@@ -2132,6 +2133,7 @@ impl Checker {
             };
             self.param_context
                 .answer_builtin_applications(&self.param_context.dtype_float_query(field, &dtype))
+                .map(|value| (value, attributes))
                 .map_err(|error| TypeError::BadCall {
                     func,
                     reason: error.to_string(),

@@ -11,7 +11,16 @@ use mojito_types::types::{FuncTy, GenericFuncTy};
 /// A call typed against one callable: its result, rank, error type, the
 /// erased-origin bindings, and how many arguments with a lane it binds to a
 /// bare type parameter (`CallableOverloadMatch::simd_erasures`).
-type InferredCall = (Ty, usize, Option<Ty>, HashMap<usize, bool>, usize);
+/// A typed call: its result, overload rank, raised error, bool origin
+/// bindings, SIMD erasures, and what each of its bracket arguments bound to.
+type InferredCall = (
+    Ty,
+    usize,
+    Option<Ty>,
+    HashMap<usize, bool>,
+    usize,
+    BracketAttributes,
+);
 
 impl Checker {
     fn erased_origin_constraint_environment(
@@ -148,13 +157,14 @@ impl Checker {
             // initializer.
             _ if args.is_empty()
                 && matches!(kwargs, [keyword] if keyword.name == "copy")
-                && let Some(ty) = self.builtin_copy_constructed(name, param_args) =>
+                && let Some((ty, attributes)) = self.builtin_copy_constructed(name, param_args) =>
             {
+                self.record_bracket_attributes(span.clone(), attributes);
                 self.infer_builtin_copy_construction(span, name, &ty, &kwargs[0])
             }
             // `SIMD[DType.bool, N](fill=b)`: a mask's splat takes its one
             // lane by keyword.
-            "SIMD" if !kwargs.is_empty() => self.infer_simd_fill(param_args, args, kwargs),
+            "SIMD" if !kwargs.is_empty() => self.infer_simd_fill(&span, param_args, args, kwargs),
             _ if !kwargs.is_empty() => Err(TypeError::BadCall {
                 func: name.to_string(),
                 reason: "keyword arguments are not supported here".to_string(),
@@ -174,6 +184,10 @@ impl Checker {
             }
             "size_of" => {
                 let ty = self.size_of_operand(param_args, args)?;
+                self.record_bracket_attributes(
+                    span.clone(),
+                    types_attributes(param_args, std::slice::from_ref(&ty)),
+                );
                 self.record_at(span).adjustment = Some(Box::new(
                     mojito_checked::checked::SemanticAdjustment::SizeOf { ty },
                 ));
@@ -200,6 +214,10 @@ impl Checker {
                     });
                 }
                 let ty = self.type_param_argument(&param_args[0], "_unqualified_type_name")?;
+                self.record_bracket_attributes(
+                    span.clone(),
+                    types_attributes(param_args, std::slice::from_ref(&ty)),
+                );
                 self.record_at(span).adjustment = Some(Box::new(
                     mojito_checked::checked::SemanticAdjustment::TypeName {
                         text: mojito_symbol::symbol::unqualified_instance_name(&ty),
@@ -298,7 +316,7 @@ impl Checker {
             "Float64" => self.infer_conversion(&span, Ty::float64(), args),
             "Bool" => self.infer_conversion(&span, Ty::bool(), args),
             "divmod" => self.infer_divmod(args),
-            "SIMD" => self.infer_simd_construction(param_args, args),
+            "SIMD" => self.infer_simd_construction(&span, param_args, args),
             _ if param_args.is_empty() && self.vector_alias(name).is_some() => {
                 self.infer_vector_alias_construction(name, args)
             }
@@ -311,12 +329,14 @@ impl Checker {
                     });
                 }
                 let dtype = self.dtype_from_arg(&param_args[0])?;
+                self.record_bracket_attributes(span, vec![dtype_attribute(&param_args[0], &dtype)]);
                 self.check_simd_args(&dtype, &SimdWidth::Known(1), args)?;
                 simd_of(dtype, SimdWidth::Known(1))
             }
-            "List" => self.infer_list_construction(param_args, args),
+            "List" => self.infer_list_construction(&span, param_args, args),
             "Set" => {
-                let collection = self.set_type(param_args)?;
+                let (collection, attributes) = self.set_type(param_args)?;
+                self.record_bracket_attributes(span, attributes);
                 let element = set_element(&collection)
                     .expect("Set type helper returns a nominal Set")
                     .clone();
@@ -342,10 +362,12 @@ impl Checker {
                         got: args.len(),
                     });
                 }
-                self.dict_type(param_args)
+                let (dict, attributes) = self.dict_type(param_args)?;
+                self.record_bracket_attributes(span, attributes);
+                Ok(dict)
             }
             "Tuple" => {
-                let tuple = self.infer_tuple_construction(param_args, args)?;
+                let tuple = self.infer_tuple_construction(&span, param_args, args)?;
                 if let TyKind::Struct(target, _) = tuple.kind()
                     && target != mojito_types::types::TUPLE_TYPE_NAME
                 {
@@ -398,7 +420,7 @@ impl Checker {
         candidate: &Ty,
         signature: Option<&CallableOriginSignature>,
     ) -> CandidateOutcome {
-        let Ok((prepared, ordinary_param_args)) = self.prepare_callable_specialization(
+        let Ok((prepared, ordinary_param_args, _)) = self.prepare_callable_specialization(
             call.name,
             call.param_args,
             candidate.clone(),
@@ -414,7 +436,7 @@ impl Checker {
             call.args,
             call.kwargs,
         ) {
-            Ok((ret, score, error, bool_bindings, simd_erasures)) => {
+            Ok((ret, score, error, bool_bindings, simd_erasures, _)) => {
                 let Some(target) = callable_lowered_name(call.name, candidate) else {
                     return CandidateOutcome::Rejected;
                 };
@@ -653,15 +675,14 @@ impl Checker {
         &self,
         name: &str,
         param_args: &[mojito_ast::ast::ParamArg],
-    ) -> Option<Ty> {
+    ) -> Option<(Ty, BracketAttributes)> {
         match name {
-            "SIMD" => self
-                .simd_dims(param_args)
-                .ok()
-                .and_then(|(dtype, width)| simd_of(dtype, width).ok()),
-            "Int" | "UInt" | "Bool" | "Float64" if param_args.is_empty() => scalar_type_name(name),
+            "SIMD" => self.simd_type(param_args).ok(),
+            "Int" | "UInt" | "Bool" | "Float64" if param_args.is_empty() => {
+                scalar_type_name(name).map(|ty| (ty, Vec::new()))
+            }
             _ if param_args.is_empty() => {
-                Dtype::from_scalar_alias(name).map(|dtype| simd_ty(dtype, 1))
+                Dtype::from_scalar_alias(name).map(|dtype| (simd_ty(dtype, 1), Vec::new()))
             }
             _ => None,
         }
@@ -782,14 +803,14 @@ impl Checker {
                         .get(selected_index)
                         .map(|selected| (selected_index, selected))
                     {
-                        let (prepared, ordinary_param_args) = self
+                        let (prepared, ordinary_param_args, forwarded) = self
                             .prepare_callable_specialization(
                                 name,
                                 param_args,
                                 selected.clone(),
                                 origin_signatures.get(index),
                             )?;
-                        self.infer_callable_ty(
+                        let (.., attributes) = self.infer_callable_ty(
                             &span,
                             name,
                             prepared.clone(),
@@ -797,6 +818,7 @@ impl Checker {
                             args,
                             kwargs,
                         )?;
+                        self.record_bracket_attributes(span.clone(), forwarded.scatter(attributes));
                         self.record_call_environment_effects(
                             span.clone(),
                             &prepared,
@@ -918,7 +940,7 @@ impl Checker {
             };
             return self.infer_element_call(span, &receiver, &ty, &indices, args, kwargs);
         }
-        let (ty, ordinary_param_args) =
+        let (ty, ordinary_param_args, forwarded) =
             self.prepare_callable_specialization(name, param_args, ty, origin_signatures.first())?;
         let indirect_target = match ty.kind() {
             TyKind::Struct(..) => self.indirect_callable_target(&ty),
@@ -939,8 +961,9 @@ impl Checker {
                 },
             ));
         }
-        let (ret, _, error, bool_bindings, _) =
+        let (ret, _, error, bool_bindings, _, attributes) =
             self.infer_callable_ty(&span, name, ty.clone(), &ordinary_param_args, args, kwargs)?;
+        self.record_bracket_attributes(span.clone(), forwarded.scatter(attributes));
         if let Some(signature) = origin_signatures.first() {
             self.validate_erased_origin_constraint(name, signature, &bool_bindings)?;
         }
@@ -1165,7 +1188,7 @@ impl Checker {
                 self.clear_fact(&span, |facts| facts.overload_target.take());
             }
         }
-        let (ret, _, error, _, _) =
+        let (ret, _, error, ..) =
             self.infer_callable_ty(&span, "<element>", callable.clone(), &[], args, kwargs)?;
         let carried = contract_transfer_effects(&callable);
         if !carried.is_empty() {
@@ -1524,6 +1547,7 @@ impl Checker {
             error,
             bool_bindings,
             0,
+            Vec::new(),
         ))
     }
 
@@ -1643,8 +1667,11 @@ impl Checker {
                 arg_tys.push(actual.clone());
             }
         }
-        let (subst, tyargs) =
-            self.resolve_use_params(name, decls, param_args, &use_params, &arg_tys)?;
+        let BoundParameters {
+            subst,
+            arguments: tyargs,
+            attributes,
+        } = self.resolve_use_params(name, decls, param_args, &use_params, &arg_tys)?;
         let values = Self::value_argument_environment(decls, &tyargs);
         let resolve = |ty: &Ty| {
             let expanded = super::generics::expand_solved_packs(ty, decls, &tyargs);
@@ -1850,6 +1877,7 @@ impl Checker {
             error,
             bool_bindings,
             simd_erasures,
+            attributes,
         ))
     }
 
@@ -2144,8 +2172,10 @@ impl Checker {
         param_args: &[mojito_ast::ast::ParamArg],
         args: &[Expr],
     ) -> Result<Ty, TypeError> {
-        let values = match param_args {
-            [argument] if args.is_empty() => self.value_pack_spread(argument),
+        let (argument, values) = match param_args {
+            [argument] if args.is_empty() => self
+                .value_pack_spread(argument)
+                .map(|values| (argument, values)),
             _ => None,
         }
         .ok_or_else(|| {
@@ -2153,6 +2183,13 @@ impl Checker {
                 "'{PARAM_LIST_ADDRESS}' takes one value pack spread and no arguments"
             ))
         })?;
+        self.record_bracket_attributes(
+            span.clone(),
+            vec![bracket_attribute(
+                argument,
+                &TyArg::Val(CtValue::Expr(values.clone())),
+            )],
+        );
         let element = match values.meta() {
             mojito_types::param_expr::MetaTy::ParamList(element) => element.as_value().cloned(),
             _ => None,

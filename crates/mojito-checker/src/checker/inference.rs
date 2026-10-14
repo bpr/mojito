@@ -416,7 +416,6 @@ impl Checker {
                 self.record_literal_materializations(expr, &literal_ty, ty)?;
             }
             self.record_at(expr.source_span()).ty = Some(ty.clone());
-            self.record_parameter_attributes(expr);
             self.record_linear_temporary(expr, ty);
             self.materialize_parameter_read(expr, ty);
             if let Some(mojito_checked::checked::SemanticAdjustment::ReferenceResult { reference }) =
@@ -441,7 +440,7 @@ impl Checker {
                 // parameter expressions a generator names, which the
                 // elaborator closes per instance.
                 let dimensions = if name == "SIMD" {
-                    self.simd_dims(param_args).ok().map(|(dtype, width)| {
+                    self.simd_dims(param_args).ok().map(|(dtype, width, _)| {
                         let width = if width.is_inferred() {
                             SimdWidth::Known(i64::try_from(args.len()).unwrap_or(0))
                         } else {
@@ -880,10 +879,12 @@ impl Checker {
                 {
                     return element;
                 }
-                if let Some(value) = self.dtype_float_query(callee, param_args, args, kwargs) {
+                if let Some(query) = self.dtype_float_query(callee, param_args, args, kwargs) {
+                    let (value, attributes) = query?;
+                    self.record_bracket_attributes(expr.source_span(), attributes);
                     self.record_at(expr.source_span()).adjustment = Some(Box::new(
                         mojito_checked::checked::SemanticAdjustment::ParamValue {
-                            value: value?,
+                            value,
                             materialized: None,
                         },
                     ));
@@ -949,7 +950,7 @@ impl Checker {
                     );
                 }
                 let target = self.indirect_callable_target(&callable);
-                let (ret, _, error, _, _) = self.infer_callable_ty(
+                let (ret, _, error, _, _, attributes) = self.infer_callable_ty(
                     &expr.source_span(),
                     "<callable>",
                     callable.clone(),
@@ -957,6 +958,7 @@ impl Checker {
                     args,
                     kwargs,
                 )?;
+                self.record_bracket_attributes(expr.source_span(), attributes);
                 // Replay the effects the callable VALUE's type carries, and
                 // a callable struct's `Struct.__call__` entry with the
                 // callee expression as the receiver actual.
@@ -1555,9 +1557,14 @@ impl Checker {
                     reason: "keyword arguments are not supported".to_string(),
                 });
             }
+            let record = |types: &[Ty]| {
+                self.record_bracket_attributes(span.clone(), types_attributes(param_args, types));
+            };
             match field {
                 "isa" => {
-                    let (index, _) = self.variant_alternative(alternatives, param_args)?;
+                    let (index, alternative) =
+                        self.variant_alternative(alternatives, param_args)?;
+                    record(std::slice::from_ref(&alternative));
                     if !args.is_empty() {
                         return Err(TypeError::ArityMismatch {
                             name: "Variant.isa".to_string(),
@@ -1579,6 +1586,7 @@ impl Checker {
                 "unsafe_get" => {
                     let (index, alternative) =
                         self.variant_alternative(alternatives, param_args)?;
+                    record(std::slice::from_ref(&alternative));
                     if !args.is_empty() {
                         return Err(TypeError::ArityMismatch {
                             name: "Variant.unsafe_get".to_string(),
@@ -1600,6 +1608,7 @@ impl Checker {
                 "set" => {
                     let (index, alternative) =
                         self.variant_alternative(alternatives, param_args)?;
+                    record(std::slice::from_ref(&alternative));
                     if args.len() != 1 {
                         return Err(TypeError::ArityMismatch {
                             name: "Variant.set".to_string(),
@@ -1630,6 +1639,7 @@ impl Checker {
                 "unwrap" | "unsafe_unwrap" => {
                     let (index, alternative) =
                         self.variant_alternative(alternatives, param_args)?;
+                    record(std::slice::from_ref(&alternative));
                     if !args.is_empty() {
                         return Err(TypeError::ArityMismatch {
                             name: format!("Variant.{field}"),
@@ -1701,6 +1711,7 @@ impl Checker {
                     }
                     let input = self.type_param_argument(&param_args[0], "Variant.replace")?;
                     let output = self.type_param_argument(&param_args[1], "Variant.replace")?;
+                    record(&[input.clone(), output.clone()]);
                     let input_index = self
                         .variant_index(alternatives, &input, |alternative| alternative == &input)
                         .ok_or_else(|| TypeError::TypeMismatch {
@@ -2565,7 +2576,9 @@ impl Checker {
                 got: param_args.len(),
             });
         }
-        let element = self.tuple_element_types(param_args)?.remove(0);
+        let (mut elements, attributes) = self.tuple_element_types(param_args)?;
+        let element = elements.remove(0);
+        self.record_bracket_attributes(span.clone(), attributes);
         match args {
             [] => {}
             [initializer] => {
@@ -2601,11 +2614,13 @@ impl Checker {
 
     pub(super) fn infer_list_construction(
         &self,
+        span: &SourceSpan,
         param_args: &[mojito_ast::ast::ParamArg],
         args: &[Expr],
     ) -> Result<Ty, TypeError> {
         if !param_args.is_empty() {
-            let collection = self.list_type(param_args)?;
+            let (collection, attributes) = self.list_type(param_args)?;
+            self.record_bracket_attributes(span.clone(), attributes);
             let elem = list_element(&collection)
                 .expect("List type construction has one type argument")
                 .clone();
@@ -2640,6 +2655,7 @@ impl Checker {
     /// `Tuple[T1, ..., Tn](args...)` (fixed, element-wise checked).
     pub(super) fn infer_tuple_construction(
         &self,
+        span: &SourceSpan,
         param_args: &[mojito_ast::ast::ParamArg],
         args: &[Expr],
     ) -> Result<Ty, TypeError> {
@@ -2650,7 +2666,8 @@ impl Checker {
                 .collect::<Result<Vec<_>, _>>()
                 .map(nominal_tuple_type);
         }
-        let tuple = self.tuple_type(param_args)?;
+        let (tuple, attributes) = self.tuple_type(param_args)?;
+        self.record_bracket_attributes(span.clone(), attributes);
         // `Tuple[T0, ...]()` is the default construction: the specialization's
         // own `Defaultable` initializer once the discovery pass has
         // materialized it, and the canonical type before, as the request.
@@ -2713,7 +2730,8 @@ impl Checker {
                     got: args.len(),
                 });
             }
-            let variant = self.variant_type(param_args)?;
+            let (variant, attributes) = self.variant_type(param_args)?;
+            self.record_bracket_attributes(span.clone(), attributes);
             let TyKind::Variant(alternatives) = variant.kind() else {
                 return Err(TypeError::InvariantViolation(
                     "Variant type construction did not produce a variant".to_string(),
@@ -2754,7 +2772,8 @@ impl Checker {
                 got: args.len(),
             });
         }
-        let variant = self.variant_type(param_args)?;
+        let (variant, attributes) = self.variant_type(param_args)?;
+        self.record_bracket_attributes(span.clone(), attributes);
         let TyKind::Variant(alternatives) = variant.kind() else {
             return Err(TypeError::InvariantViolation(
                 "Variant type construction did not produce a variant".to_string(),

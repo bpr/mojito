@@ -1495,7 +1495,7 @@ impl Checker {
         patterns.push(func.ret.clone());
         let mut actuals = expected_params.clone();
         actuals.push((*expected_ret).clone());
-        let Ok((subst, _)) =
+        let Ok(BoundParameters { subst, .. }) =
             self.resolve_use_params("<generic callable>", decls, &[], &patterns, &actuals)
         else {
             return false;
@@ -2720,6 +2720,8 @@ struct MethodCallResolution {
     declared_params: Vec<Ty>,
     /// See [`MethodSig::nested_origins`].
     nested_origins: NestedOrigins,
+    /// What each of the call's bracket arguments bound to.
+    bracket_attributes: BracketAttributes,
 }
 
 impl MethodCallResolution {
@@ -2934,7 +2936,17 @@ struct StructDeclaration<'a> {
     decorators: &'a [mojito_ast::ast::Decorator],
 }
 
-type MethodInstantiation = (Vec<Ty>, Option<Ty>, Option<Ty>, TySubst, Vec<TyArg>);
+/// A method's own parameters instantiated at one call: its parameter,
+/// collector, and keyword-collector types, the substitution, its own
+/// arguments, and what each of the call's bracket arguments bound to.
+type MethodInstantiation = (
+    Vec<Ty>,
+    Option<Ty>,
+    Option<Ty>,
+    TySubst,
+    Vec<TyArg>,
+    BracketAttributes,
+);
 
 struct MethodCallScore {
     rank: usize,
@@ -2968,6 +2980,7 @@ struct SubscriptResolution {
 
 type SplitCallableSpecialization = (
     Vec<mojito_ast::ast::ParamArg>,
+    ForwardedBrackets,
     Vec<(Vec<usize>, mojito_types::origin::Origin)>,
     HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
 );
@@ -3002,6 +3015,10 @@ mod operators;
 mod iteration;
 
 mod type_resolution;
+use type_resolution::{
+    BoundParameters, BracketAttributes, ForwardedBrackets, bracket_attribute, dtype_attribute,
+    types_attributes,
+};
 
 mod constraints;
 

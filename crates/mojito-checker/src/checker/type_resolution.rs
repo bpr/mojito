@@ -22,6 +22,113 @@ pub(super) fn reject_stored_callable_type(ty: &Ty, position: &str) -> Result<(),
     Ok(())
 }
 
+/// What each bracket argument of one application bound to, in source
+/// order: `Some` for an argument with no run-time form (a type, an origin,
+/// or a compile-time value), as upstream's op carries each argument as the
+/// parameter attribute its binding produced.
+pub(super) type BracketAttributes = Vec<Option<TyArg>>;
+
+/// What [`Checker::resolve_use_params`] bound a use site's parameters to:
+/// the type substitution, the full argument list in declaration order (the
+/// identity), and each source bracket argument's attribute.
+pub(super) struct BoundParameters {
+    pub(super) subst: TySubst,
+    pub(super) arguments: Vec<TyArg>,
+    pub(super) attributes: BracketAttributes,
+}
+
+/// The attribute bracket argument `argument` carries once binding resolved
+/// it to `bound`: a type-shaped argument always has one, and a
+/// value-shaped one only when it bound to a type or an origin, a run-time
+/// value having none.
+pub(super) fn bracket_attribute(
+    argument: &mojito_ast::ast::ParamArg,
+    bound: &TyArg,
+) -> Option<TyArg> {
+    use mojito_ast::ast::ParamArg;
+    match argument {
+        ParamArg::Named { value, .. } => bracket_attribute(value, bound),
+        ParamArg::Type(_) => Some(bound.clone()),
+        ParamArg::Value(_) => {
+            matches!(bound, TyArg::Ty(_) | TyArg::Origin(_)).then(|| bound.clone())
+        }
+    }
+}
+
+/// The attributes of bracket arguments `args` that each bound to the type
+/// beside it in `types`.
+pub(super) fn types_attributes(
+    args: &[mojito_ast::ast::ParamArg],
+    types: &[Ty],
+) -> BracketAttributes {
+    args.iter()
+        .zip(types)
+        .map(|(argument, ty)| bracket_attribute(argument, &TyArg::Ty(ty.clone())))
+        .collect()
+}
+
+/// The attribute of a dtype bracket argument that bound to `dtype`.
+pub(super) fn dtype_attribute(
+    argument: &mojito_ast::ast::ParamArg,
+    dtype: &SimdDtype,
+) -> Option<TyArg> {
+    bracket_attribute(
+        argument,
+        &TyArg::Val(match dtype {
+            SimdDtype::Known(dtype) => CtValue::Dtype(*dtype),
+            SimdDtype::Expr(expr) => CtValue::Expr(expr.clone()),
+        }),
+    )
+}
+
+/// Where the arguments a partition forwards to a binder sit in the source
+/// bracket list, beside the attribute each argument it kept back (an
+/// origin) bound to: the binder's attributes, over the forwarded list,
+/// scatter back into source order.
+#[derive(Clone)]
+pub(super) struct ForwardedBrackets {
+    positions: Vec<usize>,
+    kept: BracketAttributes,
+}
+
+impl ForwardedBrackets {
+    /// Every argument of a `len`-long bracket list forwarded as it stands.
+    pub(super) fn all(len: usize) -> Self {
+        Self {
+            positions: (0..len).collect(),
+            kept: vec![None; len],
+        }
+    }
+
+    /// A partition of a `len`-long bracket list that has forwarded or kept
+    /// nothing yet.
+    pub(super) fn empty(len: usize) -> Self {
+        Self {
+            positions: Vec::new(),
+            kept: vec![None; len],
+        }
+    }
+
+    /// Forward the argument at source `position`.
+    pub(super) fn forward(&mut self, position: usize) {
+        self.positions.push(position);
+    }
+
+    /// Keep back the argument at source `position`, bound to `attribute`.
+    pub(super) fn keep(&mut self, position: usize, attribute: Option<TyArg>) {
+        self.kept[position] = attribute;
+    }
+
+    /// The source list's attributes, given the binder's `forwarded` ones.
+    pub(super) fn scatter(&self, forwarded: BracketAttributes) -> BracketAttributes {
+        let mut attributes = self.kept.clone();
+        for (position, attribute) in self.positions.iter().zip(forwarded) {
+            attributes[*position] = attribute;
+        }
+        attributes
+    }
+}
+
 /// One explicit origin argument a struct application supplied, resolved
 /// against its slot: the slot's index in the declaration's full parameter
 /// list (the `OriginParamId` domain of the struct's own binders) and the
@@ -42,6 +149,9 @@ pub(in crate::checker) struct ExplicitStructOrigin {
 /// the application left the slot to inference.
 pub(super) struct PartitionedStructArgs {
     pub(super) forwarded: Vec<mojito_ast::ast::ParamArg>,
+    /// Where `forwarded` sits in the source list, beside each origin
+    /// argument's attribute.
+    pub(super) brackets: ForwardedBrackets,
     pub(super) explicit_origins: Vec<ExplicitStructOrigin>,
     pub(super) tail: Vec<mojito_types::origin::Origin>,
 }
@@ -86,7 +196,25 @@ impl Checker {
         resolved
     }
 
-    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
+    /// The type `name[args]` denotes, beside what each of its bracket
+    /// arguments bound to, as an annotation resolves it.
+    pub(super) fn applied_type(
+        &self,
+        name: &str,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<(Ty, BracketAttributes), TypeError> {
+        let depth = self.annotation_depth.get();
+        self.annotation_depth.set(depth + 1);
+        let resolved = self
+            .reflected_type_annotation(&SourceType::Named(name.to_string(), args.to_vec()))
+            .and_then(|reflected| match reflected {
+                Some(ty) => Ok((ty, vec![None; args.len()])),
+                None => self.applied_type_at_depth(name, args),
+            });
+        self.annotation_depth.set(depth);
+        resolved
+    }
+
     fn resolve_ty_from_anno_at_depth(&self, ty: &SourceType) -> Result<Ty, TypeError> {
         if let Some(reflected) = self.reflected_type_annotation(ty)? {
             return Ok(reflected);
@@ -264,226 +392,7 @@ impl Checker {
             // A bare name may be an in-scope type parameter (a generic `def`'s
             // `T`) or a struct type, optionally applied to parameter arguments.
             SourceType::Named(name, args) => {
-                let existential_trait = args.first().and_then(|argument| match argument {
-                    mojito_ast::ast::ParamArg::Type(SourceType::Named(trait_name, trait_args))
-                        if trait_args.is_empty() =>
-                    {
-                        Some(trait_name)
-                    }
-                    mojito_ast::ast::ParamArg::Value(Expr {
-                        kind: ExprKind::Identifier(trait_name),
-                        ..
-                    }) => Some(trait_name),
-                    _ => None,
-                });
-                if name == "Some"
-                    && args.len() == 1
-                    && let Some(trait_name) = existential_trait
-                {
-                    let trait_name = mojito_ast::ast::canonical_trait_name(trait_name);
-                    if COMPILER_TRAITS.contains(&trait_name) || self.traits.contains_key(trait_name)
-                    {
-                        return Ok(TyKind::Param {
-                            binder: synthetic_binder(&format!("Some[{trait_name}]")),
-                            bounds: vec![trait_name.to_string()],
-                            callable_bound: None,
-                        }
-                        .into());
-                    }
-                }
-                if name == "Never" && args.is_empty() {
-                    return Ok(Ty::never());
-                }
-                if name == "NoneType" && args.is_empty() {
-                    return Ok(Ty::none());
-                }
-                if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice")
-                    && args.is_empty()
-                {
-                    return Ok(TyKind::Struct(name.clone(), Vec::new()).into());
-                }
-                // Upstream compatibility alias: `StringSlice` resolves to the
-                // canonical `StringSpan` view (never emitted; diagnostics and
-                // display always spell `StringSpan`). Resolved at the same
-                // nesting depth, so a bare `StringSlice` parameter keeps the
-                // origin inference a bare `StringSpan` gets.
-                if name == "StringSlice" && self.structs.contains_key("StringSpan") {
-                    return self.resolve_ty_from_anno_at_depth(&SourceType::Named(
-                        "StringSpan".to_string(),
-                        args.clone(),
-                    ));
-                }
-                if name == "StringLiteral" && args.is_empty() {
-                    return self.bare_string_literal();
-                }
-                if args.is_empty()
-                    && let Some(parameter) = self.lookup_tparam(name)
-                {
-                    return Ok(parameter);
-                }
-                // Annotations parse the primitive spellings to dedicated
-                // `SourceType` variants; a `Named` primitive reaches this arm
-                // only from an expression-derived type position (a comptime
-                // alias or associated-member body).
-                if args.is_empty() {
-                    match name.as_str() {
-                        "Int" => return Ok(Ty::int()),
-                        "UInt" => return Ok(Ty::uint()),
-                        "Bool" => return Ok(Ty::bool()),
-                        "Float64" => return Ok(Ty::float64()),
-                        _ => {}
-                    }
-                }
-                // SIMD vector types and their fixed-width scalar aliases.
-                if let Some(dtype) = Dtype::from_scalar_alias(name) {
-                    if !args.is_empty() {
-                        return Err(TypeError::WrongTypeArgCount {
-                            name: name.clone(),
-                            expected: 0,
-                            got: args.len(),
-                        });
-                    }
-                    return Ok(simd_ty(dtype, 1));
-                }
-                if name == "SIMD" {
-                    return self.simd_type(args);
-                }
-                if name == "Scalar" {
-                    if args.len() != 1 {
-                        return Err(TypeError::WrongTypeArgCount {
-                            name: name.clone(),
-                            expected: 1,
-                            got: args.len(),
-                        });
-                    }
-                    return simd_of(self.dtype_from_arg(&args[0])?, SimdWidth::Known(1));
-                }
-                if name == "$pack" {
-                    return self
-                        .tuple_element_types(args)
-                        .map(|elements| TyKind::RuntimePack(elements).into());
-                }
-                if name == "__RuntimeTuple" {
-                    return self
-                        .tuple_element_types(args)
-                        .map(|elements| TyKind::Tuple(elements).into());
-                }
-                // Compiler-private tagged-union storage (the self-hosted
-                // `Variant`'s field): the intrinsic union type, reachable only
-                // from bundled standard-library sources.
-                if name == mojito_types::types::VARIANT_STORAGE_TYPE_NAME {
-                    if !self.bundled_stdlib_declaration {
-                        return Err(TypeError::Unsupported(format!(
-                            "'{name}' is compiler-private storage; use Variant from std.utils"
-                        )));
-                    }
-                    return self.variant_type(args);
-                }
-                // Compiler-private inline uninit storage (`MaybeUninit`'s
-                // field), reachable only from the bundled crossing module.
-                if name == mojito_types::types::UNINIT_STORAGE_TYPE_NAME {
-                    if !self.bundled_stdlib_declaration {
-                        return Err(TypeError::Unsupported(format!(
-                            "'{name}' is compiler-private storage; use MaybeUninit from std.memory"
-                        )));
-                    }
-                    if args.len() != 1 {
-                        return Err(TypeError::WrongTypeArgCount {
-                            name: name.clone(),
-                            expected: 1,
-                            got: args.len(),
-                        });
-                    }
-                    let element = self.tuple_element_types(args)?.remove(0);
-                    return Ok(TyKind::Struct(
-                        name.clone(),
-                        vec![mojito_types::types::TyArg::Ty(element)],
-                    )
-                    .into());
-                }
-                if name == "_" && args.is_empty() {
-                    return Ok(Ty::infer());
-                }
-                if name == "Error" && args.is_empty() {
-                    return Ok(Ty::error());
-                }
-                if name == "DType" && args.is_empty() && !self.structs.contains_key(name) {
-                    return Ok(Ty::dtype());
-                }
-                // Literal families are lang items: direct `_` holes are solved
-                // from an initializer before ordinary generic-bound checking.
-                if name == "List" {
-                    return self.list_type(args);
-                }
-                if name == "Set" {
-                    return self.set_type(args);
-                }
-                if name == "Dict" {
-                    return self.dict_type(args);
-                }
-                if name == "Tuple" {
-                    return self.tuple_type(args);
-                }
-                // Generic comptime aliases share the redeclaration-checked
-                // type namespace with structs; expand an application into the
-                // aliased type before the struct lookup.
-                if let Some(alias) = self.comptime_aliases.get(name) {
-                    let alias = alias.clone();
-                    return self.resolve_comptime_alias(name, &alias, args);
-                }
-                // Relative package re-exports may retain only the sibling
-                // module tail in a qualified comptime-alias reference. Resolve
-                // that spelling when it selects one unique registered alias.
-                if name.starts_with("__module$") {
-                    let leaf = name.rsplit('$').next().unwrap_or(name);
-                    let mut matches = self
-                        .comptime_aliases
-                        .keys()
-                        .filter(|candidate| candidate.rsplit('$').next() == Some(leaf));
-                    if let Some(candidate) = matches.next()
-                        && matches.next().is_none()
-                        && let Some(alias) = self.comptime_aliases.get(candidate)
-                    {
-                        let candidate = candidate.to_string();
-                        let alias = alias.clone();
-                        return self.resolve_comptime_alias(&candidate, &alias, args);
-                    }
-                }
-                if let Some(info) = self.structs.get(name) {
-                    if name == super::comptime_validation::PARAMETER_LIST && !args.is_empty() {
-                        self.admit_parameter_list_brackets()?;
-                    }
-                    let decls = info.decls.clone();
-                    let source_params = info.source_params.clone();
-                    let (_, tyargs) =
-                        self.resolve_struct_use_args(name, &decls, &source_params, args, &[], &[])?;
-                    return Ok(Self::struct_instance_type(name, tyargs));
-                }
-                if matches!(
-                    name.as_str(),
-                    "UnsafePointer" | "Pointer" | "MutPointer" | "ImmPointer"
-                ) {
-                    return self.pointer_type(name, args);
-                }
-                // The enclosing struct's own parameter spelled bare: Mojo
-                // requires `Self.T` / `Self.n` inside the body.
-                if args.is_empty() && self.is_enclosing_struct_param(name) {
-                    return Err(TypeError::UnqualifiedStructParam(name.clone()));
-                }
-                // A spread the pack-qualification pass normalized to the bare
-                // spelling names the enclosing struct's pack.
-                if args.is_empty() && name.starts_with('*') && self.self_ty.is_some() {
-                    return self.ty_from_anno(&SourceType::SelfParam(name.clone()));
-                }
-                // A `def`'s own `Ts[index]` while the pack is still a
-                // parameter: the dependent element type.
-                if let [mojito_ast::ast::ParamArg::Value(index)] = args.as_slice()
-                    && let Some(pack) =
-                        self.unbound_pack_type(&SourceType::Named(name.clone(), Vec::new()))
-                {
-                    return self.pack_element_type(&pack, index);
-                }
-                return Err(TypeError::UnknownType(name.clone()));
+                return self.applied_type_at_depth(name, args).map(|(ty, _)| ty);
             }
             // `Self.T` — one of the enclosing struct's *type* parameters (a value
             // parameter is not a type, so `Self.n` in type position is an error).
@@ -731,6 +640,263 @@ impl Checker {
         Ok(TyArg::Ty(ty))
     }
 
+    /// The type the application `name[args]` names at the current depth, as
+    /// [`Self::applied_type`] answers it.
+    fn applied_type_at_depth(
+        &self,
+        name: &str,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<(Ty, BracketAttributes), TypeError> {
+        if let Some(applied) = self.builtin_applied_type(name, args)? {
+            return Ok(applied);
+        }
+        // Literal families are lang items: direct `_` holes are solved
+        // from an initializer before ordinary generic-bound checking.
+        if name == "List" {
+            return self.list_type(args);
+        }
+        if name == "Set" {
+            return self.set_type(args);
+        }
+        if name == "Dict" {
+            return self.dict_type(args);
+        }
+        if name == "Tuple" {
+            return self.tuple_type(args);
+        }
+        // Generic comptime aliases share the redeclaration-checked
+        // type namespace with structs; expand an application into the
+        // aliased type before the struct lookup.
+        if let Some(alias) = self.comptime_aliases.get(name) {
+            let alias = alias.clone();
+            return self.resolve_comptime_alias(name, &alias, args);
+        }
+        // Relative package re-exports may retain only the sibling
+        // module tail in a qualified comptime-alias reference. Resolve
+        // that spelling when it selects one unique registered alias.
+        if name.starts_with("__module$") {
+            let leaf = name.rsplit('$').next().unwrap_or(name);
+            let mut matches = self
+                .comptime_aliases
+                .keys()
+                .filter(|candidate| candidate.rsplit('$').next() == Some(leaf));
+            if let Some(candidate) = matches.next()
+                && matches.next().is_none()
+                && let Some(alias) = self.comptime_aliases.get(candidate)
+            {
+                let candidate = candidate.to_string();
+                let alias = alias.clone();
+                return self.resolve_comptime_alias(&candidate, &alias, args);
+            }
+        }
+        if let Some(info) = self.structs.get(name) {
+            if name == super::comptime_validation::PARAMETER_LIST && !args.is_empty() {
+                self.admit_parameter_list_brackets()?;
+            }
+            let decls = info.decls.clone();
+            let source_params = info.source_params.clone();
+            let BoundParameters {
+                arguments,
+                attributes,
+                ..
+            } = self.resolve_struct_use_args(name, &decls, &source_params, args, &[], &[])?;
+            return Ok((Self::struct_instance_type(name, arguments), attributes));
+        }
+        if matches!(
+            name,
+            "UnsafePointer" | "Pointer" | "MutPointer" | "ImmPointer"
+        ) {
+            return self.pointer_type(name, args);
+        }
+        // The enclosing struct's own parameter spelled bare: Mojo
+        // requires `Self.T` / `Self.n` inside the body.
+        if args.is_empty() && self.is_enclosing_struct_param(name) {
+            return Err(TypeError::UnqualifiedStructParam(name.to_string()));
+        }
+        // A spread the pack-qualification pass normalized to the bare
+        // spelling names the enclosing struct's pack.
+        if args.is_empty() && name.starts_with('*') && self.self_ty.is_some() {
+            return self
+                .ty_from_anno(&SourceType::SelfParam(name.to_string()))
+                .map(|ty| (ty, Vec::new()));
+        }
+        // A `def`'s own `Ts[index]` while the pack is still a
+        // parameter: the dependent element type.
+        if let [mojito_ast::ast::ParamArg::Value(index)] = args
+            && let Some(pack) =
+                self.unbound_pack_type(&SourceType::Named(name.to_string(), Vec::new()))
+        {
+            return self
+                .pack_element_type(&pack, index)
+                .map(|ty| (ty, vec![None]));
+        }
+        Err(TypeError::UnknownType(name.to_string()))
+    }
+
+    /// The type a compiler-known name applies to `args` (`Never`, `SIMD`,
+    /// `Scalar`, the compiler-private storage types, a type parameter in
+    /// scope), beside its bracket attributes; `None` for any other name.
+    fn builtin_applied_type(
+        &self,
+        name: &str,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<Option<(Ty, BracketAttributes)>, TypeError> {
+        let existential_trait = args.first().and_then(|argument| match argument {
+            mojito_ast::ast::ParamArg::Type(SourceType::Named(trait_name, trait_args))
+                if trait_args.is_empty() =>
+            {
+                Some(trait_name)
+            }
+            mojito_ast::ast::ParamArg::Value(Expr {
+                kind: ExprKind::Identifier(trait_name),
+                ..
+            }) => Some(trait_name),
+            _ => None,
+        });
+        if name == "Some"
+            && args.len() == 1
+            && let Some(trait_name) = existential_trait
+        {
+            let trait_name = mojito_ast::ast::canonical_trait_name(trait_name);
+            if COMPILER_TRAITS.contains(&trait_name) || self.traits.contains_key(trait_name) {
+                return Ok(Some((
+                    TyKind::Param {
+                        binder: synthetic_binder(&format!("Some[{trait_name}]")),
+                        bounds: vec![trait_name.to_string()],
+                        callable_bound: None,
+                    }
+                    .into(),
+                    vec![None],
+                )));
+            }
+        }
+        if name == "Never" && args.is_empty() {
+            return Ok(Some((Ty::never(), Vec::new())));
+        }
+        if name == "NoneType" && args.is_empty() {
+            return Ok(Some((Ty::none(), Vec::new())));
+        }
+        if matches!(name, "Slice" | "ContiguousSlice" | "StridedSlice") && args.is_empty() {
+            return Ok(Some((
+                TyKind::Struct(name.to_string(), Vec::new()).into(),
+                Vec::new(),
+            )));
+        }
+        // Upstream compatibility alias: `StringSlice` resolves to the
+        // canonical `StringSpan` view (never emitted; diagnostics and
+        // display always spell `StringSpan`). Resolved at the same
+        // nesting depth, so a bare `StringSlice` parameter keeps the
+        // origin inference a bare `StringSpan` gets.
+        if name == "StringSlice" && self.structs.contains_key("StringSpan") {
+            return self.applied_type_at_depth("StringSpan", args).map(Some);
+        }
+        if name == "StringLiteral" && args.is_empty() {
+            return self.bare_string_literal().map(|ty| Some((ty, Vec::new())));
+        }
+        if args.is_empty()
+            && let Some(parameter) = self.lookup_tparam(name)
+        {
+            return Ok(Some((parameter, Vec::new())));
+        }
+        // Annotations parse the primitive spellings to dedicated
+        // `SourceType` variants; a `Named` primitive reaches this arm
+        // only from an expression-derived type position (a comptime
+        // alias or associated-member body).
+        if args.is_empty() {
+            match name {
+                "Int" => return Ok(Some((Ty::int(), Vec::new()))),
+                "UInt" => return Ok(Some((Ty::uint(), Vec::new()))),
+                "Bool" => return Ok(Some((Ty::bool(), Vec::new()))),
+                "Float64" => return Ok(Some((Ty::float64(), Vec::new()))),
+                _ => {}
+            }
+        }
+        // SIMD vector types and their fixed-width scalar aliases.
+        if let Some(dtype) = Dtype::from_scalar_alias(name) {
+            if !args.is_empty() {
+                return Err(TypeError::WrongTypeArgCount {
+                    name: name.to_string(),
+                    expected: 0,
+                    got: args.len(),
+                });
+            }
+            return Ok(Some((simd_ty(dtype, 1), Vec::new())));
+        }
+        if name == "SIMD" {
+            return self.simd_type(args).map(Some);
+        }
+        if name == "Scalar" {
+            if args.len() != 1 {
+                return Err(TypeError::WrongTypeArgCount {
+                    name: name.to_string(),
+                    expected: 1,
+                    got: args.len(),
+                });
+            }
+            let dtype = self.dtype_from_arg(&args[0])?;
+            let attribute = dtype_attribute(&args[0], &dtype);
+            return Ok(Some((
+                simd_of(dtype, SimdWidth::Known(1))?,
+                vec![attribute],
+            )));
+        }
+        if name == "$pack" {
+            return self
+                .tuple_element_types(args)
+                .map(|(elements, attributes)| {
+                    Some((TyKind::RuntimePack(elements).into(), attributes))
+                });
+        }
+        if name == "__RuntimeTuple" {
+            return self
+                .tuple_element_types(args)
+                .map(|(elements, attributes)| Some((TyKind::Tuple(elements).into(), attributes)));
+        }
+        // Compiler-private tagged-union storage (the self-hosted
+        // `Variant`'s field): the intrinsic union type, reachable only
+        // from bundled standard-library sources.
+        if name == mojito_types::types::VARIANT_STORAGE_TYPE_NAME {
+            if !self.bundled_stdlib_declaration {
+                return Err(TypeError::Unsupported(format!(
+                    "'{name}' is compiler-private storage; use Variant from std.utils"
+                )));
+            }
+            return self.variant_type(args).map(Some);
+        }
+        // Compiler-private inline uninit storage (`MaybeUninit`'s
+        // field), reachable only from the bundled crossing module.
+        if name == mojito_types::types::UNINIT_STORAGE_TYPE_NAME {
+            if !self.bundled_stdlib_declaration {
+                return Err(TypeError::Unsupported(format!(
+                    "'{name}' is compiler-private storage; use MaybeUninit from std.memory"
+                )));
+            }
+            if args.len() != 1 {
+                return Err(TypeError::WrongTypeArgCount {
+                    name: name.to_string(),
+                    expected: 1,
+                    got: args.len(),
+                });
+            }
+            let (mut elements, attributes) = self.tuple_element_types(args)?;
+            let element = elements.remove(0);
+            return Ok(Some((
+                TyKind::Struct(name.to_string(), vec![TyArg::Ty(element)]).into(),
+                attributes,
+            )));
+        }
+        if name == "_" && args.is_empty() {
+            return Ok(Some((Ty::infer(), Vec::new())));
+        }
+        if name == "Error" && args.is_empty() {
+            return Ok(Some((Ty::error(), Vec::new())));
+        }
+        if name == "DType" && args.is_empty() && !self.structs.contains_key(name) {
+            return Ok(Some((Ty::dtype(), Vec::new())));
+        }
+        Ok(None)
+    }
+
     /// Resolve a struct application's explicit compile-time arguments,
     /// accepting origin arguments in the slots the declaration's raw
     /// parameter list spells (`decls` erases Origin parameters, so
@@ -747,12 +913,19 @@ impl Checker {
         args: &[mojito_ast::ast::ParamArg],
         patterns: &[Ty],
         actuals: &[Ty],
-    ) -> Result<(TySubst, Vec<TyArg>), TypeError> {
+    ) -> Result<BoundParameters, TypeError> {
         let partitioned = self.partition_struct_origin_args(name, source_params, args)?;
-        let (subst, mut tyargs) =
-            self.resolve_use_params(name, decls, &partitioned.forwarded, patterns, actuals)?;
-        tyargs.extend(partitioned.tail_arguments());
-        Ok((subst, tyargs))
+        let BoundParameters {
+            subst,
+            mut arguments,
+            attributes,
+        } = self.resolve_use_params(name, decls, &partitioned.forwarded, patterns, actuals)?;
+        arguments.extend(partitioned.tail_arguments());
+        Ok(BoundParameters {
+            subst,
+            arguments,
+            attributes: partitioned.brackets.scatter(attributes),
+        })
     }
 
     /// Partition a struct application's explicit compile-time arguments into
@@ -823,6 +996,7 @@ impl Checker {
         };
         let forward_all = || PartitionedStructArgs {
             forwarded: args.to_vec(),
+            brackets: ForwardedBrackets::all(args.len()),
             explicit_origins: Vec::new(),
             tail: vec![Origin::Unbound; origin_slots],
         };
@@ -883,8 +1057,10 @@ impl Checker {
             // an ordinary over-application (e.g. an infer-only binder spelled
             // explicitly), which the erased-decl binder diagnoses.
             let mut resolved = Vec::with_capacity(origin_slots);
-            for (param, argument) in explicit.iter().zip(args) {
+            let mut brackets = ForwardedBrackets::empty(args.len());
+            for (position, (param, argument)) in explicit.iter().zip(args).enumerate() {
                 if !is_origin(param) {
+                    brackets.forward(position);
                     continue;
                 }
                 // Upstream's placeholder spellings (`_`, `...`) mark the slot
@@ -896,17 +1072,18 @@ impl Checker {
                     if strict == super::StorageStrictness::Full {
                         return Err(TypeError::NotConcrete(name.to_string()));
                     }
-                    self.accept_origin_argument(
+                    let attribute = self.accept_origin_argument(
                         name,
                         param,
                         argument,
                         mojito_types::origin::Origin::Unbound,
                         None,
                     )?;
+                    brackets.keep(position, attribute);
                     continue;
                 }
                 match self.resolve_origin_param_arg(argument) {
-                    Ok(origin) => resolved.push((*param, argument, origin)),
+                    Ok(origin) => resolved.push((position, *param, argument, origin)),
                     Err(error) => {
                         // A signature annotation may name places only the body
                         // can resolve (`origin_of(self.entries)`): accept an
@@ -914,13 +1091,14 @@ impl Checker {
                         if self.signature_origin_leniency.get()
                             && syntactic_origin_argument(argument)
                         {
-                            self.accept_origin_argument(
+                            let attribute = self.accept_origin_argument(
                                 name,
                                 param,
                                 argument,
                                 mojito_types::origin::Origin::Unbound,
                                 None,
                             )?;
+                            brackets.keep(position, attribute);
                             continue;
                         }
                         // An origin-shaped argument that does not resolve is
@@ -934,8 +1112,10 @@ impl Checker {
                 }
             }
             let mut explicit_origins = Vec::with_capacity(resolved.len());
-            for (param, argument, (origin, mutability)) in resolved {
-                self.accept_origin_argument(name, param, argument, origin.clone(), mutability)?;
+            for (position, param, argument, (origin, mutability)) in resolved {
+                let attribute =
+                    self.accept_origin_argument(name, param, argument, origin.clone(), mutability)?;
+                brackets.keep(position, attribute);
                 explicit_origins.push(ExplicitStructOrigin {
                     id: slot_id(param),
                     origin,
@@ -951,6 +1131,7 @@ impl Checker {
             let tail = tail_of(&explicit_origins);
             return Ok(PartitionedStructArgs {
                 forwarded,
+                brackets,
                 explicit_origins,
                 tail,
             });
@@ -958,9 +1139,10 @@ impl Checker {
         // Keyword spellings: extract named origin arguments wherever they
         // appear; everything else forwards to the erased-decl binder.
         let mut forwarded = Vec::with_capacity(args.len());
+        let mut brackets = ForwardedBrackets::empty(args.len());
         let mut explicit_origins = Vec::new();
         let mut supplied_origins: Vec<&str> = Vec::new();
-        for argument in args {
+        for (position, argument) in args.iter().enumerate() {
             if let ParamArg::Named { name: keyword, .. } = argument
                 && let Some(param) = explicit.iter().find(|p| p.name == *keyword && is_origin(p))
             {
@@ -968,25 +1150,27 @@ impl Checker {
                     if strict == super::StorageStrictness::Full {
                         return Err(TypeError::NotConcrete(name.to_string()));
                     }
-                    self.accept_origin_argument(
+                    let attribute = self.accept_origin_argument(
                         name,
                         param,
                         argument,
                         mojito_types::origin::Origin::Unbound,
                         None,
                     )?;
+                    brackets.keep(position, attribute);
                     supplied_origins.push(&param.name);
                     continue;
                 }
                 match self.resolve_origin_param_arg(argument) {
                     Ok((origin, mutability)) => {
-                        self.accept_origin_argument(
+                        let attribute = self.accept_origin_argument(
                             name,
                             param,
                             argument,
                             origin.clone(),
                             mutability,
                         )?;
+                        brackets.keep(position, attribute);
                         supplied_origins.push(&param.name);
                         explicit_origins.push(ExplicitStructOrigin {
                             id: slot_id(param),
@@ -998,6 +1182,7 @@ impl Checker {
                     Err(error) => return Err(error),
                 }
             }
+            brackets.forward(position);
             forwarded.push(argument.clone());
         }
         if strict != super::StorageStrictness::Off
@@ -1013,6 +1198,7 @@ impl Checker {
         let tail = tail_of(&explicit_origins);
         Ok(PartitionedStructArgs {
             forwarded,
+            brackets,
             explicit_origins,
             tail,
         })
@@ -1089,6 +1275,7 @@ impl Checker {
     /// a value-shaped accepted argument records `origin` as its attribute —
     /// it is compile-time data on the construction, never a runtime value. A
     /// storage annotation is never lowered, so its arguments record nothing.
+    /// Answers the bracket attribute the argument bound to.
     fn accept_origin_argument(
         &self,
         struct_name: &str,
@@ -1096,7 +1283,7 @@ impl Checker {
         argument: &mojito_ast::ast::ParamArg,
         origin: mojito_types::origin::Origin,
         mutability: Option<mojito_types::origin::Mutability>,
-    ) -> Result<(), TypeError> {
+    ) -> Result<Option<TyArg>, TypeError> {
         let requires_mut = matches!(
             param.origin_mutability.as_ref().map(|e| &e.kind),
             Some(ExprKind::Bool(true))
@@ -1120,13 +1307,19 @@ impl Checker {
         while let mojito_ast::ast::ParamArg::Named { value: inner, .. } = value {
             value = inner;
         }
-        if self.strict_storage_annotation.get() == super::StorageStrictness::Off
-            && let mojito_ast::ast::ParamArg::Value(expression) = value
-        {
-            self.record_at(expression.source_span()).argument_attribute =
-                Some(TyArg::Origin(origin));
+        let attribute = TyArg::Origin(origin);
+        match value {
+            mojito_ast::ast::ParamArg::Value(expression) => {
+                let recorded =
+                    self.strict_storage_annotation.get() == super::StorageStrictness::Off;
+                if recorded {
+                    self.record_at(expression.source_span()).argument_attribute =
+                        Some(attribute.clone());
+                }
+                Ok(recorded.then_some(attribute))
+            }
+            _ => Ok(Some(attribute)),
         }
-        Ok(())
     }
 
     /// Resolve the type-valued sequence at the base of an indexed type
@@ -1548,7 +1741,7 @@ impl Checker {
         name: &str,
         alias: &ComptimeAlias,
         args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<Ty, TypeError> {
+    ) -> Result<(Ty, BracketAttributes), TypeError> {
         let template = match &alias.body {
             AliasBody::Type(template) => template,
             AliasBody::Predicate(_) => {
@@ -1562,7 +1755,11 @@ impl Checker {
                 )));
             }
         };
-        let (_, tyargs) = self.resolve_use_params(name, &alias.decls, args, &[], &[])?;
+        let BoundParameters {
+            arguments: tyargs,
+            attributes,
+            ..
+        } = self.resolve_use_params(name, &alias.decls, args, &[], &[])?;
         let mut types = HashMap::new();
         let mut values = HashMap::new();
         for (decl, argument) in alias.decls.iter().zip(&tyargs) {
@@ -1585,7 +1782,10 @@ impl Checker {
         // The symbolic template keeps canonical `Tuple[T, ...]`; a substituted
         // application must re-select the executable nominal implementation so
         // discovery can materialize it.
-        Ok(self.resolve_assoc_ty(&substitute_assoc(template, &bindings)))
+        Ok((
+            self.resolve_assoc_ty(&substitute_assoc(template, &bindings)),
+            attributes,
+        ))
     }
 
     /// Concretely resolve a parameterized associated-type application on a
@@ -2032,49 +2232,18 @@ impl Checker {
         }
     }
 
-    /// Record what each bracket argument of call, invoke, or type
-    /// application `expr` resolved to that is not a run-time value — a
-    /// type-shaped one, or a value-shaped one binding bound to a type or an
-    /// origin ([`mojito_checked::checked::NodeFacts::parameter_attributes`])
-    /// — as upstream's op carries each bracket argument as the parameter
-    /// attribute its check produced.
-    pub(super) fn record_parameter_attributes(&self, expr: &Expr) {
-        // A type application in receiver position resolves as the
-        // receiver's type, and is never inferred on its own.
-        let receiver = match &expr.kind {
-            ExprKind::MethodCall { object, .. }
-            | ExprKind::Member { object, .. }
-            | ExprKind::Index { object, .. } => Some(&**object),
-            ExprKind::Invoke { callee, .. } => match &callee.kind {
-                ExprKind::Member { object, .. } => Some(&**object),
-                _ => None,
-            },
-            _ => None,
-        };
-        if let Some(object) = receiver
-            && matches!(object.kind, ExprKind::TypeApply { .. })
-            && !self.has_fact(&object.source_span(), |facts| {
-                facts.parameter_attributes.is_some()
-            })
-        {
-            self.record_parameter_attributes(object);
-        }
-        let (ExprKind::Call { param_args, .. }
-        | ExprKind::Invoke { param_args, .. }
-        | ExprKind::TypeApply {
-            args: param_args, ..
-        }) = &expr.kind
-        else {
-            return;
-        };
-        let attributes: Vec<_> = param_args
-            .iter()
-            .map(|argument| self.parameter_attribute(argument))
-            .collect();
+    /// Record what each bracket argument of the application at `span`
+    /// bound to, as its binder returned it: nothing when every argument is
+    /// a run-time value.
+    pub(super) fn record_bracket_attributes(
+        &self,
+        span: SourceSpan,
+        attributes: BracketAttributes,
+    ) {
         if attributes.iter().all(Option::is_none) {
             return;
         }
-        self.record_at(expr.source_span()).parameter_attributes = Some(attributes);
+        self.record_at(span).parameter_attributes = Some(attributes);
     }
 
     /// Resolve the type in value position `expr`, `ty`, recording the type
@@ -2086,9 +2255,12 @@ impl Checker {
     }
 
     /// Resolve `List[T]` from its single type argument.
-    pub(super) fn list_type(&self, args: &[mojito_ast::ast::ParamArg]) -> Result<Ty, TypeError> {
+    pub(super) fn list_type(
+        &self,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<(Ty, BracketAttributes), TypeError> {
         if args.is_empty() {
-            return Ok(list_type(Ty::infer()));
+            return Ok((list_type(Ty::infer()), Vec::new()));
         }
         if args.len() != 1 {
             return Err(TypeError::WrongTypeArgCount {
@@ -2097,7 +2269,23 @@ impl Checker {
                 got: args.len(),
             });
         }
-        Ok(list_type(self.collection_type_argument("List", &args[0])?))
+        let (element, attributes) = self.collection_type_arguments("List", args)?;
+        Ok((list_type(element[0].clone()), attributes))
+    }
+
+    /// Each of `args` resolved as a type argument of `collection`, beside
+    /// the attribute each bound to.
+    fn collection_type_arguments(
+        &self,
+        collection: &str,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<(Vec<Ty>, BracketAttributes), TypeError> {
+        let types = args
+            .iter()
+            .map(|argument| self.collection_type_argument(collection, argument))
+            .collect::<Result<Vec<_>, _>>()?;
+        let attributes = types_attributes(args, &types);
+        Ok((types, attributes))
     }
 
     pub(super) fn collection_type_argument(
@@ -2126,44 +2314,66 @@ impl Checker {
         Ok(resolved)
     }
 
-    pub(super) fn set_type(&self, args: &[mojito_ast::ast::ParamArg]) -> Result<Ty, TypeError> {
-        if args.is_empty() {
-            return Ok(self.nominal_set(Ty::infer()));
-        }
-        match args {
-            [element] => Ok(self.nominal_set(self.collection_type_argument("Set", element)?)),
-            [element, hasher] => Ok(mojito_types::types::set_type_with(
+    pub(super) fn set_type(
+        &self,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<(Ty, BracketAttributes), TypeError> {
+        let types = match args {
+            [] => Vec::new(),
+            [element] => vec![self.collection_type_argument("Set", element)?],
+            [element, hasher] => vec![
                 self.collection_type_argument("Set", element)?,
                 self.hasher_type_argument("Set", hasher)?,
-            )),
-            _ => Err(TypeError::WrongTypeArgCount {
-                name: "Set".to_string(),
-                expected: 2,
-                got: args.len(),
-            }),
-        }
+            ],
+            _ => {
+                return Err(TypeError::WrongTypeArgCount {
+                    name: "Set".to_string(),
+                    expected: 2,
+                    got: args.len(),
+                });
+            }
+        };
+        let ty = match types.as_slice() {
+            [] => self.nominal_set(Ty::infer()),
+            [element] => self.nominal_set(element.clone()),
+            [element, hasher, ..] => {
+                mojito_types::types::set_type_with(element.clone(), hasher.clone())
+            }
+        };
+        Ok((ty, types_attributes(args, &types)))
     }
 
-    pub(super) fn dict_type(&self, args: &[mojito_ast::ast::ParamArg]) -> Result<Ty, TypeError> {
-        if args.is_empty() {
-            return Ok(self.nominal_dict(Ty::infer(), Ty::infer()));
-        }
-        match args {
-            [key, value] => Ok(self.nominal_dict(
+    pub(super) fn dict_type(
+        &self,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<(Ty, BracketAttributes), TypeError> {
+        let types = match args {
+            [] => Vec::new(),
+            [key, value] => vec![
                 self.collection_type_argument("Dict", key)?,
                 self.collection_type_argument("Dict", value)?,
-            )),
-            [key, value, hasher] => Ok(mojito_types::types::dict_type_with(
+            ],
+            [key, value, hasher] => vec![
                 self.collection_type_argument("Dict", key)?,
                 self.collection_type_argument("Dict", value)?,
                 self.hasher_type_argument("Dict", hasher)?,
-            )),
-            _ => Err(TypeError::WrongTypeArgCount {
-                name: "Dict".to_string(),
-                expected: 3,
-                got: args.len(),
-            }),
-        }
+            ],
+            _ => {
+                return Err(TypeError::WrongTypeArgCount {
+                    name: "Dict".to_string(),
+                    expected: 3,
+                    got: args.len(),
+                });
+            }
+        };
+        let ty = match types.as_slice() {
+            [key, value] => self.nominal_dict(key.clone(), value.clone()),
+            [key, value, hasher, ..] => {
+                mojito_types::types::dict_type_with(key.clone(), value.clone(), hasher.clone())
+            }
+            _ => self.nominal_dict(Ty::infer(), Ty::infer()),
+        };
+        Ok((ty, types_attributes(args, &types)))
     }
 
     /// `Set[T]` with the hasher argument filled from the linked declaration's
@@ -2228,7 +2438,7 @@ impl Checker {
         &self,
         name: &str,
         args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<Ty, TypeError> {
+    ) -> Result<(Ty, BracketAttributes), TypeError> {
         if !matches!(args.len(), 1 | 2) {
             return Err(TypeError::WrongTypeArgCount {
                 name: name.to_string(),
@@ -2309,11 +2519,21 @@ impl Checker {
                 context: format!("{name} origin"),
             });
         }
-        Ok(TyKind::Pointer {
-            element: elem,
-            origin,
+        let mut attributes = vec![bracket_attribute(&args[0], &TyArg::Ty(elem.clone()))];
+        if let Some(argument) = args.get(1) {
+            attributes.push(
+                pointer_origin_attribute(&origin)
+                    .and_then(|bound| bracket_attribute(argument, &TyArg::Origin(bound))),
+            );
         }
-        .into())
+        Ok((
+            TyKind::Pointer {
+                element: elem,
+                origin,
+            }
+            .into(),
+            attributes,
+        ))
     }
 
     pub(super) fn pointer_origin_arg(
@@ -2531,11 +2751,14 @@ impl Checker {
     pub(super) fn tuple_element_types(
         &self,
         args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<Vec<Ty>, TypeError> {
+    ) -> Result<(Vec<Ty>, BracketAttributes), TypeError> {
         let mut elems = Vec::with_capacity(args.len());
+        let mut attributes = Vec::with_capacity(args.len());
         for arg in args {
             if let Some(pack) = self.pack_spread_argument(arg) {
-                elems.push(pack?);
+                let pack = pack?;
+                attributes.push(bracket_attribute(arg, &TyArg::Ty(pack.clone())));
+                elems.push(pack);
                 continue;
             }
             // A spread of a computed list is its elements once every length
@@ -2559,9 +2782,10 @@ impl Checker {
                     TyArg::Ty(ty) => Some(ty),
                     TyArg::Val(_) | TyArg::Origin(_) => None,
                 }));
+                attributes.push(None);
                 continue;
             }
-            elems.push(match arg {
+            let element = match arg {
                 mojito_ast::ast::ParamArg::Type(t) => self.ty_from_anno(t)?,
                 // A bare-identifier arg is reinterpreted as a type (as elsewhere).
                 mojito_ast::ast::ParamArg::Value(Expr {
@@ -2580,10 +2804,12 @@ impl Checker {
                         "named Tuple element arguments".to_string(),
                     ));
                 }
-            });
+            };
+            attributes.push(bracket_attribute(arg, &TyArg::Ty(element.clone())));
+            elems.push(element);
         }
         Self::reject_mixed_spread("Tuple", &elems)?;
-        Ok(elems)
+        Ok((elems, attributes))
     }
 
     /// The pack a type names by itself while it is still a parameter: the
@@ -2688,12 +2914,15 @@ impl Checker {
         }
     }
 
-    pub(super) fn tuple_type(&self, args: &[mojito_ast::ast::ParamArg]) -> Result<Ty, TypeError> {
-        let elements = self.tuple_element_types(args)?;
+    pub(super) fn tuple_type(
+        &self,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<(Ty, BracketAttributes), TypeError> {
+        let (elements, attributes) = self.tuple_element_types(args)?;
         for element in &elements {
             reject_stored_callable_type(element, "the 'Tuple' element type")?;
         }
-        Ok(mojito_types::types::tuple_type(elements))
+        Ok((mojito_types::types::tuple_type(elements), attributes))
     }
 
     /// Upstream's spelling of a checked type in a diagnostic, with each struct
@@ -2856,7 +3085,10 @@ impl Checker {
     /// Resolve the alternatives of `Variant[T1, ..., Tn]`.  Alternative order
     /// is significant because it becomes the runtime tag; duplicate types would
     /// make `isa[T]` and `value[T]` ambiguous and are rejected here.
-    pub(super) fn variant_type(&self, args: &[mojito_ast::ast::ParamArg]) -> Result<Ty, TypeError> {
+    pub(super) fn variant_type(
+        &self,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<(Ty, BracketAttributes), TypeError> {
         if args.is_empty() {
             return Err(TypeError::WrongTypeArgCount {
                 name: "Variant".to_string(),
@@ -2874,7 +3106,8 @@ impl Checker {
             alternatives.push(alternative);
         }
         Self::reject_mixed_spread("Variant", &alternatives)?;
-        Ok(TyKind::Variant(alternatives).into())
+        let attributes = types_attributes(args, &alternatives);
+        Ok((TyKind::Variant(alternatives).into(), attributes))
     }
 
     pub(super) fn type_param_argument(
@@ -2928,7 +3161,7 @@ impl Checker {
     pub(super) fn simd_dims(
         &self,
         args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<(SimdDtype, SimdWidth), TypeError> {
+    ) -> Result<(SimdDtype, SimdWidth, BracketAttributes), TypeError> {
         if args.len() != 2 {
             return Err(TypeError::WrongTypeArgCount {
                 name: "SIMD".to_string(),
@@ -2937,22 +3170,26 @@ impl Checker {
             });
         }
         let dtype = self.dtype_from_arg(&args[0])?;
-        let width = if matches!(
+        let (width, width_attribute) = if matches!(
             &args[1],
             mojito_ast::ast::ParamArg::Value(Expr { kind: ExprKind::Identifier(name), .. }) if name == "_"
         ) {
-            SimdWidth::inferred(&self.param_context)
+            (SimdWidth::inferred(&self.param_context), None)
         } else {
             self.simd_width(&args[1])?
         };
-        Ok((dtype, width))
+        let attributes = vec![dtype_attribute(&args[0], &dtype), width_attribute];
+        Ok((dtype, width, attributes))
     }
 
     /// The (canonicalized) `Ty` for `SIMD[DType.<dt>, width]` — a width-1 `float64`
     /// resolves to `TyKind::Float64` (the unification).
-    pub(super) fn simd_type(&self, args: &[mojito_ast::ast::ParamArg]) -> Result<Ty, TypeError> {
-        let (dtype, width) = self.simd_dims(args)?;
-        simd_of(dtype, width)
+    pub(super) fn simd_type(
+        &self,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<(Ty, BracketAttributes), TypeError> {
+        let (dtype, width, attributes) = self.simd_dims(args)?;
+        Ok((simd_of(dtype, width)?, attributes))
     }
 
     /// Evaluate a SIMD width argument: a comptime `Int` that is a power of
@@ -2962,7 +3199,7 @@ impl Checker {
     pub(super) fn simd_width(
         &self,
         arg: &mojito_ast::ast::ParamArg,
-    ) -> Result<SimdWidth, TypeError> {
+    ) -> Result<(SimdWidth, Option<TyArg>), TypeError> {
         let value = match arg {
             mojito_ast::ast::ParamArg::Value(expr) => {
                 let _lifting = self.lifting_position();
@@ -3018,17 +3255,18 @@ impl Checker {
                 return Err(TypeError::BadSimdWidth("a named argument".to_string()));
             }
         };
+        let attribute = bracket_attribute(arg, &TyArg::Val(value.clone()));
         if let CtValue::Expr(expr) = value {
             if !expr.meta().is_integer() {
                 return Err(TypeError::BadSimdWidth(expr.to_string()));
             }
-            return Ok(SimdWidth::Expr(expr));
+            return Ok((SimdWidth::Expr(expr), attribute));
         }
         let w = mojito_types::param_expr::fold::integer_value(&value)
             .and_then(|width| width.to_i64())
             .ok_or_else(|| TypeError::BadSimdWidth(value.to_string()))?;
         if w >= 1 && (w & (w - 1)) == 0 {
-            Ok(SimdWidth::Known(w))
+            Ok((SimdWidth::Known(w), attribute))
         } else {
             Err(TypeError::BadSimdWidth(w.to_string()))
         }
@@ -3059,90 +3297,6 @@ impl Checker {
             .or_else(|| self.installed_type_alias(name))
             .or_else(|| self.tparams.iter().rev().find_map(|scope| scope.get(name)))
             .cloned()
-    }
-
-    /// The attribute a type-shaped bracket argument denotes, as
-    /// [`Self::resolve_param_arg`] decides it for whichever parameter it
-    /// binds: a value pack spread whole (`*vs`), an origin (`Self.o`,
-    /// `MutUntrackedOrigin`), the struct's own value parameter (`Self.n`),
-    /// a local display's element (`L[0]`), or a type. A value-shaped
-    /// argument answers what binding recorded for it
-    /// ([`mojito_checked::checked::NodeFacts::argument_attribute`]): `None`
-    /// for a run-time value.
-    fn parameter_attribute(&self, argument: &mojito_ast::ast::ParamArg) -> Option<TyArg> {
-        use mojito_ast::ast::ParamArg;
-        let ty = match argument {
-            ParamArg::Named { value, .. } => return self.parameter_attribute(value),
-            ParamArg::Value(value) => {
-                return self.fact(&value.source_span(), |facts| {
-                    facts.argument_attribute.as_ref()
-                });
-            }
-            ParamArg::Type(ty) => ty,
-        };
-        if let Some(pack) = self.value_pack_spread(argument) {
-            return Some(TyArg::Val(CtValue::Expr(pack)));
-        }
-        if (matches!(ty, SourceType::Named(_, args) if args.is_empty())
-            || matches!(ty, SourceType::SelfParam(_)))
-            && let Ok((origin, _)) = self.resolve_origin_param_arg(argument)
-        {
-            return Some(TyArg::Origin(origin));
-        }
-        if let SourceType::SelfParam(param) = ty
-            && matches!(self.self_param_ct_value(param), Some(CtValue::Expr(_)))
-        {
-            return self.self_param_value(param).map(TyArg::Val);
-        }
-        if let Some(element) = self.display_element_argument(ty) {
-            return element
-                .ok()
-                .map(|element| TyArg::Val(CtValue::Expr(element)));
-        }
-        self.ty_from_anno(ty)
-            .ok()
-            .map(TyArg::Ty)
-            .or_else(|| self.member_value_attribute(ty))
-    }
-
-    /// The value a member chain in type position names (`Float32.dtype`,
-    /// `Self.e.rows`), as the expression it spells evaluates.
-    fn member_value_attribute(&self, ty: &SourceType) -> Option<TyArg> {
-        fn spelled(ty: &SourceType) -> Option<Expr> {
-            let expr = |kind| Expr::new(kind, mojito_common::token::Span::default());
-            Some(match ty {
-                SourceType::Named(name, args) if args.is_empty() => {
-                    expr(ExprKind::Identifier(name.clone()))
-                }
-                SourceType::SelfParam(field) => expr(ExprKind::Member {
-                    object: Box::new(expr(ExprKind::Identifier("Self".to_string()))),
-                    field: field.clone(),
-                }),
-                SourceType::Assoc { base, name, args } if args.is_empty() => {
-                    expr(ExprKind::Member {
-                        object: Box::new(spelled(base)?),
-                        field: name.clone(),
-                    })
-                }
-                _ => return None,
-            })
-        }
-        let SourceType::Assoc { .. } = ty else {
-            return None;
-        };
-        if let Ok(dtype) = self.dtype_from_arg(&mojito_ast::ast::ParamArg::Type(ty.clone())) {
-            return Some(TyArg::Val(match dtype {
-                SimdDtype::Known(dtype) => CtValue::Dtype(dtype),
-                SimdDtype::Expr(expr) => CtValue::Expr(expr),
-            }));
-        }
-        match self
-            .eval_associated_ct(&spelled(ty)?, &HashMap::new())
-            .ok()?
-        {
-            CtValue::Type(ty) => Some(TyArg::Ty(ty)),
-            value => Some(TyArg::Val(value)),
-        }
     }
 }
 
@@ -3322,6 +3476,20 @@ fn immutable_capability(
 /// Whether an application argument is upstream's origin placeholder spelling
 /// (`_` or `...`), possibly behind a keyword (`origin=_`): the slot is
 /// explicitly marked inferred rather than omitted.
+/// The struct origin a pointer provenance binds as a bracket argument.
+fn pointer_origin_attribute(
+    origin: &mojito_types::origin::PointerOrigin,
+) -> Option<mojito_types::origin::Origin> {
+    use mojito_types::origin::{Origin, PointerOrigin};
+    match origin {
+        PointerOrigin::Static => Some(Origin::Static),
+        PointerOrigin::Untracked { mutable } | PointerOrigin::UnsafeAny { mutable } => {
+            Some(Origin::Untracked { mutable: *mutable })
+        }
+        other => other.as_origin(),
+    }
+}
+
 fn origin_placeholder(argument: &mojito_ast::ast::ParamArg) -> bool {
     let mut value = argument;
     while let mojito_ast::ast::ParamArg::Named { value: inner, .. } = value {

@@ -717,13 +717,19 @@ impl Checker {
         use mojito_ast::ast::ParamArg;
 
         if signature.origins.is_empty() {
-            return Ok((arguments.to_vec(), Vec::new(), HashMap::new()));
+            return Ok((
+                arguments.to_vec(),
+                ForwardedBrackets::all(arguments.len()),
+                Vec::new(),
+                HashMap::new(),
+            ));
         }
         let mut supplied = vec![false; signature.source.len()];
         let mut origins = vec![None; signature.origins.len()];
         let mut ordinary = Vec::new();
+        let mut forwarded = ForwardedBrackets::empty(arguments.len());
         let mut next_positional = 0;
-        for argument in arguments {
+        for (position, argument) in arguments.iter().enumerate() {
             let is_named = matches!(argument, ParamArg::Named { .. });
             let (index, value) = match argument {
                 ParamArg::Named {
@@ -782,12 +788,15 @@ impl Checker {
             supplied[index] = true;
             if let Some(origin_index) = parameter.origin {
                 let origin = self.explicit_origin_argument(&value)?;
+                let attribute = TyArg::Origin(origin.clone());
                 if let ParamArg::Value(expression) = &value {
                     self.record_at(expression.source_span()).argument_attribute =
-                        Some(mojito_types::types::TyArg::Origin(origin.clone()));
+                        Some(attribute.clone());
                 }
+                forwarded.keep(position, bracket_attribute(&value, &attribute));
                 origins[origin_index] = Some(origin);
             } else if parameter.ordinary {
+                forwarded.forward(position);
                 ordinary.push(if is_named {
                     ParamArg::Named {
                         name: parameter.name.trim_start_matches('*').to_string(),
@@ -827,7 +836,7 @@ impl Checker {
                 origin.map(|origin| (parameter.slots.clone(), origin))
             })
             .collect::<Vec<_>>();
-        Ok((ordinary, bindings, tails))
+        Ok((ordinary, forwarded, bindings, tails))
     }
 
     #[allow(
@@ -867,15 +876,19 @@ impl Checker {
         arguments: &[mojito_ast::ast::ParamArg],
         callable: Ty,
         signature: Option<&CallableOriginSignature>,
-    ) -> Result<(Ty, Vec<mojito_ast::ast::ParamArg>), TypeError> {
+    ) -> Result<(Ty, Vec<mojito_ast::ast::ParamArg>, ForwardedBrackets), TypeError> {
         let Some(signature) = signature else {
-            return Ok((callable, arguments.to_vec()));
+            return Ok((
+                callable,
+                arguments.to_vec(),
+                ForwardedBrackets::all(arguments.len()),
+            ));
         };
-        let (ordinary, bindings, tails) =
+        let (ordinary, forwarded, bindings, tails) =
             self.split_callable_specialization(name, arguments, signature)?;
         let callable =
             bind_callable_origin_tails(self.bind_callable_origins(callable, &bindings), &tails);
-        Ok((callable, ordinary))
+        Ok((callable, ordinary, forwarded))
     }
 
     /// Materialize the monomorphic checked view of an explicitly specialized
@@ -891,7 +904,11 @@ impl Checker {
             return Ok((callable, Vec::new()));
         };
         let GenericFuncTy { decls, func } = (**generic).clone();
-        let (subst, tyargs) = self.resolve_use_params(name, &decls, arguments, &[], &[])?;
+        let BoundParameters {
+            subst,
+            arguments: tyargs,
+            ..
+        } = self.resolve_use_params(name, &decls, arguments, &[], &[])?;
         let values = Self::value_argument_environment(&decls, &tyargs);
         let resolve = |ty: &Ty| {
             let expanded = expand_solved_packs(ty, &decls, &tyargs);
@@ -909,7 +926,7 @@ impl Checker {
         callable: Ty,
         signature: Option<&CallableOriginSignature>,
     ) -> Result<Ty, TypeError> {
-        let (callable, ordinary) =
+        let (callable, ordinary, _) =
             self.prepare_callable_specialization(name, arguments, callable, signature)?;
         // The pinned compiler accepts explicit Origin specialization of a
         // stateless nested function as a value but rejects materializing one
@@ -1194,6 +1211,7 @@ impl Checker {
                 kw_variadic.cloned(),
                 HashMap::new(),
                 Vec::new(),
+                Vec::new(),
             ));
         }
         let forwarded_element = self.forwarded_kwargs_element(name, kwargs)?;
@@ -1277,8 +1295,11 @@ impl Checker {
                 actuals.push(actual);
             }
         }
-        let (subst, tyargs) =
-            self.resolve_use_params(name, &signature.decls, param_args, &patterns, &actuals)?;
+        let BoundParameters {
+            subst,
+            arguments: tyargs,
+            attributes,
+        } = self.resolve_use_params(name, &signature.decls, param_args, &patterns, &actuals)?;
         let values = Self::value_argument_environment(&signature.decls, &tyargs);
         let resolve = |ty: &Ty| {
             let expanded = expand_solved_packs(ty, &signature.decls, &tyargs);
@@ -1324,6 +1345,7 @@ impl Checker {
             kw_variadic.map(resolve).transpose()?,
             subst,
             tyargs,
+            attributes,
         ))
     }
 

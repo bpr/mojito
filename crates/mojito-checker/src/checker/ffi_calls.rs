@@ -53,6 +53,9 @@ impl Checker {
             });
         };
         let ret = self.type_param_argument(return_arg, "external_call")?;
+        let mut attributes = vec![None; param_args.len()];
+        attributes[1] = bracket_attribute(return_arg, &TyArg::Ty(ret.clone()));
+        self.record_bracket_attributes(span.clone(), attributes);
         if !ffi::accepts_ret(row.ret, &ret) {
             return Err(TypeError::TypeMismatch {
                 expected: row.ret.describe().to_string(),

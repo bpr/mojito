@@ -778,10 +778,12 @@ impl Checker {
     /// single argument that splats across all lanes; each must fit the dtype.
     pub(super) fn infer_simd_construction(
         &self,
+        span: &SourceSpan,
         param_args: &[mojito_ast::ast::ParamArg],
         args: &[Expr],
     ) -> Result<Ty, TypeError> {
-        let (dtype, mut width) = self.simd_dims(param_args)?;
+        let (dtype, mut width, attributes) = self.simd_dims(param_args)?;
+        self.record_bracket_attributes(span.clone(), attributes);
         if width.is_inferred() {
             let inferred = i64::try_from(args.len()).unwrap_or(0);
             if inferred < 1 || (inferred & (inferred - 1)) != 0 {
@@ -831,11 +833,13 @@ impl Checker {
     /// a `Scalar`, so a mask takes its one lane by keyword, not positionally.
     pub(super) fn infer_simd_fill(
         &self,
+        span: &SourceSpan,
         param_args: &[mojito_ast::ast::ParamArg],
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
-        let (dtype, width) = self.simd_dims(param_args)?;
+        let (dtype, width, attributes) = self.simd_dims(param_args)?;
+        self.record_bracket_attributes(span.clone(), attributes);
         let not_a_fill = || TypeError::BadCall {
             func: "SIMD".to_string(),
             reason: "only a DType.bool mask of a known width takes 'fill=', its one Bool lane"

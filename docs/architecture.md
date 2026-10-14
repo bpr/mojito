@@ -903,12 +903,20 @@ names it (`CheckedOp::TypeValue`, `CheckedParamArg::Attribute`,
 operand of an op is never the annotation as written: as upstream's call op
 carries each bracket argument as the parameter attribute its check produced,
 the check records the `TyArg` of each bracket argument that is not a
-run-time value at the occurrence (`NodeFacts::parameter_attributes`,
-`Checker::record_parameter_attributes`): a type-shaped one's — a type, a
-value it names (`Self.n`, a pack spread `*vs`, a display element `L[0]`), or
-an origin — and a value-shaped one's it bound to a type or an origin
-(`List[String]`, `Pointer[Int, origin_of(x)]`), which binding records as it
-binds (`NodeFacts::argument_attribute`), and a type in value position its
+run-time value at the occurrence (`NodeFacts::parameter_attributes`) as the
+binder that resolved the bracket list returns it, once: each binder answers
+its list's `BracketAttributes` in source order beside what it bound
+(`resolve_use_params`'s `BoundParameters`, `applied_type` for a type
+application, `simd_dims`, the builtin collection and pointer types), a
+partition that keeps origins back scatters the binder's answer into source
+positions (`ForwardedBrackets::scatter`, for the struct origin partition and
+an explicit specialization's), and the route holding the occurrence records
+it (`Checker::record_bracket_attributes`). A type-shaped argument's
+attribute is what it bound to — a type, a value it names (`Self.n`, a pack
+spread `*vs`), or an origin — and a value-shaped one's is the type or origin
+it bound to (`List[String]`, `Pointer[Int, origin_of(x)]`, `size_of[T]`),
+which `resolve_param_arg` and origin binding also record at the argument
+(`NodeFacts::argument_attribute`); a type in value position records its
 `Ty` (`NodeFacts::type_operand`, `Checker::type_value`); the op holds them,
 and MIR reads them instead of the spelling. A closed one in a plain `def`
 (`g[h(3)]()`) is lifted the same way, over no binder. A call of a

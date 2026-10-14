@@ -129,12 +129,17 @@ impl Checker {
                 })
             {
                 return self
-                    .infer_type_receiver_instance_call(span.clone(), name, targs, method, call)
+                    .infer_type_receiver_instance_call(
+                        span.clone(),
+                        (name, targs, Some(object.source_span())),
+                        method,
+                        call,
+                    )
                     .map(Some);
             }
             reject_kwargs(kwargs)?;
             return self
-                .infer_static_method(name, targs, method, args, object.source.as_deref())
+                .infer_static_method(&object.source_span(), name, targs, method, args)
                 .map(Some);
         }
         // `Box[String].filled(...)`: a single non-builtin compile-time
@@ -163,7 +168,12 @@ impl Checker {
             }
             if !args.is_empty() && sigs.iter().any(|sig| sig.has_self) {
                 return self
-                    .infer_type_receiver_instance_call(span.clone(), sname, &[targ], method, call)
+                    .infer_type_receiver_instance_call(
+                        span.clone(),
+                        (sname, &[targ], None),
+                        method,
+                        call,
+                    )
                     .map(Some);
             }
         }
@@ -214,7 +224,7 @@ impl Checker {
             && signatures.iter().all(|sig| sig.has_self)
         {
             return self
-                .infer_type_receiver_instance_call(span.clone(), sname, &[], method, call)
+                .infer_type_receiver_instance_call(span.clone(), (sname, &[], None), method, call)
                 .map(Some);
         }
         let mut matches = Vec::new();
@@ -224,17 +234,23 @@ impl Checker {
         // message replaces `NoMatch` only when this is the sole callable shape.
         let single_candidate = signatures.iter().filter(|sig| !sig.has_self).count() == 1;
         for sig in signatures.iter().filter(|sig| !sig.has_self) {
-            let Ok((params, variadic, kw_variadic, method_subst, method_arguments)) = self
-                .instantiate_method_generics(
-                    &format!("{sname}.{method}"),
-                    sig,
-                    &sig.params,
-                    sig.variadic.as_ref(),
-                    sig.kw_variadic.as_ref(),
-                    param_args,
-                    args,
-                    kwargs,
-                )
+            let Ok((
+                params,
+                variadic,
+                kw_variadic,
+                method_subst,
+                method_arguments,
+                bracket_attributes,
+            )) = self.instantiate_method_generics(
+                &format!("{sname}.{method}"),
+                sig,
+                &sig.params,
+                sig.variadic.as_ref(),
+                sig.kw_variadic.as_ref(),
+                param_args,
+                args,
+                kwargs,
+            )
             else {
                 continue;
             };
@@ -323,6 +339,7 @@ impl Checker {
                     declared_return: None,
                     declared_params: Vec::new(),
                     nested_origins: NestedOrigins::AsDeclared,
+                    bracket_attributes,
                 });
             }
         }
@@ -337,6 +354,7 @@ impl Checker {
                     .to_string(),
                 }
             })?;
+            self.record_bracket_attributes(span.clone(), selected.bracket_attributes.clone());
             if parameterized_syntax {
                 self.record_at(span.clone()).parameterized_method_call =
                     Some(selected.param_decls.clone());

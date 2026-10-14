@@ -953,8 +953,8 @@ impl Checker {
                 }
             }
             ExprKind::TypeApply { name, args } => {
-                let ty = self.ty_from_anno(&SourceType::Named(name.clone(), args.clone()))?;
-                self.record_parameter_attributes(value);
+                let (ty, attributes) = self.applied_type(name, args)?;
+                self.record_bracket_attributes(value.source_span(), attributes);
                 Ok(ty)
             }
             ExprKind::TypeValue(ty) => self.type_value(value, ty),
@@ -2165,7 +2165,14 @@ impl Checker {
             .borrow_mut()
             .insert(span.clone(), immutable_binders);
         if !kwargs.is_empty() && args.is_empty() && kwargs.len() == 1 && kwargs[0].name == "copy" {
-            return self.infer_copy_construction(name, info, param_args, kwargs, &partitioned);
+            return self.infer_copy_construction(
+                span,
+                name,
+                info,
+                param_args,
+                kwargs,
+                &partitioned,
+            );
         }
         // A hand-written `def __init__(out self, …)` is the constructor: check the
         // call arguments against its parameters (the `self` receiver is implicit).
@@ -2188,17 +2195,23 @@ impl Checker {
                     // instantiates them from the arguments like any generic
                     // method; the resolved arguments feed per-call
                     // specialization.
-                    let Ok((params, variadic, kw_variadic, _, method_arguments)) = self
-                        .instantiate_method_generics(
-                            &format!("{name}.__init__"),
-                            sig,
-                            &sig.params,
-                            sig.variadic.as_ref(),
-                            sig.kw_variadic.as_ref(),
-                            param_args,
-                            args,
-                            kwargs,
-                        )
+                    let Ok((
+                        params,
+                        variadic,
+                        kw_variadic,
+                        _,
+                        method_arguments,
+                        bracket_attributes,
+                    )) = self.instantiate_method_generics(
+                        &format!("{name}.__init__"),
+                        sig,
+                        &sig.params,
+                        sig.variadic.as_ref(),
+                        sig.kw_variadic.as_ref(),
+                        param_args,
+                        args,
+                        kwargs,
+                    )
                     else {
                         continue;
                     };
@@ -2277,6 +2290,7 @@ impl Checker {
                             declared_return: None,
                             declared_params: sig.params.clone(),
                             nested_origins: sig.nested_origins,
+                            bracket_attributes,
                         });
                     }
                 }
@@ -2287,6 +2301,12 @@ impl Checker {
                 if let Some(target) = &selected.lowered_name {
                     self.record_at(span.clone()).overload_target = Some(target.clone());
                 }
+                self.record_bracket_attributes(
+                    span.clone(),
+                    partitioned
+                        .brackets
+                        .scatter(selected.bracket_attributes.clone()),
+                );
                 self.record_construction_instantiation(
                     span,
                     name,
@@ -2383,8 +2403,15 @@ impl Checker {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 Self::reject_unconstrained_pack(name, &decls, param_args, &params)?;
-                let (mut subst, tyargs) =
-                    self.resolve_use_params(name, &decls, param_args, &params, &arg_tys)?;
+                let BoundParameters {
+                    mut subst,
+                    arguments: tyargs,
+                    attributes,
+                } = self.resolve_use_params(name, &decls, param_args, &params, &arg_tys)?;
+                self.record_bracket_attributes(
+                    span.clone(),
+                    partitioned.brackets.scatter(attributes),
+                );
                 if let Some(specialized) =
                     self.finish_variadic_construction(span, name, param_args, &tyargs, args, kwargs)
                 {
@@ -2615,7 +2642,16 @@ impl Checker {
                 {
                     bound_failure = Some(error.clone());
                 }
-                if let Ok((subst, tyargs)) = resolved_use {
+                if let Ok(BoundParameters {
+                    subst,
+                    arguments: tyargs,
+                    attributes,
+                }) = resolved_use
+                {
+                    self.record_bracket_attributes(
+                        span.clone(),
+                        partitioned.brackets.scatter(attributes),
+                    );
                     let pointer_origins = match self.bind_constructor_origins(
                         name,
                         "__init__",
@@ -2962,8 +2998,12 @@ impl Checker {
         // The origin slots were partitioned out of `param_args` above; the
         // field types bind the struct's origin binders from the arguments.
         Self::reject_unconstrained_pack(name, &decls, param_args, &field_tys)?;
-        let (subst, tyargs) =
-            self.resolve_use_params(name, &decls, param_args, &field_tys, &arg_tys)?;
+        let BoundParameters {
+            subst,
+            arguments: tyargs,
+            attributes,
+        } = self.resolve_use_params(name, &decls, param_args, &field_tys, &arg_tys)?;
+        self.record_bracket_attributes(span.clone(), partitioned.brackets.scatter(attributes));
         if let Some(specialized) =
             self.finish_variadic_construction(span, name, param_args, &tyargs, args, &[])
         {
@@ -3063,7 +3103,7 @@ impl Checker {
         param_args: &[mojito_ast::ast::ParamArg],
         patterns: &[Ty],
         actuals: &[Ty],
-    ) -> Result<(TySubst, Vec<TyArg>), TypeError> {
+    ) -> Result<BoundParameters, TypeError> {
         let mut subst: TySubst = TySubst::new();
         if decls.is_empty() {
             if !param_args.is_empty() {
@@ -3073,10 +3113,15 @@ impl Checker {
                     got: param_args.len(),
                 });
             }
-            return Ok((subst, Vec::new()));
+            return Ok(BoundParameters {
+                subst,
+                arguments: Vec::new(),
+                attributes: Vec::new(),
+            });
         }
         if !param_args.is_empty() {
             let bound = bracket_bindings(name, decls, param_args)?;
+            let mut attributes: BracketAttributes = vec![None; param_args.len()];
             // Infer parameters hidden before `//` even when later parameters
             // were supplied explicitly (`hash[Fnv1a](value)` infers `T` from
             // `value` while binding the explicit hasher argument). A pack
@@ -3145,20 +3190,23 @@ impl Checker {
                     }
                     // A spread of a value pack that is still a parameter
                     // (`PL[*vs]`, `PL[*Self.vs]`) forwards that pack whole.
-                    if let [argument] = arguments.as_slice()
+                    if let [(position, argument)] = arguments.as_slice()
                         && matches!(decl, ParamDecl::Value { .. })
                         && let Some(pack) = self.value_pack_spread(argument)
                     {
-                        let value = CtValue::Expr(pack);
-                        value_environment.insert(
-                            decl.name().trim_start_matches('*').to_string(),
-                            value.clone(),
-                        );
-                        tyargs.push(TyArg::Val(value));
+                        let value = TyArg::Val(CtValue::Expr(pack));
+                        attributes[*position] = bracket_attribute(argument, &value);
+                        if let TyArg::Val(value) = &value {
+                            value_environment.insert(
+                                decl.name().trim_start_matches('*').to_string(),
+                                value.clone(),
+                            );
+                        }
+                        tyargs.push(value);
                         continue;
                     }
                     let mut values = Vec::with_capacity(arguments.len());
-                    for argument in arguments {
+                    for (position, argument) in arguments {
                         // A spread of a computed list binds its elements,
                         // or the list itself while a length in it is open.
                         if let mojito_ast::ast::ParamArg::Value(Expr {
@@ -3169,16 +3217,14 @@ impl Checker {
                             values.extend(self.spread_pack_values(operand)?);
                             continue;
                         }
-                        values.push(
-                            self.resolve_param_arg(decl, argument)?
-                                .ct_value()
-                                .ok_or_else(|| {
-                                    TypeError::Unsupported(
-                                        "an origin argument cannot bind a type or value parameter"
-                                            .to_string(),
-                                    )
-                                })?,
-                        );
+                        let resolved = self.resolve_param_arg(decl, argument)?;
+                        attributes[position] = bracket_attribute(argument, &resolved);
+                        values.push(resolved.ct_value().ok_or_else(|| {
+                            TypeError::Unsupported(
+                                "an origin argument cannot bind a type or value parameter"
+                                    .to_string(),
+                            )
+                        })?);
                     }
                     // A spread of a pack that is still a parameter forwards
                     // that pack whole, as `Self`'s own argument spells it.
@@ -3208,8 +3254,10 @@ impl Checker {
                     tyargs.push(TyArg::Val(value));
                     continue;
                 }
-                let tyarg = if let Some(argument) = arguments.first() {
-                    self.resolve_param_arg(decl, argument)?
+                let tyarg = if let Some((position, argument)) = arguments.first() {
+                    let resolved = self.resolve_param_arg(decl, argument)?;
+                    attributes[*position] = bracket_attribute(argument, &resolved);
+                    resolved
                 } else if let ParamDecl::Value {
                     callable_default: Some(_),
                     ..
@@ -3266,7 +3314,11 @@ impl Checker {
             }
             self.validate_callable_parameter_bounds(name, decls, &tyargs)?;
             self.validate_generic_constraints(name, decls, &tyargs)?;
-            return Ok((subst, tyargs));
+            return Ok(BoundParameters {
+                subst,
+                arguments: tyargs,
+                attributes,
+            });
         }
         // Inference: type parameters (and value parameters occupying a solved
         // argument slot, `Array[T, length]` against `Array[Int, 3]`) from the
@@ -3442,7 +3494,11 @@ impl Checker {
         }
         self.validate_callable_parameter_bounds(name, decls, &tyargs)?;
         self.validate_generic_constraints(name, decls, &tyargs)?;
-        Ok((subst, tyargs))
+        Ok(BoundParameters {
+            subst,
+            arguments: tyargs,
+            attributes: Vec::new(),
+        })
     }
 
     /// The type binders of `decls` a call's bracket arguments bind
@@ -3465,7 +3521,7 @@ impl Checker {
                     variadic: false,
                     ..
                 },
-                [argument],
+                [(_, argument)],
             ) = (decl, arguments.as_slice())
                 && let TyArg::Ty(ty) = self.resolve_param_arg(decl, argument)?
             {
@@ -3552,10 +3608,10 @@ impl Checker {
     /// type, else the value as [`Self::resolve_param_arg`] types it.
     fn bound_value_ty(
         &self,
-        arguments: &[&mojito_ast::ast::ParamArg],
+        arguments: &[(usize, &mojito_ast::ast::ParamArg)],
         declared: &Ty,
     ) -> Option<Ty> {
-        let argument = arguments.first()?;
+        let (_, argument) = arguments.first()?;
         match self.value_pack_spread(argument) {
             Some(pack) => match pack.meta() {
                 mojito_types::param_expr::MetaTy::ParamList(element) => element.as_value().cloned(),
@@ -3593,6 +3649,7 @@ impl Checker {
     /// source's origin tail.
     fn infer_copy_construction(
         &self,
+        span: &SourceSpan,
         name: &str,
         info: &StructInfo,
         param_args: &[mojito_ast::ast::ParamArg],
@@ -3630,13 +3687,18 @@ impl Checker {
         let decls = info.decls.clone();
         let arg_ty = self.infer(&kwargs[0].value)?;
         self.record_read_temporary_argument(&kwargs[0].value);
-        let (subst, tyargs) = self.resolve_use_params(
+        let BoundParameters {
+            subst,
+            arguments: tyargs,
+            attributes,
+        } = self.resolve_use_params(
             name,
             &decls,
             param_args,
             &params,
             std::slice::from_ref(&arg_ty),
         )?;
+        self.record_bracket_attributes(span.clone(), partitioned.brackets.scatter(attributes));
         let expected = if let Some(parameter) = params.first() {
             substitute_assoc(
                 parameter,
@@ -3943,17 +4005,18 @@ fn substituted_value_decl(decl: &ParamDecl, subst: &TySubst) -> Option<ParamDecl
     (solved != **ty).then(|| decl.with_value_type(solved))
 }
 
-/// Each of `decls`' bracket arguments in `param_args`, positional ones
-/// skipping infer-only binders and keyword ones bound by name.
+/// Each of `decls`' bracket arguments in `param_args`, with its source
+/// position, positional ones skipping infer-only binders and keyword ones
+/// bound by name.
 fn bracket_bindings<'a>(
     name: &str,
     decls: &[ParamDecl],
     param_args: &'a [mojito_ast::ast::ParamArg],
-) -> Result<Vec<Vec<&'a mojito_ast::ast::ParamArg>>, TypeError> {
-    let mut bound: Vec<Vec<&mojito_ast::ast::ParamArg>> = vec![Vec::new(); decls.len()];
+) -> Result<Vec<Vec<(usize, &'a mojito_ast::ast::ParamArg)>>, TypeError> {
+    let mut bound: Vec<Vec<(usize, &mojito_ast::ast::ParamArg)>> = vec![Vec::new(); decls.len()];
     let mut positional = 0;
     let mut saw_keyword = false;
-    for argument in param_args {
+    for (position, argument) in param_args.iter().enumerate() {
         match argument {
             mojito_ast::ast::ParamArg::Named {
                 name: keyword,
@@ -3971,7 +4034,7 @@ fn bracket_bindings<'a>(
                 if !bound[index].is_empty() {
                     return Err(TypeError::Redeclaration(keyword.clone()));
                 }
-                bound[index].push(value);
+                bound[index].push((position, value));
             }
             positional_argument => {
                 if saw_keyword {
@@ -4025,7 +4088,7 @@ fn bracket_bindings<'a>(
                         got: param_args.len(),
                     });
                 }
-                bound[positional].push(positional_argument);
+                bound[positional].push((position, positional_argument));
                 if !matches!(
                     decls[positional],
                     ParamDecl::Type { variadic: true, .. }

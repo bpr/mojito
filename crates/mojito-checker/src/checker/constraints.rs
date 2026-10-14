@@ -252,17 +252,19 @@ impl Checker {
         self.tparams.push(scope);
         let saved = self.enclosing_type_params.len();
         self.enclosing_type_params.extend(params.iter().cloned());
-        let template = self.ty_from_anno(source_ty);
         // The body's own occurrence records what it resolved to, under the
         // member's parameters.
-        if let Ok(template) = &template {
-            match &body.kind {
-                ExprKind::TypeValue(_) => {
-                    self.record_at(body.source_span()).type_operand = Some(template.clone());
-                }
-                ExprKind::TypeApply { .. } => self.record_parameter_attributes(body),
-                _ => {}
+        let template = match &body.kind {
+            ExprKind::TypeApply { name, args } => {
+                self.applied_type(name, args).map(|(template, attributes)| {
+                    self.record_bracket_attributes(body.source_span(), attributes);
+                    template
+                })
             }
+            _ => self.ty_from_anno(source_ty),
+        };
+        if let (Ok(template), ExprKind::TypeValue(_)) = (&template, &body.kind) {
+            self.record_at(body.source_span()).type_operand = Some(template.clone());
         }
         self.enclosing_type_params.truncate(saved);
         self.tparams.pop();
@@ -321,10 +323,10 @@ impl Checker {
                     .ok_or_else(|| TypeError::NotComptime(name.clone()))
             }
             ExprKind::TypeApply { name, args } => {
-                let ty = self
-                    .ty_value_from_name(name, args)?
+                let (ty, attributes) = self
+                    .applied_type_value(name, args)?
                     .ok_or_else(|| TypeError::NotComptime(name.clone()))?;
-                self.record_parameter_attributes(expr);
+                self.record_bracket_attributes(expr.source_span(), attributes);
                 Ok(ty)
             }
             ExprKind::Call {
@@ -572,7 +574,9 @@ impl Checker {
             if param_args.len() != 2 {
                 return None;
             }
-            return mojito_types::types::simd_shape(&self.simd_type(param_args).ok()?.into_kind());
+            return mojito_types::types::simd_shape(
+                &self.simd_type(param_args).ok()?.0.into_kind(),
+            );
         }
         if !param_args.is_empty() {
             return None;
@@ -898,18 +902,28 @@ impl Checker {
         name: &str,
         args: &[mojito_ast::ast::ParamArg],
     ) -> Result<Option<CtValue>, TypeError> {
+        Ok(self.applied_type_value(name, args)?.map(|(value, _)| value))
+    }
+
+    /// The type value `name[args]` names, beside what each of its bracket
+    /// arguments bound to; `None` when `name` names no type.
+    pub(super) fn applied_type_value(
+        &self,
+        name: &str,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<Option<(CtValue, BracketAttributes)>, TypeError> {
         if args.is_empty() {
             // A type value names the nominal `String`, not the compile-time
             // literal type a `[text: String]` value parameter binds.
             if let Some(ty) = scalar_type_name(name).filter(|ty| *ty != TyKind::StringLiteral) {
-                return Ok(Some(CtValue::Type(ty)));
+                return Ok(Some((CtValue::Type(ty), Vec::new())));
             }
             if name == "None" {
-                return Ok(Some(CtValue::Type(Ty::none())));
+                return Ok(Some((CtValue::Type(Ty::none()), Vec::new())));
             }
         }
-        match self.ty_from_anno(&SourceType::Named(name.to_string(), args.to_vec())) {
-            Ok(ty) => Ok(Some(CtValue::Type(ty))),
+        match self.applied_type(name, args) {
+            Ok((ty, attributes)) => Ok(Some((CtValue::Type(ty), attributes))),
             Err(TypeError::UnknownType(_)) => Ok(None),
             Err(error) => Err(error),
         }
@@ -1411,8 +1425,8 @@ impl Checker {
                         "{name}[T] takes exactly one type argument"
                     )));
                 }
-                let operand = self.predicate_operand(&args[0])?;
-                self.record_parameter_attributes(expr);
+                let (operand, attribute) = self.predicate_operand(&args[0])?;
+                self.record_bracket_attributes(expr.source_span(), vec![attribute]);
                 GenericConstraint::Trivial(kind, operand)
             }
             // A single non-scalar bracket argument (`IsTriviallyMovable[T]`)
@@ -1527,7 +1541,6 @@ impl Checker {
         let Some(receiver) = self.typelist_receiver(object)? else {
             return Ok(None);
         };
-        self.record_parameter_attributes(expr);
         let single = |what: &str| -> Result<&mojito_ast::ast::ParamArg, TypeError> {
             match param_args.as_slice() {
                 [only] => Ok(only),
@@ -1612,7 +1625,8 @@ impl Checker {
                 }
             }
             "contains" => {
-                let element = self.predicate_operand(single("contains")?)?;
+                let (element, attribute) = self.predicate_operand(single("contains")?)?;
+                self.record_bracket_attributes(expr.source_span(), vec![attribute]);
                 match receiver {
                     TypeListReceiver::Pack(param) => {
                         GenericConstraint::PackContains { param, element }
@@ -1774,12 +1788,14 @@ impl Checker {
                     return Ok(None);
                 }
                 let mut types = Vec::new();
+                let mut attributes = Vec::with_capacity(param_args.len());
                 for argument in param_args {
                     let annotation = match argument {
                         // The optional `Trait=` keyword names the common
                         // bound; membership is not re-checked here (the
                         // elements' own uses enforce their capabilities).
                         mojito_ast::ast::ParamArg::Named { name, .. } if name == "Trait" => {
+                            attributes.push(None);
                             continue;
                         }
                         mojito_ast::ast::ParamArg::Type(annotation) => annotation.clone(),
@@ -1793,14 +1809,16 @@ impl Checker {
                             ));
                         }
                     };
-                    types.push(self.ty_from_anno(&annotation).map_err(|_| {
+                    let element = self.ty_from_anno(&annotation).map_err(|_| {
                         TypeError::Unsupported(
                             "a TypeList.of element must be a concrete type in this position"
                                 .to_string(),
                         )
-                    })?);
+                    })?;
+                    attributes.push(bracket_attribute(argument, &TyArg::Ty(element.clone())));
+                    types.push(element);
                 }
-                self.record_parameter_attributes(expr);
+                self.record_bracket_attributes(expr.source_span(), attributes);
                 Ok(Some(TypeListReceiver::Concrete(types)))
             }
             _ => Ok(None),
@@ -1947,7 +1965,7 @@ impl Checker {
         let (decls, template) = (decls.to_vec(), template.clone());
         let mut bindings = HashMap::new();
         for (decl, argument) in decls.iter().zip(args) {
-            bindings.insert(decl.id().clone(), self.predicate_operand(argument)?);
+            bindings.insert(decl.id().clone(), self.predicate_operand(argument)?.0);
         }
         self.substitute_predicate(&template, &bindings)
     }
@@ -2026,18 +2044,21 @@ impl Checker {
     fn predicate_operand(
         &self,
         argument: &mojito_ast::ast::ParamArg,
-    ) -> Result<ConstraintOperand, TypeError> {
-        Ok(match argument {
+    ) -> Result<(ConstraintOperand, Option<TyArg>), TypeError> {
+        let operand = match argument {
             mojito_ast::ast::ParamArg::Value(expr) => self.constraint_operand(expr)?,
             mojito_ast::ast::ParamArg::Type(SourceType::Named(name, args)) if args.is_empty() => {
-                scalar_type_name(name).map_or_else(
-                    || ConstraintOperand::Param(ParamRef::unbound(name)),
-                    ConstraintOperand::Type,
-                )
+                if let Some(ty) = scalar_type_name(name) {
+                    ConstraintOperand::Type(ty)
+                } else {
+                    let attribute = self.lookup_tparam(name).map(TyArg::Ty);
+                    return Ok((ConstraintOperand::Param(ParamRef::unbound(name)), attribute));
+                }
             }
             // `Self.T` names the struct's binder, as in `conforms_to`.
-            mojito_ast::ast::ParamArg::Type(SourceType::SelfParam(name)) => {
-                ConstraintOperand::Param(self.self_binder(name))
+            mojito_ast::ast::ParamArg::Type(ty @ SourceType::SelfParam(name)) => {
+                let attribute = self.ty_from_anno(ty).ok().map(TyArg::Ty);
+                return Ok((ConstraintOperand::Param(self.self_binder(name)), attribute));
             }
             mojito_ast::ast::ParamArg::Type(ty) => ConstraintOperand::Type(self.ty_from_anno(ty)?),
             mojito_ast::ast::ParamArg::Named { .. } => {
@@ -2045,7 +2066,12 @@ impl Checker {
                     "a comptime predicate takes positional arguments".to_string(),
                 ));
             }
-        })
+        };
+        let attribute = match &operand {
+            ConstraintOperand::Type(ty) => bracket_attribute(argument, &TyArg::Ty(ty.clone())),
+            _ => None,
+        };
+        Ok((operand, attribute))
     }
 
     pub(super) fn constraint_operand(&self, expr: &Expr) -> Result<ConstraintOperand, TypeError> {
@@ -2135,8 +2161,8 @@ impl Checker {
             ExprKind::Str(value) => ConstraintOperand::Value(CtValue::Str(value.clone())),
             ExprKind::TypeValue(ty) => ConstraintOperand::Type(self.type_value(expr, ty)?),
             ExprKind::TypeApply { name, args } => {
-                let ty = self.ty_from_anno(&SourceType::Named(name.clone(), args.clone()))?;
-                self.record_parameter_attributes(expr);
+                let (ty, attributes) = self.applied_type(name, args)?;
+                self.record_bracket_attributes(expr.source_span(), attributes);
                 ConstraintOperand::Type(ty)
             }
             // A pack element (`Self.Ts[i]`) is a type operand.

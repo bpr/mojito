@@ -171,8 +171,8 @@ impl Checker {
             // `def[index: Int](var element: Self.Ts[index])`) is judged at
             // the receiver's elements.
             let at_receiver = self.method_decls_at_receiver(sig, info, targs);
-            let (params, variadic, kw_variadic, method_subst, method_arguments) = match self
-                .instantiate_method_generics(
+            let (params, variadic, kw_variadic, method_subst, method_arguments, bracket_attributes) =
+                match self.instantiate_method_generics(
                     &format!("{sname}.{method}"),
                     at_receiver.as_ref().unwrap_or(sig),
                     &receiver_params,
@@ -182,28 +182,30 @@ impl Checker {
                     args,
                     kwargs,
                 ) {
-                Ok(instantiated) => instantiated,
-                // A runtime value where a subscript accessor takes a
-                // compile-time `Int` (`t[i]` over a runtime `i`) is the
-                // reason the call reports.
-                Err(TypeError::NotComptime(_))
-                    if !overloaded
-                        && matches!(method, "__getitem__" | "__getitem_param__")
-                        && matches!(sig.decls.as_slice(),
+                    Ok(instantiated) => instantiated,
+                    // A runtime value where a subscript accessor takes a
+                    // compile-time `Int` (`t[i]` over a runtime `i`) is the
+                    // reason the call reports.
+                    Err(TypeError::NotComptime(_))
+                        if !overloaded
+                            && matches!(method, "__getitem__" | "__getitem_param__")
+                            && matches!(sig.decls.as_slice(),
                             [ParamDecl::Value { ty, .. }] if **ty == TyKind::Int) =>
-                {
-                    availability_failure.get_or_insert_with(|| {
-                        "expected a compile-time Int index, found a runtime value".to_string()
-                    });
-                    continue;
-                }
-                Err(failure) => {
-                    if !overloaded && let Some(reason) = collector_element_failure(sig, &failure) {
-                        availability_failure.get_or_insert(reason);
+                    {
+                        availability_failure.get_or_insert_with(|| {
+                            "expected a compile-time Int index, found a runtime value".to_string()
+                        });
+                        continue;
                     }
-                    continue;
-                }
-            };
+                    Err(failure) => {
+                        if !overloaded
+                            && let Some(reason) = collector_element_failure(sig, &failure)
+                        {
+                            availability_failure.get_or_insert(reason);
+                        }
+                        continue;
+                    }
+                };
             let instantiation = method_instantiation_arguments(sig, &method_arguments);
             if let Err(failure) =
                 self.method_constraint_result(sig, &method_arguments, &info.decls, targs)
@@ -310,6 +312,7 @@ impl Checker {
                     declared_return: Some(sig.ret.clone()),
                     declared_params: sig.params.clone(),
                     nested_origins: sig.nested_origins,
+                    bracket_attributes,
                     param_types: params,
                     param_decls: sig.decls.clone(),
                 });
@@ -392,8 +395,8 @@ impl Checker {
                 .kw_variadic
                 .as_ref()
                 .map(|ty| substitute_self(ty, obj_ty));
-            let (params, variadic, kw_variadic, method_subst, method_arguments) = match self
-                .instantiate_method_generics(
+            let (params, variadic, kw_variadic, method_subst, method_arguments, bracket_attributes) =
+                match self.instantiate_method_generics(
                     &format!("{obj_ty}.{method}"),
                     &sig,
                     &receiver_params,
@@ -403,16 +406,16 @@ impl Checker {
                     args,
                     kwargs,
                 ) {
-                Ok(instantiated) => instantiated,
-                Err(failure) => {
-                    if single_candidate
-                        && let Some(reason) = collector_element_failure(&sig, &failure)
-                    {
-                        availability_failure.get_or_insert(reason);
+                    Ok(instantiated) => instantiated,
+                    Err(failure) => {
+                        if single_candidate
+                            && let Some(reason) = collector_element_failure(&sig, &failure)
+                        {
+                            availability_failure.get_or_insert(reason);
+                        }
+                        continue;
                     }
-                    continue;
-                }
-            };
+                };
             if let Err(failure) = self.method_constraint_result(&sig, &method_arguments, &[], &[]) {
                 if single_candidate
                     && availability_failure.is_none()
@@ -500,6 +503,7 @@ impl Checker {
                 declared_return: None,
                 declared_params: Vec::new(),
                 nested_origins: NestedOrigins::AsDeclared,
+                bracket_attributes,
             });
             requirements.push((sig, method_arguments));
         }
@@ -693,6 +697,7 @@ fn intrinsic_resolution(
         declared_return: None,
         declared_params: Vec::new(),
         nested_origins: NestedOrigins::AsDeclared,
+        bracket_attributes: Vec::new(),
     }
 }
 

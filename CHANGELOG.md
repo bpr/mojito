@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The check records each bracket argument's parameter attribute once, as
+  the binder that resolved the bracket list returns it, rather than
+  resolving a type-shaped argument a second time from its spelling (R659).
+  A value-shaped argument a builtin binds to a type (`size_of[T]()`,
+  `_unqualified_type_name[T]()`, a `Variant` method's `[T]`) now carries
+  that type as its attribute too; the generated MIR is unchanged.
 - A bracket argument written as a value that the check binds to a type or
   an origin (`List[String]()`'s `String`, `Pointer[Int, origin_of(x)]`'s
   origin) is now the call's parameter attribute rather than a name node,

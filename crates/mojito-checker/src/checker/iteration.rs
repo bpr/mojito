@@ -742,7 +742,7 @@ impl Checker {
             .kw_variadic
             .as_ref()
             .map(|ty| substitute(ty, &receiver_subst));
-        let (_, variadic, kw_variadic, method_subst, method_arguments) = self
+        let (_, variadic, kw_variadic, method_subst, method_arguments, _) = self
             .instantiate_method_generics(
                 &format!("{owner} iterator protocol"),
                 signature,

@@ -321,7 +321,7 @@ impl Checker {
     pub(super) fn reflection_handle(&self, expr: &Expr) -> Result<Option<Ty>, TypeError> {
         match &expr.kind {
             ExprKind::TypeApply { name, args } if name == "reflect" => {
-                self.reflection_subject(args).map(Some)
+                self.reflection_subject(expr, args).map(Some)
             }
             ExprKind::Call {
                 name,
@@ -329,7 +329,7 @@ impl Checker {
                 args,
                 kwargs,
             } if name == "reflect" && args.is_empty() && kwargs.is_empty() => {
-                self.reflection_subject(param_args).map(Some)
+                self.reflection_subject(expr, param_args).map(Some)
             }
             ExprKind::Identifier(name) => match self.local_comptime_value(name) {
                 Some(bound) => self.reflection_handle(bound),
@@ -421,7 +421,9 @@ impl Checker {
 
     /// The type `reflect[...]` applies to. `Self` is the enclosing struct at
     /// its own parameters, or the abstract `Self` of a trait body.
-    fn reflection_subject(&self, args: &[ParamArg]) -> Result<Ty, TypeError> {
+    /// The subject type of the application `reflect[args]` at `application`,
+    /// recording what its bracket argument bound to.
+    fn reflection_subject(&self, application: &Expr, args: &[ParamArg]) -> Result<Ty, TypeError> {
         let [argument] = args else {
             return Err(TypeError::WrongTypeArgCount {
                 name: "reflect".to_string(),
@@ -429,15 +431,21 @@ impl Checker {
                 got: args.len(),
             });
         };
-        if let ParamArg::Value(Expr {
+        let subject = if let ParamArg::Value(Expr {
             kind: ExprKind::Identifier(name),
             ..
         }) = argument
             && name == "Self"
         {
-            return Ok(self.self_ty.clone().unwrap_or_else(Ty::self_type));
-        }
-        self.type_param_argument(argument, "reflect")
+            self.self_ty.clone().unwrap_or_else(Ty::self_type)
+        } else {
+            self.type_param_argument(argument, "reflect")?
+        };
+        self.record_bracket_attributes(
+            application.source_span(),
+            types_attributes(args, std::slice::from_ref(&subject)),
+        );
+        Ok(subject)
     }
 
     /// A `field_names()` or `field_types()` read, with its value.

@@ -1881,8 +1881,8 @@ impl Checker {
                 if !self.comptime_aliases.contains_key(name)
                     && mojito_types::types::trivial_predicate_name(name).is_none() =>
             {
-                let ty = self.ty_from_anno(&SourceType::Named(name.clone(), args.clone()))?;
-                self.record_parameter_attributes(expr);
+                let (ty, attributes) = self.applied_type(name, args)?;
+                self.record_bracket_attributes(expr.source_span(), attributes);
                 Some(ty)
             }
             ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {

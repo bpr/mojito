@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R755**.
+Next free ID: **R758**.
 
 ## Ordered Work
 
@@ -5534,20 +5534,60 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R659 The check resolves each type-shaped bracket argument twice**
+- [ ] **R756 Value-shaped bracket arguments carry two attribute facts that
+  can disagree**
 
-  `Checker::record_parameter_attributes` resolves a type-shaped bracket
-  argument again after the check bound it (`parameter_attribute`), by
-  what its spelling names rather than by the parameter it binds.
-  - Upstream's check produces each argument's attribute once, as it binds
-    the parameter.
-  - The lever: `resolve_use_params`, SIMD's `simd_dims`, and the origin
-    partition return each source argument's `TyArg` beside the bound
-    list, and the call site records those.
-  - Done when `parameter_attribute` is deleted and the attributes are
-    unchanged on the probe fixtures.
-  - Found while landing R628 (2026-10-13).
+  A value-shaped argument binding resolves to a type or an origin is
+  recorded twice: in the call's `NodeFacts::parameter_attributes` and at
+  the argument (`NodeFacts::argument_attribute`).
+  - The leaf binders (`size_of[T]`, `_unqualified_type_name[T]`, the
+    builtin collection, tuple, pointer, and `Variant` argument types,
+    `TypeList.of`) record only the first, so the two disagree there.
+  - Upstream's op carries the attribute once, on the call.
+  - The lever: `runtime_param_arg_expressions` (`checker.rs`) and
+    `checked_parameter_arguments` (`call_contract.rs`) read the call's
+    `parameter_attributes`, and `argument_attribute` is deleted.
+  - Done when `NodeFacts::argument_attribute` is gone and the corpus MIR
+    is unchanged.
+  - Found while landing R659 (2026-10-13).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R755 The check still resolves some explicit bracket arguments more
+  than once while binding**
+
+  A few routes resolve an application's bracket list again after its
+  binder already did, where upstream binds each argument once.
+  - `explicit_type_subst` (`declarations.rs`) resolves the explicit type
+    arguments before `resolve_use_params` resolves them again.
+  - `infer` re-runs `simd_dims` for a `SIMD` construction's dimensions
+    after `infer_simd_construction` bound them (`inference.rs`).
+  - `record_static_receiver` (`method_calls/statics.rs`) binds a static
+    call's receiver application again after
+    `infer_struct_static_method` bound it.
+  - The lever: each route keeps its binder's `BoundParameters` (or
+    dimensions) and reads them where it now re-binds.
+  - Done when each named site reads its route's earlier binding.
+  - Found while landing R659 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R757 Bracket attributes are keyed by source position, where
+  upstream's op keys them by parameter**
+
+  `NodeFacts::parameter_attributes` and `CheckedParamArg` follow the source
+  bracket list, and MIR's `param_arg_regs_folding` walks source positions,
+  the folded ones named by position
+  (`SemanticAdjustment::FoldedParameterArguments`).
+  - Upstream's call op carries the bound parameter list in declaration
+    order, with defaults filled in.
+  - The lever: binding returns its attributes per declared parameter
+    (`BoundParameters::arguments` already is), the checked op carries
+    that list, and MIR reads it by parameter.
+  - Done when no checked fact names a bracket argument by its source
+    position.
+  - Found while landing R659 (2026-10-13).
+  - Depends on R756.
   - Model: Opus, Not Planned.
 
 - [ ] **R644 MIR still matches operator and lambda syntax at two sites
