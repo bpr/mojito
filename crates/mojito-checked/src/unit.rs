@@ -21,16 +21,15 @@ use std::sync::Arc;
 
 /// One lowering unit of a checked program, borrowed from it: the nodes of
 /// one declaration, as upstream's unit is an op.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum LoweringUnit<'a> {
     /// A module `def`, and its statement node.
     Function { root: CheckedStmtId },
     /// The method at `index` among the members of the struct whose
-    /// statement node is `root`, lowering to the symbol `lowered`;
-    /// `member` is the method's position among its node's methods.
+    /// statement node is `root`; `member` is the method's position among
+    /// its node's methods.
     Method {
         index: usize,
-        lowered: String,
         root: CheckedStmtId,
         member: usize,
     },
@@ -70,6 +69,23 @@ impl LoweringUnit<'_> {
         };
         Some((&node.module, &declaration.name, member))
     }
+
+    /// A method unit's position among its struct's members and the symbol
+    /// its node in `tables` lowers to.
+    fn method_symbol<'t>(&self, tables: &'t CheckedTables) -> Option<(usize, &'t str)> {
+        let Self::Method {
+            index,
+            root,
+            member,
+        } = self
+        else {
+            return None;
+        };
+        let CheckedStmtOp::Struct(declaration) = &tables.statement(*root)?.op else {
+            return None;
+        };
+        Some((*index, declaration.methods.get(*member)?.symbol.as_str()))
+    }
 }
 
 impl CheckedProgram {
@@ -88,24 +104,13 @@ impl CheckedProgram {
                 CheckedStmtOp::Def(_) => units.push(LoweringUnit::Function { root }),
                 CheckedStmtOp::Struct(declaration) => {
                     let name = &declaration.name;
-                    units.extend(
-                        declaration
-                            .methods
-                            .iter()
-                            .enumerate()
-                            .map(|(index, method)| LoweringUnit::Method {
-                                index,
-                                lowered: mojito_symbol::symbol::lowered_method_name(
-                                    &format!("{name}.{}", method.lifecycle_name()),
-                                    &declaration.type_params,
-                                    method.shape(),
-                                    &**self.overloads(),
-                                    &|name| self.constants().get(name),
-                                ),
-                                root,
-                                member: index,
-                            }),
-                    );
+                    units.extend((0..declaration.methods.len()).map(|index| {
+                        LoweringUnit::Method {
+                            index,
+                            root,
+                            member: index,
+                        }
+                    }));
                     units.extend(
                         self.default_wrappers()
                             .iter()
@@ -147,11 +152,9 @@ impl CheckedProgram {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum UnitKind {
     Function,
-    /// A struct's method, at its position among the struct's members, and
-    /// the symbol it lowers to.
+    /// A struct's method, at its position among the struct's members.
     Method {
         index: usize,
-        lowered: String,
     },
     Wrapper,
     TraitMember,
@@ -284,7 +287,6 @@ impl CheckedUnit {
             LoweringUnit::Constant { root } => (UnitKind::Constant, statement(root)?.clone()),
             LoweringUnit::Method {
                 index,
-                lowered,
                 root,
                 member,
             } => {
@@ -294,10 +296,7 @@ impl CheckedUnit {
                 };
                 origin_parameters = struct_origin_parameters(structure);
                 (
-                    UnitKind::Method {
-                        index: *index,
-                        lowered: lowered.clone(),
-                    },
+                    UnitKind::Method { index: *index },
                     member_of(structure, Some(methods.get(*member)?)),
                 )
             }
@@ -356,14 +355,13 @@ impl UnitProgram {
                 member: self.program.trait_members().first()?,
                 root,
             },
-            UnitKind::Method { index, lowered } => {
+            UnitKind::Method { index } => {
                 let CheckedStmtOp::Struct(declaration) = &tables.statement(root)?.op else {
                     return None;
                 };
                 declaration.methods.first()?;
                 LoweringUnit::Method {
                     index: *index,
-                    lowered: lowered.clone(),
                     root,
                     member: 0,
                 }
@@ -447,7 +445,8 @@ impl DiscoveryResult {
                         &statements,
                         &wrappers,
                         &self.node_facts,
-                        &self.checked_types,
+                        self.signatures(),
+                        unit.method_symbol(tables),
                     ),
                     ..checked
                 })
@@ -724,7 +723,14 @@ mod tests {
                 &statements,
                 &wrappers,
                 &HashMap::new(),
-                &HashMap::new(),
+                crate::checked::Signatures {
+                    checked_types: &HashMap::new(),
+                    generic_parameters: &HashMap::new(),
+                    declaration_effects: &HashMap::new(),
+                    overloads: &ProgramOverloads::default(),
+                    constants: &ProgramConstants::default(),
+                },
+                None,
             ),
             ..shell
         };

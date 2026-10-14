@@ -474,13 +474,7 @@ pub fn lower_unit(
             let _def = timing::span("def");
             lower_function(root, checked, functions, declarations, invariant_errors);
         }
-        LoweringUnit::Method {
-            index,
-            lowered,
-            root,
-            member,
-            ..
-        } => {
+        LoweringUnit::Method { root, member, .. } => {
             let _struct = timing::span("struct");
             let Some(node) = checked.tables().statement(root) else {
                 return;
@@ -494,9 +488,9 @@ pub fn lower_unit(
             lower_struct_member(
                 &StructLowering::new(checked, node.module.as_ref(), &declaration.name),
                 StructMember {
-                    index,
-                    name: m.lifecycle_name(),
-                    lowered,
+                    name: &m.registered,
+                    lowered: m.symbol.clone(),
+                    signature: &m.signature,
                     params: &m.params,
                     has_self: m.has_self,
                     self_convention: m.self_convention,
@@ -515,9 +509,9 @@ pub fn lower_unit(
             lower_struct_member(
                 &StructLowering::new(checked, wrapper.module.as_ref(), &wrapper.declaration),
                 StructMember {
-                    index: wrapper.method_index,
                     name: &wrapper.method,
                     lowered: wrapper.lowered_name.clone(),
+                    signature: &wrapper.signature,
                     params: &wrapper.params,
                     has_self: true,
                     self_convention: wrapper.self_convention,
@@ -621,7 +615,7 @@ fn lower_program(
         .unwrap_or(units.len());
     for unit in &units[..constants] {
         lowered(
-            unit.clone(),
+            *unit,
             &mut functions,
             &mut declarations,
             &mut invariant_errors,
@@ -667,7 +661,7 @@ fn lower_program(
     };
     for unit in &units[constants..] {
         lowered(
-            unit.clone(),
+            *unit,
             &mut functions,
             &mut declarations,
             &mut invariant_errors,
@@ -717,13 +711,11 @@ fn struct_declaration(
     };
     let mojito_checked::checked::CheckedStruct {
         name,
-        type_params,
         fields,
         methods,
         fieldwise_init,
         ..
     } = &**declaration;
-    let overloads = checked.overloads();
     let mut_self_methods = methods
         .iter()
         .filter(|m| {
@@ -733,19 +725,10 @@ fn struct_declaration(
             )
         })
         .map(|m| {
-            let method_name = m.lifecycle_name();
-            let source = format!("{name}.{method_name}");
-            let lowered = mojito_symbol::symbol::lowered_method_name(
-                &source,
-                type_params,
-                m.shape(),
-                &**overloads,
-                &|name| checked.constants().get(name),
-            );
-            if lowered == source {
-                method_name.to_string()
+            if m.symbol == format!("{name}.{}", m.registered) {
+                m.registered.clone()
             } else {
-                lowered
+                m.symbol.clone()
             }
         })
         .chain(
@@ -773,17 +756,11 @@ fn struct_declaration(
         name: name.clone(),
         fields: fields
             .iter()
-            .enumerate()
-            .map(|(field_index, field)| {
+            .map(|field| {
                 (
                     field.name.clone(),
-                    checked_type_or_record(
-                        checked,
-                        &AnnotationSite::StructField {
-                            module: s.module.clone(),
-                            declaration: name.clone(),
-                            field: field_index,
-                        },
+                    checked_or_record(
+                        field.ty.as_ref(),
                         &format!("field '{}' of struct '{name}'", field.name),
                         invariant_errors,
                     ),
@@ -889,7 +866,8 @@ fn lower_function(
     };
     let mojito_checked::checked::CheckedDef {
         name,
-        type_params,
+        symbol: lowered_name,
+        signature,
         params,
         positional_only,
         keyword_only,
@@ -910,15 +888,7 @@ fn lower_function(
     if let Some(result) = named_result {
         names.push(result.name.clone());
     }
-    let generic_site = GenericSite::Function {
-        module: s.module.clone(),
-        declaration: s.span,
-        syntax: s.syntax_id,
-    };
-    let param_decls = checked
-        .generic_parameters_at(&generic_site)
-        .unwrap_or(&[])
-        .to_vec();
+    let param_decls = signature.parameters.clone();
     let value_parameter_locals = callable_parameter_locals(&param_decls);
     let enclosing_binders = EnclosingBinders::of(&param_decls);
     names.extend(value_parameter_locals.iter().map(|(name, _)| name.clone()));
@@ -931,14 +901,8 @@ fn lower_function(
                 .expect("caller parameter belongs to declaration");
             body_parameter_ty(
                 p,
-                checked_type_or_record(
-                    checked,
-                    &AnnotationSite::FunctionParam {
-                        module: s.module.clone(),
-                        declaration: s.span,
-                        syntax: s.syntax_id,
-                        param,
-                    },
+                checked_or_record(
+                    signature.param(param),
                     &format!("parameter '{}' of function '{name}'", p.name),
                     invariant_errors,
                 ),
@@ -957,10 +921,6 @@ fn lower_function(
         .iter()
         .map(|p| is_ref(&p.convention))
         .collect();
-    let lowered_name =
-        mojito_symbol::symbol::lowered_def_name(name, type_params, params, &**overloads, &|name| {
-            checked.constants().get(name)
-        });
     let variadic_idx = params.iter().position(|p| p.kind == ParamKind::Variadic);
     let kw_variadic_idx = params.iter().position(|p| p.kind == ParamKind::KwVariadic);
     let regular: Vec<_> = params
@@ -969,30 +929,12 @@ fn lower_function(
             p.kind == ParamKind::Regular && !matches!(p.convention, Some(ArgConvention::Out))
         })
         .collect();
-    let return_site = AnnotationSite::FunctionReturn {
-        module: s.module.clone(),
-        declaration: s.span,
-        syntax: s.syntax_id,
-    };
-    let ret_ty = checked_type_or_record(
-        checked,
-        &return_site,
+    let ret_ty = checked_or_record(
+        signature.result.as_ref(),
         &format!("return type of function '{name}'"),
         invariant_errors,
     );
-    let effect = checked
-        .declaration_effect_at(&return_site)
-        .cloned()
-        .unwrap_or_else(|| {
-            invariant_errors.push(format!("missing checked effect for function '{name}'"));
-            mojito_checked::checked::DeclarationEffect {
-                raises: false,
-                error: None,
-                returns_reference: false,
-                param_writes: Vec::new(),
-                availability: Vec::new(),
-            }
-        });
+    let effect = effect_or_record(signature, &format!("function '{name}'"), invariant_errors);
     let defaults = regular
         .iter()
         .map(|p| {
@@ -1000,21 +942,15 @@ fn lower_function(
                 .iter()
                 .position(|candidate| std::ptr::eq(candidate, *p))
                 .unwrap_or(params.len());
-            let ty = checked.checked_type_at(&AnnotationSite::FunctionParam {
-                module: s.module.clone(),
-                declaration: s.span,
-                syntax: s.syntax_id,
-                param,
-            });
             lower_default(
                 DefaultLowering {
                     checked,
                     overloads,
-                    owner: &lowered_name,
+                    owner: lowered_name,
                     parameter: p,
                     default: p.default,
                     binders: &enclosing_binders,
-                    ty,
+                    ty: signature.param(param),
                 },
                 functions,
                 declarations,
@@ -1027,17 +963,13 @@ fn lower_function(
         param_types: regular
             .iter()
             .map(|p| {
-                checked_type_or_record(
-                    checked,
-                    &AnnotationSite::FunctionParam {
-                        module: s.module.clone(),
-                        declaration: s.span,
-                        syntax: s.syntax_id,
-                        param: params
+                checked_or_record(
+                    signature.param(
+                        params
                             .iter()
                             .position(|candidate| std::ptr::eq(candidate, *p))
                             .unwrap_or(params.len()),
-                    },
+                    ),
                     &format!("parameter '{}' of function '{name}'", p.name),
                     invariant_errors,
                 )
@@ -1046,14 +978,8 @@ fn lower_function(
         defaults,
         required: regular.iter().map(|p| p.default.is_none()).collect(),
         variadic: variadic_idx.map(|i| {
-            checked_type_or_record(
-                checked,
-                &AnnotationSite::FunctionParam {
-                    module: s.module.clone(),
-                    declaration: s.span,
-                    syntax: s.syntax_id,
-                    param: i,
-                },
+            checked_or_record(
+                signature.param(i),
                 &format!("variadic parameter of function '{name}'"),
                 invariant_errors,
             )
@@ -1061,14 +987,8 @@ fn lower_function(
         variadic_convention: variadic_idx.and_then(|i| params[i].convention),
         variadic_index: runtime_variadic_index(params, variadic_idx),
         kw_variadic: kw_variadic_idx.map(|i| {
-            checked_type_or_record(
-                checked,
-                &AnnotationSite::FunctionParam {
-                    module: s.module.clone(),
-                    declaration: s.span,
-                    syntax: s.syntax_id,
-                    param: i,
-                },
+            checked_or_record(
+                signature.param(i),
                 &format!("keyword variadic parameter of function '{name}'"),
                 invariant_errors,
             )
@@ -1094,7 +1014,7 @@ fn lower_function(
     lower_fn_nested(
         FunctionLowering {
             checked,
-            name: &lowered_name,
+            name: lowered_name,
             parameter_names: &names,
             parameter_types: ptys,
             value_parameter_locals,
@@ -1134,7 +1054,6 @@ fn lower_struct_member<P: DeclaredParam>(
         name,
     } = *structure;
     let module = module.cloned();
-    let method_index = m.index;
     let method_name = m.name;
     let source_mangled = format!("{name}.{method_name}");
     let mangled = m.lowered;
@@ -1154,41 +1073,18 @@ fn lower_struct_member<P: DeclaredParam>(
                 && !matches!(param.convention(), Some(ArgConvention::Out))
         })
         .collect();
-    let return_site = AnnotationSite::MethodReturn {
-        module: module.clone(),
-        declaration: name.to_string(),
-        method: method_index,
-    };
-    let ret_ty = checked_type_or_record(
-        checked,
-        &return_site,
+    let signature = m.signature;
+    let ret_ty = checked_or_record(
+        signature.result.as_ref(),
         &format!("return type of method '{source_mangled}'"),
         invariant_errors,
     );
-    let effect = checked
-        .declaration_effect_at(&return_site)
-        .cloned()
-        .unwrap_or_else(|| {
-            invariant_errors.push(format!(
-                "missing checked effect for method '{source_mangled}'"
-            ));
-            mojito_checked::checked::DeclarationEffect {
-                raises: false,
-                error: None,
-                returns_reference: false,
-                param_writes: Vec::new(),
-                availability: Vec::new(),
-            }
-        });
-    let generic_site = GenericSite::Method {
-        module: module.clone(),
-        declaration: name.to_string(),
-        method: method_index,
-    };
-    let mut param_decls = checked
-        .generic_parameters_at(&generic_site)
-        .unwrap_or(&[])
-        .to_vec();
+    let effect = effect_or_record(
+        signature,
+        &format!("method '{source_mangled}'"),
+        invariant_errors,
+    );
+    let mut param_decls = signature.parameters.clone();
     if method_name == "__init__" {
         // A constructor's compile-time interface is the struct's
         // parameter list: an explicit `Array[Int, 3](fill=7)`
@@ -1212,7 +1108,7 @@ fn lower_struct_member<P: DeclaredParam>(
             })
             .unwrap_or(&[])
             .iter()
-            .chain(checked.generic_parameters_at(&generic_site).unwrap_or(&[])),
+            .chain(&signature.parameters),
     );
     let receiver_value_parameters: Vec<(String, Ty)> = checked
         .generic_parameters_at(&GenericSite::Struct {
@@ -1253,12 +1149,6 @@ fn lower_struct_member<P: DeclaredParam>(
                 .iter()
                 .position(|candidate| std::ptr::eq(candidate, *param))
                 .unwrap_or(m.params.len());
-            let ty = checked.checked_type_at(&AnnotationSite::MethodParam {
-                module: module.clone(),
-                declaration: name.to_string(),
-                method: method_index,
-                param: position,
-            });
             lower_default(
                 DefaultLowering {
                     checked,
@@ -1267,7 +1157,7 @@ fn lower_struct_member<P: DeclaredParam>(
                     parameter: param,
                     default: m.defaults.get(position).copied().flatten(),
                     binders: &enclosing_binders,
-                    ty,
+                    ty: signature.param(position),
                 },
                 functions,
                 declarations,
@@ -1283,18 +1173,13 @@ fn lower_struct_member<P: DeclaredParam>(
         param_types: regular
             .iter()
             .map(|param| {
-                checked_type_or_record(
-                    checked,
-                    &AnnotationSite::MethodParam {
-                        module: module.clone(),
-                        declaration: name.to_string(),
-                        method: method_index,
-                        param: m
-                            .params
+                checked_or_record(
+                    signature.param(
+                        m.params
                             .iter()
                             .position(|candidate| std::ptr::eq(candidate, *param))
                             .unwrap_or(m.params.len()),
-                    },
+                    ),
                     &format!("parameter '{}' of method '{source_mangled}'", param.name()),
                     invariant_errors,
                 )
@@ -1303,14 +1188,8 @@ fn lower_struct_member<P: DeclaredParam>(
         defaults,
         required: regular.iter().map(|param| !param.has_default()).collect(),
         variadic: variadic_idx.map(|index| {
-            checked_type_or_record(
-                checked,
-                &AnnotationSite::MethodParam {
-                    module: module.clone(),
-                    declaration: name.to_string(),
-                    method: method_index,
-                    param: index,
-                },
+            checked_or_record(
+                signature.param(index),
                 &format!("variadic parameter of method '{source_mangled}'"),
                 invariant_errors,
             )
@@ -1318,14 +1197,8 @@ fn lower_struct_member<P: DeclaredParam>(
         variadic_convention: variadic_idx.and_then(|index| m.params[index].convention()),
         variadic_index: runtime_variadic_index(m.params, variadic_idx),
         kw_variadic: kw_variadic_idx.map(|index| {
-            checked_type_or_record(
-                checked,
-                &AnnotationSite::MethodParam {
-                    module: module.clone(),
-                    declaration: name.to_string(),
-                    method: method_index,
-                    param: index,
-                },
+            checked_or_record(
+                signature.param(index),
                 &format!("keyword variadic parameter of method '{source_mangled}'"),
                 invariant_errors,
             )
@@ -1383,14 +1256,8 @@ fn lower_struct_member<P: DeclaredParam>(
     ptys.extend(caller_params().map(|(param, p)| {
         body_parameter_ty(
             p,
-            checked_type_or_record(
-                checked,
-                &AnnotationSite::MethodParam {
-                    module: module.clone(),
-                    declaration: name.to_string(),
-                    method: method_index,
-                    param,
-                },
+            checked_or_record(
+                signature.param(param),
                 &format!("parameter '{}' of method '{source_mangled}'", p.name()),
                 invariant_errors,
             ),
@@ -1451,13 +1318,12 @@ impl<'a> StructLowering<'a> {
 /// wrapper of a trait default it inherits, whose parameters are a resolved
 /// signature's ([`mojito_checked::checked::CheckedDefaultWrapper`]).
 struct StructMember<'a, P> {
-    /// Its position among the struct's members, which its checked sites
-    /// name.
-    index: usize,
     /// The name it is registered and counted under.
     name: &'a str,
     /// The symbol it lowers to.
     lowered: String,
+    /// Its checked signature, at its position among the struct's members.
+    signature: &'a mojito_checked::checked::CheckedSignature,
     params: &'a [P],
     has_self: bool,
     self_convention: Option<ArgConvention>,
@@ -2146,18 +2012,26 @@ fn bindings_read(
     owners
 }
 
-fn checked_type_or_record(
-    checked: &CheckedProgram,
-    site: &AnnotationSite,
-    description: &str,
-    invariant_errors: &mut Vec<String>,
-) -> Ty {
-    if let Some(ty) = checked.checked_type_at(site) {
-        ty.clone()
-    } else {
+/// `ty`, a declaration's checked type for `description`; when the check
+/// recorded none, an invariant error and no type.
+fn checked_or_record(ty: Option<&Ty>, description: &str, invariant_errors: &mut Vec<String>) -> Ty {
+    ty.cloned().unwrap_or_else(|| {
         invariant_errors.push(format!("missing checked type for {description}"));
         Ty::none()
-    }
+    })
+}
+
+/// The checked effect `signature` holds for the declaration `description`;
+/// when the check recorded none, an invariant error and no effect.
+fn effect_or_record(
+    signature: &mojito_checked::checked::CheckedSignature,
+    description: &str,
+    invariant_errors: &mut Vec<String>,
+) -> mojito_checked::checked::DeclarationEffect {
+    signature.effect.clone().unwrap_or_else(|| {
+        invariant_errors.push(format!("missing checked effect for {description}"));
+        mojito_checked::checked::DeclarationEffect::default()
+    })
 }
 
 /// A callable value parameter has storage in the callee frame although it is

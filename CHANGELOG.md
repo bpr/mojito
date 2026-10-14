@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A checked declaration op holds what the check resolved for it rather
+  than its signature as written, as upstream's function op holds its
+  resolved function type (R630). A `def`'s and a method's op hold the
+  symbol it lowers to, a method's its registered name, and its checked
+  signature: compile-time parameters, parameter and result types, and
+  effect. A struct's op holds its fields' checked types. No op keeps
+  annotation, type-parameter, or decorator syntax, and MIR reads a
+  declaration from its op rather than its declaration-site rows. The
+  generated MIR is unchanged; the bundled package format is 47.
 - MIR matches no operator, lambda, or other expression syntax: every such
   site lowers from its checked op (`CheckedOp::Prefix`, `Infix`, `Lambda`),
   as upstream's lowering consumes typed ops (R644). The last two syntax

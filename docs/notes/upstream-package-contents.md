@@ -64,9 +64,10 @@ unit (its checked nodes, each carrying its own type and attributes, and
 its declaration-site facts, `mojito_checked::unit::CheckedUnit`);
 `PackageBodies::get` installs a body's unit as its checked program, lowers
 it (HIR CFG, MIR), and inserts its drops when the elaborator first reaches
-it. What remains is representation: a node's annotation operands and a
-declaration's signature are still syntax (R630); the importer rebuilds no
-statement syntax from the nodes (R650, 2026-10-13).
+it. No part of a unit is syntax: a declaration's op holds its symbol and
+its checked signature, as upstream's function op holds its resolved
+function type (R630, 2026-10-13), and the importer rebuilds no statement
+syntax from the nodes (R650, 2026-10-13).
 
 ## Finding: the package names no install path
 

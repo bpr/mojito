@@ -1755,7 +1755,7 @@ The checked handoff owns the elaborated AST for diagnostics and
 an explicit semantic arena. Every checked expression has a `CheckedNodeId`, its
 own operation (`CheckedOp`: the node's `ExprKind` with each child expression
 replaced by the child's node, so its operands are its child edges and a type
-operand stays its annotation), its occurrence, resolved runtime type, value/place/type category, stable owner identity for
+operand is the attribute the check resolved), its occurrence, resolved runtime type, value/place/type category, stable owner identity for
 binding uses, extensible effect facts, and a list of semantic adjustments. Checked
 declarations have independent `CheckedDeclId` identities. A statement is a
 checked node too (`CheckedStmt`, with a `CheckedStmtId`): its own operation
@@ -1763,7 +1763,15 @@ checked node too (`CheckedStmt`, with a `CheckedStmtId`): its own operation
 body a list of statement nodes, so `if`, `while`, `for`, `try`, `with`, and
 the compile-time forms stay structured as upstream's `hlcf` keeps them), its
 occurrence, the binding it introduces with that binding's type, and its
-declaration. A function's root statements are its op's body; the tables keep
+declaration. A declaration's op holds what the check resolved for it, never
+its signature as written, as upstream's function op holds its symbol and its
+resolved function type: a `def`'s and a method's op hold the symbol it lowers
+to (a nested `def`'s own name, which its enclosing lowering qualifies), a
+method's its registered name (`__copyinit__` for a copy constructor), and a
+`CheckedSignature` read from the check's declaration sites (its compile-time
+`ParamDecl`s, each declared parameter's `Ty`, its result `Ty`, and its
+`DeclarationEffect`); a default wrapper holds one too, and a struct's op holds
+each field's checked type (`CheckedField`). A function's root statements are its op's body; the tables keep
 the module's and each default wrapper's. A lambda's op names its `def`'s
 statement node. HIR walks the statement and expression nodes, and every CFG
 builder is handed its body's statement ids: a unit's from its declaration's
@@ -1775,7 +1783,8 @@ bindings' nodes and its returned value's node (`Cfg::build_checked_thunk`).
 No checked statement is found by its source location. MIR lowers an opaque
 statement and a `try` by matching its `CheckedStmtOp` alone, each expression
 operand the handle of the matching `HirStmt::expressions` entry, in the op's
-operand order; it reads each declaration from its op, and finds nested
+operand order; it reads each declaration's symbol, signature, and field types
+from its op, looking up no declaration-site row, and finds nested
 `def`s and lambdas by walking statement ids. Source spans index
 diagnostics and associate a checker-approved compile-time value argument with
 the register produced from that same source occurrence; they are not used to

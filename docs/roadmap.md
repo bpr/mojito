@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R758**.
+Next free ID: **R761**.
 
 ## Ordered Work
 
@@ -5590,20 +5590,55 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R756.
   - Model: Opus, Not Planned.
 
-- [ ] **R630 A checked declaration op's signature is syntax, where
-  upstream's is a resolved function type**
+- [ ] **R758 A trait method op holds no checked signature, where
+  upstream's trait declares each requirement's function type**
 
-  `CheckedDef`, `CheckedMethod`, `CheckedTraitMethod`,
-  `CheckedStruct::fields`, and the `VarDecl`/`Comptime` `ty` hold
-  `ast::Type`, `TypeParam`, and `Decorator` attributes as written.
-  - A `TypeParam`'s `default` and `origin_mutability` and a decorator's
-    arguments are `Expr`s with no node.
-  - The lever: the op holds the declaration's checked signature, its
-    `FunctionType` annotation site's `Ty` and its `generic_parameters`
-    `ParamDecl`s.
-  - Done when no `CheckedStmtOp` payload holds an `ast::Type`.
-  - Found while landing R615 (2026-10-11).
-  - Depends on R628.
+  `CheckedTraitMethod` holds its parameters' names, conventions, and
+  defaults, but no type, result type, or compile-time parameter list.
+  - The check records no declaration site for a trait method, so the
+    arena builder has nothing to read.
+  - `TraitRequirement` (`declaration.rs`) holds parameter types and
+    conventions, but no result type and no `ParamDecl`s.
+  - The lever: record a requirement's checked signature where
+    `checker/traits.rs` builds its `MethodSig`, and have the trait op hold
+    a `CheckedSignature`, as `CheckedMethod` does.
+  - Found while landing R630 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R759 A `comptime` declaration op holds no compile-time parameter
+  list, where upstream's parametric alias declares one**
+
+  A module or local `comptime` alias, a struct's associated member, and a
+  trait's `comptime` requirement name no parameters on their ops.
+  - The check keeps them privately, in `ComptimeAlias::decls` and in each
+    trait's member requirements.
+  - `ConformanceFacts::parameterized_associated` covers struct members
+    only.
+  - The lever: record each declaration's `ParamDecl`s at a site and have
+    `CheckedStmtOp::Comptime`, `CheckedStructComptime`, and
+    `CheckedTraitComptime` hold them.
+  - Found while landing R630 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R760 A package unit still encodes declaration-site rows its ops
+  now hold**
+
+  A unit's `SiteFacts` shares every `FunctionParam`, `FunctionReturn`,
+  `MethodParam`, `MethodReturn`, and `StructField` type row, every
+  function and method compile-time parameter list, and their effects, but
+  MIR now reads all of them from the declaration ops.
+  - Only a nested closure's `FunctionType` row and the struct's own
+    parameter list are still read from the sites.
+  - The lever: stop sharing the rows the ops hold in
+    `DiscoveryResult::units`, and measure the package size.
+  - A default wrapper's signature is filled from the same rows in
+    `CheckedProgram::new`, after the checker built it with an empty one.
+    Filling it where `checker/trait_defaults.rs` records the wrapper's
+    sites would let those rows go too.
+  - Found while landing R630 (2026-10-13).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R631 A struct's origin parameters are a name list beside its

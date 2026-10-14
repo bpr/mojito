@@ -557,6 +557,7 @@ impl Checker {
                 member: wrapper.shape.member.clone(),
                 self_convention: wrapper.shape.receiver,
                 params: wrapper.shape.params.clone(),
+                signature: mojito_checked::checked::CheckedSignature::default(),
                 body: wrapper.body.clone(),
             })
             .collect()

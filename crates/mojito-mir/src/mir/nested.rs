@@ -406,10 +406,6 @@ fn lower_nested_node(
     declarations: &mut MirDeclarations,
     enclosing: Enclosing<'_>,
 ) {
-    let ds = checked
-        .tables()
-        .statement(node.node)
-        .expect("a nested def names a node of its tables");
     let def = def_of(checked, node.node);
     let dparams = &def.params;
     let (positional_only, keyword_only) = (&def.positional_only, &def.keyword_only);
@@ -440,15 +436,8 @@ fn lower_nested_node(
     if let Some(result) = named_result {
         names.push(result.name.clone());
     }
-    let generic_site = GenericSite::Function {
-        module: ds.module.clone(),
-        declaration: ds.span,
-        syntax: ds.syntax_id,
-    };
-    let param_decls = checked
-        .generic_parameters_at(&generic_site)
-        .unwrap_or(&[])
-        .to_vec();
+    let signature = &def.signature;
+    let param_decls = signature.parameters.clone();
     let value_parameter_locals = enclosing.frame_locals(&param_decls);
     let enclosing_binders = &enclosing
         .binders
@@ -457,20 +446,12 @@ fn lower_nested_node(
     names.extend(value_parameter_locals.iter().map(|(name, _)| name.clone()));
     let mut ptys = capture_types.clone();
     ptys.extend(caller_params.iter().map(|(param, p)| {
-        let ty = checked
-            .checked_type_at(&AnnotationSite::FunctionParam {
-                module: ds.module.clone(),
-                declaration: ds.span,
-                syntax: ds.syntax_id,
-                param: *param,
-            })
-            .cloned()
-            .unwrap_or_else(|| {
-                panic!(
-                    "checked type missing for parameter '{}' of nested function",
-                    p.name
-                )
-            });
+        let ty = signature.param(*param).cloned().unwrap_or_else(|| {
+            panic!(
+                "checked type missing for parameter '{}' of nested function",
+                p.name
+            )
+        });
         body_parameter_ty(p, ty)
     }));
     // The closure object owns declaration-time copy/move captures. A lifted
@@ -498,16 +479,7 @@ fn lower_nested_node(
             .iter()
             .map(|(_, parameter)| is_ref(&parameter.convention)),
     );
-    let collector_ty = |index| {
-        checked
-            .checked_type_at(&AnnotationSite::FunctionParam {
-                module: ds.module.clone(),
-                declaration: ds.span,
-                syntax: ds.syntax_id,
-                param: index,
-            })
-            .cloned()
-    };
+    let collector_ty = |index| signature.param(index).cloned();
     let variadic_idx = dparams.iter().position(|p| p.kind == ParamKind::Variadic);
     let kw_variadic_idx = dparams.iter().position(|p| p.kind == ParamKind::KwVariadic);
     let regular: Vec<_> = dparams
@@ -525,40 +497,15 @@ fn lower_nested_node(
     declaration_names.extend(regular.iter().map(|(_, parameter)| parameter.name.clone()));
     let mut declaration_types = capture_types;
     declaration_types.extend(regular.iter().map(|(index, parameter)| {
-        checked
-            .checked_type_at(&AnnotationSite::FunctionParam {
-                module: ds.module.clone(),
-                declaration: ds.span,
-                syntax: ds.syntax_id,
-                param: *index,
-            })
-            .cloned()
-            .unwrap_or_else(|| {
-                panic!(
-                    "checked type missing for parameter '{}' of nested function",
-                    parameter.name
-                )
-            })
+        signature.param(*index).cloned().unwrap_or_else(|| {
+            panic!(
+                "checked type missing for parameter '{}' of nested function",
+                parameter.name
+            )
+        })
     }));
-    let return_site = AnnotationSite::FunctionReturn {
-        module: ds.module.clone(),
-        declaration: ds.span,
-        syntax: ds.syntax_id,
-    };
-    let return_ty = checked
-        .checked_type_at(&return_site)
-        .cloned()
-        .unwrap_or_else(Ty::none);
-    let effect = checked
-        .declaration_effect_at(&return_site)
-        .cloned()
-        .unwrap_or(mojito_checked::checked::DeclarationEffect {
-            raises: false,
-            error: None,
-            returns_reference: false,
-            param_writes: Vec::new(),
-            availability: Vec::new(),
-        });
+    let return_ty = signature.result.clone().unwrap_or_else(Ty::none);
+    let effect = signature.effect.clone().unwrap_or_default();
     let capture_count = captures.len();
     let binders = enclosing_binders.with(&param_decls);
     let defaults: Vec<_> = std::iter::repeat_n(None, capture_count)
@@ -691,8 +638,8 @@ fn lower_nested_node(
     nf.returns_reference = effect.returns_reference;
     // The nested `def` was checked as an ordinary declaration, so its
     // return and raising contract are recorded checked facts.
-    nf.ret_ty = checked.checked_type_at(&return_site).cloned();
-    if let Some(effect) = checked.declaration_effect_at(&return_site) {
+    nf.ret_ty.clone_from(&signature.result);
+    if let Some(effect) = &signature.effect {
         nf.raises = effect.raises;
         nf.error_ty.clone_from(&effect.error);
     }

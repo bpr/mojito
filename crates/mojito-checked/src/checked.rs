@@ -2,9 +2,9 @@
 
 use mojito_ast::ast::Stmt;
 use mojito_ast::ast::{
-    ArgConvention, CaptureList, CollectionKind, ComprehensionClause, Decorator, Expr, ExprKind,
-    ImportNames, InfixOp, KwArg, LoopBindingMode, MethodProvenance, OriginSpec, Param, ParamArg,
-    ParamKind, PrefixOp, SubscriptArg, TStringPart, Type, TypeParam,
+    ArgConvention, CollectionKind, ComprehensionClause, Expr, ExprKind, ImportNames, InfixOp,
+    KwArg, LoopBindingMode, MethodProvenance, ParamArg, ParamKind, PrefixOp, SubscriptArg,
+    TStringPart, TypeParam,
 };
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_common::token::{SourceSpan, Span, SyntaxId};
@@ -1678,13 +1678,15 @@ pub struct CheckedStmtId(pub u32);
 ///
 /// It is the statement's [`StmtKind`](mojito_ast::ast::StmtKind), with each
 /// child expression replaced by its node and each child statement list by
-/// its statements' nodes. A signature (parameter and return types, type
-/// parameters, decorators, fields) stays the syntax as written.
+/// its statements' nodes. A declaration holds what the check resolved for
+/// it, as upstream's function op holds its symbol and its resolved
+/// function type: its symbol and its [`CheckedSignature`], and a struct
+/// its fields' checked types. A binding's type is the statement's
+/// [`CheckedStmt::binding_ty`].
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum CheckedStmtOp {
     VarDecl {
         name: String,
-        ty: Option<Type>,
         /// The nodes of the applications the check lifted out of `ty`.
         applications: Vec<CheckedNodeId>,
         value: CheckedNodeId,
@@ -1716,8 +1718,6 @@ pub enum CheckedStmtOp {
     Trait(Box<CheckedTrait>),
     Comptime {
         name: String,
-        type_params: Vec<TypeParam>,
-        ty: Option<Type>,
         where_clauses: Vec<CheckedNodeId>,
         value: CheckedNodeId,
     },
@@ -1941,33 +1941,56 @@ impl CheckedStmtOp {
     }
 }
 
-/// A checked `def`: its signature as written, its parameter defaults and
-/// constraints as nodes, and its body.
+/// A checked `def`: its symbol and checked signature, its parameter
+/// defaults and constraints as nodes, and its body.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedDef {
     pub name: String,
-    pub decorators: Vec<Decorator>,
-    pub type_params: Vec<TypeParam>,
+    /// The symbol it lowers to: signature-qualified when a module `def`'s
+    /// name is overloaded, and a nested `def`'s own name, which its
+    /// enclosing function's lowering qualifies.
+    pub symbol: String,
+    pub signature: CheckedSignature,
     pub params: Vec<CheckedFnParam>,
     pub positional_only: Option<usize>,
     pub keyword_only: Option<usize>,
-    pub captures: Option<CaptureList>,
     pub raises: bool,
-    pub raises_type: Option<Type>,
-    pub ret: Option<Type>,
     pub where_clauses: Vec<CheckedNodeId>,
     pub body: Vec<CheckedStmtId>,
 }
 
-/// A function parameter whose default is a node.
+/// A declaration's checked signature, as the check recorded it at the
+/// declaration's sites: as upstream's function op holds its resolved
+/// function type and its parameter list.
+///
+/// A type is absent where the check recorded none, which lowering reports
+/// as a broken invariant.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct CheckedSignature {
+    /// Its own compile-time parameters.
+    pub parameters: Vec<mojito_types::types::ParamDecl>,
+    /// Each declared parameter's checked type, in declaration order (the
+    /// receiver excluded), aligned with the declaration's parameters.
+    pub params: Vec<Option<Ty>>,
+    pub result: Option<Ty>,
+    pub effect: Option<DeclarationEffect>,
+}
+
+impl CheckedSignature {
+    /// The checked type of the declared parameter at `index`.
+    pub fn param(&self, index: usize) -> Option<&Ty> {
+        self.params.get(index)?.as_ref()
+    }
+}
+
+/// A function parameter whose default is a node; its type is its
+/// declaration's [`CheckedSignature`]'s.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedFnParam {
     pub name: String,
-    pub ty: Type,
     pub default: Option<CheckedNodeId>,
     pub kind: ParamKind,
     pub convention: Option<ArgConvention>,
-    pub origin: Option<OriginSpec>,
 }
 
 impl mojito_ast::ast::DeclaredParam for CheckedFnParam {
@@ -1988,84 +2011,57 @@ impl mojito_ast::ast::DeclaredParam for CheckedFnParam {
     }
 }
 
-impl mojito_ast::ast::AnnotatedParam for CheckedFnParam {
-    fn annotation(&self) -> &Type {
-        &self.ty
-    }
-}
-
 /// A checked `struct`: its members, with their bodies and constraints as
 /// nodes.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedStruct {
     pub name: String,
-    pub decorators: Vec<Decorator>,
-    pub type_params: Vec<TypeParam>,
     pub conforms: Vec<String>,
-    pub callable_conformance: Option<Type>,
     pub conformance_conditions: Vec<(String, CheckedNodeId)>,
     pub where_clauses: Vec<CheckedNodeId>,
-    pub fields: Vec<Param>,
+    pub fields: Vec<CheckedField>,
     pub associated: Vec<CheckedStructComptime>,
     pub methods: Vec<CheckedMethod>,
     pub fieldwise_init: bool,
+}
+
+/// A struct's stored field: its name and checked type.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CheckedField {
+    pub name: String,
+    /// Absent where the check recorded none.
+    pub ty: Option<Ty>,
 }
 
 /// A struct's associated `comptime` member.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedStructComptime {
     pub name: String,
-    pub params: Vec<TypeParam>,
-    pub ty: Option<Type>,
     pub where_clauses: Vec<CheckedNodeId>,
     pub value: CheckedNodeId,
 }
 
-/// A struct method, with its body as statement nodes.
+/// A struct method: its registered name, symbol, and checked signature,
+/// with its body as statement nodes.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedMethod {
     pub name: String,
-    pub type_params: Vec<TypeParam>,
+    /// The name it is registered and counted under: a copy or move
+    /// constructor's lifecycle name, as
+    /// [`mojito_symbol::symbol::lifecycle_method_name`] names its syntax.
+    pub registered: String,
+    /// The symbol it lowers to: signature-qualified when overloaded.
+    pub symbol: String,
+    pub signature: CheckedSignature,
     pub has_self: bool,
     pub self_convention: Option<ArgConvention>,
-    pub self_origin: Option<OriginSpec>,
-    pub decorators: Vec<Decorator>,
     pub params: Vec<CheckedFnParam>,
     pub positional_only: Option<usize>,
     pub keyword_only: Option<usize>,
     pub raises: bool,
-    pub raises_type: Option<Type>,
-    pub ret: Option<Type>,
     pub where_clauses: Vec<CheckedNodeId>,
     pub body: Vec<CheckedStmtId>,
     pub provenance: MethodProvenance,
-}
-
-impl CheckedMethod {
-    /// The signature facts its lowered symbol spells.
-    pub fn shape(&self) -> mojito_symbol::symbol::MethodShape<'_, CheckedFnParam> {
-        mojito_symbol::symbol::MethodShape {
-            type_params: &self.type_params,
-            params: &self.params,
-            keyword_only: self.keyword_only,
-            has_self: self.has_self,
-            self_convention: self.self_convention,
-        }
-    }
-
-    /// The name it is registered and counted under, as
-    /// [`mojito_symbol::symbol::lifecycle_method_name`] names its syntax.
-    pub fn lifecycle_name(&self) -> &str {
-        mojito_symbol::symbol::lifecycle_name(mojito_symbol::symbol::LifecycleShape {
-            name: &self.name,
-            has_self: self.has_self,
-            self_convention: self.self_convention,
-            positional_only: self.positional_only,
-            keyword_only: self.keyword_only,
-            params: &self.params,
-            returns: self.ret.is_some(),
-        })
-    }
 }
 
 /// A checked `trait`: its requirements, a default's body as statement
@@ -2083,15 +2079,11 @@ pub struct CheckedTrait {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedTraitMethod {
     pub name: String,
-    pub type_params: Vec<TypeParam>,
     pub self_convention: Option<ArgConvention>,
-    pub self_origin: Option<OriginSpec>,
     pub params: Vec<CheckedFnParam>,
     pub positional_only: Option<usize>,
     pub keyword_only: Option<usize>,
     pub raises: bool,
-    pub raises_type: Option<Type>,
-    pub ret: Option<Type>,
     pub where_clauses: Vec<CheckedNodeId>,
     /// The `def` node of its trait's member
     /// ([`CheckedProgram::trait_members`]) when the method declares a
@@ -2103,8 +2095,6 @@ pub struct CheckedTraitMethod {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedTraitComptime {
     pub name: String,
-    pub params: Vec<TypeParam>,
-    pub ty: Type,
     pub where_clauses: Vec<CheckedNodeId>,
 }
 
@@ -2407,6 +2397,9 @@ pub struct CheckedDefaultWrapper {
     pub self_convention: Option<mojito_ast::ast::ArgConvention>,
     /// Every declared parameter but the receiver, in order.
     pub params: Vec<SignatureParam>,
+    /// Its checked signature, read from its member sites when the program
+    /// is assembled.
+    pub signature: CheckedSignature,
     /// The check's syntax of the body. A package unit does not hold it:
     /// its nodes are the unit's [`CheckedTables::wrapper_roots`].
     #[serde(skip)]
@@ -2523,7 +2516,7 @@ impl DiscoveryResult {
             &self.node_facts,
             &self.default_wrappers,
             &self.trait_members,
-            Some(visit),
+            ArenaMode::Scan(visit),
         );
     }
 
@@ -2578,7 +2571,25 @@ impl DiscoveryResult {
         wrappers: &[CheckedDefaultWrapper],
         visit: &mut dyn FnMut(&Expr),
     ) {
-        build_checked_expressions(statements, &self.node_facts, wrappers, &[], Some(visit));
+        build_checked_expressions(
+            statements,
+            &self.node_facts,
+            wrappers,
+            &[],
+            ArenaMode::Scan(visit),
+        );
+    }
+
+    /// The lookups each declaration op's symbol and signature are read
+    /// from.
+    pub(crate) fn signatures(&self) -> Signatures<'_> {
+        Signatures {
+            checked_types: &self.checked_types,
+            generic_parameters: &self.generic_parameters,
+            declaration_effects: &self.declaration_effects,
+            overloads: &self.overloads,
+            constants: &self.constants,
+        }
     }
 
     fn facts_of(&self, expression: &Expr) -> Option<&NodeFacts> {
@@ -2824,7 +2835,7 @@ pub enum CheckedTransferDest {
 
 /// the declaration returns a reference. Recorded per callable so lowering
 /// never re-reads source `raises`/return annotations.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DeclarationEffect {
     pub raises: bool,
     pub error: Option<Ty>,
@@ -2973,16 +2984,34 @@ impl CheckedProgram {
             conformances,
             overloads,
             constants,
-            default_wrappers,
+            mut default_wrappers,
             trait_members,
         } = discovery;
         let expressions_span = mojito_common::timing::span("expressions");
+        let signatures = Signatures {
+            checked_types: &checked_types,
+            generic_parameters: &generic_parameters,
+            declaration_effects: &declaration_effects,
+            overloads: &overloads,
+            constants: &constants,
+        };
+        for wrapper in &mut default_wrappers {
+            wrapper.signature = signatures.method(
+                wrapper.module.as_ref(),
+                &wrapper.declaration,
+                wrapper.method_index,
+                wrapper.params.len(),
+            );
+        }
         let arena = build_checked_expressions(
             &statements,
             &node_facts,
             &default_wrappers,
             &trait_members,
-            None,
+            ArenaMode::Build {
+                signatures,
+                member: None,
+            },
         );
         drop(expressions_span);
         let _declarations = mojito_common::timing::span("declarations");
@@ -3273,36 +3302,156 @@ pub fn origin_parameter_names<'a>(
 }
 
 /// The checked tables of one package unit, `statements` and `wrappers`'
-/// bodies, built from the check's `facts` and `checked_types` as the whole
-/// program's are.
+/// bodies, built from the check's `facts` and `signatures` as the whole
+/// program's are. A struct member unit's `member` is its method's
+/// position among the struct's members and its symbol, which its
+/// struct's shell no longer spells.
 pub(crate) fn unit_tables(
     statements: &[Stmt],
     wrappers: &[CheckedDefaultWrapper],
     facts: &HashMap<SourceSpan, NodeFacts>,
-    checked_types: &HashMap<AnnotationSite, Ty>,
+    signatures: Signatures<'_>,
+    member: Option<(usize, &str)>,
 ) -> CheckedTables {
-    let arena = build_checked_expressions(statements, facts, wrappers, &[], None);
-    let declarations = build_checked_declarations(statements, &[], checked_types, facts);
+    let arena = build_checked_expressions(
+        statements,
+        facts,
+        wrappers,
+        &[],
+        ArenaMode::Build { signatures, member },
+    );
+    let declarations = build_checked_declarations(statements, &[], signatures.checked_types, facts);
     CheckedTables::new(arena, declarations)
+}
+
+/// The lookups a declaration op's symbol and checked signature are read
+/// from: the check's declaration sites, and the overload sets and module
+/// constants a symbol is spelled by.
+#[derive(Clone, Copy)]
+pub(crate) struct Signatures<'a> {
+    pub(crate) checked_types: &'a HashMap<AnnotationSite, Ty>,
+    pub(crate) generic_parameters: &'a HashMap<GenericSite, Vec<mojito_types::types::ParamDecl>>,
+    pub(crate) declaration_effects: &'a HashMap<AnnotationSite, DeclarationEffect>,
+    pub(crate) overloads: &'a crate::package::ProgramOverloads,
+    pub(crate) constants: &'a crate::package::ProgramConstants,
+}
+
+impl Signatures<'_> {
+    /// The checked signature of the free `def` `statement`, of `arity`
+    /// declared parameters.
+    fn function(&self, statement: &Stmt, arity: usize) -> CheckedSignature {
+        let (module, declaration, syntax) =
+            (&statement.module, statement.span, statement.syntax_id);
+        let result = AnnotationSite::FunctionReturn {
+            module: module.clone(),
+            declaration,
+            syntax,
+        };
+        CheckedSignature {
+            parameters: self
+                .generic_parameters
+                .get(&GenericSite::Function {
+                    module: module.clone(),
+                    declaration,
+                    syntax,
+                })
+                .cloned()
+                .unwrap_or_default(),
+            params: (0..arity)
+                .map(|param| {
+                    self.checked_types
+                        .get(&AnnotationSite::FunctionParam {
+                            module: module.clone(),
+                            declaration,
+                            syntax,
+                            param,
+                        })
+                        .cloned()
+                })
+                .collect(),
+            result: self.checked_types.get(&result).cloned(),
+            effect: self.declaration_effects.get(&result).cloned(),
+        }
+    }
+
+    /// The checked signature of the member `method` of struct
+    /// `declaration`, of `arity` declared parameters.
+    fn method(
+        &self,
+        module: Option<&String>,
+        declaration: &str,
+        method: usize,
+        arity: usize,
+    ) -> CheckedSignature {
+        let result = AnnotationSite::MethodReturn {
+            module: module.cloned(),
+            declaration: declaration.to_string(),
+            method,
+        };
+        CheckedSignature {
+            parameters: self
+                .generic_parameters
+                .get(&GenericSite::Method {
+                    module: module.cloned(),
+                    declaration: declaration.to_string(),
+                    method,
+                })
+                .cloned()
+                .unwrap_or_default(),
+            params: (0..arity)
+                .map(|param| {
+                    self.checked_types
+                        .get(&AnnotationSite::MethodParam {
+                            module: module.cloned(),
+                            declaration: declaration.to_string(),
+                            method,
+                            param,
+                        })
+                        .cloned()
+                })
+                .collect(),
+            result: self.checked_types.get(&result).cloned(),
+            effect: self.declaration_effects.get(&result).cloned(),
+        }
+    }
+}
+
+/// What [`build_checked_expressions`] does.
+enum ArenaMode<'a, 's> {
+    /// Build the nodes, each declaration op's symbol and signature read
+    /// from `signatures`; `member` is a struct member unit's
+    /// ([`unit_tables`]).
+    Build {
+        signatures: Signatures<'a>,
+        member: Option<(usize, &'a str)>,
+    },
+    /// The traversal alone, each expression reported instead of built.
+    Scan(&'s mut dyn FnMut(&Expr)),
 }
 
 /// The checked arena of `statements`, of `default_wrappers`' bodies, and of
 /// each of `trait_members`' declarations, each node holding the facts
-/// `facts` recorded at its occurrence; with `scan`, the traversal alone, each
-/// expression reported instead of built.
-fn build_checked_expressions(
+/// `facts` recorded at its occurrence; in scan `mode`, the traversal alone.
+fn build_checked_expressions<'a>(
     statements: &[Stmt],
-    facts: &HashMap<SourceSpan, NodeFacts>,
+    facts: &'a HashMap<SourceSpan, NodeFacts>,
     default_wrappers: &[CheckedDefaultWrapper],
-    trait_members: &[CheckedTraitMember],
-    scan: Option<&mut dyn FnMut(&Expr)>,
+    trait_members: &'a [CheckedTraitMember],
+    mode: ArenaMode<'a, '_>,
 ) -> CheckedArena {
+    let (scan, signatures, member) = match mode {
+        ArenaMode::Build { signatures, member } => (None, Some(signatures), member),
+        ArenaMode::Scan(visit) => (Some(visit), None, None),
+    };
     let mut builder = ArenaBuilder {
         scan,
         nodes: Vec::new(),
         statements: Vec::new(),
         facts,
         trait_members,
+        signatures,
+        member,
+        functions: 0,
     };
     let roots = builder.block(statements);
     let wrapper_roots = default_wrappers
@@ -3335,6 +3484,15 @@ struct ArenaBuilder<'a, 's> {
     facts: &'a HashMap<SourceSpan, NodeFacts>,
     /// The members whose `def` nodes a trait's defaults are built as.
     trait_members: &'a [CheckedTraitMember],
+    /// What a declaration op's symbol and signature are read from; absent
+    /// in scan mode, which builds no op.
+    signatures: Option<Signatures<'a>>,
+    /// A struct member unit's method's position among its struct's members
+    /// and its symbol.
+    member: Option<(usize, &'a str)>,
+    /// How many function bodies enclose the statement being built: a
+    /// `def` inside one is named by its own name.
+    functions: usize,
 }
 
 impl<'a> ArenaBuilder<'a, '_> {
@@ -3790,7 +3948,6 @@ impl<'a> ArenaBuilder<'a, '_> {
         match &statement.kind {
             StmtKind::VarDecl { name, ty, value } => CheckedStmtOp::VarDecl {
                 name: name.clone(),
-                ty: ty.clone(),
                 applications: ty
                     .as_ref()
                     .map(|ty| self.type_applications(ty))
@@ -3809,14 +3966,11 @@ impl<'a> ArenaBuilder<'a, '_> {
             StmtKind::Expr(value) => CheckedStmtOp::Expr(self.expr(value)),
             StmtKind::Comptime {
                 name,
-                type_params,
-                ty,
                 where_clauses,
                 value,
+                ..
             } => CheckedStmtOp::Comptime {
                 name: name.clone(),
-                type_params: type_params.clone(),
-                ty: ty.clone(),
                 where_clauses: values(self, where_clauses),
                 value: self.expr(value),
             },
@@ -3840,43 +3994,39 @@ impl<'a> ArenaBuilder<'a, '_> {
             },
             StmtKind::Def {
                 name,
-                decorators,
                 type_params,
                 params,
                 positional_only,
                 keyword_only,
-                captures,
                 raises,
-                raises_type,
-                ret,
                 where_clauses,
                 body,
+                ..
             } => CheckedStmtOp::Def(Box::new(CheckedDef {
                 name: name.clone(),
-                decorators: decorators.clone(),
-                type_params: type_params.clone(),
+                symbol: self.function_symbol(name, type_params, params),
+                signature: self
+                    .signatures
+                    .map(|signatures| signatures.function(statement, params.len()))
+                    .unwrap_or_default(),
                 params: self.fn_params(params),
                 positional_only: *positional_only,
                 keyword_only: *keyword_only,
-                captures: captures.clone(),
                 raises: *raises,
-                raises_type: raises_type.clone(),
-                ret: ret.clone(),
                 where_clauses: values(self, where_clauses),
-                body: self.block(body),
+                body: self.function_body(body),
             })),
             StmtKind::Struct {
                 name,
-                decorators,
                 type_params,
                 conforms,
-                callable_conformance,
                 conformance_conditions,
                 where_clauses,
                 fields,
                 associated,
                 methods,
                 fieldwise_init,
+                ..
             } => {
                 let conformance_conditions = conformance_conditions
                     .iter()
@@ -3887,41 +4037,68 @@ impl<'a> ArenaBuilder<'a, '_> {
                     .iter()
                     .map(|member| CheckedStructComptime {
                         name: member.name.clone(),
-                        params: member.params.clone(),
-                        ty: member.ty.clone(),
                         where_clauses: values(self, &member.where_clauses),
                         value: self.expr(&member.value),
                     })
                     .collect();
                 let methods = methods
                     .iter()
-                    .map(|method| CheckedMethod {
-                        name: method.name.clone(),
-                        type_params: method.type_params.clone(),
-                        has_self: method.has_self,
-                        self_convention: method.self_convention,
-                        self_origin: method.self_origin.clone(),
-                        decorators: method.decorators.clone(),
-                        params: self.fn_params(&method.params),
-                        positional_only: method.positional_only,
-                        keyword_only: method.keyword_only,
-                        raises: method.raises,
-                        raises_type: method.raises_type.clone(),
-                        ret: method.ret.clone(),
-                        where_clauses: values(self, &method.where_clauses),
-                        body: self.block(&method.body),
-                        provenance: method.provenance,
+                    .enumerate()
+                    .map(|(position, method)| {
+                        let registered =
+                            mojito_symbol::symbol::lifecycle_method_name(method).to_string();
+                        let (index, symbol) =
+                            self.method_symbol(name, type_params, &registered, method, position);
+                        CheckedMethod {
+                            name: method.name.clone(),
+                            registered,
+                            symbol,
+                            signature: self
+                                .signatures
+                                .map(|signatures| {
+                                    signatures.method(
+                                        statement.module.as_ref(),
+                                        name,
+                                        index,
+                                        method.params.len(),
+                                    )
+                                })
+                                .unwrap_or_default(),
+                            has_self: method.has_self,
+                            self_convention: method.self_convention,
+                            params: self.fn_params(&method.params),
+                            positional_only: method.positional_only,
+                            keyword_only: method.keyword_only,
+                            raises: method.raises,
+                            where_clauses: values(self, &method.where_clauses),
+                            body: self.function_body(&method.body),
+                            provenance: method.provenance,
+                        }
+                    })
+                    .collect();
+                let fields = fields
+                    .iter()
+                    .enumerate()
+                    .map(|(field, declared)| CheckedField {
+                        name: declared.name.clone(),
+                        ty: self.signatures.and_then(|signatures| {
+                            signatures
+                                .checked_types
+                                .get(&AnnotationSite::StructField {
+                                    module: statement.module.clone(),
+                                    declaration: name.clone(),
+                                    field,
+                                })
+                                .cloned()
+                        }),
                     })
                     .collect();
                 CheckedStmtOp::Struct(Box::new(CheckedStruct {
                     name: name.clone(),
-                    decorators: decorators.clone(),
-                    type_params: type_params.clone(),
                     conforms: conforms.clone(),
-                    callable_conformance: callable_conformance.clone(),
                     conformance_conditions,
                     where_clauses,
-                    fields: fields.clone(),
+                    fields,
                     associated,
                     methods,
                     fieldwise_init: *fieldwise_init,
@@ -3938,15 +4115,11 @@ impl<'a> ArenaBuilder<'a, '_> {
                     .enumerate()
                     .map(|(index, method)| CheckedTraitMethod {
                         name: method.name.clone(),
-                        type_params: method.type_params.clone(),
                         self_convention: method.self_convention,
-                        self_origin: method.self_origin.clone(),
                         params: self.fn_params(&method.params),
                         positional_only: method.positional_only,
                         keyword_only: method.keyword_only,
                         raises: method.raises,
-                        raises_type: method.raises_type.clone(),
-                        ret: method.ret.clone(),
                         where_clauses: values(self, &method.where_clauses),
                         default: method
                             .default_body
@@ -3959,8 +4132,6 @@ impl<'a> ArenaBuilder<'a, '_> {
                     .iter()
                     .map(|member| CheckedTraitComptime {
                         name: member.name.clone(),
-                        params: member.params.clone(),
-                        ty: member.ty.clone(),
                         where_clauses: values(self, &member.where_clauses),
                     })
                     .collect();
@@ -4053,13 +4224,69 @@ impl<'a> ArenaBuilder<'a, '_> {
             .iter()
             .map(|param| CheckedFnParam {
                 name: param.name.clone(),
-                ty: param.ty.clone(),
                 default: self.optional(param.default.as_ref()),
                 kind: param.kind,
                 convention: param.convention,
-                origin: param.origin.clone(),
             })
             .collect()
+    }
+
+    /// The nodes of a function's `body`, inside one more function.
+    fn function_body(&mut self, body: &[Stmt]) -> Vec<CheckedStmtId> {
+        self.functions += 1;
+        let body = self.block(body);
+        self.functions -= 1;
+        body
+    }
+
+    /// The symbol the `def` `name` lowers to, as the check names its
+    /// owner: a module `def`'s signature-qualified when its name is
+    /// overloaded, a nested one's its own name. Empty in scan mode.
+    fn function_symbol(
+        &self,
+        name: &str,
+        type_params: &[TypeParam],
+        params: &[mojito_ast::ast::FnParam],
+    ) -> String {
+        match self.signatures {
+            Some(signatures) if self.functions == 0 => mojito_symbol::symbol::lowered_def_name(
+                name,
+                type_params,
+                params,
+                signatures.overloads,
+                &|name| signatures.constants.get(name),
+            ),
+            Some(_) => name.to_string(),
+            None => String::new(),
+        }
+    }
+
+    /// The position among struct `structure`'s members of its method
+    /// `method`, at `position` among the methods it spells and registered
+    /// as `registered`, and the symbol it lowers to; a struct member
+    /// unit's are the unit's. The symbol is empty in scan mode.
+    fn method_symbol(
+        &self,
+        structure: &str,
+        type_params: &[TypeParam],
+        registered: &str,
+        method: &mojito_ast::ast::Method,
+        position: usize,
+    ) -> (usize, String) {
+        match (self.member, self.signatures) {
+            (Some((index, symbol)), _) => (index, symbol.to_string()),
+            (None, Some(signatures)) => (
+                position,
+                mojito_symbol::symbol::lowered_method_name(
+                    &format!("{structure}.{registered}"),
+                    type_params,
+                    mojito_symbol::symbol::MethodShape::of(method),
+                    signatures.overloads,
+                    &|name| signatures.constants.get(name),
+                ),
+            ),
+            (None, None) => (position, String::new()),
+        }
     }
 }
 
