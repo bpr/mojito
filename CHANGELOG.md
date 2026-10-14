@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR matches no operator, lambda, or other expression syntax: every such
+  site lowers from its checked op (`CheckedOp::Prefix`, `Infix`, `Lambda`),
+  as upstream's lowering consumes typed ops (R644). The last two syntax
+  sites went with R628 and R643; the generated MIR is unchanged.
 - The check records each bracket argument's parameter attribute once, as
   the binder that resolved the bracket list returns it, rather than
   resolving a type-shaped argument a second time from its spelling (R659).
