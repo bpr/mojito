@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R889**.
+Next free ID: **R892**.
 
 ## Ordered Work
 
@@ -63,24 +63,6 @@ CFG. The entries that close that gap are staged in
 producers first, then the CFG lowering point moving down one consumer at a
 time.
 
-
-- [ ] **R872 HIR lowers run-time `if`/`while`/`for`/`break`/`continue` to a
-  CFG where upstream emits `hlcf.if` and labelled loops**
-
-  Upstream's parser and `LowerSemanticCF` produce `hlcf.if` and a labelled
-  `hlcf.loop`, and HIR's `Cfg` turns the same checked statements into
-  blocks and jumps.
-  - Stage 3 of `docs/structured-control-flow-plan.md`.
-  - The lever is `Lowerer::stmt` in `crates/mojito-hir/src/hir.rs`, and
-    `mir.rs::lower_cfg`, which walks the result.
-  - `while`/`for` become a `Loop` with an `If` on the condition or has-next
-    flag, and the loop `else` on the normal exit (`lowerLITLoop`).
-  - `break`/`continue` become labelled terminators.
-  - After it lands, `lower-control-flow` runs right after MIR lowering.
-  - The entry's planning session may split it by construct if one session
-    cannot land it, filing the rest as chained entries.
-  - Depends on R870, R871.
-  - Model: Fable, Planned.
 
 - [ ] **R873 `comptime if` and `comptime for` are CFG terminators where
   upstream holds `hlcf.comptime.if` and `hlcf.comptime.for` region ops**
@@ -144,6 +126,36 @@ time.
   - After it lands, `lower-control-flow` runs right after MIR lowering.
   - Depends on R872.
   - Model: Opus, Planned.
+
+- [ ] **R889 Code after a `return`, `break`, or `continue` still lowers,
+  into an unreachable block, where upstream's `LowerSemanticCF` erases it**
+
+  HIR's `Lower::push_region_op` opens a fresh block for a region op that
+  follows a sealed block, so dead statements reach MIR, the analyses, and
+  the elaborator.
+  - Upstream deletes the ops after a terminator while lowering semantic
+    control flow, so no dead region reaches `CheckLifetimes`.
+  - Straight-line dead instructions are already dropped (`Lower::push`).
+  - It matters once the single-block rule switches on: a dead op after a
+    region terminator is not one block.
+  - Found while landing R872 (2026-10-14).
+  - Depends on R874.
+  - Model: Opus, Not Planned.
+
+- [ ] **R890 A `for` over a raising iterator tests a `TryNext` flag where
+  upstream calls `__next__` in a `try` whose handler breaks to the loop's
+  `else`**
+
+  `HirInstr::TryNext` and `MirInstr::TryNext` catch the exhaustion type
+  inside one instruction and write a `Bool` the loop's opening `if` tests.
+  - Upstream's `emitForStmt` wraps the `__next__` call in an error region
+    that leaves through the loop's `else` (`lit.loop.break.else`).
+  - Comprehension loops (`lower_expr/ctrl.rs`) share the shape.
+  - With single-block `try` parts the call can be a `Try` whose handler
+    breaks, and `TryNext` can go.
+  - Found while landing R872 (2026-10-14).
+  - Depends on R874.
+  - Model: Opus, Not Planned.
 
 - [ ] **R875 The move and initialization checks read a lowered CFG where
   `CheckLifetimes` walks structured regions**
@@ -878,6 +890,21 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Found while landing R826 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R891 A `break` out of a `try`/`finally` in `for x in xs` over a
+  named `List` destroys `xs` before the `finally` reads `x`**
+
+  `for x in xs: try: … break … finally: print(x)` fails in the VM with
+  `ReadRef … invalid reference projection Field("data") on None`.
+  - The escape's cleanup list holds the iterator and `xs` and runs before
+    the `finally`, which reads `x`, a reference into `xs`.
+  - `continue` across the same `finally`, and `break` with an `except`
+    and no `finally`, both run correctly.
+  - It is very likely R830's case: run the list after the crossed
+    `finally`, then add this program as a fixture.
+  - Found while landing R872 (2026-10-14); it fails on `aae331e8` too.
+  - Depends on R830.
+  - Model: Opus, Not Planned.
 
 - [ ] **R831 A `try`'s raise-edge cleanup list serves every raise point of
   its body**

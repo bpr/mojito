@@ -1000,8 +1000,8 @@ R378, where upstream evaluates a `comptime`
 alias. A thunk reads a local `comptime` value bound before it (`comptime k
 = n + 1`) as the parameter expression it denotes
 (`EnclosingBinders::comptime_bindings`). HIR lowers the
-loop as a
-loop whose header is `Terminator::ComptimeLoop` and MIR as the `ComptimeFor`
+loop as an `HirInstr::ComptimeFor` region op, MIR lowering as the
+`ComptimeFor` region op and `lower-control-flow` as the `ComptimeFor`
 terminator — the binder, the slot the body reads it through, and the
 sequence, as upstream's `hlcf.comptime.for` iterates a compile-time sequence —
 the ownership analysis and drop
@@ -2451,7 +2451,7 @@ carved out for subtree generations for the same reason. MIR verify accepts
 a domain loan whose path ends in — but never continues past — the subtree
 segment, and rejects subtree segments in transfer destination domains.
 
-## Stage 4: HIR CFG Lowering
+## Stage 4: HIR Lowering
 
 Module:
 
@@ -2465,8 +2465,9 @@ Main type:
 hir::Cfg
 ```
 
-HIR is the first control-flow-aware representation. It is a graph of basic
-blocks backed by `petgraph::StableGraph`, built by walking the checked
+HIR is the first control-flow-aware representation. It is a region tree of
+basic blocks, the blocks nodes of one `petgraph::StableGraph`, built by
+walking the checked
 statement and expression nodes (`CheckedStmtOp`, `CheckedOp`), as upstream's
 control-flow lowering consumes typed ops. Expression-bearing instructions and
 terminators carry `HirExpr`: a checked node, its operands' trees, and its
@@ -2482,8 +2483,27 @@ spellings and its binding-to-slot map, so a name in the region, read or
 assigned, is the binding its scope declared, and an `except` region declares
 its handler binding's slot first. HIR retains responsibility for statement
 control flow.
-The CFG design admits additional edge kinds for suspension/resumption and pattern
-failure without baking them into expression lowering.
+
+Statement control flow is structured, as upstream's parser and
+`LowerSemanticCF` build `hlcf` ops. `Cfg::root` is the body's region: its
+blocks, entry first. A run-time `if` is an `HirInstr::If` (`hlcf.if`) whose
+first condition is its operand and each `elif` a condition region ended by
+`Terminator::ElifCond`; every arm that completes ends in `Terminator::Yield`.
+A `while` or `for` is an `HirInstr::Loop` (`hlcf.loop`) labelled uniquely in
+its function, as `LowerSemanticCF` numbers loops: its body opens with an
+`If` on the condition, or on the `Bool` slot the iterator protocol wrote
+(`HirCond::Slot`), whose else arm holds the loop's `else` body and then
+`Terminator::Break(label)`; the body ends in `Terminator::Continue(label)`.
+The `else` body lowers outside its loop's frame, so its own
+`break`/`continue` name the enclosing loop (`lowerLITLoop`). A `comptime for`
+is an `HirInstr::ComptimeFor` (`hlcf.comptime.for`), left with
+`ComptimeBreak` and iterated with `ComptimeContinue`. A `comptime if` is
+still a diamond of blocks inside its region (`ComptimeBranch` and `Jump`,
+the only terminators with graph edges), and code after a block a `return`
+or `break` sealed still lowers, into a fresh unreachable block, where
+upstream's `LowerSemanticCF` erases it. MIR lowering builds the matching
+MIR region ops (`Flatten::hir_region`), and `lower-control-flow` lowers them
+to blocks at the end of `lower_cfg`.
 
 Each HIR block has:
 
@@ -2499,19 +2519,18 @@ Each block is sealed with exactly one terminator:
 ```rust
 pub enum Terminator {
     Jump(BlockId),
-    Branch { cond: HirExpr, then_b: BlockId, else_b: BlockId },
-    BranchOnSlot { cond: VarId, then_b: BlockId, else_b: BlockId },
     ComptimeBranch { cond: HirExpr, then_b: BlockId, else_b: BlockId },
-    ComptimeLoop { iter: HirExpr, var: String, binding, index: VarId, body, exit },
     Return(Option<HirExpr>),
     ReturnWithCleanup { value: Option<HirExpr>, cleanup: Vec<VarId> },
     FallOff,
-    EscapeJump(BlockId),
+    Yield,
+    ElifCond(HirExpr),
+    Break(u32),
+    Continue(u32),
+    ComptimeBreak,
+    ComptimeContinue,
 }
 ```
-
-A `for` header branches on the `Bool` slot its iterator protocol wrote
-(`BranchOnSlot`), which no checked node computes.
 
 Iterator-driven loops use `ReturnWithCleanup` when a source `return` bypasses
 their common exit. The return expression is materialized first, then MIR keeps
@@ -2520,11 +2539,11 @@ block, where drop elaboration ends them.
 
 The core invariant is:
 
-> Every block has one terminator, and terminators own the outgoing control-flow
-> shape.
+> Every block has one terminator, and terminators and region ops own the
+> control-flow shape.
 
-That invariant makes later MIR and analysis passes graph-driven rather than
-syntax-driven.
+That invariant makes later MIR and analysis passes structure-driven rather
+than syntax-driven.
 
 ### Variable Slots
 
@@ -2853,8 +2872,9 @@ callee frame before that temporary frame storage is discarded.
 `try` is represented structurally rather than fully inlining all exceptional
 edges into the surrounding CFG.
 
-HIR can emit a special `HirInstr::Try` that carries the original `try` statement
-plus a snapshot of enclosing function-level loop targets. This is needed for
+HIR emits an `HirInstr::Try` that carries the original `try` statement plus a
+snapshot of the enclosing loops (`EnclosingLoop`: the label or `comptime for`
+a `break`/`continue` names, and a return's cleanup). This is needed for
 source like:
 
 ```mojo
@@ -2865,16 +2885,13 @@ for i in range(10):
         print(i)
 ```
 
-The `break` targets a loop outside the `try` region. A seeded try-region CFG can
-therefore produce:
-
-```rust
-Terminator::EscapeJump(target)
-```
-
-where `target` is a block in the enclosing function CFG, not the local region CFG.
-The VM later propagates this as a non-local jump while running `finally` blocks on
-the way out.
+The `break` targets a loop outside the `try` region. A seeded try-region CFG
+lowers it to `Terminator::Break(label)` naming that loop, and
+`lower-control-flow` resolves it to `MirTerm::EscapeJump { target }`, where
+`target` is a block of the function's list, not the region's. The VM
+propagates this as a non-local jump while running `finally` blocks on the
+way out. A `break` from a `try` part to a loop inside an enclosing `try`
+part reaches the unsupported boundary there.
 
 ## Stage 5: MIR Lowering
 

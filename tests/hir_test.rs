@@ -1,10 +1,12 @@
-//! Phase 1 (AST → HIR/CFG) tests. They assert the **shape** of the control-flow
-//! graph — block count, edges, and terminators — for each control-flow construct,
-//! since Phase 1 is about structure, not instruction contents.
+//! Phase 1 (AST → HIR) tests. They assert the **shape** of the region tree —
+//! region ops, their regions' blocks, and terminators — for each control-flow
+//! construct, since Phase 1 is about structure, not instruction contents.
 
 use mojito::Ty;
 use mojito::checked::CheckedStmtOp;
-use mojito::hir::{BlockId, Cfg, RegionSeed, Terminator};
+use mojito::hir::{
+    Cfg, EnclosingLoop, HirCond, HirInstr, HirRegion, LoopTarget, RegionSeed, Terminator,
+};
 use mojito::origin::OwnerId;
 use mojito::{check_program, parse};
 
@@ -56,8 +58,9 @@ fn root_def_body(
 }
 
 /// The body of the first loop of checked function `main` in `src`, lowered
-/// as a `try` region seeded with the enclosing loop `(header, exit)`.
-fn loop_body_region(src: &str, header: BlockId, exit: BlockId) -> Cfg {
+/// as a `try` region seeded with the enclosing loop labelled 7, and with 8
+/// as the first label free.
+fn loop_body_region(src: &str) -> Cfg {
     let program = parse(src).expect("parse error");
     let checked = check_program(&program).expect("type error");
     let tables = checked.tables();
@@ -79,18 +82,62 @@ fn loop_body_region(src: &str, header: BlockId, exit: BlockId) -> Cfg {
         })
         .expect("a loop in main");
     Cfg::build_seeded_checked_region(
-        RegionSeed::default(),
+        RegionSeed {
+            labels: 8,
+            ..RegionSeed::default()
+        },
         &loop_body,
-        &[(header, exit, Vec::new())],
+        &[EnclosingLoop {
+            target: LoopTarget::Loop(7),
+            cleanup: Vec::new(),
+        }],
         std::sync::Arc::clone(tables),
     )
 }
 
-/// Every block must be sealed with exactly one terminator (CFG well-formedness).
+/// Every block must be sealed with exactly one terminator.
 fn assert_all_sealed(cfg: &Cfg) {
     for b in cfg.g.node_indices() {
         assert!(cfg.term(b).is_some(), "block {b:?} has no terminator");
     }
+}
+
+/// The instructions of `region`'s entry block.
+fn entry_instrs<'c>(cfg: &'c Cfg, region: &HirRegion) -> &'c [HirInstr] {
+    &cfg.block(region.blocks[0]).instrs
+}
+
+/// The terminator of `region`'s last block.
+fn last_term<'c>(cfg: &'c Cfg, region: &HirRegion) -> &'c Terminator {
+    cfg.term(*region.blocks.last().expect("a region has a block"))
+        .expect("sealed")
+}
+
+/// The one `Loop` op of `region`'s entry block: its label and body.
+fn the_loop<'c>(cfg: &'c Cfg, region: &HirRegion) -> (u32, &'c HirRegion) {
+    entry_instrs(cfg, region)
+        .iter()
+        .find_map(|instruction| match instruction {
+            HirInstr::Loop { label, body } => Some((*label, body)),
+            _ => None,
+        })
+        .expect("a loop op")
+}
+
+/// The `If` a loop body opens with: its operand and its else arm.
+fn loop_test<'c>(cfg: &'c Cfg, body: &HirRegion) -> (&'c HirCond, &'c HirRegion) {
+    entry_instrs(cfg, body)
+        .iter()
+        .find_map(|instruction| match instruction {
+            HirInstr::If {
+                cond, then, orelse, ..
+            } => {
+                assert!(matches!(last_term(cfg, then), Terminator::Yield));
+                Some((cond, orelse))
+            }
+            _ => None,
+        })
+        .expect("a loop body opens with its test")
 }
 
 #[test]
@@ -98,6 +145,7 @@ fn straight_line_is_one_block_returning() {
     // No control flow ⇒ a single block, implicitly `return None`.
     let c = checked_cfg("var x: Int = 1\nvar y: Int = 2\n");
     assert_eq!(c.node_count(), 1);
+    assert_eq!(c.root.blocks, [c.entry]);
     assert_eq!(c.edge_count(), 0);
     assert!(matches!(c.term(c.entry), Some(Terminator::Return(None))));
     assert_eq!(c.block(c.entry).instrs.len(), 2); // two Binds
@@ -105,132 +153,128 @@ fn straight_line_is_one_block_returning() {
 }
 
 #[test]
-fn if_without_else_has_four_blocks_and_a_diamond() {
-    // entry ─Branch→ {then, else}; both ─Jump→ join.  4 blocks, 4 edges.
+fn if_without_else_is_one_if_op_with_yielding_arms() {
     let c = checked_function_cfg("def main(a: Bool):\n    if a:\n        pass\n", "main");
-    assert_eq!(c.node_count(), 4);
-    assert_eq!(c.edge_count(), 4);
+    assert_eq!(
+        c.root.blocks.len(),
+        1,
+        "the `if` adds no block to its region"
+    );
+    assert_eq!(c.node_count(), 3);
+    assert_eq!(c.edge_count(), 0);
     assert_all_sealed(&c);
-
-    // The entry branches to two successors, which both reach a single join block.
-    match c.term(c.entry) {
-        Some(Terminator::Branch { then_b, else_b, .. }) => {
-            let join_from_then = c.successors(*then_b)[0];
-            let join_from_else = c.successors(*else_b)[0];
-            assert_eq!(
-                join_from_then, join_from_else,
-                "then and else must merge at one join"
-            );
+    match entry_instrs(&c, &c.root) {
+        [
+            HirInstr::If {
+                cond: HirCond::Expr(_),
+                then,
+                elifs,
+                orelse,
+            },
+        ] => {
+            assert!(elifs.is_empty());
+            assert!(matches!(last_term(&c, then), Terminator::Yield));
+            assert!(matches!(last_term(&c, orelse), Terminator::Yield));
         }
-        other => panic!("entry should end in a Branch, got {other:?}"),
+        other => panic!("expected one `if` op, got {other:?}"),
     }
 }
 
 #[test]
-fn if_elif_else_has_six_blocks_seven_edges() {
-    // entry ─Branch→{then1, else1}; else1 ─Branch→{then2, else2(=orelse)};
-    // then1, then2, else2 all ─Jump→ join.  6 blocks, 7 edges.
+fn elif_is_a_condition_region_not_a_nested_if() {
     let c = checked_function_cfg(
         "def main(a: Bool, b: Bool):\n    if a:\n        pass\n    elif b:\n        pass\n    else:\n        pass\n",
         "main",
     );
-    assert_eq!(c.node_count(), 6);
-    assert_eq!(c.edge_count(), 7);
     assert_all_sealed(&c);
+    let [HirInstr::If { elifs, orelse, .. }] = entry_instrs(&c, &c.root) else {
+        panic!("expected one `if` op");
+    };
+    let [elif] = elifs.as_slice() else {
+        panic!("expected one elif");
+    };
+    assert!(matches!(last_term(&c, &elif.cond), Terminator::ElifCond(_)));
+    assert!(matches!(last_term(&c, &elif.then), Terminator::Yield));
+    assert!(
+        !entry_instrs(&c, orelse)
+            .iter()
+            .any(|instruction| matches!(instruction, HirInstr::If { .. })),
+        "the else arm holds no nested `if`"
+    );
 }
 
 #[test]
-fn while_loop_has_header_body_exit_with_back_edge() {
-    // entry→header; header ─Branch→{body, exit}; body ─Jump→ header (back-edge).
-    // 4 blocks, 4 edges.
+fn while_loop_is_a_labelled_loop_that_tests_first() {
     let c = checked_function_cfg("def main(a: Bool):\n    while a:\n        pass\n", "main");
-    assert_eq!(c.node_count(), 4);
-    assert_eq!(c.edge_count(), 4);
     assert_all_sealed(&c);
-
-    // The header is the entry's sole successor and branches to two blocks, one of
-    // which (the body) jumps back to the header.
-    let header = c.successors(c.entry)[0];
-    let (body, exit) = match c.term(header) {
-        Some(Terminator::Branch { then_b, else_b, .. }) => (*then_b, *else_b),
-        other => panic!("header should Branch, got {other:?}"),
-    };
-    assert!(
-        c.has_edge(body, header),
-        "body must have a back-edge to the header"
-    );
-    assert!(
-        matches!(c.term(exit), Some(Terminator::Return(None))),
-        "exit falls through to return"
-    );
+    assert_eq!(c.root.blocks.len(), 1);
+    let (label, body) = the_loop(&c, &c.root);
+    let (cond, exit) = loop_test(&c, body);
+    assert!(matches!(cond, HirCond::Expr(_)));
+    assert!(matches!(last_term(&c, exit), Terminator::Break(l) if *l == label));
+    assert!(matches!(last_term(&c, body), Terminator::Continue(l) if *l == label));
+    assert_eq!(c.labels, label + 1);
 }
 
 #[test]
-fn break_jumps_to_the_loop_exit_not_the_header() {
-    // `while a: break` — the body jumps to the exit and has NO back-edge.
+fn break_leaves_the_loop_without_continuing() {
     let c = checked_function_cfg("def main(a: Bool):\n    while a:\n        break\n", "main");
-    let header = c.successors(c.entry)[0];
-    let (body, exit) = match c.term(header) {
-        Some(Terminator::Branch { then_b, else_b, .. }) => (*then_b, *else_b),
-        other => panic!("header should Branch, got {other:?}"),
-    };
-    assert!(c.has_edge(body, exit), "break must jump to the loop exit");
+    let (label, body) = the_loop(&c, &c.root);
+    assert!(matches!(last_term(&c, body), Terminator::Break(l) if *l == label));
     assert!(
-        !c.has_edge(body, header),
-        "a body that always breaks has no back-edge"
+        !body
+            .blocks
+            .iter()
+            .any(|b| matches!(c.term(*b), Some(Terminator::Continue(_)))),
+        "a body that always breaks never continues"
     );
     assert_all_sealed(&c);
 }
 
 #[test]
-fn continue_jumps_back_to_the_header() {
-    // `while a: continue` — the body jumps to the header (a back-edge), like a
-    // normal loop end, and does NOT reach the exit directly from the body.
+fn continue_starts_the_next_iteration() {
     let c = checked_function_cfg(
         "def main(a: Bool):\n    while a:\n        continue\n",
         "main",
     );
-    let header = c.successors(c.entry)[0];
-    let (body, exit) = match c.term(header) {
-        Some(Terminator::Branch { then_b, else_b, .. }) => (*then_b, *else_b),
-        other => panic!("header should Branch, got {other:?}"),
-    };
-    assert!(
-        c.has_edge(body, header),
-        "continue jumps back to the header"
-    );
-    assert!(
-        !c.has_edge(body, exit),
-        "the body does not reach the exit directly"
-    );
+    let (label, body) = the_loop(&c, &c.root);
+    assert!(matches!(last_term(&c, body), Terminator::Continue(l) if *l == label));
     assert_all_sealed(&c);
 }
 
 #[test]
-fn nested_loops_break_targets_the_innermost_exit() {
-    // The inner `break` must target the INNER loop's exit, never the outer's.
+fn nested_loops_break_names_the_innermost_label() {
     let c = checked_function_cfg(
         "def main(a: Bool, b: Bool):\n    while a:\n        while b:\n            break\n",
         "main",
     );
-    // Find the outer header (entry's successor) and the inner header (the outer
-    // body's successor). The inner body must edge to the inner exit.
-    let outer_header = c.successors(c.entry)[0];
-    let outer_body = match c.term(outer_header) {
-        Some(Terminator::Branch { then_b, .. }) => *then_b,
-        other => panic!("outer header should Branch, got {other:?}"),
-    };
-    // The outer body jumps to the inner loop's pre-header/header.
-    let inner_header = c.successors(outer_body)[0];
-    let (inner_body, inner_exit) = match c.term(inner_header) {
-        Some(Terminator::Branch { then_b, else_b, .. }) => (*then_b, *else_b),
-        other => panic!("inner header should Branch, got {other:?}"),
-    };
-    assert!(
-        c.has_edge(inner_body, inner_exit),
-        "inner break targets the inner exit"
-    );
+    let (outer, outer_body) = the_loop(&c, &c.root);
+    let (inner, inner_body) = the_loop(&c, outer_body);
+    assert_ne!(outer, inner, "every loop of a function has its own label");
+    assert!(matches!(last_term(&c, inner_body), Terminator::Break(l) if *l == inner));
+    assert!(matches!(last_term(&c, outer_body), Terminator::Continue(l) if *l == outer));
     assert_all_sealed(&c);
+}
+
+#[test]
+fn a_break_in_a_loop_else_names_the_enclosing_loop() {
+    let c = checked_function_cfg(
+        "def main(a: Bool, b: Bool):\n    while a:\n        while b:\n            pass\n        else:\n            break\n",
+        "main",
+    );
+    let (outer, outer_body) = the_loop(&c, &c.root);
+    let (inner, inner_body) = the_loop(&c, outer_body);
+    let (_, inner_else) = loop_test(&c, inner_body);
+    assert!(
+        matches!(last_term(&c, inner_else), Terminator::Break(l) if *l == outer),
+        "the else body's own break leaves the outer loop"
+    );
+    assert!(
+        !inner_else
+            .blocks
+            .iter()
+            .any(|b| matches!(c.term(*b), Some(Terminator::Break(l)) if *l == inner))
+    );
 }
 
 #[test]
@@ -242,103 +286,90 @@ fn return_seals_the_block_with_a_value() {
 }
 
 #[test]
-fn code_after_a_return_in_a_branch_does_not_flow_to_the_join() {
-    // In `if a: return 1  else: pass`, the then-block returns, so it must NOT edge
-    // to the join; only the else-block reaches it.
+fn a_returning_arm_does_not_yield() {
     let c = checked_function_cfg(
         "def main(a: Bool) -> Int:\n    if a:\n        return 1\n    else:\n        pass\n    return 2\n",
         "main",
     );
-    let (then_b, else_b) = match c.term(c.entry) {
-        Some(Terminator::Branch { then_b, else_b, .. }) => (*then_b, *else_b),
-        other => panic!("entry should Branch, got {other:?}"),
+    let [HirInstr::If { then, orelse, .. }] = entry_instrs(&c, &c.root) else {
+        panic!("expected one `if` op");
     };
-    assert!(matches!(c.term(then_b), Some(Terminator::Return(Some(_)))));
-    let join = c.successors(else_b)[0];
-    assert!(
-        !c.has_edge(then_b, join),
-        "a returning branch does not reach the join"
-    );
-    assert!(c.has_edge(else_b, join));
+    assert!(matches!(last_term(&c, then), Terminator::Return(Some(_))));
+    assert!(matches!(last_term(&c, orelse), Terminator::Yield));
+    assert!(matches!(c.term(c.entry), Some(Terminator::Return(Some(_)))));
     assert_all_sealed(&c);
 }
 
 #[test]
-fn for_loop_lowers_to_a_while_shaped_graph() {
-    // A `for` gets the same header/body/exit skeleton as a `while` (the iterator
-    // protocol is a Phase 2 refinement; the shape is what Phase 1 fixes).
+fn for_loop_tests_its_has_next_slot_before_binding() {
     let c = checked_cfg("for i in range(3):\n    pass\n");
-    let header = c.successors(c.entry)[0];
-    let (body, _exit) = match c.term(header) {
-        Some(Terminator::BranchOnSlot { then_b, else_b, .. }) => (*then_b, *else_b),
-        other => panic!("for-header should branch on its has-next slot, got {other:?}"),
-    };
-    assert!(
-        c.has_edge(body, header),
-        "for-body has a back-edge to the header"
-    );
+    let (label, body) = the_loop(&c, &c.root);
+    let (cond, exit) = loop_test(&c, body);
+    assert!(matches!(cond, HirCond::Slot(_)));
+    assert!(matches!(last_term(&c, exit), Terminator::Break(l) if *l == label));
+    assert!(matches!(
+        entry_instrs(&c, body),
+        [
+            HirInstr::HasNext { .. },
+            HirInstr::If { .. },
+            HirInstr::Next { .. },
+            HirInstr::BindIteration { .. },
+            HirInstr::Stmt(_), // `pass`
+        ]
+    ));
+    assert!(matches!(last_term(&c, body), Terminator::Continue(l) if *l == label));
     assert_all_sealed(&c);
 }
 
 #[test]
-fn seeded_region_break_continue_escape_to_external_loops() {
-    // A region seeded with an enclosing function loop lowers an outward `break` to
-    // `EscapeJump(exit)` and `continue` to `EscapeJump(header)` — carrying the
-    // enclosing block ids (not region-local nodes).
-    let header = BlockId::new(41);
-    let exit = BlockId::new(42);
-    let region = loop_body_region(
-        "def main():\n    while True:\n        break\n",
-        header,
-        exit,
+fn a_comptime_for_break_inside_an_if_is_a_comptime_break() {
+    let c = checked_function_cfg(
+        "def main(a: Bool):\n    comptime for i in range(3):\n        if a:\n            break\n",
+        "main",
     );
-    let esc = region
-        .g
-        .node_indices()
-        .find_map(|b| match region.term(b) {
-            Some(Terminator::EscapeJump(t)) => Some(*t),
+    let body = entry_instrs(&c, &c.root)
+        .iter()
+        .find_map(|instruction| match instruction {
+            HirInstr::ComptimeFor { body, .. } => Some(body),
             _ => None,
         })
-        .expect("break should escape as EscapeJump");
-    assert_eq!(esc, exit, "break escapes to the enclosing loop exit");
-
-    let region2 = loop_body_region(
-        "def main():\n    while True:\n        continue\n",
-        header,
-        exit,
-    );
-    let esc2 = region2
-        .g
-        .node_indices()
-        .find_map(|b| match region2.term(b) {
-            Some(Terminator::EscapeJump(t)) => Some(*t),
-            _ => None,
-        })
-        .expect("continue should escape as EscapeJump");
-    assert_eq!(
-        esc2, header,
-        "continue escapes to the enclosing loop header"
-    );
+        .expect("a comptime for op");
+    assert!(matches!(last_term(&c, body), Terminator::ComptimeContinue));
+    let [HirInstr::If { then, .. }] = entry_instrs(&c, body) else {
+        panic!("expected the body's `if`");
+    };
+    assert!(matches!(last_term(&c, then), Terminator::ComptimeBreak));
+    assert_all_sealed(&c);
 }
 
 #[test]
-fn nested_loop_in_region_absorbs_its_own_break() {
-    // A loop declared *inside* the region absorbs its own `break` (a local `Jump`),
-    // so no `EscapeJump` is produced.
-    let header = BlockId::new(7);
-    let exit = BlockId::new(8);
-    let region = loop_body_region(
-        "def main():\n    while True:\n        while True:\n            break\n",
-        header,
-        exit,
-    );
-    let has_escape = region
-        .g
-        .node_indices()
-        .any(|b| matches!(region.term(b), Some(Terminator::EscapeJump(_))));
+fn seeded_region_break_continue_name_the_enclosing_loop() {
+    let region = loop_body_region("def main():\n    while True:\n        break\n");
+    assert!(matches!(
+        last_term(&region, &region.root),
+        Terminator::Break(7)
+    ));
+    let region = loop_body_region("def main():\n    while True:\n        continue\n");
+    assert!(matches!(
+        last_term(&region, &region.root),
+        Terminator::Continue(7)
+    ));
+}
+
+#[test]
+fn nested_loop_in_region_takes_a_fresh_label() {
+    let region =
+        loop_body_region("def main():\n    while True:\n        while True:\n            break\n");
+    let (label, body) = the_loop(&region, &region.root);
+    assert_eq!(label, 8, "the region numbers its loops from its seed");
+    assert!(matches!(last_term(&region, body), Terminator::Break(8)));
+    assert_eq!(region.labels, 9);
     assert!(
-        !has_escape,
-        "a break of the region's own loop stays a local Jump"
+        !region
+            .g
+            .node_indices()
+            .any(|b| matches!(region.term(b), Some(Terminator::Break(7)))),
+        "a break of the region's own loop does not leave the region"
     );
 }
 
@@ -713,6 +744,7 @@ fn region_seed(cfg: &Cfg, handler: Option<(Option<OwnerId>, String)>) -> RegionS
         vars: cfg.vars.clone(),
         bindings: cfg.bindings.clone(),
         handler,
+        labels: cfg.labels,
     }
 }
 

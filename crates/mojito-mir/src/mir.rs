@@ -2194,6 +2194,11 @@ struct Flatten<'a> {
     overloads: std::sync::Arc<mojito_checked::package::ProgramOverloads>,
     /// The program's checked tables, shared with HIR construction.
     checked: &'a std::sync::Arc<mojito_checked::checked::CheckedTables>,
+    /// The HIR being lowered, whose blocks a region op's regions name.
+    cfg: &'a Cfg,
+    /// The next loop label free in this function: a `try` part's HIR
+    /// numbers its loops from here.
+    next_label: u32,
     /// The local `comptime` display bindings in the scopes enclosing the
     /// block being lowered, in declaration order: a `try` region sees its
     /// enclosing scopes' and its own, and its own go out of scope with it,
@@ -2325,68 +2330,6 @@ impl LoopIndex {
             binding,
         }
     }
-}
-
-/// The `comptime for` indices in scope at each block of a CFG, outermost
-/// first: a loop's body blocks — those its body reaches without passing its
-/// header or exit — see the loop's `Int` binder as a value binder of the
-/// body. The binder is the one the checker recorded on the iterable.
-fn loop_index_scopes(cfg: &Cfg) -> HashMap<hir::BlockId, Vec<LoopIndex>> {
-    fn targets(term: Option<&Terminator>) -> Vec<hir::BlockId> {
-        match term {
-            Some(Terminator::Jump(to)) => vec![*to],
-            Some(
-                Terminator::Branch { then_b, else_b, .. }
-                | Terminator::BranchOnSlot { then_b, else_b, .. }
-                | Terminator::ComptimeBranch { then_b, else_b, .. },
-            ) => vec![*then_b, *else_b],
-            Some(Terminator::ComptimeLoop { body, exit, .. }) => vec![*body, *exit],
-            Some(
-                Terminator::Return(_)
-                | Terminator::ReturnWithCleanup { .. }
-                | Terminator::FallOff
-                | Terminator::EscapeJump(_),
-            )
-            | None => Vec::new(),
-        }
-    }
-    let g = &cfg.g;
-    let mut scopes: HashMap<hir::BlockId, Vec<LoopIndex>> = HashMap::new();
-    let mut loops: Vec<(Vec<hir::BlockId>, LoopIndex)> = Vec::new();
-    for header in g.node_indices() {
-        let Some(Terminator::ComptimeLoop {
-            iter,
-            binding,
-            body,
-            exit,
-            ..
-        }) = &g[header].term
-        else {
-            continue;
-        };
-        let Some(iteration) = comptime_iteration(&cfg.checked, iter) else {
-            continue;
-        };
-        let mut members = Vec::new();
-        let mut pending = vec![*body];
-        while let Some(block) = pending.pop() {
-            if block == header || block == *exit || members.contains(&block) {
-                continue;
-            }
-            members.push(block);
-            pending.extend(targets(g[block].term.as_ref()));
-        }
-        loops.push((members, LoopIndex::of(&iteration, *binding)));
-    }
-    // An enclosing loop's body holds the nested loop's, so the larger body
-    // is the outer scope.
-    loops.sort_by_key(|(members, _)| std::cmp::Reverse(members.len()));
-    for (members, index) in loops {
-        for block in members {
-            scopes.entry(block).or_default().push(index.clone());
-        }
-    }
-    scopes
 }
 
 /// The expression the local `comptime` binding `owner` denotes among
@@ -3714,19 +3657,7 @@ fn lower_cfg_body(
         reg_types: HashMap::new(),
     };
 
-    // One empty MIR block per HIR block; record the HIR→MIR index mapping so
-    // terminators can translate their jump targets.
-    let mut map: HashMap<hir::BlockId, MirBlockId> = HashMap::new();
-    for hb in cfg.g.node_indices() {
-        map.insert(hb, mir.blocks.len());
-        mir.blocks.push(MirBlock {
-            instrs: Vec::new(),
-            term: MirTerm::Return(None),
-        }); // placeholder term
-    }
-
     {
-        let fallback = Terminator::FallOff;
         let mut fl = Flatten {
             f: &mut mir,
             cur: 0,
@@ -3747,6 +3678,8 @@ fn lower_cfg_body(
             parameter_reads: enclosing_binders.loop_bindings.iter().cloned().collect(),
             overloads: std::sync::Arc::clone(overloads),
             checked: &cfg.checked,
+            cfg,
+            next_label: cfg.labels,
             displays: Vec::new(),
             slots: cfg.slots.clone(),
             aliases: HashMap::new(),
@@ -3769,23 +3702,8 @@ fn lower_cfg_body(
             reassigned_names: reassigned_names(cfg, nested),
             returns_reference,
         };
-        let loop_scopes = loop_index_scopes(cfg);
-        for hb in cfg.g.node_indices() {
-            fl.cur = map[&hb];
-            // A `comptime for` body sees the loop's index as a value binder,
-            // so a bracket argument built from it (`g[i]()`) resolves.
-            fl.enclosing_binders =
-                enclosing_binders.with_loops(loop_scopes.get(&hb).map_or(&[], Vec::as_slice));
-            fl.comptime_thunks.enter_scope(&fl.enclosing_binders);
-            for instr in &cfg.g[hb].instrs {
-                // At the function level the "outer" map is this function's own map
-                // (a `try`'s escape targets are this function's loop blocks).
-                fl.lower_instr(instr, &map);
-            }
-            let term = cfg.g[hb].term.as_ref().unwrap_or(&fallback);
-            let mterm = fl.lower_term(term, &map, &map);
-            fl.f.blocks[fl.cur].term = mterm;
-        }
+        fl.comptime_thunks.enter_scope(&fl.enclosing_binders);
+        fl.f.blocks = fl.hir_region(&cfg.root);
         fl.f.n_regs = fl.next_reg;
         // The MIR flattener may intern additional locals beyond the HIR's set
         // (conditional-result / iterator temporaries), so take the final interner.
@@ -4600,7 +4518,7 @@ impl EnclosingBinders {
     }
 
     /// These binders, then the indices of the `comptime for` loops
-    /// enclosing a block, outermost first.
+    /// entered, outermost first.
     fn with_loops(&self, indices: &[LoopIndex]) -> Self {
         let mut binders = self.with(indices.iter().map(|index| &index.declaration));
         binders.loop_bindings.extend(

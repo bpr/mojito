@@ -1,19 +1,25 @@
 //! Stage 4: lower the checked statement and expression nodes into a
-//! **control-flow graph** (CFG) of basic blocks, built on `petgraph`.
+//! **region tree** of basic blocks, as upstream's parser and
+//! `LowerSemanticCF` build `hlcf` ops.
 //!
 //! Expressions stay *nested* here (as checked nodes); Stage 5 flattens them to
 //! A-Normal Form. Ownership and liveness analysis (Stages 6–7) run over the
 //! flattened form, not this one.
 //!
 //! A [`Cfg`] is built per function body (or the top-level statement list) via
-//! [`Cfg::build_checked_fn`]. Every block ends in exactly one [`Terminator`];
-//! control flow (`if`/`while`/`for`/`break`/`continue`/`return`) becomes
-//! blocks and edges, so later passes are pure graph traversal. A local name
-//! resolves to its slot once, here, recorded per node in [`Cfg::slots`].
+//! [`Cfg::build_checked_fn`]. Its [`Cfg::root`] region holds the body's
+//! blocks, entry first; every block ends in exactly one [`Terminator`]. A
+//! run-time `if` is an [`HirInstr::If`] (`hlcf.if`), a `while`/`for` a
+//! labelled [`HirInstr::Loop`] (`hlcf.loop`), and a `comptime for` an
+//! [`HirInstr::ComptimeFor`] (`hlcf.comptime.for`), each holding its own
+//! regions; `break`/`continue` are region terminators naming their loop. A
+//! `comptime if` is still a diamond of blocks inside its region. A local
+//! name resolves to its slot once, here, recorded per node in
+//! [`Cfg::slots`].
 
 use mojito_checked::checked::{
-    CheckedExpr, CheckedNodeId, CheckedOp, CheckedProgram, CheckedStmtId, CheckedStmtOp,
-    CheckedTables, SemanticAdjustment,
+    CheckedExpr, CheckedNodeId, CheckedOp, CheckedProgram, CheckedStmt, CheckedStmtId,
+    CheckedStmtOp, CheckedTables, SemanticAdjustment,
 };
 use mojito_types::origin::OwnerId;
 use mojito_types::types::Ty;
@@ -172,54 +178,94 @@ pub enum HirInstr {
         binding: mojito_types::origin::OwnerId,
     },
     /// A `try` statement whose sub-regions are lowered in Stage 5 as mini-CFGs.
-    /// `loop_targets` snapshots the enclosing **function-level** loop stack
-    /// (`(continue → header, break → exit, return cleanup)`, innermost-last)
-    /// at this point, so control leaving a `try` retains both the outer target and
-    /// the iterator storage that a return must destroy after `finally`. Only
-    /// produced when every enclosing loop is function-level; otherwise the `try`
-    /// stays a `Stmt`.
+    /// `loops` snapshots the enclosing loop stack (innermost last) at this
+    /// point, so a `break`/`continue` inside a part names the loop it leaves
+    /// and a return destroys the iterator storage it crosses after `finally`.
     Try {
         stmt: HirStmt,
-        loop_targets: Vec<(BlockId, BlockId, Vec<VarId>)>,
+        loops: Vec<EnclosingLoop>,
     },
+    /// `hlcf.if`: `then` when `cond` holds, else each of `elifs` in order,
+    /// else `orelse`. Every arm that completes ends in [`Terminator::Yield`].
+    If {
+        cond: HirCond,
+        then: HirRegion,
+        elifs: Vec<HirElif>,
+        orelse: HirRegion,
+    },
+    /// `hlcf.loop`, labelled `label` (unique in its function, as
+    /// `LowerSemanticCF` numbers loops): `body` runs until a
+    /// [`Terminator::Break`] names it, and [`Terminator::Continue`] starts
+    /// the next iteration. A `while`/`for` body opens with an [`HirInstr::If`]
+    /// on its condition or has-next flag whose else arm holds the loop's
+    /// `else` body and then breaks.
+    Loop { label: u32, body: HirRegion },
+    /// `hlcf.comptime.for`: the iterable is a compile-time sequence MIR
+    /// lowers as parameter expressions; the loop variable `var` is the
+    /// checked binding `binding`, interned at `index` here and bound to its
+    /// runtime slot by MIR as a `for` variable is. `body` ends an iteration
+    /// with [`Terminator::ComptimeContinue`] and leaves the loop with
+    /// [`Terminator::ComptimeBreak`]. The elaborator unrolls it.
+    ComptimeFor {
+        iter: HirExpr,
+        var: String,
+        binding: Option<mojito_types::origin::OwnerId>,
+        index: VarId,
+        body: HirRegion,
+    },
+}
+
+/// A region of a region op: its blocks, entry first. Every block is a node
+/// of its [`Cfg::g`], and no edge leaves the region.
+#[derive(Debug, Clone, Default)]
+pub struct HirRegion {
+    pub blocks: Vec<BlockId>,
+}
+
+/// An [`HirInstr::If`]'s operand: a checked condition, or a `Bool` slot HIR
+/// itself wrote (a `for` loop's has-next flag), which no checked node
+/// computes.
+#[derive(Debug, Clone)]
+pub enum HirCond {
+    Expr(HirExpr),
+    Slot(VarId),
+}
+
+/// One `elif` arm: the region computing its condition, ended by
+/// [`Terminator::ElifCond`], and the arm itself.
+#[derive(Debug, Clone)]
+pub struct HirElif {
+    pub cond: HirRegion,
+    pub then: HirRegion,
+}
+
+/// The loop a `break`/`continue` leaves: a labelled [`HirInstr::Loop`] or
+/// the innermost [`HirInstr::ComptimeFor`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoopTarget {
+    Loop(u32),
+    ComptimeFor,
+}
+
+/// One enclosing loop: the target its `break`/`continue` name, and the
+/// values to destroy when a return bypasses its common exit (for a `for`,
+/// the current element followed by the normalized iterator).
+#[derive(Debug, Clone)]
+pub struct EnclosingLoop {
+    pub target: LoopTarget,
+    pub cleanup: Vec<VarId>,
 }
 
 /// How a block hands control to its successor(s). Exactly one per block.
 #[derive(Debug, Clone)]
 pub enum Terminator {
     Jump(BlockId),
-    Branch {
-        cond: HirExpr,
-        then_b: BlockId,
-        else_b: BlockId,
-    },
-    /// Branch on a `Bool` slot HIR itself wrote (a `for` header's
-    /// has-next flag), which no checked node computes.
-    BranchOnSlot {
-        cond: VarId,
-        then_b: BlockId,
-        else_b: BlockId,
-    },
     /// A `comptime if` arm boundary: the condition is a compile-time
     /// expression MIR lowers as a parameter expression, not a value.
     ComptimeBranch {
         cond: HirExpr,
         then_b: BlockId,
         else_b: BlockId,
-    },
-    /// A `comptime for` header: the iterable is a compile-time range MIR
-    /// lowers as parameter expressions; the loop variable `var` is the
-    /// checked binding `binding`, interned at `index` here and bound to its
-    /// runtime slot by MIR as a `for` variable is; `body` is the loop body
-    /// (its back edge jumps here) and `exit` the block after the loop. The
-    /// elaborator unrolls it.
-    ComptimeLoop {
-        iter: HirExpr,
-        var: String,
-        binding: Option<mojito_types::origin::OwnerId>,
-        index: VarId,
-        body: BlockId,
-        exit: BlockId,
     },
     Return(Option<HirExpr>),
     /// A return nested in one or more iterator-driven loops. The value is
@@ -236,12 +282,20 @@ pub enum Terminator {
     /// Only appears in region CFGs (`build_seeded_checked_region`), never a
     /// function body.
     FallOff,
-    /// A `break`/`continue` inside a seeded region that targets a loop in the
-    /// **enclosing function** CFG: `target` is that loop's exit (`break`) or header
-    /// (`continue`) block, an id in the enclosing CFG, *not* this region's. No graph
-    /// edge is added (the target isn't a node here); the VM propagates it out as a
-    /// `Flow::Jump`. Only appears in region CFGs seeded with external loops.
-    EscapeJump(BlockId),
+    /// `hlcf.yield`: an [`HirInstr::If`] arm completed.
+    Yield,
+    /// `hlcf.if.elifcond.yield`: an elif condition region's `Bool`.
+    ElifCond(HirExpr),
+    /// `hlcf.break`: leave the [`HirInstr::Loop`] labelled so.
+    Break(u32),
+    /// `hlcf.continue`: start the next iteration of the loop labelled so.
+    Continue(u32),
+    /// `hlcf.comptime.for.break`: leave the innermost
+    /// [`HirInstr::ComptimeFor`].
+    ComptimeBreak,
+    /// `hlcf.comptime.for.continue`: end this iteration of the innermost
+    /// [`HirInstr::ComptimeFor`].
+    ComptimeContinue,
 }
 
 #[derive(Debug, Default)]
@@ -254,6 +308,8 @@ pub struct BasicBlock {
 #[derive(Debug)]
 pub struct Cfg {
     pub g: StableGraph<BasicBlock, ()>,
+    /// The body's region: its blocks, entry first. Region ops nest the rest.
+    pub root: HirRegion,
     pub entry: BlockId,
     /// The variable interner table: `vars[id as usize]` is the name that `id` was
     /// assigned. Exposed so the Stage 5 MIR flattener can seed its own interner and
@@ -277,6 +333,9 @@ pub struct Cfg {
     pub bindings: HashMap<OwnerId, VarId>,
     /// The statement nodes of the body this CFG lowers.
     pub body: Vec<CheckedStmtId>,
+    /// The next loop label free after this CFG's loops: a `try` part built
+    /// from its frame numbers its own loops from here.
+    pub labels: u32,
 }
 
 impl Cfg {
@@ -336,40 +395,32 @@ impl Cfg {
     /// that starts from the enclosing frame's [`RegionSeed`]: it shares the
     /// frame's `VarId`s (a name already interned keeps its id, new names
     /// append) and resolves a name to its binding's slot there. The region's
-    /// loop stack starts with the enclosing function's loops
-    /// (`external_loops`, innermost-last, as `(header, exit, cleanup)` in the
-    /// *enclosing* CFG): a `break`/`continue` that targets one of them lowers
-    /// to a [`Terminator::EscapeJump`]. `n_params` is 0.
+    /// loop stack starts with the enclosing loops (`loops`, innermost last):
+    /// a `break`/`continue` naming one of them leaves the region, which MIR's
+    /// `lower-control-flow` resolves. `n_params` is 0.
     pub fn build_seeded_checked_region(
         seed: RegionSeed,
         body: &[CheckedStmtId],
-        external_loops: &[(BlockId, BlockId, Vec<VarId>)],
+        loops: &[EnclosingLoop],
         checked: Arc<CheckedTables>,
     ) -> Self {
         let mut g = StableGraph::new();
         let entry = g.add_node(BasicBlock::default());
-        let loops = external_loops
-            .iter()
-            .map(|(header, exit, cleanup)| LoopFrame {
-                header: *header,
-                exit: *exit,
-                escape: true,
-                cleanup: cleanup.clone(),
-            })
-            .collect();
         let RegionSeed {
             vars,
             bindings,
             handler,
+            labels,
         } = seed;
         let mut lower = Lower {
             g,
             cur: entry,
-            loops,
+            region_blocks: vec![entry],
+            loops: loops.to_vec(),
+            next_label: labels,
             scopes: vec![vars.iter().map(|n| (n.clone(), n.clone())).collect()],
             captures: HashSet::new(),
             vars,
-            is_function: false,
             checked,
             slots: HashMap::new(),
             bindings,
@@ -422,11 +473,12 @@ impl Cfg {
         let mut lower = Lower {
             g,
             cur: entry,
+            region_blocks: vec![entry],
             loops: Vec::new(),
+            next_label: 0,
             vars: Vec::new(),
             scopes: Vec::new(),
             captures: shadow_captures,
-            is_function: true,
             checked,
             slots: HashMap::new(),
             bindings: HashMap::new(),
@@ -458,14 +510,16 @@ impl Cfg {
 /// What a `try` region starts from.
 ///
 /// The enclosing frame's slot spellings (`vars`, so `VarId`s agree), the
-/// slot of each checked binding the frame has declared (`bindings`), and
-/// the `except` binding the region declares first, when it is a handler
-/// that names its error.
+/// slot of each checked binding the frame has declared (`bindings`), the
+/// `except` binding the region declares first, when it is a handler that
+/// names its error, and the first loop label free in the function
+/// (`labels`), so the region's loops keep labels unique.
 #[derive(Debug, Clone, Default)]
 pub struct RegionSeed {
     pub vars: Vec<String>,
     pub bindings: HashMap<OwnerId, VarId>,
     pub handler: Option<(Option<OwnerId>, String)>,
+    pub labels: u32,
 }
 
 fn collect_function_implicit_names(
@@ -514,22 +568,22 @@ fn collect_function_implicit_names(
     }
 }
 
-/// Lowering cursor: appends to the "current" block, splitting on control flow.
-/// Invariant: `cur` is the current insertion point; a block gets its terminator
-/// (and out-edges) exactly once, via [`Lower::seal`].
+/// Lowering cursor: appends to the "current" block of the region being
+/// built. Invariant: `cur` is the current insertion point; a block gets its
+/// terminator (and out-edges) exactly once, via [`Lower::seal`].
 struct Lower {
     g: StableGraph<BasicBlock, ()>,
     cur: BlockId,
-    /// Innermost-last stack of enclosing loops' targets.
-    loops: Vec<LoopFrame>,
+    /// The blocks of the region being built, entry first.
+    region_blocks: Vec<BlockId>,
+    /// Innermost-last stack of enclosing loops.
+    loops: Vec<EnclosingLoop>,
+    /// The next loop label free in this function.
+    next_label: u32,
     /// Interner: a variable name's first appearance assigns its `VarId`.
     vars: Vec<String>,
     scopes: Vec<HashMap<String, String>>,
     captures: HashSet<String>,
-    /// Whether this is a function-body CFG (vs. a seeded `try` region). A
-    /// function's own loops are function-level, so a `try` inside one can escape to
-    /// them; a region's own loops are region-local and cannot be escape targets.
-    is_function: bool,
     /// The program's checked tables, shared with every other lowering.
     checked: Arc<CheckedTables>,
     /// The slot each local-name node resolved to.
@@ -614,7 +668,40 @@ impl Lower {
     }
 
     fn new_block(&mut self) -> BlockId {
-        self.g.add_node(BasicBlock::default())
+        let block = self.g.add_node(BasicBlock::default());
+        self.region_blocks.push(block);
+        block
+    }
+
+    /// A region of its own: a fresh entry block that `build` lowers into,
+    /// its last block sealed with the terminator `build` returns unless a
+    /// `return`, `break`, or `continue` sealed it already.
+    fn region(&mut self, build: impl FnOnce(&mut Self) -> Terminator) -> HirRegion {
+        let outer = std::mem::take(&mut self.region_blocks);
+        let cur = self.cur;
+        self.cur = self.new_block();
+        let end = build(self);
+        self.seal(end);
+        self.cur = cur;
+        HirRegion {
+            blocks: std::mem::replace(&mut self.region_blocks, outer),
+        }
+    }
+
+    /// Append region op `op` to the current block, opening a fresh
+    /// (unreachable) one after a block a `return`, `break`, or `continue`
+    /// sealed, so code after it still lowers.
+    fn push_region_op(&mut self, op: HirInstr) {
+        if self.g[self.cur].term.is_some() {
+            self.cur = self.new_block();
+        }
+        self.g[self.cur].instrs.push(op);
+    }
+
+    /// A fresh loop label.
+    const fn label(&mut self) -> u32 {
+        self.next_label += 1;
+        self.next_label - 1
     }
 
     fn push(&mut self, i: HirInstr) {
@@ -636,22 +723,20 @@ impl Lower {
             Terminator::Jump(to) => {
                 self.g.add_edge(self.cur, *to, ());
             }
-            Terminator::Branch { then_b, else_b, .. }
-            | Terminator::BranchOnSlot { then_b, else_b, .. }
-            | Terminator::ComptimeBranch { then_b, else_b, .. } => {
+            Terminator::ComptimeBranch { then_b, else_b, .. } => {
                 self.g.add_edge(self.cur, *then_b, ());
                 self.g.add_edge(self.cur, *else_b, ());
             }
-            Terminator::ComptimeLoop { body, exit, .. } => {
-                self.g.add_edge(self.cur, *body, ());
-                self.g.add_edge(self.cur, *exit, ());
-            }
-            // No in-graph edge: `Return`/`FallOff` leave the CFG; `EscapeJump`
-            // targets a block in the *enclosing* CFG (not a node here).
+            // No in-graph edge: every other terminator leaves its region.
             Terminator::Return(_)
             | Terminator::ReturnWithCleanup { .. }
             | Terminator::FallOff
-            | Terminator::EscapeJump(_) => {}
+            | Terminator::Yield
+            | Terminator::ElifCond(_)
+            | Terminator::Break(_)
+            | Terminator::Continue(_)
+            | Terminator::ComptimeBreak
+            | Terminator::ComptimeContinue => {}
         }
         self.g[self.cur].term = Some(t);
     }
@@ -669,6 +754,9 @@ impl Lower {
     fn finish(self, entry: BlockId, n_params: usize, body: Vec<CheckedStmtId>) -> Cfg {
         Cfg {
             g: self.g,
+            root: HirRegion {
+                blocks: self.region_blocks,
+            },
             entry,
             vars: self.vars,
             n_params,
@@ -676,6 +764,7 @@ impl Lower {
             slots: self.slots,
             bindings: self.bindings,
             body,
+            labels: self.next_label,
         }
     }
 
@@ -849,321 +938,28 @@ impl Lower {
         });
     }
 
-    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     fn stmt(&mut self, id: CheckedStmtId) {
         let checked = Arc::clone(&self.checked);
         let s = checked
             .statement(id)
             .expect("a checked body names a statement node of its tables");
         match &s.op {
-            // A `comptime if` is the same diamond with a compile-time
-            // condition: the elaborator keeps one arm, after ownership has
-            // decided both.
-            CheckedStmtOp::If { branches, orelse }
-            | CheckedStmtOp::ComptimeIf { branches, orelse } => {
-                let comptime = matches!(s.op, CheckedStmtOp::ComptimeIf { .. });
-                let join = self.new_block();
-                for (cond, body) in branches {
-                    let then_b = self.new_block();
-                    let else_b = self.new_block();
-                    let cond = self.expr(*cond);
-                    self.seal(if comptime {
-                        Terminator::ComptimeBranch {
-                            cond,
-                            then_b,
-                            else_b,
-                        }
-                    } else {
-                        Terminator::Branch {
-                            cond,
-                            then_b,
-                            else_b,
-                        }
-                    });
-                    self.cur = then_b;
-                    self.scoped_block(body);
-                    self.seal(Terminator::Jump(join));
-                    self.cur = else_b; // the next elif/else lowers into this block
-                }
-                if let Some(body) = orelse {
-                    self.scoped_block(body);
-                }
-                self.seal(Terminator::Jump(join));
-                self.cur = join;
+            CheckedStmtOp::If { branches, orelse } => {
+                self.if_statement(branches, orelse.as_deref());
             }
-
+            CheckedStmtOp::ComptimeIf { branches, orelse } => {
+                self.comptime_if(branches, orelse.as_deref());
+            }
             CheckedStmtOp::Scope(body) => self.scoped_block(body),
-
-            // A `comptime for` is a loop whose header advances a compile-time
-            // index: the body is analysed once as a loop body with the trip
-            // count unknown, `break` and `continue` are the loop's, and the
-            // elaborator unrolls it.
             CheckedStmtOp::ComptimeFor { var, iter, body } => {
-                let iter = self.expr(*iter);
-                let header = self.new_block();
-                let body_b = self.new_block();
-                let exit = self.new_block();
-                self.seal(Terminator::Jump(header));
-                self.cur = header;
-                self.scopes.push(HashMap::new());
-                let index = self.declare_binding(var, s.binding);
-                self.seal(Terminator::ComptimeLoop {
-                    iter,
-                    var: var.clone(),
-                    binding: s.binding,
-                    index,
-                    body: body_b,
-                    exit,
-                });
-                self.cur = body_b;
-                self.loops.push(LoopFrame {
-                    header,
-                    exit,
-                    escape: false,
-                    cleanup: Vec::new(),
-                });
-                self.block(body);
-                self.loops.pop();
-                self.scopes.pop();
-                self.seal(Terminator::Jump(header));
-                self.cur = exit;
+                self.comptime_for(var, *iter, s.binding, body);
             }
-
             CheckedStmtOp::While { cond, body, orelse } => {
-                let header = self.new_block();
-                let body_b = self.new_block();
-                let exit = self.new_block();
-                let normal_exit = orelse.as_ref().map_or(exit, |_| self.new_block());
-                self.seal(Terminator::Jump(header));
-                self.cur = header;
-                let cond = self.expr(*cond);
-                self.seal(Terminator::Branch {
-                    cond,
-                    then_b: body_b,
-                    else_b: normal_exit,
-                });
-                self.cur = body_b;
-                self.loops.push(LoopFrame {
-                    header,
-                    exit,
-                    escape: false,
-                    cleanup: Vec::new(),
-                });
-                self.scoped_block(body);
-                self.loops.pop();
-                self.seal(Terminator::Jump(header)); // back-edge (unless body sealed via break/return)
-                if let Some(body) = orelse {
-                    self.cur = normal_exit;
-                    self.scoped_block(body);
-                    self.seal(Terminator::Jump(exit));
-                }
-                self.cur = exit;
+                self.while_loop(*cond, body, orelse.as_deref());
             }
-
-            // `for x in it: body` — a while-shaped CFG driving the iterator
-            // protocol: a pre-header evaluates the iterable once into an iterator
-            // slot; the header computes `has_next` and branches on it; the body
-            // binds the loop variable via `next` (which advances the iterator).
-            CheckedStmtOp::For {
-                var,
-                binding: binding_mode,
-                iter,
-                body,
-                orelse,
-            } => {
-                let checked_iter = self.expr(*iter);
-                let protocol = checked
-                    .expression(*iter)
-                    .into_iter()
-                    .flat_map(|node| &node.adjustments)
-                    .find_map(|adjustment| match adjustment {
-                        SemanticAdjustment::Iterate(protocol) => Some(protocol.clone()),
-                        _ => None,
-                    })
-                    .expect("checked for-loop iterable has an iteration protocol");
-                let binding_plan = *protocol
-                    .binding
-                    .clone()
-                    .expect("checked for-loop protocol has a binding plan");
-                debug_assert_eq!(binding_plan.mode, *binding_mode);
-                // Evaluate the iterable once into a fresh iterator variable. `$`
-                // names can't be produced by the parser, so they never collide with
-                // user variables; a monotone `vars.len()` suffix keeps them unique.
-                let it_name = format!("$iter{}", self.vars.len());
-                let it_var = self.var(&it_name);
-                // Every borrowed source is retained in its own slot — `it_var`
-                // holds either a `BorrowIter` reference handle to the named
-                // source or the `Bind`-bound owned temporary — and the iterator
-                // object lives in a distinct slot: `GetIter` normalization must
-                // not clobber the source the iterator still refers to. Only an
-                // empty-`prepare` iterable normalizes in place, and owned
-                // iteration (`__iter__(var self)`) consumes the source into the
-                // iterator, so both keep the single slot (retaining and dropping
-                // a consumed source again would double-free).
-                // A `BorrowIter`'d source (borrowed origin present) is a loan of
-                // storage owned elsewhere; only a `Bind`'d owned temporary that
-                // the iterator may refer to is kept alive and dropped by the loop.
-                let borrowed = protocol.borrowed_origin.is_some();
-                let split_source = matches!(
-                    protocol.mode,
-                    mojito_checked::checked::IterationMode::Borrowed
-                ) && (borrowed || !protocol.prepare.is_empty());
-                let loop_owns_source = split_source && !borrowed && protocol.source_retained;
-                if let Some(origin) = protocol.borrowed_origin.clone() {
-                    self.push(HirInstr::BorrowIter {
-                        dest: it_var,
-                        expr: checked_iter,
-                        origin,
-                        mutable: binding_plan.action
-                            == mojito_checked::checked::IterationBindingAction::BorrowReference
-                            && binding_plan.mutable,
-                    });
-                } else {
-                    self.push(HirInstr::Bind {
-                        dest: it_var,
-                        expr: checked_iter,
-                        binding_ty: None,
-                        binding: None,
-                    });
-                }
-                let iter_var = if split_source {
-                    self.var(&format!("$iterobj{}", self.vars.len()))
-                } else {
-                    it_var
-                };
-                // Normalize the iterable to an iterator (a user struct's `__iter__`;
-                // a no-op only for compiler-private iterator storage).
-                self.push(HirInstr::GetIter {
-                    source: it_var,
-                    dest: iter_var,
-                    protocol: protocol.clone(),
-                });
-
-                let header = self.new_block();
-                let body_b = self.new_block();
-                let exit = self.new_block();
-                let normal_exit = orelse.as_ref().map_or(exit, |_| self.new_block());
-                self.scopes.push(HashMap::new());
-                let declaration = s
-                    .declaration
-                    .and_then(|id| checked.declaration(id))
-                    .expect("checked for-loop binding declaration");
-                let binding = declaration
-                    .binding
-                    .expect("checked for-loop binding has a stable owner");
-                let v = self.declare_binding(var, Some(binding));
-                debug_assert_eq!(declaration.ty.as_ref(), Some(&binding_plan.binding_ty));
-                let raw_var = self.var(&format!("$yield{}", self.vars.len()));
-                self.seal(Terminator::Jump(header));
-
-                // A nominal typed-raising iterator calls `__next__` in the header
-                // and branches on whether it returned an element; compiler-private
-                // storage tests `HasNext` and advances with `Next` in the body.
-                self.cur = header;
-                let hn_name = format!("$hasnext{}", self.vars.len());
-                let hn_var = self.var(&hn_name);
-                if let Some(exhaustion) = protocol.exhaustion.clone() {
-                    self.push(HirInstr::TryNext {
-                        iter: iter_var,
-                        raw: raw_var,
-                        yielded: hn_var,
-                        call: *protocol
-                            .next
-                            .clone()
-                            .expect("raising iterator has checked __next__ contract"),
-                        exhaustion,
-                        element_ty: binding_plan.yielded_ty.clone(),
-                    });
-                } else {
-                    self.push(HirInstr::HasNext {
-                        iter: iter_var,
-                        dest: hn_var,
-                    });
-                }
-                self.seal(Terminator::BranchOnSlot {
-                    cond: hn_var,
-                    then_b: body_b,
-                    else_b: normal_exit,
-                });
-
-                // body: the raising path already retained the element; private
-                // storage advances now. Then bind x and execute the source body.
-                self.cur = body_b;
-                if protocol.exhaustion.is_none() {
-                    self.push(HirInstr::Next {
-                        iter: iter_var,
-                        raw: raw_var,
-                        element_ty: binding_plan.yielded_ty.clone(),
-                    });
-                }
-                self.push(HirInstr::BindIteration {
-                    raw: raw_var,
-                    dest: v,
-                    iter: iter_var,
-                    plan: binding_plan,
-                    binding,
-                });
-                // The yielded slot is not listed: the binding always consumes it.
-                let mut cleanup = vec![v];
-                cleanup.push(iter_var);
-                if loop_owns_source {
-                    cleanup.push(it_var);
-                }
-                self.loops.push(LoopFrame {
-                    header,
-                    exit,
-                    escape: false,
-                    cleanup,
-                });
-                self.block(body);
-                self.loops.pop();
-                self.scopes.pop();
-                self.seal(Terminator::Jump(header));
-                if let Some(body) = orelse {
-                    self.cur = normal_exit;
-                    self.scoped_block(body);
-                    self.seal(Terminator::Jump(exit));
-                }
-                self.cur = exit;
-                // Lowering emits no drops: the synthetic iterator, defined by
-                // `GetIter`, dies on every loop exit edge (`break` included),
-                // where drop elaboration destroys it.
-                if loop_owns_source {
-                    // An owned temporary source is used only by `GetIter` before
-                    // the loop, so a liveness anchor at the exit keeps it live
-                    // through the loop body, and elaboration destroys it exactly
-                    // once, after the loop. A source the iterator cannot refer to
-                    // dies right after `GetIter`, and a borrowed named source is
-                    // owned by the enclosing scope (dropped there), so the loop
-                    // anchors neither.
-                    self.push(HirInstr::KeepAlive(it_var));
-                }
-            }
-
-            CheckedStmtOp::Break => {
-                let Some(f) = self.loops.last().cloned() else {
-                    self.push(HirInstr::Stmt(self.statement(id)));
-                    return;
-                };
-                // A loop in this CFG → a plain `Jump` to its exit; an enclosing
-                // function loop (seeded into a `try` region) → an `EscapeJump`.
-                self.seal(if f.escape {
-                    Terminator::EscapeJump(f.exit)
-                } else {
-                    Terminator::Jump(f.exit)
-                });
-            }
-            CheckedStmtOp::Continue => {
-                let Some(f) = self.loops.last().cloned() else {
-                    self.push(HirInstr::Stmt(self.statement(id)));
-                    return;
-                };
-                self.seal(if f.escape {
-                    Terminator::EscapeJump(f.header)
-                } else {
-                    Terminator::Jump(f.header)
-                });
-            }
+            CheckedStmtOp::For { .. } => self.for_loop(s),
+            CheckedStmtOp::Break => self.leave(id, true),
+            CheckedStmtOp::Continue => self.leave(id, false),
             CheckedStmtOp::Return(value) => self.ret(*value),
 
             CheckedStmtOp::VarDecl { name, value, .. }
@@ -1261,47 +1057,344 @@ impl Lower {
             }
 
             // A `try`: snapshot the enclosing loop stack so a `break`/`continue`
-            // inside it can escape to an outer loop. Supported only when every
-            // enclosing loop is function-level (escapable to the function driver): a
-            // function's own loops always are; a region's own loops are region-local
-            // and can't be an escape target, so such a `try` falls back to the opaque
-            // `Stmt` path (Stage 5 then refuses a crossing `break`/`continue`).
-            CheckedStmtOp::Try { .. } => {
-                let escapable = self.is_function || self.loops.iter().all(|f| f.escape);
-                if escapable {
-                    let loop_targets = self
-                        .loops
-                        .iter()
-                        .map(|f| (f.header, f.exit, f.cleanup.clone()))
-                        .collect();
-                    self.push(HirInstr::Try {
-                        stmt: self.statement(id),
-                        loop_targets,
-                    });
-                } else {
-                    self.push(HirInstr::Stmt(self.statement(id)));
-                }
-            }
+            // inside a part names the loop it leaves.
+            CheckedStmtOp::Try { .. } => self.push(HirInstr::Try {
+                stmt: self.statement(id),
+                loops: self.loops.clone(),
+            }),
 
             // Everything else (member-write, aug-assign, declarations, imports, …)
             // is kept whole for Stage 4; Stage 5 refines it.
             _ => self.push(HirInstr::Stmt(self.statement(id))),
         }
     }
-}
+    /// `if`/`elif`/`else` as `hlcf.if`: the first condition is the op's
+    /// operand, evaluated here; each later one is an elif condition region.
+    fn if_statement(
+        &mut self,
+        branches: &[(CheckedNodeId, Vec<CheckedStmtId>)],
+        orelse: Option<&[CheckedStmtId]>,
+    ) {
+        let Some(((first, then), rest)) = branches.split_first() else {
+            return;
+        };
+        let cond = HirCond::Expr(self.expr(*first));
+        let then = self.arm(Some(then));
+        let mut elifs = Vec::new();
+        for (cond, body) in rest {
+            let cond = self.region(|this| Terminator::ElifCond(this.expr(*cond)));
+            elifs.push(HirElif {
+                cond,
+                then: self.arm(Some(body)),
+            });
+        }
+        let orelse = self.arm(orelse);
+        self.push_region_op(HirInstr::If {
+            cond,
+            then,
+            elifs,
+            orelse,
+        });
+    }
 
-/// One enclosing loop's `break`/`continue` targets. `escape = false` for a loop
-/// in *this* CFG (a `break`/`continue` is a `Jump`); `escape = true` for a loop in
-/// the enclosing **function** CFG (seeded into a `try` region — a `break`/
-/// `continue` becomes an `EscapeJump` the VM propagates out).
-#[derive(Clone)]
-struct LoopFrame {
-    header: BlockId,
-    exit: BlockId,
-    escape: bool,
-    /// Values to destroy when a return bypasses this loop's common exit. For a
-    /// `for`, this is the current element followed by the normalized iterator.
-    cleanup: Vec<VarId>,
+    /// An `if` arm: `body` in its own scope, then `yield`.
+    fn arm(&mut self, body: Option<&[CheckedStmtId]>) -> HirRegion {
+        self.region(|this| {
+            if let Some(body) = body {
+                this.scoped_block(body);
+            }
+            Terminator::Yield
+        })
+    }
+
+    /// A `comptime if` is a diamond with a compile-time condition: the
+    /// elaborator keeps one arm, after ownership has decided both.
+    fn comptime_if(
+        &mut self,
+        branches: &[(CheckedNodeId, Vec<CheckedStmtId>)],
+        orelse: Option<&[CheckedStmtId]>,
+    ) {
+        let join = self.new_block();
+        for (cond, body) in branches {
+            let then_b = self.new_block();
+            let else_b = self.new_block();
+            let cond = self.expr(*cond);
+            self.seal(Terminator::ComptimeBranch {
+                cond,
+                then_b,
+                else_b,
+            });
+            self.cur = then_b;
+            self.scoped_block(body);
+            self.seal(Terminator::Jump(join));
+            self.cur = else_b; // the next elif/else lowers into this block
+        }
+        if let Some(body) = orelse {
+            self.scoped_block(body);
+        }
+        self.seal(Terminator::Jump(join));
+        self.cur = join;
+    }
+
+    /// A `comptime for` as `hlcf.comptime.for`: the body is analysed once
+    /// with the trip count unknown, `break` and `continue` are the loop's,
+    /// and the elaborator unrolls it.
+    fn comptime_for(
+        &mut self,
+        var: &str,
+        iter: CheckedNodeId,
+        binding: Option<OwnerId>,
+        body: &[CheckedStmtId],
+    ) {
+        let iter = self.expr(iter);
+        self.scopes.push(HashMap::new());
+        let index = self.declare_binding(var, binding);
+        self.loops.push(EnclosingLoop {
+            target: LoopTarget::ComptimeFor,
+            cleanup: Vec::new(),
+        });
+        let body = self.region(|this| {
+            this.block(body);
+            Terminator::ComptimeContinue
+        });
+        self.loops.pop();
+        self.scopes.pop();
+        self.push_region_op(HirInstr::ComptimeFor {
+            iter,
+            var: var.to_string(),
+            binding,
+            index,
+            body,
+        });
+    }
+
+    /// `while cond: body else: orelse` as a labelled `hlcf.loop` whose body
+    /// tests `cond` first (`lowerLITLoop`).
+    fn while_loop(
+        &mut self,
+        cond: CheckedNodeId,
+        body: &[CheckedStmtId],
+        orelse: Option<&[CheckedStmtId]>,
+    ) {
+        let label = self.label();
+        let body = self.region(|this| {
+            let cond = HirCond::Expr(this.expr(cond));
+            this.loop_test(cond, label, orelse);
+            this.loops.push(EnclosingLoop {
+                target: LoopTarget::Loop(label),
+                cleanup: Vec::new(),
+            });
+            this.scoped_block(body);
+            this.loops.pop();
+            Terminator::Continue(label)
+        });
+        self.push_region_op(HirInstr::Loop { label, body });
+    }
+
+    /// A loop body's opening test: go on when `cond` holds, else run the
+    /// loop's `orelse` body and break. The `else` body lowers outside this
+    /// loop's frame, so its own `break`/`continue` name the enclosing loop,
+    /// as `LowerSemanticCF` lowers it.
+    fn loop_test(&mut self, cond: HirCond, label: u32, orelse: Option<&[CheckedStmtId]>) {
+        let then = self.region(|_| Terminator::Yield);
+        let orelse = self.region(|this| {
+            if let Some(body) = orelse {
+                this.scoped_block(body);
+            }
+            Terminator::Break(label)
+        });
+        self.push_region_op(HirInstr::If {
+            cond,
+            then,
+            elifs: Vec::new(),
+            orelse,
+        });
+    }
+
+    /// `for x in it: body else: orelse` — a while-shaped loop driving the
+    /// iterator protocol: the iterable is evaluated once into an iterator
+    /// slot before the loop; the loop body computes `has_next` and tests
+    /// it, then binds the loop variable via `next` (which advances the
+    /// iterator).
+    fn for_loop(&mut self, s: &CheckedStmt) {
+        let CheckedStmtOp::For {
+            var,
+            binding: binding_mode,
+            iter,
+            body,
+            orelse,
+        } = &s.op
+        else {
+            return;
+        };
+        let checked = Arc::clone(&self.checked);
+        let checked_iter = self.expr(*iter);
+        let protocol = checked
+            .expression(*iter)
+            .into_iter()
+            .flat_map(|node| &node.adjustments)
+            .find_map(|adjustment| match adjustment {
+                SemanticAdjustment::Iterate(protocol) => Some(protocol.clone()),
+                _ => None,
+            })
+            .expect("checked for-loop iterable has an iteration protocol");
+        let binding_plan = *protocol
+            .binding
+            .clone()
+            .expect("checked for-loop protocol has a binding plan");
+        debug_assert_eq!(binding_plan.mode, *binding_mode);
+        // Evaluate the iterable once into a fresh iterator variable. `$`
+        // names can't be produced by the parser, so they never collide with
+        // user variables; a monotone `vars.len()` suffix keeps them unique.
+        let it_name = format!("$iter{}", self.vars.len());
+        let it_var = self.var(&it_name);
+        // Every borrowed source is retained in its own slot — `it_var`
+        // holds either a `BorrowIter` reference handle to the named
+        // source or the `Bind`-bound owned temporary — and the iterator
+        // object lives in a distinct slot: `GetIter` normalization must
+        // not clobber the source the iterator still refers to. Only an
+        // empty-`prepare` iterable normalizes in place, and owned
+        // iteration (`__iter__(var self)`) consumes the source into the
+        // iterator, so both keep the single slot (retaining and dropping
+        // a consumed source again would double-free).
+        // A `BorrowIter`'d source (borrowed origin present) is a loan of
+        // storage owned elsewhere; only a `Bind`'d owned temporary that
+        // the iterator may refer to is kept alive and dropped by the loop.
+        let borrowed = protocol.borrowed_origin.is_some();
+        let split_source = matches!(
+            protocol.mode,
+            mojito_checked::checked::IterationMode::Borrowed
+        ) && (borrowed || !protocol.prepare.is_empty());
+        let loop_owns_source = split_source && !borrowed && protocol.source_retained;
+        if let Some(origin) = protocol.borrowed_origin.clone() {
+            self.push(HirInstr::BorrowIter {
+                dest: it_var,
+                expr: checked_iter,
+                origin,
+                mutable: binding_plan.action
+                    == mojito_checked::checked::IterationBindingAction::BorrowReference
+                    && binding_plan.mutable,
+            });
+        } else {
+            self.push(HirInstr::Bind {
+                dest: it_var,
+                expr: checked_iter,
+                binding_ty: None,
+                binding: None,
+            });
+        }
+        let iter_var = if split_source {
+            self.var(&format!("$iterobj{}", self.vars.len()))
+        } else {
+            it_var
+        };
+        // Normalize the iterable to an iterator (a user struct's `__iter__`;
+        // a no-op only for compiler-private iterator storage).
+        self.push(HirInstr::GetIter {
+            source: it_var,
+            dest: iter_var,
+            protocol: protocol.clone(),
+        });
+
+        self.scopes.push(HashMap::new());
+        let declaration = s
+            .declaration
+            .and_then(|id| checked.declaration(id))
+            .expect("checked for-loop binding declaration");
+        let binding = declaration
+            .binding
+            .expect("checked for-loop binding has a stable owner");
+        let v = self.declare_binding(var, Some(binding));
+        debug_assert_eq!(declaration.ty.as_ref(), Some(&binding_plan.binding_ty));
+        let raw_var = self.var(&format!("$yield{}", self.vars.len()));
+        let hn_var = self.var(&format!("$hasnext{}", self.vars.len()));
+        let label = self.label();
+        // The yielded slot is not listed: the binding always consumes it.
+        let mut cleanup = vec![v, iter_var];
+        if loop_owns_source {
+            cleanup.push(it_var);
+        }
+        let body = self.region(|this| {
+            // A nominal typed-raising iterator calls `__next__` first and
+            // tests whether it returned an element; compiler-private
+            // storage tests `HasNext` and advances with `Next` after.
+            let exhaustion = protocol.exhaustion.clone();
+            let raising = exhaustion.is_some();
+            if let Some(exhaustion) = exhaustion {
+                this.push(HirInstr::TryNext {
+                    iter: iter_var,
+                    raw: raw_var,
+                    yielded: hn_var,
+                    call: *protocol
+                        .next
+                        .clone()
+                        .expect("raising iterator has checked __next__ contract"),
+                    exhaustion,
+                    element_ty: binding_plan.yielded_ty.clone(),
+                });
+            } else {
+                this.push(HirInstr::HasNext {
+                    iter: iter_var,
+                    dest: hn_var,
+                });
+            }
+            // The loop variable is out of scope in the `else` body.
+            let scope = this.scopes.pop();
+            this.loop_test(HirCond::Slot(hn_var), label, orelse.as_deref());
+            this.scopes.extend(scope);
+            if !raising {
+                this.push(HirInstr::Next {
+                    iter: iter_var,
+                    raw: raw_var,
+                    element_ty: binding_plan.yielded_ty.clone(),
+                });
+            }
+            this.push(HirInstr::BindIteration {
+                raw: raw_var,
+                dest: v,
+                iter: iter_var,
+                plan: binding_plan,
+                binding,
+            });
+            this.loops.push(EnclosingLoop {
+                target: LoopTarget::Loop(label),
+                cleanup,
+            });
+            this.block(body);
+            this.loops.pop();
+            Terminator::Continue(label)
+        });
+        self.scopes.pop();
+        self.push_region_op(HirInstr::Loop { label, body });
+        // Lowering emits no drops: the synthetic iterator, defined by
+        // `GetIter`, dies on every loop exit edge (`break` included),
+        // where drop elaboration destroys it.
+        if loop_owns_source {
+            // An owned temporary source is used only by `GetIter` before
+            // the loop, so a liveness anchor after it keeps it live
+            // through the loop body, and elaboration destroys it exactly
+            // once, after the loop. A source the iterator cannot refer to
+            // dies right after `GetIter`, and a borrowed named source is
+            // owned by the enclosing scope (dropped there), so the loop
+            // anchors neither.
+            self.push(HirInstr::KeepAlive(it_var));
+        }
+    }
+
+    /// `break` (`exits`) or `continue`: a terminator naming the innermost
+    /// enclosing loop; outside every loop, the statement MIR rejects.
+    fn leave(&mut self, id: CheckedStmtId, exits: bool) {
+        let Some(frame) = self.loops.last() else {
+            self.push(HirInstr::Stmt(self.statement(id)));
+            return;
+        };
+        self.seal(match (frame.target, exits) {
+            (LoopTarget::Loop(label), true) => Terminator::Break(label),
+            (LoopTarget::Loop(label), false) => Terminator::Continue(label),
+            (LoopTarget::ComptimeFor, true) => Terminator::ComptimeBreak,
+            (LoopTarget::ComptimeFor, false) => Terminator::ComptimeContinue,
+        });
+    }
 }
 
 fn explicit_local_names(checked: &CheckedTables, body: &[CheckedStmtId]) -> HashSet<String> {

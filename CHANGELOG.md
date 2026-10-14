@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- HIR builds run-time statement control flow as upstream's `hlcf` region
+  ops (R872): `if`/`elif`/`else` is an `if` with elif condition regions,
+  `while` and `for` a uniquely labelled `loop` whose body opens with an
+  `if` on the condition or has-next flag, its else arm holding the loop's
+  `else` and a `break`, and `comptime for` a `comptime.for` op;
+  `break`/`continue` name their loop, so one leaving a `try` part needs no
+  outer block map, and `lower-control-flow` makes its escape. Comprehension
+  loops are labelled too. No program's output changes.
 - MIR lowering builds `and`/`or`, conditional expressions, comparison
   chains, and comprehensions as upstream's `hlcf.if`/`loop` region ops
   (R871), each region one block, and ends every body with

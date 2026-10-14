@@ -4,9 +4,9 @@
 
 use mojito::hir::Cfg;
 use mojito::mir::{
-    MirBlock, MirDeclarations, MirFunction, MirInstr, MirPlace, MirProgram, MirSubscriptArg,
-    MirTerm, Proj, Reg, SpanTable, UseMode, has_structured_control_flow, lower_cfg,
-    lower_cfg_structured, lower_program,
+    LoopLabel, MirBlock, MirDeclarations, MirFunction, MirInstr, MirPlace, MirProgram,
+    MirSubscriptArg, MirTerm, Proj, Reg, SpanTable, UseMode, has_structured_control_flow,
+    lower_cfg, lower_cfg_structured, lower_program,
 };
 use mojito::types::TyKind;
 use mojito::{Compiler, SemanticAdjustment, Ty, parse};
@@ -574,7 +574,7 @@ def main():
     let (cfg, mir) = checked_main_with(source, lower_cfg_structured);
     assert_eq!(
         mir.blocks.len(),
-        cfg.g.node_count(),
+        cfg.root.blocks.len(),
         "no expression adds a block"
     );
     let mut ops = Vec::new();
@@ -1435,12 +1435,88 @@ fn temps_carry_real_source_spans() {
 
 #[test]
 fn control_flow_block_count_matches_hir() {
-    let (cfg, mir) = checked_main(
-        "def main(a: Bool):\n    if a:\n        var x: Int = 1\n    else:\n        var y: Int = 2\n",
-    );
-    assert_eq!(mir.blocks.len(), cfg.node_count());
-    // The entry block ends in a Branch on the flattened condition.
+    let source = "def main(a: Bool):\n    if a:\n        var x: Int = 1\n    else:\n        var y: Int = 2\n";
+    let (cfg, mir) = checked_main_with(source, lower_cfg_structured);
+    assert_eq!(mir.blocks.len(), cfg.root.blocks.len());
+    assert!(matches!(
+        mir.blocks[0].instrs.last(),
+        Some(MirInstr::If { .. })
+    ));
+    // Lowered, the entry block ends in a Branch on the flattened condition.
+    let (_, mir) = checked_main(source);
     assert!(matches!(mir.blocks[0].term, MirTerm::Branch { .. }));
+}
+
+#[test]
+fn structured_loops_build_labelled_region_ops() {
+    let source = r#"
+def main():
+    var n = 0
+    while n < 3:
+        n += 1
+        if n == 2:
+            continue
+    else:
+        print(n)
+    for i in range(4):
+        if i == 3:
+            break
+        elif i == 1:
+            pass
+        print(i)
+"#;
+    let (_, mir) = checked_main_with(source, lower_cfg_structured);
+    assert_eq!(mir.blocks.len(), 1, "run-time control flow adds no block");
+    let mut labels = Vec::new();
+    let mut leaves = Vec::new();
+    loop_labels(&mir.blocks, &mut labels, &mut leaves);
+    assert_eq!(labels.len(), 2);
+    assert_ne!(labels[0], labels[1], "every loop has its own label");
+    assert!(!leaves.is_empty());
+    assert!(
+        leaves
+            .iter()
+            .all(|label| label.is_some_and(|l| labels.contains(&l))),
+        "every break/continue names a loop of the function: {leaves:?}"
+    );
+    let (_, lowered) = checked_main(source);
+    assert!(!has_structured_control_flow(&lowered));
+}
+
+/// Collect the label of each `loop` op in `blocks`, at any depth, and the
+/// label each `break`/`continue` names.
+fn loop_labels(
+    blocks: &[MirBlock],
+    labels: &mut Vec<LoopLabel>,
+    leaves: &mut Vec<Option<LoopLabel>>,
+) {
+    for block in blocks {
+        if let MirTerm::Break { label } | MirTerm::Continue { label } = &block.term {
+            leaves.push(*label);
+        }
+        for instruction in &block.instrs {
+            match instruction {
+                MirInstr::Loop { label, body } => {
+                    labels.extend(*label);
+                    loop_labels(body, labels, leaves);
+                }
+                MirInstr::If {
+                    then,
+                    elifs,
+                    orelse,
+                    ..
+                } => {
+                    loop_labels(then, labels, leaves);
+                    for elif in elifs {
+                        loop_labels(&elif.cond, labels, leaves);
+                        loop_labels(&elif.then, labels, leaves);
+                    }
+                    loop_labels(orelse, labels, leaves);
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 #[test]

@@ -4,34 +4,24 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_checked::checked::{CheckedOp, CheckedTables};
+use mojito_checked::checked::CheckedOp;
 use mojito_types::types::TyKind;
 
 impl<'a> Flatten<'a> {
-    /// Lower one straight-line HIR instruction into `self.cur`. `outer_map` is the
-    /// enclosing **function**'s HIR→MIR block map, used to resolve a `try`'s
-    /// escape targets (`break`/`continue` to an outer loop); most arms ignore it.
-    pub(super) fn lower_instr(
-        &mut self,
-        i: &'a HirInstr,
-        outer_map: &HashMap<hir::BlockId, MirBlockId>,
-    ) {
+    /// Lower one HIR instruction into `self.cur`.
+    pub(super) fn lower_instr(&mut self, i: &'a HirInstr) {
         // Bracket each HIR instruction for temporary-argument anchors (see
         // `lower_stmt`, whose statements arrive through this dispatcher too):
         // hidden `$arg_loan_r` slots stay live until the consuming call has
         // returned — at the latest the instruction's end — via a `KeepAlive`
         // use; an assignment flushes them before its store.
         let saved = std::mem::take(&mut self.pending_argument_anchors);
-        self.lower_instr_dispatch(i, outer_map);
+        self.lower_instr_dispatch(i);
         self.flush_argument_anchors();
         self.pending_argument_anchors = saved;
     }
 
-    fn lower_instr_dispatch(
-        &mut self,
-        i: &'a HirInstr,
-        outer_map: &HashMap<hir::BlockId, MirBlockId>,
-    ) {
+    fn lower_instr_dispatch(&mut self, i: &'a HirInstr) {
         match i {
             HirInstr::Bind {
                 dest,
@@ -79,16 +69,14 @@ impl<'a> Flatten<'a> {
                 let value = self.expr_hir(e);
                 self.bind_discarded_result(e, value);
             }
-            HirInstr::Stmt(s) => self.lower_hir_stmt(s, outer_map),
-            // A `try` whose enclosing loops are function-level: lower each sub-region
-            // seeded with those loops (`loop_targets`, HIR function block ids), so an
-            // outward `break`/`continue` becomes an `EscapeJump` resolved via
-            // `outer_map`.
-            HirInstr::Try { stmt, loop_targets } => {
+            HirInstr::Stmt(s) => self.lower_hir_stmt(s),
+            // A `try`: each part is lowered seeded with the enclosing loops, so
+            // an outward `break`/`continue` names the loop it leaves.
+            HirInstr::Try { stmt, loops } => {
                 let tables = self.checked;
                 match tables.statement(stmt.node).and_then(TryRegions::of) {
                     Some(regions) => self.with_statement_loans(|this| {
-                        this.emit_try(regions, loop_targets, outer_map);
+                        this.emit_try(regions, loops);
                     }),
                     None => self.emit(MirInstr::Unsupported(
                         "malformed HIR try instruction".to_string(),
@@ -98,6 +86,56 @@ impl<'a> Flatten<'a> {
             HirInstr::KeepAlive(var) => {
                 self.emit(MirInstr::KeepAlive { var: *var });
             }
+            HirInstr::If {
+                cond,
+                then,
+                elifs,
+                orelse,
+            } => {
+                let cond = match cond {
+                    hir::HirCond::Expr(cond) => self.condition_hir(cond),
+                    hir::HirCond::Slot(slot) => {
+                        let cond = self.fresh(SourceSpan::new(None, DUMMY_SPAN), Some(*slot));
+                        self.emit(MirInstr::UseVar {
+                            dest: cond,
+                            var: *slot,
+                            mode: UseMode::Copy,
+                        });
+                        cond
+                    }
+                };
+                self.flush_argument_anchors();
+                let then = self.hir_region(then);
+                let elifs = elifs
+                    .iter()
+                    .map(|elif| MirElif {
+                        cond: self.hir_region(&elif.cond),
+                        then: self.hir_region(&elif.then),
+                    })
+                    .collect();
+                let orelse = self.hir_region(orelse);
+                self.emit(MirInstr::If {
+                    results: Vec::new(),
+                    cond,
+                    then,
+                    elifs,
+                    orelse,
+                });
+            }
+            HirInstr::Loop { label, body } => {
+                let body = self.hir_region(body);
+                self.emit(MirInstr::Loop {
+                    label: Some(LoopLabel(*label)),
+                    body,
+                });
+            }
+            HirInstr::ComptimeFor {
+                iter,
+                binding,
+                index,
+                body,
+                ..
+            } => self.lower_comptime_for(iter, *binding, *index, body),
             // Iterator protocol: compute into a register, then store to the target
             // variable (so the header's branch can read `has_next` as a `UseVar`,
             // and the body binds the loop variable).
@@ -1774,8 +1812,7 @@ impl<'a> Flatten<'a> {
         &mut self,
         body: &[CheckedStmtId],
         handler: Option<(Option<mojito_types::origin::OwnerId>, &str, Ty)>,
-        ext_loops: &[(hir::BlockId, hir::BlockId, Vec<VarId>)],
-        outer_map: &HashMap<hir::BlockId, MirBlockId>,
+        ext_loops: &[hir::EnclosingLoop],
     ) -> (Vec<MirBlock>, Option<VarId>) {
         let region_cfg = hir::Cfg::build_seeded_checked_region(
             hir::RegionSeed {
@@ -1784,6 +1821,7 @@ impl<'a> Flatten<'a> {
                 handler: handler
                     .as_ref()
                     .map(|(binding, name, _)| (*binding, (*name).to_string())),
+                labels: self.next_label,
             },
             body,
             ext_loops,
@@ -1824,15 +1862,6 @@ impl<'a> Flatten<'a> {
             spans: std::mem::take(&mut self.f.spans), // accumulate into the shared table
             reg_types: std::mem::take(&mut self.f.reg_types),
         };
-        let mut map: HashMap<hir::BlockId, MirBlockId> = HashMap::new();
-        for hb in region_cfg.g.node_indices() {
-            map.insert(hb, region.blocks.len());
-            region.blocks.push(MirBlock {
-                instrs: Vec::new(),
-                term: MirTerm::Return(None),
-            });
-        }
-        let fallback = Terminator::FallOff;
         {
             let mut fl = Flatten {
                 f: &mut region,
@@ -1851,6 +1880,8 @@ impl<'a> Flatten<'a> {
                 parameter_reads: self.parameter_reads.clone(),
                 overloads: std::sync::Arc::clone(&self.overloads),
                 checked: &region_cfg.checked,
+                cfg: &region_cfg,
+                next_label: region_cfg.labels,
                 displays: self.displays.clone(),
                 slots: region_cfg.slots.clone(),
                 aliases: self.aliases.clone(),
@@ -1868,23 +1899,10 @@ impl<'a> Flatten<'a> {
                 reassigned_names: self.reassigned_names.clone(),
                 returns_reference: self.returns_reference,
             };
-            let loop_scopes = loop_index_scopes(&region_cfg);
-            for hb in region_cfg.g.node_indices() {
-                fl.cur = map[&hb];
-                fl.enclosing_binders = self
-                    .enclosing_binders
-                    .with_loops(loop_scopes.get(&hb).map_or(&[], Vec::as_slice));
-                fl.comptime_thunks.enter_scope(&fl.enclosing_binders);
-                for instr in &region_cfg.g[hb].instrs {
-                    fl.lower_instr(instr, outer_map);
-                }
-                let term = region_cfg.g[hb].term.as_ref().unwrap_or(&fallback);
-                // Region terminators resolve local jumps via the region's own `map`;
-                // an `EscapeJump` resolves its outer-loop target via `outer_map`.
-                let mterm = fl.lower_term(term, &map, outer_map);
-                fl.f.blocks[fl.cur].term = mterm;
-            }
+            fl.comptime_thunks.enter_scope(&fl.enclosing_binders);
+            fl.f.blocks = fl.hir_region(&region_cfg.root);
             self.next_reg = fl.next_reg;
+            self.next_label = fl.next_label;
             self.vars.clone_from(&fl.vars);
             self.var_types.clone_from(&fl.var_types);
             self.owner_vars.clone_from(&fl.owner_vars);
@@ -1896,19 +1914,12 @@ impl<'a> Flatten<'a> {
     }
 
     /// Lower a `try`'s sub-regions and emit the [`MirInstr::Try`]. `ext_loops` are
-    /// the enclosing function loops (HIR block ids) a `break`/`continue` may escape
-    /// to; `outer_map` resolves them to MIR blocks. Shared by the primary
-    /// (`HirInstr::Try`) and fallback (`lower_stmt`) paths.
+    /// the enclosing loops a `break`/`continue` may leave.
     #[allow(
         clippy::needless_pass_by_value,
         reason = "borrow bundle: its own fields are `&mut`"
     )]
-    pub(super) fn emit_try(
-        &mut self,
-        regions: TryRegions<'_>,
-        ext_loops: &[(hir::BlockId, hir::BlockId, Vec<VarId>)],
-        outer_map: &HashMap<hir::BlockId, MirBlockId>,
-    ) {
+    pub(super) fn emit_try(&mut self, regions: TryRegions<'_>, ext_loops: &[hir::EnclosingLoop]) {
         let TryRegions {
             body,
             except,
@@ -1916,7 +1927,7 @@ impl<'a> Flatten<'a> {
             finalbody,
             handler_binding,
         } = regions;
-        let (body_blocks, _) = self.lower_region(body, None, ext_loops, outer_map);
+        let (body_blocks, _) = self.lower_region(body, None, ext_loops);
         let handler = except.map(|(name, ex_body)| {
             // The checker rejects a try whose body can raise more than one
             // error type, so copying the first propagating raising fact types
@@ -1926,12 +1937,11 @@ impl<'a> Flatten<'a> {
                     region_error_type(&body_blocks, &self.f.reg_types).unwrap_or_else(Ty::error);
                 (handler_binding, name, error)
             });
-            let (blocks, slot) = self.lower_region(ex_body, handler, ext_loops, outer_map);
+            let (blocks, slot) = self.lower_region(ex_body, handler, ext_loops);
             (slot, blocks)
         });
-        let orelse_blocks = orelse.map(|b| self.lower_region(b, None, ext_loops, outer_map).0);
-        let finalbody_blocks =
-            finalbody.map(|b| self.lower_region(b, None, ext_loops, outer_map).0);
+        let orelse_blocks = orelse.map(|b| self.lower_region(b, None, ext_loops).0);
+        let finalbody_blocks = finalbody.map(|b| self.lower_region(b, None, ext_loops).0);
         self.emit(MirInstr::Try {
             body: body_blocks,
             handler,
@@ -2118,14 +2128,7 @@ impl<'a> Flatten<'a> {
     /// statement it lowers: its expression roots, and the slot HIR interned
     /// for the binding the statement declares. Every reachable
     /// case is handled; the categorization decisions are documented per arm.
-    /// `outer_map` threads the enclosing function's block map for a
-    /// fallback-path `try`.
-    pub(super) fn lower_stmt(
-        &mut self,
-        node: &CheckedStmt,
-        hir: &'a hir::HirStmt,
-        outer_map: &HashMap<hir::BlockId, MirBlockId>,
-    ) {
+    pub(super) fn lower_stmt(&mut self, node: &CheckedStmt, hir: &'a hir::HirStmt) {
         // Bracket the statement for temporary-argument anchors: hidden
         // `$arg_loan_r` slots created while lowering this statement's calls
         // stay live (as do their loans) until the consuming call returns, at
@@ -2135,7 +2138,7 @@ impl<'a> Flatten<'a> {
         // Nested statement lowering saves and restores the enclosing list, so
         // each statement flushes exactly its own anchors.
         let saved = std::mem::take(&mut self.pending_argument_anchors);
-        self.lower_stmt_dispatch(node, hir, outer_map);
+        self.lower_stmt_dispatch(node, hir);
         self.flush_argument_anchors();
         self.pending_argument_anchors = saved;
     }
@@ -2151,12 +2154,7 @@ impl<'a> Flatten<'a> {
     }
 
     #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
-    fn lower_stmt_dispatch(
-        &mut self,
-        node: &CheckedStmt,
-        hir: &'a hir::HirStmt,
-        outer_map: &HashMap<hir::BlockId, MirBlockId>,
-    ) {
+    fn lower_stmt_dispatch(&mut self, node: &CheckedStmt, hir: &'a hir::HirStmt) {
         let statement_binding = node.binding;
         let operands: Vec<Node<'a>> = hir
             .expressions
@@ -2653,33 +2651,6 @@ impl<'a> Flatten<'a> {
                 _,
             ) => {}
 
-            // `try`/`except`/`else`/`finally` — each part lowers to a mini-CFG that
-            // shares this function's slots; the VM runs them with `exec_try`
-            // semantics. `cleanup` (the exceptional-edge drops) is filled by the
-            // drop-elaboration pass.
-            (CheckedStmtOp::Try { .. }, _) => {
-                let Some(regions) = TryRegions::of(node) else {
-                    return;
-                };
-                // A `break`/`continue` that leaves the `try` (targeting an enclosing
-                // loop) needs the outer loop's target block, which the self-contained
-                // mini-CFG region can't name — refuse cleanly rather than build an
-                // ill-formed region. (A `return` crossing out is fine: it surfaces as
-                // a `Flow::Return` the block driver handles.)
-                let tables = self.checked;
-                if regions
-                    .bodies()
-                    .any(|body| region_crosses_control(tables, body))
-                {
-                    self.emit(MirInstr::Unsupported(
-                        "try with break/continue crossing the try boundary".into(),
-                    ));
-                    return;
-                }
-                // Fallback path (a `try` whose enclosing loops are region-local, so
-                // the HIR left it as an opaque `Stmt`): no escapable loops.
-                self.emit_try(regions, &[], outer_map);
-            }
             // A direct nested declaration creates its closure exactly here. Copy
             // and move captures therefore snapshot/transfer before any following
             // statement can mutate or use the source binding. Later calls and
@@ -2894,6 +2865,7 @@ impl<'a> Flatten<'a> {
                 | CheckedStmtOp::Scope(_)
                 | CheckedStmtOp::Break
                 | CheckedStmtOp::Continue
+                | CheckedStmtOp::Try { .. }
                 | CheckedStmtOp::Return(_)
                 | CheckedStmtOp::VarDecl { .. }
                 | CheckedStmtOp::Assign { .. }
@@ -3066,11 +3038,7 @@ impl<'a> Flatten<'a> {
         });
     }
 
-    pub(super) fn lower_hir_stmt(
-        &mut self,
-        statement: &'a mojito_hir::hir::HirStmt,
-        outer_map: &HashMap<hir::BlockId, MirBlockId>,
-    ) {
+    pub(super) fn lower_hir_stmt(&mut self, statement: &'a mojito_hir::hir::HirStmt) {
         let tables = self.checked;
         let Some(node) = tables.statement(statement.node) else {
             self.emit(MirInstr::Unsupported(
@@ -3078,7 +3046,7 @@ impl<'a> Flatten<'a> {
             ));
             return;
         };
-        self.with_statement_loans(|this| this.lower_stmt(node, statement, outer_map));
+        self.with_statement_loans(|this| this.lower_stmt(node, statement));
     }
 
     /// Bind `value`, a HIR binding's value, to slot `dest`: a declaration of
@@ -3246,47 +3214,180 @@ impl<'a> Flatten<'a> {
         }
     }
 
+    /// A `comptime for` as `hlcf.comptime.for`. A loop with no recorded
+    /// sequence is the explicit boundary: the iterable is one the
+    /// elaborator unrolls in the AST, never a loop the check kept.
+    fn lower_comptime_for(
+        &mut self,
+        iter: &'a hir::HirExpr,
+        binding: Option<mojito_types::origin::OwnerId>,
+        index: VarId,
+        body: &'a hir::HirRegion,
+    ) {
+        let iteration = comptime_iteration(self.checked, iter);
+        let sequence = iteration.clone().and_then(|iteration| {
+            use mojito_checked::checked::ComptimeSource;
+            let source = match iteration.source {
+                ComptimeSource::Sequence(sequence) => sequence,
+                ComptimeSource::Evaluated { element, .. } | ComptimeSource::Applied { element } => {
+                    let ty = self.hir_node(iter).ty.clone()?;
+                    let binders = &self.enclosing_binders;
+                    mojito_checked::checked::ComptimeSequence::Elements(
+                        self.comptime_thunks
+                            .request_sequence(iter.node, binders, ty, element),
+                    )
+                }
+                ComptimeSource::Bound { binding, .. } => {
+                    mojito_checked::checked::ComptimeSequence::Elements(
+                        self.display(binding)?.sequence.clone(),
+                    )
+                }
+                ComptimeSource::Iterator {
+                    iterator,
+                    has_next,
+                    next_iter,
+                } => {
+                    let ty = iterator.as_value()?.clone();
+                    let binders = &self.enclosing_binders;
+                    mojito_checked::checked::ComptimeSequence::Iterator {
+                        initial: self.comptime_thunks.request_value(iter.node, binders, ty),
+                        has_next,
+                        next_iter,
+                    }
+                }
+                ComptimeSource::EvaluatedRange { bounds } => {
+                    let CheckedOp::Call {
+                        args: arg_nodes, ..
+                    } = &self.hir_node(iter).op
+                    else {
+                        return None;
+                    };
+                    let arg_nodes = arg_nodes.clone();
+                    let bounds: Vec<ParamExpr> = bounds
+                        .into_iter()
+                        .zip(arg_nodes)
+                        .map(|(bound, node)| {
+                            bound.unwrap_or_else(|| {
+                                let binders = &self.enclosing_binders;
+                                self.comptime_thunks.request_value(node, binders, Ty::int())
+                            })
+                        })
+                        .collect();
+                    let constant =
+                        |value: i64| ParamContext::detached().constant(CtValue::Int(value)).ok();
+                    let (start, stop, step) = match bounds.as_slice() {
+                        [stop] => (constant(0)?, stop.clone(), constant(1)?),
+                        [start, stop] => (start.clone(), stop.clone(), constant(1)?),
+                        [start, stop, step] => (start.clone(), stop.clone(), step.clone()),
+                        _ => return None,
+                    };
+                    mojito_checked::checked::ComptimeSequence::Range { start, stop, step }
+                }
+            };
+            Some((iteration.binder, source))
+        });
+        if let Some((binder, source)) = sequence
+            && let Some(iteration) = iteration
+        {
+            // The slot the body's reads of the variable resolve to:
+            // the one HIR declared for the checked binding, which a
+            // second loop of one name holds under a shadow spelling.
+            let slot = binding.map_or(index, |owner| {
+                *self.owner_vars.entry(owner).or_insert(index)
+            });
+            // Typed by the binder, even when no body read types it:
+            // each unrolled copy stores its element there.
+            if let Some(ty) = source.binder_meta().as_value() {
+                self.var_types.insert(slot, ty.clone());
+            }
+            let body = self.loop_body(&iteration, binding, body);
+            self.emit(MirInstr::ComptimeFor {
+                binder,
+                slot,
+                source,
+                body,
+                orelse: vec![MirBlock {
+                    instrs: Vec::new(),
+                    term: MirTerm::Unreachable,
+                }],
+            });
+        } else {
+            // The body still lowers, for the slots it types.
+            if let Some(iteration) = iteration {
+                self.loop_body(&iteration, binding, body);
+            } else {
+                self.hir_region(body);
+            }
+            self.emit(MirInstr::Unsupported(format!(
+                "comptime for over `{:?}` is not a compile-time sequence",
+                self.hir_node(iter).op
+            )));
+        }
+    }
+
+    /// A `comptime for` body, which sees the loop's index as a value binder,
+    /// so a bracket argument built from it (`g[i]()`) resolves.
+    fn loop_body(
+        &mut self,
+        iteration: &mojito_checked::checked::ComptimeIteration,
+        binding: Option<mojito_types::origin::OwnerId>,
+        body: &'a hir::HirRegion,
+    ) -> Vec<MirBlock> {
+        let outer = self.enclosing_binders.clone();
+        self.enclosing_binders = outer.with_loops(&[LoopIndex::of(iteration, binding)]);
+        self.comptime_thunks.enter_scope(&self.enclosing_binders);
+        let blocks = self.hir_region(body);
+        self.enclosing_binders = outer;
+        blocks
+    }
+
+    /// Lower HIR region `region` to a block list of its own, its block ids
+    /// local (entry 0), sharing this function's registers and slots.
+    pub(super) fn hir_region(&mut self, region: &'a hir::HirRegion) -> Vec<MirBlock> {
+        let graph = &self.cfg.g;
+        let placeholders = region
+            .blocks
+            .iter()
+            .map(|_| MirBlock {
+                instrs: Vec::new(),
+                term: MirTerm::Unreachable,
+            })
+            .collect();
+        let outer = std::mem::replace(&mut self.f.blocks, placeholders);
+        let cur = self.cur;
+        let reference = self.setup_reference.take();
+        let map: HashMap<hir::BlockId, MirBlockId> = region
+            .blocks
+            .iter()
+            .enumerate()
+            .map(|(index, block)| (*block, index))
+            .collect();
+        for (index, block) in region.blocks.iter().enumerate() {
+            self.cur = index;
+            let block = &graph[*block];
+            for instr in &block.instrs {
+                self.lower_instr(instr);
+            }
+            let term = block
+                .term
+                .as_ref()
+                .map_or(MirTerm::FallOff, |term| self.lower_term(term, &map));
+            self.f.blocks[self.cur].term = term;
+        }
+        self.setup_reference = reference;
+        self.cur = cur;
+        std::mem::replace(&mut self.f.blocks, outer)
+    }
+
     /// Lower a HIR block terminator; the branch/return operands are flattened into
     /// `self.cur` first, then the `MirTerm` references their result registers.
     pub(super) fn lower_term(
         &mut self,
         t: &'a Terminator,
         map: &HashMap<hir::BlockId, MirBlockId>,
-        outer_map: &HashMap<hir::BlockId, MirBlockId>,
     ) -> MirTerm {
         match t {
             Terminator::Jump(b) => MirTerm::Jump(map[b]),
-            Terminator::Branch {
-                cond,
-                then_b,
-                else_b,
-            } => {
-                let c = self.condition_hir(cond); // evaluated at the end of this block
-                self.flush_argument_anchors();
-                MirTerm::Branch {
-                    cond: c,
-                    then_b: map[then_b],
-                    else_b: map[else_b],
-                }
-            }
-            Terminator::BranchOnSlot {
-                cond,
-                then_b,
-                else_b,
-            } => {
-                let c = self.fresh(SourceSpan::new(None, DUMMY_SPAN), Some(*cond));
-                self.emit(MirInstr::UseVar {
-                    dest: c,
-                    var: *cond,
-                    mode: UseMode::Copy,
-                });
-                self.flush_argument_anchors();
-                MirTerm::Branch {
-                    cond: c,
-                    then_b: map[then_b],
-                    else_b: map[else_b],
-                }
-            }
             Terminator::ComptimeBranch {
                 cond,
                 then_b,
@@ -3296,107 +3397,6 @@ impl<'a> Flatten<'a> {
                 then_b: map[then_b],
                 else_b: map[else_b],
             },
-            // A header with no recorded sequence is the explicit boundary:
-            // the iterable is one the elaborator unrolls in the AST, never a
-            // loop the check kept.
-            Terminator::ComptimeLoop {
-                iter,
-                binding,
-                index,
-                body,
-                exit,
-                ..
-            } => {
-                let sequence = comptime_iteration(self.checked, iter).and_then(|iteration| {
-                    use mojito_checked::checked::ComptimeSource;
-                    let source = match iteration.source {
-                        ComptimeSource::Sequence(sequence) => sequence,
-                        ComptimeSource::Evaluated { element, .. }
-                        | ComptimeSource::Applied { element } => {
-                            let ty = self.hir_node(iter).ty.clone()?;
-                            let binders = &self.enclosing_binders;
-                            mojito_checked::checked::ComptimeSequence::Elements(
-                                self.comptime_thunks
-                                    .request_sequence(iter.node, binders, ty, element),
-                            )
-                        }
-                        ComptimeSource::Bound { binding, .. } => {
-                            mojito_checked::checked::ComptimeSequence::Elements(
-                                self.display(binding)?.sequence.clone(),
-                            )
-                        }
-                        ComptimeSource::Iterator {
-                            iterator,
-                            has_next,
-                            next_iter,
-                        } => {
-                            let ty = iterator.as_value()?.clone();
-                            let binders = &self.enclosing_binders;
-                            mojito_checked::checked::ComptimeSequence::Iterator {
-                                initial: self.comptime_thunks.request_value(iter.node, binders, ty),
-                                has_next,
-                                next_iter,
-                            }
-                        }
-                        ComptimeSource::EvaluatedRange { bounds } => {
-                            let CheckedOp::Call {
-                                args: arg_nodes, ..
-                            } = &self.hir_node(iter).op
-                            else {
-                                return None;
-                            };
-                            let arg_nodes = arg_nodes.clone();
-                            let bounds: Vec<ParamExpr> = bounds
-                                .into_iter()
-                                .zip(arg_nodes)
-                                .map(|(bound, node)| {
-                                    bound.unwrap_or_else(|| {
-                                        let binders = &self.enclosing_binders;
-                                        self.comptime_thunks.request_value(node, binders, Ty::int())
-                                    })
-                                })
-                                .collect();
-                            let constant = |value: i64| {
-                                ParamContext::detached().constant(CtValue::Int(value)).ok()
-                            };
-                            let (start, stop, step) = match bounds.as_slice() {
-                                [stop] => (constant(0)?, stop.clone(), constant(1)?),
-                                [start, stop] => (start.clone(), stop.clone(), constant(1)?),
-                                [start, stop, step] => (start.clone(), stop.clone(), step.clone()),
-                                _ => return None,
-                            };
-                            mojito_checked::checked::ComptimeSequence::Range { start, stop, step }
-                        }
-                    };
-                    Some((iteration.binder, source))
-                });
-                if let Some((binder, source)) = sequence {
-                    // The slot the body's reads of the variable resolve to:
-                    // the one HIR declared for the checked binding, which a
-                    // second loop of one name holds under a shadow spelling.
-                    let slot = binding.map_or(*index, |owner| {
-                        *self.owner_vars.entry(owner).or_insert(*index)
-                    });
-                    // Typed by the binder, even when no body read types it:
-                    // each unrolled copy stores its element there.
-                    if let Some(ty) = source.binder_meta().as_value() {
-                        self.var_types.insert(slot, ty.clone());
-                    }
-                    MirTerm::ComptimeFor {
-                        binder,
-                        slot,
-                        source,
-                        body: map[body],
-                        exit: map[exit],
-                    }
-                } else {
-                    self.emit(MirInstr::Unsupported(format!(
-                        "comptime for over `{:?}` is not a compile-time sequence",
-                        self.hir_node(iter).op
-                    )));
-                    MirTerm::Jump(map[exit])
-                }
-            }
             Terminator::Return(expression) => {
                 let value = expression.as_ref().map(|e| self.lower_return_value(e));
                 self.flush_argument_anchors();
@@ -3421,12 +3421,20 @@ impl<'a> Flatten<'a> {
                 MirTerm::Return(value)
             }
             Terminator::FallOff => MirTerm::FallOff,
-            // An outward `break`/`continue`: the target is an enclosing-function
-            // block, resolved via `outer_map` (`cleanup` filled by drop elaboration).
-            Terminator::EscapeJump(b) => MirTerm::EscapeJump {
-                target: outer_map[b],
-                cleanup: Vec::new(),
+            Terminator::Yield => MirTerm::Yield(Vec::new()),
+            Terminator::ElifCond(cond) => {
+                let cond = self.condition_hir(cond);
+                self.flush_argument_anchors();
+                MirTerm::ElifCond(cond)
+            }
+            Terminator::Break(label) => MirTerm::Break {
+                label: Some(LoopLabel(*label)),
             },
+            Terminator::Continue(label) => MirTerm::Continue {
+                label: Some(LoopLabel(*label)),
+            },
+            Terminator::ComptimeBreak => MirTerm::ComptimeBreak,
+            Terminator::ComptimeContinue => MirTerm::ComptimeContinue,
         }
     }
 }
@@ -3437,37 +3445,4 @@ impl<'a> Flatten<'a> {
 enum SetArguments<'a> {
     Slice([Option<mojito_checked::checked::CheckedNodeId>; 3]),
     Multi(&'a [mojito_checked::checked::CheckedSubscriptArg]),
-}
-
-/// Whether a `try` region's statements contain a `break`/`continue` that **leaves**
-/// the region — targeting a loop *outside* it. Such an escape would need to name the
-/// outer loop's target block, which the self-contained mini-CFG region can't express
-/// (unlike a `return`, which surfaces as a `Flow::Return` the block driver handles).
-/// Nested loops absorb their own `break`/`continue` (tracked via `loop_depth`);
-/// nested `def`/`struct` bodies have their own control flow and are not scanned.
-fn region_crosses_control(checked: &CheckedTables, body: &[CheckedStmtId]) -> bool {
-    fn walk(checked: &CheckedTables, statements: &[CheckedStmtId], loop_depth: usize) -> bool {
-        statements.iter().any(|id| {
-            let Some(node) = checked.statement(*id) else {
-                return false;
-            };
-            match &node.op {
-                CheckedStmtOp::Break | CheckedStmtOp::Continue => loop_depth == 0,
-                CheckedStmtOp::If { branches, orelse } => {
-                    branches.iter().any(|(_, b)| walk(checked, b, loop_depth))
-                        || orelse
-                            .as_ref()
-                            .is_some_and(|b| walk(checked, b, loop_depth))
-                }
-                CheckedStmtOp::While { body, .. } | CheckedStmtOp::For { body, .. } => {
-                    walk(checked, body, loop_depth + 1)
-                }
-                CheckedStmtOp::Scope(body) => walk(checked, body, loop_depth),
-                CheckedStmtOp::Try { .. } => TryRegions::of(node)
-                    .is_some_and(|regions| regions.bodies().any(|b| walk(checked, b, loop_depth))),
-                _ => false,
-            }
-        })
-    }
-    walk(checked, body, 0)
 }

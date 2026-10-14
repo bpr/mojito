@@ -74,10 +74,12 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
 ## What Mojito does
 
 - **HIR** (`crates/mojito-hir/src/hir.rs`) reads structured checked
-  statements (`CheckedStmtOp`) and lowers `if`/`while`/`for`/`break`/
-  `continue`/`comptime if`/`comptime for` into a `Cfg`
-  (`StableGraph<BasicBlock, ()>`) of blocks and jumps. Each `try` part is
-  its own region CFG (`build_seeded_checked_region`).
+  statements (`CheckedStmtOp`) and, since stage 3, lowers them into a
+  region tree: `if`/`while`/`for`/`comptime for` are `HirInstr::If`/
+  `Loop`/`ComptimeFor` region ops and `break`/`continue` labelled region
+  terminators. A `comptime if` is still a diamond of blocks and jumps
+  inside its region, the only multi-block shape left beside a `try` part,
+  which is its own region CFG (`build_seeded_checked_region`).
 - **MIR** (`crates/mojito-mir/src/mir/ir.rs`) is a CFG: `MirTerm` is `Jump`,
   `Branch`, `ComptimeBranch`, `ComptimeFor`, `Return`, `ReturnWithCleanup`,
   `FallOff`, and `EscapeJump`.
@@ -87,9 +89,10 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
     slots, walked by `instruction_regions`/`instruction_regions_mut` and
     `block_successors`. A `try` part is left through `EscapeJump`/`FallOff`.
   - `lower_expr/ctrl.rs` builds `short_circuit`, `ternary`, `compare_chain`,
-    and `comprehension_clauses` as `If`/`Loop` region ops (stage 2), and
-    MIR lowering ends each body with `lower-control-flow`, so every phase
-    below it still sees blocks.
+    and `comprehension_clauses` as `If`/`Loop` region ops (stage 2), MIR
+    lowering builds HIR's region ops as the same ops (stage 3,
+    `Flatten::hir_region`), and it ends each body with
+    `lower-control-flow`, so every phase below it still sees blocks.
 - **The analyses work on edges.** Ownership, borrow, and initialization
   checks are dataflow over blocks; `analysis/drops.rs` puts drops on edges
   and splits critical edges.
@@ -202,12 +205,27 @@ last producer. Every stage keeps program output unchanged; the
      `close_register_types` types the result registers through the pass's
      `$yield` slots; `mir::lower_cfg_structured` returns the structured
      form for phase tests.
-3. **Statements.** HIR's `Cfg` becomes a region tree: `if`/`elif` are `If`;
-   `while`/`for` are a `Loop` with an `If` on the condition or has-next and
-   the loop `else` on the normal exit; `break`/`continue` are labelled.
-   `mir.rs::lower_cfg` walks the tree.
-4. **Compile-time forms.** `comptime if`/`for` become `ComptimeIf`/
-   `ComptimeFor`, lowered by the transitional pass to today's terminators.
+3. **Statements.** *Landed (R872).* HIR's `Cfg` is a region tree
+   (`Cfg::root`, `HirRegion`): `if`/`elif` are `If`, each `elif` a
+   condition region; `while`/`for` are a `Loop`, labelled uniquely per
+   function, whose body opens with an `If` on the condition or has-next
+   flag, its else arm holding the loop `else` (lowered outside the loop's
+   frame) and then `Break` (`lowerLITLoop`); `break`/`continue` are
+   labelled. `Flatten::hir_region` lowers each region to a block list,
+   and a comprehension loop takes its label from the same counter
+   (`Flatten::loop_label`), so every loop of a function is labelled.
+   - `comptime for` moved here from stage 4: a `comptime for` body's
+     `break` inside a run-time `if` region cannot jump to a block outside
+     that region, so it is `ComptimeBreak`, which only a `ComptimeFor`
+     region op can resolve. HIR builds `HirInstr::ComptimeFor`, MIR
+     lowering the `ComptimeFor` region op.
+   - A `break`/`continue` in a `try` part names its loop's label, and
+     `lower-control-flow` makes the `EscapeJump`; HIR has no escape
+     terminator, and MIR lowering threads no outer block map.
+   - Dead code after a sealed block still lowers, into a fresh
+     unreachable block, where `LowerSemanticCF` erases it.
+4. **Compile-time forms.** `comptime if` becomes `ComptimeIf`, lowered by
+   the transitional pass to today's terminators.
 5. **`try`.** Each part is one region; `EscapeJump`/`FallOff` become
    `Break`/`Continue`/`Yield`. The single-block rule switches on.
 6. **Move and initialization checks on regions**, as `CheckLifetimes`:
@@ -253,7 +271,7 @@ Mojito-only shape.
 
 ## Unverified
 
-- The one-session sizes of stages 3 and 6–11 are estimates (HIR is about
+- The one-session sizes of stages 6–11 are estimates (HIR is about
   1,400 lines; the ownership and drop analyses about 9,500). Each entry may
   be split by its planning session.
 - Where upstream lowers `lit.try` was not traced. `SimplifyCF` still names

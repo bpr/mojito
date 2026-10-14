@@ -560,6 +560,7 @@ impl<'a> Flatten<'a> {
                 // `emitForStmt` after `LowerSemanticCF`: `__has_next__`, an
                 // `if` that breaks when it fails, `__next__`, the body, and
                 // `continue`.
+                let label = Some(self.loop_label());
                 let body = self.region(|this| {
                     let has_next = this.fresh(iter.location(), Some(iterator_object));
                     if let Some(exhaustion) = protocol.exhaustion.clone() {
@@ -588,7 +589,7 @@ impl<'a> Flatten<'a> {
                         elifs: Vec::new(),
                         orelse: vec![MirBlock {
                             instrs: Vec::new(),
-                            term: MirTerm::Break { label: None },
+                            term: MirTerm::Break { label },
                         }],
                     });
                     if protocol.exhaustion.is_none() {
@@ -615,9 +616,9 @@ impl<'a> Flatten<'a> {
                         binding.owner,
                     );
                     this.comprehension_clauses(plan, index + 1);
-                    MirTerm::Continue { label: None }
+                    MirTerm::Continue { label }
                 });
-                self.emit(MirInstr::Loop { label: None, body });
+                self.emit(MirInstr::Loop { label, body });
                 if split_source && !borrowed && protocol.source_retained {
                     // An owned temporary source is used only by `GetIter` before
                     // the loop, so when the iterator may refer to its storage a
@@ -679,6 +680,12 @@ impl<'a> Flatten<'a> {
         self.setup_reference = reference;
         self.cur = cur;
         std::mem::replace(&mut self.f.blocks, outer)
+    }
+
+    /// A fresh label for a loop of this function, unique beside HIR's.
+    const fn loop_label(&mut self) -> LoopLabel {
+        self.next_label += 1;
+        LoopLabel(self.next_label - 1)
     }
 
     /// What a chain's next link reads for middle operand `operand`, whose
