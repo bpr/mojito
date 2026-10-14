@@ -3,7 +3,7 @@
 **Status:** plan recorded 2026-10-14 (R859); stages 1 (R870), 2 (R871),
 3 (R872), 4 (R873), and 5 (R874) landed 2026-10-14, and the `comptime for`
 body's `has_next` test (R885) with them. The scheduled tasks are on
-[`docs/roadmap.md`](roadmap.md) track `pmir`, one entry per stage below.
+[`docs/roadmap.md`](roadmap.md) track `mojo-shape`, one entry per stage below.
 This document is their design record and is updated as stages land. It is
 the structured-control part of
 [`docs/parametric-mir-plan.md`](parametric-mir-plan.md).

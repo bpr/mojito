@@ -35,7 +35,8 @@ Claude model and whether the task is planned first. A `Planned` entry with no
 plan file at the repository root gets a plan session before the session that
 carries it out, which is handed the plan; a plan pass that fails or writes no
 plan file leaves the task unexecuted. `--no-auto-plan` skips that pass,
-`--auto-plan-all` gives it to `Not Planned` entries too, and a plan file
+`--auto-plan-all` gives it to `Not Planned` entries too, `--plan-fable-on-opus`
+gives it only to a `Fable` entry that runs on Opus, and a plan file
 already at the root is handed to the executing session either way. A plan
 counts only while its name matches the entry's current title: one left under
 the same ID by an entry since rewritten in place is stale, so the entry counts
@@ -53,6 +54,7 @@ Usage:
   scripts/claude_loop.py --plan -n 3          # plan the next three instead
   scripts/claude_loop.py --no-auto-plan       # execute Planned entries unplanned
   scripts/claude_loop.py --auto-plan-all      # plan every entry, then execute it
+  scripts/claude_loop.py --model opus --plan-fable-on-opus  # plan Fable entries Opus runs
   scripts/claude_loop.py --model opus -n 0    # run every entry on Opus
   scripts/claude_loop.py --dry-run -n 2       # print prompts, run nothing
   scripts/claude_loop.py --no-commit          # leave the work uncommitted
@@ -371,11 +373,14 @@ def model_for(args, task: Task) -> str:
 def modes_for(args, task: Task) -> list[str]:
     """The task's sessions in order: `"plan"` writes the plan file only,
     `"execute"` carries the task out. A `Planned` entry (any entry, under
-    `--auto-plan-all`) with no plan file yet is planned before it is carried
-    out."""
+    `--auto-plan-all`, and a `Fable` entry run on Opus, under
+    `--plan-fable-on-opus`) with no plan file yet is planned before it is
+    carried out."""
     if args.plan:
         return ["plan"]
-    wants_plan = task.planned or args.auto_plan_all
+    downgraded = task.model == "Fable" and model_name(args, task) == "Opus"
+    wants_plan = (task.planned or args.auto_plan_all
+                  or (args.plan_fable_on_opus and downgraded))
     if wants_plan and not args.no_auto_plan and not plan_path(task).exists():
         return ["plan", "execute"]
     return ["execute"]
@@ -410,6 +415,9 @@ def main() -> int:
     auto_plan.add_argument("--auto-plan-all", action="store_true",
                            help="give every entry without a plan file a plan session first, "
                                 "Not Planned ones included")
+    auto_plan.add_argument("--plan-fable-on-opus", action="store_true",
+                           help="also give a plan session to a Fable entry that runs on Opus "
+                                "(through --model), Not Planned or not")
     p.add_argument("--permission-mode", default="bypassPermissions")
     p.add_argument("--claude", default="claude", help="claude executable")
     p.add_argument("--claude-arg", action="append", default=[],
