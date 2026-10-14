@@ -40,6 +40,13 @@ pub fn verify(program: &MirProgram) -> Vec<String> {
     for (name, function) in &program.functions {
         verify_function(name, function, &program.declarations, &mut errors);
     }
+    errors.extend(
+        program
+            .declarations
+            .imported
+            .iter()
+            .flat_map(super::link::ImportedDeclarations::failures),
+    );
     errors
 }
 

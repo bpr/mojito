@@ -304,7 +304,15 @@ import (every compilation that links the bundled library):
   reached and then by name (`Checker::installed_binding`). Only a whole-
   table walk decodes every record of its table, and the check makes none
   on the importer path. A record that does not decode is a lookup
-  miss and fails the compilation (`InstalledInterfaces::failures`).
+  miss and fails the compilation that reached it, never another: its
+  verdict lives in the record's own cell, decoded once per process
+  (`PackageDeclarations::decode`), and each compilation's view of the
+  package notes the failed records its lookups reach (`ReachedFailures`).
+  The check's view (`Installed`, its `PackageScope`, and the effect
+  lookups) is refused after the check (`InstalledInterfaces::failures`);
+  MIR's (`ImportedDeclarations`) is a program verifier finding
+  (`mir::verify`), and the elaborator's reach through it is
+  `MonoErrorKind::Decode`, which outranks the miss's own symptom.
 - **Above the waist no package body or declaration is prepared,
   elaborated, or checked again.** The driver partitions the link into the
   package's traits, borrowed, and the program's own statements
@@ -397,7 +405,11 @@ refuses is `CompilerError::Elaborate`; there is no other execution path.
 package body it materializes whose finish or verify left findings
 (`PackageBodies::findings`, `MonoErrorKind::Verify`). The verdict is the
 body's own, so a body no compilation reaches fails none, as upstream's
-importer fails only the compilation that materializes a bad body.
+importer fails only the compilation that materializes a bad body. A package
+declaration that does not decode is judged the same way: the elaborator
+refuses one its lookups reached (`MonoErrorKind::Decode`), and only
+`drop_elaborated_mir`, whose artifact holds the whole package, reports every
+record that does not decode (`PackageDeclarations::failures`).
 
 The entry roots are defined once, by `native::mono::entry_roots`: `main` and
 the module initializer `__toplevel__`, each when the program defines it.

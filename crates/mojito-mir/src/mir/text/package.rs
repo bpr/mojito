@@ -50,6 +50,7 @@ pub use mojito_checked::package::{
 };
 use mojito_checked::package::{
     LoweredDeclaration, PackageScope, PackagedBody, Payload, ProgramConstants, ProgramOverloads,
+    ReachedFailures,
 };
 use mojito_checked::unit::CheckedUnit;
 use mojito_common::timing;
@@ -511,6 +512,7 @@ pub fn read_package(bytes: PackageBytes, root: &LibraryRoot) -> Result<Package, 
     let scope = PackageScope::new(
         Arc::clone(&declarations),
         vec![true; declarations.modules().len()].into(),
+        ReachedFailures::default(),
     );
     Ok(Package {
         header: directory.header,

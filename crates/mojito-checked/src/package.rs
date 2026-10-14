@@ -44,7 +44,7 @@ use mojito_symbol::symbol::{
 use mojito_types::type_section::{TypeSection, decoding_types};
 use std::borrow::Cow;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::{Deref, Range};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -760,15 +760,16 @@ pub struct PackagedBody {
 /// time one of its names is looked up, once per process.
 ///
 /// A package is shared by every compilation in a process, so nothing an
-/// importer adds to a declaration lives here.
+/// importer adds to a declaration lives here. A record that does not decode
+/// keeps its verdict in its own cell: a lookup misses it, and the
+/// compilation whose view reached it ([`ReachedFailures`]) is refused.
 #[derive(Debug)]
 pub struct PackageDeclarations {
     directory: DeclarationDirectory,
     /// Each module's canonical and stamped path, under its importer's
     /// root, in module table order.
     modules: Vec<(String, String)>,
-    decoded: Vec<OnceLock<Option<LoweredDeclaration>>>,
-    failures: Mutex<Vec<String>>,
+    decoded: Vec<OnceLock<Result<LoweredDeclaration, String>>>,
 }
 
 impl PackageDeclarations {
@@ -802,7 +803,6 @@ impl PackageDeclarations {
             directory,
             modules,
             decoded,
-            failures: Mutex::new(Vec::new()),
         })
     }
 
@@ -824,7 +824,7 @@ impl PackageDeclarations {
 
     /// The struct declaration `name`, decoded on first use; `None` when the
     /// package declares no such struct or its record does not decode (a
-    /// failure [`Self::failures`] reports).
+    /// verdict [`Self::decode`] keeps).
     pub fn structure(&self, name: &str) -> Option<&StructDeclaration> {
         self.structure_at(self.struct_position(name)?)
     }
@@ -861,6 +861,28 @@ impl PackageDeclarations {
         self.lowered(word(1) as usize)?
             .functions
             .get(word(2) as usize)
+    }
+
+    /// The entry of the declaration the struct `name` belongs to, decoding
+    /// nothing.
+    pub fn struct_entry(&self, name: &str) -> Option<usize> {
+        let position = self.struct_position(name)?;
+        Some(self.directory.word(Section::Structs, position, 1) as usize)
+    }
+
+    /// The entry of the declaration the function `name` belongs to,
+    /// decoding nothing.
+    pub fn function_entry(&self, name: &str) -> Option<usize> {
+        let row = self.directory.function_row(name)?;
+        Some(self.directory.word(Section::Functions, row, 1) as usize)
+    }
+
+    /// The entry of the declaration the trait `name` belongs to, decoding
+    /// nothing.
+    pub fn trait_entry(&self, name: &str) -> Option<usize> {
+        self.directory
+            .key_declaration(InterfaceTable::Traits, name)
+            .map(|entry| entry as usize)
     }
 
     /// Every struct name, in package order, decoding nothing.
@@ -970,10 +992,7 @@ impl PackageDeclarations {
     /// The trait declaration `name`, decoded on first use; `None` when the
     /// package declares no such trait.
     pub fn trait_declaration(&self, name: &str) -> Option<&TraitDeclaration> {
-        let entry = self
-            .directory
-            .key_declaration(InterfaceTable::Traits, name)?;
-        self.lowered(entry as usize)?
+        self.lowered(self.trait_entry(name)?)?
             .traits
             .iter()
             .find(|declaration| declaration.name == name)
@@ -1005,34 +1024,38 @@ impl PackageDeclarations {
     }
 
     /// The lowered part of the declaration at `entry`, decoded on first
-    /// use.
+    /// use; `None` when it does not decode.
     pub fn lowered(&self, entry: usize) -> Option<&LoweredDeclaration> {
-        self.decoded
-            .get(entry)?
-            .get_or_init(|| {
-                let declaration = self.directory.declaration(entry)?;
-                let record = self.directory.payload.get(&declaration.record);
-                record
-                    .get(..declaration.residue)
-                    .ok_or_else(|| "its record is truncated".to_string())
-                    .and_then(|lowered| {
-                        let mut lowered: LoweredDeclaration = self
-                            .directory
-                            .payload
-                            .decoding(|| postcard::from_bytes(lowered))
-                            .map_err(|error| error.to_string())?;
-                        lowered.join(&self.directory, entry, declaration.name)?;
-                        Ok(lowered)
-                    })
-                    .map_err(|error| {
-                        self.fail(format!(
-                            "package declaration `{}` does not decode: {error}",
-                            declaration.name
-                        ));
-                    })
-                    .ok()
-            })
-            .as_ref()
+        self.decode(entry)?.ok()
+    }
+
+    /// The verdict on the declaration at `entry`, decoded on first use and
+    /// kept in its own cell: its lowered part, or why its record does not
+    /// decode. `None` when the directory has no such entry.
+    pub fn decode(&self, entry: usize) -> Option<Result<&LoweredDeclaration, &str>> {
+        let declaration = self.directory.declaration(entry)?;
+        let verdict = self.decoded.get(entry)?.get_or_init(|| {
+            let record = self.directory.payload.get(&declaration.record);
+            record
+                .get(..declaration.residue)
+                .ok_or_else(|| "its record is truncated".to_string())
+                .and_then(|lowered| {
+                    let mut lowered: LoweredDeclaration = self
+                        .directory
+                        .payload
+                        .decoding(|| postcard::from_bytes(lowered))
+                        .map_err(|error| error.to_string())?;
+                    lowered.join(&self.directory, entry, declaration.name)?;
+                    Ok(lowered)
+                })
+                .map_err(|error| {
+                    format!(
+                        "package declaration `{}` does not decode: {error}",
+                        declaration.name
+                    )
+                })
+        });
+        Some(verdict.as_ref().map_err(String::as_str))
     }
 
     /// The lowered part of the declaration the name `name` belongs to
@@ -1069,26 +1092,54 @@ impl PackageDeclarations {
             .count()
     }
 
-    /// The declarations that failed to decode so far.
+    /// The whole package's verdict: why each record that does not decode
+    /// fails, decoding every record. For a consumer of the whole package,
+    /// such as an artifact holding every body, never one compilation's
+    /// verdict, which is the records its view reached ([`ReachedFailures`]).
     pub fn failures(&self) -> Vec<String> {
-        self.failures
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+        (0..self.directory.declaration_count())
+            .filter_map(|entry| Some(self.decode(entry)?.err()?.to_string()))
+            .collect()
     }
 
     /// The position of the declaration the name `name` belongs to,
     /// decoding nothing.
-    fn owning(&self, name: &str) -> Option<usize> {
+    pub fn owning(&self, name: &str) -> Option<usize> {
         declaration_candidates(name)
             .find_map(|candidate| self.directory.declaration_position(candidate))
     }
+}
 
-    fn fail(&self, message: String) {
-        self.failures
+/// The package declarations one compilation's lookups reached and that do
+/// not decode: a lookup that reaches one misses, and the compilation is
+/// refused for it, never a compilation that did not reach it.
+///
+/// Clones share one record, so every view a compilation clones notes into
+/// it.
+#[derive(Debug, Clone, Default)]
+pub struct ReachedFailures(Arc<Mutex<BTreeSet<usize>>>);
+
+impl ReachedFailures {
+    /// Record the declaration at `entry` when `package` cannot decode it.
+    pub fn note(&self, package: &PackageDeclarations, entry: Option<usize>) {
+        if let Some(entry) = entry
+            && matches!(package.decode(entry), Some(Err(_)))
+        {
+            self.0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(entry);
+        }
+    }
+
+    /// Why each reached declaration fails, in package order.
+    pub fn messages(&self, package: &PackageDeclarations) -> Vec<String> {
+        self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(message);
+            .iter()
+            .filter_map(|entry| Some(package.decode(*entry)?.err()?.to_string()))
+            .collect()
     }
 }
 
@@ -1099,12 +1150,23 @@ pub struct PackageScope {
     package: Arc<PackageDeclarations>,
     /// Per module, whether the link reached it.
     reached: Arc<[bool]>,
+    /// The records its lookups reached that do not decode.
+    failures: ReachedFailures,
 }
 
 impl PackageScope {
-    /// The declarations of `package` in the modules `reached` marks.
-    pub const fn new(package: Arc<PackageDeclarations>, reached: Arc<[bool]>) -> Self {
-        Self { package, reached }
+    /// The declarations of `package` in the modules `reached` marks, each
+    /// record a lookup reaches that does not decode noted in `failures`.
+    pub const fn new(
+        package: Arc<PackageDeclarations>,
+        reached: Arc<[bool]>,
+        failures: ReachedFailures,
+    ) -> Self {
+        Self {
+            package,
+            reached,
+            failures,
+        }
     }
 
     /// The value of the reached library integer constant `name`, held once
@@ -1114,7 +1176,17 @@ impl PackageScope {
         if !self.reaches(entry) {
             return None;
         }
-        self.package.lowered(entry)?.constant(name).cloned()
+        self.lowered(entry)?.constant(name).cloned()
+    }
+
+    /// The lowered part of the declaration at `entry`, noting a record
+    /// that does not decode.
+    fn lowered(&self, entry: usize) -> Option<&LoweredDeclaration> {
+        let lowered = self.package.lowered(entry);
+        if lowered.is_none() {
+            self.failures.note(&self.package, Some(entry));
+        }
+        lowered
     }
 
     /// Whether the link reached the module of the declaration at `entry`.
@@ -1148,8 +1220,13 @@ impl PackageScope {
                 return Vec::new();
             }
             return self
-                .package
-                .trait_declaration(owner)
+                .lowered(entry as usize)
+                .and_then(|lowered| {
+                    lowered
+                        .traits
+                        .iter()
+                        .find(|declaration| declaration.name == owner)
+                })
                 .map(|declaration| {
                     declaration
                         .requirements
@@ -1165,11 +1242,15 @@ impl PackageScope {
             .function_position(name)
             .into_iter()
             .chain(directory.function_positions(&format!("{name}{OV_SEP}")))
-            .filter(|position| {
-                let row = directory.word(Section::FunctionsByName, *position, 0) as usize;
-                self.reaches(directory.word(Section::Functions, row, 1) as usize)
+            .map(|position| directory.word(Section::FunctionsByName, position, 0) as usize)
+            .filter(|row| self.reaches(directory.word(Section::Functions, *row, 1) as usize))
+            .filter_map(|row| {
+                let word = |column| directory.word(Section::Functions, row, column);
+                self.lowered(word(1) as usize)?
+                    .functions
+                    .get(word(2) as usize)?
+                    .overload_member()
             })
-            .filter_map(|position| self.package.function_at(position)?.overload_member())
             .filter(|(member, _)| *member == family)
             .map(|(_, arity)| arity)
             .collect()
@@ -1197,12 +1278,18 @@ impl OverloadLookup for PackageScope {
 
     fn fieldwise_parameters(&self, name: &str) -> Option<Cow<'_, [String]>> {
         let position = self.package.struct_position(name)?;
-        let entry = self.package.directory.word(Section::Structs, position, 1) as usize;
+        let word = |column| {
+            self.package
+                .directory
+                .word(Section::Structs, position, column)
+        };
+        let entry = word(1) as usize;
         if !self.reaches(entry) {
             return None;
         }
-        self.package
-            .structure_at(position)?
+        self.lowered(entry)?
+            .structs
+            .get(word(2) as usize)?
             .fieldwise_parameters()
             .map(Cow::Owned)
     }

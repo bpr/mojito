@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A package declaration that does not decode fails only a compilation whose
+  lookups reach it (R820): its verdict lives in its own record's cell
+  (`PackageDeclarations::decode`), each compilation's view notes the failed
+  records it reaches (`ReachedFailures`), and the check, the program
+  verifier, and the elaborator (`MonoErrorKind::Decode`) refuse that
+  compilation alone. `CompiledProgram::concrete_mir` no longer refuses every
+  later compilation in the process once any one reached a bad record.
 - The elaborator refuses a package body it reaches whose finish or verify
   left findings, a pre-elaboration pass's included (R819): each body keeps
   its own verdict (`PackageBodies::findings`), so a body no program reaches

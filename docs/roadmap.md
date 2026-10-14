@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R821**.
+Next free ID: **R822**.
 
 ## Ordered Work
 
@@ -187,19 +187,19 @@ which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
 
-- [ ] **R820 `concrete_mir` refuses every compile after one package
-  declaration fails to decode anywhere in the process**
+- [ ] **R821 A package body's lowering can reach a package declaration
+  that does not decode without that body's verdict saying so**
 
-  `PackageDeclarations::failures` is one append-only list per package, and
-  the bundled package is shared by every compilation in the process.
-  - `CompiledProgram::concrete_mir` refuses the whole list, so a bad record
-    one compilation reached fails every later one, reached or not.
-  - The verdict should be per declaration, refused by the lookup that
-    reaches it, as R819 made package bodies' verdicts.
-  - Done when the list check leaves `concrete_mir` and a phase test pins
-    that a private package's bad declaration fails only a program reaching
-    it.
-  - Depends on R819.
+  A package unit lowers against `read_package`'s one `PackageScope` and
+  `MirDeclarations::of_package`, shared by every body and thread, so their
+  `ReachedFailures` cannot say which body reached a bad record.
+  - Such a body most likely fails `verify_function_in` on a missing callee
+    or struct, an R819 finding, but nothing guarantees it.
+  - Fix: give each unit's lowering a view of its own and join its reached
+    failures into `FinishedBody::findings`.
+  - Done when a phase test pins that a body whose lowering reaches a
+    corrupted record carries a finding naming it.
+  - Depends on R820.
   - Model: Opus, Not Planned.
 
 - [ ] **R776 A MIR pass has no text-in, text-out test harness**

@@ -106,6 +106,8 @@ impl CompiledProgram {
             let mut complete = elaborated.clone();
             complete.functions.extend(package.bodies.all());
             complete.invariant_errors.extend(package.bodies.failures());
+            // The artifact holds every body and materializes every
+            // declaration, so its verdict is the whole package's.
             complete
                 .invariant_errors
                 .extend(package.declarations.failures());
@@ -120,7 +122,8 @@ impl CompiledProgram {
     /// reaches it.
     ///
     /// A program whose own bodies failed verification is refused, and so is
-    /// one whose elaboration reaches a package body that failed it.
+    /// one whose elaboration reaches a package body that failed it, or a
+    /// package declaration that does not decode.
     pub fn concrete_mir(&self) -> Result<&SpecializedProgram, CompilerError> {
         let findings = &self.elaborated_mir().invariant_errors;
         if !findings.is_empty() {
@@ -135,23 +138,7 @@ impl CompiledProgram {
                     self.package.as_deref().map(|package| &package.bodies),
                     &crate::native::mono::entry_roots(mir),
                     self.target.as_ref(),
-                )
-                .and_then(|concrete| {
-                    let failures = self
-                        .package
-                        .as_ref()
-                        .map(|package| package.declarations.failures())
-                        .unwrap_or_default();
-                    if failures.is_empty() {
-                        Ok(concrete)
-                    } else {
-                        Err(crate::native::mono::MonoError {
-                            kind: crate::native::mono::MonoErrorKind::Unsupported,
-                            function: None,
-                            construct: failures.join("; "),
-                        })
-                    }
-                });
+                );
                 if let Ok(concrete) = &concrete {
                     timing::count(
                         "concrete_functions",

@@ -817,6 +817,82 @@ mod tests {
         assert!(elaborate_against(&compiled, &bodies).is_ok());
     }
 
+    #[test]
+    fn a_package_declaration_that_does_not_decode_fails_only_a_program_reaching_it() {
+        let (package, entry) = undecodable_declaration("List");
+        let reaching = Compiler::default()
+            .compile_source(
+                "def main():\n    var xs: List[Int] = [1]\n    print(len(xs))\n",
+                Path::new("main.mojo"),
+            )
+            .expect("compiles");
+        let error = elaborate_linked(&reaching, &package).expect_err("a reached record fails");
+        assert_eq!(error.kind, crate::native::mono::MonoErrorKind::Decode);
+        assert!(error.construct.contains("`List`"), "{error}");
+        assert!(matches!(package.declarations.decode(entry), Some(Err(_))));
+        // The failed record stays in the shared package; a program that
+        // does not reach it is not refused for it.
+        let unreaching = Compiler::default()
+            .compile_source("def main():\n    var x = 1\n", Path::new("main.mojo"))
+            .expect("compiles");
+        assert!(elaborate_linked(&unreaching, &package).is_ok());
+        let execution = Compiler::default()
+            .compile_source(
+                "def main():\n    var xs: List[Int] = [1]\n    print(len(xs))\n",
+                Path::new("main.mojo"),
+            )
+            .and_then(|program| Compiler::default().execute(&program))
+            .expect("the process package's declarations decode");
+        assert_eq!(execution.output, "1\n");
+    }
+
+    /// A private copy of the bundled package whose declaration record
+    /// `name` does not decode, and that record's entry.
+    fn undecodable_declaration(name: &str) -> (crate::mir::text::package::Package, usize) {
+        bundled_std_package(true)
+            .expect("the installed package reads")
+            .expect("the bundled library packages");
+        let path = cache_dir().join(format!("std-{BUILD_ID}.mojoc"));
+        let mut bytes = std::fs::read(&path).expect("the package is cached");
+        let root = bundled_root().expect("a bundled library").join("stdlib");
+        let root = LibraryRoot::new(&root);
+        let clean = read_package(PackageBytes::Owned(bytes.clone()), &root)
+            .expect("the cached package reads");
+        let directory = clean.declarations.directory();
+        let (entry, declaration) = (0..directory.declaration_count())
+            .filter_map(|entry| Some((entry, directory.declaration(entry)?)))
+            .find(|(_, declaration)| declaration.name == name)
+            .expect("the package declares the record");
+        let header = crate::mir::text::package::PACKAGE_FORMAT.len() + 1;
+        let length = u64::from_le_bytes(
+            bytes[header..header + 8]
+                .try_into()
+                .expect("a directory length"),
+        );
+        let start = header + 8 + usize::try_from(length).expect("a length");
+        let lowered = start + declaration.record.start;
+        bytes[lowered..lowered + declaration.residue].fill(0xFF);
+        let package =
+            read_package(PackageBytes::Owned(bytes), &root).expect("the corrupted package reads");
+        (package, entry)
+    }
+
+    /// Elaborate `compiled` against `package`, its declarations and bodies
+    /// alike, through a view of the package's declarations of its own.
+    fn elaborate_linked(
+        compiled: &crate::compiler::CompiledProgram,
+        package: &crate::mir::text::package::Package,
+    ) -> Result<crate::native::mono::SpecializedProgram, crate::native::mono::MonoError> {
+        let mut mir = compiled.elaborated_mir().clone();
+        crate::mir::link::link_declarations(&mut mir.declarations, &package.declarations);
+        crate::native::mono::specialize_importing(
+            &mir,
+            Some(&package.bodies),
+            &crate::native::mono::entry_roots(&mir),
+            None,
+        )
+    }
+
     /// A private copy of the bundled package whose every body, finished as
     /// the importer finishes it, carries one verifier finding.
     fn failing_bodies() -> PackageBodies {

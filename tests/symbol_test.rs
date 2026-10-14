@@ -769,7 +769,11 @@ fn program_overloads_ask_the_own_sets_then_the_owning_package_declaration() {
         .place_constant("N", mojito::IntLiteral::from(2_i64))
         .expect("a library declaration");
     let package = Arc::new(PackageDeclarations::of_records(records).expect("the records encode"));
-    let scope = PackageScope::new(Arc::clone(&package), Arc::from([true, false]));
+    let scope = PackageScope::new(
+        Arc::clone(&package),
+        Arc::from([true, false]),
+        mojito::checked_package::ReachedFailures::default(),
+    );
     let mut overloads = ProgramOverloads::importing(Some(scope.clone()));
     assert_eq!(package.decoded(), 0);
     overloads.scan_more(

@@ -182,7 +182,7 @@ impl MirDeclarations {
     /// decoded on first use.
     pub fn trait_declaration(&self, name: &str) -> Option<&TraitDeclaration> {
         self.own_trait(name)
-            .or_else(|| self.imported.as_ref()?.package().trait_declaration(name))
+            .or_else(|| self.imported.as_ref()?.trait_declaration(name))
     }
 
     /// Whether the declared trait `candidate` refines `required`, directly

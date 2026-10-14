@@ -7982,13 +7982,19 @@ fn a_library_trait_s_overloaded_requirement_is_found_by_lookup() {
         mojito::checked_package::PackageDeclarations::of_records(records)
             .expect("the records encode"),
     );
-    let reached =
-        mojito::checked_package::PackageScope::new(package.clone(), std::sync::Arc::from([true]));
+    let reached = mojito::checked_package::PackageScope::new(
+        package.clone(),
+        std::sync::Arc::from([true]),
+        mojito::checked_package::ReachedFailures::default(),
+    );
     assert!(reached.method_is_overloaded("Probe.probe", 0));
     assert!(reached.method_is_overloaded("Probe.probe", 1));
     assert!(!reached.method_is_overloaded("Probe.probe", 2));
-    let unreached =
-        mojito::checked_package::PackageScope::new(package, std::sync::Arc::from([false]));
+    let unreached = mojito::checked_package::PackageScope::new(
+        package,
+        std::sync::Arc::from([false]),
+        mojito::checked_package::ReachedFailures::default(),
+    );
     assert!(!unreached.method_is_overloaded("Probe.probe", 0));
     assert!(!unreached.method_is_overloaded("Probe.probe", 1));
 }

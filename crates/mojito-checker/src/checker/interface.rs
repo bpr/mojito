@@ -262,6 +262,7 @@ impl InstalledInterfaces {
             binding_count,
             decoded,
             failures: Mutex::new(Vec::new()),
+            reached_failures: mojito_checked::package::ReachedFailures::default(),
         }))
     }
 
@@ -282,6 +283,7 @@ impl InstalledInterfaces {
         mojito_checked::package::PackageScope::new(
             Arc::clone(&self.0.package.package),
             Arc::clone(&self.0.reached),
+            self.0.reached_failures.clone(),
         )
     }
 
@@ -294,14 +296,17 @@ impl InstalledInterfaces {
             .count()
     }
 
-    /// Why each declaration record a lookup asked for and that did not
-    /// decode failed.
+    /// Why each declaration record a lookup asked for, here or through
+    /// [`Self::package_scope`], and that did not decode failed.
     pub fn failures(&self) -> Vec<String> {
-        self.0
+        let mut failures = self
+            .0
             .failures
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+            .clone();
+        failures.extend(self.0.reached_failures.messages(&self.0.package.package));
+        failures
     }
 
     /// The record of the declaration `table`'s `key` belongs to, decoded on
@@ -351,11 +356,7 @@ impl InstalledInterfaces {
         &self,
         name: &str,
     ) -> Option<&Vec<mojito_checked::checked::TransferEffect>> {
-        self.0
-            .package
-            .package
-            .lowered_owning(name)?
-            .transfer_effects(name)
+        self.lowered_owning(name)?.transfer_effects(name)
     }
 
     /// The call-through effects the package recorded for its callable
@@ -364,11 +365,18 @@ impl InstalledInterfaces {
         &self,
         name: &str,
     ) -> Option<&Vec<mojito_checked::checked::CallThroughEffect>> {
-        self.0
-            .package
-            .package
-            .lowered_owning(name)?
-            .call_through_effects(name)
+        self.lowered_owning(name)?.call_through_effects(name)
+    }
+
+    /// The lowered part of the declaration owning `name`, noting a record
+    /// that does not decode.
+    fn lowered_owning(&self, name: &str) -> Option<&LoweredDeclaration> {
+        let package = &self.0.package.package;
+        let lowered = package.lowered_owning(name);
+        if lowered.is_none() {
+            self.0.reached_failures.note(package, package.owning(name));
+        }
+        lowered
     }
 
     /// Whether a reached module's declaration holds `table`'s `key`,
@@ -1075,6 +1083,9 @@ struct Installed {
     /// Per declaration, its record once a lookup asked for it.
     decoded: Vec<OnceLock<Option<Box<DeclarationInterface>>>>,
     failures: Mutex<Vec<String>>,
+    /// The package's lowered declarations its lookups and its package
+    /// scope's reached that do not decode.
+    reached_failures: mojito_checked::package::ReachedFailures,
 }
 
 impl DeclarationInterface {

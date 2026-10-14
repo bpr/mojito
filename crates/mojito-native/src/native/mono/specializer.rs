@@ -92,25 +92,25 @@ impl<'a> Specializer<'a> {
     }
 
     pub(super) fn run(mut self, entries: &[String]) -> Result<SpecializedProgram, MonoError> {
-        let mut entry_map = HashMap::new();
-        for entry in entries {
-            let decl = self.declarations.get(entry.as_str());
-            self.functions.get(entry.as_str()).ok_or_else(|| {
-                self.error(
-                    None,
-                    format!("entry function `{entry}` (not found in the MIR program)"),
-                )
-            })?;
-            if decl.is_some_and(|decl| !decl.param_decls.is_empty()) {
-                return Err(self.error(
-                    Some(entry),
-                    format!("generic entry `{entry}` has unresolved parameters"),
-                ));
-            }
-            let name = self.enqueue(entry, self.base_bindings(), Vec::new())?;
-            entry_map.insert(entry.clone(), name);
+        let demanded = self.demand(entries);
+        // A package declaration the elaboration reached that does not decode
+        // was a miss to every lookup that reached it, so its failure outranks
+        // whatever that miss made the elaboration conclude.
+        let failures = self
+            .source
+            .declarations
+            .imported
+            .as_ref()
+            .map(mojito_mir::mir::link::ImportedDeclarations::failures)
+            .unwrap_or_default();
+        if !failures.is_empty() {
+            return Err(MonoError {
+                kind: MonoErrorKind::Decode,
+                function: None,
+                construct: failures.join("; "),
+            });
         }
-        self.drain()?;
+        let entry_map = demanded?;
         let instance_templates = self
             .instances
             .iter()
@@ -154,6 +154,31 @@ impl<'a> Specializer<'a> {
             entries: entry_map,
             counts,
         })
+    }
+
+    /// Demand every entry of `entries` and elaborate all it reaches,
+    /// answering each entry's instance name.
+    fn demand(&mut self, entries: &[String]) -> Result<HashMap<String, String>, MonoError> {
+        let mut entry_map = HashMap::new();
+        for entry in entries {
+            let decl = self.declarations.get(entry.as_str());
+            self.functions.get(entry.as_str()).ok_or_else(|| {
+                self.error(
+                    None,
+                    format!("entry function `{entry}` (not found in the MIR program)"),
+                )
+            })?;
+            if decl.is_some_and(|decl| !decl.param_decls.is_empty()) {
+                return Err(self.error(
+                    Some(entry),
+                    format!("generic entry `{entry}` has unresolved parameters"),
+                ));
+            }
+            let name = self.enqueue(entry, self.base_bindings(), Vec::new())?;
+            entry_map.insert(entry.clone(), name);
+        }
+        self.drain()?;
+        Ok(entry_map)
     }
 
     pub(super) fn base_bindings(&self) -> Bindings {

@@ -121,6 +121,8 @@ pub enum MonoErrorKind {
     /// A package body the elaboration materializes failed verification
     /// when its importer finished it.
     Verify,
+    /// A package declaration the elaboration reached does not decode.
+    Decode,
 }
 
 impl std::fmt::Display for MonoError {
@@ -147,6 +149,10 @@ impl std::fmt::Display for MonoError {
             (None, MonoErrorKind::Verify) => {
                 write!(f, "a package body fails verification: {construct}")
             }
+            (Some(function), MonoErrorKind::Decode) => {
+                write!(f, "in `{function}`: {construct}")
+            }
+            (None, MonoErrorKind::Decode) => write!(f, "{construct}"),
         }
     }
 }
