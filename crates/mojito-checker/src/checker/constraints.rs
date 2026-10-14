@@ -5,6 +5,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::ct::SimdConstructionError;
 use mojito_types::types::TyKind;
 
 impl Checker {
@@ -408,25 +409,18 @@ impl Checker {
                     .map(|argument| self.eval_associated_ct(argument, associated))
                     .collect::<Result<Vec<_>, _>>()?;
                 let width = width as usize;
-                let values = if values.len() == 1 && width != 1 {
-                    vec![values[0].clone(); width]
-                } else if values.len() == width {
-                    values
-                } else {
-                    return Err(TypeError::NotComptime(format!(
-                        "SIMD[DType.{}, {width}] construction expects one lane or {width} lanes",
-                        dtype.name()
-                    )));
-                };
-                let lanes = values
-                    .iter()
-                    .map(|value| mojito_types::ct::CtLane::from_value(value, dtype))
-                    .collect::<Option<Vec<_>>>()
-                    .ok_or_else(|| {
-                        TypeError::NotComptime(format!(
-                            "a SIMD[DType.{}, {width}] lane needs a compile-time scalar",
-                            dtype.name()
-                        ))
+                let lanes = mojito_types::ct::simd_construction_lanes(dtype, width, &values)
+                    .map_err(|error| {
+                        TypeError::NotComptime(match error {
+                            SimdConstructionError::Arity => format!(
+                                "SIMD[DType.{}, {width}] construction expects one lane or {width} lanes",
+                                dtype.name()
+                            ),
+                            SimdConstructionError::Lane => format!(
+                                "a SIMD[DType.{}, {width}] lane needs a compile-time scalar",
+                                dtype.name()
+                            ),
+                        })
                     })?;
                 Ok(CtValue::Simd { dtype, lanes })
             }

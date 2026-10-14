@@ -11,8 +11,9 @@
 //! that folds ([`MirInstr::folded_constant`]) over constant operands is the
 //! folded constant, one with an unknown operand stays unknown, and every
 //! other result is overdefined. A literal materialized to `UInt` or a scalar
-//! SIMD type, a one-element `simd.make` of a literal at any known width
-//! (the splat), and an operator over `UInt` or SIMD constants fold to a
+//! SIMD type, a `simd.make` at any known width of one literal (the splat)
+//! or of one constant element per lane (`ct::simd_construction_lanes`), and
+//! an operator over `UInt` or SIMD constants fold to a
 //! `Const::Value`, lanes by the VM's own lane rule. A built-in scalar
 //! conversion (`UInt(x)`, `Float64(x)`, `Bool(x)`) over a constant folds by
 //! the VM's conversion rule, as `SCCP` folds the inlined `pop.cast`. A parameter read (`Const::Param`) and

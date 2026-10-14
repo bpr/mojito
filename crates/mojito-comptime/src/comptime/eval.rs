@@ -4,7 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::ct::ScalarConversion;
+use mojito_types::ct::{ScalarConversion, SimdConstructionError};
 use mojito_types::types::TyKind;
 
 impl Elab<'_> {
@@ -473,26 +473,17 @@ impl Elab<'_> {
             {
                 let values = self.eval_all(args, scope)?;
                 let width = width as usize;
-                let values = if values.len() == 1 && width != 1 {
-                    vec![values[0].clone(); width]
-                } else if values.len() == width {
-                    values
-                } else {
-                    return Err(ComptimeError::Arity(format!(
-                        "SIMD[DType.{}, {width}] construction expects one lane or {width} lanes, got {}",
-                        dtype.name(),
-                        values.len()
-                    )));
-                };
-                let lanes = values
-                    .iter()
-                    .map(|value| mojito_types::ct::CtLane::from_value(value, dtype))
-                    .collect::<Option<Vec<_>>>()
-                    .ok_or_else(|| {
-                        ComptimeError::NotComptime(format!(
+                let lanes = mojito_types::ct::simd_construction_lanes(dtype, width, &values)
+                    .map_err(|error| match error {
+                        SimdConstructionError::Arity => ComptimeError::Arity(format!(
+                            "SIMD[DType.{}, {width}] construction expects one lane or {width} lanes, got {}",
+                            dtype.name(),
+                            values.len()
+                        )),
+                        SimdConstructionError::Lane => ComptimeError::NotComptime(format!(
                             "a SIMD[DType.{}, {width}] lane needs a compile-time scalar",
                             dtype.name()
-                        ))
+                        )),
                     })?;
                 Ok(CtValue::Simd { dtype, lanes })
             }

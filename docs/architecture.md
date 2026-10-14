@@ -4887,8 +4887,10 @@ second runs `SCCP` and a `Canonicalizer` again, so `PIPELINE` is
   operators with no checker-selected dunder and no `raises`, `not`, `-`,
   and `~`, a literal materialized to `Int`, `UInt`, `Float64`, or a
   one-lane SIMD type, a one-element `simd.make` of a literal at any known
-  width, or above one lane of a one-lane constant of its dtype or a `Bool`
-  fill (upstream's splat `SIMD.__init__`), a built-in scalar conversion
+  width, and above one lane a `simd.make` with one element (upstream's
+  splat `SIMD.__init__`) or one element per lane (upstream's
+  `SIMD.__init__(*elems: Scalar[dtype])`), each element a literal, a
+  one-lane constant of its dtype, or a `Bool` into a `bool` vector, a built-in scalar conversion
   (`MirInstr::scalar_conversion`: a bare `call` of `Int`, `UInt`,
   `Float64`, or `Bool` with one argument that names no declared function,
   as the VM and Pliron resolve it, Mojito's counterpart of the
@@ -4900,8 +4902,11 @@ second runs `SCCP` and a `Canonicalizer` again, so `PIPELINE` is
   comptime evaluator call too, and folds nothing for a float converted to
   `Int` or `UInt` that is out of range or not finite, which the pin's
   interpreter refuses and only run time saturates. A materialization or a one-lane `simd.make` folds to the value
-  `CtValue::materialize_as` gives, and a wider splat to that lane repeated
-  (`param_expr::fold::splat_lanes`); the lane rule
+  `CtValue::materialize_as` gives, and a wider `simd.make` to the lanes
+  `ct::simd_construction_lanes` gives, each element's lane by
+  `CtLane::from_value`, the construction rule the comptime evaluator and
+  the checker's constraint evaluator share; an element Mojito narrows but
+  the pin rejects (an `Int`, divergence R186) folds nothing. The literal lane rule
   (`CtLane::of_int_literal`, `CtLane::of_float_literal`) is the VM's own,
   which `runtime::materialize_literal` and `runtime::simd_from_values` call;
   a `UInt` or SIMD result is a `Const::Value`, upstream's
@@ -4920,8 +4925,7 @@ second runs `SCCP` and a `Canonicalizer` again, so `PIPELINE` is
   The rewrite replaces each instruction that folds over the final lattice
   by a `const` of the same register, which keeps its type and span; the
   pass never rewrites a terminator, which the `canonicalize` after it does.
-  A literal splatted to a multi-lane SIMD type, and a multi-lane
-  `simd.make`, are not folded. Its `--timings` counter is `folded_constants`.
+  Its `--timings` counter is `folded_constants`.
 - **Two seams, once per body.** `CompiledProgram::elaborated_mir` runs
   `pre_elaborate_program` over the program's own bodies after
   `elaborate_drops_program` (the `pre_elaboration` `--timings` span), and an

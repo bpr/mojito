@@ -987,10 +987,14 @@ impl Elab<'_> {
             })
             .and_then(|target| mojito_types::types::simd_shape(&target))
             .and_then(|(dtype, width)| {
-                mojito_types::ct::CtLane::from_value(&value, dtype).map(|lane| CtValue::Simd {
+                let width = usize::try_from(width).unwrap_or(1);
+                mojito_types::ct::simd_construction_lanes(
                     dtype,
-                    lanes: vec![lane; usize::try_from(width).unwrap_or(1)],
-                })
+                    width,
+                    std::slice::from_ref(&value),
+                )
+                .ok()
+                .map(|lanes| CtValue::Simd { dtype, lanes })
             })
             .unwrap_or(value)
     }

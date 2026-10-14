@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `sccp` now folds a per-lane SIMD construction such as
+  `SIMD[DType.int32, 4](1, 2, 3, 4)` (R855) to one constant vector, as
+  upstream folds `SIMD.__init__(*elems: Scalar[dtype])`, when each element
+  is a literal, a one-lane constant of the vector's dtype, or a `Bool` into
+  a `bool` vector. Its lanes come from one construction rule
+  (`ct::simd_construction_lanes` over `CtLane::from_value`) that the
+  comptime evaluator and the checker's constraint evaluator now share, so
+  a compile-time integer literal in a float lane now rounds once, as at
+  run time, instead of twice.
+
 - `sccp` now folds a built-in scalar conversion of a constant
   (`UInt(Int(7))`, `Float64(n)`, `Bool(1)`, R856), Mojito's counterpart of
   the `pop.cast` upstream's inlined `SIMD.__init__` leaves, by one rule

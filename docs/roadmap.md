@@ -56,20 +56,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R855 A multi-lane `simd.make` of literals is not folded**
-
-  `sccp` folds a one-lane `simd.make` of a literal, but leaves
-  `SIMD[DType.int32, 4](1, 2, 3, 4)`, where upstream folds the construction
-  to one constant vector.
-  - `MirInstr::folded_constant` could build each lane with
-    `CtLane::of_int_literal` or `of_float_literal` and write a
-    `CtValue::Simd`, as R847's splat does.
-  - Done when such a construction folds and the native differential is
-    clean on a probe.
-  - Found while landing R846 (2026-10-14).
-  - Depends on R847 (the same lane-vector constant).
-  - Model: Opus, Not Planned.
-
 - [ ] **R836 Generic bodies carry empty pass-through blocks into every
   instance**
 

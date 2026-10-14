@@ -35,31 +35,38 @@ pub enum CtLane {
 }
 
 impl CtLane {
-    /// Wrap a compile-time scalar into one lane of `dtype`, or `None` when
-    /// the value kind does not fit the lane (a float into an integer lane).
+    /// One element's lane of `dtype` under upstream's `*elems: Scalar[dtype]`
+    /// conversion, or `None` when the element does not fit the lane (a float
+    /// into an integer lane, a one-lane value of another dtype).
+    ///
+    /// A literal materializes by the literal rule ([`Self::of_int_literal`],
+    /// [`Self::of_float_literal`]), and a one-lane `Scalar[dtype]` is its own
+    /// lane. The `Int`, `UInt`, and `Float` arms are the element narrowing
+    /// the pin rejects (divergence R186).
     pub fn from_value(value: &CtValue, dtype: mojito_ast::ast::Dtype) -> Option<Self> {
         use mojito_ast::ast::Dtype;
-        match dtype {
-            Dtype::Bool => match value {
-                CtValue::Bool(value) => Some(Self::Bool(*value)),
+        match (dtype, value) {
+            (_, CtValue::IntLiteral(literal)) => Self::of_int_literal(literal, dtype),
+            (_, CtValue::FloatLiteral(literal)) => Self::of_float_literal(literal, dtype),
+            (_, CtValue::Simd { dtype: own, lanes }) if *own == dtype => match lanes.as_slice() {
+                [lane] => Some(lane.clone()),
                 _ => None,
             },
-            Dtype::Float16 | Dtype::Float32 | Dtype::Float64 => {
+            (Dtype::Bool, CtValue::Bool(value)) => Some(Self::Bool(*value)),
+            (Dtype::Bool, _) => None,
+            (Dtype::Float16 | Dtype::Float32 | Dtype::Float64, value) => {
                 let value = match value {
-                    CtValue::Float(bits) => dtype.round_lane(f64::from_bits(*bits)),
-                    CtValue::FloatLiteral(value) => dtype.float_literal_lane(value)?,
-                    CtValue::IntLiteral(value) => dtype.round_lane(value.to_f64()?),
-                    CtValue::Int(value) => dtype.round_lane(*value as f64),
-                    CtValue::UInt(value) => dtype.round_lane(*value as f64),
+                    CtValue::Float(bits) => f64::from_bits(*bits),
+                    CtValue::Int(value) => *value as f64,
+                    CtValue::UInt(value) => *value as f64,
                     _ => return None,
                 };
-                Some(Self::Float(value.to_bits()))
+                Some(Self::Float(dtype.round_lane(value).to_bits()))
             }
-            integer => {
+            (integer, value) => {
                 let wide: i128 = match value {
                     CtValue::Int(value) => i128::from(*value),
                     CtValue::UInt(value) => i128::from(*value),
-                    CtValue::IntLiteral(value) => i128::from(value.wrapping_signed(64)?),
                     CtValue::Bool(value) => i128::from(*value),
                     _ => return None,
                 };
@@ -93,6 +100,35 @@ impl CtLane {
             .then(|| dtype.float_literal_lane(literal))
             .flatten()
             .map(|lane| Self::Float(lane.to_bits()))
+    }
+}
+
+/// Why a compile-time `SIMD[dtype, width](values…)` construction has no
+/// value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SimdConstructionError {
+    /// Neither one value (a splat) nor one value per lane.
+    Arity,
+    /// A value does not fit a lane of the dtype.
+    Lane,
+}
+
+/// The lanes of `SIMD[dtype, width](values…)`: one value splats across the
+/// width, and `width` values give one lane each (upstream's
+/// `*elems: Scalar[dtype]`), each lane by [`CtLane::from_value`].
+///
+/// The comptime evaluator, the checker's constraint evaluator, and `sccp`'s
+/// `simd.make` fold all build a construction's lanes by this one rule.
+pub fn simd_construction_lanes(
+    dtype: mojito_ast::ast::Dtype,
+    width: usize,
+    values: &[CtValue],
+) -> Result<Vec<CtLane>, SimdConstructionError> {
+    let lane = |value| CtLane::from_value(value, dtype).ok_or(SimdConstructionError::Lane);
+    match values {
+        [value] if width != 1 => Ok(vec![lane(value)?; width]),
+        _ if values.len() == width => values.iter().map(lane).collect(),
+        _ => Err(SimdConstructionError::Arity),
     }
 }
 
@@ -1296,6 +1332,44 @@ mod tests {
             Some(CtLane::Float(
                 f64::from(2f32.powi(60) + 2f32.powi(37)).to_bits()
             ))
+        );
+    }
+
+    #[test]
+    fn construction_lanes_convert_each_element_to_a_scalar() {
+        use super::{CtValue, SimdConstructionError, simd_construction_lanes};
+        let wide = CtValue::IntLiteral(IntLiteral::from((1_i64 << 60) + (1 << 36) + 1));
+        assert_eq!(
+            CtLane::from_value(&wide, Dtype::Float32),
+            Some(CtLane::Float(
+                f64::from(2f32.powi(60) + 2f32.powi(37)).to_bits()
+            ))
+        );
+        let int32 = |lane| CtValue::Simd {
+            dtype: Dtype::Int32,
+            lanes: vec![CtLane::Int(lane)],
+        };
+        assert_eq!(
+            CtLane::from_value(&int32(7), Dtype::Int32),
+            Some(CtLane::Int(7))
+        );
+        assert_eq!(CtLane::from_value(&int32(7), Dtype::Int8), None);
+        let literal = |value: i64| CtValue::IntLiteral(IntLiteral::from(value));
+        assert_eq!(
+            simd_construction_lanes(Dtype::UInt8, 3, &[literal(300)]),
+            Ok(vec![CtLane::Int(44); 3])
+        );
+        assert_eq!(
+            simd_construction_lanes(Dtype::Int32, 3, &[literal(1), int32(2), literal(-3)]),
+            Ok(vec![CtLane::Int(1), CtLane::Int(2), CtLane::Int(-3)])
+        );
+        assert_eq!(
+            simd_construction_lanes(Dtype::Int32, 3, &[literal(1), literal(2)]),
+            Err(SimdConstructionError::Arity)
+        );
+        assert_eq!(
+            simd_construction_lanes(Dtype::Bool, 2, &[literal(1), literal(0)]),
+            Err(SimdConstructionError::Lane)
         );
     }
 
