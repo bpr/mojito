@@ -143,6 +143,7 @@ pub fn compile(
         signatures: &signatures,
         declarations: &declarations,
         struct_decls: &struct_decls,
+        mir_declarations: &program.declarations,
         layout,
         locator: &locator,
         trace_lifecycle: options.trace_lifecycle,

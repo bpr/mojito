@@ -4868,21 +4868,31 @@ second runs `SCCP` and a `Canonicalizer` again, so `PIPELINE` is
   then folds each `value.copy` that is the identity to its operand (R780,
   `MirInstr::forwarded_operand`, MLIR's `fold` returning an operand): when
   source and destination are typed alike by a type
-  `types::copy_is_identity` accepts (a scalar, pointer, `None`, or one SIMD
-  lane, held whole in one register on both backends), the copy is removed
-  and every reader names the source, chains resolved to their root. Only a
-  result with one definition whose source has at most one is forwarded, so
-  the source's definition dominates every reader. Then, until nothing
+  `MirDeclarations::copy_is_identity` accepts, the copy is removed and every
+  reader names the source, chains resolved to their root. That is a value
+  held whole in one register on both backends (`types::copy_is_identity`: a
+  scalar, pointer, `None`, or one SIMD lane), or a register-passable trivial
+  one, which upstream's parser loads into an SSA value its copies are: a
+  compiler-known type upstream declares `TrivialRegisterPassable`
+  (`types::trivially_register_passable_leaf`: vector SIMD, `StringLiteral`),
+  or a struct declaring it unconditionally with no `__copyinit__` or
+  `__del__` and only such fields; a tuple is not one, as upstream's is not.
+  Only a result with one definition whose source has at most one is
+  forwarded, so the source's definition dominates every reader, and a copy
+  of a value held in storage only when it is its source's sole reader, since
+  a reader may consume it. A `place.load` result is the place's value at the
+  read: a backend may alias it to the place (Pliron's
+  `collect_aliased_load_regs`) only for a type whose copy is not the
+  identity, while nothing writes the place before the register's last
+  reader. Then, until nothing
   changes, it erases each instruction whose results nothing reads and
   that `MirInstr::would_be_trivially_dead` declares free of effects but
   reading (MLIR's `wouldOpBeTriviallyDead`): constants, literal
   materialization, layout and name queries, borrows, field and reference
   reads, plain place reads, variant tests, and SIMD value operations. As in
   MLIR, anything not declared free of effects stays: a copy that is not the
-  identity (it may run `__copyinit__`, which only an instance decides, and
-  an aggregate copy, even a trivial one, is the snapshot of a shallow
-  aggregate place read, so forwarding it would let a later store to the
-  place show through), a move, an operator (a
+  identity (it may run `__copyinit__`, which only an instance decides), a
+  move, an operator (a
   dunder call per instance), a call, every drop, consume, and ownership
   mark (none of which defines a result), and every loan or interior marker.
   A register's read count is every register its instruction names but its

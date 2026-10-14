@@ -56,8 +56,9 @@ use mojito_checked::checked::CheckedConst;
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_common::token::SourceSpan;
 use mojito_mir::mir::{
-    Const as MirConst, MirBlock, MirBlockId, MirCaptureMode, MirClosureCapture, MirFunction,
-    MirFunctionDeclaration, MirInstr, MirPlace, MirStructDeclaration, MirTerm, Proj, Reg, UseMode,
+    Const as MirConst, MirBlock, MirBlockId, MirCaptureMode, MirClosureCapture, MirDeclarations,
+    MirFunction, MirFunctionDeclaration, MirInstr, MirPlace, MirStructDeclaration, MirTerm, Proj,
+    Reg, UseMode,
 };
 use mojito_types::types::{Ty, TyArg, canonical_simd_ty, scalar_simd_dtype};
 
@@ -222,6 +223,9 @@ pub struct LowerEnv<'a> {
     pub signatures: &'a HashMap<String, FnSignature>,
     pub declarations: &'a HashMap<String, MirFunctionDeclaration>,
     pub struct_decls: &'a HashMap<&'a str, &'a MirStructDeclaration>,
+    /// The program's MIR declarations, which answer whether a copy of a
+    /// value is the value ([`MirDeclarations::copy_is_identity`]).
+    pub mir_declarations: &'a MirDeclarations,
     pub layout: LayoutCx<'a>,
     pub locator: &'a Locator,
     /// Emit `mjrt_trace` lifecycle events (test lane only).
@@ -262,7 +266,7 @@ pub fn lower_body(
         print_sink: None,
         partially_moved: HashSet::new(),
         leaf_flags: HashMap::new(),
-        aliased_load_regs: collect_aliased_load_regs(func, env.declarations),
+        aliased_load_regs: collect_aliased_load_regs(func, env.declarations, env.mir_declarations),
         loaded_places: collect_loaded_places(&func.blocks),
         pointer_slot_refs: HashSet::new(),
         initialized_vars: HashSet::new(),

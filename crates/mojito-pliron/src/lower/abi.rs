@@ -355,7 +355,8 @@ impl FnLowering<'_> {
 
     /// Load the value at `address` with checked type `ty` into `dest`:
     /// scalars load directly; an aggregate whose consumers are not all
-    /// borrowing (see `collect_aliased_load_regs`) copies out into fresh
+    /// borrowing, or whose copy is the value itself (see
+    /// `collect_aliased_load_regs`), copies out into fresh
     /// storage — a clone for a value with copy work of its own, otherwise a
     /// byte copy.
     pub(super) fn load_from(

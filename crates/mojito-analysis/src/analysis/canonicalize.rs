@@ -34,6 +34,7 @@ use mojito_mir::mir::{
     block_successors, instruction_regs_mut, prune_unreachable_blocks, terminator_regs_mut,
     terminator_targets, terminator_targets_mut,
 };
+use mojito_types::types::copy_is_identity;
 use std::collections::{HashMap, HashSet};
 
 /// The pass, under MLIR's flag spelling.
@@ -50,12 +51,15 @@ pub const CANONICALIZE: BodyPass = BodyPass {
 /// anything: an erased instruction can empty a block, and a branch folded
 /// to a jump leaves its condition unread. A removed instruction's results
 /// lose their types and spans; registers are not renumbered.
-pub fn canonicalize(_name: &str, function: &mut MirFunction, _declarations: &MirDeclarations) {
+pub fn canonicalize(_name: &str, function: &mut MirFunction, declarations: &MirDeclarations) {
     timing::count("folded_branches", fold_constant_branches(function) as u64);
     let blocks = block_count(&mut function.blocks);
     let mut edits = simplify_control_flow(&mut function.blocks, true);
     prune_unreachable_blocks(function);
-    timing::count("forwarded_copies", forward_copies(function) as u64);
+    timing::count(
+        "forwarded_copies",
+        forward_copies(function, declarations) as u64,
+    );
     let mut erased = HashSet::new();
     loop {
         let before = erased.len();
@@ -345,8 +349,12 @@ fn visit_blocks(blocks: &mut [MirBlock], visit: &mut impl FnMut(&mut MirBlock)) 
 ///
 /// Only a result with one definition whose operand has at most one is
 /// forwarded, so every other occurrence of the result is a read the
-/// operand's definition dominates.
-fn forward_copies(function: &mut MirFunction) -> usize {
+/// operand's definition dominates. A copy of a value held in storage rather
+/// than one register (a register-passable trivial aggregate) is forwarded
+/// only when it is its operand's sole reader: a reader may consume such a
+/// value (an owned argument, an `UninitStorage` initialization), so the
+/// forwarded value keeps exactly the copy's readers.
+fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) -> usize {
     let MirFunction {
         blocks,
         reg_types,
@@ -354,20 +362,31 @@ fn forward_copies(function: &mut MirFunction) -> usize {
         ..
     } = function;
     let definitions = definition_counts(blocks, *n_regs);
+    let mut reads = vec![0_u32; *n_regs as usize];
+    count_reads(blocks, &mut reads);
     let mut folds = HashMap::new();
     visit_blocks(blocks, &mut |block| {
         for instruction in &block.instrs {
             let mut results = Vec::new();
             instruction_result_regs(instruction, &mut results);
-            if let (Some(operand), [dest]) =
-                (instruction.forwarded_operand(reg_types), results.as_slice())
-            {
+            if let (Some(operand), [dest]) = (
+                instruction.forwarded_operand(reg_types, declarations),
+                results.as_slice(),
+            ) {
                 folds.insert(dest.0, operand);
             }
         }
     });
     let single = |reg: u32, most: u32| definitions.get(reg as usize).is_some_and(|n| *n <= most);
-    folds.retain(|dest: &u32, operand: &mut Reg| single(*dest, 1) && single(operand.0, 1));
+    let in_register = |reg: &Reg| {
+        reg_types
+            .get(&reg.0)
+            .is_some_and(|ty| copy_is_identity(ty.kind()))
+    };
+    let sole_reader = |reg: &Reg| reads.get(reg.0 as usize) == Some(&1);
+    folds.retain(|dest: &u32, operand: &mut Reg| {
+        single(*dest, 1) && single(operand.0, 1) && (in_register(operand) || sole_reader(operand))
+    });
     let roots: HashMap<u32, Reg> = folds
         .keys()
         .filter_map(|dest| {

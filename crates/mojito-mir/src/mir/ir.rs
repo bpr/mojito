@@ -1925,15 +1925,22 @@ impl MirInstr {
     ///
     /// Only a `value.copy` folds, and only when its source and destination are
     /// typed alike by a type whose copy is the identity
-    /// ([`copy_is_identity`]). A widening copy changes its readers' operand
-    /// type, and a `rebind` is an assertion the elaborator judges per
-    /// instance.
-    pub fn forwarded_operand(&self, reg_types: &HashMap<u32, Ty>) -> Option<Reg> {
+    /// ([`MirDeclarations::copy_is_identity`]): a one-register value, or a
+    /// register-passable trivial one, which upstream's parser loads into an
+    /// SSA value its copies are. A widening copy changes its readers'
+    /// operand type, and a `rebind` is an assertion the elaborator judges
+    /// per instance.
+    pub fn forwarded_operand(
+        &self,
+        reg_types: &HashMap<u32, Ty>,
+        declarations: &MirDeclarations,
+    ) -> Option<Reg> {
         let Self::CopyValue { dest, value } = self else {
             return None;
         };
         let source = reg_types.get(&value.0)?;
-        (reg_types.get(&dest.0) == Some(source) && copy_is_identity(source)).then_some(*value)
+        (reg_types.get(&dest.0) == Some(source) && declarations.copy_is_identity(source))
+            .then_some(*value)
     }
 
     /// The operand and target of a built-in scalar conversion
@@ -2085,7 +2092,10 @@ impl MirInstr {
                 };
                 (dest, folded)
             }
-            Self::CopyValue { dest, .. } => (dest, operand(self.forwarded_operand(reg_types)?)?),
+            Self::CopyValue { dest, .. } => (
+                dest,
+                operand(self.forwarded_operand(reg_types, declarations)?)?,
+            ),
             Self::Call { dest, .. } => {
                 let (arg, target) = self.scalar_conversion(declarations)?;
                 (dest, operand(arg)?.folded_conversion(target)?)
@@ -2449,7 +2459,7 @@ mod tests {
                 dest: Reg(1),
                 value: Reg(0),
             }
-            .forwarded_operand(&reg_types)
+            .forwarded_operand(&reg_types, &MirDeclarations::default())
         };
         assert_eq!(
             folds(Ty::new(TyKind::Int), Ty::new(TyKind::Int)),
@@ -2459,9 +2469,9 @@ mod tests {
         assert_eq!(folds(param.clone(), param), None);
         let string = Ty::new(TyKind::Struct("String".into(), Vec::new()));
         assert_eq!(folds(string.clone(), string), None);
-        assert_eq!(folds(lane(4), lane(4)), None);
+        assert_eq!(folds(lane(4), lane(4)), Some(Reg(0)));
         let literal = Ty::new(TyKind::StringLiteral);
-        assert_eq!(folds(literal.clone(), literal), None);
+        assert_eq!(folds(literal.clone(), literal), Some(Reg(0)));
         assert_eq!(
             folds(Ty::new(TyKind::IntLiteral), Ty::new(TyKind::Int)),
             None
@@ -2471,7 +2481,131 @@ mod tests {
             dest: Reg(1),
             value: Reg(0),
         };
-        assert_eq!(rebind.forwarded_operand(&reg_types), None);
+        assert_eq!(
+            rebind.forwarded_operand(&reg_types, &MirDeclarations::default()),
+            None
+        );
+    }
+
+    #[test]
+    fn copy_is_identity_answers_from_a_trivial_register_passable_declaration() {
+        use mojito_checked::checked::StructConformance;
+        let param = || {
+            Ty::new(TyKind::Param {
+                binder: mojito_types::param_expr::ParamRef::unbound("T"),
+                bounds: Vec::new(),
+                callable_bound: None,
+            })
+        };
+        let structure =
+            |name: &str, fields: Vec<Ty>, trait_name: &str, conditions| MirStructDeclaration {
+                name: name.into(),
+                fields: fields
+                    .into_iter()
+                    .enumerate()
+                    .map(|(at, ty)| (format!("f{at}"), ty))
+                    .collect(),
+                mut_self_methods: HashSet::new(),
+                fieldwise_init: true,
+                param_decls: Vec::new(),
+                explicit_destructors: HashMap::new(),
+                explicit_destroy: None,
+                conformances: Vec::new(),
+                declared: vec![StructConformance {
+                    trait_name: trait_name.into(),
+                    conditions,
+                }],
+                associated_types: Vec::new(),
+                parameterized_associated_types: Vec::new(),
+                associated_values: Vec::new(),
+            };
+        let struct_ty = |name: &str| Ty::new(TyKind::Struct(name.into(), Vec::new()));
+        let unconditional = || vec![GenericConstraint::Bool(true)];
+        let lanes = Ty::new(TyKind::Simd {
+            dtype: mojito_types::types::SimdDtype::Known(Dtype::Int32),
+            width: mojito_types::types::SimdWidth::Known(4),
+        });
+        let string = struct_ty("String");
+        let trivial = "TrivialRegisterPassable";
+        let mut declarations = MirDeclarations {
+            structs: vec![
+                structure(
+                    "P",
+                    vec![Ty::new(TyKind::Int), lanes.clone()],
+                    trivial,
+                    unconditional(),
+                ),
+                structure("Nested", vec![struct_ty("P")], trivial, unconditional()),
+                structure(
+                    "Copied",
+                    vec![Ty::new(TyKind::Int)],
+                    trivial,
+                    unconditional(),
+                ),
+                structure("Holds", vec![string], trivial, unconditional()),
+                structure("Generic", vec![param()], trivial, unconditional()),
+                structure(
+                    "Conditional",
+                    vec![Ty::new(TyKind::Int)],
+                    trivial,
+                    vec![GenericConstraint::Conforms {
+                        param: mojito_types::param_expr::ParamRef::unbound("T"),
+                        trait_name: trivial.into(),
+                    }],
+                ),
+                structure(
+                    "Implicit",
+                    vec![Ty::new(TyKind::Int)],
+                    "ImplicitlyCopyable",
+                    unconditional(),
+                ),
+            ],
+            ..MirDeclarations::default()
+        };
+        declarations.functions.push(MirFunctionDeclaration {
+            lowered_name: "Copied.__copyinit__".into(),
+            param_names: Vec::new(),
+            param_types: Vec::new(),
+            defaults: Vec::new(),
+            required: Vec::new(),
+            variadic: None,
+            variadic_convention: None,
+            variadic_index: None,
+            kw_variadic: None,
+            kw_variadic_convention: None,
+            kw_variadic_index: None,
+            positional_only: None,
+            keyword_only: None,
+            param_decls: Vec::new(),
+            has_receiver: false,
+            receiver_convention: None,
+            param_conventions: Vec::new(),
+            ret_ty: Ty::none(),
+            returns_reference: false,
+            raises: false,
+            error_ty: None,
+            ref_params: Vec::new(),
+            param_writes: Vec::new(),
+            availability: Vec::new(),
+            enclosing: None,
+            region_binders: Vec::new(),
+        });
+        let answers = |name: &str| declarations.copy_is_identity(&struct_ty(name));
+        assert!(answers("P"));
+        assert!(answers("Nested"));
+        assert!(declarations.copy_is_identity(&lanes));
+        assert!(declarations.copy_is_identity(&Ty::new(TyKind::StringLiteral)));
+        for kept in [
+            "Copied",
+            "Holds",
+            "Generic",
+            "Conditional",
+            "Implicit",
+            "Tuple",
+        ] {
+            assert!(!answers(kept), "{kept}");
+        }
+        assert!(!declarations.copy_is_identity(&param()));
     }
 
     #[test]

@@ -2731,9 +2731,10 @@ pub const fn builtin_copy_is_value_read(ty: &TyKind) -> bool {
 ///
 /// The value is a scalar, pointer, `None`, or one SIMD lane, held whole in
 /// one register on both backends, so copying it is a bit copy and no
-/// `__copyinit__` runs. A lane's dtype may still be a parameter; every instance closes it to a
-/// scalar. Aggregates are excluded even when trivially copyable: MIR reads
-/// an aggregate place shallowly, and the copy is the read's snapshot.
+/// `__copyinit__` runs. A lane's dtype may still be a parameter; every
+/// instance closes it to a scalar. A copy of a value held in storage is the
+/// identity too when its type is register-passable trivial:
+/// `MirDeclarations::copy_is_identity` answers for those.
 pub const fn copy_is_identity(ty: &TyKind) -> bool {
     matches!(
         ty,
@@ -2751,6 +2752,13 @@ pub const fn copy_is_identity(ty: &TyKind) -> bool {
                 ..
             }
     )
+}
+
+/// Whether this compiler-known type is one upstream declares
+/// `TrivialRegisterPassable`: a [`copy_is_identity`] value, a SIMD vector
+/// of any dtype and width, or a `StringLiteral`. Its copy is a bit copy.
+pub const fn trivially_register_passable_leaf(ty: &TyKind) -> bool {
+    copy_is_identity(ty) || matches!(ty, TyKind::Simd { .. } | TyKind::StringLiteral)
 }
 
 /// Recover the monomorphic or generic callable contract carried either directly

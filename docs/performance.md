@@ -1317,9 +1317,10 @@ the program's and the package's concrete bodies.
 
 **What stays.** A copy of a struct or of a type parameter may run
 `__copyinit__`, so it stays on the generator; a type-parameter copy an
-instance makes trivial is R839. A copy of a trivially copyable aggregate
-(vector SIMD, `StringLiteral`, tuples) stays because an aggregate place read
-is shallow and the copy is its snapshot (R838). A widening copy
+instance makes trivial is R839. A copy of a register-passable trivial
+aggregate (vector SIMD, `StringLiteral`, a `TrivialRegisterPassable`
+struct) now folds too (R838, below); a tuple copy stays, as upstream's
+`Tuple.__init__(copy=)` call does. A widening copy
 (`IntLiteral` into `Int`) stays because forwarding it would change its
 readers' operand type.
 
@@ -1490,3 +1491,27 @@ The counters are `canonicalize.threaded_branches`,
 `collections_many` the post-elaboration run threads 6 edges and merges 26
 blocks; the pre-elaboration work lands in std package bodies, finished on
 the elaborator's thread, so its counts do not reach `--timings`.
+
+## Canonicalize forwards copies of register-passable trivial values (2026-10-14, R838)
+
+`canonicalize` now forwards a `value.copy` of a vector SIMD, a
+`StringLiteral`, or a struct that declares `TrivialRegisterPassable`
+unconditionally (`MirDeclarations::copy_is_identity`), as upstream's parser
+loads such a value into an SSA value its copies are. Such a copy is
+forwarded only when it is its operand's sole reader, and Pliron never
+aliases a load of such a type to its place, so the forwarded register is
+the value read, not a view of the place. `scripts/instantiation-report`
+over the 1 021 fixtures that predate the change, debug binary:
+
+| | before | after | change |
+|---|---:|---:|---:|
+| corpus `concrete_instructions` | 787 273 | 787 247 | −26 |
+| corpus `generator_instructions` | 216 720 | 216 714 | −6 |
+| corpus `generator_instance_instructions` | 349 092 | 349 075 | −17 |
+
+Ten fixtures moved, all SIMD-heavy (`simd_parameter_default_construction`
+−6 concrete instructions); none grew. The effect is small because lowering
+already makes no copy for `var q = p` or a read argument: the copies left
+are a field read returned, stored, or passed owned. On
+`assets/ok/trivial_register_passable_copy_forwarded.mojo` the
+pre-elaboration `canonicalize.forwarded_copies` rises from 1 to 5.

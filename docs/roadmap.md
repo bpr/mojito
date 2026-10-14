@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R860**.
+Next free ID: **R863**.
 
 ## Ordered Work
 
@@ -56,25 +56,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R838 A copy of a trivially copyable aggregate survives into every
-  instance**
-
-  `canonicalize` cannot forward a copy of a vector SIMD, `StringLiteral`,
-  tuple of scalars, or `TrivialRegisterPassable` struct, where upstream's
-  loads produce values and such a copy is the SSA value itself.
-  - MIR reads an aggregate place shallowly, and the copy is the read's
-    snapshot: Pliron's `collect_aliased_load_regs` (`lower/support.rs`)
-    aliases a load whose consumers all borrow, so a forwarded copy would
-    show a later store to the place.
-  - It needs a load that snapshots whenever its register outlives a store
-    to the place, or a fold that proves no such store lies between the copy
-    and its readers (`analysis/register_loans.rs` reasons about the same).
-  - `MirDeclarations` must also answer `TrivialRegisterPassable` for a
-    struct, which it does not record today.
-  - Done when such copies fold, with the native differential clean on a
-    probe that stores to the place after the copy.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R839 A copy typed by a type parameter stays a copy in an instance
   that makes it trivial**
@@ -4826,6 +4807,63 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Pinned by `conformance/probes/conforms_to_undeclared_compiler_trait.mojo`.
   - Found while landing R564 (2026-10-10).
   - Depends on R578.
+  - Model: Opus, Not Planned.
+- [ ] **R862 `TrivialRegisterPassable` holds for a struct that never
+  declares it**
+
+  `conforms_to(T, TrivialRegisterPassable)` holds for a `Movable` struct and
+  `List[Int]`, and a `T: TrivialRegisterPassable` bound accepts both, where
+  the pin answers no and rejects the call.
+  - Cause: the shared rule answers the trait shallowly
+    (`StructTraitRule::Shallow` in `mojito_types::conformance`, and the
+    checker's `conforms_to` `_ => true` arm), as R577 describes for
+    `Sized`.
+  - Unlike R577's traits, every fact is already at hand: a struct's
+    `declared` rows, and `types::trivially_register_passable_leaf` for the
+    compiler-known types upstream declares it on.
+    `MirDeclarations::copy_is_identity` already answers this way below the
+    waist.
+  - Pinned by
+    `conformance/probes/conforms_to_trivial_register_passable_undeclared.mojo`
+    and `conformance/probes/trivial_register_passable_bound_undeclared.mojo`.
+  - Found while landing R838 (2026-10-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+- [ ] **R860 A `TrivialRegisterPassable` struct may define a copy
+  constructor or `__del__`, or hold a non-trivial field**
+
+  Mojito accepts all three, and runs the user copy constructor and
+  destructor, where the pin rejects each at the declaration.
+  - The pin's errors: "trivial types must not declare explicit copy
+    constructors", "trivial types must not declare '__del__' methods", and
+    "all members of 'TrivialRegisterPassable' struct must themselves be
+    'TrivialRegisterPassable'" (the trait's docstring in
+    `std/builtin/value.mojo` states the same).
+  - The checker should reject them where it checks a struct's declared
+    conformances.
+  - Once it does, `MirDeclarations::copy_is_identity` can trust the
+    declaration and drop its `__copyinit__`, `__del__`, and field walk.
+  - Pinned by `conformance/probes/trivial_register_passable_custom_copy.mojo`,
+    `trivial_register_passable_custom_del.mojo`, and
+    `trivial_register_passable_non_trivial_field.mojo`.
+  - Found while landing R838 (2026-10-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+- [ ] **R861 A `Copyable` struct holding a `TrivialRegisterPassable` field
+  is rejected as not `Copyable`**
+
+  `struct Box(Copyable): var p: P`, with `P` declaring
+  `TrivialRegisterPassable`, fails with "type 'Box' for parameter 'Self'
+  does not conform to trait 'Copyable'", where the pin runs it.
+  - `TrivialRegisterPassable` refines `ImplicitlyCopyable`, so the field is
+    copyable; the synthesized `Copyable` row apparently misses the
+    refinement.
+  - The cause is not yet traced.
+  - Pinned by
+    `conformance/probes/copyable_struct_trivial_register_passable_field.mojo`;
+    promote it to `assets/ok/` when it runs.
+  - Found while landing R838 (2026-10-14).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R578 Bundled library types declare other conformances than

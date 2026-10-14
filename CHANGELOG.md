@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `canonicalize` now forwards a copy of a vector SIMD, a `StringLiteral`,
+  or a struct that declares `TrivialRegisterPassable` (R838) when the copy
+  is its source's sole reader, as upstream's parser loads such a value into
+  an SSA value; Pliron no longer aliases a load of such a type to its
+  place. A tuple copy stays, as upstream's `Tuple.__init__(copy=)` does.
+  Corpus concrete instructions fall by 26, with no output change.
+
 - `canonicalize` now threads each edge into an empty block that only
   jumps on, folds a branch whose arms name one block to a jump, and merges
   a block into its single jump predecessor (R836), so generic bodies no

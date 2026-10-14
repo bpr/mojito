@@ -1,0 +1,72 @@
+mojito-mir 1.53
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("cases.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+    struct { name: Holder, fields: [field { name: wide, type: simd { dtype: int32, width: 4 } }, field { name: point, type: struct_type { name: Point, arguments: [] } }], mut_self_methods: [], fieldwise_init: true, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [conformance { trait: Movable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [] },
+    struct { name: Point, fields: [field { name: x, type: Int }, field { name: y, type: Int }], mut_self_methods: [], fieldwise_init: true, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [conformance { trait: TrivialRegisterPassable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [] }
+  ],
+  decls: [
+    decl { lowered_name: corner, param_names: [h], param_types: [struct_type { name: Holder, arguments: [] }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: struct_type { name: Point, arguments: [] }, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: widen, param_names: [h], param_types: [struct_type { name: Holder, arguments: [] }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: simd { dtype: int32, width: 4 }, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: widen,
+        registers: 2,
+        vars: 1,
+        var_names: [h],
+        params: 1,
+        param_types: [struct_type { name: Holder, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Holder, arguments: [] } }],
+        return_type: present(simd { dtype: int32, width: 4 }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: simd { dtype: int32, width: 4 } }, reg_type { reg: %r1, type: simd { dtype: int32, width: 4 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 242, end: 248, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 242, end: 248, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Holder, arguments: [] }), projections: [projection { op: field(wide), type: simd { dtype: int32, width: 4 } }], type: present(simd { dtype: int32, width: 4 }), through: absent } },
+              value.copy { dest: %r1, value: %r0 }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: corner,
+        registers: 2,
+        vars: 1,
+        var_names: [h],
+        params: 1,
+        param_types: [struct_type { name: Holder, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Holder, arguments: [] } }],
+        return_type: present(struct_type { name: Point, arguments: [] }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: Point, arguments: [] } }, reg_type { reg: %r1, type: struct_type { name: Point, arguments: [] } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 294, end: 301, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 294, end: 301, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Holder, arguments: [] }), projections: [projection { op: field(point), type: struct_type { name: Point, arguments: [] } }], type: present(struct_type { name: Point, arguments: [] }), through: absent } },
+              value.copy { dest: %r1, value: %r0 }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      }
+  ]
+}

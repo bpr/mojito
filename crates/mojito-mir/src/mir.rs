@@ -41,8 +41,7 @@ use mojito_types::ct::{CtValue, ScalarConversion};
 use mojito_types::param_expr::{ParamContext, ParamExpr};
 use mojito_types::types::TyKind;
 use mojito_types::types::{
-    ConstraintOperand, GenericConstraint, ParamDecl, Ty, TyArg, copy_is_identity, dict_elements,
-    tuple_elements,
+    ConstraintOperand, GenericConstraint, ParamDecl, Ty, TyArg, dict_elements, tuple_elements,
 };
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
@@ -213,6 +212,38 @@ impl MirDeclarations {
             candidate,
             required,
         )
+    }
+
+    /// Whether a copy of a value of `ty` is the value itself, as upstream's
+    /// parser loads a register-passable trivial value into an SSA value: a
+    /// compiler-known type upstream declares `TrivialRegisterPassable`
+    /// (`types::trivially_register_passable_leaf`), or a struct that
+    /// declares it unconditionally, directly or through a refining trait.
+    /// The trait forbids a custom copy constructor or destructor and requires
+    /// every field to conform, so such a struct also defines no
+    /// `__copyinit__` or `__del__` and holds only fields of concrete types
+    /// this answers for. A field typed by a
+    /// parameter answers no until an instance closes it, and a conditional
+    /// conformance until the elaborator decides it.
+    pub fn copy_is_identity(&self, ty: &Ty) -> bool {
+        if mojito_types::types::trivially_register_passable_leaf(ty.kind()) {
+            return true;
+        }
+        let TyKind::Struct(name, _) = ty.kind() else {
+            return false;
+        };
+        self.structure(name).is_some_and(|declaration| {
+            declaration.declared.iter().any(|row| {
+                (row.trait_name == "TrivialRegisterPassable"
+                    || self.trait_refines(&row.trait_name, "TrivialRegisterPassable"))
+                    && matches!(row.conditions.as_slice(), [GenericConstraint::Bool(true)])
+            }) && ["__copyinit__", "__del__"]
+                .iter()
+                .all(|member| self.function(&format!("{name}.{member}")).is_none())
+                && declaration.fields.iter().all(|(_, field)| {
+                    !mojito_types::types::is_symbolic(field) && self.copy_is_identity(field)
+                })
+        })
     }
 
     /// The requirement a call through `bounds` selects by its `dispatch`

@@ -145,10 +145,15 @@ pub fn collect_projected_move_places<'m>(
 /// consumer, so the address is valid wherever the register is read; a
 /// callable is excluded because its owner is retained for one hop only. Any
 /// owning or unclassified consumer keeps the copy — the conservative side is
-/// an extra copy, never two owners of one buffer.
+/// an extra copy, never two owners of one buffer. A load of a
+/// register-passable trivial value is that value, as upstream's
+/// `lit.ref.load` is, so it always copies out: a forwarded copy
+/// ([`MirDeclarations::copy_is_identity`]) reads the register in the copy's
+/// place, and must not see a later store to the place.
 pub fn collect_aliased_load_regs(
     function: &MirFunction,
     declarations: &HashMap<String, MirFunctionDeclaration>,
+    mir_declarations: &MirDeclarations,
 ) -> HashSet<u32> {
     fn visit(
         blocks: &[MirBlock],
@@ -196,10 +201,11 @@ pub fn collect_aliased_load_regs(
         .into_keys()
         .filter(|reg| !owning.contains(reg))
         .filter(|reg| {
-            function
-                .reg_types
-                .get(reg)
-                .is_some_and(|ty| is_aggregate_ty(ty) && !matches!(ty.kind(), TyKind::Func(_)))
+            function.reg_types.get(reg).is_some_and(|ty| {
+                is_aggregate_ty(ty)
+                    && !matches!(ty.kind(), TyKind::Func(_))
+                    && !mir_declarations.copy_is_identity(ty)
+            })
         })
         .collect()
 }
