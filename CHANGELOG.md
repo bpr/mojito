@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Every `benchmarks/compile` program now runs at the pinned Mojo with
+  Mojito's output (R818): `tuple.mojo`'s `Pair` declares `Sized`, which the
+  pin requires for `len` and Mojito does not yet (R191), so
+  `scripts/sweep-assets-mojo --benchmarks` passes on all eleven programs.
 - The overnight gate checks `benchmarks/compile` against the pinned Mojo
   (R814): its `benchmarks-mojo-sweep` step runs the new
   `scripts/sweep-assets-mojo --benchmarks`, which fails on any benchmark the

@@ -206,19 +206,6 @@ which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
 
-- [ ] **R818 No run has yet confirmed the pinned Mojo accepts every
-  compile benchmark**
-
-  The `benchmarks-mojo-sweep` step exists, but the pin env was missing when
-  it landed, so no `--benchmarks` run has passed yet.
-  - Run `scripts/sweep-assets-mojo --mojo-pixi-manifest P --benchmarks`, or
-    read the first nightly log.
-  - Respell any benchmark the pin rejects, including `tuple.mojo`'s
-    `__getitem_param__` rewrite; file a real output difference on the
-    `divergences` track.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R775 Nothing checks that a pre-elaboration pass leaves every
   program's behavior unchanged**
 

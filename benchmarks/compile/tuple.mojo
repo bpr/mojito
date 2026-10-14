@@ -3,7 +3,7 @@
 # `def __getitem_param__[i: Int](self) -> Self.Ts[i]`, which unrolls per
 # element at specialization, so each subscript has the exact per-index
 # element type.
-struct Pair[*Ts: Copyable & Movable & Deinitable](Copyable, Movable):
+struct Pair[*Ts: Copyable & Movable & Deinitable](Copyable, Movable, Sized):
     var storage: Tuple[*Self.Ts]
 
     def __init__(out self, var *args: *Self.Ts):
