@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R859**.
+Next free ID: **R860**.
 
 ## Ordered Work
 
@@ -55,23 +55,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md),
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
-
-- [ ] **R836 Generic bodies carry empty pass-through blocks into every
-  instance**
-
-  An empty block that only jumps on is copied into each instance, where
-  upstream's `Canonicalizer` threads it with the `cf` dialect's branch
-  patterns.
-  - 503 of the 3 612 std blocks `empty.mojo` reaches are such blocks.
-  - The patterns are `SimplifyPassThroughBr` and merging a block into its
-    single predecessor.
-  - It is a pattern in the `canonicalize` pass (`analysis/canonicalize.rs`),
-    not a new pass.
-  - A drop or cleanup placed on an edge must stay on that path.
-  - Done when the pattern runs at both seams, the differential is clean, and
-    the corpus block and instruction counts are recorded.
-  - Depends on R779.
-  - Model: Opus, Not Planned.
 
 - [ ] **R838 A copy of a trivially copyable aggregate survives into every
   instance**
@@ -121,6 +104,24 @@ which names the upstream pass each one follows. Each is measured by the
   - Done when a pass test shows `canonicalize` alone folding a constant
     operator.
   - Depends on R781.
+  - Model: Opus, Not Planned.
+
+- [ ] **R859 Parametric MIR's run-time control flow is a CFG where
+  upstream's generators keep it structured**
+
+  Upstream's generators hold `if` and loops as `hlcf` region ops until
+  `LowerControlFlow`, after elaboration, while Mojito's HIR lowers every
+  body to a CFG before ownership.
+  - So a join or a loop latch is a block in Mojito's generators and in
+    none of upstream's.
+  - `canonicalize` threads and merges the empty ones (R836), a CFG
+    stand-in, not an upstream pattern.
+  - Upstream's `hlcf` canonicalizations (`HLCFOpsCanonicalizers.cpp`) and
+    `SimplifyCF` act on that structure and have no CFG form here.
+  - `docs/pliron-future.md` describes the `hlcf` layer.
+  - Done when a plan for structured run-time control flow above the waist
+    is recorded and split into entries.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R844 The post-elaboration pipeline re-verifies every concrete

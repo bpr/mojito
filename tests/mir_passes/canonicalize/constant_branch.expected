@@ -21,22 +21,12 @@
             instructions: [
               const { dest: %r0, value: string("a") },
               call { dest: %r1, func: "__module$std$string$String.__init__$ov$StringLiteral", raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
-              var.store { var: $v1, src: %r1, binding_type: present(struct_type { name: "__module$std$string$String", arguments: [] }), in_place: true }
-            ],
-            terminator: jump { target: bb2 }
-          },
-          bb1 {
-            instructions: [
-            ],
-            terminator: return { value: absent }
-          },
-          bb2 {
-            instructions: [
+              var.store { var: $v1, src: %r1, binding_type: present(struct_type { name: "__module$std$string$String", arguments: [] }), in_place: true },
               drop.var { var: $v1 },
               place.load { dest: %r4, place: place { root: $v0, root_type: present(param { owner: "constant_branch", slot: 0, name: T, bounds: [ImplicitlyCopyable, Writable], callable_bound: absent }), projections: [], type: present(param { owner: "constant_branch", slot: 0, name: T, bounds: [ImplicitlyCopyable, Writable], callable_bound: absent }), through: absent } },
               call { dest: %r5, func: print, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
-            terminator: jump { target: bb1 }
+            terminator: return { value: absent }
           }
         ]
       }

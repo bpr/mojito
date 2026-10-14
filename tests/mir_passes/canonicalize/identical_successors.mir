@@ -1,0 +1,78 @@
+mojito-mir 1.53
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("cases.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: identical_successors, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "identical_successors", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: identical_successors,
+        registers: 6,
+        vars: 2,
+        var_names: [x, flag],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Bool }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Bool }, reg_type { reg: %r4, type: Bool }, reg_type { reg: %r5, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 1011, end: 1012, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 1015, end: 1016, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 1015, end: 1016, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 1011, end: 1016, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 1024, end: 1028, origin: present($v1) }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 1077, end: 1078, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+            ],
+            terminator: comptime_branch { condition: gt { left: operand_param(binder { owner: "identical_successors", slot: 0, name: n }), right: operand_value(ct_int_literal(2)) }, then: bb2, else: bb3 }
+          },
+          bb1 {
+            instructions: [
+              const { dest: %r1, value: int_literal(1) },
+              literal.materialize { dest: %r2, value: %r1, target: Int },
+              var.use { dest: %r0, var: $v0, mode: copy },
+              binary { op: gt, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent },
+              var.store { var: $v1, src: %r3, binding_type: present(Bool), in_place: true },
+              var.use { dest: %r4, var: $v1, mode: copy },
+              drop.var { var: $v1 }
+            ],
+            terminator: branch { condition: %r4, then: bb5, else: bb6 }
+          },
+          bb2 {
+            instructions: [
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb3 {
+            instructions: [
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb4 {
+            instructions: [
+              var.use { dest: %r5, var: $v0, mode: copy }
+            ],
+            terminator: return { value: present(%r5) }
+          },
+          bb5 {
+            instructions: [
+            ],
+            terminator: jump { target: bb4 }
+          },
+          bb6 {
+            instructions: [
+            ],
+            terminator: jump { target: bb4 }
+          }
+        ]
+      }
+  ]
+}

@@ -165,6 +165,12 @@ impl CompiledProgram {
                         "generator_instance_instructions",
                         counts.generator_instance_instructions() as u64,
                     );
+                    timing::count("concrete_blocks", counts.concrete_blocks as u64);
+                    timing::count("generator_blocks", counts.generator_blocks() as u64);
+                    timing::count(
+                        "generator_instance_blocks",
+                        counts.generator_instance_blocks() as u64,
+                    );
                     for row in &counts.generators {
                         timing::note("generator", || {
                             format!(

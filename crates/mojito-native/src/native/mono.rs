@@ -90,6 +90,8 @@ pub struct ElaborationCounts {
     pub generators: Vec<GeneratorCount>,
     /// Instructions in the whole concrete program.
     pub concrete_instructions: usize,
+    /// Blocks in the whole concrete program.
+    pub concrete_blocks: usize,
 }
 
 impl ElaborationCounts {
@@ -115,9 +117,20 @@ impl ElaborationCounts {
             .sum()
     }
 
-    /// Recount the concrete instructions, every generator's instances' and
-    /// the whole program's, over `program`, a rewrite of the elaboration's
-    /// output. Template sizes stay as the elaborator read them.
+    /// The blocks of the reached generators' template bodies, each counted
+    /// once.
+    pub fn generator_blocks(&self) -> usize {
+        self.generators.iter().map(|row| row.template_blocks).sum()
+    }
+
+    /// The blocks of every generator instance in the concrete output.
+    pub fn generator_instance_blocks(&self) -> usize {
+        self.generators.iter().map(|row| row.instance_blocks).sum()
+    }
+
+    /// Recount the concrete instructions and blocks, every generator's
+    /// instances' and the whole program's, over `program`, a rewrite of the
+    /// elaboration's output. Template sizes stay as the elaborator read them.
     pub fn recount(&mut self, program: &MirProgram) {
         let output: HashMap<&str, &MirFunction> = program
             .functions
@@ -125,18 +138,17 @@ impl ElaborationCounts {
             .map(|(name, function)| (name.as_str(), function))
             .collect();
         for row in &mut self.generators {
-            row.instance_instructions = row
-                .instance_names
-                .iter()
-                .filter_map(|name| output.get(name.as_str()))
-                .map(|function| function.instruction_count())
-                .sum();
+            let instances = || {
+                row.instance_names
+                    .iter()
+                    .filter_map(|name| output.get(name.as_str()))
+            };
+            row.instance_instructions = instances().map(|f| f.instruction_count()).sum();
+            row.instance_blocks = instances().map(|f| f.block_count()).sum();
         }
-        self.concrete_instructions = program
-            .functions
-            .iter()
-            .map(|(_, function)| function.instruction_count())
-            .sum();
+        let functions = || program.functions.iter().map(|(_, function)| function);
+        self.concrete_instructions = functions().map(MirFunction::instruction_count).sum();
+        self.concrete_blocks = functions().map(MirFunction::block_count).sum();
     }
 }
 
@@ -151,6 +163,10 @@ pub struct GeneratorCount {
     pub template_instructions: usize,
     /// Instructions of its instances in the concrete output, summed.
     pub instance_instructions: usize,
+    /// Blocks of the template body, as the elaborator read it.
+    pub template_blocks: usize,
+    /// Blocks of its instances in the concrete output, summed.
+    pub instance_blocks: usize,
     /// Its instances' names in the concrete output.
     pub instance_names: Vec<String>,
 }

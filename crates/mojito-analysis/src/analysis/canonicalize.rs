@@ -3,21 +3,36 @@
 //!
 //! This is its region simplification, folding, and dead-op erasure: a
 //! `branch` on a constant condition becomes a `jump` to the taken arm, as
-//! the `cf` dialect's `SimplifyConstCondBranchPred` pattern rewrites it;
-//! blocks the entry does not reach go, as MLIR's `eraseUnreachableBlocks`
-//! erases them; an instruction that folds to one of its operands
-//! ([`MirInstr::forwarded_operand`], an identity `value.copy`) is replaced
-//! by that operand in every reader, as MLIR's greedy driver applies a `fold`
-//! that returns an operand; and an instruction whose results nothing reads
-//! goes when it has no effect but reading
+//! `hlcf.if`'s `RemoveStaticCondition` pattern keeps the arm a static
+//! condition takes; blocks the entry does not reach go, as MLIR's
+//! `eraseUnreachableBlocks` erases them; an instruction that folds to one of
+//! its operands ([`MirInstr::forwarded_operand`], an identity `value.copy`)
+//! is replaced by that operand in every reader, as MLIR's greedy driver
+//! applies a `fold` that returns an operand; and an instruction whose
+//! results nothing reads goes when it has no effect but reading
 //! ([`MirInstr::would_be_trivially_dead`]), repeated until nothing changes.
+//!
+//! Upstream's generators keep run-time control flow as structured `hlcf`
+//! region ops until `LowerControlFlow`, after elaboration, so a join or a
+//! loop latch is no block there. MIR is a CFG before elaboration, and the
+//! blocks that structure would not have are removed here by MLIR's own CFG
+//! rewrites: an edge into an empty block that only jumps on is threaded to
+//! where it goes (`SimplifyPassThroughBr`), a branch whose arms name one
+//! block becomes a jump (`SimplifyCondBranchIdenticalSuccessors`, as
+//! `hlcf.if`'s `HoistYieldResults` and `comptime.if`'s `checkTrivialBlocks`
+//! erase an `if` whose arms are bare yields), and a block a jump alone
+//! reaches is merged into its predecessor
+//! (`SimplifyBrToBlockWithSinglePred`). A `comptime for` header's targets
+//! are never rewritten: the elaborator finds the loop body as the blocks its
+//! `body` target dominates.
 
 use super::pre_elaboration::BodyPass;
 use mojito_common::timing;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
-    Const, MirBlock, MirDeclarations, MirFunction, MirInstr, MirTerm, Reg, instruction_regs_mut,
-    prune_unreachable_blocks, terminator_regs_mut,
+    Const, MirBlock, MirBlockId, MirDeclarations, MirFunction, MirInstr, MirTerm, Reg,
+    block_successors, instruction_regs_mut, prune_unreachable_blocks, terminator_regs_mut,
+    terminator_targets, terminator_targets_mut,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -27,33 +42,43 @@ pub const CANONICALIZE: BodyPass = BodyPass {
     run: canonicalize,
 };
 
-/// Fold each `branch` on a constant to a `jump`, erase `function`'s
-/// unreachable blocks, forward each identity copy's operand to its readers,
-/// then erase every trivially dead instruction.
+/// Fold each `branch` on a constant, simplify the control flow, erase
+/// unreachable blocks, forward identity copies, and erase dead
+/// instructions of `function`.
 ///
-/// Erasure repeats until none is left. A removed instruction's results lose their types and spans;
-/// registers are not renumbered.
+/// Erasure and control-flow simplification repeat until neither changes
+/// anything: an erased instruction can empty a block, and a branch folded
+/// to a jump leaves its condition unread. A removed instruction's results
+/// lose their types and spans; registers are not renumbered.
 pub fn canonicalize(_name: &str, function: &mut MirFunction, _declarations: &MirDeclarations) {
     timing::count("folded_branches", fold_constant_branches(function) as u64);
     let blocks = block_count(&mut function.blocks);
+    let mut edits = simplify_control_flow(&mut function.blocks, true);
     prune_unreachable_blocks(function);
+    timing::count("forwarded_copies", forward_copies(function) as u64);
+    let mut erased = HashSet::new();
+    loop {
+        let before = erased.len();
+        erase_dead_until_none(function, &mut erased);
+        if erased.len() == before {
+            break;
+        }
+        let round = simplify_control_flow(&mut function.blocks, true);
+        if round == ControlFlowEdits::default() {
+            break;
+        }
+        edits.add(round);
+        prune_unreachable_blocks(function);
+    }
+    function.reg_types.retain(|reg, _| !erased.contains(reg));
+    function.spans.0.retain(|reg, _| !erased.contains(reg));
     timing::count(
         "erased_blocks",
         (blocks - block_count(&mut function.blocks)) as u64,
     );
-    timing::count("forwarded_copies", forward_copies(function) as u64);
-    let mut erased = HashSet::new();
-    loop {
-        let mut reads = vec![0_u32; function.n_regs as usize];
-        count_reads(&mut function.blocks, &mut reads);
-        let before = erased.len();
-        erase_dead(&mut function.blocks, &reads, &mut erased);
-        if erased.len() == before {
-            break;
-        }
-    }
-    function.reg_types.retain(|reg, _| !erased.contains(reg));
-    function.spans.0.retain(|reg, _| !erased.contains(reg));
+    timing::count("threaded_branches", edits.threaded as u64);
+    timing::count("folded_successors", edits.folded as u64);
+    timing::count("merged_blocks", edits.merged as u64);
     timing::count("erased_instructions", erased.len() as u64);
 }
 
@@ -74,6 +99,181 @@ fn regions_mut(instruction: &mut MirInstr) -> Vec<&mut Vec<MirBlock>> {
         .chain(orelse.as_mut())
         .chain(finalbody.as_mut())
         .collect()
+}
+
+/// How many edges [`simplify_control_flow`] threaded, branches it folded to
+/// a jump, and blocks it merged into their predecessor.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct ControlFlowEdits {
+    threaded: usize,
+    folded: usize,
+    merged: usize,
+}
+
+impl ControlFlowEdits {
+    const fn add(&mut self, other: Self) {
+        self.threaded += other.threaded;
+        self.folded += other.folded;
+        self.merged += other.merged;
+    }
+}
+
+/// Thread the edges into empty pass-through blocks, fold each branch whose
+/// arms name one block to a jump, and merge each block a jump alone reaches
+/// into its predecessor, in `blocks` and every `try` region below them,
+/// until none applies. `function_level` says `blocks` is a function's list,
+/// whose blocks regions' escapes name too.
+///
+/// The blocks left unreachable stay for the pruning to erase. Only an
+/// unconditional jump's target is merged and only an empty block is
+/// threaded past, so an edge's drops and an escape's or return's cleanup
+/// stay on their path.
+fn simplify_control_flow(blocks: &mut [MirBlock], function_level: bool) -> ControlFlowEdits {
+    let mut edits = ControlFlowEdits::default();
+    for region in blocks
+        .iter_mut()
+        .flat_map(|block| block.instrs.iter_mut().flat_map(regions_mut))
+    {
+        edits.add(simplify_control_flow(region, false));
+    }
+    loop {
+        let round = ControlFlowEdits {
+            threaded: thread_pass_throughs(blocks),
+            folded: fold_identical_successors(blocks),
+            merged: merge_single_predecessors(blocks, function_level),
+        };
+        if round == ControlFlowEdits::default() {
+            return edits;
+        }
+        edits.add(round);
+    }
+}
+
+/// Retarget each `jump`, `branch`, and `comptime_branch` edge of `blocks`
+/// into a pass-through block at the first block past the chain that is not
+/// one; returns how many edges moved. An edge that would make a
+/// pass-through jump to itself, or that enters a cycle of pass-throughs,
+/// stays.
+fn thread_pass_throughs(blocks: &mut [MirBlock]) -> usize {
+    let mut threaded = 0;
+    for at in 0..blocks.len() {
+        let targets: Vec<MirBlockId> = match &blocks[at].term {
+            MirTerm::Jump(_) | MirTerm::Branch { .. } | MirTerm::ComptimeBranch { .. } => {
+                terminator_targets(&blocks[at].term)
+            }
+            _ => continue,
+        };
+        let resolved: Vec<MirBlockId> = targets
+            .iter()
+            .map(|&target| match resolve_pass_through(blocks, target) {
+                end if end == at && pass_through(blocks, at).is_some() => target,
+                end => end,
+            })
+            .collect();
+        for (target, end) in terminator_targets_mut(&mut blocks[at].term)
+            .into_iter()
+            .zip(resolved)
+        {
+            if *target != end {
+                *target = end;
+                threaded += 1;
+            }
+        }
+    }
+    threaded
+}
+
+/// The block an empty block of `blocks` only jumps on to, when `at` is one
+/// and the jump is not to itself.
+fn pass_through(blocks: &[MirBlock], at: MirBlockId) -> Option<MirBlockId> {
+    match blocks.get(at)? {
+        MirBlock {
+            instrs,
+            term: MirTerm::Jump(next),
+        } if instrs.is_empty() && *next != at => Some(*next),
+        _ => None,
+    }
+}
+
+/// The first block from `start` along a chain of pass-through blocks that
+/// is not one, or the block where the chain closes a cycle.
+fn resolve_pass_through(blocks: &[MirBlock], start: MirBlockId) -> MirBlockId {
+    let mut seen = HashSet::from([start]);
+    let mut at = start;
+    while let Some(next) = pass_through(blocks, at) {
+        if !seen.insert(next) {
+            break;
+        }
+        at = next;
+    }
+    at
+}
+
+/// Rewrite each `branch` and `comptime_branch` of `blocks` whose arms name
+/// one block to a `jump` there; returns how many were rewritten.
+fn fold_identical_successors(blocks: &mut [MirBlock]) -> usize {
+    let mut folded = 0;
+    for block in blocks {
+        if let MirTerm::Branch { then_b, else_b, .. }
+        | MirTerm::ComptimeBranch { then_b, else_b, .. } = block.term
+            && then_b == else_b
+        {
+            block.term = MirTerm::Jump(then_b);
+            folded += 1;
+        }
+    }
+    folded
+}
+
+/// Append to each reachable block of `blocks` ending in a `jump` the block
+/// it jumps to, when that block is not the entry and nothing else reaches
+/// it; returns how many were merged. A merged block is left empty and
+/// returning, unreachable.
+fn merge_single_predecessors(blocks: &mut [MirBlock], function_level: bool) -> usize {
+    let successors = |block: &MirBlock| {
+        if function_level {
+            block_successors(block)
+        } else {
+            terminator_targets(&block.term)
+        }
+    };
+    let mut reachable = vec![false; blocks.len()];
+    let mut work = vec![0];
+    while let Some(at) = work.pop() {
+        if at < blocks.len() && !reachable[at] {
+            reachable[at] = true;
+            work.extend(successors(&blocks[at]));
+        }
+    }
+    let mut predecessors = vec![0_usize; blocks.len()];
+    for (block, _) in blocks.iter().zip(&reachable).filter(|(_, live)| **live) {
+        for successor in successors(block) {
+            if let Some(count) = predecessors.get_mut(successor) {
+                *count += 1;
+            }
+        }
+    }
+    let mut merged = 0;
+    for at in (0..blocks.len()).filter(|&at| reachable[at]) {
+        while let MirTerm::Jump(next) = blocks[at].term
+            && next != at
+            && next != 0
+            && predecessors.get(next) == Some(&1)
+        {
+            let MirBlock { instrs, term } = std::mem::replace(
+                &mut blocks[next],
+                MirBlock {
+                    instrs: Vec::new(),
+                    term: MirTerm::Return(None),
+                },
+            );
+            blocks[at].instrs.extend(instrs);
+            blocks[at].term = term;
+            predecessors[next] = 0;
+            merged += 1;
+        }
+    }
+    merged
 }
 
 /// Rewrite each `branch` of `function` whose condition is defined once, by
@@ -200,6 +400,20 @@ fn block_count(blocks: &mut [MirBlock]) -> usize {
                 .sum::<usize>()
         })
         .sum()
+}
+
+/// Erase the trivially dead instructions of `function` until none is left,
+/// adding their results to `erased`.
+fn erase_dead_until_none(function: &mut MirFunction, erased: &mut HashSet<u32>) {
+    loop {
+        let mut reads = vec![0_u32; function.n_regs as usize];
+        count_reads(&mut function.blocks, &mut reads);
+        let before = erased.len();
+        erase_dead(&mut function.blocks, &reads, erased);
+        if erased.len() == before {
+            break;
+        }
+    }
 }
 
 /// Add every register read in `blocks`, their regions included, to

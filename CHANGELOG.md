@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `canonicalize` now threads each edge into an empty block that only
+  jumps on, folds a branch whose arms name one block to a jump, and merges
+  a block into its single jump predecessor (R836), so generic bodies no
+  longer carry join and latch blocks into every instance: corpus concrete
+  blocks fall by 10.4 % and generator-instance blocks by 13 %, with no
+  instruction or output change. Upstream's generators keep this control
+  flow structured, so these MLIR CFG patterns stand in for that structure.
+  The elaborator now also counts blocks (`concrete_blocks`,
+  `generator_blocks`, `generator_instance_blocks` under `--timings` and in
+  `benchmarks/instantiation.tsv`).
+
 - `sccp` now folds a per-lane SIMD construction such as
   `SIMD[DType.int32, 4](1, 2, 3, 4)` (R855) to one constant vector, as
   upstream folds `SIMD.__init__(*elems: Scalar[dtype])`, when each element

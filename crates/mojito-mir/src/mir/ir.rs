@@ -2241,6 +2241,11 @@ impl MirFunction {
     pub fn instruction_count(&self) -> usize {
         self.blocks.iter().map(|block| block.instrs.len()).sum()
     }
+
+    /// The blocks of this body, its `try` regions' not counted.
+    pub const fn block_count(&self) -> usize {
+        self.blocks.len()
+    }
 }
 
 /// Maps each generated register to its source span and (if it names one) the

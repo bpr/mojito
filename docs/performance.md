@@ -772,6 +772,10 @@ unit as `mir.lower.instructions`).
 - `generator_instance_instructions`: the instructions of every generator
   instance in the concrete output. Its ratio to `generator_instructions` is
   the expansion the pre-elaboration passes attack.
+- `concrete_blocks`, `generator_blocks`, `generator_instance_blocks`: the
+  same three sizes in blocks, a body's function-level blocks with its `try`
+  regions' not counted (`MirFunction::block_count`). A control-flow rewrite
+  that removes blocks moves no instruction, so only these show it.
 
 `MOJITO_TIMING_NOTES=1` adds one `generator` note per row:
 `<template> <instances> <template instructions> <instance instructions>`.
@@ -1449,3 +1453,40 @@ instructions R846's section names survives. On `collections_many`,
 post-elaboration count stays 4, and `concrete_instructions` falls from
 15 857 to 15 852 (debug binary, `--timings`). The corpus-wide
 `scripts/instantiation-report` rerun is left to the nightly gate.
+
+## Canonicalize threads pass-through blocks (2026-10-14, R836)
+
+`canonicalize` now threads each edge into an empty block that only jumps
+on, folds a branch whose arms name one block to a jump, and merges a block
+a jump alone reaches into its predecessor (`docs/architecture.md`
+§Pre-Elaboration Pipeline). These stand in for upstream's structured
+control flow: its generators hold `if` and loops as `hlcf` region ops, so
+a join or a latch is no block there. The elaborator now counts blocks
+(§3). `scripts/instantiation-report` over all 1 021 fixtures, debug
+binary; *before* is the tree without the rewrites, with the counters:
+
+| | before | after | change |
+|---|---:|---:|---:|
+| corpus `concrete_blocks` | 139 119 | 124 655 | −14 464 (−10.4 %) |
+| corpus `generator_blocks` | 39 885 | 37 321 | −2 564 (−6.4 %) |
+| corpus `generator_instance_blocks` | 65 194 | 56 712 | −8 482 (−13.0 %) |
+| corpus `concrete_instructions` | 787 273 | 787 273 | 0 |
+| `collections_many` concrete blocks | 2 452 | 2 228 | −224 |
+| `stdlib_heavy` concrete blocks | 515 | 475 | −40 |
+| `nested_generics` concrete blocks | 604 | 566 | −38 |
+| `trait_defaults` concrete blocks | 311 | 302 | −9 |
+
+1 019 fixtures lost blocks and none gained any; no instruction count
+moved. The std package bodies `emit-mir benchmarks/compile/empty.mojo`
+prints fall from 3 608 blocks to 3 085, and of their 505 empty blocks
+ending in a `jump` 19 are left: 18 entry blocks and one `comptime for`
+body target, which the rewrites leave alone. The committed baseline's
+instruction totals also move from R840's 794 792 to 787 273, the
+unrecorded effect of R841–R856.
+
+The counters are `canonicalize.threaded_branches`,
+`canonicalize.folded_successors`, and `canonicalize.merged_blocks`, beside
+`erased_blocks`, which counts the blocks they leave unreachable. On
+`collections_many` the post-elaboration run threads 6 edges and merges 26
+blocks; the pre-elaboration work lands in std package bodies, finished on
+the elaborator's thread, so its counts do not reach `--timings`.

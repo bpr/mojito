@@ -1,1022 +1,1023 @@
-fixture	status	concrete_functions	concrete_instructions	generators	generator_instances	generator_instructions	generator_instance_instructions
-assets/ok/abstract_dispatch_effect_free_conformers.mojo	elaborated	9	103	1	1	2	2
-assets/ok/add.mojo	elaborated	6	97	0	0	0	0
-assets/ok/allocation_tracked_unsafe_ptr.mojo	elaborated	16	197	11	11	57	57
-assets/ok/arithmetic.mojo	elaborated	5	103	0	0	0	0
-assets/ok/array_comparable.mojo	elaborated	17	314	12	12	198	196
-assets/ok/array_display_temporary_subscript.mojo	elaborated	84	1760	25	61	359	976
-assets/ok/array_element_assignment.mojo	elaborated	43	933	22	24	350	363
-assets/ok/array_fixed_size_core.mojo	elaborated	53	1154	33	35	478	491
-assets/ok/array_struct_elements_and_fill.mojo	elaborated	24	413	14	19	217	260
-assets/ok/assign_interior_view_over_sibling_field.mojo	elaborated	39	798	14	14	164	162
-assets/ok/assign_interior_view_through_temporary.mojo	elaborated	38	793	14	14	164	162
-assets/ok/assign_interior_view_to_other_local.mojo	elaborated	39	799	14	14	164	162
-assets/ok/assign_nested_call_interior_view_over_source.mojo	elaborated	39	796	14	14	164	162
-assets/ok/assign_plain_named_view_over_source.mojo	elaborated	34	707	14	14	164	162
-assets/ok/assign_plain_view_temporary_over_field.mojo	elaborated	34	706	14	14	164	162
-assets/ok/assign_plain_view_temporary_over_source.mojo	elaborated	33	705	14	14	164	162
-assets/ok/assign_register_passable_element_over_list.mojo	elaborated	19	341	13	13	213	211
-assets/ok/associated_trait_self_element.mojo	elaborated	6	100	0	0	0	0
-assets/ok/associated_type_return.mojo	elaborated	7	104	2	2	4	4
-assets/ok/augmented_bitwise_assignment.mojo	elaborated	36	785	14	14	164	162
-assets/ok/bitwise_shift_precedence.mojo	elaborated	6	158	0	0	0	0
-assets/ok/bool_alias_predicate_where.mojo	elaborated	11	130	3	4	5	7
-assets/ok/boolable_and_divmod.mojo	elaborated	11	172	4	6	19	32
-assets/ok/borrowed_iteration_temporary_source_drop.mojo	elaborated	10	136	0	0	0	0
-assets/ok/bound_generic_write_to.mojo	elaborated	46	911	19	21	226	245
-assets/ok/builtins_numeric.mojo	elaborated	5	134	0	0	0	0
-assets/ok/bundled_def_loan_carrying_argument.mojo	elaborated	37	458	30	31	291	300
-assets/ok/bundled_instance_loan_carrying_argument.mojo	elaborated	110	2026	58	103	1046	1677
-assets/ok/by_value_argument_drop_order.mojo	elaborated	27	377	1	1	2	2
-assets/ok/by_value_argument_read_at_call_setup.mojo	elaborated	26	429	0	0	0	0
-assets/ok/by_value_subscript_temporary_drop.mojo	elaborated	15	277	0	0	0	0
-assets/ok/call_result_pointer_deref_keeps_owner.mojo	elaborated	11	187	1	1	1	1
-assets/ok/call_result_pointer_deref_store.mojo	elaborated	6	105	0	0	0	0
-assets/ok/call_result_pointer_field_chain_write.mojo	elaborated	20	352	14	14	222	220
-assets/ok/call_result_pointer_field_local_write.mojo	elaborated	20	339	14	14	222	220
-assets/ok/call_result_pointer_field_read.mojo	elaborated	23	395	14	14	214	212
-assets/ok/call_result_pointer_field_write.mojo	elaborated	20	339	14	14	222	220
-assets/ok/call_temporary_ref_receiver.mojo	elaborated	55	1227	18	28	242	376
-assets/ok/callable_element_call_dispatch.mojo	elaborated	24	419	14	14	214	214
-assets/ok/callable_struct_element_invocation.mojo	elaborated	19	323	13	13	213	213
-assets/ok/callable_struct_transfer_after_last_use.mojo	elaborated	17	284	11	11	151	151
-assets/ok/capturing_callable_parameter_with_locals.mojo	elaborated	7	130	1	1	12	12
-assets/ok/capturing_generic_callable_parameter_environment.mojo	elaborated	15	191	6	8	44	62
-assets/ok/capturing_lambda_array_display.mojo	elaborated	77	1500	24	58	343	903
-assets/ok/chained_comparison.mojo	elaborated	6	112	0	0	0	0
-assets/ok/chained_comparison_link_drop_order.mojo	elaborated	20	448	1	1	15	15
-assets/ok/chained_comparison_operand_copy.mojo	elaborated	9	182	0	0	0	0
-assets/ok/closures.mojo	elaborated	13	157	0	0	0	0
-assets/ok/collection_display_default.mojo	elaborated	158	2868	56	123	1021	2040
-assets/ok/collection_truthiness.mojo	elaborated	104	2055	49	87	879	1415
-assets/ok/collector_runtime_index.mojo	elaborated	46	939	22	26	286	374
-assets/ok/comparable_ordered_algorithms.mojo	elaborated	8	138	2	3	19	26
-assets/ok/comprehension_temporary_source_drop.mojo	elaborated	26	392	16	16	235	233
-assets/ok/comptime_alias_generic.mojo	elaborated	23	359	16	17	215	226
-assets/ok/comptime_alias_value_body.mojo	elaborated	5	94	0	0	0	0
-assets/ok/comptime_annotated_scalar.mojo	elaborated	6	141	1	1	12	12
-assets/ok/comptime_application_argument.mojo	elaborated	100	1313	42	92	619	1174
-assets/ok/comptime_applied_constant_in_signature.mojo	elaborated	7	104	0	0	0	0
-assets/ok/comptime_call_callee_shapes.mojo	elaborated	76	539	43	58	153	200
-assets/ok/comptime_call_signature.mojo	elaborated	38	275	19	27	68	79
-assets/ok/comptime_collections.mojo	elaborated	211	3661	74	169	1195	2717
-assets/ok/comptime_ctfe.mojo	elaborated	34	703	14	14	164	162
-assets/ok/comptime_display_binding_alias.mojo	elaborated	56	805	41	51	579	708
-assets/ok/comptime_display_binding_arguments.mojo	elaborated	89	1086	33	84	439	982
-assets/ok/comptime_display_binding_reads.mojo	elaborated	215	3803	103	193	1902	3114
-assets/ok/comptime_for.mojo	elaborated	5	102	0	0	0	0
-assets/ok/comptime_for_aggregate_binder.mojo	elaborated	96	2251	36	76	691	1700
-assets/ok/comptime_for_annotated_binding.mojo	elaborated	40	820	18	21	206	267
-assets/ok/comptime_for_applied_bound.mojo	elaborated	68	1173	26	44	311	541
-assets/ok/comptime_for_applied_sequence.mojo	elaborated	69	1278	27	48	290	639
-assets/ok/comptime_for_body_binding_served.mojo	elaborated	10	192	3	5	32	87
-assets/ok/comptime_for_body_scope.mojo	elaborated	9	139	4	4	19	36
-assets/ok/comptime_for_collection_template_served.mojo	elaborated	42	787	22	24	203	246
-assets/ok/comptime_for_display_binding.mojo	elaborated	219	3961	85	197	1385	3275
-assets/ok/comptime_for_display_element_reads.mojo	elaborated	100	1975	29	80	389	1387
-assets/ok/comptime_for_display_method_reads.mojo	elaborated	89	1860	35	53	393	723
-assets/ok/comptime_for_display_over_binder.mojo	elaborated	159	2763	76	143	1143	2158
-assets/ok/comptime_for_index_typed_local.mojo	elaborated	15	254	7	10	77	154
-assets/ok/comptime_for_iterable_struct.mojo	elaborated	12	123	3	3	9	9
-assets/ok/comptime_for_iteration_scope.mojo	elaborated	8	187	1	2	11	15
-assets/ok/comptime_for_iterator_aggregate_elements.mojo	elaborated	51	855	18	23	176	189
-assets/ok/comptime_for_named_collection.mojo	elaborated	135	2518	60	115	1036	1892
-assets/ok/comptime_for_string_aggregates.mojo	elaborated	76	2051	27	37	522	864
-assets/ok/comptime_for_struct_elements.mojo	elaborated	14	236	8	8	136	137
-assets/ok/comptime_for_template_served.mojo	elaborated	47	959	19	26	225	364
-assets/ok/comptime_for_tuple_elements.mojo	elaborated	147	2882	57	125	1127	2181
-assets/ok/comptime_for_unserved_nested.mojo	elaborated	21	288	12	15	176	192
-assets/ok/comptime_for_user_iterator.mojo	elaborated	29	239	11	16	51	85
-assets/ok/comptime_for_value_struct_method.mojo	elaborated	21	303	12	16	177	199
-assets/ok/comptime_frozen_struct.mojo	elaborated	6	106	0	0	0	0
-assets/ok/comptime_hash.mojo	elaborated	63	1100	26	36	386	426
-assets/ok/comptime_if.mojo	elaborated	7	94	0	0	0	0
-assets/ok/comptime_if_abstract_body_call.mojo	elaborated	43	735	19	25	185	199
-assets/ok/comptime_if_arm_destroy_joins.mojo	elaborated	16	154	5	7	39	42
-assets/ok/comptime_if_condition_applies_def.mojo	elaborated	62	958	23	41	273	329
-assets/ok/comptime_if_condition_reads_index.mojo	elaborated	43	227	16	36	54	114
-assets/ok/comptime_if_generic_specialization.mojo	elaborated	7	95	1	2	2	2
-assets/ok/comptime_if_generic_struct_ctor_overloads.mojo	elaborated	14	160	4	8	23	38
-assets/ok/comptime_if_generic_struct_lifecycle.mojo	elaborated	15	176	5	10	32	56
-assets/ok/comptime_if_generic_struct_method_call.mojo	elaborated	19	170	7	14	17	30
-assets/ok/comptime_if_inferred_def.mojo	elaborated	41	742	19	26	195	208
-assets/ok/comptime_if_inferred_static_method.mojo	elaborated	46	772	22	31	204	212
-assets/ok/comptime_if_layout_query.mojo	elaborated	24	141	5	15	14	20
-assets/ok/comptime_if_nested_def_call.mojo	elaborated	16	130	7	11	28	27
-assets/ok/comptime_if_nested_keyed_def.mojo	elaborated	9	109	2	4	10	12
-assets/ok/comptime_if_overload_beside_pack.mojo	elaborated	11	177	2	5	12	62
-assets/ok/comptime_if_overload_beside_plain.mojo	elaborated	34	690	15	16	166	164
-assets/ok/comptime_if_overload_pack_first.mojo	elaborated	9	145	2	4	12	40
-assets/ok/comptime_if_overload_pack_plain_triple.mojo	elaborated	8	126	2	2	12	23
-assets/ok/comptime_if_overload_pack_zero_arity.mojo	elaborated	8	117	2	2	12	17
-assets/ok/comptime_if_overloaded_def.mojo	elaborated	12	121	4	7	8	7
-assets/ok/comptime_if_overloaded_def_explicit.mojo	elaborated	9	114	2	4	4	4
-assets/ok/comptime_if_template_served.mojo	elaborated	46	880	18	24	242	257
-assets/ok/comptime_lambda_initializer.mojo	elaborated	5	95	0	0	0	0
-assets/ok/comptime_layout_constant.mojo	elaborated	8	117	2	2	6	6
-assets/ok/comptime_local_application_per_read.mojo	elaborated	58	1021	25	28	270	324
-assets/ok/comptime_local_binder_alias.mojo	elaborated	45	785	20	26	211	240
-assets/ok/comptime_local_display_applications.mojo	elaborated	192	3406	81	144	1388	2381
-assets/ok/comptime_local_over_binder.mojo	elaborated	45	809	21	26	228	253
-assets/ok/comptime_module_constant_parameter_values.mojo	elaborated	154	2823	61	120	1169	2005
-assets/ok/comptime_shadowed_locals.mojo	elaborated	42	827	22	24	241	254
-assets/ok/comptime_sized_scalar_constant.mojo	elaborated	8	129	0	0	0	0
-assets/ok/comptime_string_value.mojo	elaborated	33	688	14	14	164	162
-assets/ok/comptime_struct_string_field.mojo	elaborated	52	1108	21	28	295	428
-assets/ok/comptime_template_body_bindings.mojo	elaborated	56	1037	30	37	385	467
-assets/ok/comptime_tuple.mojo	elaborated	47	995	20	30	303	472
-assets/ok/comptime_value_materialized_without_constructor.mojo	elaborated	52	1101	21	24	282	300
-assets/ok/conditional_expression_transfer.mojo	elaborated	20	354	3	3	37	37
-assets/ok/conditional_member_availability.mojo	elaborated	10	126	3	4	7	9
-assets/ok/conditional_member_trivial_value_clauses.mojo	elaborated	43	732	19	24	174	179
-assets/ok/conforms_to_library_types_unasked_traits.mojo	elaborated	44	1028	16	23	227	395
-assets/ok/conforms_to_user_and_unasked_traits.mojo	elaborated	38	723	16	20	172	174
-assets/ok/constructor_read_temporary_drop_order.mojo	elaborated	17	326	3	5	9	15
-assets/ok/container_hashable.mojo	elaborated	194	3359	82	170	1479	2514
-assets/ok/contextual_member_static.mojo	elaborated	23	360	13	13	213	213
-assets/ok/copy_construction_last_use_moves.mojo	elaborated	26	355	9	9	56	56
-assets/ok/copy_construction_owned_receiver_forwards.mojo	elaborated	21	256	3	3	36	36
-assets/ok/copy_construction_read_argument_lends.mojo	elaborated	24	298	3	3	36	36
-assets/ok/copy_construction_read_receiver_lends.mojo	elaborated	23	304	3	3	36	36
-assets/ok/copy_return.mojo	elaborated	36	706	15	15	166	164
-assets/ok/copyable.mojo	elaborated	35	704	14	14	164	162
-assets/ok/copyable_iterator_reference_aggregate.mojo	elaborated	9	107	1	1	4	4
-assets/ok/copyinit_moveinit.mojo	elaborated	13	199	2	2	17	17
-assets/ok/ctfe_annotated_module_constant.mojo	elaborated	6	104	0	0	0	0
-assets/ok/ctfe_beside_comptime_if_struct_method.mojo	elaborated	38	793	16	18	190	190
-assets/ok/ctfe_body_requests.mojo	elaborated	53	872	22	28	207	263
-assets/ok/ctfe_collection_result_compile_time_reads.mojo	elaborated	22	328	14	14	214	212
-assets/ok/ctfe_construction_in_body.mojo	elaborated	14	133	1	1	4	2
-assets/ok/ctfe_dict_set_result.mojo	elaborated	141	2595	59	113	1030	1838
-assets/ok/ctfe_display_tuple_subscript_in_body.mojo	elaborated	162	3022	67	132	1219	2188
-assets/ok/ctfe_list_field_struct_result.mojo	elaborated	19	324	13	13	213	211
-assets/ok/ctfe_list_result_materialize.mojo	elaborated	81	1530	23	60	301	860
-assets/ok/ctfe_module_constant_requests.mojo	elaborated	14	132	4	7	14	18
-assets/ok/ctfe_module_display_constant_requests.mojo	elaborated	198	3487	77	154	1252	2409
-assets/ok/ctfe_module_optional_constant.mojo	elaborated	18	222	12	12	109	108
-assets/ok/ctfe_optional_result.mojo	elaborated	59	962	25	37	263	367
-assets/ok/ctfe_pointer_struct_result.mojo	elaborated	44	798	22	24	237	251
-assets/ok/ctfe_projection_of_temporary_in_body.mojo	elaborated	63	1128	26	32	343	413
-assets/ok/ctfe_type_generic_def_in_body.mojo	elaborated	10	105	1	2	3	2
-assets/ok/decorators.mojo	elaborated	7	105	0	0	0	0
-assets/ok/def_aggregate_value_binder_served.mojo	elaborated	37	738	17	19	193	211
-assets/ok/default_args.mojo	elaborated	7	136	0	0	0	0
-assets/ok/default_converting_constructor.mojo	elaborated	49	844	22	24	246	260
-assets/ok/default_reads_binder.mojo	elaborated	69	821	29	50	200	219
-assets/ok/defines_main.mojo	elaborated	5	92	0	0	0	0
-assets/ok/deinit_body_field_last_use.mojo	elaborated	20	259	0	0	0	0
-assets/ok/deinit_param_destruction_timing.mojo	elaborated	20	226	0	0	0	0
-assets/ok/delegated_ref_return_projection.mojo	elaborated	21	356	14	14	214	214
-assets/ok/dict_display_literal_constructor.mojo	elaborated	130	2361	43	119	823	2092
-assets/ok/dict_hasher_forwarding.mojo	elaborated	73	1220	38	66	678	1108
-assets/ok/dict_insert_linear_capable.mojo	elaborated	81	1406	47	72	832	1194
-assets/ok/dict_methods_growth.mojo	elaborated	99	2012	65	93	1186	1588
-assets/ok/dict_movable_only_elements.mojo	elaborated	130	2466	57	106	1000	1684
-assets/ok/dict_take_items.mojo	elaborated	85	1562	51	79	915	1317
-assets/ok/dict_upstream_key_value_iteration.mojo	elaborated	129	2439	56	106	976	1696
-assets/ok/dict_views_iteration.mojo	elaborated	87	1544	53	81	851	1253
-assets/ok/discard_slots_typed_per_statement.mojo	elaborated	9	117	0	0	0	0
-assets/ok/discarded_call_result_drop_order.mojo	elaborated	14	390	1	1	6	6
-assets/ok/discarded_result_destruction.mojo	elaborated	11	118	0	0	0	0
-assets/ok/discarded_transfer_destroyed_in_place.mojo	elaborated	16	240	3	3	37	37
-assets/ok/display_argument_built_at_call_setup.mojo	elaborated	160	3170	69	122	1167	1954
-assets/ok/display_element_read_at_construction.mojo	elaborated	158	3153	65	133	1065	2029
-assets/ok/docstrings.mojo	elaborated	5	92	0	0	0	0
-assets/ok/dtype_compile_time_values.mojo	elaborated	39	530	24	30	282	278
-assets/ok/dtype_default_param.mojo	elaborated	7	107	1	2	2	4
-assets/ok/dtype_float_queries.mojo	elaborated	6	116	1	1	1	1
-assets/ok/dtype_float_query_template_served.mojo	elaborated	23	152	7	18	28	26
-assets/ok/dtype_keyed_bool_lane.mojo	elaborated	37	729	17	18	173	175
-assets/ok/dtype_keyed_method.mojo	elaborated	18	187	9	12	24	34
-assets/ok/dtype_keyed_method_forward.mojo	elaborated	16	145	6	10	29	33
-assets/ok/dtype_keyed_method_value_struct.mojo	elaborated	15	167	8	10	17	21
-assets/ok/dtype_keyed_overload_beside_keyed.mojo	elaborated	42	859	23	26	315	337
-assets/ok/dtype_keyed_overload_beside_plain.mojo	elaborated	33	690	16	17	166	165
-assets/ok/dtype_keyed_overload_family.mojo	elaborated	35	698	16	19	167	167
-assets/ok/dtype_runtime_surface.mojo	elaborated	122	2339	47	99	845	1585
-assets/ok/dtype_runtime_value.mojo	elaborated	5	95	0	0	0	0
-assets/ok/dtype_struct_param.mojo	elaborated	9	112	2	4	3	6
-assets/ok/dtype_value_param.mojo	elaborated	8	111	2	3	4	6
-assets/ok/dunder_contains.mojo	elaborated	6	119	0	0	0	0
-assets/ok/dunder_index.mojo	elaborated	7	112	0	0	0	0
-assets/ok/dunder_setitem.mojo	elaborated	7	159	0	0	0	0
-assets/ok/dunder_vec2.mojo	elaborated	35	759	14	14	164	162
-assets/ok/element_store_from_same_list.mojo	elaborated	69	1255	24	51	276	647
-assets/ok/entry_redeclares_library_names.mojo	elaborated	51	968	27	29	337	348
-assets/ok/env_roundtrip.mojo	elaborated	40	930	14	14	164	162
-assets/ok/errno_strerror.mojo	elaborated	46	973	16	16	268	266
-assets/ok/evaluated_default_argument.mojo	elaborated	56	977	18	19	171	172
-assets/ok/exceptions.mojo	elaborated	6	96	0	0	0	0
-assets/ok/explicit_destroy_consumed_field_droppable.mojo	elaborated	37	710	18	22	178	190
-assets/ok/explicit_destroy_partial_fields.mojo	elaborated	10	140	0	0	0	0
-assets/ok/explicit_destroy_raise_edges.mojo	elaborated	43	811	14	14	164	162
-assets/ok/explicit_transfer_convention.mojo	elaborated	67	1266	34	45	391	533
-assets/ok/external_call_write_stdout.mojo	elaborated	43	915	20	22	273	287
-assets/ok/field_store_overwrite_drop.mojo	elaborated	6	108	0	0	0	0
-assets/ok/field_store_overwrite_drop_shapes.mojo	elaborated	11	193	0	0	0	0
-assets/ok/field_view_beside_field_store.mojo	elaborated	44	911	14	14	164	162
-assets/ok/fieldwise_init_with_spelled_copy_constructor.mojo	elaborated	7	109	0	0	0	0
-assets/ok/fieldwise_keyword_construction.mojo	elaborated	51	1019	21	32	246	391
-assets/ok/file_descriptor_stdout_order.mojo	elaborated	179	3665	62	84	969	1256
-assets/ok/file_handle_roundtrip.mojo	elaborated	190	4336	65	91	1014	1505
-assets/ok/float16_display.mojo	elaborated	35	779	17	17	217	215
-assets/ok/float16_semantics.mojo	elaborated	35	909	24	29	437	442
-assets/ok/forward_struct_reference_iterator.mojo	elaborated	24	366	14	14	214	212
-assets/ok/free_function_origin_binder_result.mojo	elaborated	43	648	21	35	258	470
-assets/ok/free_function_origin_binders.mojo	elaborated	7	108	0	0	0	0
-assets/ok/func_styles.mojo	elaborated	6	95	0	0	0	0
-assets/ok/function_type_where_bound.mojo	elaborated	7	100	2	2	10	8
-assets/ok/function_type_where_unconstrained_actual.mojo	elaborated	7	100	2	2	10	8
-assets/ok/function_typed_kwargs.mojo	elaborated	100	2023	40	78	788	1346
-assets/ok/function_value_array_display.mojo	elaborated	20	339	9	13	133	215
-assets/ok/function_value_array_element_binding.mojo	elaborated	19	351	8	12	132	214
-assets/ok/generic_constructor_literal_argument.mojo	elaborated	35	722	15	17	168	174
-assets/ok/generic_copyable_iterator_refinement.mojo	elaborated	8	125	1	1	24	24
-assets/ok/generic_ctfe_associated_value.mojo	elaborated	7	96	1	1	1	1
-assets/ok/generic_ctfe_value_param.mojo	elaborated	6	96	1	1	7	2
-assets/ok/generic_ctor_literal_materialization.mojo	elaborated	10	152	3	4	6	8
-assets/ok/generic_def_static_receiver_binder.mojo	elaborated	35	704	16	16	175	173
-assets/ok/generic_display_argument_infers_parameter.mojo	elaborated	160	2924	68	136	1084	2103
-assets/ok/generic_display_argument_typed_by_parameter.mojo	elaborated	153	2895	61	130	1060	2058
-assets/ok/generic_equatable_dispatch.mojo	elaborated	128	2523	51	105	980	1766
-assets/ok/generic_field_pointer_deref_in_place.mojo	elaborated	7	140	2	2	5	5
-assets/ok/generic_iterable_explicit_iter.mojo	elaborated	67	1193	22	49	273	648
-assets/ok/generic_method_per_call_clones.mojo	elaborated	47	818	20	28	191	238
-assets/ok/generic_nested_def_captures.mojo	elaborated	73	1133	30	51	345	520
-assets/ok/generic_param_string_literal_materializes.mojo	elaborated	34	700	15	16	167	168
-assets/ok/generic_struct_generic_constructor_overload.mojo	elaborated	46	886	18	27	200	276
-assets/ok/generic_struct_instance_bodies.mojo	elaborated	144	2685	63	121	1092	1917
-assets/ok/generic_struct_instance_dispatch.mojo	elaborated	154	2920	71	130	1141	1981
-assets/ok/generic_struct_template_reach.mojo	elaborated	80	1191	25	60	224	558
-assets/ok/generic_struct_tuple_field.mojo	elaborated	58	935	21	40	197	313
-assets/ok/hashable_bucketing.mojo	elaborated	51	1181	27	31	502	496
-assets/ok/hashable_extra_hash_overload.mojo	elaborated	18	371	9	10	174	151
-assets/ok/hashable_hasher_protocol.mojo	elaborated	58	1276	29	38	512	539
-assets/ok/hasher_upstream_spellings.mojo	elaborated	35	654	12	27	230	438
-assets/ok/hasher_user_conformer.mojo	elaborated	114	1952	49	92	763	1356
-assets/ok/hashlib_bytes_hash.mojo	elaborated	48	1151	25	26	453	456
-assets/ok/hashlib_explicit_hasher_containers.mojo	elaborated	127	2160	52	104	785	1517
-assets/ok/hashlib_keyed_ahasher.mojo	elaborated	50	1158	26	30	491	487
-assets/ok/hashlib_values.mojo	elaborated	95	1730	28	72	523	863
-assets/ok/hello_world.mojo	elaborated	5	92	0	0	0	0
-assets/ok/homogeneous_variadic_loan_carrying_element.mojo	elaborated	28	435	20	22	247	250
-assets/ok/imm_origin_binders.mojo	elaborated	7	116	2	2	4	4
-assets/ok/imm_origin_cast_view.mojo	elaborated	11	132	0	0	0	0
-assets/ok/implicit_conversion.mojo	elaborated	8	112	0	0	0	0
-assets/ok/implicit_conversion_bound_on_declaration.mojo	elaborated	35	693	17	20	173	180
-assets/ok/implicit_conversion_exact_source.mojo	elaborated	8	112	0	0	0	0
-assets/ok/implicit_conversion_raising.mojo	elaborated	7	107	0	0	0	0
-assets/ok/indexer_normalization.mojo	elaborated	15	263	9	9	158	156
-assets/ok/init_out_self.mojo	elaborated	8	118	0	0	0	0
-assets/ok/initializer_list_contextual.mojo	elaborated	51	867	25	29	252	282
-assets/ok/inplace_field.mojo	elaborated	6	106	0	0	0	0
-assets/ok/inplace_raises_try.mojo	elaborated	6	108	0	0	0	0
-assets/ok/inplace_subscript_multi.mojo	elaborated	8	120	0	0	0	0
-assets/ok/inplace_subscript_once.mojo	elaborated	9	121	0	0	0	0
-assets/ok/inplace_subscript_raises_try.mojo	elaborated	8	114	0	0	0	0
-assets/ok/inplace_subscript_ref.mojo	elaborated	7	116	0	0	0	0
-assets/ok/inplace_subscript_value.mojo	elaborated	8	159	0	0	0	0
-assets/ok/inplace_var.mojo	elaborated	6	105	0	0	0	0
-assets/ok/input.mojo	elaborated	35	761	14	14	164	162
-assets/ok/instance_constructor_symbols.mojo	elaborated	101	1825	21	84	275	1220
-assets/ok/interior_dest_rebind_releases_loans.mojo	elaborated	28	490	13	23	213	347
-assets/ok/invert_operator.mojo	elaborated	16	200	10	10	86	85
-assets/ok/joint_map.mojo	elaborated	121	2378	49	99	956	1676
-assets/ok/keyed_def_builds_loan_carrying_instance.mojo	elaborated	20	319	15	15	211	208
-assets/ok/keyword_call.mojo	elaborated	7	137	0	0	0	0
-assets/ok/keyword_only.mojo	elaborated	8	158	1	1	42	42
-assets/ok/keyword_slice_subscripts.mojo	elaborated	18	244	10	10	99	98
-assets/ok/keyword_subscript_user_struct.mojo	elaborated	20	335	13	13	213	211
-assets/ok/kwargs.mojo	elaborated	100	2020	40	78	788	1346
-assets/ok/kwargs_keyed_read.mojo	elaborated	130	2747	41	102	812	1852
-assets/ok/lambda_basic.mojo	elaborated	11	138	0	0	0	0
-assets/ok/lambda_generic_comptime.mojo	elaborated	11	151	3	5	10	15
-assets/ok/lambda_hof.mojo	elaborated	10	133	1	1	4	4
-assets/ok/lambda_in_control_flow.mojo	elaborated	9	137	0	0	0	0
-assets/ok/lane_gather_template_served.mojo	elaborated	15	163	8	10	22	30
-assets/ok/lane_keyed_hash.mojo	elaborated	44	650	16	36	227	409
-assets/ok/lane_template_served.mojo	elaborated	23	236	8	18	45	86
-assets/ok/late_initialized_local.mojo	elaborated	46	861	17	17	201	199
-assets/ok/layout_allocation.mojo	elaborated	19	229	14	14	63	63
-assets/ok/lifecycle_deprecated_spellings.mojo	elaborated	9	114	0	0	0	0
-assets/ok/line_continuation.mojo	elaborated	5	95	0	0	0	0
-assets/ok/list_and_struct.mojo	elaborated	22	391	16	16	235	233
-assets/ok/list_anytype_element.mojo	elaborated	13	170	8	8	74	74
-assets/ok/list_contiguous_slice_strict.mojo	elaborated	64	1296	30	39	407	552
-assets/ok/list_element_view_method_result.mojo	elaborated	167	3423	51	131	991	2209
-assets/ok/list_methods_growth.mojo	elaborated	53	1136	48	48	676	672
-assets/ok/list_of_vectors_subscript.mojo	elaborated	20	361	15	15	223	223
-assets/ok/list_strided_slice_normalizes.mojo	elaborated	51	1069	22	33	355	509
-assets/ok/list_subscript_field_store.mojo	elaborated	18	374	13	13	213	213
-assets/ok/list_subscript_field_store_drop.mojo	elaborated	32	580	13	26	213	426
-assets/ok/list_subscript_field_store_shapes.mojo	elaborated	82	1673	24	61	295	866
-assets/ok/list_unsafe_ptr_multi_element.mojo	elaborated	19	350	14	14	214	212
-assets/ok/list_unsafe_uninit_length.mojo	elaborated	76	1606	24	50	302	672
-assets/ok/live_pointer_ref_argument.mojo	elaborated	7	112	0	0	0	0
-assets/ok/loan_carrying_instance_clone.mojo	elaborated	45	665	26	39	278	475
-assets/ok/local_comptime_float.mojo	elaborated	34	731	15	15	170	168
-assets/ok/loop_binding_consuming_copy.mojo	elaborated	53	1002	20	30	263	397
-assets/ok/mapping_key_iteration_reads.mojo	elaborated	125	2461	52	102	985	1705
-assets/ok/math_module_rounding.mojo	elaborated	13	136	4	8	9	18
-assets/ok/maybe_uninit_predicates.mojo	elaborated	5	102	0	0	0	0
-assets/ok/maybe_uninit_roundtrip.mojo	elaborated	18	196	7	11	15	25
-assets/ok/maybe_uninit_write.mojo	elaborated	9	116	4	4	8	8
-assets/ok/method_mut_param.mojo	elaborated	6	115	0	0	0	0
-assets/ok/method_named_result.mojo	elaborated	53	1023	20	30	263	397
-assets/ok/method_result_pointer_field_write.mojo	elaborated	21	341	14	14	222	220
-assets/ok/method_simd_pattern_beside_bare.mojo	elaborated	34	694	16	18	166	166
-assets/ok/method_value_parameter_binding.mojo	elaborated	12	142	3	6	11	22
-assets/ok/module_reference_result_reads.mojo	elaborated	41	890	18	21	193	208
-assets/ok/movable_where_false_explicit_destroy.mojo	elaborated	7	102	0	0	0	0
-assets/ok/move_after_last_raise_in_try.mojo	elaborated	34	692	14	14	164	162
-assets/ok/mut_callable_parameter_write_back.mojo	elaborated	14	175	2	4	10	20
-assets/ok/mut_owned_params.mojo	elaborated	30	680	14	14	164	162
-assets/ok/mut_parameter_reassignment_drop.mojo	elaborated	7	115	0	0	0	0
-assets/ok/mut_parameter_reassignment_drop_shapes.mojo	elaborated	10	183	0	0	0	0
-assets/ok/mut_parameter_transfer_refilled.mojo	elaborated	38	803	14	14	164	162
-assets/ok/mut_pointer_parameter_reassign.mojo	elaborated	6	105	0	0	0	0
-assets/ok/mut_ref_writeback.mojo	elaborated	7	125	0	0	0	0
-assets/ok/named_result_transferred.mojo	elaborated	21	310	5	11	77	122
-assets/ok/named_shared_views.mojo	elaborated	34	736	16	16	180	178
-assets/ok/native_borrowed_reads.mojo	elaborated	66	1204	21	44	267	612
-assets/ok/nested.mojo	elaborated	7	97	0	0	0	0
-assets/ok/nested_comprehensions.mojo	elaborated	43	743	26	38	398	574
-assets/ok/nested_copy_lifecycle.mojo	elaborated	161	2821	61	138	967	2040
-assets/ok/nested_def_enclosing_binders.mojo	elaborated	65	863	36	45	271	302
-assets/ok/nested_def_reads_comptime_for_index.mojo	elaborated	46	318	23	40	102	174
-assets/ok/nested_def_reads_enclosing_parameter.mojo	elaborated	25	203	14	18	85	87
-assets/ok/nested_def_value_argument.mojo	elaborated	10	108	3	5	17	16
-assets/ok/nested_index_store.mojo	elaborated	31	532	14	26	222	418
-assets/ok/nested_origin_binder_not_captured.mojo	elaborated	41	620	18	34	242	466
-assets/ok/nested_origins_read_only_decorator.mojo	elaborated	42	649	23	37	273	485
-assets/ok/nested_recursive_call.mojo	elaborated	8	113	0	0	0	0
-assets/ok/nominal_string_affix.mojo	elaborated	38	950	14	14	164	162
-assets/ok/nominal_string_atof_rounding.mojo	elaborated	105	3460	25	39	276	456
-assets/ok/nominal_string_basics.mojo	elaborated	35	781	14	14	164	162
-assets/ok/nominal_string_bool_mul.mojo	elaborated	38	883	14	14	164	162
-assets/ok/nominal_string_bytes_capacity.mojo	elaborated	73	1702	32	36	512	547
-assets/ok/nominal_string_bytes_peek_split.mojo	elaborated	98	2595	25	39	245	356
-assets/ok/nominal_string_case.mojo	elaborated	59	1687	14	14	164	162
-assets/ok/nominal_string_codepoint_from_byte.mojo	elaborated	37	872	14	14	164	162
-assets/ok/nominal_string_codepoint_from_u32.mojo	elaborated	52	1074	24	26	256	271
-assets/ok/nominal_string_codepoint_iter.mojo	elaborated	67	2122	14	14	164	162
-assets/ok/nominal_string_codepoint_predicates.mojo	elaborated	65	2132	22	24	237	252
-assets/ok/nominal_string_codepoint_type.mojo	elaborated	57	1008	22	24	237	252
-assets/ok/nominal_string_default_binding.mojo	elaborated	47	1122	14	14	164	162
-assets/ok/nominal_string_dict_keys.mojo	elaborated	127	2520	52	105	985	1768
-assets/ok/nominal_string_find.mojo	elaborated	38	890	14	14	164	162
-assets/ok/nominal_string_graphemes.mojo	elaborated	50	1750	14	14	164	162
-assets/ok/nominal_string_indexing.mojo	elaborated	51	1144	14	14	164	162
-assets/ok/nominal_string_join.mojo	elaborated	76	1497	20	53	275	721
-assets/ok/nominal_string_justify.mojo	elaborated	44	1053	14	14	164	162
-assets/ok/nominal_string_keyword_slices.mojo	elaborated	76	2427	24	26	255	284
-assets/ok/nominal_string_operations.mojo	elaborated	41	1057	14	14	164	162
-assets/ok/nominal_string_parse.mojo	elaborated	110	4198	25	39	276	456
-assets/ok/nominal_string_parse_errors.mojo	elaborated	111	4102	25	39	276	456
-assets/ok/nominal_string_predicates.mojo	elaborated	55	1337	14	14	164	162
-assets/ok/nominal_string_protocols.mojo	elaborated	134	2854	50	104	981	1789
-assets/ok/nominal_string_replace.mojo	elaborated	40	1093	14	14	164	162
-assets/ok/nominal_string_reversed_iteration.mojo	elaborated	59	2070	14	14	164	162
-assets/ok/nominal_string_search_extras.mojo	elaborated	44	1173	14	14	164	162
-assets/ok/nominal_string_split.mojo	elaborated	57	1290	20	30	263	397
-assets/ok/nominal_string_split_forms.mojo	elaborated	71	1877	20	30	263	397
-assets/ok/nominal_string_strip.mojo	elaborated	64	1524	14	14	164	162
-assets/ok/nominal_string_unicode_case.mojo	elaborated	59	1737	14	14	164	162
-assets/ok/nominal_string_writer.mojo	elaborated	39	821	16	16	173	176
-assets/ok/number_and_string_literals.mojo	elaborated	32	703	14	14	164	162
-assets/ok/numeric_operation_traits.mojo	elaborated	12	158	5	6	11	13
-assets/ok/numeric_truthiness_condition.mojo	elaborated	25	446	19	19	248	246
-assets/ok/operator_operand_borrow.mojo	elaborated	40	704	29	29	450	420
-assets/ok/optional_dict_keys.mojo	elaborated	141	2518	59	121	962	1819
-assets/ok/optional_is_none.mojo	elaborated	45	853	24	26	247	261
-assets/ok/optional_owning_api.mojo	elaborated	56	656	23	39	256	389
-assets/ok/optional_raising_subscript.mojo	elaborated	57	932	24	37	262	384
-assets/ok/optional_value_protocols.mojo	elaborated	88	1506	41	67	501	718
-assets/ok/origin_argument_alias_bodies.mojo	elaborated	26	396	13	13	213	211
-assets/ok/origin_argument_direct_applications.mojo	elaborated	24	368	13	13	213	211
-assets/ok/origin_binder_result_keeps_argument.mojo	elaborated	35	764	16	16	167	165
-assets/ok/origin_delegated_call_arguments_run.mojo	elaborated	21	357	14	14	214	214
-assets/ok/origin_delegated_call_with_arguments.mojo	elaborated	2	0	0	0	0	0
-assets/ok/origin_delegated_multi_binder.mojo	elaborated	7	126	0	0	0	0
-assets/ok/origin_delegated_multi_binder_alias_field.mojo	elaborated	9	143	0	0	0	0
-assets/ok/origin_delegated_parameter_receiver.mojo	elaborated	9	144	0	0	0	0
-assets/ok/origin_placeholder_initialized_local.mojo	elaborated	22	391	17	17	241	239
-assets/ok/origin_placeholder_parameter.mojo	elaborated	22	333	16	16	226	224
-assets/ok/os_dir_operations.mojo	elaborated	137	3186	50	65	825	1171
-assets/ok/os_path_functions.mojo	elaborated	148	4053	49	72	1076	1403
-assets/ok/overload_transfer_effect_isolation.mojo	elaborated	27	491	21	21	323	321
-assets/ok/overload_var_copy_beside_generic.mojo	elaborated	32	693	15	15	165	163
-assets/ok/overload_var_copy_constructor.mojo	elaborated	40	798	17	20	182	203
-assets/ok/overload_var_copy_method.mojo	elaborated	33	688	15	15	165	163
-assets/ok/overloaded_hash_through_hash.mojo	elaborated	15	343	9	9	176	148
-assets/ok/overloaded_method_own_binder_symbols.mojo	elaborated	54	1025	28	30	355	336
-assets/ok/overloaded_signature_module_constant.mojo	elaborated	9	118	0	0	0	0
-assets/ok/overloading_arity.mojo	elaborated	43	810	14	14	164	162
-assets/ok/overloading_literal_default.mojo	elaborated	6	94	0	0	0	0
-assets/ok/overloading_owned_parameter.mojo	elaborated	12	148	0	0	0	0
-assets/ok/overloading_struct_params.mojo	elaborated	12	141	0	0	0	0
-assets/ok/overloading_variadic_constructor.mojo	elaborated	8	122	2	3	6	10
-assets/ok/owned_iteration_iterator_owned_type.mojo	elaborated	14	255	9	9	132	132
-assets/ok/owned_operand_destroyed_on_later_raise.mojo	elaborated	22	250	1	1	4	4
-assets/ok/owned_pack_destroyed_in_reverse.mojo	elaborated	42	823	20	20	201	219
-assets/ok/owned_pointer_api.mojo	elaborated	19	213	6	11	39	70
-assets/ok/ownership_marker_traits.mojo	elaborated	14	137	4	5	8	12
-assets/ok/pack_argument_destroyed_after_call.mojo	elaborated	63	1254	30	42	451	602
-assets/ok/pack_bare_in_struct_header.mojo	elaborated	36	730	20	21	195	217
-assets/ok/pack_beside_value_binder.mojo	elaborated	38	727	19	23	184	187
-assets/ok/pack_constructor_spread_served.mojo	elaborated	68	931	29	49	233	340
-assets/ok/pack_def_scalar_value_binders_served.mojo	elaborated	38	799	19	19	196	200
-assets/ok/pack_def_unkept_loop_template_served.mojo	elaborated	48	917	26	28	347	375
-assets/ok/pack_element_alias_served.mojo	elaborated	35	763	17	17	188	227
-assets/ok/pack_element_alias_string_literal.mojo	elaborated	34	728	15	16	171	194
-assets/ok/pack_element_binding_served.mojo	elaborated	53	943	32	35	342	409
-assets/ok/pack_element_copy_served.mojo	elaborated	36	729	16	16	178	190
-assets/ok/pack_element_default_construction.mojo	elaborated	54	939	29	36	316	402
-assets/ok/pack_element_read_borrowed.mojo	elaborated	49	913	24	26	299	314
-assets/ok/pack_element_rebind.mojo	elaborated	42	807	20	23	205	222
-assets/ok/pack_element_temporaries.mojo	elaborated	70	1208	39	51	409	554
-assets/ok/pack_forwarding_method.mojo	elaborated	39	731	17	20	178	195
-assets/ok/pack_forwarding_print.mojo	elaborated	34	714	15	16	170	180
-assets/ok/pack_index_named_method.mojo	elaborated	50	856	20	31	196	281
-assets/ok/pack_inferred_through_tuple.mojo	elaborated	75	1003	25	57	204	380
-assets/ok/pack_length_runtime_position.mojo	elaborated	46	812	27	30	200	200
-assets/ok/pack_method_template_served.mojo	elaborated	46	804	24	27	215	237
-assets/ok/pack_overload_arity.mojo	elaborated	33	693	16	18	166	166
-assets/ok/pack_overload_beside_keyed.mojo	elaborated	33	711	18	18	178	175
-assets/ok/pack_overload_bounds.mojo	elaborated	31	686	16	16	166	164
-assets/ok/pack_overload_by_value_tiebreak.mojo	elaborated	42	766	25	25	176	174
-assets/ok/pack_overload_constructor.mojo	elaborated	6	103	1	1	2	2
-assets/ok/pack_overload_empty_collector_arity.mojo	elaborated	31	679	16	16	167	165
-assets/ok/pack_overload_keyword_only.mojo	elaborated	31	692	16	16	170	168
-assets/ok/pack_overload_leading_type.mojo	elaborated	32	701	16	17	172	174
-assets/ok/pack_overload_method_arity.mojo	elaborated	33	700	18	18	168	166
-assets/ok/pack_overload_sibling_forward.mojo	elaborated	34	695	16	19	170	179
-assets/ok/pack_overload_variadic_position.mojo	elaborated	31	678	16	16	166	164
-assets/ok/pack_reverse_concat_types.mojo	elaborated	53	827	23	38	189	290
-assets/ok/pack_spread_into_writer_write.mojo	elaborated	48	955	20	23	193	234
-assets/ok/pack_spread_result_overloaded_init_served.mojo	elaborated	48	774	21	30	194	218
-assets/ok/pack_struct_element_alias_condition.mojo	elaborated	11	150	3	6	22	44
-assets/ok/pack_struct_explicit_in_generic_body.mojo	elaborated	60	883	22	42	208	317
-assets/ok/pack_struct_getitem.mojo	elaborated	50	838	21	31	196	277
-assets/ok/pack_struct_inferred_args.mojo	elaborated	59	951	22	40	193	307
-assets/ok/pack_struct_method_collector.mojo	elaborated	44	785	22	26	200	226
-assets/ok/pack_struct_pair.mojo	elaborated	43	793	20	24	185	209
-assets/ok/pack_struct_static_method_through_instance.mojo	elaborated	8	101	2	3	3	4
-assets/ok/pack_struct_variadic_init.mojo	elaborated	40	763	20	22	187	210
-assets/ok/pack_struct_writable.mojo	elaborated	47	825	19	26	194	264
-assets/ok/pack_template_served.mojo	elaborated	48	1051	23	29	237	383
-assets/ok/package_constant_in_own_signature.mojo	elaborated	33	693	14	14	164	162
-assets/ok/param_expr_alias.mojo	elaborated	6	98	1	1	2	2
-assets/ok/param_expr_arithmetic.mojo	elaborated	5	124	0	0	0	0
-assets/ok/param_expr_array.mojo	elaborated	15	266	10	10	159	157
-assets/ok/param_expr_canonical.mojo	elaborated	11	126	4	6	5	9
-assets/ok/param_expr_fold_routes.mojo	elaborated	6	111	1	1	2	2
-assets/ok/param_expr_literal_argument.mojo	elaborated	14	263	9	9	158	156
-assets/ok/param_expr_normal_form.mojo	elaborated	22	204	11	17	12	24
-assets/ok/param_expr_overflow.mojo	elaborated	5	100	0	0	0	0
-assets/ok/param_expr_where.mojo	elaborated	6	94	1	1	2	2
-assets/ok/param_expr_where_assumption.mojo	elaborated	11	114	6	6	18	14
-assets/ok/parameterized_assoc_concrete.mojo	elaborated	20	309	14	14	201	201
-assets/ok/parameterized_assoc_origin.mojo	elaborated	5	92	0	0	0	0
-assets/ok/parameterized_assoc_self_origin.mojo	elaborated	19	304	13	13	199	197
-assets/ok/parameterized_assoc_self_origin_return.mojo	elaborated	19	304	13	13	199	197
-assets/ok/parameterized_assoc_value.mojo	elaborated	5	92	0	0	0	0
-assets/ok/parametric_static_methods.mojo	elaborated	174	3275	57	151	1042	2492
-assets/ok/partial_move_mut_parameter_reinit.mojo	elaborated	7	116	0	0	0	0
-assets/ok/partial_move_reinit_sibling_use.mojo	elaborated	6	114	0	0	0	0
-assets/ok/path_operations.mojo	elaborated	245	5553	77	119	1366	2017
-assets/ok/per_call_clone_loan_carrying_argument.mojo	elaborated	42	696	21	35	240	440
-assets/ok/pliron_alloc_roundtrip.mojo	elaborated	10	205	2	4	17	34
-assets/ok/pliron_builtin_numeric_edges.mojo	elaborated	5	144	0	0	0	0
-assets/ok/pliron_callable_struct.mojo	elaborated	46	948	18	27	242	373
-assets/ok/pliron_closure_env.mojo	elaborated	9	183	0	0	0	0
-assets/ok/pliron_convert_bool.mojo	elaborated	6	166	0	0	0	0
-assets/ok/pliron_convert_int_float.mojo	elaborated	6	139	0	0	0	0
-assets/ok/pliron_convert_uint.mojo	elaborated	6	162	0	0	0	0
-assets/ok/pliron_deep_recursion.mojo	elaborated	7	104	0	0	0	0
-assets/ok/pliron_diamond.mojo	elaborated	7	113	0	0	0	0
-assets/ok/pliron_dict_set.mojo	elaborated	172	3303	55	150	1034	2528
-assets/ok/pliron_fib.mojo	elaborated	7	107	0	0	0	0
-assets/ok/pliron_finally_early_return.mojo	elaborated	34	701	14	14	164	162
-assets/ok/pliron_finally_overrides.mojo	elaborated	8	99	0	0	0	0
-assets/ok/pliron_float32_semantics.mojo	elaborated	5	150	0	0	0	0
-assets/ok/pliron_float_arith.mojo	elaborated	6	118	0	0	0	0
-assets/ok/pliron_float_compare_nan.mojo	elaborated	6	146	0	0	0	0
-assets/ok/pliron_float_floor_mod.mojo	elaborated	6	157	0	0	0	0
-assets/ok/pliron_float_neg_zero.mojo	elaborated	6	99	0	0	0	0
-assets/ok/pliron_float_pow.mojo	elaborated	6	102	0	0	0	0
-assets/ok/pliron_floor_signs.mojo	elaborated	7	130	0	0	0	0
-assets/ok/pliron_input_echo.mojo	elaborated	33	705	14	14	164	162
-assets/ok/pliron_int_pow.mojo	elaborated	7	170	0	0	0	0
-assets/ok/pliron_int_truediv.mojo	elaborated	6	105	0	0	0	0
-assets/ok/pliron_iter_borrowed.mojo	elaborated	7	160	0	0	0	0
-assets/ok/pliron_iter_bounded.mojo	elaborated	7	142	0	0	0	0
-assets/ok/pliron_iter_drop_order.mojo	elaborated	9	163	0	0	0	0
-assets/ok/pliron_iter_range.mojo	elaborated	17	367	9	9	139	139
-assets/ok/pliron_kwargs_defaults.mojo	elaborated	8	144	0	0	0	0
-assets/ok/pliron_kwargs_ref.mojo	elaborated	7	124	0	0	0	0
-assets/ok/pliron_list_core.mojo	elaborated	68	1393	23	49	314	681
-assets/ok/pliron_literal_materialize.mojo	elaborated	6	128	0	0	0	0
-assets/ok/pliron_loop.mojo	elaborated	7	131	0	0	0	0
-assets/ok/pliron_math_rounding_edges.mojo	elaborated	14	164	4	9	9	21
-assets/ok/pliron_multifunc.mojo	elaborated	9	121	0	0	0	0
-assets/ok/pliron_multiindex_kw.mojo	elaborated	62	1274	24	26	255	284
-assets/ok/pliron_pointer_lifecycle.mojo	elaborated	9	150	2	2	17	17
-assets/ok/pliron_print_scalars.mojo	elaborated	6	108	0	0	0	0
-assets/ok/pliron_print_str_literal.mojo	elaborated	5	113	0	0	0	0
-assets/ok/pliron_reference_write_back.mojo	elaborated	6	97	0	0	0	0
-assets/ok/pliron_scalar_casts.mojo	elaborated	5	166	0	0	0	0
-assets/ok/pliron_scalar_widths.mojo	elaborated	5	209	0	0	0	0
-assets/ok/pliron_shortcircuit.mojo	elaborated	7	136	0	0	0	0
-assets/ok/pliron_slice_desc.mojo	elaborated	69	1407	33	44	487	655
-assets/ok/pliron_straightline.mojo	elaborated	6	129	0	0	0	0
-assets/ok/pliron_string_convert.mojo	elaborated	32	721	14	14	164	162
-assets/ok/pliron_string_literal_var.mojo	elaborated	33	717	14	14	164	162
-assets/ok/pliron_stringliteral_value.mojo	elaborated	34	732	14	14	164	162
-assets/ok/pliron_struct_drop_order.mojo	elaborated	8	114	0	0	0	0
-assets/ok/pliron_struct_fieldwise.mojo	elaborated	8	166	0	0	0	0
-assets/ok/pliron_struct_init_method.mojo	elaborated	8	124	0	0	0	0
-assets/ok/pliron_subscript_ref.mojo	elaborated	7	147	0	0	0	0
-assets/ok/pliron_thin_callables.mojo	elaborated	11	142	0	0	0	0
-assets/ok/pliron_try_cleanup_drop_order.mojo	elaborated	8	100	0	0	0	0
-assets/ok/pliron_try_handled_error.mojo	elaborated	30	676	14	14	164	162
-assets/ok/pliron_try_loop_escape.mojo	elaborated	5	106	0	0	0	0
-assets/ok/pliron_try_nested_reraise.mojo	elaborated	7	104	0	0	0	0
-assets/ok/pliron_tuple_pack.mojo	elaborated	45	937	18	26	220	348
-assets/ok/pliron_uint_arith.mojo	elaborated	6	179	0	0	0	0
-assets/ok/pliron_uint_compare.mojo	elaborated	6	141	0	0	0	0
-assets/ok/pliron_uint_pow.mojo	elaborated	7	145	0	0	0	0
-assets/ok/pliron_uninit_roundtrip.mojo	elaborated	14	193	7	7	15	15
-assets/ok/pliron_wrap_int_arith.mojo	elaborated	6	141	0	0	0	0
-assets/ok/pliron_wrap_pow.mojo	elaborated	7	144	0	0	0	0
-assets/ok/pliron_wrap_uint_arith.mojo	elaborated	6	121	0	0	0	0
-assets/ok/pointer_bound_copy.mojo	elaborated	7	157	0	0	0	0
-assets/ok/pointer_deref_store_loan_carrying_pointee.mojo	elaborated	69	1346	28	44	349	540
-assets/ok/pointer_deref_store_overwrite_drop.mojo	elaborated	6	110	0	0	0	0
-assets/ok/pointer_empty_deref.mojo	elaborated	7	143	2	2	17	17
-assets/ok/pointer_field_adapter_from_deref_rebinding.mojo	elaborated	22	342	13	13	213	211
-assets/ok/pointer_field_adapter_from_reborrow.mojo	elaborated	22	341	13	13	213	211
-assets/ok/pointer_field_adapter_return_from_field.mojo	elaborated	23	356	13	13	213	211
-assets/ok/pointer_field_bare_origin_mutable_source_write.mojo	elaborated	19	336	14	14	222	220
-assets/ok/pointer_field_chained_view_call.mojo	elaborated	24	376	13	13	213	211
-assets/ok/pointer_field_ctor_from_ref_field.mojo	elaborated	20	330	13	13	213	211
-assets/ok/pointer_field_ctor_owned_source.mojo	elaborated	21	353	13	13	213	211
-assets/ok/pointer_field_ctor_temporary_explicit_init.mojo	elaborated	20	344	13	13	213	211
-assets/ok/pointer_field_deref_field_store.mojo	elaborated	5	105	0	0	0	0
-assets/ok/pointer_field_deref_field_store_shapes.mojo	elaborated	8	199	0	0	0	0
-assets/ok/pointer_field_deref_index.mojo	elaborated	19	340	14	14	214	212
-assets/ok/pointer_field_drain_mut_method.mojo	elaborated	23	370	15	15	241	239
-assets/ok/pointer_field_fieldwise_init_binder.mojo	elaborated	23	368	13	13	213	211
-assets/ok/pointer_field_imm_origin_cast_read.mojo	elaborated	18	322	13	13	213	211
-assets/ok/pointer_field_iterator_storage.mojo	elaborated	21	360	13	13	213	211
-assets/ok/pointer_field_mut_origin_plain_self_in_place.mojo	elaborated	20	347	14	14	222	220
-assets/ok/pointer_field_reborrow_read.mojo	elaborated	22	358	14	14	214	212
-assets/ok/pointer_field_symbolic_origin_mut_parameter_write.mojo	elaborated	20	348	14	14	222	220
-assets/ok/pointer_field_symbolic_origin_mutable_local_write.mojo	elaborated	19	337	14	14	222	220
-assets/ok/pointer_field_symbolic_origin_ref_constructor_write.mojo	elaborated	21	347	14	14	222	220
-assets/ok/pointer_field_symbolic_origin_wrapper_field_write.mojo	elaborated	20	340	14	14	222	220
-assets/ok/pointer_field_view_for_temporary.mojo	elaborated	25	390	14	14	214	212
-assets/ok/pointer_field_view_free_function.mojo	elaborated	21	350	13	13	213	211
-assets/ok/pointer_field_view_method_return.mojo	elaborated	22	341	13	13	213	211
-assets/ok/pointer_field_view_plain_self.mojo	elaborated	22	352	13	13	213	211
-assets/ok/pointer_field_view_read_parameter.mojo	elaborated	23	368	13	13	213	211
-assets/ok/pointer_field_view_ref_yield.mojo	elaborated	25	402	14	14	214	212
-assets/ok/pointer_field_view_returned.mojo	elaborated	6	104	0	0	0	0
-assets/ok/pointer_field_wrapper_iterator_protocol.mojo	elaborated	26	397	14	14	214	214
-assets/ok/pointer_immutable_conversion.mojo	elaborated	5	114	0	0	0	0
-assets/ok/pointer_origin_cast_upgrade_reads.mojo	elaborated	8	126	2	2	17	17
-assets/ok/pointer_origin_constructors.mojo	elaborated	11	155	0	0	0	0
-assets/ok/pointer_origin_field_inference.mojo	elaborated	6	126	1	1	2	2
-assets/ok/pointer_placeholder_parameter.mojo	elaborated	34	688	14	14	164	162
-assets/ok/pointer_subscript_reads_in_place.mojo	elaborated	98	1693	34	60	386	751
-assets/ok/pointer_take_pointee_tracked.mojo	elaborated	5	104	0	0	0	0
-assets/ok/pointer_temp_argument_loan.mojo	elaborated	6	103	0	0	0	0
-assets/ok/pointer_temp_argument_loan_return.mojo	elaborated	8	122	0	0	0	0
-assets/ok/pointer_to_owner_twice.mojo	elaborated	19	373	13	13	213	211
-assets/ok/pointer_to_place.mojo	elaborated	5	109	0	0	0	0
-assets/ok/pointer_to_ref_binding.mojo	elaborated	6	113	0	0	0	0
-assets/ok/pointer_to_ref_binding_twice.mojo	elaborated	18	357	13	13	213	211
-assets/ok/pointer_to_ref_union_origin.mojo	elaborated	6	111	0	0	0	0
-assets/ok/pointer_to_ref_write_through.mojo	elaborated	5	107	0	0	0	0
-assets/ok/pointer_to_tuple_element.mojo	elaborated	18	282	5	11	29	98
-assets/ok/pointer_tuple_field_write.mojo	elaborated	9	136	2	3	5	8
-assets/ok/pointer_type_argument_clone_binder.mojo	elaborated	21	243	16	16	72	72
-assets/ok/pointer_type_argument_interior_clone_binder.mojo	elaborated	17	294	12	12	135	133
-assets/ok/pointer_unsafe_vocabulary.mojo	elaborated	7	177	2	2	17	17
-assets/ok/positional_only.mojo	elaborated	7	105	0	0	0	0
-assets/ok/print_argument_drop_order.mojo	elaborated	7	105	0	0	0	0
-assets/ok/print_argument_read_in_place.mojo	elaborated	39	742	15	15	177	175
-assets/ok/print_keywords_file.mojo	elaborated	106	2155	35	38	460	500
-assets/ok/raise_borrowed_string_parameter.mojo	elaborated	35	763	14	14	164	162
-assets/ok/range_zero_step_empty.mojo	elaborated	10	220	3	3	66	66
-assets/ok/read_temporary_conditional_argument_drop.mojo	elaborated	16	231	3	3	37	37
-assets/ok/rebind_assignment.mojo	elaborated	39	776	18	19	212	206
-assets/ok/rebind_augmented_assignment.mojo	elaborated	38	807	18	19	201	196
-assets/ok/rebind_generic_body.mojo	elaborated	38	738	20	20	196	188
-assets/ok/rebind_method_template_served.mojo	elaborated	38	725	19	20	180	179
-assets/ok/rebind_overloaded_def.mojo	elaborated	7	108	2	2	7	4
-assets/ok/rebind_place_projection.mojo	elaborated	53	1434	17	17	197	195
-assets/ok/receiver_origin_iterator_argument.mojo	elaborated	41	643	22	36	268	480
-assets/ok/ref_binding_projected_field_offset.mojo	elaborated	19	335	13	13	213	211
-assets/ok/ref_binding_temporary_source.mojo	elaborated	19	321	13	13	213	211
-assets/ok/ref_param.mojo	elaborated	6	99	0	0	0	0
-assets/ok/ref_result_field_value_copy.mojo	elaborated	47	942	18	28	242	376
-assets/ok/ref_result_through_read_param.mojo	elaborated	54	1086	20	29	249	382
-assets/ok/reference_argument_read_at_call_setup.mojo	elaborated	148	2786	48	106	954	1728
-assets/ok/reference_call_assignment_target.mojo	elaborated	39	926	14	14	164	162
-assets/ok/reference_carrier_collection.mojo	elaborated	28	445	13	23	199	333
-assets/ok/reference_element_chained_read.mojo	elaborated	30	505	14	25	214	363
-assets/ok/reference_iteration_temporary_list.mojo	elaborated	22	369	16	16	235	233
-assets/ok/reference_result_view_conversion.mojo	elaborated	51	1102	24	26	342	357
-assets/ok/reference_return_forwarded_accessor.mojo	elaborated	23	349	17	17	212	210
-assets/ok/reflected_operators.mojo	elaborated	9	124	0	0	0	0
-assets/ok/reflection_comptime_for_served.mojo	elaborated	43	862	26	28	331	355
-assets/ok/reflection_field_name_materialize.mojo	elaborated	43	879	23	25	330	359
-assets/ok/reflection_field_type_construction.mojo	elaborated	37	753	16	16	180	220
-assets/ok/reflection_list_materialized_whole.mojo	elaborated	61	1219	28	43	398	666
-assets/ok/reflection_runtime_query.mojo	elaborated	40	860	21	23	304	319
-assets/ok/reflection_symbolic_fields.mojo	elaborated	46	879	23	25	332	347
-assets/ok/reflection_template_served.mojo	elaborated	21	145	12	16	32	23
-assets/ok/repr_sized_scalars.mojo	elaborated	32	796	14	14	164	162
-assets/ok/repr_type_names.mojo	elaborated	60	1315	26	30	275	324
-assets/ok/reversed_iteration.mojo	elaborated	39	619	27	27	381	376
-assets/ok/reversed_list.mojo	elaborated	79	1366	30	59	374	743
-assets/ok/runtime_pack_dunder_len.mojo	elaborated	8	110	2	3	7	9
-assets/ok/same_arity_generic_method_overloads.mojo	elaborated	40	796	19	21	177	179
-assets/ok/same_spelled_type_params.mojo	elaborated	54	856	27	35	210	230
-assets/ok/scalar_default_construction.mojo	elaborated	9	116	1	4	1	4
-assets/ok/scalar_dtype_construction.mojo	elaborated	5	113	0	0	0	0
-assets/ok/scalar_range_float_strided.mojo	elaborated	11	284	3	6	53	106
-assets/ok/scalar_range_sequential.mojo	elaborated	13	231	4	8	41	94
-assets/ok/scalar_range_strided.mojo	elaborated	13	296	5	7	79	122
-assets/ok/scalar_range_zero_starting.mojo	elaborated	13	201	5	8	41	77
-assets/ok/scalar_runtime_conversions.mojo	elaborated	7	132	1	1	2	2
-assets/ok/self_hosted_dict.mojo	elaborated	126	2585	53	103	987	1707
-assets/ok/self_hosted_vec.mojo	elaborated	15	214	5	5	54	54
-assets/ok/set_methods_growth.mojo	elaborated	63	1087	58	58	722	720
-assets/ok/set_variadic_constructor.mojo	elaborated	30	448	24	25	317	333
-assets/ok/shadowed_local_callable_call.mojo	elaborated	26	468	11	15	169	251
-assets/ok/shadowing_constants.mojo	elaborated	6	103	0	0	0	0
-assets/ok/simd_abi_crossings.mojo	elaborated	28	592	18	20	239	264
-assets/ok/simd_bool_masks.mojo	elaborated	6	225	0	0	0	0
-assets/ok/simd_cast.mojo	elaborated	5	118	0	0	0	0
-assets/ok/simd_cast_float_thresholds.mojo	elaborated	5	194	0	0	0	0
-assets/ok/simd_cast_matrix.mojo	elaborated	5	269	0	0	0	0
-assets/ok/simd_compare_all_dtypes.mojo	elaborated	10	358	3	3	37	37
-assets/ok/simd_dtype_alias.mojo	elaborated	7	166	0	0	0	0
-assets/ok/simd_dtypes_int_lanes.mojo	elaborated	5	293	0	0	0	0
-assets/ok/simd_float_div.mojo	elaborated	5	187	0	0	0	0
-assets/ok/simd_floats.mojo	elaborated	5	109	0	0	0	0
-assets/ok/simd_floordiv_mod.mojo	elaborated	5	264	0	0	0	0
-assets/ok/simd_generic_width.mojo	elaborated	9	116	2	4	4	8
-assets/ok/simd_inferred_width_binding.mojo	elaborated	5	132	0	0	0	0
-assets/ok/simd_int_wrap_native_int.mojo	elaborated	5	144	0	0	0	0
-assets/ok/simd_lane_binders_inferred.mojo	elaborated	19	195	7	13	33	51
-assets/ok/simd_lane_dynamic.mojo	elaborated	14	266	6	6	73	73
-assets/ok/simd_lane_dynamic_widths.mojo	elaborated	9	222	3	3	37	37
-assets/ok/simd_lane_write.mojo	elaborated	5	147	0	0	0	0
-assets/ok/simd_literal_splat.mojo	elaborated	9	149	1	1	2	2
-assets/ok/simd_methods.mojo	elaborated	5	166	0	0	0	0
-assets/ok/simd_nullary_construction.mojo	elaborated	8	128	1	3	1	6
-assets/ok/simd_parameter_default_construction.mojo	elaborated	29	514	8	24	127	382
-assets/ok/simd_reductions_float.mojo	elaborated	5	277	0	0	0	0
-assets/ok/simd_reductions_int.mojo	elaborated	5	252	0	0	0	0
-assets/ok/simd_scalar_splat.mojo	elaborated	27	439	15	16	220	222
-assets/ok/simd_shifts_masked.mojo	elaborated	5	281	0	0	0	0
-assets/ok/simd_shuffle.mojo	elaborated	5	160	0	0	0	0
-assets/ok/simd_symbolic_surface.mojo	elaborated	72	1414	41	52	565	638
-assets/ok/simd_symbolic_width_hooks.mojo	elaborated	9	110	4	4	6	6
-assets/ok/simd_symbolic_width_literal_binding.mojo	elaborated	11	175	5	6	51	75
-assets/ok/simd_to_bits.mojo	elaborated	5	200	0	0	0	0
-assets/ok/simd_to_bits_default_symbolic.mojo	elaborated	10	125	2	5	7	17
-assets/ok/simd_wide_widths.mojo	elaborated	5	245	0	0	0	0
-assets/ok/size_of_builtin.mojo	elaborated	6	100	1	1	1	1
-assets/ok/sized_generic_views.mojo	elaborated	25	357	15	17	207	213
-assets/ok/slice.mojo	elaborated	71	1426	34	46	502	671
-assets/ok/slice_descriptor_protocols.mojo	elaborated	77	1596	34	49	524	761
-assets/ok/span_generic_free_def_view.mojo	elaborated	70	1257	20	51	252	641
-assets/ok/span_implicit_from_list.mojo	elaborated	24	394	17	17	227	225
-assets/ok/span_iteration.mojo	elaborated	70	1400	31	45	386	560
-assets/ok/span_move_use.mojo	elaborated	21	342	16	16	226	224
-assets/ok/span_pointer_construction.mojo	elaborated	54	1085	20	34	250	410
-assets/ok/span_temp_method_argument.mojo	elaborated	25	416	20	20	282	280
-assets/ok/span_temp_static_argument.mojo	elaborated	26	438	21	21	307	305
-assets/ok/span_view_basics.mojo	elaborated	68	1345	29	43	364	538
-assets/ok/static_call_origin_application.mojo	elaborated	26	384	16	16	212	210
-assets/ok/static_call_through_self.mojo	elaborated	22	160	5	13	16	31
-assets/ok/static_call_through_shadowed_type_name.mojo	elaborated	12	171	3	3	37	37
-assets/ok/static_method_explicit_application.mojo	elaborated	42	736	19	23	175	178
-assets/ok/static_method_pack_spread.mojo	elaborated	46	887	21	24	206	243
-assets/ok/static_method_reads_struct_value_parameter.mojo	elaborated	22	150	8	16	27	40
-assets/ok/static_methods.mojo	elaborated	7	105	0	0	0	0
-assets/ok/static_reference_result_argument.mojo	elaborated	7	114	0	0	0	0
-assets/ok/std_traits_origin_imports.mojo	elaborated	8	123	0	0	0	0
-assets/ok/stored_array_span_iterators.mojo	elaborated	39	657	34	34	433	429
-assets/ok/string_capacity.mojo	elaborated	34	812	14	14	164	162
-assets/ok/string_default_construction.mojo	elaborated	38	819	17	18	179	188
-assets/ok/string_element_view_conversion.mojo	elaborated	68	1384	23	46	326	673
-assets/ok/string_escapes.mojo	elaborated	33	701	14	14	164	162
-assets/ok/string_format_declared.mojo	elaborated	140	5556	46	97	930	3485
-assets/ok/string_grapheme_iteration.mojo	elaborated	43	1692	14	14	164	162
-assets/ok/string_iadd_view_operand.mojo	elaborated	51	1143	18	27	242	375
-assets/ok/string_literal_bytes.mojo	elaborated	7	122	0	0	0	0
-assets/ok/string_literal_overload.mojo	elaborated	31	679	14	14	164	162
-assets/ok/string_overload_conversion.mojo	elaborated	32	673	14	14	164	162
-assets/ok/string_span_equatable.mojo	elaborated	53	1206	14	14	164	162
-assets/ok/string_span_implicit_temporary.mojo	elaborated	39	955	14	14	164	162
-assets/ok/string_span_literal.mojo	elaborated	63	1283	24	26	255	284
-assets/ok/string_span_methods.mojo	elaborated	132	3811	28	40	333	498
-assets/ok/string_view_equality.mojo	elaborated	35	765	14	14	164	162
-assets/ok/stropping.mojo	elaborated	6	106	0	0	0	0
-assets/ok/struct_generator_lane_symbolic_width.mojo	elaborated	8	119	2	3	12	14
-assets/ok/struct_generator_struct_value.mojo	elaborated	17	159	4	11	18	36
-assets/ok/struct_generator_vector_value.mojo	elaborated	10	160	3	5	26	50
-assets/ok/struct_method_comptime_template_served.mojo	elaborated	46	884	19	27	210	250
-assets/ok/struct_method_instance_clone_unreached.mojo	elaborated	9	112	3	4	7	12
-assets/ok/struct_operator_operand_owner_drop.mojo	elaborated	14	189	3	3	9	9
-assets/ok/struct_operator_subscript_operand_in_place.mojo	elaborated	34	682	18	19	254	257
-assets/ok/struct_operator_temporary_operand_drop.mojo	elaborated	16	400	1	1	7	7
-assets/ok/struct_type_param_construction_clone.mojo	elaborated	49	906	19	29	186	202
-assets/ok/struct_value_member_runtime_read.mojo	elaborated	40	732	20	21	172	171
-assets/ok/struct_value_pack_method_read.mojo	elaborated	32	434	27	27	254	315
-assets/ok/struct_value_param_frozen.mojo	elaborated	12	138	3	5	11	21
-assets/ok/symbolic_instance_construction.mojo	elaborated	16	161	5	11	33	36
-assets/ok/telemetry.mojo	elaborated	10	147	3	4	16	27
-assets/ok/tempfile_mkdtemp.mojo	elaborated	193	3867	65	87	1049	1295
-assets/ok/template_def_bound_conversion.mojo	elaborated	59	1076	26	30	211	223
-assets/ok/template_def_converting_argument.mojo	elaborated	38	725	17	20	191	204
-assets/ok/template_def_defaulted_parameter.mojo	elaborated	47	853	24	29	250	290
-assets/ok/template_def_slice_stringify.mojo	elaborated	88	1851	31	36	487	626
-assets/ok/template_def_string_builtins.mojo	elaborated	37	970	15	16	176	186
-assets/ok/template_def_try_unpack.mojo	elaborated	47	897	20	28	246	348
-assets/ok/template_def_type_alias.mojo	elaborated	31	706	15	16	181	196
-assets/ok/template_def_value_local.mojo	elaborated	74	1294	24	56	302	716
-assets/ok/template_def_var_parameter.mojo	elaborated	63	860	30	48	227	310
-assets/ok/template_folded_arithmetic.mojo	elaborated	12	307	2	4	82	163
-assets/ok/template_folded_operators.mojo	elaborated	12	279	4	6	95	170
-assets/ok/template_folded_value.mojo	elaborated	15	221	4	9	45	117
-assets/ok/template_inner_request.mojo	elaborated	11	120	3	6	5	10
-assets/ok/template_keyed_runtime_if.mojo	elaborated	10	391	3	5	88	288
-assets/ok/template_keyed_runtime_while.mojo	elaborated	10	400	3	5	88	297
-assets/ok/template_lane_def_value_binder_outside_lane.mojo	elaborated	52	877	28	33	237	256
-assets/ok/template_loop_local.mojo	elaborated	15	374	4	9	91	268
-assets/ok/template_method_applied_overloaded_static.mojo	elaborated	62	830	27	44	207	262
-assets/ok/template_method_binder_construction.mojo	elaborated	58	1278	28	38	508	550
-assets/ok/template_method_borrowed_parameter.mojo	elaborated	43	802	20	25	193	214
-assets/ok/template_method_bound_binder_result.mojo	elaborated	47	806	22	28	197	224
-assets/ok/template_method_bound_copy.mojo	elaborated	73	1246	24	54	277	658
-assets/ok/template_method_bound_defaulted_argument.mojo	elaborated	48	968	19	24	182	198
-assets/ok/template_method_bound_dispatch.mojo	elaborated	72	1495	31	46	540	635
-assets/ok/template_method_bound_display_argument.mojo	elaborated	207	3398	69	167	1157	2554
-assets/ok/template_method_bound_self_argument.mojo	elaborated	61	1004	27	35	254	291
-assets/ok/template_method_bound_value_argument.mojo	elaborated	52	1054	21	28	212	258
-assets/ok/template_method_bound_witness_shapes.mojo	elaborated	89	1490	36	58	533	617
-assets/ok/template_method_built_over_local.mojo	elaborated	94	1415	35	76	357	818
-assets/ok/template_method_callable_parameter.mojo	elaborated	48	779	20	26	194	222
-assets/ok/template_method_calls.mojo	elaborated	67	1152	23	52	246	596
-assets/ok/template_method_collapsed_static_overload.mojo	elaborated	43	724	20	28	174	185
-assets/ok/template_method_comprehension.mojo	elaborated	178	3305	67	157	1188	2512
-assets/ok/template_method_comptime_control.mojo	elaborated	55	1240	21	31	245	507
-assets/ok/template_method_construction.mojo	elaborated	103	1509	40	84	380	852
-assets/ok/template_method_converting_argument.mojo	elaborated	40	836	16	18	190	214
-assets/ok/template_method_converting_binding.mojo	elaborated	79	1223	27	60	271	646
-assets/ok/template_method_converting_call_argument.mojo	elaborated	46	747	21	28	189	212
-assets/ok/template_method_copied_consuming_receiver.mojo	elaborated	67	1127	28	46	297	461
-assets/ok/template_method_copied_receiver.mojo	elaborated	91	1685	31	66	377	837
-assets/ok/template_method_defaulted_argument.mojo	elaborated	64	1163	22	30	204	242
-assets/ok/template_method_discarded_value.mojo	elaborated	47	846	22	32	230	311
-assets/ok/template_method_element_field_result.mojo	elaborated	158	3043	53	134	983	2158
-assets/ok/template_method_explicit_application.mojo	elaborated	45	810	20	30	207	282
-assets/ok/template_method_explicit_destroy_call.mojo	elaborated	57	875	26	38	228	290
-assets/ok/template_method_field_of_field.mojo	elaborated	51	843	23	32	203	239
-assets/ok/template_method_for_loop.mojo	elaborated	85	1593	35	69	484	988
-assets/ok/template_method_foreign_overload.mojo	elaborated	83	1472	25	64	354	868
-assets/ok/template_method_generic_call.mojo	elaborated	140	2369	46	117	744	1596
-assets/ok/template_method_generic_static_call.mojo	elaborated	61	861	27	42	209	262
-assets/ok/template_method_generic_static_owner_unbound.mojo	elaborated	75	1237	18	60	178	729
-assets/ok/template_method_generic_static_parameter_pack.mojo	elaborated	47	772	21	28	186	206
-assets/ok/template_method_generic_static_shapes.mojo	elaborated	65	988	29	46	277	392
-assets/ok/template_method_generic_witness.mojo	elaborated	58	1211	30	37	497	501
-assets/ok/template_method_getter.mojo	elaborated	35	703	17	20	171	176
-assets/ok/template_method_hash_leaf.mojo	elaborated	59	1348	28	39	517	622
-assets/ok/template_method_immutable_sibling_view.mojo	elaborated	69	1149	24	54	254	612
-assets/ok/template_method_inplace_place.mojo	elaborated	47	588	17	33	110	212
-assets/ok/template_method_moves.mojo	elaborated	55	986	24	37	226	297
-assets/ok/template_method_nested_def.mojo	elaborated	85	1417	33	69	390	845
-assets/ok/template_method_nested_def_conventions.mojo	elaborated	99	1449	37	80	367	818
-assets/ok/template_method_nested_def_defaults.mojo	elaborated	93	1432	37	73	386	795
-assets/ok/template_method_nested_def_forms.mojo	elaborated	117	1633	46	98	444	980
-assets/ok/template_method_operator_dispatch.mojo	elaborated	60	1048	25	40	230	328
-assets/ok/template_method_operator_operands.mojo	elaborated	67	1001	32	50	260	354
-assets/ok/template_method_origin_parameter.mojo	elaborated	42	785	19	24	184	201
-assets/ok/template_method_overloaded_generic_static_call.mojo	elaborated	63	878	27	44	216	290
-assets/ok/template_method_overloaded_parameter_typed_static.mojo	elaborated	41	710	20	26	174	182
-assets/ok/template_method_own_comptime_if.mojo	elaborated	41	784	18	22	187	221
-assets/ok/template_method_own_lane.mojo	elaborated	17	188	6	11	30	57
-assets/ok/template_method_pack_accessor.mojo	elaborated	50	855	21	31	199	272
-assets/ok/template_method_pack_struct.mojo	elaborated	86	1919	38	60	633	1032
-assets/ok/template_method_parameter_built_store.mojo	elaborated	67	917	29	58	330	660
-assets/ok/template_method_parameter_receiver.mojo	elaborated	82	1377	28	62	295	694
-assets/ok/template_method_parameterized_call.mojo	elaborated	52	929	23	32	227	288
-assets/ok/template_method_per_call_clone.mojo	elaborated	43	777	18	23	176	188
-assets/ok/template_method_place_argument.mojo	elaborated	70	1161	31	52	342	563
-assets/ok/template_method_print_parameter_temporary.mojo	elaborated	63	1007	21	42	220	386
-assets/ok/template_method_raises.mojo	elaborated	44	787	19	24	206	246
-assets/ok/template_method_range_loop.mojo	elaborated	77	1512	31	59	495	955
-assets/ok/template_method_rebind.mojo	elaborated	38	725	17	20	178	181
-assets/ok/template_method_receiver_pointer.mojo	elaborated	167	2863	71	144	1101	2002
-assets/ok/template_method_reference_argument.mojo	elaborated	116	1921	34	100	390	1309
-assets/ok/template_method_reference_call.mojo	elaborated	87	1414	27	69	275	801
-assets/ok/template_method_reference_local.mojo	elaborated	110	1834	30	92	337	1201
-assets/ok/template_method_reference_receiver.mojo	elaborated	97	1585	29	77	332	982
-assets/ok/template_method_reference_result.mojo	elaborated	70	1162	33	52	336	501
-assets/ok/template_method_reflected_operator.mojo	elaborated	57	830	28	42	216	266
-assets/ok/template_method_sibling_view.mojo	elaborated	79	1224	29	64	270	644
-assets/ok/template_method_simd_construction.mojo	elaborated	71	1392	32	51	540	657
-assets/ok/template_method_simd_leaf.mojo	elaborated	156	2542	51	129	838	1833
-assets/ok/template_method_simd_leaf_default_bits.mojo	elaborated	60	1031	23	38	264	451
-assets/ok/template_method_simd_leaf_default_bits_lanes.mojo	elaborated	60	1031	23	38	264	451
-assets/ok/template_method_simd_scalar.mojo	elaborated	63	1447	32	43	616	748
-assets/ok/template_method_statements.mojo	elaborated	49	902	24	34	246	326
-assets/ok/template_method_static_binder_infers_struct_parameter.mojo	elaborated	42	732	18	24	176	194
-assets/ok/template_method_static_binder_overload_arity.mojo	elaborated	44	731	21	28	189	212
-assets/ok/template_method_static_call.mojo	elaborated	43	749	19	24	179	192
-assets/ok/template_method_string_builtins.mojo	elaborated	39	1014	16	18	195	224
-assets/ok/template_method_string_literal_argument.mojo	elaborated	72	1305	22	30	234	302
-assets/ok/template_method_stringify_parameter_value.mojo	elaborated	56	888	19	34	186	250
-assets/ok/template_method_struct_lane.mojo	elaborated	45	600	8	40	102	500
-assets/ok/template_method_subscript_store.mojo	elaborated	172	2702	42	144	450	1880
-assets/ok/template_method_subscripted_receiver.mojo	elaborated	252	4687	64	223	1184	3696
-assets/ok/template_method_temporary_receiver.mojo	elaborated	113	2067	34	74	323	750
-assets/ok/template_method_transfer_replay.mojo	elaborated	68	1182	22	50	256	616
-assets/ok/template_method_truthiness_condition.mojo	elaborated	60	1009	30	39	304	382
-assets/ok/template_method_tuple_element.mojo	elaborated	93	1683	31	74	431	1021
-assets/ok/template_method_tuple_unpack.mojo	elaborated	63	1058	24	43	263	419
-assets/ok/template_method_value_argument.mojo	elaborated	61	887	30	42	234	287
-assets/ok/template_method_value_binder.mojo	elaborated	42	790	19	25	208	246
-assets/ok/template_method_value_parameter.mojo	elaborated	93	1559	31	75	359	874
-assets/ok/template_method_vanishing_transfer.mojo	elaborated	74	1329	25	56	309	722
-assets/ok/template_method_var_self.mojo	elaborated	51	1001	23	33	295	432
-assets/ok/template_method_variadic_initializer.mojo	elaborated	70	1294	29	54	368	740
-assets/ok/template_method_variadic_struct.mojo	elaborated	51	813	24	36	214	286
-assets/ok/template_method_vector_hash_leaf.mojo	elaborated	20	443	10	14	178	196
-assets/ok/template_method_vector_instance.mojo	elaborated	14	351	8	8	166	155
-assets/ok/template_method_vector_key.mojo	elaborated	14	212	4	8	44	88
-assets/ok/template_method_view_binding.mojo	elaborated	79	1365	25	64	332	824
-assets/ok/template_method_view_result_interior.mojo	elaborated	46	886	17	20	186	206
-assets/ok/template_method_with_statement.mojo	elaborated	102	1477	30	66	367	838
-assets/ok/template_overload_binding.mojo	elaborated	10	109	2	4	3	6
-assets/ok/template_overload_binding_local.mojo	elaborated	9	108	2	4	6	12
-assets/ok/template_overload_binding_method.mojo	elaborated	14	132	4	8	11	22
-assets/ok/template_pack_elements.mojo	elaborated	36	734	16	18	181	197
-assets/ok/template_print_call_keywords.mojo	elaborated	115	2240	40	48	509	598
-assets/ok/template_print_keywords.mojo	elaborated	44	809	20	26	200	234
-assets/ok/template_print_statement.mojo	elaborated	37	784	18	22	206	246
-assets/ok/template_print_whole_value.mojo	elaborated	38	770	17	20	186	206
-assets/ok/template_raise_forms.mojo	elaborated	49	777	23	29	209	241
-assets/ok/template_scalar_loop.mojo	elaborated	8	132	1	3	16	36
-assets/ok/template_served_body_call_into_overload_family.mojo	elaborated	49	883	30	34	341	361
-assets/ok/template_served_def_closed_call.mojo	elaborated	52	856	30	33	273	285
-assets/ok/template_served_def_loan_carrying_argument.mojo	elaborated	44	716	21	34	255	464
-assets/ok/template_served_loan_carrying_instance.mojo	elaborated	53	807	30	44	324	533
-assets/ok/template_tuple_default_initializer.mojo	elaborated	77	1210	26	58	286	554
-assets/ok/template_two_arms.mojo	elaborated	9	100	2	4	4	6
-assets/ok/template_two_types.mojo	elaborated	7	98	1	2	1	2
-assets/ok/template_type_member_loop_bound.mojo	elaborated	28	420	15	21	175	283
-assets/ok/template_value_keyed_def.mojo	elaborated	34	745	16	18	199	224
-assets/ok/template_value_keyed_lane_def.mojo	elaborated	11	153	3	6	24	48
-assets/ok/template_value_keyed_struct.mojo	elaborated	17	210	8	12	49	79
-assets/ok/template_value_shaped_construction.mojo	elaborated	13	179	3	8	46	77
-assets/ok/template_value_shaped_operations.mojo	elaborated	13	209	3	8	50	107
-assets/ok/template_view_over_loan_carrying_argument.mojo	elaborated	44	624	21	38	250	475
-assets/ok/template_where_instances.mojo	elaborated	9	104	2	4	3	4
-assets/ok/temporary_argument_field_deinit.mojo	elaborated	42	905	14	14	164	162
-assets/ok/temporary_receiver_deinit.mojo	elaborated	47	811	17	20	174	182
-assets/ok/temporary_receiver_view.mojo	elaborated	103	2965	31	42	386	550
-assets/ok/ternary.mojo	elaborated	6	120	0	0	0	0
-assets/ok/thin_nested_def_reads_value_parameter.mojo	elaborated	23	190	11	15	63	76
-assets/ok/trait_bound_argument_drop_order.mojo	elaborated	19	196	5	5	52	52
-assets/ok/trait_bound_comparison_drop_order.mojo	elaborated	45	902	16	20	200	271
-assets/ok/trait_default_calls_later_function.mojo	elaborated	38	773	15	15	183	181
-assets/ok/trait_default_comptime_if.mojo	elaborated	53	864	21	31	203	236
-assets/ok/trait_default_method.mojo	elaborated	7	100	1	1	2	2
-assets/ok/trait_default_overloads.mojo	elaborated	16	149	3	5	8	15
-assets/ok/trait_default_parameter_defaults.mojo	elaborated	72	965	36	51	303	368
-assets/ok/trait_default_refinement.mojo	elaborated	20	172	5	8	15	25
-assets/ok/trait_default_wrapper_conventions.mojo	elaborated	117	2194	50	88	833	1399
-assets/ok/trait_inheritance.mojo	elaborated	8	102	1	1	4	4
-assets/ok/trait_method_binder_spelling.mojo	elaborated	19	362	11	11	184	156
-assets/ok/trait_requirement_constant_default.mojo	elaborated	48	870	15	16	195	224
-assets/ok/trait_requirement_default_from_caller_parameter.mojo	elaborated	13	153	4	7	59	42
-assets/ok/trait_requirement_parameter_default.mojo	elaborated	21	241	7	14	68	120
-assets/ok/trait_requirement_variadic_collector.mojo	elaborated	52	929	25	30	258	349
-assets/ok/trait_value_member_through_type_param.mojo	elaborated	9	107	4	4	12	10
-assets/ok/trait_witness_renames_parameter.mojo	elaborated	8	113	1	1	3	3
-assets/ok/traits.mojo	elaborated	8	99	1	1	2	2
-assets/ok/transfer_into_owned_argument.mojo	elaborated	54	779	26	26	324	324
-assets/ok/transfer_into_read_parameter_borrows.mojo	elaborated	40	743	14	14	164	162
-assets/ok/transferred_carrier_keeps_source_alive.mojo	elaborated	29	486	13	24	213	362
-assets/ok/transferred_view_loan_stays_shared.mojo	elaborated	36	594	17	30	241	438
-assets/ok/try_break_continue.mojo	elaborated	9	146	3	3	37	37
-assets/ok/try_in_loop_temporary_drop_order.mojo	elaborated	15	201	3	3	37	37
-assets/ok/try_raise_edge_drop_order.mojo	elaborated	14	168	0	0	0	0
-assets/ok/try_reassign_outer.mojo	elaborated	10	187	3	3	37	37
-assets/ok/try_region_drop_timing.mojo	elaborated	16	196	3	3	37	37
-assets/ok/try_region_local_drop_order.mojo	elaborated	37	812	17	17	201	199
-assets/ok/try_region_shadowed_binding.mojo	elaborated	40	803	14	14	164	162
-assets/ok/try_return.mojo	elaborated	33	694	14	14	164	162
-assets/ok/try_return_destroys_held_values.mojo	elaborated	10	156	0	0	0	0
-assets/ok/tstring_forms.mojo	elaborated	79	1222	20	58	199	563
-assets/ok/tstring_generic_interpolation.mojo	elaborated	43	808	21	25	205	275
-assets/ok/tstring_lazy.mojo	elaborated	39	760	20	21	199	221
-assets/ok/tstring_template_served.mojo	elaborated	94	1602	35	74	542	999
-assets/ok/tuple_annotated_binding.mojo	elaborated	68	1235	21	47	260	555
-assets/ok/tuple_array_defaultable.mojo	elaborated	59	1092	28	41	339	499
-assets/ok/tuple_hashable_dict_key.mojo	elaborated	181	3065	64	157	1069	2267
-assets/ok/tuple_nested_type_arguments.mojo	elaborated	25	438	4	20	17	144
-assets/ok/tuple_of_scalars_comparison.mojo	elaborated	37	764	25	32	353	553
-assets/ok/tuple_one_element.mojo	elaborated	58	1112	34	39	446	428
-assets/ok/tuple_pointer_element_write.mojo	elaborated	8	130	2	3	5	8
-assets/ok/tuple_reverse_concat.mojo	elaborated	87	1483	7	82	91	1086
-assets/ok/tuple_static_len_open_pack.mojo	elaborated	57	817	26	42	190	271
-assets/ok/tuple_struct_element_equality.mojo	elaborated	9	163	3	3	20	38
-assets/ok/tuple_template_served.mojo	elaborated	91	1595	23	71	306	847
-assets/ok/tuple_unpack.mojo	elaborated	6	51	3	4	16	27
-assets/ok/tuple_unpack_call.mojo	elaborated	37	738	17	18	180	189
-assets/ok/tuple_unpack_place_copies.mojo	elaborated	57	1192	25	37	336	426
-assets/ok/type_names_applied_elements.mojo	elaborated	66	1209	28	37	289	390
-assets/ok/type_param_copy_construction.mojo	elaborated	46	769	20	26	179	184
-assets/ok/type_predicate_comptime_if.mojo	elaborated	34	695	15	16	168	166
-assets/ok/type_receiver_instance_call.mojo	elaborated	60	1095	27	40	360	504
-assets/ok/typelist_comptime_vocabulary.mojo	elaborated	5	104	0	0	0	0
-assets/ok/typelist_reverse_concat.mojo	elaborated	5	96	0	0	0	0
-assets/ok/typelist_where_clauses.mojo	elaborated	8	105	0	0	0	0
-assets/ok/unsafe_pointer.mojo	elaborated	7	152	2	2	17	17
-assets/ok/unspelled_loan_carrying_type_argument.mojo	elaborated	28	453	19	21	244	259
-assets/ok/untracked_pointer_ref_params.mojo	elaborated	9	137	2	2	17	17
-assets/ok/user_iterator.mojo	elaborated	7	137	0	0	0	0
-assets/ok/value_argument_from_caller_parameter.mojo	elaborated	23	164	9	18	50	52
-assets/ok/value_pack_aggregate_served.mojo	elaborated	10	126	4	5	17	28
-assets/ok/value_pack_bracket_spread.mojo	elaborated	39	335	27	33	228	233
-assets/ok/value_pack_comptime_for_served.mojo	elaborated	8	118	2	3	12	24
-assets/ok/value_pack_parameter_list_members.mojo	elaborated	32	403	24	27	278	301
-assets/ok/value_pack_parameter_list_writable.mojo	elaborated	113	1878	29	89	368	1256
-assets/ok/value_pack_runtime_read.mojo	elaborated	127	1467	42	120	648	1340
-assets/ok/value_pack_template_served.mojo	elaborated	106	1289	28	88	274	740
-assets/ok/value_pack_typed_by_type_param.mojo	elaborated	64	565	26	59	229	454
-assets/ok/value_param_typed_by_type_param.mojo	elaborated	57	785	23	36	174	185
-assets/ok/value_parameter_field_read.mojo	elaborated	40	818	16	16	225	223
-assets/ok/value_parameter_inferred_from_argument_type.mojo	elaborated	57	836	24	39	219	236
-assets/ok/value_parameter_materialized_per_use.mojo	elaborated	36	731	16	17	206	204
-assets/ok/value_parameter_method_aggregate.mojo	elaborated	42	789	20	23	249	252
-assets/ok/value_parameter_string_aggregate.mojo	elaborated	49	1059	23	29	407	474
-assets/ok/value_params.mojo	elaborated	8	114	2	3	5	6
-assets/ok/variable_scoping.mojo	elaborated	5	115	0	0	0	0
-assets/ok/variadic_args.mojo	elaborated	8	223	1	3	40	120
-assets/ok/variadic_collector_forwarded_and_borrowed.mojo	elaborated	58	1221	25	35	483	626
-assets/ok/variadic_collector_len.mojo	elaborated	14	156	6	6	16	16
-assets/ok/variadic_element_value_read.mojo	elaborated	44	816	21	21	253	251
-assets/ok/variadic_method_type_params.mojo	elaborated	43	748	21	26	191	208
-assets/ok/variadic_overload_collector_position.mojo	elaborated	7	100	2	2	2	2
-assets/ok/variadic_pack_forwarding_generic_def.mojo	elaborated	47	753	20	32	180	205
-assets/ok/variadic_pack_upstream_spellings.mojo	elaborated	48	949	21	28	254	356
-assets/ok/variadic_struct_over_variant_method.mojo	elaborated	35	686	18	20	174	176
-assets/ok/variadic_var_collector_transfer.mojo	elaborated	52	978	22	33	252	387
-assets/ok/variant_deinit_with_linear_payload.mojo	elaborated	10	119	2	2	8	8
-assets/ok/variant_duplicate_alternatives.mojo	elaborated	8	109	3	3	6	6
-assets/ok/variant_generic_def_operations.mojo	elaborated	42	784	20	23	187	203
-assets/ok/variant_hash_dict_key.mojo	elaborated	131	2505	55	110	1027	1761
-assets/ok/variant_init_with_constructor.mojo	elaborated	38	725	17	21	171	177
-assets/ok/variant_nominal_string_payload.mojo	elaborated	35	705	17	17	171	169
-assets/ok/variant_owning_api.mojo	elaborated	44	770	20	23	185	194
-assets/ok/variant_string_literal_payload.mojo	elaborated	35	701	17	17	170	168
-assets/ok/variant_unsafe_get_static_supported.mojo	elaborated	37	711	17	21	169	173
-assets/ok/view_copy_at_last_use.mojo	elaborated	66	1409	24	26	255	284
-assets/ok/view_temporaries.mojo	elaborated	69	1380	29	33	351	435
-assets/ok/view_temporary_origins.mojo	elaborated	86	2413	24	37	242	350
-assets/ok/vm_backed_ctfe_recursive_call.mojo	elaborated	7	111	0	0	0	0
-assets/ok/vm_backed_ctfe_ternary.mojo	elaborated	6	101	0	0	0	0
-assets/ok/waypoints.mojo	elaborated	18	302	13	13	199	197
-assets/ok/where_message_satisfied.mojo	elaborated	6	94	1	1	1	1
-assets/ok/where_repeated_clauses.mojo	elaborated	6	103	1	1	4	4
-assets/ok/while.mojo	elaborated	5	114	0	0	0	0
-assets/ok/with_enter_only.mojo	elaborated	41	883	17	17	201	199
-assets/ok/with_exit_error_swallow.mojo	elaborated	41	735	14	14	164	162
-assets/ok/with_multiple.mojo	elaborated	179	3681	63	85	978	1255
-assets/ok/with_multiple_dependent.mojo	elaborated	40	790	17	17	201	199
-assets/ok/with_statement.mojo	elaborated	177	3635	62	84	969	1251
-assets/ok/witness_default_differs_from_requirement.mojo	elaborated	21	240	6	10	35	62
-assets/ok/writable_extra_write_to_overload.mojo	elaborated	33	709	14	14	164	162
-assets/ok/writer_write_override.mojo	elaborated	47	953	19	25	223	332
-benchmarks/compile/add.mojo	elaborated	6	97	0	0	0	0
-benchmarks/compile/collections_many.mojo	elaborated	834	15905	111	803	1961	14595
-benchmarks/compile/empty.mojo	elaborated	2	0	0	0	0	0
-benchmarks/compile/generic.mojo	elaborated	25	357	15	17	207	213
-benchmarks/compile/hello.mojo	elaborated	5	92	0	0	0	0
-benchmarks/compile/keyed.mojo	elaborated	58	1145	22	39	267	453
-benchmarks/compile/nested_generics.mojo	elaborated	217	3697	59	194	1027	2802
-benchmarks/compile/stdlib_heavy.mojo	elaborated	174	3275	57	151	1042	2492
-benchmarks/compile/trait_defaults.mojo	elaborated	185	1884	29	130	294	1090
-benchmarks/compile/tstring.mojo	elaborated	43	808	21	25	205	275
-benchmarks/compile/tuple.mojo	elaborated	50	843	21	31	196	277
-total	1020	42507	794792	16591	26916	218153	351199
+fixture	status	concrete_functions	concrete_instructions	generators	generator_instances	generator_instructions	generator_instance_instructions	concrete_blocks	generator_blocks	generator_instance_blocks
+assets/ok/abstract_dispatch_effect_free_conformers.mojo	elaborated	9	100	1	1	2	2	17	1	1
+assets/ok/add.mojo	elaborated	6	94	0	0	0	0	14	0	0
+assets/ok/allocation_tracked_unsafe_ptr.mojo	elaborated	16	194	11	11	57	57	27	14	14
+assets/ok/arithmetic.mojo	elaborated	5	100	0	0	0	0	13	0	0
+assets/ok/array_comparable.mojo	elaborated	17	311	12	12	198	196	50	37	37
+assets/ok/array_display_temporary_subscript.mojo	elaborated	84	1756	25	61	359	975	273	60	165
+assets/ok/array_element_assignment.mojo	elaborated	43	930	22	24	350	363	158	58	63
+assets/ok/array_fixed_size_core.mojo	elaborated	53	1151	33	35	478	491	194	86	91
+assets/ok/array_struct_elements_and_fill.mojo	elaborated	24	410	14	19	217	260	64	37	48
+assets/ok/assign_interior_view_over_sibling_field.mojo	elaborated	39	795	14	14	164	162	144	30	30
+assets/ok/assign_interior_view_through_temporary.mojo	elaborated	38	790	14	14	164	162	143	30	30
+assets/ok/assign_interior_view_to_other_local.mojo	elaborated	39	796	14	14	164	162	144	30	30
+assets/ok/assign_nested_call_interior_view_over_source.mojo	elaborated	39	793	14	14	164	162	144	30	30
+assets/ok/assign_plain_named_view_over_source.mojo	elaborated	34	704	14	14	164	162	126	30	30
+assets/ok/assign_plain_view_temporary_over_field.mojo	elaborated	34	703	14	14	164	162	126	30	30
+assets/ok/assign_plain_view_temporary_over_source.mojo	elaborated	33	702	14	14	164	162	125	30	30
+assets/ok/assign_register_passable_element_over_list.mojo	elaborated	19	338	13	13	213	211	50	36	36
+assets/ok/associated_trait_self_element.mojo	elaborated	6	97	0	0	0	0	14	0	0
+assets/ok/associated_type_return.mojo	elaborated	7	101	2	2	4	4	15	2	2
+assets/ok/augmented_bitwise_assignment.mojo	elaborated	36	778	14	14	164	162	128	30	30
+assets/ok/bitwise_shift_precedence.mojo	elaborated	6	153	0	0	0	0	14	0	0
+assets/ok/bool_alias_predicate_where.mojo	elaborated	11	127	3	4	5	7	19	3	4
+assets/ok/boolable_and_divmod.mojo	elaborated	11	169	4	6	19	32	19	7	6
+assets/ok/borrowed_iteration_temporary_source_drop.mojo	elaborated	10	133	0	0	0	0	23	0	0
+assets/ok/bound_generic_write_to.mojo	elaborated	46	905	19	21	225	244	150	35	37
+assets/ok/builtins_numeric.mojo	elaborated	5	127	0	0	0	0	13	0	0
+assets/ok/bundled_def_loan_carrying_argument.mojo	elaborated	37	455	30	31	291	300	75	57	61
+assets/ok/bundled_instance_loan_carrying_argument.mojo	elaborated	110	1997	58	103	1032	1659	276	149	255
+assets/ok/by_value_argument_drop_order.mojo	elaborated	27	374	1	1	2	2	35	1	1
+assets/ok/by_value_argument_read_at_call_setup.mojo	elaborated	26	426	0	0	0	0	36	0	0
+assets/ok/by_value_subscript_temporary_drop.mojo	elaborated	15	274	0	0	0	0	26	0	0
+assets/ok/call_result_pointer_deref_keeps_owner.mojo	elaborated	11	184	1	1	1	1	19	1	1
+assets/ok/call_result_pointer_deref_store.mojo	elaborated	6	102	0	0	0	0	14	0	0
+assets/ok/call_result_pointer_field_chain_write.mojo	elaborated	20	349	14	14	222	220	51	37	37
+assets/ok/call_result_pointer_field_local_write.mojo	elaborated	20	336	14	14	222	220	51	37	37
+assets/ok/call_result_pointer_field_read.mojo	elaborated	23	392	14	14	214	212	54	37	37
+assets/ok/call_result_pointer_field_write.mojo	elaborated	20	336	14	14	222	220	51	37	37
+assets/ok/call_temporary_ref_receiver.mojo	elaborated	55	1224	18	28	242	376	205	45	67
+assets/ok/callable_element_call_dispatch.mojo	elaborated	24	416	14	14	214	214	57	37	37
+assets/ok/callable_struct_element_invocation.mojo	elaborated	19	320	13	13	213	213	50	36	36
+assets/ok/callable_struct_transfer_after_last_use.mojo	elaborated	17	281	11	11	151	151	42	28	28
+assets/ok/capturing_callable_parameter_with_locals.mojo	elaborated	7	127	1	1	12	12	15	1	1
+assets/ok/capturing_generic_callable_parameter_environment.mojo	elaborated	15	188	6	8	44	62	23	6	8
+assets/ok/capturing_lambda_array_display.mojo	elaborated	77	1497	24	58	343	903	248	59	153
+assets/ok/chained_comparison.mojo	elaborated	6	109	0	0	0	0	16	0	0
+assets/ok/chained_comparison_link_drop_order.mojo	elaborated	20	445	1	1	15	15	57	4	4
+assets/ok/chained_comparison_operand_copy.mojo	elaborated	9	179	0	0	0	0	29	0	0
+assets/ok/closures.mojo	elaborated	13	154	0	0	0	0	23	0	0
+assets/ok/collection_display_default.mojo	elaborated	158	2836	56	123	1005	2020	437	146	313
+assets/ok/collection_truthiness.mojo	elaborated	104	2026	49	87	865	1397	310	121	204
+assets/ok/collector_runtime_index.mojo	elaborated	46	935	22	26	286	373	164	53	68
+assets/ok/comparable_ordered_algorithms.mojo	elaborated	8	135	2	3	19	26	24	8	11
+assets/ok/comprehension_temporary_source_drop.mojo	elaborated	26	389	16	16	235	233	67	41	41
+assets/ok/comptime_alias_generic.mojo	elaborated	23	356	16	17	215	226	50	38	36
+assets/ok/comptime_alias_value_body.mojo	elaborated	5	91	0	0	0	0	13	0	0
+assets/ok/comptime_annotated_scalar.mojo	elaborated	6	128	1	1	11	11	14	1	1
+assets/ok/comptime_application_argument.mojo	elaborated	100	1296	42	92	619	1161	153	80	137
+assets/ok/comptime_applied_constant_in_signature.mojo	elaborated	7	100	0	0	0	0	15	0	0
+assets/ok/comptime_call_callee_shapes.mojo	elaborated	76	505	43	58	153	169	90	46	64
+assets/ok/comptime_call_signature.mojo	elaborated	38	258	19	27	68	69	48	19	27
+assets/ok/comptime_collections.mojo	elaborated	211	3627	74	169	1179	2697	550	179	416
+assets/ok/comptime_ctfe.mojo	elaborated	34	700	14	14	164	162	129	30	30
+assets/ok/comptime_display_binding_alias.mojo	elaborated	56	790	41	51	571	696	121	95	108
+assets/ok/comptime_display_binding_arguments.mojo	elaborated	89	1075	33	84	439	974	148	57	135
+assets/ok/comptime_display_binding_reads.mojo	elaborated	215	3771	103	193	1886	3094	522	274	414
+assets/ok/comptime_for.mojo	elaborated	5	99	0	0	0	0	13	0	0
+assets/ok/comptime_for_aggregate_binder.mojo	elaborated	96	2248	36	76	691	1700	254	99	158
+assets/ok/comptime_for_annotated_binding.mojo	elaborated	40	806	18	21	204	256	132	43	37
+assets/ok/comptime_for_applied_bound.mojo	elaborated	68	1169	26	44	311	540	196	63	87
+assets/ok/comptime_for_applied_sequence.mojo	elaborated	69	1274	27	48	290	638	215	66	106
+assets/ok/comptime_for_body_binding_served.mojo	elaborated	10	189	3	5	32	87	18	14	5
+assets/ok/comptime_for_body_scope.mojo	elaborated	9	136	4	4	19	36	17	13	4
+assets/ok/comptime_for_collection_template_served.mojo	elaborated	42	784	22	24	203	246	134	69	40
+assets/ok/comptime_for_display_binding.mojo	elaborated	219	3928	85	197	1368	3254	587	255	479
+assets/ok/comptime_for_display_element_reads.mojo	elaborated	100	1969	29	80	389	1384	315	75	213
+assets/ok/comptime_for_display_method_reads.mojo	elaborated	89	1857	35	53	393	723	297	87	123
+assets/ok/comptime_for_display_over_binder.mojo	elaborated	159	2734	76	143	1129	2140	426	211	334
+assets/ok/comptime_for_index_typed_local.mojo	elaborated	15	245	7	10	77	148	23	25	10
+assets/ok/comptime_for_iterable_struct.mojo	elaborated	12	120	3	3	9	9	22	3	3
+assets/ok/comptime_for_iteration_scope.mojo	elaborated	8	184	1	2	11	15	16	4	2
+assets/ok/comptime_for_iterator_aggregate_elements.mojo	elaborated	51	852	18	23	176	189	153	34	39
+assets/ok/comptime_for_named_collection.mojo	elaborated	135	2489	60	115	1022	1874	379	174	283
+assets/ok/comptime_for_string_aggregates.mojo	elaborated	76	2048	27	37	522	864	268	88	91
+assets/ok/comptime_for_struct_elements.mojo	elaborated	14	233	8	8	136	137	37	26	23
+assets/ok/comptime_for_template_served.mojo	elaborated	47	956	19	26	225	364	145	53	42
+assets/ok/comptime_for_tuple_elements.mojo	elaborated	147	2853	57	125	1113	2163	399	159	301
+assets/ok/comptime_for_unserved_nested.mojo	elaborated	21	285	12	15	176	192	47	41	33
+assets/ok/comptime_for_user_iterator.mojo	elaborated	29	236	11	16	51	85	41	23	18
+assets/ok/comptime_for_value_struct_method.mojo	elaborated	21	300	12	16	177	199	47	38	34
+assets/ok/comptime_frozen_struct.mojo	elaborated	6	103	0	0	0	0	14	0	0
+assets/ok/comptime_hash.mojo	elaborated	63	1063	26	36	371	407	161	51	55
+assets/ok/comptime_if.mojo	elaborated	7	91	0	0	0	0	15	0	0
+assets/ok/comptime_if_abstract_body_call.mojo	elaborated	43	732	19	25	185	199	135	40	41
+assets/ok/comptime_if_arm_destroy_joins.mojo	elaborated	16	151	5	7	39	42	24	17	7
+assets/ok/comptime_if_condition_applies_def.mojo	elaborated	62	955	23	41	273	329	160	52	57
+assets/ok/comptime_if_condition_reads_index.mojo	elaborated	43	224	16	36	54	114	53	51	36
+assets/ok/comptime_if_generic_specialization.mojo	elaborated	7	92	1	2	2	2	15	3	2
+assets/ok/comptime_if_generic_struct_ctor_overloads.mojo	elaborated	14	157	4	8	23	38	22	10	8
+assets/ok/comptime_if_generic_struct_lifecycle.mojo	elaborated	15	173	5	10	32	56	23	11	10
+assets/ok/comptime_if_generic_struct_method_call.mojo	elaborated	19	167	7	14	17	30	27	10	14
+assets/ok/comptime_if_inferred_def.mojo	elaborated	41	739	19	26	195	208	135	46	44
+assets/ok/comptime_if_inferred_static_method.mojo	elaborated	46	769	22	31	204	212	140	56	49
+assets/ok/comptime_if_layout_query.mojo	elaborated	24	138	5	15	14	20	32	9	15
+assets/ok/comptime_if_nested_def_call.mojo	elaborated	16	127	7	11	28	27	24	10	11
+assets/ok/comptime_if_nested_keyed_def.mojo	elaborated	9	106	2	4	10	12	17	8	4
+assets/ok/comptime_if_overload_beside_pack.mojo	elaborated	11	174	2	5	12	62	19	7	5
+assets/ok/comptime_if_overload_beside_plain.mojo	elaborated	34	687	15	16	166	164	126	33	32
+assets/ok/comptime_if_overload_pack_first.mojo	elaborated	9	142	2	4	12	40	17	7	4
+assets/ok/comptime_if_overload_pack_plain_triple.mojo	elaborated	8	123	2	2	12	23	16	7	2
+assets/ok/comptime_if_overload_pack_zero_arity.mojo	elaborated	8	114	2	2	12	17	16	7	2
+assets/ok/comptime_if_overloaded_def.mojo	elaborated	12	118	4	7	8	7	20	12	7
+assets/ok/comptime_if_overloaded_def_explicit.mojo	elaborated	9	111	2	4	4	4	17	6	4
+assets/ok/comptime_if_template_served.mojo	elaborated	46	877	18	24	242	257	146	47	42
+assets/ok/comptime_lambda_initializer.mojo	elaborated	5	92	0	0	0	0	13	0	0
+assets/ok/comptime_layout_constant.mojo	elaborated	8	111	2	2	6	5	16	2	2
+assets/ok/comptime_local_application_per_read.mojo	elaborated	58	1017	25	28	270	323	163	51	48
+assets/ok/comptime_local_binder_alias.mojo	elaborated	45	771	20	26	211	230	137	40	42
+assets/ok/comptime_local_display_applications.mojo	elaborated	192	3373	81	144	1372	2360	502	207	368
+assets/ok/comptime_local_over_binder.mojo	elaborated	45	805	21	26	228	252	137	44	42
+assets/ok/comptime_module_constant_parameter_values.mojo	elaborated	154	2788	61	120	1153	1984	422	163	299
+assets/ok/comptime_shadowed_locals.mojo	elaborated	42	823	22	24	241	253	141	45	44
+assets/ok/comptime_sized_scalar_constant.mojo	elaborated	8	114	0	0	0	0	16	0	0
+assets/ok/comptime_string_value.mojo	elaborated	33	685	14	14	164	162	125	30	30
+assets/ok/comptime_struct_string_field.mojo	elaborated	52	1105	21	28	295	428	177	52	71
+assets/ok/comptime_template_body_bindings.mojo	elaborated	56	1034	30	37	385	467	166	82	71
+assets/ok/comptime_tuple.mojo	elaborated	47	992	20	30	303	472	175	51	82
+assets/ok/comptime_value_materialized_without_constructor.mojo	elaborated	52	1098	21	24	282	300	176	49	55
+assets/ok/conditional_expression_transfer.mojo	elaborated	20	350	3	3	37	36	65	7	7
+assets/ok/conditional_member_availability.mojo	elaborated	10	123	3	4	7	9	18	3	4
+assets/ok/conditional_member_trivial_value_clauses.mojo	elaborated	43	729	19	24	174	179	135	35	40
+assets/ok/conforms_to_library_types_unasked_traits.mojo	elaborated	44	1025	16	23	227	395	142	48	39
+assets/ok/conforms_to_user_and_unasked_traits.mojo	elaborated	38	720	16	20	172	174	130	36	36
+assets/ok/constructor_read_temporary_drop_order.mojo	elaborated	17	323	3	5	9	15	25	3	5
+assets/ok/container_hashable.mojo	elaborated	194	3320	82	170	1457	2488	494	222	384
+assets/ok/contextual_member_static.mojo	elaborated	23	357	13	13	213	213	54	36	36
+assets/ok/copy_construction_last_use_moves.mojo	elaborated	26	351	9	9	56	55	44	13	13
+assets/ok/copy_construction_owned_receiver_forwards.mojo	elaborated	21	253	3	3	36	36	39	7	7
+assets/ok/copy_construction_read_argument_lends.mojo	elaborated	24	295	3	3	36	36	44	7	7
+assets/ok/copy_construction_read_receiver_lends.mojo	elaborated	23	301	3	3	36	36	46	7	7
+assets/ok/copy_return.mojo	elaborated	36	703	15	15	166	164	128	31	31
+assets/ok/copyable.mojo	elaborated	35	701	14	14	164	162	127	30	30
+assets/ok/copyable_iterator_reference_aggregate.mojo	elaborated	9	104	1	1	4	4	17	1	1
+assets/ok/copyinit_moveinit.mojo	elaborated	13	196	2	2	17	17	30	5	5
+assets/ok/ctfe_annotated_module_constant.mojo	elaborated	6	100	0	0	0	0	14	0	0
+assets/ok/ctfe_beside_comptime_if_struct_method.mojo	elaborated	38	790	16	18	190	190	136	34	34
+assets/ok/ctfe_body_requests.mojo	elaborated	53	866	22	28	207	261	145	44	44
+assets/ok/ctfe_collection_result_compile_time_reads.mojo	elaborated	22	325	14	14	214	212	53	37	37
+assets/ok/ctfe_construction_in_body.mojo	elaborated	14	130	1	1	4	2	22	1	1
+assets/ok/ctfe_dict_set_result.mojo	elaborated	141	2563	59	113	1014	1818	394	149	280
+assets/ok/ctfe_display_tuple_subscript_in_body.mojo	elaborated	162	2990	67	132	1203	2168	445	172	329
+assets/ok/ctfe_list_field_struct_result.mojo	elaborated	19	321	13	13	213	211	50	36	36
+assets/ok/ctfe_list_result_materialize.mojo	elaborated	81	1527	23	60	301	860	247	55	150
+assets/ok/ctfe_module_constant_requests.mojo	elaborated	14	128	4	7	14	18	22	8	7
+assets/ok/ctfe_module_display_constant_requests.mojo	elaborated	198	3455	77	154	1236	2389	514	188	378
+assets/ok/ctfe_module_optional_constant.mojo	elaborated	18	219	12	12	109	108	37	23	23
+assets/ok/ctfe_optional_result.mojo	elaborated	59	959	25	37	263	367	173	49	73
+assets/ok/ctfe_pointer_struct_result.mojo	elaborated	44	795	22	24	237	251	145	44	49
+assets/ok/ctfe_projection_of_temporary_in_body.mojo	elaborated	63	1125	26	32	343	413	176	57	63
+assets/ok/ctfe_type_generic_def_in_body.mojo	elaborated	10	102	1	2	3	2	18	1	2
+assets/ok/decorators.mojo	elaborated	7	102	0	0	0	0	15	0	0
+assets/ok/def_aggregate_value_binder_served.mojo	elaborated	37	735	17	19	193	211	129	36	35
+assets/ok/default_args.mojo	elaborated	7	133	0	0	0	0	20	0	0
+assets/ok/default_converting_constructor.mojo	elaborated	49	841	22	24	246	260	150	44	49
+assets/ok/default_reads_binder.mojo	elaborated	69	818	29	50	200	219	168	45	66
+assets/ok/defines_main.mojo	elaborated	5	89	0	0	0	0	13	0	0
+assets/ok/deinit_body_field_last_use.mojo	elaborated	20	256	0	0	0	0	31	0	0
+assets/ok/deinit_param_destruction_timing.mojo	elaborated	20	223	0	0	0	0	28	0	0
+assets/ok/delegated_ref_return_projection.mojo	elaborated	21	353	14	14	214	214	54	37	37
+assets/ok/dict_display_literal_constructor.mojo	elaborated	130	2332	43	119	809	2074	322	108	303
+assets/ok/dict_hasher_forwarding.mojo	elaborated	73	1216	38	66	678	1108	181	99	166
+assets/ok/dict_insert_linear_capable.mojo	elaborated	81	1377	47	72	818	1176	187	112	170
+assets/ok/dict_methods_growth.mojo	elaborated	99	1983	65	93	1172	1570	248	167	228
+assets/ok/dict_movable_only_elements.mojo	elaborated	130	2434	57	106	984	1664	374	147	264
+assets/ok/dict_take_items.mojo	elaborated	85	1533	51	79	901	1299	204	126	187
+assets/ok/dict_upstream_key_value_iteration.mojo	elaborated	129	2407	56	106	960	1676	367	135	252
+assets/ok/dict_views_iteration.mojo	elaborated	87	1515	53	81	837	1235	207	120	181
+assets/ok/discard_slots_typed_per_statement.mojo	elaborated	9	114	0	0	0	0	17	0	0
+assets/ok/discarded_call_result_drop_order.mojo	elaborated	14	387	1	1	6	6	22	1	1
+assets/ok/discarded_result_destruction.mojo	elaborated	11	115	0	0	0	0	19	0	0
+assets/ok/discarded_transfer_destroyed_in_place.mojo	elaborated	16	236	3	3	37	36	31	7	7
+assets/ok/display_argument_built_at_call_setup.mojo	elaborated	160	3140	69	122	1153	1935	427	177	305
+assets/ok/display_element_read_at_construction.mojo	elaborated	158	3124	65	133	1051	2011	429	162	313
+assets/ok/docstrings.mojo	elaborated	5	89	0	0	0	0	13	0	0
+assets/ok/dtype_compile_time_values.mojo	elaborated	39	499	24	30	268	260	62	46	43
+assets/ok/dtype_default_param.mojo	elaborated	7	103	1	2	2	4	15	1	2
+assets/ok/dtype_float_queries.mojo	elaborated	6	113	1	1	1	1	14	1	1
+assets/ok/dtype_float_query_template_served.mojo	elaborated	23	145	7	18	28	26	31	9	18
+assets/ok/dtype_keyed_bool_lane.mojo	elaborated	37	725	17	18	173	175	129	33	34
+assets/ok/dtype_keyed_method.mojo	elaborated	18	173	9	12	24	33	26	9	12
+assets/ok/dtype_keyed_method_forward.mojo	elaborated	16	142	6	10	29	33	24	6	10
+assets/ok/dtype_keyed_method_value_struct.mojo	elaborated	15	146	8	10	17	19	23	8	10
+assets/ok/dtype_keyed_overload_beside_keyed.mojo	elaborated	42	855	23	26	315	337	152	54	60
+assets/ok/dtype_keyed_overload_beside_plain.mojo	elaborated	33	686	16	17	166	165	125	32	33
+assets/ok/dtype_keyed_overload_family.mojo	elaborated	35	694	16	19	167	167	127	34	35
+assets/ok/dtype_runtime_surface.mojo	elaborated	122	2310	47	99	831	1567	339	115	238
+assets/ok/dtype_runtime_value.mojo	elaborated	5	92	0	0	0	0	13	0	0
+assets/ok/dtype_struct_param.mojo	elaborated	9	107	2	4	3	6	17	2	4
+assets/ok/dtype_value_param.mojo	elaborated	8	108	2	3	4	6	16	2	3
+assets/ok/dunder_contains.mojo	elaborated	6	116	0	0	0	0	16	0	0
+assets/ok/dunder_index.mojo	elaborated	7	109	0	0	0	0	17	0	0
+assets/ok/dunder_setitem.mojo	elaborated	7	156	0	0	0	0	20	0	0
+assets/ok/dunder_vec2.mojo	elaborated	35	756	14	14	164	162	129	30	30
+assets/ok/element_store_from_same_list.mojo	elaborated	69	1252	24	51	276	647	207	51	113
+assets/ok/entry_redeclares_library_names.mojo	elaborated	51	965	27	29	337	348	166	60	65
+assets/ok/env_roundtrip.mojo	elaborated	40	926	14	14	164	162	149	30	30
+assets/ok/errno_strerror.mojo	elaborated	46	969	16	16	268	266	155	38	38
+assets/ok/evaluated_default_argument.mojo	elaborated	56	974	18	19	171	172	162	34	35
+assets/ok/exceptions.mojo	elaborated	6	93	0	0	0	0	16	0	0
+assets/ok/explicit_destroy_consumed_field_droppable.mojo	elaborated	37	707	18	22	178	190	129	34	38
+assets/ok/explicit_destroy_partial_fields.mojo	elaborated	10	137	0	0	0	0	18	0	0
+assets/ok/explicit_destroy_raise_edges.mojo	elaborated	43	808	14	14	164	162	143	30	30
+assets/ok/explicit_transfer_convention.mojo	elaborated	67	1263	34	45	391	533	195	71	91
+assets/ok/external_call_write_stdout.mojo	elaborated	43	909	20	22	273	287	155	48	53
+assets/ok/field_store_overwrite_drop.mojo	elaborated	6	105	0	0	0	0	14	0	0
+assets/ok/field_store_overwrite_drop_shapes.mojo	elaborated	11	190	0	0	0	0	21	0	0
+assets/ok/field_view_beside_field_store.mojo	elaborated	44	908	14	14	164	162	154	30	30
+assets/ok/fieldwise_init_with_spelled_copy_constructor.mojo	elaborated	7	106	0	0	0	0	15	0	0
+assets/ok/fieldwise_keyword_construction.mojo	elaborated	51	1016	21	32	246	391	162	47	67
+assets/ok/file_descriptor_stdout_order.mojo	elaborated	179	3638	62	84	969	1255	575	156	194
+assets/ok/file_handle_roundtrip.mojo	elaborated	190	4309	65	91	1014	1504	642	159	223
+assets/ok/float16_display.mojo	elaborated	35	767	17	17	217	215	136	39	39
+assets/ok/float16_semantics.mojo	elaborated	35	828	24	29	423	424	78	59	58
+assets/ok/forward_struct_reference_iterator.mojo	elaborated	24	363	14	14	214	212	60	37	37
+assets/ok/free_function_origin_binder_result.mojo	elaborated	43	645	21	35	258	470	103	50	87
+assets/ok/free_function_origin_binders.mojo	elaborated	7	105	0	0	0	0	15	0	0
+assets/ok/func_styles.mojo	elaborated	6	92	0	0	0	0	14	0	0
+assets/ok/function_type_where_bound.mojo	elaborated	7	97	2	2	10	8	15	2	2
+assets/ok/function_type_where_unconstrained_actual.mojo	elaborated	7	97	2	2	10	8	15	2	2
+assets/ok/function_typed_kwargs.mojo	elaborated	100	1991	40	78	772	1326	301	101	193
+assets/ok/function_value_array_display.mojo	elaborated	20	336	9	13	133	215	52	24	37
+assets/ok/function_value_array_element_binding.mojo	elaborated	19	348	8	12	132	214	51	23	36
+assets/ok/generic_constructor_literal_argument.mojo	elaborated	35	719	15	17	168	174	127	31	33
+assets/ok/generic_copyable_iterator_refinement.mojo	elaborated	8	122	1	1	24	24	20	3	3
+assets/ok/generic_ctfe_associated_value.mojo	elaborated	7	93	1	1	1	1	15	1	1
+assets/ok/generic_ctfe_value_param.mojo	elaborated	6	93	1	1	7	2	14	3	1
+assets/ok/generic_ctor_literal_materialization.mojo	elaborated	10	149	3	4	6	8	18	3	4
+assets/ok/generic_def_static_receiver_binder.mojo	elaborated	35	701	16	16	175	173	127	32	32
+assets/ok/generic_display_argument_infers_parameter.mojo	elaborated	160	2892	68	136	1068	2083	438	160	328
+assets/ok/generic_display_argument_typed_by_parameter.mojo	elaborated	153	2863	61	130	1044	2038	421	146	312
+assets/ok/generic_equatable_dispatch.mojo	elaborated	128	2491	51	105	964	1746	372	135	263
+assets/ok/generic_field_pointer_deref_in_place.mojo	elaborated	7	137	2	2	5	5	15	2	2
+assets/ok/generic_iterable_explicit_iter.mojo	elaborated	67	1190	22	49	273	648	209	51	115
+assets/ok/generic_method_per_call_clones.mojo	elaborated	47	815	20	28	191	238	139	50	44
+assets/ok/generic_nested_def_captures.mojo	elaborated	73	1129	30	51	345	519	191	59	90
+assets/ok/generic_param_string_literal_materializes.mojo	elaborated	34	697	15	16	167	168	126	31	32
+assets/ok/generic_struct_generic_constructor_overload.mojo	elaborated	46	883	18	27	200	276	138	34	43
+assets/ok/generic_struct_instance_bodies.mojo	elaborated	144	2653	63	121	1076	1897	397	155	288
+assets/ok/generic_struct_instance_dispatch.mojo	elaborated	154	2888	71	130	1125	1961	424	168	302
+assets/ok/generic_struct_template_reach.mojo	elaborated	80	1188	25	60	224	558	202	43	100
+assets/ok/generic_struct_tuple_field.mojo	elaborated	58	932	21	40	197	313	150	40	56
+assets/ok/hashable_bucketing.mojo	elaborated	51	1148	27	31	485	475	160	63	61
+assets/ok/hashable_extra_hash_overload.mojo	elaborated	18	342	9	10	160	133	26	15	10
+assets/ok/hashable_hasher_protocol.mojo	elaborated	58	1239	29	38	495	518	167	65	68
+assets/ok/hasher_upstream_spellings.mojo	elaborated	35	613	12	27	213	411	61	21	45
+assets/ok/hasher_user_conformer.mojo	elaborated	114	1946	49	92	763	1355	313	118	212
+assets/ok/hashlib_bytes_hash.mojo	elaborated	48	1107	25	26	437	436	157	55	56
+assets/ok/hashlib_explicit_hasher_containers.mojo	elaborated	127	2151	52	104	784	1516	356	128	247
+assets/ok/hashlib_keyed_ahasher.mojo	elaborated	50	1117	26	30	474	466	159	62	60
+assets/ok/hashlib_values.mojo	elaborated	95	1665	28	72	505	840	219	67	114
+assets/ok/hello_world.mojo	elaborated	5	89	0	0	0	0	13	0	0
+assets/ok/homogeneous_variadic_loan_carrying_element.mojo	elaborated	28	432	20	22	247	250	63	47	49
+assets/ok/imm_origin_binders.mojo	elaborated	7	113	2	2	4	4	15	2	2
+assets/ok/imm_origin_cast_view.mojo	elaborated	11	129	0	0	0	0	19	0	0
+assets/ok/implicit_conversion.mojo	elaborated	8	109	0	0	0	0	16	0	0
+assets/ok/implicit_conversion_bound_on_declaration.mojo	elaborated	35	690	17	20	173	180	127	33	36
+assets/ok/implicit_conversion_exact_source.mojo	elaborated	8	108	0	0	0	0	16	0	0
+assets/ok/implicit_conversion_raising.mojo	elaborated	7	104	0	0	0	0	17	0	0
+assets/ok/indexer_normalization.mojo	elaborated	15	260	9	9	158	156	41	27	27
+assets/ok/init_out_self.mojo	elaborated	8	115	0	0	0	0	16	0	0
+assets/ok/initializer_list_contextual.mojo	elaborated	51	864	25	29	252	282	150	48	52
+assets/ok/inplace_field.mojo	elaborated	6	103	0	0	0	0	14	0	0
+assets/ok/inplace_raises_try.mojo	elaborated	6	105	0	0	0	0	16	0	0
+assets/ok/inplace_subscript_multi.mojo	elaborated	8	117	0	0	0	0	16	0	0
+assets/ok/inplace_subscript_once.mojo	elaborated	9	118	0	0	0	0	17	0	0
+assets/ok/inplace_subscript_raises_try.mojo	elaborated	8	111	0	0	0	0	18	0	0
+assets/ok/inplace_subscript_ref.mojo	elaborated	7	113	0	0	0	0	15	0	0
+assets/ok/inplace_subscript_value.mojo	elaborated	8	156	0	0	0	0	22	0	0
+assets/ok/inplace_var.mojo	elaborated	6	102	0	0	0	0	14	0	0
+assets/ok/input.mojo	elaborated	35	758	14	14	164	162	133	30	30
+assets/ok/instance_constructor_symbols.mojo	elaborated	101	1822	21	84	275	1220	286	47	193
+assets/ok/interior_dest_rebind_releases_loans.mojo	elaborated	28	487	13	23	213	347	72	36	59
+assets/ok/invert_operator.mojo	elaborated	16	197	10	10	86	85	31	17	17
+assets/ok/joint_map.mojo	elaborated	121	2346	49	99	940	1656	353	128	245
+assets/ok/keyed_def_builds_loan_carrying_instance.mojo	elaborated	20	316	15	15	211	208	47	36	34
+assets/ok/keyword_call.mojo	elaborated	7	134	0	0	0	0	20	0	0
+assets/ok/keyword_only.mojo	elaborated	8	155	1	1	42	42	21	4	4
+assets/ok/keyword_slice_subscripts.mojo	elaborated	18	241	10	10	99	98	35	19	19
+assets/ok/keyword_subscript_user_struct.mojo	elaborated	20	332	13	13	213	211	51	36	36
+assets/ok/kwargs.mojo	elaborated	100	1988	40	78	772	1326	301	101	193
+assets/ok/kwargs_keyed_read.mojo	elaborated	130	2715	41	102	796	1832	391	104	262
+assets/ok/lambda_basic.mojo	elaborated	11	135	0	0	0	0	19	0	0
+assets/ok/lambda_generic_comptime.mojo	elaborated	11	148	3	5	10	15	19	3	5
+assets/ok/lambda_hof.mojo	elaborated	10	130	1	1	4	4	18	1	1
+assets/ok/lambda_in_control_flow.mojo	elaborated	9	134	0	0	0	0	23	0	0
+assets/ok/lane_gather_template_served.mojo	elaborated	15	152	8	10	22	30	23	13	10
+assets/ok/lane_keyed_hash.mojo	elaborated	44	591	16	36	212	390	67	25	51
+assets/ok/lane_template_served.mojo	elaborated	23	214	8	18	45	86	31	12	18
+assets/ok/late_initialized_local.mojo	elaborated	46	857	17	17	201	198	155	37	37
+assets/ok/layout_allocation.mojo	elaborated	19	226	14	14	63	63	30	17	17
+assets/ok/lifecycle_deprecated_spellings.mojo	elaborated	9	111	0	0	0	0	17	0	0
+assets/ok/line_continuation.mojo	elaborated	5	92	0	0	0	0	13	0	0
+assets/ok/list_and_struct.mojo	elaborated	22	388	16	16	235	233	58	41	41
+assets/ok/list_anytype_element.mojo	elaborated	13	167	8	8	74	74	27	14	14
+assets/ok/list_contiguous_slice_strict.mojo	elaborated	64	1293	30	39	407	552	211	70	88
+assets/ok/list_element_view_method_result.mojo	elaborated	167	3390	51	131	975	2188	478	134	334
+assets/ok/list_methods_growth.mojo	elaborated	53	1133	48	48	676	672	145	132	132
+assets/ok/list_of_vectors_subscript.mojo	elaborated	20	350	15	15	223	223	51	38	38
+assets/ok/list_strided_slice_normalizes.mojo	elaborated	51	1066	22	33	355	509	174	60	80
+assets/ok/list_subscript_field_store.mojo	elaborated	18	371	13	13	213	213	49	36	36
+assets/ok/list_subscript_field_store_drop.mojo	elaborated	32	577	13	26	213	426	86	36	72
+assets/ok/list_subscript_field_store_shapes.mojo	elaborated	82	1669	24	61	295	865	256	58	150
+assets/ok/list_unsafe_ptr_multi_element.mojo	elaborated	19	347	14	14	214	212	50	37	37
+assets/ok/list_unsafe_uninit_length.mojo	elaborated	76	1598	24	50	302	672	253	63	126
+assets/ok/live_pointer_ref_argument.mojo	elaborated	7	109	0	0	0	0	15	0	0
+assets/ok/loan_carrying_instance_clone.mojo	elaborated	45	662	26	39	278	475	99	53	85
+assets/ok/local_comptime_float.mojo	elaborated	34	728	15	15	170	168	126	31	31
+assets/ok/loop_binding_consuming_copy.mojo	elaborated	53	998	20	30	263	397	173	49	71
+assets/ok/mapping_key_iteration_reads.mojo	elaborated	125	2429	52	102	969	1685	365	133	250
+assets/ok/math_module_rounding.mojo	elaborated	13	133	4	8	9	18	21	4	8
+assets/ok/maybe_uninit_predicates.mojo	elaborated	5	99	0	0	0	0	13	0	0
+assets/ok/maybe_uninit_roundtrip.mojo	elaborated	18	193	7	11	15	25	26	7	11
+assets/ok/maybe_uninit_write.mojo	elaborated	9	113	4	4	8	8	17	4	4
+assets/ok/method_mut_param.mojo	elaborated	6	112	0	0	0	0	14	0	0
+assets/ok/method_named_result.mojo	elaborated	53	1020	20	30	263	397	170	47	69
+assets/ok/method_result_pointer_field_write.mojo	elaborated	21	338	14	14	222	220	52	37	37
+assets/ok/method_simd_pattern_beside_bare.mojo	elaborated	34	690	16	18	166	166	126	32	34
+assets/ok/method_value_parameter_binding.mojo	elaborated	12	139	3	6	11	22	20	3	6
+assets/ok/module_reference_result_reads.mojo	elaborated	41	887	18	21	193	208	137	36	41
+assets/ok/movable_where_false_explicit_destroy.mojo	elaborated	7	99	0	0	0	0	15	0	0
+assets/ok/move_after_last_raise_in_try.mojo	elaborated	34	689	14	14	164	162	126	30	30
+assets/ok/mut_callable_parameter_write_back.mojo	elaborated	14	172	2	4	10	20	24	2	4
+assets/ok/mut_owned_params.mojo	elaborated	30	677	14	14	164	162	122	30	30
+assets/ok/mut_parameter_reassignment_drop.mojo	elaborated	7	112	0	0	0	0	15	0	0
+assets/ok/mut_parameter_reassignment_drop_shapes.mojo	elaborated	10	180	0	0	0	0	18	0	0
+assets/ok/mut_parameter_transfer_refilled.mojo	elaborated	38	800	14	14	164	162	132	30	30
+assets/ok/mut_pointer_parameter_reassign.mojo	elaborated	6	102	0	0	0	0	14	0	0
+assets/ok/mut_ref_writeback.mojo	elaborated	7	122	0	0	0	0	15	0	0
+assets/ok/named_result_transferred.mojo	elaborated	21	307	5	11	77	122	29	14	11
+assets/ok/named_shared_views.mojo	elaborated	34	733	16	16	180	178	126	32	32
+assets/ok/native_borrowed_reads.mojo	elaborated	66	1201	21	44	267	612	204	48	106
+assets/ok/nested.mojo	elaborated	7	94	0	0	0	0	15	0	0
+assets/ok/nested_comprehensions.mojo	elaborated	43	740	26	38	398	574	122	68	100
+assets/ok/nested_copy_lifecycle.mojo	elaborated	161	2790	61	138	951	2020	421	145	322
+assets/ok/nested_def_enclosing_binders.mojo	elaborated	65	859	36	45	271	301	157	59	61
+assets/ok/nested_def_reads_comptime_for_index.mojo	elaborated	46	315	23	40	102	174	54	52	40
+assets/ok/nested_def_reads_enclosing_parameter.mojo	elaborated	25	198	14	18	85	85	33	16	18
+assets/ok/nested_def_value_argument.mojo	elaborated	10	105	3	5	17	16	18	3	5
+assets/ok/nested_index_store.mojo	elaborated	31	529	14	26	222	418	81	37	68
+assets/ok/nested_origin_binder_not_captured.mojo	elaborated	41	617	18	34	242	466	99	45	84
+assets/ok/nested_origins_read_only_decorator.mojo	elaborated	42	646	23	37	273	485	102	52	89
+assets/ok/nested_recursive_call.mojo	elaborated	8	110	0	0	0	0	18	0	0
+assets/ok/nominal_string_affix.mojo	elaborated	38	947	14	14	164	162	171	30	30
+assets/ok/nominal_string_atof_rounding.mojo	elaborated	105	3401	25	39	276	456	515	58	78
+assets/ok/nominal_string_basics.mojo	elaborated	35	778	14	14	164	162	133	30	30
+assets/ok/nominal_string_bool_mul.mojo	elaborated	38	880	14	14	164	162	147	30	30
+assets/ok/nominal_string_bytes_capacity.mojo	elaborated	73	1668	32	36	496	527	233	71	75
+assets/ok/nominal_string_bytes_peek_split.mojo	elaborated	98	2589	25	39	245	356	514	47	73
+assets/ok/nominal_string_case.mojo	elaborated	59	1684	14	14	164	162	240	30	30
+assets/ok/nominal_string_codepoint_from_byte.mojo	elaborated	37	866	14	14	164	162	136	30	30
+assets/ok/nominal_string_codepoint_from_u32.mojo	elaborated	52	1071	24	26	256	271	176	48	53
+assets/ok/nominal_string_codepoint_iter.mojo	elaborated	67	2119	14	14	164	162	457	30	30
+assets/ok/nominal_string_codepoint_predicates.mojo	elaborated	65	2129	22	24	237	252	472	44	49
+assets/ok/nominal_string_codepoint_type.mojo	elaborated	57	1005	22	24	237	252	179	44	49
+assets/ok/nominal_string_default_binding.mojo	elaborated	47	1119	14	14	164	162	207	30	30
+assets/ok/nominal_string_dict_keys.mojo	elaborated	127	2488	52	105	969	1748	374	133	260
+assets/ok/nominal_string_find.mojo	elaborated	38	887	14	14	164	162	158	30	30
+assets/ok/nominal_string_graphemes.mojo	elaborated	50	1747	14	14	164	162	419	30	30
+assets/ok/nominal_string_indexing.mojo	elaborated	51	1141	14	14	164	162	192	30	30
+assets/ok/nominal_string_join.mojo	elaborated	76	1494	20	53	275	721	236	51	125
+assets/ok/nominal_string_justify.mojo	elaborated	44	1050	14	14	164	162	168	30	30
+assets/ok/nominal_string_keyword_slices.mojo	elaborated	76	2424	24	26	255	284	506	49	51
+assets/ok/nominal_string_operations.mojo	elaborated	41	1054	14	14	164	162	171	30	30
+assets/ok/nominal_string_parse.mojo	elaborated	110	4139	25	39	276	456	648	58	78
+assets/ok/nominal_string_parse_errors.mojo	elaborated	111	4043	25	39	276	456	649	58	78
+assets/ok/nominal_string_predicates.mojo	elaborated	55	1334	14	14	164	162	245	30	30
+assets/ok/nominal_string_protocols.mojo	elaborated	134	2822	50	104	965	1769	423	132	263
+assets/ok/nominal_string_replace.mojo	elaborated	40	1090	14	14	164	162	170	30	30
+assets/ok/nominal_string_reversed_iteration.mojo	elaborated	59	2067	14	14	164	162	476	30	30
+assets/ok/nominal_string_search_extras.mojo	elaborated	44	1170	14	14	164	162	191	30	30
+assets/ok/nominal_string_split.mojo	elaborated	57	1287	20	30	263	397	212	49	71
+assets/ok/nominal_string_split_forms.mojo	elaborated	71	1874	20	30	263	397	298	49	71
+assets/ok/nominal_string_strip.mojo	elaborated	64	1521	14	14	164	162	256	30	30
+assets/ok/nominal_string_unicode_case.mojo	elaborated	59	1734	14	14	164	162	240	30	30
+assets/ok/nominal_string_writer.mojo	elaborated	39	818	16	16	173	176	137	35	32
+assets/ok/number_and_string_literals.mojo	elaborated	32	700	14	14	164	162	124	30	30
+assets/ok/numeric_operation_traits.mojo	elaborated	12	155	5	6	11	13	25	5	6
+assets/ok/numeric_truthiness_condition.mojo	elaborated	25	434	19	19	248	245	79	46	46
+assets/ok/operator_operand_borrow.mojo	elaborated	40	675	29	29	436	402	83	67	61
+assets/ok/optional_dict_keys.mojo	elaborated	141	2487	59	121	946	1799	376	141	280
+assets/ok/optional_is_none.mojo	elaborated	45	850	24	26	247	261	153	46	51
+assets/ok/optional_owning_api.mojo	elaborated	56	653	23	39	256	389	108	51	77
+assets/ok/optional_raising_subscript.mojo	elaborated	57	929	24	37	262	384	169	48	73
+assets/ok/optional_value_protocols.mojo	elaborated	88	1475	41	67	485	698	218	82	121
+assets/ok/origin_argument_alias_bodies.mojo	elaborated	26	393	13	13	213	211	57	36	36
+assets/ok/origin_argument_direct_applications.mojo	elaborated	24	365	13	13	213	211	55	36	36
+assets/ok/origin_binder_result_keeps_argument.mojo	elaborated	35	761	16	16	167	165	127	32	32
+assets/ok/origin_delegated_call_arguments_run.mojo	elaborated	21	354	14	14	214	214	54	37	37
+assets/ok/origin_delegated_call_with_arguments.mojo	elaborated	2	0	0	0	0	0	2	0	0
+assets/ok/origin_delegated_multi_binder.mojo	elaborated	7	123	0	0	0	0	15	0	0
+assets/ok/origin_delegated_multi_binder_alias_field.mojo	elaborated	9	140	0	0	0	0	17	0	0
+assets/ok/origin_delegated_parameter_receiver.mojo	elaborated	9	141	0	0	0	0	17	0	0
+assets/ok/origin_placeholder_initialized_local.mojo	elaborated	22	388	17	17	241	239	57	44	44
+assets/ok/origin_placeholder_parameter.mojo	elaborated	22	330	16	16	226	224	53	39	39
+assets/ok/os_dir_operations.mojo	elaborated	137	3160	50	65	825	1170	477	124	166
+assets/ok/os_path_functions.mojo	elaborated	148	4028	49	72	1075	1402	574	148	189
+assets/ok/overload_transfer_effect_isolation.mojo	elaborated	27	488	21	21	323	321	70	56	56
+assets/ok/overload_var_copy_beside_generic.mojo	elaborated	32	690	15	15	165	163	124	31	31
+assets/ok/overload_var_copy_constructor.mojo	elaborated	40	795	17	20	182	203	132	33	36
+assets/ok/overload_var_copy_method.mojo	elaborated	33	685	15	15	165	163	125	31	31
+assets/ok/overloaded_hash_through_hash.mojo	elaborated	15	314	9	9	162	130	23	15	9
+assets/ok/overloaded_method_own_binder_symbols.mojo	elaborated	54	996	28	30	341	318	146	50	46
+assets/ok/overloaded_signature_module_constant.mojo	elaborated	9	113	0	0	0	0	17	0	0
+assets/ok/overloading_arity.mojo	elaborated	43	807	14	14	164	162	141	30	30
+assets/ok/overloading_literal_default.mojo	elaborated	6	91	0	0	0	0	14	0	0
+assets/ok/overloading_owned_parameter.mojo	elaborated	12	145	0	0	0	0	20	0	0
+assets/ok/overloading_struct_params.mojo	elaborated	12	138	0	0	0	0	20	0	0
+assets/ok/overloading_variadic_constructor.mojo	elaborated	8	119	2	3	6	10	16	2	3
+assets/ok/owned_iteration_iterator_owned_type.mojo	elaborated	14	252	9	9	132	132	39	23	23
+assets/ok/owned_operand_destroyed_on_later_raise.mojo	elaborated	22	247	1	1	4	4	32	1	1
+assets/ok/owned_pack_destroyed_in_reverse.mojo	elaborated	42	820	20	20	201	219	134	45	36
+assets/ok/owned_pointer_api.mojo	elaborated	19	210	6	11	39	70	33	9	17
+assets/ok/ownership_marker_traits.mojo	elaborated	14	134	4	5	8	12	22	4	5
+assets/ok/pack_argument_destroyed_after_call.mojo	elaborated	63	1251	30	42	451	602	194	73	97
+assets/ok/pack_bare_in_struct_header.mojo	elaborated	36	727	20	21	195	217	128	42	37
+assets/ok/pack_beside_value_binder.mojo	elaborated	38	722	19	23	184	187	130	38	39
+assets/ok/pack_constructor_spread_served.mojo	elaborated	68	928	29	49	233	340	160	48	65
+assets/ok/pack_def_scalar_value_binders_served.mojo	elaborated	38	796	19	19	196	200	136	41	35
+assets/ok/pack_def_unkept_loop_template_served.mojo	elaborated	48	912	26	28	347	373	158	69	62
+assets/ok/pack_element_alias_served.mojo	elaborated	35	760	17	17	188	227	127	42	33
+assets/ok/pack_element_alias_string_literal.mojo	elaborated	34	725	15	16	171	194	126	34	32
+assets/ok/pack_element_binding_served.mojo	elaborated	53	940	32	35	342	409	155	80	61
+assets/ok/pack_element_copy_served.mojo	elaborated	36	726	16	16	178	190	128	38	32
+assets/ok/pack_element_default_construction.mojo	elaborated	54	936	29	36	316	402	156	71	62
+assets/ok/pack_element_read_borrowed.mojo	elaborated	49	910	24	26	299	314	156	52	57
+assets/ok/pack_element_rebind.mojo	elaborated	42	804	20	23	205	222	145	48	43
+assets/ok/pack_element_temporaries.mojo	elaborated	70	1193	39	51	401	542	203	81	102
+assets/ok/pack_forwarding_method.mojo	elaborated	39	728	17	20	178	195	131	36	36
+assets/ok/pack_forwarding_print.mojo	elaborated	34	711	15	16	170	180	126	31	32
+assets/ok/pack_index_named_method.mojo	elaborated	50	853	20	31	196	281	142	39	47
+assets/ok/pack_inferred_through_tuple.mojo	elaborated	75	1000	25	57	204	380	167	44	73
+assets/ok/pack_length_runtime_position.mojo	elaborated	46	809	27	30	200	200	138	43	46
+assets/ok/pack_method_template_served.mojo	elaborated	46	801	24	27	215	237	138	48	43
+assets/ok/pack_overload_arity.mojo	elaborated	33	690	16	18	166	166	125	32	34
+assets/ok/pack_overload_beside_keyed.mojo	elaborated	33	708	18	18	178	175	125	36	34
+assets/ok/pack_overload_bounds.mojo	elaborated	31	683	16	16	166	164	123	32	32
+assets/ok/pack_overload_by_value_tiebreak.mojo	elaborated	42	763	25	25	176	174	134	41	41
+assets/ok/pack_overload_constructor.mojo	elaborated	6	100	1	1	2	2	14	1	1
+assets/ok/pack_overload_empty_collector_arity.mojo	elaborated	31	676	16	16	167	165	123	32	32
+assets/ok/pack_overload_keyword_only.mojo	elaborated	31	689	16	16	170	168	123	32	32
+assets/ok/pack_overload_leading_type.mojo	elaborated	32	698	16	17	172	174	124	32	33
+assets/ok/pack_overload_method_arity.mojo	elaborated	33	697	18	18	168	166	125	34	34
+assets/ok/pack_overload_sibling_forward.mojo	elaborated	34	692	16	19	170	179	126	32	35
+assets/ok/pack_overload_variadic_position.mojo	elaborated	31	675	16	16	166	164	123	32	32
+assets/ok/pack_reverse_concat_types.mojo	elaborated	53	824	23	38	189	290	145	46	54
+assets/ok/pack_spread_into_writer_write.mojo	elaborated	48	952	20	23	193	234	158	42	39
+assets/ok/pack_spread_result_overloaded_init_served.mojo	elaborated	48	771	21	30	194	218	140	40	46
+assets/ok/pack_struct_element_alias_condition.mojo	elaborated	11	147	3	6	22	44	19	11	6
+assets/ok/pack_struct_explicit_in_generic_body.mojo	elaborated	60	880	22	42	208	317	152	43	58
+assets/ok/pack_struct_getitem.mojo	elaborated	50	835	21	31	196	277	142	40	47
+assets/ok/pack_struct_inferred_args.mojo	elaborated	59	948	22	40	193	307	151	41	56
+assets/ok/pack_struct_method_collector.mojo	elaborated	44	782	22	26	200	226	136	41	42
+assets/ok/pack_struct_pair.mojo	elaborated	43	790	20	24	185	209	135	39	40
+assets/ok/pack_struct_static_method_through_instance.mojo	elaborated	8	98	2	3	3	4	16	2	3
+assets/ok/pack_struct_variadic_init.mojo	elaborated	40	760	20	22	187	210	132	39	38
+assets/ok/pack_struct_writable.mojo	elaborated	47	822	19	26	194	264	139	41	42
+assets/ok/pack_template_served.mojo	elaborated	48	1048	23	29	237	383	146	61	45
+assets/ok/package_constant_in_own_signature.mojo	elaborated	33	688	14	14	164	162	125	30	30
+assets/ok/param_expr_alias.mojo	elaborated	6	95	1	1	2	2	14	1	1
+assets/ok/param_expr_arithmetic.mojo	elaborated	5	121	0	0	0	0	13	0	0
+assets/ok/param_expr_array.mojo	elaborated	15	263	10	10	159	157	41	28	28
+assets/ok/param_expr_canonical.mojo	elaborated	11	123	4	6	5	9	19	4	6
+assets/ok/param_expr_fold_routes.mojo	elaborated	6	104	1	1	2	2	14	1	1
+assets/ok/param_expr_literal_argument.mojo	elaborated	14	260	9	9	158	156	40	27	27
+assets/ok/param_expr_normal_form.mojo	elaborated	22	201	11	17	12	24	30	11	17
+assets/ok/param_expr_overflow.mojo	elaborated	5	97	0	0	0	0	13	0	0
+assets/ok/param_expr_where.mojo	elaborated	6	91	1	1	2	2	14	1	1
+assets/ok/param_expr_where_assumption.mojo	elaborated	11	111	6	6	18	14	19	6	6
+assets/ok/parameterized_assoc_concrete.mojo	elaborated	20	306	14	14	201	201	47	33	33
+assets/ok/parameterized_assoc_origin.mojo	elaborated	5	89	0	0	0	0	13	0	0
+assets/ok/parameterized_assoc_self_origin.mojo	elaborated	19	301	13	13	199	197	46	32	32
+assets/ok/parameterized_assoc_self_origin_return.mojo	elaborated	19	301	13	13	199	197	46	32	32
+assets/ok/parameterized_assoc_value.mojo	elaborated	5	89	0	0	0	0	13	0	0
+assets/ok/parametric_static_methods.mojo	elaborated	174	3242	57	151	1025	2471	475	145	366
+assets/ok/partial_move_mut_parameter_reinit.mojo	elaborated	7	113	0	0	0	0	15	0	0
+assets/ok/partial_move_reinit_sibling_use.mojo	elaborated	6	111	0	0	0	0	14	0	0
+assets/ok/path_operations.mojo	elaborated	245	5497	77	119	1350	1996	793	194	288
+assets/ok/per_call_clone_loan_carrying_argument.mojo	elaborated	42	693	21	35	240	440	92	44	77
+assets/ok/pliron_alloc_roundtrip.mojo	elaborated	10	202	2	4	17	34	30	5	10
+assets/ok/pliron_builtin_numeric_edges.mojo	elaborated	5	140	0	0	0	0	13	0	0
+assets/ok/pliron_callable_struct.mojo	elaborated	46	945	18	27	242	373	163	45	66
+assets/ok/pliron_closure_env.mojo	elaborated	9	180	0	0	0	0	22	0	0
+assets/ok/pliron_convert_bool.mojo	elaborated	6	147	0	0	0	0	18	0	0
+assets/ok/pliron_convert_int_float.mojo	elaborated	6	117	0	0	0	0	14	0	0
+assets/ok/pliron_convert_uint.mojo	elaborated	6	155	0	0	0	0	24	0	0
+assets/ok/pliron_deep_recursion.mojo	elaborated	7	101	0	0	0	0	17	0	0
+assets/ok/pliron_diamond.mojo	elaborated	7	110	0	0	0	0	19	0	0
+assets/ok/pliron_dict_set.mojo	elaborated	172	3270	55	150	1017	2507	481	142	370
+assets/ok/pliron_fib.mojo	elaborated	7	104	0	0	0	0	17	0	0
+assets/ok/pliron_finally_early_return.mojo	elaborated	34	698	14	14	164	162	126	30	30
+assets/ok/pliron_finally_overrides.mojo	elaborated	8	96	0	0	0	0	16	0	0
+assets/ok/pliron_float32_semantics.mojo	elaborated	5	137	0	0	0	0	13	0	0
+assets/ok/pliron_float_arith.mojo	elaborated	6	115	0	0	0	0	14	0	0
+assets/ok/pliron_float_compare_nan.mojo	elaborated	6	143	0	0	0	0	22	0	0
+assets/ok/pliron_float_floor_mod.mojo	elaborated	6	154	0	0	0	0	18	0	0
+assets/ok/pliron_float_neg_zero.mojo	elaborated	6	96	0	0	0	0	14	0	0
+assets/ok/pliron_float_pow.mojo	elaborated	6	99	0	0	0	0	14	0	0
+assets/ok/pliron_floor_signs.mojo	elaborated	7	127	0	0	0	0	15	0	0
+assets/ok/pliron_input_echo.mojo	elaborated	33	702	14	14	164	162	125	30	30
+assets/ok/pliron_int_pow.mojo	elaborated	7	167	0	0	0	0	20	0	0
+assets/ok/pliron_int_truediv.mojo	elaborated	6	100	0	0	0	0	14	0	0
+assets/ok/pliron_iter_borrowed.mojo	elaborated	7	157	0	0	0	0	23	0	0
+assets/ok/pliron_iter_bounded.mojo	elaborated	7	139	0	0	0	0	25	0	0
+assets/ok/pliron_iter_drop_order.mojo	elaborated	9	160	0	0	0	0	28	0	0
+assets/ok/pliron_iter_range.mojo	elaborated	17	360	9	9	139	135	58	24	24
+assets/ok/pliron_kwargs_defaults.mojo	elaborated	8	141	0	0	0	0	18	0	0
+assets/ok/pliron_kwargs_ref.mojo	elaborated	7	121	0	0	0	0	15	0	0
+assets/ok/pliron_list_core.mojo	elaborated	68	1390	23	49	314	681	225	55	118
+assets/ok/pliron_literal_materialize.mojo	elaborated	6	120	0	0	0	0	14	0	0
+assets/ok/pliron_loop.mojo	elaborated	7	128	0	0	0	0	22	0	0
+assets/ok/pliron_math_rounding_edges.mojo	elaborated	14	159	4	9	9	21	22	4	9
+assets/ok/pliron_multifunc.mojo	elaborated	9	118	0	0	0	0	17	0	0
+assets/ok/pliron_multiindex_kw.mojo	elaborated	62	1271	24	26	255	284	219	49	51
+assets/ok/pliron_pointer_lifecycle.mojo	elaborated	9	147	2	2	17	17	20	5	5
+assets/ok/pliron_print_scalars.mojo	elaborated	6	104	0	0	0	0	14	0	0
+assets/ok/pliron_print_str_literal.mojo	elaborated	5	110	0	0	0	0	13	0	0
+assets/ok/pliron_reference_write_back.mojo	elaborated	6	94	0	0	0	0	14	0	0
+assets/ok/pliron_scalar_casts.mojo	elaborated	5	149	0	0	0	0	13	0	0
+assets/ok/pliron_scalar_widths.mojo	elaborated	5	183	0	0	0	0	13	0	0
+assets/ok/pliron_shortcircuit.mojo	elaborated	7	133	0	0	0	0	25	0	0
+assets/ok/pliron_slice_desc.mojo	elaborated	69	1404	33	44	487	655	223	83	100
+assets/ok/pliron_straightline.mojo	elaborated	6	126	0	0	0	0	14	0	0
+assets/ok/pliron_string_convert.mojo	elaborated	32	717	14	14	164	162	124	30	30
+assets/ok/pliron_string_literal_var.mojo	elaborated	33	714	14	14	164	162	128	30	30
+assets/ok/pliron_stringliteral_value.mojo	elaborated	34	729	14	14	164	162	128	30	30
+assets/ok/pliron_struct_drop_order.mojo	elaborated	8	111	0	0	0	0	16	0	0
+assets/ok/pliron_struct_fieldwise.mojo	elaborated	8	163	0	0	0	0	21	0	0
+assets/ok/pliron_struct_init_method.mojo	elaborated	8	121	0	0	0	0	16	0	0
+assets/ok/pliron_subscript_ref.mojo	elaborated	7	144	0	0	0	0	20	0	0
+assets/ok/pliron_thin_callables.mojo	elaborated	11	139	0	0	0	0	21	0	0
+assets/ok/pliron_try_cleanup_drop_order.mojo	elaborated	8	97	0	0	0	0	16	0	0
+assets/ok/pliron_try_handled_error.mojo	elaborated	30	673	14	14	164	162	124	30	30
+assets/ok/pliron_try_loop_escape.mojo	elaborated	5	103	0	0	0	0	16	0	0
+assets/ok/pliron_try_nested_reraise.mojo	elaborated	7	101	0	0	0	0	17	0	0
+assets/ok/pliron_tuple_pack.mojo	elaborated	45	934	18	26	220	348	146	40	51
+assets/ok/pliron_uint_arith.mojo	elaborated	6	163	0	0	0	0	14	0	0
+assets/ok/pliron_uint_compare.mojo	elaborated	6	135	0	0	0	0	22	0	0
+assets/ok/pliron_uint_pow.mojo	elaborated	7	136	0	0	0	0	20	0	0
+assets/ok/pliron_uninit_roundtrip.mojo	elaborated	14	190	7	7	15	15	22	7	7
+assets/ok/pliron_wrap_int_arith.mojo	elaborated	6	138	0	0	0	0	14	0	0
+assets/ok/pliron_wrap_pow.mojo	elaborated	7	141	0	0	0	0	20	0	0
+assets/ok/pliron_wrap_uint_arith.mojo	elaborated	6	115	0	0	0	0	14	0	0
+assets/ok/pointer_bound_copy.mojo	elaborated	7	154	0	0	0	0	15	0	0
+assets/ok/pointer_deref_store_loan_carrying_pointee.mojo	elaborated	69	1343	28	44	349	540	215	60	92
+assets/ok/pointer_deref_store_overwrite_drop.mojo	elaborated	6	107	0	0	0	0	14	0	0
+assets/ok/pointer_empty_deref.mojo	elaborated	7	140	2	2	17	17	18	5	5
+assets/ok/pointer_field_adapter_from_deref_rebinding.mojo	elaborated	22	339	13	13	213	211	53	36	36
+assets/ok/pointer_field_adapter_from_reborrow.mojo	elaborated	22	338	13	13	213	211	53	36	36
+assets/ok/pointer_field_adapter_return_from_field.mojo	elaborated	23	353	13	13	213	211	54	36	36
+assets/ok/pointer_field_bare_origin_mutable_source_write.mojo	elaborated	19	333	14	14	222	220	50	37	37
+assets/ok/pointer_field_chained_view_call.mojo	elaborated	24	373	13	13	213	211	55	36	36
+assets/ok/pointer_field_ctor_from_ref_field.mojo	elaborated	20	327	13	13	213	211	51	36	36
+assets/ok/pointer_field_ctor_owned_source.mojo	elaborated	21	350	13	13	213	211	52	36	36
+assets/ok/pointer_field_ctor_temporary_explicit_init.mojo	elaborated	20	341	13	13	213	211	51	36	36
+assets/ok/pointer_field_deref_field_store.mojo	elaborated	5	102	0	0	0	0	13	0	0
+assets/ok/pointer_field_deref_field_store_shapes.mojo	elaborated	8	196	0	0	0	0	16	0	0
+assets/ok/pointer_field_deref_index.mojo	elaborated	19	337	14	14	214	212	50	37	37
+assets/ok/pointer_field_drain_mut_method.mojo	elaborated	23	367	15	15	241	239	53	37	37
+assets/ok/pointer_field_fieldwise_init_binder.mojo	elaborated	23	365	13	13	213	211	54	36	36
+assets/ok/pointer_field_imm_origin_cast_read.mojo	elaborated	18	319	13	13	213	211	49	36	36
+assets/ok/pointer_field_iterator_storage.mojo	elaborated	21	357	13	13	213	211	52	36	36
+assets/ok/pointer_field_mut_origin_plain_self_in_place.mojo	elaborated	20	344	14	14	222	220	51	37	37
+assets/ok/pointer_field_reborrow_read.mojo	elaborated	22	355	14	14	214	212	53	37	37
+assets/ok/pointer_field_symbolic_origin_mut_parameter_write.mojo	elaborated	20	345	14	14	222	220	51	37	37
+assets/ok/pointer_field_symbolic_origin_mutable_local_write.mojo	elaborated	19	334	14	14	222	220	50	37	37
+assets/ok/pointer_field_symbolic_origin_ref_constructor_write.mojo	elaborated	21	344	14	14	222	220	52	37	37
+assets/ok/pointer_field_symbolic_origin_wrapper_field_write.mojo	elaborated	20	337	14	14	222	220	51	37	37
+assets/ok/pointer_field_view_for_temporary.mojo	elaborated	25	387	14	14	214	212	64	37	37
+assets/ok/pointer_field_view_free_function.mojo	elaborated	21	347	13	13	213	211	52	36	36
+assets/ok/pointer_field_view_method_return.mojo	elaborated	22	338	13	13	213	211	53	36	36
+assets/ok/pointer_field_view_plain_self.mojo	elaborated	22	349	13	13	213	211	53	36	36
+assets/ok/pointer_field_view_read_parameter.mojo	elaborated	23	365	13	13	213	211	54	36	36
+assets/ok/pointer_field_view_ref_yield.mojo	elaborated	25	399	14	14	214	212	64	37	37
+assets/ok/pointer_field_view_returned.mojo	elaborated	6	101	0	0	0	0	14	0	0
+assets/ok/pointer_field_wrapper_iterator_protocol.mojo	elaborated	26	394	14	14	214	214	65	37	37
+assets/ok/pointer_immutable_conversion.mojo	elaborated	5	111	0	0	0	0	13	0	0
+assets/ok/pointer_origin_cast_upgrade_reads.mojo	elaborated	8	123	2	2	17	17	19	5	5
+assets/ok/pointer_origin_constructors.mojo	elaborated	11	152	0	0	0	0	19	0	0
+assets/ok/pointer_origin_field_inference.mojo	elaborated	6	123	1	1	2	2	14	1	1
+assets/ok/pointer_placeholder_parameter.mojo	elaborated	34	685	14	14	164	162	126	30	30
+assets/ok/pointer_subscript_reads_in_place.mojo	elaborated	98	1690	34	60	386	751	266	73	130
+assets/ok/pointer_take_pointee_tracked.mojo	elaborated	5	101	0	0	0	0	13	0	0
+assets/ok/pointer_temp_argument_loan.mojo	elaborated	6	100	0	0	0	0	14	0	0
+assets/ok/pointer_temp_argument_loan_return.mojo	elaborated	8	119	0	0	0	0	18	0	0
+assets/ok/pointer_to_owner_twice.mojo	elaborated	19	370	13	13	213	211	50	36	36
+assets/ok/pointer_to_place.mojo	elaborated	5	106	0	0	0	0	13	0	0
+assets/ok/pointer_to_ref_binding.mojo	elaborated	6	110	0	0	0	0	14	0	0
+assets/ok/pointer_to_ref_binding_twice.mojo	elaborated	18	354	13	13	213	211	49	36	36
+assets/ok/pointer_to_ref_union_origin.mojo	elaborated	6	108	0	0	0	0	16	0	0
+assets/ok/pointer_to_ref_write_through.mojo	elaborated	5	104	0	0	0	0	13	0	0
+assets/ok/pointer_to_tuple_element.mojo	elaborated	18	279	5	11	29	98	26	11	11
+assets/ok/pointer_tuple_field_write.mojo	elaborated	9	133	2	3	5	8	17	2	3
+assets/ok/pointer_type_argument_clone_binder.mojo	elaborated	21	240	16	16	72	72	32	19	19
+assets/ok/pointer_type_argument_interior_clone_binder.mojo	elaborated	17	291	12	12	135	133	40	27	27
+assets/ok/pointer_unsafe_vocabulary.mojo	elaborated	7	174	2	2	17	17	18	5	5
+assets/ok/positional_only.mojo	elaborated	7	102	0	0	0	0	15	0	0
+assets/ok/print_argument_drop_order.mojo	elaborated	7	102	0	0	0	0	15	0	0
+assets/ok/print_argument_read_in_place.mojo	elaborated	39	739	15	15	177	175	131	31	31
+assets/ok/print_keywords_file.mojo	elaborated	106	2133	35	38	460	500	344	74	74
+assets/ok/raise_borrowed_string_parameter.mojo	elaborated	35	760	14	14	164	162	135	30	30
+assets/ok/range_zero_step_empty.mojo	elaborated	10	214	3	3	66	63	31	10	10
+assets/ok/read_temporary_conditional_argument_drop.mojo	elaborated	16	227	3	3	37	36	45	7	7
+assets/ok/rebind_assignment.mojo	elaborated	39	773	18	19	212	206	131	45	35
+assets/ok/rebind_augmented_assignment.mojo	elaborated	38	804	18	19	201	196	136	44	35
+assets/ok/rebind_generic_body.mojo	elaborated	38	735	20	20	196	188	130	36	36
+assets/ok/rebind_method_template_served.mojo	elaborated	38	722	19	20	180	179	130	35	36
+assets/ok/rebind_overloaded_def.mojo	elaborated	7	105	2	2	7	4	15	2	2
+assets/ok/rebind_place_projection.mojo	elaborated	53	1431	17	17	197	195	213	33	33
+assets/ok/receiver_origin_iterator_argument.mojo	elaborated	41	640	22	36	268	480	101	51	88
+assets/ok/ref_binding_projected_field_offset.mojo	elaborated	19	332	13	13	213	211	50	36	36
+assets/ok/ref_binding_temporary_source.mojo	elaborated	19	318	13	13	213	211	50	36	36
+assets/ok/ref_param.mojo	elaborated	6	96	0	0	0	0	14	0	0
+assets/ok/ref_result_field_value_copy.mojo	elaborated	47	939	18	28	242	376	164	45	67
+assets/ok/ref_result_through_read_param.mojo	elaborated	54	1083	20	29	249	382	169	47	68
+assets/ok/reference_argument_read_at_call_setup.mojo	elaborated	148	2754	48	106	938	1708	386	127	252
+assets/ok/reference_call_assignment_target.mojo	elaborated	39	923	14	14	164	162	137	30	30
+assets/ok/reference_carrier_collection.mojo	elaborated	28	442	13	23	199	333	68	32	55
+assets/ok/reference_element_chained_read.mojo	elaborated	30	502	14	25	214	363	78	37	65
+assets/ok/reference_iteration_temporary_list.mojo	elaborated	22	366	16	16	235	233	58	41	41
+assets/ok/reference_result_view_conversion.mojo	elaborated	51	1098	24	26	342	356	174	59	64
+assets/ok/reference_return_forwarded_accessor.mojo	elaborated	23	346	17	17	212	210	50	36	36
+assets/ok/reflected_operators.mojo	elaborated	9	121	0	0	0	0	17	0	0
+assets/ok/reflection_comptime_for_served.mojo	elaborated	43	859	26	28	331	355	153	77	62
+assets/ok/reflection_field_name_materialize.mojo	elaborated	43	876	23	25	330	359	153	57	59
+assets/ok/reflection_field_type_construction.mojo	elaborated	37	750	16	16	180	220	129	41	32
+assets/ok/reflection_list_materialized_whole.mojo	elaborated	61	1216	28	43	398	666	196	64	102
+assets/ok/reflection_runtime_query.mojo	elaborated	40	857	21	23	304	319	150	52	57
+assets/ok/reflection_symbolic_fields.mojo	elaborated	46	876	23	25	332	347	156	65	59
+assets/ok/reflection_template_served.mojo	elaborated	21	142	12	16	32	23	29	16	16
+assets/ok/repr_sized_scalars.mojo	elaborated	32	778	14	14	164	162	124	30	30
+assets/ok/repr_type_names.mojo	elaborated	60	1312	26	30	275	324	216	51	55
+assets/ok/reversed_iteration.mojo	elaborated	39	609	27	27	381	369	103	63	63
+assets/ok/reversed_list.mojo	elaborated	79	1357	30	59	374	737	239	68	134
+assets/ok/runtime_pack_dunder_len.mojo	elaborated	8	107	2	3	7	9	16	2	3
+assets/ok/same_arity_generic_method_overloads.mojo	elaborated	40	793	19	21	177	179	132	35	37
+assets/ok/same_spelled_type_params.mojo	elaborated	54	853	27	35	210	230	146	43	51
+assets/ok/scalar_default_construction.mojo	elaborated	9	112	1	4	1	4	17	1	4
+assets/ok/scalar_dtype_construction.mojo	elaborated	5	103	0	0	0	0	13	0	0
+assets/ok/scalar_range_float_strided.mojo	elaborated	11	269	3	6	53	106	43	9	18
+assets/ok/scalar_range_sequential.mojo	elaborated	13	222	4	8	41	94	37	8	18
+assets/ok/scalar_range_strided.mojo	elaborated	13	278	5	7	79	116	41	12	16
+assets/ok/scalar_range_zero_starting.mojo	elaborated	13	191	5	8	41	74	32	9	16
+assets/ok/scalar_runtime_conversions.mojo	elaborated	7	125	1	1	2	2	15	1	1
+assets/ok/self_hosted_dict.mojo	elaborated	126	2553	53	103	971	1687	363	134	251
+assets/ok/self_hosted_vec.mojo	elaborated	15	210	5	5	54	53	33	12	12
+assets/ok/set_methods_growth.mojo	elaborated	63	1072	58	58	714	708	151	138	138
+assets/ok/set_variadic_constructor.mojo	elaborated	30	433	24	25	309	321	71	54	58
+assets/ok/shadowed_local_callable_call.mojo	elaborated	26	464	11	15	169	250	73	30	43
+assets/ok/shadowing_constants.mojo	elaborated	6	100	0	0	0	0	14	0	0
+assets/ok/simd_abi_crossings.mojo	elaborated	28	576	18	20	239	264	59	44	43
+assets/ok/simd_bool_masks.mojo	elaborated	6	191	0	0	0	0	14	0	0
+assets/ok/simd_cast.mojo	elaborated	5	108	0	0	0	0	13	0	0
+assets/ok/simd_cast_float_thresholds.mojo	elaborated	5	157	0	0	0	0	13	0	0
+assets/ok/simd_cast_matrix.mojo	elaborated	5	225	0	0	0	0	13	0	0
+assets/ok/simd_compare_all_dtypes.mojo	elaborated	10	318	3	3	37	36	25	7	7
+assets/ok/simd_dtype_alias.mojo	elaborated	7	157	0	0	0	0	15	0	0
+assets/ok/simd_dtypes_int_lanes.mojo	elaborated	5	253	0	0	0	0	13	0	0
+assets/ok/simd_float_div.mojo	elaborated	5	162	0	0	0	0	13	0	0
+assets/ok/simd_floats.mojo	elaborated	5	102	0	0	0	0	13	0	0
+assets/ok/simd_floordiv_mod.mojo	elaborated	5	214	0	0	0	0	13	0	0
+assets/ok/simd_generic_width.mojo	elaborated	9	113	2	4	4	8	17	2	4
+assets/ok/simd_inferred_width_binding.mojo	elaborated	5	120	0	0	0	0	13	0	0
+assets/ok/simd_int_wrap_native_int.mojo	elaborated	5	127	0	0	0	0	13	0	0
+assets/ok/simd_lane_binders_inferred.mojo	elaborated	19	176	7	13	32	50	27	7	13
+assets/ok/simd_lane_dynamic.mojo	elaborated	14	261	6	6	73	72	39	14	14
+assets/ok/simd_lane_dynamic_widths.mojo	elaborated	9	212	3	3	37	36	30	7	7
+assets/ok/simd_lane_write.mojo	elaborated	5	134	0	0	0	0	13	0	0
+assets/ok/simd_literal_splat.mojo	elaborated	9	137	1	1	2	2	17	1	1
+assets/ok/simd_methods.mojo	elaborated	5	147	0	0	0	0	13	0	0
+assets/ok/simd_nullary_construction.mojo	elaborated	8	119	1	3	1	6	16	1	3
+assets/ok/simd_parameter_default_construction.mojo	elaborated	29	510	8	24	127	381	82	23	69
+assets/ok/simd_reductions_float.mojo	elaborated	5	202	0	0	0	0	13	0	0
+assets/ok/simd_reductions_int.mojo	elaborated	5	210	0	0	0	0	13	0	0
+assets/ok/simd_scalar_splat.mojo	elaborated	27	421	15	16	220	222	58	38	39
+assets/ok/simd_shifts_masked.mojo	elaborated	5	250	0	0	0	0	13	0	0
+assets/ok/simd_shuffle.mojo	elaborated	5	141	0	0	0	0	13	0	0
+assets/ok/simd_symbolic_surface.mojo	elaborated	72	1347	41	52	551	610	174	99	72
+assets/ok/simd_symbolic_width_hooks.mojo	elaborated	9	104	4	4	6	5	17	4	4
+assets/ok/simd_symbolic_width_literal_binding.mojo	elaborated	11	165	5	6	51	68	19	8	6
+assets/ok/simd_to_bits.mojo	elaborated	5	168	0	0	0	0	13	0	0
+assets/ok/simd_to_bits_default_symbolic.mojo	elaborated	10	117	2	5	7	17	18	2	5
+assets/ok/simd_wide_widths.mojo	elaborated	5	177	0	0	0	0	13	0	0
+assets/ok/size_of_builtin.mojo	elaborated	6	97	1	1	1	1	14	1	1
+assets/ok/sized_generic_views.mojo	elaborated	25	354	15	17	207	213	52	34	36
+assets/ok/slice.mojo	elaborated	71	1423	34	46	502	671	229	88	106
+assets/ok/slice_descriptor_protocols.mojo	elaborated	77	1593	34	49	524	761	231	91	105
+assets/ok/span_generic_free_def_view.mojo	elaborated	70	1254	20	51	252	641	213	45	115
+assets/ok/span_implicit_from_list.mojo	elaborated	24	391	17	17	227	225	58	40	40
+assets/ok/span_iteration.mojo	elaborated	70	1397	31	45	386	560	228	69	96
+assets/ok/span_move_use.mojo	elaborated	21	339	16	16	226	224	52	39	39
+assets/ok/span_pointer_construction.mojo	elaborated	54	1082	20	34	250	410	174	45	75
+assets/ok/span_temp_method_argument.mojo	elaborated	25	413	20	20	282	280	65	52	52
+assets/ok/span_temp_static_argument.mojo	elaborated	26	435	21	21	307	305	65	52	52
+assets/ok/span_view_basics.mojo	elaborated	68	1342	29	43	364	538	215	65	92
+assets/ok/static_call_origin_application.mojo	elaborated	26	381	16	16	212	210	53	35	35
+assets/ok/static_call_through_self.mojo	elaborated	22	157	5	13	16	31	34	7	17
+assets/ok/static_call_through_shadowed_type_name.mojo	elaborated	12	167	3	3	37	36	27	7	7
+assets/ok/static_method_explicit_application.mojo	elaborated	42	732	19	23	175	178	134	38	39
+assets/ok/static_method_pack_spread.mojo	elaborated	46	884	21	24	206	243	150	46	40
+assets/ok/static_method_reads_struct_value_parameter.mojo	elaborated	22	147	8	16	27	40	30	8	16
+assets/ok/static_methods.mojo	elaborated	7	102	0	0	0	0	15	0	0
+assets/ok/static_reference_result_argument.mojo	elaborated	7	111	0	0	0	0	15	0	0
+assets/ok/std_traits_origin_imports.mojo	elaborated	8	120	0	0	0	0	16	0	0
+assets/ok/stored_array_span_iterators.mojo	elaborated	39	654	34	34	433	429	102	80	80
+assets/ok/string_capacity.mojo	elaborated	34	809	14	14	164	162	137	30	30
+assets/ok/string_default_construction.mojo	elaborated	38	816	17	18	179	188	136	36	34
+assets/ok/string_element_view_conversion.mojo	elaborated	68	1380	23	46	326	672	219	57	115
+assets/ok/string_escapes.mojo	elaborated	33	698	14	14	164	162	125	30	30
+assets/ok/string_format_declared.mojo	elaborated	140	5530	46	97	926	3465	816	148	478
+assets/ok/string_grapheme_iteration.mojo	elaborated	43	1689	14	14	164	162	403	30	30
+assets/ok/string_iadd_view_operand.mojo	elaborated	51	1140	18	27	242	375	185	45	66
+assets/ok/string_literal_bytes.mojo	elaborated	7	119	0	0	0	0	15	0	0
+assets/ok/string_literal_overload.mojo	elaborated	31	676	14	14	164	162	123	30	30
+assets/ok/string_overload_conversion.mojo	elaborated	32	670	14	14	164	162	124	30	30
+assets/ok/string_span_equatable.mojo	elaborated	53	1203	14	14	164	162	222	30	30
+assets/ok/string_span_implicit_temporary.mojo	elaborated	39	952	14	14	164	162	146	30	30
+assets/ok/string_span_literal.mojo	elaborated	63	1280	24	26	255	284	227	49	51
+assets/ok/string_span_methods.mojo	elaborated	132	3808	28	40	333	498	582	64	88
+assets/ok/string_view_equality.mojo	elaborated	35	762	14	14	164	162	141	30	30
+assets/ok/stropping.mojo	elaborated	6	103	0	0	0	0	14	0	0
+assets/ok/struct_generator_lane_symbolic_width.mojo	elaborated	8	113	2	3	11	13	16	2	3
+assets/ok/struct_generator_struct_value.mojo	elaborated	17	153	4	11	18	33	25	6	11
+assets/ok/struct_generator_vector_value.mojo	elaborated	10	155	3	5	26	50	18	3	5
+assets/ok/struct_method_comptime_template_served.mojo	elaborated	46	881	19	27	210	250	144	44	43
+assets/ok/struct_method_instance_clone_unreached.mojo	elaborated	9	109	3	4	7	12	17	6	4
+assets/ok/struct_operator_operand_owner_drop.mojo	elaborated	14	186	3	3	9	9	22	3	3
+assets/ok/struct_operator_subscript_operand_in_place.mojo	elaborated	34	679	18	19	254	257	85	45	46
+assets/ok/struct_operator_temporary_operand_drop.mojo	elaborated	16	397	1	1	7	7	35	1	1
+assets/ok/struct_type_param_construction_clone.mojo	elaborated	49	903	19	29	186	202	147	43	45
+assets/ok/struct_value_member_runtime_read.mojo	elaborated	40	729	20	21	172	171	132	36	37
+assets/ok/struct_value_pack_method_read.mojo	elaborated	32	431	27	27	254	315	62	57	49
+assets/ok/struct_value_param_frozen.mojo	elaborated	12	135	3	5	11	21	20	3	5
+assets/ok/symbolic_instance_construction.mojo	elaborated	16	158	5	11	33	36	24	5	11
+assets/ok/telemetry.mojo	elaborated	10	144	3	4	16	27	18	6	4
+assets/ok/tempfile_mkdtemp.mojo	elaborated	193	3840	65	87	1049	1294	602	159	194
+assets/ok/template_def_bound_conversion.mojo	elaborated	59	1056	26	30	211	223	168	42	46
+assets/ok/template_def_converting_argument.mojo	elaborated	38	722	17	20	191	204	133	35	36
+assets/ok/template_def_defaulted_parameter.mojo	elaborated	47	849	24	29	250	290	152	46	58
+assets/ok/template_def_slice_stringify.mojo	elaborated	88	1846	31	36	487	626	288	70	76
+assets/ok/template_def_string_builtins.mojo	elaborated	37	967	15	16	176	186	164	31	32
+assets/ok/template_def_try_unpack.mojo	elaborated	47	894	20	28	246	348	147	42	50
+assets/ok/template_def_type_alias.mojo	elaborated	31	701	15	16	180	194	127	33	36
+assets/ok/template_def_value_local.mojo	elaborated	74	1291	24	56	302	716	222	56	128
+assets/ok/template_def_var_parameter.mojo	elaborated	63	857	30	48	227	310	161	46	70
+assets/ok/template_folded_arithmetic.mojo	elaborated	12	304	2	4	82	163	25	11	4
+assets/ok/template_folded_operators.mojo	elaborated	12	276	4	6	95	170	27	17	10
+assets/ok/template_folded_value.mojo	elaborated	15	218	4	9	45	117	23	14	9
+assets/ok/template_inner_request.mojo	elaborated	11	117	3	6	5	10	19	3	6
+assets/ok/template_keyed_runtime_if.mojo	elaborated	10	388	3	5	88	288	74	28	61
+assets/ok/template_keyed_runtime_while.mojo	elaborated	10	397	3	5	88	297	74	27	61
+assets/ok/template_lane_def_value_binder_outside_lane.mojo	elaborated	52	863	28	33	237	256	144	47	49
+assets/ok/template_loop_local.mojo	elaborated	15	371	4	9	91	268	23	21	9
+assets/ok/template_method_applied_overloaded_static.mojo	elaborated	62	827	27	44	207	262	154	43	60
+assets/ok/template_method_binder_construction.mojo	elaborated	58	1245	28	38	491	529	167	64	68
+assets/ok/template_method_borrowed_parameter.mojo	elaborated	43	799	20	25	193	214	135	36	41
+assets/ok/template_method_bound_binder_result.mojo	elaborated	47	803	22	28	197	224	139	38	44
+assets/ok/template_method_bound_copy.mojo	elaborated	73	1243	24	54	277	658	211	51	116
+assets/ok/template_method_bound_defaulted_argument.mojo	elaborated	48	965	19	24	182	198	161	35	40
+assets/ok/template_method_bound_dispatch.mojo	elaborated	72	1462	31	46	523	614	193	70	76
+assets/ok/template_method_bound_display_argument.mojo	elaborated	207	3366	69	167	1141	2534	509	159	380
+assets/ok/template_method_bound_self_argument.mojo	elaborated	61	1001	27	35	254	291	159	43	51
+assets/ok/template_method_bound_value_argument.mojo	elaborated	52	1051	21	28	212	258	165	37	44
+assets/ok/template_method_bound_witness_shapes.mojo	elaborated	89	1457	36	58	516	596	210	72	88
+assets/ok/template_method_built_over_local.mojo	elaborated	94	1412	35	76	357	818	236	64	142
+assets/ok/template_method_callable_parameter.mojo	elaborated	48	776	20	26	194	222	140	36	42
+assets/ok/template_method_calls.mojo	elaborated	67	1149	23	52	246	596	197	46	106
+assets/ok/template_method_collapsed_static_overload.mojo	elaborated	43	721	20	28	174	185	135	36	44
+assets/ok/template_method_comprehension.mojo	elaborated	178	3276	67	157	1174	2494	515	184	411
+assets/ok/template_method_comptime_control.mojo	elaborated	55	1237	21	31	245	507	165	59	47
+assets/ok/template_method_construction.mojo	elaborated	103	1506	40	84	380	852	253	73	158
+assets/ok/template_method_converting_argument.mojo	elaborated	40	833	16	18	190	214	138	32	34
+assets/ok/template_method_converting_binding.mojo	elaborated	79	1220	27	60	271	646	209	50	114
+assets/ok/template_method_converting_call_argument.mojo	elaborated	46	744	21	28	189	212	141	37	44
+assets/ok/template_method_copied_consuming_receiver.mojo	elaborated	67	1124	28	46	297	461	183	50	80
+assets/ok/template_method_copied_receiver.mojo	elaborated	91	1682	31	66	377	837	257	63	134
+assets/ok/template_method_defaulted_argument.mojo	elaborated	64	1160	22	30	204	242	206	38	46
+assets/ok/template_method_discarded_value.mojo	elaborated	47	843	22	32	230	311	139	41	48
+assets/ok/template_method_element_field_result.mojo	elaborated	158	3011	53	134	967	2138	442	132	326
+assets/ok/template_method_explicit_application.mojo	elaborated	45	807	20	30	207	282	143	36	52
+assets/ok/template_method_explicit_destroy_call.mojo	elaborated	57	872	26	38	228	290	149	42	54
+assets/ok/template_method_field_of_field.mojo	elaborated	51	840	23	32	203	239	143	39	48
+assets/ok/template_method_for_loop.mojo	elaborated	85	1588	35	69	484	988	269	85	170
+assets/ok/template_method_foreign_overload.mojo	elaborated	83	1469	25	64	354	868	245	60	150
+assets/ok/template_method_generic_call.mojo	elaborated	140	2328	46	117	724	1567	366	111	257
+assets/ok/template_method_generic_static_call.mojo	elaborated	61	858	27	42	209	262	157	45	62
+assets/ok/template_method_generic_static_owner_unbound.mojo	elaborated	75	1234	18	60	178	729	215	34	124
+assets/ok/template_method_generic_static_parameter_pack.mojo	elaborated	47	769	21	28	186	206	139	37	44
+assets/ok/template_method_generic_static_shapes.mojo	elaborated	65	985	29	46	277	392	163	48	68
+assets/ok/template_method_generic_witness.mojo	elaborated	58	1178	30	37	480	480	167	66	67
+assets/ok/template_method_getter.mojo	elaborated	35	700	17	20	171	176	127	33	36
+assets/ok/template_method_hash_leaf.mojo	elaborated	59	1297	28	39	494	583	183	67	84
+assets/ok/template_method_immutable_sibling_view.mojo	elaborated	69	1146	24	54	254	612	199	47	108
+assets/ok/template_method_inplace_place.mojo	elaborated	47	585	17	33	110	212	57	17	33
+assets/ok/template_method_moves.mojo	elaborated	55	983	24	37	226	297	157	45	63
+assets/ok/template_method_nested_def.mojo	elaborated	85	1413	33	69	390	844	229	65	137
+assets/ok/template_method_nested_def_conventions.mojo	elaborated	99	1446	37	80	367	818	237	64	142
+assets/ok/template_method_nested_def_defaults.mojo	elaborated	93	1429	37	73	386	795	237	66	135
+assets/ok/template_method_nested_def_forms.mojo	elaborated	117	1630	46	98	444	980	247	69	152
+assets/ok/template_method_operator_dispatch.mojo	elaborated	60	1045	25	40	230	328	184	47	72
+assets/ok/template_method_operator_operands.mojo	elaborated	67	998	32	50	260	354	166	48	66
+assets/ok/template_method_origin_parameter.mojo	elaborated	42	782	19	24	184	201	134	35	40
+assets/ok/template_method_overloaded_generic_static_call.mojo	elaborated	63	875	27	44	216	290	159	45	64
+assets/ok/template_method_overloaded_parameter_typed_static.mojo	elaborated	41	707	20	26	174	182	133	36	42
+assets/ok/template_method_own_comptime_if.mojo	elaborated	41	781	18	22	187	221	133	43	38
+assets/ok/template_method_own_lane.mojo	elaborated	17	181	6	11	30	55	25	6	11
+assets/ok/template_method_pack_accessor.mojo	elaborated	50	852	21	31	199	272	142	40	47
+assets/ok/template_method_pack_struct.mojo	elaborated	86	1886	38	60	616	1011	287	119	166
+assets/ok/template_method_parameter_built_store.mojo	elaborated	67	914	29	58	330	660	141	62	124
+assets/ok/template_method_parameter_receiver.mojo	elaborated	82	1374	28	62	295	694	219	51	116
+assets/ok/template_method_parameterized_call.mojo	elaborated	52	926	23	32	227	288	150	39	48
+assets/ok/template_method_per_call_clone.mojo	elaborated	43	774	18	23	176	188	135	34	39
+assets/ok/template_method_place_argument.mojo	elaborated	70	1158	31	52	342	563	185	58	91
+assets/ok/template_method_print_parameter_temporary.mojo	elaborated	63	1004	21	42	220	386	155	37	58
+assets/ok/template_method_raises.mojo	elaborated	44	784	19	24	206	246	148	41	52
+assets/ok/template_method_range_loop.mojo	elaborated	77	1505	31	59	495	951	256	86	162
+assets/ok/template_method_rebind.mojo	elaborated	38	722	17	20	178	181	130	37	36
+assets/ok/template_method_receiver_pointer.mojo	elaborated	167	2831	71	144	1085	1982	443	165	325
+assets/ok/template_method_reference_argument.mojo	elaborated	116	1918	34	100	390	1309	300	61	208
+assets/ok/template_method_reference_call.mojo	elaborated	87	1411	27	69	275	801	242	54	148
+assets/ok/template_method_reference_local.mojo	elaborated	110	1831	30	92	337	1201	294	57	200
+assets/ok/template_method_reference_receiver.mojo	elaborated	97	1582	29	77	332	982	258	56	162
+assets/ok/template_method_reference_result.mojo	elaborated	70	1159	33	52	336	501	200	68	106
+assets/ok/template_method_reflected_operator.mojo	elaborated	57	827	28	42	216	266	149	44	58
+assets/ok/template_method_sibling_view.mojo	elaborated	79	1221	29	64	270	644	209	52	118
+assets/ok/template_method_simd_construction.mojo	elaborated	71	1347	32	51	519	624	189	71	90
+assets/ok/template_method_simd_leaf.mojo	elaborated	156	2511	51	129	837	1826	379	129	270
+assets/ok/template_method_simd_leaf_default_bits.mojo	elaborated	60	1015	23	38	263	445	174	46	73
+assets/ok/template_method_simd_leaf_default_bits_lanes.mojo	elaborated	60	1015	23	38	263	445	174	46	73
+assets/ok/template_method_simd_scalar.mojo	elaborated	63	1392	32	43	590	709	182	73	83
+assets/ok/template_method_statements.mojo	elaborated	49	899	24	34	246	326	165	52	74
+assets/ok/template_method_static_binder_infers_struct_parameter.mojo	elaborated	42	729	18	24	176	194	134	34	40
+assets/ok/template_method_static_binder_overload_arity.mojo	elaborated	44	728	21	28	189	212	136	37	44
+assets/ok/template_method_static_call.mojo	elaborated	43	746	19	24	179	192	135	35	40
+assets/ok/template_method_string_builtins.mojo	elaborated	39	1011	16	18	195	224	166	32	34
+assets/ok/template_method_string_literal_argument.mojo	elaborated	72	1302	22	30	234	302	229	38	46
+assets/ok/template_method_stringify_parameter_value.mojo	elaborated	56	885	19	34	186	250	148	35	50
+assets/ok/template_method_struct_lane.mojo	elaborated	45	577	8	40	102	480	83	14	70
+assets/ok/template_method_subscript_store.mojo	elaborated	172	2699	42	144	450	1880	409	69	298
+assets/ok/template_method_subscripted_receiver.mojo	elaborated	252	4654	64	223	1167	3675	663	158	548
+assets/ok/template_method_temporary_receiver.mojo	elaborated	113	2064	34	74	323	750	323	57	128
+assets/ok/template_method_transfer_replay.mojo	elaborated	68	1179	22	50	256	616	206	49	112
+assets/ok/template_method_truthiness_condition.mojo	elaborated	60	1006	30	39	304	382	198	67	94
+assets/ok/template_method_tuple_element.mojo	elaborated	93	1680	31	74	431	1021	245	68	150
+assets/ok/template_method_tuple_unpack.mojo	elaborated	63	1055	24	43	263	419	161	45	63
+assets/ok/template_method_value_argument.mojo	elaborated	61	884	30	42	234	287	153	46	58
+assets/ok/template_method_value_binder.mojo	elaborated	42	787	19	25	208	246	134	35	41
+assets/ok/template_method_value_parameter.mojo	elaborated	93	1556	31	75	359	874	255	66	161
+assets/ok/template_method_vanishing_transfer.mojo	elaborated	74	1326	25	56	309	722	222	57	128
+assets/ok/template_method_var_self.mojo	elaborated	51	998	23	33	295	432	170	51	73
+assets/ok/template_method_variadic_initializer.mojo	elaborated	70	1279	29	54	360	728	214	63	122
+assets/ok/template_method_variadic_struct.mojo	elaborated	51	810	24	36	214	286	143	43	52
+assets/ok/template_method_vector_hash_leaf.mojo	elaborated	20	406	10	14	164	178	31	16	17
+assets/ok/template_method_vector_instance.mojo	elaborated	14	320	8	8	152	137	25	14	11
+assets/ok/template_method_vector_key.mojo	elaborated	14	192	4	8	39	74	22	4	8
+assets/ok/template_method_view_binding.mojo	elaborated	79	1362	25	64	332	824	227	53	136
+assets/ok/template_method_view_result_interior.mojo	elaborated	46	883	17	20	186	206	156	33	36
+assets/ok/template_method_with_statement.mojo	elaborated	102	1474	30	66	367	838	250	62	138
+assets/ok/template_overload_binding.mojo	elaborated	10	106	2	4	3	6	18	2	4
+assets/ok/template_overload_binding_local.mojo	elaborated	9	105	2	4	6	12	17	2	4
+assets/ok/template_overload_binding_method.mojo	elaborated	14	129	4	8	11	22	22	4	8
+assets/ok/template_pack_elements.mojo	elaborated	36	731	16	18	181	197	128	38	34
+assets/ok/template_print_call_keywords.mojo	elaborated	115	2218	40	48	509	598	353	79	84
+assets/ok/template_print_keywords.mojo	elaborated	44	806	20	26	200	234	136	36	42
+assets/ok/template_print_statement.mojo	elaborated	37	781	18	22	206	246	133	36	42
+assets/ok/template_print_whole_value.mojo	elaborated	38	767	17	20	186	206	130	33	36
+assets/ok/template_raise_forms.mojo	elaborated	49	774	23	29	209	241	155	45	57
+assets/ok/template_scalar_loop.mojo	elaborated	8	129	1	3	16	36	16	6	3
+assets/ok/template_served_body_call_into_overload_family.mojo	elaborated	49	877	30	34	341	361	159	61	68
+assets/ok/template_served_def_closed_call.mojo	elaborated	52	852	30	33	273	284	153	58	58
+assets/ok/template_served_def_loan_carrying_argument.mojo	elaborated	44	713	21	34	255	464	98	44	80
+assets/ok/template_served_loan_carrying_instance.mojo	elaborated	53	804	30	44	324	533	119	59	96
+assets/ok/template_tuple_default_initializer.mojo	elaborated	77	1207	26	58	286	554	183	56	88
+assets/ok/template_two_arms.mojo	elaborated	9	97	2	4	4	6	17	4	4
+assets/ok/template_two_types.mojo	elaborated	7	95	1	2	1	2	15	1	2
+assets/ok/template_type_member_loop_bound.mojo	elaborated	28	417	15	21	175	283	51	45	36
+assets/ok/template_value_keyed_def.mojo	elaborated	34	742	16	18	199	224	126	32	34
+assets/ok/template_value_keyed_lane_def.mojo	elaborated	11	150	3	6	24	48	19	3	6
+assets/ok/template_value_keyed_struct.mojo	elaborated	17	204	8	12	48	78	29	10	16
+assets/ok/template_value_shaped_construction.mojo	elaborated	13	175	3	8	46	76	21	8	8
+assets/ok/template_value_shaped_operations.mojo	elaborated	13	206	3	8	50	107	21	5	8
+assets/ok/template_view_over_loan_carrying_argument.mojo	elaborated	44	621	21	38	250	475	102	48	88
+assets/ok/template_where_instances.mojo	elaborated	9	101	2	4	3	4	17	4	4
+assets/ok/temporary_argument_field_deinit.mojo	elaborated	42	902	14	14	164	162	140	30	30
+assets/ok/temporary_receiver_deinit.mojo	elaborated	47	808	17	20	174	182	139	33	36
+assets/ok/temporary_receiver_view.mojo	elaborated	103	2962	31	42	386	550	593	69	92
+assets/ok/ternary.mojo	elaborated	6	117	0	0	0	0	20	0	0
+assets/ok/thin_nested_def_reads_value_parameter.mojo	elaborated	23	187	11	15	63	76	35	13	19
+assets/ok/trait_bound_argument_drop_order.mojo	elaborated	19	193	5	5	52	52	27	5	5
+assets/ok/trait_bound_comparison_drop_order.mojo	elaborated	45	899	16	20	200	271	153	32	36
+assets/ok/trait_default_calls_later_function.mojo	elaborated	38	770	15	15	183	181	136	31	31
+assets/ok/trait_default_comptime_if.mojo	elaborated	53	861	21	31	203	236	151	43	47
+assets/ok/trait_default_method.mojo	elaborated	7	97	1	1	2	2	15	1	1
+assets/ok/trait_default_overloads.mojo	elaborated	16	146	3	5	8	15	24	3	5
+assets/ok/trait_default_parameter_defaults.mojo	elaborated	72	962	36	51	303	368	179	60	82
+assets/ok/trait_default_refinement.mojo	elaborated	20	169	5	8	15	25	28	5	8
+assets/ok/trait_default_wrapper_conventions.mojo	elaborated	117	2162	50	88	817	1379	326	116	205
+assets/ok/trait_inheritance.mojo	elaborated	8	99	1	1	4	4	16	1	1
+assets/ok/trait_method_binder_spelling.mojo	elaborated	19	333	11	11	170	138	27	17	11
+assets/ok/trait_requirement_constant_default.mojo	elaborated	48	867	15	16	195	224	146	31	32
+assets/ok/trait_requirement_default_from_caller_parameter.mojo	elaborated	13	150	4	7	59	42	21	4	7
+assets/ok/trait_requirement_parameter_default.mojo	elaborated	21	238	7	14	68	120	29	7	14
+assets/ok/trait_requirement_variadic_collector.mojo	elaborated	52	926	25	30	258	349	150	53	52
+assets/ok/trait_value_member_through_type_param.mojo	elaborated	9	104	4	4	12	10	17	4	4
+assets/ok/trait_witness_renames_parameter.mojo	elaborated	8	110	1	1	3	3	16	1	1
+assets/ok/traits.mojo	elaborated	8	96	1	1	2	2	16	1	1
+assets/ok/transfer_into_owned_argument.mojo	elaborated	54	776	26	26	324	324	107	59	59
+assets/ok/transfer_into_read_parameter_borrows.mojo	elaborated	40	740	14	14	164	162	132	30	30
+assets/ok/transferred_carrier_keeps_source_alive.mojo	elaborated	29	483	13	24	213	362	77	36	64
+assets/ok/transferred_view_loan_stays_shared.mojo	elaborated	36	591	17	30	241	438	90	44	76
+assets/ok/try_break_continue.mojo	elaborated	9	142	3	3	37	36	24	7	7
+assets/ok/try_in_loop_temporary_drop_order.mojo	elaborated	15	197	3	3	37	36	39	7	7
+assets/ok/try_raise_edge_drop_order.mojo	elaborated	14	165	0	0	0	0	34	0	0
+assets/ok/try_reassign_outer.mojo	elaborated	10	183	3	3	37	36	29	7	7
+assets/ok/try_region_drop_timing.mojo	elaborated	16	192	3	3	37	36	35	7	7
+assets/ok/try_region_local_drop_order.mojo	elaborated	37	808	17	17	201	198	144	37	37
+assets/ok/try_region_shadowed_binding.mojo	elaborated	40	800	14	14	164	162	140	30	30
+assets/ok/try_return.mojo	elaborated	33	691	14	14	164	162	125	30	30
+assets/ok/try_return_destroys_held_values.mojo	elaborated	10	153	0	0	0	0	26	0	0
+assets/ok/tstring_forms.mojo	elaborated	79	1219	20	58	199	563	171	42	74
+assets/ok/tstring_generic_interpolation.mojo	elaborated	43	805	21	25	205	275	135	45	41
+assets/ok/tstring_lazy.mojo	elaborated	39	757	20	21	199	221	131	42	37
+assets/ok/tstring_template_served.mojo	elaborated	94	1599	35	74	542	999	230	89	134
+assets/ok/tuple_annotated_binding.mojo	elaborated	68	1232	21	47	260	555	162	54	65
+assets/ok/tuple_array_defaultable.mojo	elaborated	59	1089	28	41	339	499	182	71	88
+assets/ok/tuple_hashable_dict_key.mojo	elaborated	181	3032	64	157	1052	2246	464	164	354
+assets/ok/tuple_nested_type_arguments.mojo	elaborated	25	435	4	20	17	144	33	7	20
+assets/ok/tuple_of_scalars_comparison.mojo	elaborated	37	731	25	32	353	553	128	91	115
+assets/ok/tuple_one_element.mojo	elaborated	58	1083	34	39	432	410	160	88	65
+assets/ok/tuple_pointer_element_write.mojo	elaborated	8	127	2	3	5	8	16	2	3
+assets/ok/tuple_reverse_concat.mojo	elaborated	87	1480	7	82	91	1086	95	19	82
+assets/ok/tuple_static_len_open_pack.mojo	elaborated	57	814	26	42	190	271	149	45	58
+assets/ok/tuple_struct_element_equality.mojo	elaborated	9	160	3	3	20	38	25	11	11
+assets/ok/tuple_template_served.mojo	elaborated	91	1592	23	71	306	847	195	67	99
+assets/ok/tuple_unpack.mojo	elaborated	6	51	3	4	16	27	6	6	4
+assets/ok/tuple_unpack_call.mojo	elaborated	37	735	17	18	180	189	129	36	34
+assets/ok/tuple_unpack_place_copies.mojo	elaborated	57	1189	25	37	336	426	173	59	71
+assets/ok/type_names_applied_elements.mojo	elaborated	66	1206	28	37	289	390	199	56	62
+assets/ok/type_param_copy_construction.mojo	elaborated	46	766	20	26	179	184	138	38	42
+assets/ok/type_predicate_comptime_if.mojo	elaborated	34	692	15	16	168	166	126	33	32
+assets/ok/type_receiver_instance_call.mojo	elaborated	60	1092	27	40	360	504	186	65	90
+assets/ok/typelist_comptime_vocabulary.mojo	elaborated	5	101	0	0	0	0	13	0	0
+assets/ok/typelist_reverse_concat.mojo	elaborated	5	93	0	0	0	0	13	0	0
+assets/ok/typelist_where_clauses.mojo	elaborated	8	102	0	0	0	0	16	0	0
+assets/ok/uint_and_scalar_value_parameters.mojo	elaborated	11	105	3	6	4	4	19	3	6
+assets/ok/unsafe_pointer.mojo	elaborated	7	149	2	2	17	17	18	5	5
+assets/ok/unspelled_loan_carrying_type_argument.mojo	elaborated	28	450	19	21	244	259	66	46	51
+assets/ok/untracked_pointer_ref_params.mojo	elaborated	9	134	2	2	17	17	20	5	5
+assets/ok/user_iterator.mojo	elaborated	7	134	0	0	0	0	22	0	0
+assets/ok/value_argument_from_caller_parameter.mojo	elaborated	23	161	9	18	50	52	31	9	18
+assets/ok/value_pack_aggregate_served.mojo	elaborated	10	123	4	5	17	28	18	7	5
+assets/ok/value_pack_bracket_spread.mojo	elaborated	39	332	27	33	228	233	63	46	49
+assets/ok/value_pack_comptime_for_served.mojo	elaborated	8	115	2	3	12	24	16	9	3
+assets/ok/value_pack_parameter_list_members.mojo	elaborated	32	400	24	27	278	301	56	43	43
+assets/ok/value_pack_parameter_list_writable.mojo	elaborated	113	1874	29	89	368	1255	298	56	186
+assets/ok/value_pack_runtime_read.mojo	elaborated	127	1463	42	120	648	1339	253	105	238
+assets/ok/value_pack_template_served.mojo	elaborated	106	1286	28	88	274	740	230	47	136
+assets/ok/value_pack_typed_by_type_param.mojo	elaborated	64	562	26	59	229	454	104	45	91
+assets/ok/value_param_typed_by_type_param.mojo	elaborated	57	782	23	36	174	185	149	39	52
+assets/ok/value_parameter_field_read.mojo	elaborated	40	815	16	16	225	223	138	32	32
+assets/ok/value_parameter_inferred_from_argument_type.mojo	elaborated	57	833	24	39	219	236	149	40	55
+assets/ok/value_parameter_materialized_per_use.mojo	elaborated	36	728	16	17	206	204	128	32	33
+assets/ok/value_parameter_method_aggregate.mojo	elaborated	42	786	20	23	249	252	134	39	39
+assets/ok/value_parameter_string_aggregate.mojo	elaborated	49	1056	23	29	407	474	147	49	45
+assets/ok/value_params.mojo	elaborated	8	111	2	3	5	6	16	2	3
+assets/ok/variable_scoping.mojo	elaborated	5	112	0	0	0	0	13	0	0
+assets/ok/variadic_args.mojo	elaborated	8	220	1	3	40	120	25	4	12
+assets/ok/variadic_collector_forwarded_and_borrowed.mojo	elaborated	58	1218	25	35	483	626	191	73	92
+assets/ok/variadic_collector_len.mojo	elaborated	14	153	6	6	16	16	22	6	6
+assets/ok/variadic_element_value_read.mojo	elaborated	44	812	21	21	253	250	143	44	44
+assets/ok/variadic_method_type_params.mojo	elaborated	43	745	21	26	191	208	135	48	42
+assets/ok/variadic_overload_collector_position.mojo	elaborated	7	97	2	2	2	2	15	2	2
+assets/ok/variadic_pack_forwarding_generic_def.mojo	elaborated	47	750	20	32	180	205	139	36	48
+assets/ok/variadic_pack_upstream_spellings.mojo	elaborated	48	946	21	28	254	356	153	53	50
+assets/ok/variadic_struct_over_variant_method.mojo	elaborated	35	683	18	20	174	176	127	34	36
+assets/ok/variadic_var_collector_transfer.mojo	elaborated	52	975	22	33	252	387	163	45	68
+assets/ok/variant_deinit_with_linear_payload.mojo	elaborated	10	116	2	2	8	8	18	2	2
+assets/ok/variant_duplicate_alternatives.mojo	elaborated	8	106	3	3	6	6	16	3	3
+assets/ok/variant_generic_def_operations.mojo	elaborated	42	781	20	23	187	203	149	42	47
+assets/ok/variant_hash_dict_key.mojo	elaborated	131	2472	55	110	1010	1740	375	147	268
+assets/ok/variant_init_with_constructor.mojo	elaborated	38	722	17	21	171	177	130	33	37
+assets/ok/variant_nominal_string_payload.mojo	elaborated	35	702	17	17	171	169	127	33	33
+assets/ok/variant_owning_api.mojo	elaborated	44	767	20	23	185	194	136	36	39
+assets/ok/variant_string_literal_payload.mojo	elaborated	35	698	17	17	170	168	127	33	33
+assets/ok/variant_unsafe_get_static_supported.mojo	elaborated	37	708	17	21	169	173	129	33	37
+assets/ok/view_copy_at_last_use.mojo	elaborated	66	1406	24	26	255	284	227	49	51
+assets/ok/view_temporaries.mojo	elaborated	69	1377	29	33	351	435	202	64	58
+assets/ok/view_temporary_origins.mojo	elaborated	86	2410	24	37	242	350	509	46	71
+assets/ok/vm_backed_ctfe_recursive_call.mojo	elaborated	7	108	0	0	0	0	20	0	0
+assets/ok/vm_backed_ctfe_ternary.mojo	elaborated	6	98	0	0	0	0	17	0	0
+assets/ok/waypoints.mojo	elaborated	18	299	13	13	199	197	45	32	32
+assets/ok/where_message_satisfied.mojo	elaborated	6	91	1	1	1	1	14	1	1
+assets/ok/where_repeated_clauses.mojo	elaborated	6	100	1	1	4	4	14	1	1
+assets/ok/while.mojo	elaborated	5	111	0	0	0	0	16	0	0
+assets/ok/with_enter_only.mojo	elaborated	41	879	17	17	201	198	146	37	37
+assets/ok/with_exit_error_swallow.mojo	elaborated	41	732	14	14	164	162	133	30	30
+assets/ok/with_multiple.mojo	elaborated	179	3654	63	85	978	1254	582	157	195
+assets/ok/with_multiple_dependent.mojo	elaborated	40	786	17	17	201	198	139	37	37
+assets/ok/with_statement.mojo	elaborated	177	3608	62	84	969	1250	580	156	194
+assets/ok/witness_default_differs_from_requirement.mojo	elaborated	21	237	6	10	35	62	29	6	10
+assets/ok/writable_extra_write_to_overload.mojo	elaborated	33	706	14	14	164	162	125	30	30
+assets/ok/writer_write_override.mojo	elaborated	47	950	19	25	223	332	145	41	41
+benchmarks/compile/add.mojo	elaborated	6	94	0	0	0	0	14	0	0
+benchmarks/compile/collections_many.mojo	elaborated	834	15840	111	803	1944	14573	2228	276	2080
+benchmarks/compile/empty.mojo	elaborated	2	0	0	0	0	0	2	0	0
+benchmarks/compile/generic.mojo	elaborated	25	354	15	17	207	213	52	34	36
+benchmarks/compile/hello.mojo	elaborated	5	89	0	0	0	0	13	0	0
+benchmarks/compile/keyed.mojo	elaborated	58	1141	22	39	267	453	156	56	55
+benchmarks/compile/nested_generics.mojo	elaborated	217	3665	59	194	1011	2782	566	141	457
+benchmarks/compile/stdlib_heavy.mojo	elaborated	174	3242	57	151	1025	2471	475	145	366
+benchmarks/compile/trait_defaults.mojo	elaborated	185	1880	29	130	294	1090	302	52	165
+benchmarks/compile/tstring.mojo	elaborated	43	805	21	25	205	275	135	45	41
+benchmarks/compile/tuple.mojo	elaborated	50	840	21	31	196	277	142	40	47
+total	1021	42518	787273	16594	26922	216720	349092	124655	37321	56712

@@ -7,7 +7,9 @@ Usage: scripts/instantiation-report [--bin PATH] [--jobs N] [--out PATH]
 Runs `BIN run --timings FILE` on every `assets/ok/*.mojo` and
 `benchmarks/compile/*.mojo` fixture (only commands that elaborate report the
 counters, so each fixture is executed, with stdin from /dev/null) and writes
-one TSV row per fixture with the six `elaborate.*` size counters, then a
+one TSV row per fixture with the nine `elaborate.*` size counters (the
+concrete program's, and the reached generators' templates' and instances',
+in instructions and in blocks), then a
 `total` row summing the elaborated fixtures. The committed baseline is
 `benchmarks/instantiation.tsv`: a pass's effect on expansion is that file's
 diff after a rerun. The file holds no date, hash, or binary path, so a rerun
@@ -53,6 +55,9 @@ COUNTERS = (
     "generator_instances",
     "generator_instructions",
     "generator_instance_instructions",
+    "concrete_blocks",
+    "generator_blocks",
+    "generator_instance_blocks",
 )
 COUNTER_PATH = re.compile(r"(?:^|\.)elaborate\.(" + "|".join(COUNTERS) + r")$")
 INPUTS = ("assets/ok/*.mojo", "benchmarks/compile/*.mojo")
@@ -128,20 +133,25 @@ def parse_args():
 
 
 def read_baseline(path):
+    """The baseline's rows, keyed by fixture; columns are read by header
+    name, so a baseline recorded before a counter was added still loads and
+    compares on the counters it has."""
     with open(path, encoding="utf-8") as handle:
         lines = handle.read().splitlines()
-    if not lines or tuple(lines[0].split("\t")) != HEADER:
-        raise ValueError(f"{path}: header is not {' '.join(HEADER)!r}")
+    header = tuple(lines[0].split("\t")) if lines else ()
+    if header[:2] != HEADER[:2] or "concrete_instructions" not in header:
+        raise ValueError(f"{path}: header does not start {' '.join(HEADER[:2])!r}")
+    columns = [(at, name) for at, name in enumerate(header) if name in COUNTERS]
     baseline = {}
     for number, line in enumerate(lines[1:], start=2):
         fields = line.split("\t")
-        if len(fields) != len(HEADER):
-            raise ValueError(f"{path}:{number}: expected {len(HEADER)} columns")
+        if len(fields) != len(header):
+            raise ValueError(f"{path}:{number}: expected {len(header)} columns")
         if fields[0] == "total":
             continue
         counts = None
         if fields[1] == "elaborated":
-            counts = {c: int(v) for c, v in zip(COUNTERS, fields[2:])}
+            counts = {name: int(fields[at]) for at, name in columns}
         baseline[fields[0]] = (fields[1], counts)
     return baseline
 
@@ -171,6 +181,8 @@ def compare(baseline, rows, baseline_path, out_path):
     print(f"shared elaborated fixtures: {len(shared)}")
     totals = {}
     for counter in COUNTERS:
+        if shared and counter not in baseline[shared[0]][1]:
+            continue
         before = sum(baseline[f][1][counter] for f in shared)
         after = sum(fresh[f][1][counter] for f in shared)
         totals[counter] = (before, after)

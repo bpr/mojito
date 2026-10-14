@@ -4838,9 +4838,30 @@ second runs `SCCP` and a `Canonicalizer` again, so `PIPELINE` is
   `analysis/canonicalize.rs`, R779), upstream's `Canonicalizer` (MLIR's
   `canonicalize`), which upstream runs after `EliminateDeadSymbols`, `SROA`,
   and `Mem2Reg`. It first rewrites a `branch` whose condition has one
-  definition, a `const bool`, to a `jump` to the arm it takes (R781, the
-  `cf` dialect's `SimplifyConstCondBranchPred`); the untaken arm keeps its
-  own drops at its entry, so removing it ends nothing twice. It then erases
+  definition, a `const bool`, to a `jump` to the arm it takes (R781, as
+  `hlcf.if`'s `RemoveStaticCondition` keeps the arm a static condition
+  takes); the untaken arm keeps its own drops at its entry, so removing it
+  ends nothing twice. It then simplifies the control flow (R836), at the
+  function level and in each `try` region, until nothing applies: an edge
+  of a `jump`, `branch`, or `comptime if` into an empty block that only
+  jumps on is threaded to the first block past the chain that is not one
+  (MLIR's `SimplifyPassThroughBr`), a `branch` or `comptime if` whose arms
+  name one block becomes a `jump` (`SimplifyCondBranchIdenticalSuccessors`,
+  as `hlcf.if`'s `HoistYieldResults` and `comptime.if`'s
+  `checkTrivialBlocks` erase an `if` whose arms are bare yields), and a
+  block a reachable block's `jump` alone reaches is appended to it
+  (`SimplifyBrToBlockWithSinglePred`). Upstream needs none of these: its
+  generators keep run-time control flow as structured `hlcf` region ops
+  until `LowerControlFlow`, after elaboration, so a join or a loop latch is
+  no block there; MIR is a CFG before elaboration, and the rewrites remove
+  the blocks that structure would not have. A `comptime for` header's
+  targets are never rewritten, since the elaborator finds a loop's body as
+  the blocks its `body` target dominates; an escape counts as a
+  predecessor and is never rewritten; an edge that would close a cycle of
+  empty blocks stays; and a list's entry block is never merged away. Only
+  empty blocks are threaded past and only an unconditional jump's target is
+  merged, so a drop that drop elaboration put on an edge, and an escape's or a
+  return's cleanup, stays on its path. It then erases
   the blocks the entry does not reach, at the
   function level and in each `try` region from its own entry
   (`mir::prune_unreachable_blocks`, MLIR's `eraseUnreachableBlocks`). It
@@ -4867,7 +4888,11 @@ second runs `SCCP` and a `Canonicalizer` again, so `PIPELINE` is
   A register's read count is every register its instruction names but its
   own results, so an operand no enumeration classifies keeps its definition.
   An erased result loses its type and span; registers are not renumbered.
-  Its `--timings` counters are `folded_branches`, `erased_blocks`,
+  Erasure can empty a block and a folded branch leaves its condition
+  unread, so the control-flow simplification and erasure repeat until
+  neither changes anything.
+  Its `--timings` counters are `folded_branches`, `threaded_branches`,
+  `folded_successors`, `merged_blocks`, `erased_blocks`,
   `forwarded_copies`, and `erased_instructions`.
 - **`sccp` runs between the two `canonicalize` runs** (`analysis::SCCP`,
   `analysis/sccp.rs`, R781), upstream's `SCCP` (MLIR's sparse conditional

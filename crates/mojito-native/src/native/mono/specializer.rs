@@ -3360,21 +3360,22 @@ fn elaboration_counts(
         if *name == key.template || !output.contains(name.as_str()) {
             continue;
         }
-        let row = generators
-            .entry(key.template.as_str())
-            .or_insert_with(|| GeneratorCount {
+        let row = generators.entry(key.template.as_str()).or_insert_with(|| {
+            let template = templates.get(&key.template);
+            GeneratorCount {
                 template: key.template.clone(),
-                template_instructions: templates
-                    .get(&key.template)
-                    .map_or(0, MirFunction::instruction_count),
+                template_instructions: template.map_or(0, MirFunction::instruction_count),
+                template_blocks: template.map_or(0, MirFunction::block_count),
                 ..GeneratorCount::default()
-            });
+            }
+        });
         row.instances += 1;
         row.instance_names.push(name.clone());
     }
     let mut counts = ElaborationCounts {
         generators: generators.into_values().collect(),
         concrete_instructions: 0,
+        concrete_blocks: 0,
     };
     counts.recount(program);
     counts
