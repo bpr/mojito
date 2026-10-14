@@ -301,6 +301,74 @@ fn a_returning_arm_does_not_yield() {
 }
 
 #[test]
+fn a_comptime_if_is_one_comptime_if_op() {
+    let c = checked_function_cfg(
+        "def f[n: Int]() -> Int:\n    var r = 0\n    comptime if n > 0:\n        r = 1\n    elif n < 0:\n        r = 2\n    else:\n        r = 3\n    return r\n",
+        "f",
+    );
+    assert_eq!(c.root.blocks.len(), 1);
+    let ops: Vec<_> = entry_instrs(&c, &c.root)
+        .iter()
+        .filter_map(|instruction| match instruction {
+            HirInstr::ComptimeIf {
+                conds,
+                arms,
+                orelse,
+            } => Some((conds, arms, orelse)),
+            _ => None,
+        })
+        .collect();
+    let [(conds, arms, orelse)] = ops.as_slice() else {
+        panic!("expected one `comptime if` op");
+    };
+    assert_eq!(conds.len(), 2);
+    assert_eq!(arms.len(), 2);
+    for region in arms.iter().chain([*orelse]) {
+        assert_eq!(region.blocks.len(), 1);
+        assert!(matches!(last_term(&c, region), Terminator::ComptimeYield));
+    }
+    assert_eq!(c.edge_count(), 0);
+    assert_all_sealed(&c);
+}
+
+#[test]
+fn a_returning_comptime_arm_does_not_yield() {
+    let c = checked_function_cfg(
+        "def f[n: Int]() -> Int:\n    comptime if n > 0:\n        return 1\n    return 2\n",
+        "f",
+    );
+    let [HirInstr::ComptimeIf { arms, orelse, .. }] = entry_instrs(&c, &c.root) else {
+        panic!("expected one `comptime if` op");
+    };
+    assert!(matches!(
+        last_term(&c, &arms[0]),
+        Terminator::Return(Some(_))
+    ));
+    assert!(matches!(last_term(&c, orelse), Terminator::ComptimeYield));
+    assert_all_sealed(&c);
+}
+
+#[test]
+fn a_comptime_if_arm_break_is_a_comptime_break() {
+    let c = checked_function_cfg(
+        "def main():\n    comptime for i in range(3):\n        comptime if i == 1:\n            break\n",
+        "main",
+    );
+    let body = entry_instrs(&c, &c.root)
+        .iter()
+        .find_map(|instruction| match instruction {
+            HirInstr::ComptimeFor { body, .. } => Some(body),
+            _ => None,
+        })
+        .expect("a comptime for op");
+    let [HirInstr::ComptimeIf { arms, .. }] = entry_instrs(&c, body) else {
+        panic!("expected the body's `comptime if`");
+    };
+    assert!(matches!(last_term(&c, &arms[0]), Terminator::ComptimeBreak));
+    assert_all_sealed(&c);
+}
+
+#[test]
 fn for_loop_tests_its_has_next_slot_before_binding() {
     let c = checked_cfg("for i in range(3):\n    pass\n");
     let (label, body) = the_loop(&c, &c.root);

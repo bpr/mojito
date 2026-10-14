@@ -122,6 +122,21 @@ impl<'a> Flatten<'a> {
                     orelse,
                 });
             }
+            HirInstr::ComptimeIf {
+                conds,
+                arms,
+                orelse,
+            } => {
+                let conds = conds.iter().map(|c| self.comptime_condition(c)).collect();
+                let arms = arms.iter().map(|arm| self.hir_region(arm)).collect();
+                let orelse = self.hir_region(orelse);
+                self.emit(MirInstr::ComptimeIf {
+                    results: Vec::new(),
+                    conds,
+                    arms,
+                    orelse,
+                });
+            }
             HirInstr::Loop { label, body } => {
                 let body = self.hir_region(body);
                 self.emit(MirInstr::Loop {
@@ -3356,12 +3371,6 @@ impl<'a> Flatten<'a> {
         let outer = std::mem::replace(&mut self.f.blocks, placeholders);
         let cur = self.cur;
         let reference = self.setup_reference.take();
-        let map: HashMap<hir::BlockId, MirBlockId> = region
-            .blocks
-            .iter()
-            .enumerate()
-            .map(|(index, block)| (*block, index))
-            .collect();
         for (index, block) in region.blocks.iter().enumerate() {
             self.cur = index;
             let block = &graph[*block];
@@ -3371,7 +3380,7 @@ impl<'a> Flatten<'a> {
             let term = block
                 .term
                 .as_ref()
-                .map_or(MirTerm::FallOff, |term| self.lower_term(term, &map));
+                .map_or(MirTerm::FallOff, |term| self.lower_term(term));
             self.f.blocks[self.cur].term = term;
         }
         self.setup_reference = reference;
@@ -3381,22 +3390,8 @@ impl<'a> Flatten<'a> {
 
     /// Lower a HIR block terminator; the branch/return operands are flattened into
     /// `self.cur` first, then the `MirTerm` references their result registers.
-    pub(super) fn lower_term(
-        &mut self,
-        t: &'a Terminator,
-        map: &HashMap<hir::BlockId, MirBlockId>,
-    ) -> MirTerm {
+    pub(super) fn lower_term(&mut self, t: &'a Terminator) -> MirTerm {
         match t {
-            Terminator::Jump(b) => MirTerm::Jump(map[b]),
-            Terminator::ComptimeBranch {
-                cond,
-                then_b,
-                else_b,
-            } => MirTerm::ComptimeBranch {
-                cond: Box::new(self.comptime_condition(cond)),
-                then_b: map[then_b],
-                else_b: map[else_b],
-            },
             Terminator::Return(expression) => {
                 let value = expression.as_ref().map(|e| self.lower_return_value(e));
                 self.flush_argument_anchors();
@@ -3422,6 +3417,7 @@ impl<'a> Flatten<'a> {
             }
             Terminator::FallOff => MirTerm::FallOff,
             Terminator::Yield => MirTerm::Yield(Vec::new()),
+            Terminator::ComptimeYield => MirTerm::ComptimeYield(Vec::new()),
             Terminator::ElifCond(cond) => {
                 let cond = self.condition_hir(cond);
                 self.flush_argument_anchors();

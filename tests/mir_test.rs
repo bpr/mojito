@@ -592,7 +592,36 @@ def main():
     assert!(!has_structured_control_flow(&lowered));
 }
 
-/// Push a description of each `if` (its result count) and `loop` region op
+#[test]
+fn structured_comptime_if_builds_a_region_op() {
+    let source = r#"
+comptime N = 3
+
+def main():
+    comptime if N > 2:
+        print("big")
+    elif N > 1:
+        print("mid")
+    else:
+        print("small")
+"#;
+    let (_, mir) = checked_main_with(source, lower_cfg_structured);
+    assert_eq!(mir.blocks.len(), 1, "a comptime if adds no block");
+    let mut ops = Vec::new();
+    region_ops(&mir.blocks, &mut ops);
+    assert_eq!(ops, ["comptime.if 2"]);
+    let (_, lowered) = checked_main(source);
+    assert!(!has_structured_control_flow(&lowered));
+    assert!(
+        lowered
+            .blocks
+            .iter()
+            .any(|block| matches!(block.term, MirTerm::ComptimeBranch { .. }))
+    );
+}
+
+/// Push a description of each `if` (its result count), `comptime.if` (its
+/// condition count), and `loop` region op
 /// in `blocks`, outermost first, asserting each region is one block.
 fn region_ops(blocks: &[MirBlock], ops: &mut Vec<String>) {
     for instruction in blocks.iter().flat_map(|block| &block.instrs) {
@@ -612,10 +641,19 @@ fn region_ops(blocks: &[MirBlock], ops: &mut Vec<String>) {
                 ops.push("loop".to_string());
                 vec![body]
             }
+            MirInstr::ComptimeIf {
+                conds,
+                arms,
+                orelse,
+                ..
+            } => {
+                ops.push(format!("comptime.if {}", conds.len()));
+                arms.iter().chain([orelse]).collect()
+            }
             _ => continue,
         };
         for region in regions {
-            assert_eq!(region.len(), 1, "an expression region is one block");
+            assert_eq!(region.len(), 1, "a region op's region is one block");
             region_ops(region, ops);
         }
     }

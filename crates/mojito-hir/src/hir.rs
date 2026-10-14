@@ -10,11 +10,11 @@
 //! [`Cfg::build_checked_fn`]. Its [`Cfg::root`] region holds the body's
 //! blocks, entry first; every block ends in exactly one [`Terminator`]. A
 //! run-time `if` is an [`HirInstr::If`] (`hlcf.if`), a `while`/`for` a
-//! labelled [`HirInstr::Loop`] (`hlcf.loop`), and a `comptime for` an
+//! labelled [`HirInstr::Loop`] (`hlcf.loop`), a `comptime if` an
+//! [`HirInstr::ComptimeIf`] (`hlcf.comptime.if`), and a `comptime for` an
 //! [`HirInstr::ComptimeFor`] (`hlcf.comptime.for`), each holding its own
-//! regions; `break`/`continue` are region terminators naming their loop. A
-//! `comptime if` is still a diamond of blocks inside its region. A local
-//! name resolves to its slot once, here, recorded per node in
+//! regions; `break`/`continue` are region terminators naming their loop, and
+//! no terminator jumps between blocks. A local name resolves to its slot once, here, recorded per node in
 //! [`Cfg::slots`].
 
 use mojito_checked::checked::{
@@ -193,6 +193,16 @@ pub enum HirInstr {
         elifs: Vec<HirElif>,
         orelse: HirRegion,
     },
+    /// `hlcf.comptime.if`: one arm per condition in `conds`, then `orelse`.
+    /// Conditions are compile-time expressions MIR lowers as parameter
+    /// expressions, not values; every arm that completes ends in
+    /// [`Terminator::ComptimeYield`]. The elaborator keeps one arm, after
+    /// ownership has decided all of them.
+    ComptimeIf {
+        conds: Vec<HirExpr>,
+        arms: Vec<HirRegion>,
+        orelse: HirRegion,
+    },
     /// `hlcf.loop`, labelled `label` (unique in its function, as
     /// `LowerSemanticCF` numbers loops): `body` runs until a
     /// [`Terminator::Break`] names it, and [`Terminator::Continue`] starts
@@ -216,7 +226,8 @@ pub enum HirInstr {
 }
 
 /// A region of a region op: its blocks, entry first. Every block is a node
-/// of its [`Cfg::g`], and no edge leaves the region.
+/// of its [`Cfg::g`]; a region's blocks after its entry are dead code that
+/// follows a terminator.
 #[derive(Debug, Clone, Default)]
 pub struct HirRegion {
     pub blocks: Vec<BlockId>,
@@ -259,14 +270,6 @@ pub struct EnclosingLoop {
 /// How a block hands control to its successor(s). Exactly one per block.
 #[derive(Debug, Clone)]
 pub enum Terminator {
-    Jump(BlockId),
-    /// A `comptime if` arm boundary: the condition is a compile-time
-    /// expression MIR lowers as a parameter expression, not a value.
-    ComptimeBranch {
-        cond: HirExpr,
-        then_b: BlockId,
-        else_b: BlockId,
-    },
     Return(Option<HirExpr>),
     /// A return nested in one or more iterator-driven loops. The value is
     /// evaluated before `cleanup` is destroyed (innermost iterator first), so
@@ -284,6 +287,8 @@ pub enum Terminator {
     FallOff,
     /// `hlcf.yield`: an [`HirInstr::If`] arm completed.
     Yield,
+    /// `hlcf.comptime.yield`: an [`HirInstr::ComptimeIf`] arm completed.
+    ComptimeYield,
     /// `hlcf.if.elifcond.yield`: an elif condition region's `Bool`.
     ElifCond(HirExpr),
     /// `hlcf.break`: leave the [`HirInstr::Loop`] labelled so.
@@ -304,7 +309,8 @@ pub struct BasicBlock {
     pub term: Option<Terminator>,
 }
 
-/// A control-flow graph for one function body / statement list.
+/// The region tree for one function body / statement list: [`Cfg::g`] is the
+/// block arena, and holds no edges.
 #[derive(Debug)]
 pub struct Cfg {
     pub g: StableGraph<BasicBlock, ()>,
@@ -449,14 +455,6 @@ impl Cfg {
     pub fn term(&self, b: BlockId) -> Option<&Terminator> {
         self.g[b].term.as_ref()
     }
-    /// The successor blocks of `b`, by graph edge (order unspecified).
-    pub fn successors(&self, b: BlockId) -> Vec<BlockId> {
-        self.g.neighbors(b).collect()
-    }
-    /// Whether an edge `from → to` exists.
-    pub fn has_edge(&self, from: BlockId, to: BlockId) -> bool {
-        self.g.neighbors(from).any(|n| n == to)
-    }
 
     fn build_fn_with_context(
         params: &[String],
@@ -570,7 +568,7 @@ fn collect_function_implicit_names(
 
 /// Lowering cursor: appends to the "current" block of the region being
 /// built. Invariant: `cur` is the current insertion point; a block gets its
-/// terminator (and out-edges) exactly once, via [`Lower::seal`].
+/// terminator exactly once, via [`Lower::seal`].
 struct Lower {
     g: StableGraph<BasicBlock, ()>,
     cur: BlockId,
@@ -712,33 +710,13 @@ impl Lower {
         }
     }
 
-    /// Give `cur` its terminator and wire the implied out-edges — but only if it
-    /// isn't already sealed (a `break`/`continue`/`return` inside a body may have
-    /// sealed it first, in which case this is a no-op).
+    /// Give `cur` its terminator — but only if it isn't already sealed (a
+    /// `break`/`continue`/`return` inside a body may have sealed it first, in
+    /// which case this is a no-op).
     fn seal(&mut self, t: Terminator) {
-        if self.g[self.cur].term.is_some() {
-            return;
+        if self.g[self.cur].term.is_none() {
+            self.g[self.cur].term = Some(t);
         }
-        match &t {
-            Terminator::Jump(to) => {
-                self.g.add_edge(self.cur, *to, ());
-            }
-            Terminator::ComptimeBranch { then_b, else_b, .. } => {
-                self.g.add_edge(self.cur, *then_b, ());
-                self.g.add_edge(self.cur, *else_b, ());
-            }
-            // No in-graph edge: every other terminator leaves its region.
-            Terminator::Return(_)
-            | Terminator::ReturnWithCleanup { .. }
-            | Terminator::FallOff
-            | Terminator::Yield
-            | Terminator::ElifCond(_)
-            | Terminator::Break(_)
-            | Terminator::Continue(_)
-            | Terminator::ComptimeBreak
-            | Terminator::ComptimeContinue => {}
-        }
-        self.g[self.cur].term = Some(t);
     }
 
     /// Intern a variable name to a stable `VarId`.
@@ -1107,33 +1085,34 @@ impl Lower {
         })
     }
 
-    /// A `comptime if` is a diamond with a compile-time condition: the
-    /// elaborator keeps one arm, after ownership has decided both.
+    /// `comptime if`/`elif`/`else` as `hlcf.comptime.if`: every condition
+    /// first, as the op's attributes, then one region per arm.
     fn comptime_if(
         &mut self,
         branches: &[(CheckedNodeId, Vec<CheckedStmtId>)],
         orelse: Option<&[CheckedStmtId]>,
     ) {
-        let join = self.new_block();
-        for (cond, body) in branches {
-            let then_b = self.new_block();
-            let else_b = self.new_block();
-            let cond = self.expr(*cond);
-            self.seal(Terminator::ComptimeBranch {
-                cond,
-                then_b,
-                else_b,
-            });
-            self.cur = then_b;
-            self.scoped_block(body);
-            self.seal(Terminator::Jump(join));
-            self.cur = else_b; // the next elif/else lowers into this block
-        }
-        if let Some(body) = orelse {
-            self.scoped_block(body);
-        }
-        self.seal(Terminator::Jump(join));
-        self.cur = join;
+        let conds = branches.iter().map(|(cond, _)| self.expr(*cond)).collect();
+        let arms = branches
+            .iter()
+            .map(|(_, body)| self.comptime_arm(Some(body)))
+            .collect();
+        let orelse = self.comptime_arm(orelse);
+        self.push_region_op(HirInstr::ComptimeIf {
+            conds,
+            arms,
+            orelse,
+        });
+    }
+
+    /// A `comptime if` arm: `body` in its own scope, then `comptime.yield`.
+    fn comptime_arm(&mut self, body: Option<&[CheckedStmtId]>) -> HirRegion {
+        self.region(|this| {
+            if let Some(body) = body {
+                this.scoped_block(body);
+            }
+            Terminator::ComptimeYield
+        })
     }
 
     /// A `comptime for` as `hlcf.comptime.for`: the body is analysed once

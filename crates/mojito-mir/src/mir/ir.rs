@@ -2233,8 +2233,9 @@ pub enum MirTerm {
         then_b: MirBlockId,
         else_b: MirBlockId,
     },
-    /// A `comptime if`: a branch whose condition is a parameter expression
-    /// over the function's binders, decided by the elaborator, which keeps
+    /// A `comptime if` arm test, as `lower-control-flow` lowers a
+    /// [`MirInstr::ComptimeIf`]: a branch whose condition is a parameter
+    /// expression over the function's binders, decided by the elaborator, which keeps
     /// the taken arm. Ownership and drops treat it as `Branch` with the
     /// condition opaque; concrete MIR carries none.
     ComptimeBranch {

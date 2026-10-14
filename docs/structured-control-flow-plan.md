@@ -1,7 +1,7 @@
 # Structured Control Flow Above the Waist: Staged Plan
 
-**Status:** plan recorded 2026-10-14 (R859); stages 1 (R870) and 2
-(R871) landed 2026-10-14. The scheduled tasks are on
+**Status:** plan recorded 2026-10-14 (R859); stages 1 (R870), 2 (R871),
+3 (R872), and 4 (R873) landed 2026-10-14. The scheduled tasks are on
 [`docs/roadmap.md`](roadmap.md) track `pmir`, one entry per stage below.
 This document is their design record and is updated as stages land. It is
 the structured-control part of
@@ -75,11 +75,12 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
 
 - **HIR** (`crates/mojito-hir/src/hir.rs`) reads structured checked
   statements (`CheckedStmtOp`) and, since stage 3, lowers them into a
-  region tree: `if`/`while`/`for`/`comptime for` are `HirInstr::If`/
-  `Loop`/`ComptimeFor` region ops and `break`/`continue` labelled region
-  terminators. A `comptime if` is still a diamond of blocks and jumps
-  inside its region, the only multi-block shape left beside a `try` part,
-  which is its own region CFG (`build_seeded_checked_region`).
+  region tree: `if`/`while`/`for`/`comptime if`/`comptime for` are
+  `HirInstr::If`/`Loop`/`ComptimeIf`/`ComptimeFor` region ops and
+  `break`/`continue` labelled region terminators. No terminator jumps
+  between blocks; the only multi-block shapes left are dead code after a
+  sealed block and a `try` part, which is its own region CFG
+  (`build_seeded_checked_region`).
 - **MIR** (`crates/mojito-mir/src/mir/ir.rs`) is a CFG: `MirTerm` is `Jump`,
   `Branch`, `ComptimeBranch`, `ComptimeFor`, `Return`, `ReturnWithCleanup`,
   `FallOff`, and `EscapeJump`.
@@ -224,8 +225,14 @@ last producer. Every stage keeps program output unchanged; the
      terminator, and MIR lowering threads no outer block map.
    - Dead code after a sealed block still lowers, into a fresh
      unreachable block, where `LowerSemanticCF` erases it.
-4. **Compile-time forms.** `comptime if` becomes `ComptimeIf`, lowered by
-   the transitional pass to today's terminators.
+4. **Compile-time forms.** *Landed (R873).* HIR builds `comptime if`/
+   `elif`/`else` as one `HirInstr::ComptimeIf`, every condition first and
+   then one arm region per condition plus the else region, each arm that
+   completes ended by `Terminator::ComptimeYield`, as `ParserStmts.cpp`
+   builds `hlcf.comptime.if`. MIR lowering builds `MirInstr::ComptimeIf`,
+   which the transitional pass lowers to today's `ComptimeBranch` chain.
+   HIR's `Jump` and `ComptimeBranch` terminators are gone, so `Cfg::g` has
+   no edge. `comptime for` landed with stage 3.
 5. **`try`.** Each part is one region; `EscapeJump`/`FallOff` become
    `Break`/`Continue`/`Yield`. The single-block rule switches on.
 6. **Move and initialization checks on regions**, as `CheckLifetimes`:

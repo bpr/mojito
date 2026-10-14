@@ -825,8 +825,10 @@ HIR, MIR, and VM do not need to carry special semantics for most of them. A
 exceptions, the constructs that cross the waist as themselves. The template
 keeps a `comptime if`, the checker types every arm with the binders symbolic
 and records each condition it compiles as a constraint
-(`SemanticAdjustment::ComptimeCondition`), HIR and MIR lower it as the `if`
-diamond with the `ComptimeBranch` terminator — a branch whose condition is a
+(`SemanticAdjustment::ComptimeCondition`), HIR and MIR lower it as the
+`ComptimeIf` region op (`hlcf.comptime.if`), every condition first, then one
+region per arm, and `lower-control-flow` lowers that to a chain of
+`ComptimeBranch` terminators — branches whose condition is a
 `GenericConstraint` over the function's binders, not a register — and
 `native::mono` decides it under the instance's bindings after drop
 elaboration (`select_comptime_branches`), keeping the taken arm and pruning
@@ -2498,9 +2500,11 @@ The `else` body lowers outside its loop's frame, so its own
 `break`/`continue` name the enclosing loop (`lowerLITLoop`). A `comptime for`
 is an `HirInstr::ComptimeFor` (`hlcf.comptime.for`), left with
 `ComptimeBreak` and iterated with `ComptimeContinue`. A `comptime if` is
-still a diamond of blocks inside its region (`ComptimeBranch` and `Jump`,
-the only terminators with graph edges), and code after a block a `return`
-or `break` sealed still lowers, into a fresh unreachable block, where
+an `HirInstr::ComptimeIf` (`hlcf.comptime.if`): its conditions, computed
+first as upstream's parser does, then one arm region per condition and an
+else region, each arm that completes ended by `Terminator::ComptimeYield`.
+No HIR terminator jumps between blocks, so `Cfg::g` holds no edge; code
+after a block a `return` or `break` sealed still lowers, into a fresh unreachable block, where
 upstream's `LowerSemanticCF` erases it. MIR lowering builds the matching
 MIR region ops (`Flatten::hir_region`), and `lower-control-flow` lowers them
 to blocks at the end of `lower_cfg`.
@@ -2518,12 +2522,11 @@ Each block is sealed with exactly one terminator:
 
 ```rust
 pub enum Terminator {
-    Jump(BlockId),
-    ComptimeBranch { cond: HirExpr, then_b: BlockId, else_b: BlockId },
     Return(Option<HirExpr>),
     ReturnWithCleanup { value: Option<HirExpr>, cleanup: Vec<VarId> },
     FallOff,
     Yield,
+    ComptimeYield,
     ElifCond(HirExpr),
     Break(u32),
     Continue(u32),

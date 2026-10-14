@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R892**.
+Next free ID: **R893**.
 
 ## Ordered Work
 
@@ -63,22 +63,6 @@ CFG. The entries that close that gap are staged in
 producers first, then the CFG lowering point moving down one consumer at a
 time.
 
-
-- [ ] **R873 `comptime if` and `comptime for` are CFG terminators where
-  upstream holds `hlcf.comptime.if` and `hlcf.comptime.for` region ops**
-
-  MIR holds compile-time control flow as the `ComptimeBranch` and
-  `ComptimeFor` terminators, so the elaborator must rediscover a loop body
-  from the CFG.
-  - Stage 4 of `docs/structured-control-flow-plan.md`.
-  - HIR emits `ComptimeIf`/`ComptimeFor` region ops with
-    `ComptimeBreak`/`ComptimeContinue`.
-  - The transitional `lower-control-flow` lowers them to today's
-    terminators, right after MIR lowering.
-  - `comptime.for.goto.else` stays out until the checker accepts
-    `comptime for … else`.
-  - Depends on R872.
-  - Model: Opus, Planned.
 
 - [ ] **R887 A conditional expression whose condition is a parameter value
   is a run-time `if` where upstream emits `hlcf.comptime.if`**
@@ -140,6 +124,21 @@ time.
     region terminator is not one block.
   - Found while landing R872 (2026-10-14).
   - Depends on R874.
+  - Model: Opus, Not Planned.
+
+- [ ] **R892 HIR's block arena is a `petgraph` `StableGraph` that holds no
+  edge**
+
+  Since R873 no HIR terminator jumps between blocks, so `Cfg::g` is only a
+  block store, and `Cfg::node_count`/`edge_count` describe a graph nothing
+  builds.
+  - Lever: a `Vec<BasicBlock>` in `Lower` and `Cfg`, with `BlockId` an
+    index, and `mojito-hir`'s `petgraph` dependency dropped.
+  - Callers: `mir::reassigned_names` walks `cfg.g.node_indices()`;
+    `tests/hir_test.rs` and `tests/mir_test.rs` use the counts.
+  - Upstream has no HIR, so this only removes a shape upstream lacks.
+  - Found while landing R873 (2026-10-14).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R890 A `for` over a raising iterator tests a `TryNext` flag where

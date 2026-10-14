@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- HIR builds `comptime if`/`elif`/`else` as one `hlcf.comptime.if` op
+  (R873): every condition first, then one arm region per condition and an
+  else region, each ended by `comptime.yield`, and MIR lowering builds the
+  matching `ComptimeIf` op, which `lower-control-flow` lowers to today's
+  branch chain. HIR has no jump terminator left. No program's output
+  changes.
 - HIR builds run-time statement control flow as upstream's `hlcf` region
   ops (R872): `if`/`elif`/`else` is an `if` with elif condition regions,
   `while` and `for` a uniquely labelled `loop` whose body opens with an
