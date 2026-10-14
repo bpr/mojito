@@ -85,7 +85,7 @@ impl<'a> Specializer<'a> {
         self
     }
 
-    /// The declarations a parameter value's construction names.
+    /// The declarations a reflected field-name list's construction names.
     pub(super) const fn construction_decls(&self) -> ConstructionDecls<'_, 'a> {
         ConstructionDecls {
             functions: &self.declarations,
@@ -758,12 +758,10 @@ impl<'a> Specializer<'a> {
             bindings,
         )?;
         self.unroll_comptime_loops(name, &mut function, scope, bindings)?;
-        substitute_function(&mut function, bindings, scope, self.construction_decls()).map_err(
-            |mut e| {
-                e.function.get_or_insert_with(|| name.to_string());
-                e
-            },
-        )?;
+        substitute_function(&mut function, bindings, scope).map_err(|mut e| {
+            e.function.get_or_insert_with(|| name.to_string());
+            e
+        })?;
         Ok(function)
     }
 
@@ -1340,8 +1338,10 @@ impl<'a> Specializer<'a> {
     /// by demanding it. One the bindings leave open stays for
     /// the verifier's concrete mode to name; one the bindings close with no
     /// answer (a reflection query of a field the struct lacks) fails the
-    /// instantiation. A display read at an `Array` is constructed at the
-    /// read's register type instead ([`array_display_construction`]), minting
+    /// instantiation. A display constant is the frozen `Array` its lifted
+    /// application built; a reflected field-name list read at an `Array` is
+    /// constructed at the read's register type instead
+    /// ([`array_display_construction`]), minting
     /// its parts' registers in `n_regs` and `reg_types`. A failure in blocks
     /// the instance has not yet `reached` (an unrolled iteration, before
     /// its branches are decided) is held in `unreached_failures` and
@@ -1438,9 +1438,9 @@ impl<'a> Specializer<'a> {
                     constant => constant?,
                 };
                 match constant {
-                    // A display read at an `Array` is built by its
-                    // list-literal initializer; any other value is the
-                    // constant typed by `dest`'s register.
+                    // A reflected field-name list read at an `Array` is
+                    // built by its list-literal initializer; any other value
+                    // is the constant typed by `dest`'s register.
                     Some(k)
                         if let Some(ty) = &ty
                             && let Some(owned) = constructed_parameter_constant(&k, ty) =>

@@ -613,15 +613,20 @@ impl ParamContext {
     }
 
     /// The elements of a parameter list whose length is known, in order: a
-    /// constant list's values, a tabulation of a constant count, or a
+    /// constant list's values (a frozen collection's elements), a
+    /// tabulation of a constant count, or a
     /// concatenation of such lists. `None` while a length is still open.
     pub fn list_elements(&self, list: &ParamExpr) -> Result<Option<Vec<ParamExpr>>, ParamError> {
         match list.kind() {
-            ParamKind::Constant(CtValue::Tuple(values)) => values
-                .iter()
-                .map(|value| self.constant(value.clone()))
-                .collect::<Result<_, _>>()
-                .map(Some),
+            ParamKind::Constant(value)
+                if let Some(values) = value.comptime_iteration_elements() =>
+            {
+                values
+                    .into_iter()
+                    .map(|value| self.constant(value))
+                    .collect::<Result<_, _>>()
+                    .map(Some)
+            }
             ParamKind::ListTabulate { count, element } => {
                 let Some(count) = count.as_constant().and_then(fold::integer_value) else {
                     return Ok(None);
@@ -1013,7 +1018,9 @@ impl ParamContext {
 
     /// Rebuild `expr` bottom-up, replacing each reflection query or
     /// application `answer` answers (after its operands are rebuilt) by its
-    /// constant; everything above re-enters the folding constructors.
+    /// constant; everything above re-enters the folding constructors. A
+    /// display application's answer is the frozen collection itself, which
+    /// list reads see through [`CtValue::comptime_iteration_elements`].
     fn answer_queries(
         &self,
         expr: &ParamExpr,
@@ -1080,12 +1087,6 @@ impl ParamContext {
             _ => return Ok(expr.clone()),
         };
         match answer(&rebuilt)? {
-            // A parameter list's answer is the list of its elements.
-            Some(value) if matches!(rebuilt.meta(), MetaTy::ParamList(_)) => self.constant(
-                value
-                    .comptime_iteration_elements()
-                    .map_or(value, CtValue::Tuple),
-            ),
             Some(value) => self.constant(value),
             None => Ok(rebuilt),
         }
@@ -1682,9 +1683,7 @@ pub fn builtin_application_value(
         let [list] = args else {
             return None;
         };
-        let CtValue::Tuple(values) = list.as_constant()? else {
-            return None;
-        };
+        let values = list.as_constant()?.comptime_iteration_elements()?;
         return Some(i64::try_from(values.len()).map(CtValue::Int).map_err(|_| {
             ParamError::Arithmetic("parameter list is too long to count".to_string())
         }));

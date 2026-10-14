@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R900**.
+Next free ID: **R903**.
 
 ## Ordered Work
 
@@ -3561,6 +3561,23 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R901 An `Array` value parameter is rejected**
+
+  Problem: `def show[xs: Array[Int, 3]]()` called as `show[L]()` over
+  `comptime L = [1, 2, 3]`, or as `show[[4, 5, 6]]()`, fails with "type
+  mismatch for value parameter 'xs': expected Array[Int, 3], found a
+  non-materializable compile-time value", where the pin prints the
+  elements; `struct Box[xs: Array[Int, 2]]` as `Box[[1, 2]]` fails the
+  same way.
+  - `Checker::ct_value_ty` (`checker/traits.rs`) answers `None` for a
+    display application, and `List[T]` rather than `Array[T, n]` for a
+    `CtValue::List`.
+  - The bound value is the frozen `Array` a display's CTFE builds, which
+    `native::mono` already materializes as one `Const::Value` per read.
+  - Found while landing R789 (2026-10-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R489 An associated `comptime` member that applies a function is
   rejected**
 
@@ -5105,6 +5122,19 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `conformance/assets-mojo-errors.tsv` row.
   - Unverified on the pin: the pin env was missing when R735 landed.
   - Found while landing R735 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R902 `read` is accepted as an argument name**
+
+  Problem: `def same(read: Int) -> Int` compiles and runs, where the pin
+  rejects it: "'read' was removed; use 'imm'" and "expected argument name".
+  - Mojito accepts a program the pin rejects, so this is a divergence.
+  - Ledger name: `read-argument-name`
+    (`conformance/fixtures/read_argument_name.mojo`).
+  - The fix rejects `read` in the parser's argument-name position with the
+    pin's message, and moves the case to an `assets/parse_error` fixture.
+  - Found while landing R789 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6914,15 +6944,21 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R789 A compile-time list read at an `Array` is still constructed at each read**
+- [ ] **R900 A reflected field-name list read at an `Array` is built by
+  the elaborator's list-literal construction**
 
-  `materialize[L]()` for `comptime L = [String("x"), String("y")]` runs `Array`'s list-literal initializer at every read, where Mojo materializes one frozen `Array` value.
-  - Every other closed compile-time value is already one typed `Const::Value` (R524); this is the last constructor path (`array_display_construction`, `construct_parameter_reads`, `ConstructionDecls`, `mono/substitute.rs`).
-  - The elements are typed constants, so a transforming `__init__` runs once; the initializer still moves each element into fresh storage, so an element's move initializer with effects shows them at each read.
-  - The Mojo-shaped fix evaluates the display's `Array` once by the elaborator's CTFE (`Specializer::demand_application` → `VmBackend::call_concrete` → `freeze`), frozen to `CtValue::Struct` over pointer memory, and deletes the three pieces above.
-  - That needs a CTFE demand of a generic struct instance's variadic constructor, which `demand_application` does not serve, and a display kept as an `Array` value rather than `CtValue::List`.
-  - Found while landing R524 (2026-10-13).
-  - Depends on nothing.
+  Problem: `materialize[names]()` over `comptime names =
+  reflect[T].field_names()` runs `Array`'s list-literal initializer at each
+  read, where the pin reads the `Array` its `field_names()` built at compile
+  time.
+  - The elements are `String`s, so no difference can be observed.
+  - Upstream's `field_names()` is a stdlib function returning
+    `Array[StaticString, count]`; once it is bundled, its compile-time value
+    is a CTFE application, served as display constants are.
+  - The fix deletes `array_display_construction`, `ConstructionDecls`, and
+    `constructed_parameter_constant` (`mono/substitute.rs`).
+  - Found while landing R789 (2026-10-14).
+  - Depends on R324.
   - Model: Fable, Not Planned.
 
 - [ ] **R306 A scalar `range(...)` is typed by a checker rule where the

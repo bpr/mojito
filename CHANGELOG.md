@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A compile-time list read at an `Array` is one frozen value (R789):
+  `materialize[L]()` over `comptime L = [M(1), M(2)]` materializes the
+  `Array` the display's CTFE built, as the pin's `kgen.param.constant`
+  does, and no longer runs `Array`'s list-literal initializer, and each
+  element's move initializer, at every read
+  (`assets/ok/comptime_array_materialized_frozen.mojo`). The dead
+  slot-read construction (`construct_parameter_reads`) is gone; a reflected
+  field-name list is still constructed at each read (R900).
 - A `comptime for` over a compile-time iterator that borrows its
   collection now runs (R793): `d.keys()`, `d.items()`, `d.values()`, a
   list's or a set's `__iter__()`, and a user iterator holding a `Pointer`,

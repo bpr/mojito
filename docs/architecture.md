@@ -875,9 +875,8 @@ binder's own slot owning nothing and so no drop root
 read of it, per unrolled copy, into a `Const::Value` typed by the read's
 register, a `String` leaf included, as upstream's `kgen.param.constant`
 materializes a parameter at each use: each backend writes the frozen
-fields into fresh storage, and no initializer runs again. Only an element
-read at an `Array` is constructed, by the list-literal initializer over its
-elements' constants (`construct_parameter_reads`, R789). A tuple, struct, or vector value
+fields into fresh storage, and no initializer runs again. An element of a
+nested list display is a frozen `Array` like any other struct. A tuple, struct, or vector value
 parameter's slot follows the same rule: it owns nothing and is no drop root
 (`mir::materialized_parameter_slots`), and each read of it is the value's
 typed constant, with nothing built at entry; a place of a slot whose value
@@ -1949,10 +1948,14 @@ compile-time query thunks. A string read at the nominal `String`, and an
 aggregate holding one, is the same one operation: `native::mono` emits the
 `Const::Value` typed by the read's register and never calls the value's
 initializer, so an `__init__` that transforms its arguments runs once, at
-compile time, as the pin's does. The one residual construction is a
-compile-time list read at an `Array`, built at each read by the
-list-literal initializer over its elements' constants
-(`array_display_construction`, R789). A local binding of an
+compile time, as the pin's does. A display constant (`comptime L =
+[M(1), M(2)]`) is the `Array` its lifted application's CTFE builds and
+freezes over pointer memory: `ParamContext::answer_queries` keeps that
+frozen value rather than flattening it to its elements, and each read
+materializes it with no element initializer run. The one residual
+construction is a reflected field-name list read at an `Array`, built at
+each read by the list-literal initializer over its names
+(`array_display_construction`, R900). A local binding of an
 application is that application at each read, as a module constant is: it
 has no slot, and every read materializes a fresh value.
 

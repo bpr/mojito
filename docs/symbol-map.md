@@ -1473,17 +1473,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   slot holding nothing: `reject_parameter_storage_reads`
   (`mono/substitute.rs`) rejects a place of it that survives the
   substitution, and `seed_captured_parameter_slots` stores a captured
-  folded slot's constant at entry, never one owning a buffer. Only a list
-  read at an `Array` is constructed at each read
-  (`construct_parameter_reads`, through `array_display_construction`). The VM materializes a folded one through
+  folded slot's constant at entry, never one owning a buffer. A display
+  constant is the frozen `Array` its CTFE built, materialized the same
+  way. The VM materializes a folded one through
   `ct_value_as_runtime` (`backend/vm.rs`) and, a tuple at any depth as the nominal `Tuple` its
   checked type names, `thaw`
   (`backend/vm/adapters.rs`), and Pliron through `lower_parameter_value`
   (a top-level string included) and `store_parameter_value`
   (`lower/consts.rs`). A `comptime for` element is the same constant at
-  each read of its binder, and an element read at an `Array` is
-  constructed (`construct_parameter_reads`, from `Specializer::copy_body`,
-  `mono/unroll.rs`). A
+  each read of its binder (`Specializer::copy_body`, `mono/unroll.rs`). A
   borrow of a compile-time value (a value parameter, a `comptime for`
   variable) is a temporary the checker materializes
   (`materialized_reference_actual`, and for a read of a tuple or struct
@@ -1602,8 +1600,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `verify/concrete.rs` rejects a survivor.
 - `Specializer::answer_param_constants` and `param_constant`
   (`mono/specializer.rs`) fold it per instance to the constant typed by
-  its register, a list read at an `Array` constructed instead
-  (`constructed_parameter_constant`, `array_display_construction`,
+  its register — a display application's answer is the frozen `Array`
+  `ParamContext::answer_queries` keeps — and a reflected field-name list
+  read at an `Array` constructed instead (R900;
+  `constructed_parameter_constant`, `array_display_construction`,
   `mono/substitute.rs`, through the list-literal initializer
   `ConstructionDecls::list_literal_constructor` finds, the call MIR lowers a
   display to): a length through `eval_ct`,

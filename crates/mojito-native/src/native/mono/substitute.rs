@@ -8,8 +8,8 @@ use mojito_mir::mir::Proj;
 use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, VariantIndex};
 
-/// The declarations an `Array` display's construction names: the
-/// list-literal initializer.
+/// The declarations a reflected field-name list's construction names: the
+/// list-literal initializer ([`array_display_construction`]).
 #[derive(Clone, Copy)]
 pub(super) struct ConstructionDecls<'d, 'a> {
     pub(super) functions: &'d Catalog<'a, MirFunctionDeclaration>,
@@ -94,20 +94,14 @@ pub(super) fn default_construct_parameters(
 
 /// Substitute `bindings` through `function`, whose declaration declares the
 /// compile-time parameters in `scope`. Each read of a value parameter is its
-/// typed constant, an `Array` display's its construction
-/// ([`construct_parameter_reads`]) with the initializer `decls` declares. A
-/// slot of a value owning storage holds nothing, so no place of it may
-/// remain.
+/// typed constant. A slot of a value owning storage holds nothing, so no
+/// place of it may remain.
 pub(super) fn substitute_function(
     function: &mut MirFunction,
     bindings: &Bindings,
     scope: &[ParamDecl],
-    decls: ConstructionDecls,
 ) -> Result<(), MonoError> {
-    let (constructed, locals): (HashMap<_, _>, HashMap<_, _>) =
-        bound_parameter_locals(scope, bindings)
-            .into_iter()
-            .partition(|(name, value)| is_array_display(value, parameter_slot_ty(function, name)));
+    let locals = bound_parameter_locals(scope, bindings);
     substitute_value_parameter_reads(
         &mut function.blocks,
         &function.var_names,
@@ -137,31 +131,6 @@ pub(super) fn substitute_function(
     }
     if let Some(ty) = &mut function.error_ty {
         *ty = substitute_ty(ty, bindings)?;
-    }
-    for (var, name) in function.var_names.iter().enumerate() {
-        let Some(value) = constructed.get(name.as_str()) else {
-            continue;
-        };
-        let var = var as u32;
-        let ty = function
-            .var_tys
-            .get(&var)
-            .cloned()
-            .ok_or_else(|| MonoError {
-                kind: MonoErrorKind::Unsupported,
-                function: None,
-                construct: format!("value parameter `{value}` has no declared type"),
-            })?;
-        construct_parameter_reads(
-            &mut function.blocks,
-            var,
-            value,
-            &ty,
-            &mut function.n_regs,
-            &mut function.reg_types,
-            decls,
-        )?;
-        reject_parameter_storage_reads(&function.blocks, var, value)?;
     }
     substitute_blocks_metadata(&mut function.blocks, bindings)?;
     check_reinterpretation_widths(&function.blocks, &function.reg_types)?;
@@ -297,58 +266,6 @@ pub(super) fn substitute_value_parameter_reads(
                 }
             }
         }
-    }
-    Ok(())
-}
-
-/// Construct the `Array` display `value` wherever `blocks` read its slot
-/// `slot` — a `comptime for` binder's or a value parameter's — at the
-/// read's type (`ty`, the slot's, where the read has none)
-/// ([`array_display_construction`]), whose result the read's consumer — a
-/// materialized temporary or a copy — owns.
-pub(super) fn construct_parameter_reads(
-    blocks: &mut [MirBlock],
-    slot: u32,
-    value: &CtValue,
-    ty: &Ty,
-    n_regs: &mut u32,
-    reg_types: &mut HashMap<u32, Ty>,
-    decls: ConstructionDecls,
-) -> Result<(), MonoError> {
-    for block in blocks {
-        let mut instrs = Vec::with_capacity(block.instrs.len());
-        for mut instruction in std::mem::take(&mut block.instrs) {
-            if let MirInstr::UseVar { dest, var, .. } = instruction
-                && var == slot
-            {
-                let read = reg_types
-                    .get(&dest.0)
-                    .cloned()
-                    .unwrap_or_else(|| ty.clone());
-                instrs.extend(array_display_construction(
-                    dest, value, &read, n_regs, reg_types, decls,
-                )?);
-                continue;
-            }
-            if let MirInstr::Try {
-                body,
-                handler,
-                orelse,
-                finalbody,
-                ..
-            } = &mut instruction
-            {
-                for region in std::iter::once(body)
-                    .chain(handler.iter_mut().map(|(_, blocks)| blocks))
-                    .chain(orelse.iter_mut())
-                    .chain(finalbody.iter_mut())
-                {
-                    construct_parameter_reads(region, slot, value, ty, n_regs, reg_types, decls)?;
-                }
-            }
-            instrs.push(instruction);
-        }
-        block.instrs = instrs;
     }
     Ok(())
 }
@@ -1307,25 +1224,21 @@ pub(super) fn value_parameter_constant(value: &CtValue, slot_ty: Option<&Ty>) ->
     }
 }
 
-/// The display a parameter constant `k` read at `ty` is constructed from
-/// rather than read as a constant: a list or tuple read at an `Array`
-/// ([`array_display_construction`]).
+/// The reflected field-name list a parameter constant `k` read at `ty` is
+/// constructed from rather than read as a constant: a tuple of names read
+/// at an `Array` ([`array_display_construction`]), as
+/// `reflect[T].field_names()` answers. A display constant is the frozen
+/// `Array` its lifted application built, read as any other constant.
 pub(super) fn constructed_parameter_constant(k: &Const, ty: &Ty) -> Option<CtValue> {
     match k {
-        Const::Value(value @ (CtValue::Tuple(_) | CtValue::List(_)))
-            if array_instance_parts(ty).is_some() =>
+        Const::Value(value @ CtValue::Tuple(names))
+            if array_instance_parts(ty).is_some()
+                && names.iter().all(|name| matches!(name, CtValue::Str(_))) =>
         {
             Some(value.clone())
         }
         _ => None,
     }
-}
-
-/// Whether a parameter value bound to a slot of `ty` is an `Array` display,
-/// constructed at each read ([`construct_parameter_reads`]).
-pub(super) fn is_array_display(value: &CtValue, ty: Option<&Ty>) -> bool {
-    matches!(value, CtValue::Tuple(_) | CtValue::List(_))
-        && ty.is_some_and(|ty| array_instance_parts(ty).is_some())
 }
 
 /// The constant a chain of field projections selects out of a struct-typed
@@ -1404,9 +1317,10 @@ fn seed_captured_parameter_slots(
 }
 
 /// The run-time construction of the parameter value `value`, of the concrete
-/// type `ty`, into `dest`: a list at an `Array` is the list-literal
-/// initializer over its elements (the call a display `[a, b]` lowers to),
-/// and any other value its typed constant ([`value_parameter_constant`]).
+/// type `ty`, into `dest`: a reflected field-name list at an `Array` is the
+/// list-literal initializer over its names (the call a display `[a, b]`
+/// lowers to), and any other value its typed constant
+/// ([`value_parameter_constant`]).
 pub(super) fn array_display_construction(
     dest: Reg,
     value: &CtValue,
@@ -1421,9 +1335,7 @@ pub(super) fn array_display_construction(
         construct: format!("constructing the parameter value `{value}` at `{ty}`"),
     };
     match value {
-        CtValue::Tuple(elements) | CtValue::List(elements)
-            if let Some((element, length)) = array_instance_parts(ty) =>
-        {
+        CtValue::Tuple(elements) if let Some((element, length)) = array_instance_parts(ty) => {
             if usize::try_from(length).ok() != Some(elements.len()) {
                 return Err(unsupported());
             }
@@ -1447,12 +1359,6 @@ pub(super) fn array_display_construction(
             Ok(vec![MirInstr::Const { dest, k }])
         }
     }
-}
-
-/// The declared type of the slot `function` names `name`.
-fn parameter_slot_ty<'f>(function: &'f MirFunction, name: &str) -> Option<&'f Ty> {
-    let var = function.var_names.iter().position(|slot| slot == name)?;
-    function.var_tys.get(&u32::try_from(var).ok()?)
 }
 
 fn collect_captured_vars(blocks: &[MirBlock], captured: &mut HashSet<u32>) {
