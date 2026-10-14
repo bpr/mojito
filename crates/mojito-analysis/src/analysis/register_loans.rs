@@ -536,6 +536,10 @@ struct RegisterLoanStep {
     call_result: bool,
     /// A scalar read's result register and the roots it borrows for one hop.
     single_hop: Option<(u32, BTreeSet<VarId>)>,
+    /// The slots the instruction ends by moving them. An ended slot's storage
+    /// backs no register: a by-value scalar already holds its bits, and a
+    /// handle into the slot is dead (use after move is `moves`' error).
+    ended: Vec<VarId>,
 }
 
 impl RegisterLoanStep {
@@ -707,6 +711,7 @@ impl RegisterLoanStep {
         let mut results = Vec::new();
         mojito_mir::mir::verify::instruction_result_regs(instruction, &mut results);
         Self {
+            ended: super::scan::vars_moved(instruction),
             operands,
             results,
             owners,
@@ -753,6 +758,14 @@ impl RegisterLoanStep {
                 registers.owners.remove(&result.0);
             } else {
                 registers.owners.insert(result.0, result_owners.clone());
+            }
+        }
+        if !self.ended.is_empty() {
+            for map in [&mut registers.owners, &mut registers.single_hop] {
+                for roots in map.values_mut() {
+                    roots.retain(|root| !self.ended.contains(root));
+                }
+                map.retain(|_, roots| !roots.is_empty());
             }
         }
         owners
@@ -1041,7 +1054,7 @@ impl RegisterLiveness {
         };
         let live_out = |live_in: &[DenseSet], block: usize| {
             let mut out = DenseSet::default();
-            for successor in successors(&blocks[block].term) {
+            for successor in terminator_targets(&blocks[block].term) {
                 if let Some(live) = live_in.get(successor) {
                     out.union(live);
                 }

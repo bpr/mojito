@@ -157,7 +157,7 @@ pub(super) fn loan_generation_entries_over(
 ) -> Vec<LoanGenerationState> {
     let mut predecessors: Vec<Vec<usize>> = vec![Vec::new(); blocks.len()];
     for (block, body) in blocks.iter().enumerate() {
-        for successor in successors(&body.term) {
+        for successor in terminator_targets(&body.term) {
             if successor < blocks.len() {
                 predecessors[successor].push(block);
             }

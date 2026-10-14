@@ -22,7 +22,13 @@ pub enum OptError {
 impl fmt::Display for OptError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Load(report) => write!(formatter, "{report}"),
+            Self::Load(report) => {
+                write!(formatter, "{report}")?;
+                report
+                    .diagnostics
+                    .iter()
+                    .try_for_each(|diagnostic| write!(formatter, "\n  {}", diagnostic.message))
+            }
             Self::Verify { pass, findings } => write!(
                 formatter,
                 "MIR does not verify after pass `{pass}`: {}",
@@ -68,4 +74,45 @@ pub fn opt(
         }
     }
     Ok(program)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BodyPass, OptError, opt};
+    use mojito_mir::mir::{MirDeclarations, MirFunction, MirInstr};
+
+    /// A pass that drops every dropped slot twice.
+    const DOUBLE_DROP: BodyPass = BodyPass {
+        name: "double-drop",
+        run: double_drops,
+    };
+
+    fn double_drops(_: &str, function: &mut MirFunction, _: &MirDeclarations) {
+        for block in &mut function.blocks {
+            block.instrs = std::mem::take(&mut block.instrs)
+                .into_iter()
+                .flat_map(|instruction| match instruction {
+                    MirInstr::DropVar { var } => vec![instruction, MirInstr::DropVar { var }],
+                    other => vec![other],
+                })
+                .collect();
+        }
+    }
+
+    #[test]
+    fn a_pass_that_drops_an_ended_slot_fails_verification() {
+        let input =
+            include_bytes!("../../../../tests/mir_passes/elaborate-drops/already_elaborated.mir");
+        let error = opt(input, "already_elaborated.mir", &[&DOUBLE_DROP])
+            .expect_err("a doubled drop does not verify");
+        let OptError::Verify { pass, findings } = error else {
+            panic!("expected a verification failure after the pass, got {error}");
+        };
+        assert_eq!(pass, "double-drop");
+        assert!(
+            findings.iter().any(|finding| finding
+                .contains("drop.var of slot $v1 ('b') that every path has already ended")),
+            "{findings:?}"
+        );
+    }
 }

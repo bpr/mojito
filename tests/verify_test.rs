@@ -16,7 +16,7 @@ use std::path::Path;
 use mojito::mir::{
     Const, FuncRef, MirBlock, MirDeclarations, MirFunction, MirInstr, MirInteriorOrigin,
     MirIntrinsicSubscript, MirLoan, MirParamArg, MirPlace, MirProgram, MirTerm, Proj, Reg,
-    SpanTable,
+    SpanTable, UseMode,
 };
 use mojito::param_expr::{MetaTy, ParamContext, ParamId};
 use mojito::types::DependentType;
@@ -2056,4 +2056,189 @@ fn verifier_rejects_in_place_binding_without_its_producer() {
         }),
         "in-place binding of r0 does not follow the call producing it",
     );
+}
+
+/// The slot-end findings `verify` reports for a function over slot 0 (`x`),
+/// registers r0 (Int), r1 (Bool), and r2 (Int).
+fn slot_end_findings(blocks: Vec<MirBlock>) -> Vec<String> {
+    let f = function(
+        blocks,
+        3,
+        &[(0, Ty::int()), (1, Ty::bool()), (2, Ty::int())],
+    );
+    verify(&program(f))
+        .into_iter()
+        .filter(|finding| finding.contains("every path has already ended"))
+        .collect()
+}
+
+fn define_x() -> Vec<MirInstr> {
+    vec![
+        MirInstr::Const {
+            dest: Reg(0),
+            k: Const::Int(1),
+        },
+        MirInstr::Const {
+            dest: Reg(1),
+            k: Const::Bool(true),
+        },
+        MirInstr::DefVar {
+            var: 0,
+            src: Reg(0),
+            binding_ty: Some(Ty::int()),
+            in_place: false,
+        },
+    ]
+}
+
+const fn move_x() -> MirInstr {
+    MirInstr::UseVar {
+        dest: Reg(2),
+        var: 0,
+        mode: UseMode::Move,
+    }
+}
+
+const DROP_X: MirInstr = MirInstr::DropVar { var: 0 };
+
+fn raising_call() -> MirInstr {
+    MirInstr::Call {
+        dest: Reg(2),
+        func: FuncRef::named("boom"),
+        raises: Some(Ty::int()),
+        args: Vec::new(),
+        kwargs: Vec::new(),
+        arg_places: Vec::new(),
+        kwarg_places: Vec::new(),
+        param_arg_regs: Vec::new(),
+        capture_accesses: Vec::new(),
+        receiver: None,
+        instantiated_args: Vec::new(),
+        spread: None,
+    }
+}
+
+/// A `try` around `body`, with an empty handler when `handler` holds.
+fn try_region(body: Vec<MirBlock>, handler: Option<Vec<MirBlock>>) -> MirInstr {
+    MirInstr::Try {
+        body,
+        handler: handler.map(|blocks| (None, blocks)),
+        orelse: None,
+        finalbody: None,
+        cleanup: Vec::new(),
+    }
+}
+
+/// A drop or consume of a slot every path already dropped, consumed, or
+/// moved destroys its value twice.
+#[test]
+fn verifier_rejects_a_drop_of_an_ended_slot() {
+    let doubled = [define_x(), vec![DROP_X, DROP_X]].concat();
+    let findings = slot_end_findings(vec![block(doubled, MirTerm::Return(None))]);
+    assert_eq!(
+        findings,
+        [
+            "MIR function 'test' block 0: drop.var of slot $v0 ('x') that every path has already ended"
+        ]
+    );
+    let consumed = [define_x(), vec![DROP_X, MirInstr::ConsumeVar { var: 0 }]].concat();
+    let findings = slot_end_findings(vec![block(consumed, MirTerm::Return(None))]);
+    assert!(
+        findings[0].contains("var.consume of slot $v0"),
+        "{findings:?}"
+    );
+    let branch = MirTerm::Branch {
+        cond: Reg(1),
+        then_b: 1,
+        else_b: 2,
+    };
+    let both_arms = vec![
+        block(define_x(), branch.clone()),
+        block(vec![move_x()], MirTerm::Jump(3)),
+        block(vec![move_x()], MirTerm::Jump(3)),
+        block(vec![DROP_X], MirTerm::Return(None)),
+    ];
+    assert_eq!(slot_end_findings(both_arms).len(), 1);
+    // An escape and the `try`'s fall-off both reach block 1 with `x` moved.
+    let body = vec![
+        block(vec![move_x()], branch),
+        block(
+            Vec::new(),
+            MirTerm::EscapeJump {
+                target: 1,
+                cleanup: Vec::new(),
+            },
+        ),
+        block(Vec::new(), MirTerm::FallOff),
+    ];
+    let escaping = vec![
+        block(
+            [define_x(), vec![try_region(body, None)]].concat(),
+            MirTerm::Jump(1),
+        ),
+        block(vec![DROP_X], MirTerm::Return(None)),
+    ];
+    assert_eq!(slot_end_findings(escaping).len(), 1);
+}
+
+/// A slot ended on some paths only, re-stored, or still live where a
+/// region escapes or raises is not ended on every path.
+#[test]
+fn verifier_accepts_a_drop_of_a_slot_some_path_left_live() {
+    let branch = MirTerm::Branch {
+        cond: Reg(1),
+        then_b: 1,
+        else_b: 2,
+    };
+    let one_arm = vec![
+        block(define_x(), branch.clone()),
+        block(vec![move_x()], MirTerm::Jump(3)),
+        block(Vec::new(), MirTerm::Jump(3)),
+        block(vec![DROP_X], MirTerm::Return(None)),
+    ];
+    assert_eq!(slot_end_findings(one_arm), Vec::<String>::new());
+    let restored = [
+        define_x(),
+        vec![
+            move_x(),
+            MirInstr::DefVar {
+                var: 0,
+                src: Reg(0),
+                binding_ty: Some(Ty::int()),
+                in_place: false,
+            },
+            DROP_X,
+        ],
+    ]
+    .concat();
+    let restored = vec![block(restored, MirTerm::Return(None))];
+    assert_eq!(slot_end_findings(restored), Vec::<String>::new());
+    // The body escapes to block 1 before moving `x`, and falls off after.
+    let body = vec![
+        block(Vec::new(), branch),
+        block(
+            Vec::new(),
+            MirTerm::EscapeJump {
+                target: 1,
+                cleanup: Vec::new(),
+            },
+        ),
+        block(vec![move_x()], MirTerm::FallOff),
+    ];
+    let escaping = vec![
+        block(
+            [define_x(), vec![try_region(body, None)]].concat(),
+            MirTerm::Jump(1),
+        ),
+        block(vec![DROP_X], MirTerm::Return(None)),
+    ];
+    assert_eq!(slot_end_findings(escaping), Vec::<String>::new());
+    // The body moves `x` after its last raise, so its handler still owns it.
+    let body = vec![block(vec![raising_call(), move_x()], MirTerm::FallOff)];
+    let handler = vec![block(vec![DROP_X], MirTerm::FallOff)];
+    let raising = vec![block(
+        [define_x(), vec![try_region(body, Some(handler))]].concat(),
+        MirTerm::Return(None),
+    )];
+    assert_eq!(slot_end_findings(raising), Vec::<String>::new());
 }

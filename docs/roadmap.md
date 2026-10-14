@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R826**.
+Next free ID: **R828**.
 
 ## Ordered Work
 
@@ -187,21 +187,20 @@ which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
 
-- [ ] **R825 The MIR verifier accepts a drop of a slot every path already ended**
+- [ ] **R826 Cleanup lists name slots every path already ended**
 
-  A `drop.var` of a slot that every path has already dropped, consumed, or
-  moved still verifies, so a pass that drops a dead slot passes the
-  per-pass verification of `mojito opt` and `run_pipeline`.
-  - Reproduce: duplicate a `drop.var` line in
-    `tests/mir_passes/elaborate-drops/already_elaborated.mir` and run
-    `mojito opt` over it: it exits 0.
-  - Upstream's destructor insertion destroys each value exactly once on a
-    live path; this check holds Mojito there.
-  - Add a must-analysis ("ended on every path") to `mir::verify`, plus a
-    unit test in `analysis::opt` and an error mode for `tests/mir_passes`.
-  - Design: `R822-the-mir-verifier-accepts-a-slot-plan.md`, slice 3.
-  - Depends on R824.
-  - Model: Opus, Planned.
+  A `return.cleanup`, an `escape`, and a `try`'s cleanup list may name a
+  slot every path reaching the edge already dropped or moved, and only the
+  VM's no-op teardown of a vacated slot keeps that from destroying it twice.
+  - Upstream's destructor insertion destroys each value once; it has no
+    idempotent backstop to lean on.
+  - The R825 verifier rule (`verify/drops.rs`) skips these implicit ends,
+    which keeps it sound but lets such a list pass.
+  - Fix: drop elaboration lists only slots live on the edge, then the rule
+    reports a listed slot that is ended on every path.
+  - Found while landing R825 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### Native Backend
 
@@ -1435,6 +1434,21 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     from the contract.
   - It is a verifier-facing inaccuracy in `ref.make` typing.
   - Found while landing R672 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R827 Field drops and copy elision take every call as raising**
+
+  `field_drops.rs` and `copy_elision.rs` treat every instruction outside a
+  small silent list as a raise point (`scan::may_raise`), where drop
+  elaboration now seeds a handler only at checked raise points
+  (`scan::raises_to_handler`).
+  - A non-raising call can keep a field live past its move, the field-level
+    form of the dead drop R825 fixed for whole slots.
+  - The R825 verifier rule checks whole slots only, so it does not catch it.
+  - Fix: switch both to `raises_to_handler`, and compare `mojito run`
+    output on the `try` and `__deinit__` fixtures against the old binary.
+  - Found while landing R825 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

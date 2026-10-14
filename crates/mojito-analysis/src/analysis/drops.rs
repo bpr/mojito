@@ -124,7 +124,7 @@ pub(super) fn elaborate_drops(
     // instruction, and drop the variables that die at their last use in-block.
     let mut blocks = Vec::with_capacity(nb);
     for (b, instrs) in block_instrs.into_iter().enumerate() {
-        let empty_exit = instrs.is_empty() && successors(&f.blocks[b].term).is_empty();
+        let empty_exit = instrs.is_empty() && terminator_targets(&f.blocks[b].term).is_empty();
         let replay = BlockReplay {
             instrs,
             register_uses: &register_loan_uses[b],
@@ -237,7 +237,7 @@ pub(super) fn elaborate_drops(
     for p in 0..nb {
         // Unique successors (a `Branch`'s arms are distinct in practice; dedup for
         // safety so an edge isn't processed — and dropped — twice).
-        let mut succs: Vec<usize> = successors(&f.blocks[p].term);
+        let mut succs: Vec<usize> = terminator_targets(&f.blocks[p].term);
         succs.sort_unstable();
         succs.dedup();
         let n_succ = succs.len();
@@ -581,7 +581,7 @@ pub(super) fn elaborate_region_drops(
             live_out,
             |instr, live| {
                 live.extend(escape_live_in(instr, seeds.effective_live_in));
-                if may_raise(instr) {
+                if raises_to_handler(instr) {
                     live.extend(seeds.raise.iter().copied());
                 }
             },
@@ -626,12 +626,12 @@ pub(super) fn elaborate_region_drops(
     // processed and `rewire_target` covers every case.
     let mut pred_count = vec![0usize; nb];
     for block in blocks.iter().take(nb) {
-        for s in successors(&block.term) {
+        for s in terminator_targets(&block.term) {
             pred_count[s] += 1;
         }
     }
     for p in 0..nb {
-        let mut succs: Vec<usize> = successors(&blocks[p].term);
+        let mut succs: Vec<usize> = terminator_targets(&blocks[p].term);
         succs.sort_unstable();
         succs.dedup();
         let n_succ = succs.len();
@@ -699,7 +699,7 @@ pub(super) fn region_block_live_out(
         | MirTerm::ComptimeBranch { .. }
         | MirTerm::ComptimeFor { .. } => {
             let mut out = HashSet::new();
-            for s in successors(&blocks[b].term) {
+            for s in terminator_targets(&blocks[b].term) {
                 if let Some(live) = live_in.get(s) {
                     out.extend(live);
                 }
@@ -741,7 +741,7 @@ pub(super) fn transfer_region_drop_liveness(
     for (instr, uses) in instrs.iter().zip(register_uses).rev() {
         transfer_instruction_drop_liveness(&mut live, instr, uses, function_defs);
         live.extend(escape_live_in(instr, seeds.effective_live_in));
-        if may_raise(instr) {
+        if raises_to_handler(instr) {
             live.extend(seeds.raise.iter().copied());
         }
     }
@@ -1108,7 +1108,7 @@ pub(super) fn block_live_out(
     live_in: &[HashSet<VarId>],
 ) -> HashSet<VarId> {
     let mut out = HashSet::new();
-    for s in successors(&f.blocks[b].term) {
+    for s in terminator_targets(&f.blocks[b].term) {
         out.extend(&live_in[s]);
     }
     out
@@ -1118,7 +1118,7 @@ pub(super) fn block_live_out(
 pub(super) fn predecessor_counts(f: &MirFunction) -> Vec<usize> {
     let mut counts = vec![0usize; f.blocks.len()];
     for b in 0..f.blocks.len() {
-        for s in successors(&f.blocks[b].term) {
+        for s in terminator_targets(&f.blocks[b].term) {
             counts[s] += 1;
         }
     }

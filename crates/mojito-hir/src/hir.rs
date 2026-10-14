@@ -1103,8 +1103,8 @@ impl Lower {
                     plan: binding_plan,
                     binding,
                 });
+                // The yielded slot is not listed: the binding always consumes it.
                 let mut cleanup = vec![v];
-                cleanup.push(raw_var);
                 cleanup.push(iter_var);
                 if loop_owns_source {
                     cleanup.push(it_var);

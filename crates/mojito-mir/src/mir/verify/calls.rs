@@ -652,6 +652,7 @@ pub(super) fn verify_function(
         }
     }
     verify_scope(name, function, declarations, errors);
+    verify_slot_ends(name, function, errors);
     let context = RegionContext {
         region_len: function.blocks.len(),
         function_len: function.blocks.len(),

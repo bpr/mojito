@@ -6,8 +6,9 @@
 use std::collections::BTreeSet;
 
 use mojito_hir::hir::VarId;
-use mojito_mir::mir::verify::instruction_places_mut;
-use mojito_mir::mir::{MirBlock, MirFunction, MirInstr, MirTerm};
+use mojito_mir::mir::{
+    MirBlock, MirFunction, MirInstr, MirTerm, for_each_instruction_slot_mut, instruction_slots,
+};
 
 /// Remove the `retired` slots from `function`, none of them a parameter nor
 /// still addressed: every slot above one moves down past it, and its name
@@ -42,14 +43,11 @@ pub(super) fn retire_slots(function: &mut MirFunction, retired: &BTreeSet<VarId>
 pub(super) fn addressed_slots<'a>(
     blocks: impl IntoIterator<Item = &'a MirBlock>,
 ) -> BTreeSet<VarId> {
-    let addressed = std::cell::RefCell::new(BTreeSet::new());
-    let record = |var: VarId| {
-        addressed.borrow_mut().insert(var);
-        var
-    };
-    let mut blocks: Vec<MirBlock> = blocks.into_iter().cloned().collect();
-    renumber_blocks(&mut blocks, &record);
-    addressed.into_inner()
+    let mut addressed = BTreeSet::new();
+    for block in blocks {
+        collect_block_slots(block, &mut addressed);
+    }
+    addressed
 }
 
 pub(super) fn renumber_slots(function: &mut MirFunction, renumber: &dyn Fn(VarId) -> VarId) {
@@ -83,101 +81,71 @@ pub(super) fn renumber_blocks(blocks: &mut [MirBlock], renumber: &dyn Fn(VarId) 
 }
 
 fn renumber_instruction(instruction: &mut MirInstr, renumber: &dyn Fn(VarId) -> VarId) {
-    for place in instruction_places_mut(instruction) {
-        place.root = renumber(place.root);
-        if let Some(through) = &mut place.through {
-            *through = renumber(*through);
+    for_each_instruction_slot_mut(instruction, &mut |var| *var = renumber(*var));
+    if let MirInstr::Try {
+        body,
+        handler,
+        orelse,
+        finalbody,
+        cleanup,
+    } = instruction
+    {
+        renumber_blocks(body, renumber);
+        if let Some((slot, blocks)) = handler {
+            if let Some(slot) = slot {
+                *slot = renumber(*slot);
+            }
+            renumber_blocks(blocks, renumber);
+        }
+        if let Some(blocks) = orelse {
+            renumber_blocks(blocks, renumber);
+        }
+        if let Some(blocks) = finalbody {
+            renumber_blocks(blocks, renumber);
+        }
+        for var in cleanup {
+            *var = renumber(*var);
         }
     }
-    for access in capture_accesses_mut(instruction) {
-        access.root = renumber(access.root);
-    }
-    match instruction {
-        MirInstr::EstablishLoans {
-            reference,
-            loans,
-            dest_interior,
-            ..
-        } => {
-            *reference = renumber(*reference);
-            for interior in loans
-                .iter_mut()
-                .filter_map(|loan| loan.interior.as_mut())
-                .chain(dest_interior.as_mut())
-            {
-                interior.root = renumber(interior.root);
-            }
-        }
-        MirInstr::InvalidateInteriors { base, except, .. } => {
-            base.root = renumber(base.root);
-            if let Some(except) = except {
-                *except = renumber(*except);
-            }
-        }
-        MirInstr::KeepAlive { var }
-        | MirInstr::UseVar { var, .. }
-        | MirInstr::DefVar { var, .. }
-        | MirInstr::DeclareVar { var }
-        | MirInstr::DropVar { var }
-        | MirInstr::ConsumeVar { var } => *var = renumber(*var),
-        MirInstr::GetIter { source, dest, .. } => {
-            *source = renumber(*source);
-            *dest = renumber(*dest);
-        }
-        MirInstr::HasNext { iter, .. }
-        | MirInstr::Next { iter, .. }
-        | MirInstr::TryNext { iter, .. } => *iter = renumber(*iter),
-        MirInstr::Try {
+}
+
+/// Every slot one block names: its instructions', its regions' and their
+/// handler bindings and cleanups, and its terminator's.
+fn collect_block_slots(block: &MirBlock, addressed: &mut BTreeSet<VarId>) {
+    for instruction in &block.instrs {
+        addressed.extend(instruction_slots(instruction));
+        if let MirInstr::Try {
             body,
             handler,
             orelse,
             finalbody,
             cleanup,
-        } => {
-            renumber_blocks(body, renumber);
-            if let Some((slot, blocks)) = handler {
-                if let Some(slot) = slot {
-                    *slot = renumber(*slot);
+        } = instruction
+        {
+            addressed.extend(handler.iter().filter_map(|(slot, _)| *slot));
+            addressed.extend(cleanup.iter().copied());
+            for region in std::iter::once(body)
+                .chain(handler.iter().map(|(_, blocks)| blocks))
+                .chain(orelse)
+                .chain(finalbody)
+            {
+                for inner in region {
+                    collect_block_slots(inner, addressed);
                 }
-                renumber_blocks(blocks, renumber);
-            }
-            if let Some(blocks) = orelse {
-                renumber_blocks(blocks, renumber);
-            }
-            if let Some(blocks) = finalbody {
-                renumber_blocks(blocks, renumber);
-            }
-            for var in cleanup {
-                *var = renumber(*var);
             }
         }
-        _ => {}
     }
-}
-
-/// The capture accesses an instruction records — static ownership facts whose
-/// roots name the same slots the body addresses.
-fn capture_accesses_mut(instruction: &mut MirInstr) -> Vec<&mut mojito_mir::mir::MirCaptureAccess> {
-    match instruction {
-        MirInstr::Call {
-            capture_accesses, ..
+    match &block.term {
+        MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } => {
+            addressed.extend(cleanup.iter().copied());
         }
-        | MirInstr::CallIndirect {
-            capture_accesses, ..
+        MirTerm::ComptimeFor { slot, .. } => {
+            addressed.insert(*slot);
         }
-        | MirInstr::MethodCall {
-            capture_accesses, ..
-        } => capture_accesses.iter_mut().collect(),
-        MirInstr::Index {
-            call: Some(call), ..
-        }
-        | MirInstr::Slice {
-            call: Some(call), ..
-        }
-        | MirInstr::MultiIndex {
-            call: Some(call), ..
-        }
-        | MirInstr::MultiSet { call, .. } => call.capture_accesses.iter_mut().collect(),
-        _ => Vec::new(),
+        MirTerm::Jump(_)
+        | MirTerm::Branch { .. }
+        | MirTerm::ComptimeBranch { .. }
+        | MirTerm::Return(_)
+        | MirTerm::FallOff => {}
     }
 }

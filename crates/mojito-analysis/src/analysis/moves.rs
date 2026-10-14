@@ -335,34 +335,11 @@ pub(super) fn join_node(a: &Node, b: &Node) -> Node {
     Node { base, children }
 }
 
-/// A basic block's successors (by terminator).
-pub(super) fn successors(term: &MirTerm) -> Vec<usize> {
-    match term {
-        MirTerm::Jump(t) => vec![*t],
-        MirTerm::Branch { then_b, else_b, .. }
-        | MirTerm::ComptimeBranch { then_b, else_b, .. }
-        | MirTerm::ComptimeFor {
-            body: then_b,
-            exit: else_b,
-            ..
-        } => {
-            vec![*then_b, *else_b]
-        }
-        // `EscapeJump` only appears inside a `try` region (never a function body),
-        // so this — which walks function-body successors — never sees it; it leaves
-        // this CFG like a `Return`.
-        MirTerm::Return(_)
-        | MirTerm::ReturnWithCleanup { .. }
-        | MirTerm::FallOff
-        | MirTerm::EscapeJump { .. } => vec![],
-    }
-}
-
 /// Each block's predecessors within `blocks` (from terminator successors).
 pub(super) fn block_predecessors(blocks: &[MirBlock]) -> Vec<Vec<usize>> {
     let mut predecessors = vec![Vec::new(); blocks.len()];
     for (block, body) in blocks.iter().enumerate() {
-        for successor in successors(&body.term) {
+        for successor in terminator_targets(&body.term) {
             if let Some(list) = predecessors.get_mut(successor) {
                 list.push(block);
             }
@@ -389,14 +366,14 @@ impl Worklist {
         let mut visited = vec![false; nb];
         let mut order = Vec::with_capacity(nb);
         if nb > 0 {
-            let mut stack = vec![(0, successors(&blocks[0].term), 0)];
+            let mut stack = vec![(0, terminator_targets(&blocks[0].term), 0)];
             visited[0] = true;
             while let Some((block, block_successors, next)) = stack.last_mut() {
                 if let Some(successor) = block_successors.get(*next).copied() {
                     *next += 1;
                     if successor < nb && !visited[successor] {
                         visited[successor] = true;
-                        stack.push((successor, successors(&blocks[successor].term), 0));
+                        stack.push((successor, terminator_targets(&blocks[successor].term), 0));
                     }
                 } else {
                     order.push(*block);
@@ -432,7 +409,7 @@ impl Worklist {
 
     /// Revisit the successors of a block whose outgoing state changed.
     pub(super) fn push_successors(&mut self, term: &MirTerm) {
-        for successor in successors(term) {
+        for successor in terminator_targets(term) {
             self.push(successor);
         }
     }

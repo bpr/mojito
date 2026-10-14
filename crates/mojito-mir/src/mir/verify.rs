@@ -3,8 +3,8 @@
 //! The verifier consumes a lowered [`MirProgram`] plus its checked declaration
 //! metadata — never source AST — and reports every violation as a message in
 //! the program's `invariant_errors` style. Production compilation and the VM
-//! reject programs with any finding; ownership dataflow remains owned by
-//! `crate::analysis` and is composed with this verifier by the pipeline.
+//! reject programs with any finding; use-after-move diagnostics remain owned
+//! by `crate::analysis`, composed with this verifier by the pipeline.
 //!
 //! Findings locate themselves textually with the canonical prefixes
 //! `MIR function '<name>'` and `MIR function '<name>' block <n>`.
@@ -24,6 +24,8 @@
 //!   type) inside a nonraising function must be protected by a handler;
 //! - reference invariants: `StoreRef` initializes reference storage, and a
 //!   declared write-back parameter receives a caller place.
+//! - slot ends: a `drop.var` or `var.consume` of a slot every path reaching
+//!   it already dropped, consumed, or moved.
 
 use super::{
     FuncRef, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
@@ -79,6 +81,7 @@ pub fn types_agree(found: &Ty, expected: &Ty) -> bool {
 
 mod calls;
 mod concrete;
+mod drops;
 mod instr;
 mod intrinsics;
 pub(in crate::mir) use intrinsics::instantiate_generic_callable_contract;
@@ -94,6 +97,7 @@ mod types;
 use calls::*;
 pub use concrete::concrete_function_findings;
 use concrete::verify_concrete_program;
+use drops::verify_slot_ends;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use instr::*;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]

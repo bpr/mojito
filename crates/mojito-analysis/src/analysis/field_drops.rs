@@ -250,14 +250,14 @@ fn refine_region(
     // (2) Edge deaths.
     let mut pred_count = vec![0usize; nb];
     for block in blocks.iter() {
-        for s in successors(&block.term) {
+        for s in terminator_targets(&block.term) {
             if s < nb {
                 pred_count[s] += 1;
             }
         }
     }
     for p in 0..nb {
-        let mut succs: Vec<usize> = successors(&blocks[p].term)
+        let mut succs: Vec<usize> = terminator_targets(&blocks[p].term)
             .into_iter()
             .filter(|s| *s < nb)
             .collect();
@@ -519,7 +519,7 @@ fn block_field_live_out(
         | MirTerm::ComptimeBranch { .. }
         | MirTerm::ComptimeFor { .. } => {
             let mut out = FieldSet::new();
-            for s in successors(&blocks[b].term) {
+            for s in terminator_targets(&blocks[b].term) {
                 if let Some(live) = live_in.get(s) {
                     out.extend(live.iter().copied());
                 }
@@ -701,7 +701,7 @@ fn register_field_provenance(
     let nb = blocks.len();
     let mut predecessors: Vec<Vec<usize>> = vec![Vec::new(); nb];
     for (b, block) in blocks.iter().enumerate() {
-        for s in successors(&block.term) {
+        for s in terminator_targets(&block.term) {
             if s < nb {
                 predecessors[s].push(b);
             }

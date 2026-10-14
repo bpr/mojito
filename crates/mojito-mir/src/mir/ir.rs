@@ -432,6 +432,167 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
     out
 }
 
+/// Every slot an instruction names: its place roots and `through` slots,
+/// its capture-access roots, loan and interior roots, and the slot operands
+/// of the variable and iterator instructions.
+///
+/// None of a `try`'s region blocks, handler binding, or cleanup are
+/// included; the caller walks those itself. [`for_each_instruction_slot_mut`]
+/// visits the same slots in the same order.
+pub fn instruction_slots(instruction: &MirInstr) -> Vec<VarId> {
+    let mut out = Vec::new();
+    for place in super::verify::instruction_places(instruction) {
+        out.push(place.root);
+        out.extend(place.through);
+    }
+    out.extend(
+        capture_accesses(instruction)
+            .iter()
+            .map(|access| access.root),
+    );
+    match instruction {
+        MirInstr::EstablishLoans {
+            reference,
+            loans,
+            dest_interior,
+            ..
+        } => {
+            out.push(*reference);
+            out.extend(
+                loans
+                    .iter()
+                    .filter_map(|loan| loan.interior.as_ref())
+                    .chain(dest_interior.as_ref())
+                    .map(|interior| interior.root),
+            );
+        }
+        MirInstr::InvalidateInteriors { base, except, .. } => {
+            out.push(base.root);
+            out.extend(*except);
+        }
+        MirInstr::KeepAlive { var }
+        | MirInstr::UseVar { var, .. }
+        | MirInstr::DefVar { var, .. }
+        | MirInstr::DeclareVar { var }
+        | MirInstr::DropVar { var }
+        | MirInstr::ConsumeVar { var } => out.push(*var),
+        MirInstr::GetIter { source, dest, .. } => out.extend([*source, *dest]),
+        MirInstr::HasNext { iter, .. }
+        | MirInstr::Next { iter, .. }
+        | MirInstr::TryNext { iter, .. } => out.push(*iter),
+        _ => {}
+    }
+    out
+}
+
+/// Visit every slot [`instruction_slots`] lists, mutably and in the same
+/// order. A visitor rather than a list: the places and the slot operands
+/// borrow the instruction apart.
+pub fn for_each_instruction_slot_mut(
+    instruction: &mut MirInstr,
+    visit: &mut impl FnMut(&mut VarId),
+) {
+    for place in super::verify::instruction_places_mut(instruction) {
+        visit(&mut place.root);
+        if let Some(through) = &mut place.through {
+            visit(through);
+        }
+    }
+    for access in capture_accesses_mut(instruction) {
+        visit(&mut access.root);
+    }
+    match instruction {
+        MirInstr::EstablishLoans {
+            reference,
+            loans,
+            dest_interior,
+            ..
+        } => {
+            visit(reference);
+            for interior in loans
+                .iter_mut()
+                .filter_map(|loan| loan.interior.as_mut())
+                .chain(dest_interior.as_mut())
+            {
+                visit(&mut interior.root);
+            }
+        }
+        MirInstr::InvalidateInteriors { base, except, .. } => {
+            visit(&mut base.root);
+            if let Some(except) = except {
+                visit(except);
+            }
+        }
+        MirInstr::KeepAlive { var }
+        | MirInstr::UseVar { var, .. }
+        | MirInstr::DefVar { var, .. }
+        | MirInstr::DeclareVar { var }
+        | MirInstr::DropVar { var }
+        | MirInstr::ConsumeVar { var } => visit(var),
+        MirInstr::GetIter { source, dest, .. } => {
+            visit(source);
+            visit(dest);
+        }
+        MirInstr::HasNext { iter, .. }
+        | MirInstr::Next { iter, .. }
+        | MirInstr::TryNext { iter, .. } => visit(iter),
+        _ => {}
+    }
+}
+
+/// The capture accesses an instruction records: static ownership facts
+/// whose roots name the same slots the body addresses.
+fn capture_accesses(instruction: &MirInstr) -> &[MirCaptureAccess] {
+    match instruction {
+        MirInstr::Call {
+            capture_accesses, ..
+        }
+        | MirInstr::CallIndirect {
+            capture_accesses, ..
+        }
+        | MirInstr::MethodCall {
+            capture_accesses, ..
+        } => capture_accesses,
+        MirInstr::Index {
+            call: Some(call), ..
+        }
+        | MirInstr::Slice {
+            call: Some(call), ..
+        }
+        | MirInstr::MultiIndex {
+            call: Some(call), ..
+        }
+        | MirInstr::MultiSet { call, .. } => &call.capture_accesses,
+        _ => &[],
+    }
+}
+
+/// [`capture_accesses`], mutably.
+fn capture_accesses_mut(instruction: &mut MirInstr) -> &mut [MirCaptureAccess] {
+    match instruction {
+        MirInstr::Call {
+            capture_accesses, ..
+        }
+        | MirInstr::CallIndirect {
+            capture_accesses, ..
+        }
+        | MirInstr::MethodCall {
+            capture_accesses, ..
+        } => capture_accesses,
+        MirInstr::Index {
+            call: Some(call), ..
+        }
+        | MirInstr::Slice {
+            call: Some(call), ..
+        }
+        | MirInstr::MultiIndex {
+            call: Some(call), ..
+        }
+        | MirInstr::MultiSet { call, .. } => &mut call.capture_accesses,
+        _ => &mut [],
+    }
+}
+
 /// The index registers of a place's projections.
 fn place_regs_mut<'a>(place: &'a mut MirPlace, out: &mut Vec<&'a mut Reg>) {
     for projection in &mut place.proj {
@@ -519,22 +680,7 @@ fn prune_block_list(blocks: &mut Vec<MirBlock>) -> Vec<Option<usize>> {
 /// The blocks of the same list a block hands control to: its terminator's
 /// targets, and the escape targets of every region it holds.
 pub fn block_successors(block: &MirBlock) -> Vec<MirBlockId> {
-    let mut successors = match &block.term {
-        MirTerm::Jump(to) => vec![*to],
-        MirTerm::Branch { then_b, else_b, .. }
-        | MirTerm::ComptimeBranch { then_b, else_b, .. }
-        | MirTerm::ComptimeFor {
-            body: then_b,
-            exit: else_b,
-            ..
-        } => {
-            vec![*then_b, *else_b]
-        }
-        MirTerm::Return(_)
-        | MirTerm::ReturnWithCleanup { .. }
-        | MirTerm::FallOff
-        | MirTerm::EscapeJump { .. } => Vec::new(),
-    };
+    let mut successors = terminator_targets(&block.term);
     for region in block.instrs.iter().flat_map(try_regions) {
         collect_escape_targets(region, &mut successors);
     }

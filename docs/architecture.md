@@ -4433,7 +4433,11 @@ current Mojo:
   before the consumer, in that load order (`RegisterUses::loaded`).
   `refine_deinit_fields` applies the same split to a `deinit self` receiver's
   fields; a subscript setter's plain indices load like a getter's. An
-  aggregate load retains its owner through every consumer as before.
+  aggregate load retains its owner through every consumer as before. A
+  moving end of a slot (a `move`/`forward` use, a consume, a whole-root
+  move capture) removes that root from every register's provenance: the
+  slot's storage backs no register any more, so `two(h^, h.v)` drops no `h`
+  after the `forward` has ended it.
 - MIR lowering places the load itself at call setup, as Mojo evaluates
   every argument to an lvalue in source order and reads each once the last
   is evaluated. Each call lowerer opens a setup frame (`CallSetup`,
@@ -4683,14 +4687,15 @@ normal `FallOff` continuation (`else` entry, then `finally` entry, then the
 code after the block), `Return`/`ReturnWithCleanup`/`EscapeJump` edges (the
 `finally` still runs after them, and a crossing return's cleanup values are
 torn down after it), and `EscapeJump` targets bounded by the enclosing
-effective live-in. Because any potentially-raising instruction can transfer
-control to the raise edge's observer (the handler, or the `finally` and the
-enclosing handler when there is none), a **raise seed** — that observer's entry
-liveness — is unioned into the live set at every instruction not on a minimal
-allowlist of provably silent operations (`DefVar`, `UseVar`, `DropVar`,
-`ConsumeVar`, `KeepAlive`). Backward propagation therefore places each
-normal-flow drop after the last potentially-raising instruction preceding the
-death: a handler can never observe a vacated slot, and an outer variable
+effective live-in. Because a raising operation transfers control to the
+raise edge's observer (the handler, or the `finally` and the enclosing
+handler when there is none), a **raise seed** — that observer's entry
+liveness — is unioned into the live set at every checked raise point
+(`scan::raises_to_handler`: a `raise`, a call whose callee is declared
+`raises`, or a nested `try`), as upstream's CFG has raise edges only at
+raising operations and as the move analysis reads them. Backward propagation
+therefore places each normal-flow drop after the last raise point preceding
+the death: a handler can never observe a vacated slot, and an outer variable
 rebound in the body runs the overwritten value's destructor between the
 constructing call and the rebind — skipped exactly when that call raises. A
 value live into the `try` that no region path can observe (an unconditional
@@ -4717,7 +4722,11 @@ edge cannot host per-instruction drops, so the scope-exit cleanup lists remain
 and act as raise-edge/scope-exit backstops. The VM's `DropVar` and cleanup
 teardown on an already-vacated (`None`) slot are no-ops, and that idempotency
 is load-bearing: a value may legitimately be listed on a cleanup edge it
-already died before.
+already died before. That idempotency is the VM's, not the program's: the
+verifier rejects a `drop.var` or `var.consume` of a slot every path reaching
+it already ended (`mir::verify`'s slot-end rule), so no pass may emit one.
+A `for` loop's yielded slot is in no cleanup list, since the binding always
+consumes it.
 
 ### Try Cleanup
 

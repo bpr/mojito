@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The MIR verifier rejects a `drop.var` or `var.consume` of a slot that
+  every path reaching it already dropped, consumed, or moved (R825), so
+  `mojito opt`, `run_pipeline`, package body finish, and concrete MIR all
+  refuse a pass that destroys a value twice. The rule is a must-analysis over
+  blocks, `try` regions, and their escape edges. Drop elaboration was fixed
+  first: a moved slot no longer backs a loaded register (`two(h^, h.v)`
+  dropped `h` after forwarding it), a handler's live set is seeded only at
+  checked raise points (a non-raising call after a move kept the slot live),
+  and a `for` loop's yielded slot left the loop cleanup list (a `continue`
+  out of a `try` dropped it after the binding moved it). `mojito opt` now
+  prints its load findings, and `tests/mir_passes` gains `.error` cases.
+
 - Drop elaboration no longer drops slots around a `try` that the `try`
   already ended (R824). A handler's error binding is a def site at the
   handler's entry, every region's locals are scoped to their `try`, and the

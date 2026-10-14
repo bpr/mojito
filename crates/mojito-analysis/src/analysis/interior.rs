@@ -324,7 +324,7 @@ pub(super) fn interior_region_states(
 ) -> (Vec<Option<InteriorState>>, Vec<Option<InteriorState>>) {
     let mut preds: Vec<Vec<usize>> = vec![Vec::new(); blocks.len()];
     for (block, body) in blocks.iter().enumerate() {
-        for successor in successors(&body.term) {
+        for successor in terminator_targets(&body.term) {
             if successor < blocks.len() {
                 preds[successor].push(block);
             }

@@ -9,6 +9,18 @@ it with `<case>.expected`. Only that section is pinned, so a MIR format bump
 breaks no expected file; the reader still loads an input written at an older
 minor version.
 
+## Error cases
+
+A case with a `<case>.error` file beside it expects failure, after
+`mlir-opt -verify-diagnostics`: the trial runs the pass through
+`analysis::opt`, skips the canonical check, and compares the error's
+report with `<case>.error`. `opt` verifies its input when it loads it, so
+an input that does not verify fails at load, before the pass runs
+(`elaborate-drops/double_drop.mir` is the doubled-drop reproducer). A pass
+whose output does not verify is pinned by a unit test in
+`analysis::opt` instead. Create an empty `<case>.error` and bless it as
+below. Labels are `<pass>/<case>.mir`, so the reports hold no machine path.
+
 ## Adding a case
 
 1. Write a small Mojo program outside the repository and print its MIR with

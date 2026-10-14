@@ -376,10 +376,10 @@ pub(super) fn vars_moved(i: &MirInstr) -> Vec<VarId> {
 /// `RuntimeError::Raised`, transferring control to an enclosing handler.
 /// Minimal allowlist of provably silent instructions; everything else — calls,
 /// subscripts, `Raise`, nested `Try`, ... — counts as a potential raise.
-/// Misclassifying silent→raising merely delays a drop to the `Try.cleanup`
-/// backstop; raising→silent could let a handler observe a vacated slot, so the
-/// allowlist stays minimal. (Non-`Raised` runtime errors abort the program, so
-/// drops are unobservable on those paths.)
+/// Copy elision and field-drop placement use it; raising→silent could let a
+/// handler observe a vacated slot, so the allowlist stays minimal.
+/// (Non-`Raised` runtime errors abort the program, so drops are unobservable
+/// on those paths.)
 pub(super) const fn may_raise(instr: &MirInstr) -> bool {
     !matches!(
         instr,
@@ -390,6 +390,14 @@ pub(super) const fn may_raise(instr: &MirInstr) -> bool {
             | MirInstr::ConsumeVar { .. }
             | MirInstr::KeepAlive { .. }
     )
+}
+
+/// Whether this instruction is a checked raise point: a `raise`, a call
+/// whose callee is declared `raises`, or a nested `try` whose regions may
+/// raise outward. Drop elaboration seeds a handler's live set only here, as
+/// upstream's CFG has raise edges only at raising operations.
+pub(super) fn raises_to_handler(instr: &MirInstr) -> bool {
+    matches!(instr, MirInstr::Try { .. }) || interior::interior_instruction_directly_raises(instr)
 }
 
 /// Visit every instruction under `blocks`, recursing into `try` sub-regions.
