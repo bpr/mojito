@@ -1305,6 +1305,43 @@ fn comptime_for_elements_terminator_reprints() {
 }
 
 #[test]
+fn comptime_for_iterator_terminator_reprints() {
+    use mojito_types::param_expr::{MetaTy, ParamContext, ParamId, ParamRef};
+    let context = ParamContext::detached();
+    let binder = ParamRef {
+        id: ParamId::new("$comptime_for@f:10..18", 0),
+        name: "$iter".into(),
+    };
+    let iterator = context.decl_ref(binder.id.clone(), "$iter", MetaTy::int());
+    let initial = context.constant(CtValue::Int(3)).expect("a constant");
+    let step = |function: &str, meta| context.apply(function, &[iterator.clone()], meta);
+    let mut function = function_with(vec![Ty::int()], Vec::new());
+    function.n_vars = 1;
+    function.var_names = vec!["x".to_string()];
+    function.blocks[0].term = MirTerm::ComptimeFor {
+        binder,
+        slot: 0,
+        source: mojito_checked::checked::ComptimeSequence::Iterator {
+            initial,
+            has_next: step("has_next", MetaTy::value(Ty::bool())),
+            next_iter: step("next_iter", MetaTy::int()),
+        },
+        body: 1,
+        exit: 2,
+    };
+    function.blocks.push(MirBlock {
+        instrs: Vec::new(),
+        term: MirTerm::Jump(0),
+    });
+    function.blocks.push(MirBlock {
+        instrs: Vec::new(),
+        term: MirTerm::Return(None),
+    });
+    let program = program_with(vec![("comptime_for_iterator".into(), function)]);
+    assert_reprints(&program);
+}
+
+#[test]
 fn nested_try_regions_reprint_without_region_source_marks() {
     let region_block = |term: MirTerm| MirBlock {
         instrs: vec![MirInstr::KeepAlive { var: 0 }],

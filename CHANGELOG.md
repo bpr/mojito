@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `comptime for` over an iterable the built-in rule does not serve
+  iterates by upstream's iterator protocol (R321): the check spells the
+  iterable as its `__iter__()` call, the MIR header
+  (`comptime_for.iterator`, schema 1.52, package format 53) binds the
+  iterator, and the elaborator steps it with the bundled
+  `std.builtin._stubs` functions `paramfor_has_next` and
+  `paramfor_next_iter`, the variable each copy's `paramfor_next_value`.
+  A user `Iterator & Copyable`, or a struct whose `__iter__()` returns one,
+  now runs as at the pin where it was rejected
+  (`assets/ok/comptime_for_user_iterator.mojo`). A compile-time
+  application of a generic function given a closed generic struct type
+  now binds the struct's instance. `range`, collections, packs, and
+  reflection lists keep their own rule (R791, R794, R795).
 - Every closed compile-time value is materialized by one operation, the
   typed `Const::Value` its read's register types, as upstream's
   `kgen.param.constant` is (R524): a string read at `String`, and a

@@ -819,7 +819,19 @@ type, and records what the loop iterates
 (`SemanticAdjustment::ComptimeIteration`, its `ComptimeSource` a compiled
 `ComptimeSequence` — a range, a closed display's elements, a value pack, a
 reflection query — or `Evaluated` for a display over the binders, which the
-check types and does not close). An aggregate loop variable is a
+check types and does not close). Every other iterable is iterated by
+upstream's iterator protocol (`ComptimeSource::Iterator`,
+`Checker::check_comptime_iterator_for`, `checker/comptime_iteration.rs`):
+the check spells the iterable as its `__iter__()` call, which the checked
+arena hands HIR in the iterable's place and MIR lifts as a thunk over the
+binders in scope, the header's binder is the iterator, and its
+`ComptimeSequence::Iterator` steps it by the applications of the bundled
+`std.builtin._stubs` functions `paramfor_has_next` and `paramfor_next_iter`
+over that binder, which `native::mono` runs on the VM per step, as
+upstream's `processParamForOp` runs them on its interpreter. The loop
+variable is no binder: it is a local alias of `paramfor_next_value` over
+the iterator, which each body copy materializes as any application alias
+is. An aggregate loop variable is a
 compile-time parameter of the element's type, as upstream's induction
 variable is: a tuple element's binder is the nominal `Tuple` over its
 elements' types (`ComptimeSequence::binder_meta`), a borrow of the variable

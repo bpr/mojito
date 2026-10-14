@@ -413,6 +413,30 @@ fn comptime_for_over_a_list_of_strings() {
     assert_eq!(run(src).unwrap(), "empty\noccupied\ndeleted\n");
 }
 
+const COUNT_ITERATOR: &str = "@fieldwise_init\nstruct Count(Iterator, Copyable):\n    comptime Element = Int\n    var n: Int\n\n    def __next__(mut self) raises StopIteration -> Int:\n        if self.n <= 0:\n            raise StopIteration()\n        self.n -= 1\n        return self.n\n";
+
+#[test]
+fn comptime_for_over_a_user_iterator_steps_its_iter() {
+    // Any other iterable is iterated by its `__iter__()`, stepped at compile
+    // time by the bundled `paramfor_*` stubs, as upstream desugars it.
+    let src = format!(
+        "{COUNT_ITERATOR}\n    def __iter__(self) -> Self:\n        return self.copy()\n\ndef main():\n    comptime for x in Count(3):\n        print(x)\n"
+    );
+    assert_eq!(run(&src).unwrap(), "2\n1\n0\n");
+}
+
+#[test]
+fn comptime_for_over_a_type_without_iter_rejects() {
+    let src = format!(
+        "{COUNT_ITERATOR}\ndef main():\n    comptime for x in Count(3):\n        print(x)\n"
+    );
+    let err = run(&src).unwrap_err();
+    assert!(
+        err.contains("'Count' does not implement the '__iter__' method"),
+        "{err}"
+    );
+}
+
 #[test]
 fn heterogeneous_type_pack_round_trips_through_tuple_spread() {
     // Mirrors current Mojo: a heterogeneous variadic pack can be transferred

@@ -3003,6 +3003,9 @@ mod initializer_list;
 
 mod template_string;
 
+mod comptime_iteration;
+pub use comptime_iteration::paramfor_stub;
+
 pub use template_string::template_string_entry;
 
 mod indexing;

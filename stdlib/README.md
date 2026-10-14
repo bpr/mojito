@@ -64,6 +64,11 @@ point, as upstream's toolchain does.
   public Tuple is nominal and is not a method-free runtime iterable. Its
   default initializer stores each element's default construction to that
   storage, available where every element is `Defaultable`.
+- `std/builtin/_stubs.mojo` — upstream's `paramfor_has_next`,
+  `paramfor_next_iter`, and `paramfor_next_value`, which step a `comptime
+  for` iterator at compile time. The prelude links them for their bodies:
+  the compiler names them by module path, and no user spelling reaches
+  them.
 - `std/builtin/variadics.mojo` — upstream's `ParameterList[type: AnyType, //,
   *values: type]`, the zero-sized value a homogeneous value pack is when read
   at run time, and its `_ParameterListIter`. Its elements live in a constant

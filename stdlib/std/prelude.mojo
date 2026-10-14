@@ -25,3 +25,8 @@ from std.io import FileDescriptor, FileHandle, open
 
 # Linked for its bodies, not for a name: the compiler calls these by symbol.
 from std._intrinsics import _pow_int
+from std.builtin._stubs import (
+    paramfor_has_next,
+    paramfor_next_iter,
+    paramfor_next_value,
+)

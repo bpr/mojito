@@ -1181,7 +1181,22 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`record_comptime_iteration`, admitted by `reads_compile_time_alone` over
   `comptime_binding_owners`), a condition naming an evaluated binding is
   left uncompiled (`names_evaluated_binding`), and a runtime read is
-  rejected (`reject_display_crossing`, from `inference.rs`).
+  rejected (`reject_display_crossing`, from `inference.rs`). An iterable
+  `comptime_iteration_element` does not serve (it gives `None`) is
+  iterated by upstream's iterator protocol:
+  `Checker::check_comptime_iterator_for` (`checker/comptime_iteration.rs`)
+  types the spelled `iterable.__iter__()` call and the three stub calls
+  (`comptime_iterator_protocol`, the stubs in a `Checker::probe`, named by
+  `paramfor_stub` over `std.builtin._stubs`, the bundled
+  `stdlib/std/builtin/_stubs.mojo` the prelude links for its bodies),
+  records the call as the iterable's `SpelledConstruction` and
+  `ComptimeSource::Iterator` in the iterable's `comptime_iteration` fact
+  (`CheckedArena::spelled_construction` pushes it onto the call's node),
+  and binds the variable as a local alias of the `paramfor_next_value`
+  application. `lower_term` makes the header's
+  `ComptimeSequence::Iterator`, its `initial` the thunk of the spelled
+  call (`ComptimeThunks::request_value`), and `Specializer::trip_elements`
+  (`native/mono/unroll.rs`) steps it, binding each copy to its iterator.
   `Flatten::lower_comptime_binding` (`mir/lower_stmt.rs`) records the
   binding with its value's node handle and sequence (`DisplayBinding`, in
   the scoped `Flatten::displays`; `ComptimeThunks::bind_display`) and gives

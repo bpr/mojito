@@ -1425,6 +1425,29 @@ fn term_value(term: &MirTerm) -> String {
                 ("exit", format!("bb{exit}")),
             ],
         ),
+        MirTerm::ComptimeFor {
+            binder,
+            slot,
+            source:
+                ComptimeSequence::Iterator {
+                    initial,
+                    has_next,
+                    next_iter,
+                },
+            body,
+            exit,
+        } => record(
+            tag,
+            &[
+                ("binder", binder_ref(binder)),
+                ("slot", var_value(*slot)),
+                ("initial", param_expr(initial)),
+                ("has_next", param_expr(has_next)),
+                ("next_iter", param_expr(next_iter)),
+                ("body", format!("bb{body}")),
+                ("exit", format!("bb{exit}")),
+            ],
+        ),
         MirTerm::Return(value) => record(tag, &[("value", option(value.map(reg_value)))]),
         MirTerm::ReturnWithCleanup { value, cleanup } => record(
             tag,

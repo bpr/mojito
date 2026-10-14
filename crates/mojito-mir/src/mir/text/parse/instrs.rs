@@ -814,6 +814,17 @@ impl Decoder {
                 body: self.req(value, fields, "body", Self::block_id)?,
                 exit: self.req(value, fields, "exit", Self::block_id)?,
             }),
+            "comptime_for.iterator" => Some(MirTerm::ComptimeFor {
+                binder: self.req(value, fields, "binder", Self::binder_ref)?,
+                slot: self.req(value, fields, "slot", Self::var)?,
+                source: mojito_checked::checked::ComptimeSequence::Iterator {
+                    initial: self.req(value, fields, "initial", Self::param_expr)?,
+                    has_next: self.req(value, fields, "has_next", Self::param_expr)?,
+                    next_iter: self.req(value, fields, "next_iter", Self::param_expr)?,
+                },
+                body: self.req(value, fields, "body", Self::block_id)?,
+                exit: self.req(value, fields, "exit", Self::block_id)?,
+            }),
             "return" => Some(MirTerm::Return(self.req(
                 value,
                 fields,

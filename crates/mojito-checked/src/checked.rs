@@ -444,8 +444,9 @@ pub struct InteriorInvalidation {
 
 /// A `comptime for` over a compile-time sequence of parameter expressions.
 ///
-/// The loop's own binder, of the element's type, and the sequence it
-/// iterates over the binders in scope. The body is checked once with the
+/// The loop's own binder — of the element's type, or the iterator's for an
+/// [`ComptimeSource::Iterator`] — and the sequence it iterates over the
+/// binders in scope. The body is checked once with the
 /// binder symbolic; `native::mono` unrolls it under each instance's
 /// bindings.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -494,6 +495,17 @@ pub enum ComptimeSource {
     EvaluatedRange {
         bounds: Vec<Option<mojito_types::param_expr::ParamExpr>>,
     },
+    /// Upstream's iterator protocol: the check spelled the iterable as its
+    /// `__iter__()` call, which MIR lifts as a function over the binders in
+    /// scope, and the binder is the `iterator`-typed iterator. `has_next`
+    /// and `next_iter` are the `paramfor_has_next`/`paramfor_next_iter`
+    /// applications over the binder, which the elaborator runs to step it;
+    /// the loop variable is an alias of `paramfor_next_value` over it.
+    Iterator {
+        iterator: mojito_types::param_expr::MetaTy,
+        has_next: mojito_types::param_expr::ParamExpr,
+        next_iter: mojito_types::param_expr::ParamExpr,
+    },
 }
 
 impl ComptimeSource {
@@ -504,6 +516,7 @@ impl ComptimeSource {
             Self::Evaluated { element, .. }
             | Self::Applied { element }
             | Self::Bound { element, .. } => element.clone(),
+            Self::Iterator { iterator, .. } => iterator.clone(),
             Self::EvaluatedRange { .. } => mojito_types::param_expr::MetaTy::int(),
         }
     }
@@ -523,6 +536,14 @@ pub enum ComptimeSequence {
     /// [`mojito_types::ct::CtValue::comptime_iteration_elements`] names: a
     /// list's or a set's elements, a dictionary's keys.
     Elements(mojito_types::param_expr::ParamExpr),
+    /// An iterator stepped by upstream's protocol from `initial`, the
+    /// iterable's `__iter__()`: while `has_next` over the binder holds, the
+    /// binder takes `next_iter` over it. The binder is the iterator.
+    Iterator {
+        initial: mojito_types::param_expr::ParamExpr,
+        has_next: mojito_types::param_expr::ParamExpr,
+        next_iter: mojito_types::param_expr::ParamExpr,
+    },
 }
 
 impl ComptimeSequence {
@@ -543,6 +564,7 @@ impl ComptimeSequence {
         }
         match self {
             Self::Range { .. } => MetaTy::int(),
+            Self::Iterator { initial, .. } => initial.meta().clone(),
             Self::Elements(elements) => match elements.meta().iteration_element() {
                 Some(element @ MetaTy::Tuple(_)) => {
                     nominal(element).map_or_else(|| element.clone(), MetaTy::value)
@@ -576,6 +598,11 @@ impl ComptimeSequence {
         match self {
             Self::Range { start, stop, step } => vec![start, stop, step],
             Self::Elements(elements) => vec![elements],
+            Self::Iterator {
+                initial,
+                has_next,
+                next_iter,
+            } => vec![initial, has_next, next_iter],
         }
     }
 }
@@ -585,6 +612,11 @@ impl std::fmt::Display for ComptimeSequence {
         match self {
             Self::Range { start, stop, step } => write!(f, "range({start}, {stop}, {step})"),
             Self::Elements(elements) => write!(f, "{elements}"),
+            Self::Iterator {
+                initial,
+                has_next,
+                next_iter,
+            } => write!(f, "iter({initial}; {has_next}; {next_iter})"),
         }
     }
 }
@@ -4213,7 +4245,8 @@ impl<'a> ArenaBuilder<'a> {
     /// it is a spelled sugar: the sugar's operand position holds it, so HIR
     /// lowers the construction where the sugar was written (an
     /// initializer list, a t-string, a value pack read as its
-    /// `ParameterList`, a scalar `range` call).
+    /// `ParameterList`, a scalar `range` call, a `comptime for` iterable read
+    /// as its `__iter__()` call).
     fn spelled_construction(&mut self, expression: &Expr) -> Option<CheckedNodeId> {
         if !matches!(
             expression.kind,
@@ -4222,6 +4255,9 @@ impl<'a> ArenaBuilder<'a> {
                 | ExprKind::Identifier(_)
                 | ExprKind::Member { .. }
                 | ExprKind::Call { .. }
+                | ExprKind::MethodCall { .. }
+                | ExprKind::Invoke { .. }
+                | ExprKind::Index { .. }
         ) {
             return None;
         }
@@ -4233,12 +4269,21 @@ impl<'a> ArenaBuilder<'a> {
             return None;
         };
         let node = self.expr(&construction.0);
-        // A `for` loop iterates the construction it spells.
-        if let Some(protocol) = &self.facts(&expression.source_span()).iteration_protocol {
-            self.nodes[node.0 as usize]
-                .adjustments
-                .push(SemanticAdjustment::Iterate((**protocol).clone()));
-        }
+        // A `for` loop iterates the construction it spells, and a `comptime
+        // for` steps it.
+        let facts = self.facts(&expression.source_span());
+        let loops: Vec<SemanticAdjustment> = facts
+            .iteration_protocol
+            .iter()
+            .map(|protocol| SemanticAdjustment::Iterate((**protocol).clone()))
+            .chain(
+                facts
+                    .comptime_iteration
+                    .iter()
+                    .map(|iteration| SemanticAdjustment::ComptimeIteration(iteration.clone())),
+            )
+            .collect();
+        self.nodes[node.0 as usize].adjustments.extend(loops);
         Some(node)
     }
 
@@ -5261,6 +5306,9 @@ node_facts! {
         selected_call: Box<CheckedCallContract>,
         subscript_descriptor: (Vec<Option<mojito_types::types::SliceKind>>, bool),
         iteration_protocol: Box<IterationProtocol>,
+        /// The protocol a `comptime for` steps the construction spelled
+        /// for its iterable by (`seq.__iter__()`).
+        comptime_iteration: Box<ComptimeIteration>,
         simd_construction: (SimdDtype, SimdWidth),
         /// The one operation record of the occurrence.
         adjustment: Box<SemanticAdjustment>,

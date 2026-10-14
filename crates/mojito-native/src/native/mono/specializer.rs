@@ -969,8 +969,11 @@ impl<'a> Specializer<'a> {
                 ParamDecl::Type { .. } => {
                     let ty = match arg.kind() {
                         ParamKind::DeclRef(reference) => bindings.types.get(reference).cloned(),
-                        ParamKind::TypeShape(ty) => substitute_ty(ty, bindings).ok(),
-                        ParamKind::Constant(CtValue::Type(ty)) => Some(ty.clone()),
+                        // A closed type names its generic structs by their
+                        // instances, as a shape does once substituted.
+                        ParamKind::TypeShape(ty) | ParamKind::Constant(CtValue::Type(ty)) => {
+                            substitute_ty(ty, bindings).ok()
+                        }
                         _ => None,
                     }
                     .ok_or_else(|| unresolved("an unresolved type"))?;

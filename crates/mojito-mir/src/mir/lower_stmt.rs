@@ -3315,6 +3315,19 @@ impl<'a> Flatten<'a> {
                                 self.display(binding)?.sequence.clone(),
                             )
                         }
+                        ComptimeSource::Iterator {
+                            iterator,
+                            has_next,
+                            next_iter,
+                        } => {
+                            let ty = iterator.as_value()?.clone();
+                            let binders = &self.enclosing_binders;
+                            mojito_checked::checked::ComptimeSequence::Iterator {
+                                initial: self.comptime_thunks.request_value(iter.node, binders, ty),
+                                has_next,
+                                next_iter,
+                            }
+                        }
                         ComptimeSource::EvaluatedRange { bounds } => {
                             let CheckedOp::Call {
                                 args: arg_nodes, ..

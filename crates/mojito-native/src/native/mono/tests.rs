@@ -1156,6 +1156,86 @@ fn comptime_for_unrolls_one_copy_per_iteration() {
 }
 
 #[test]
+fn comptime_for_steps_an_iterator_one_copy_per_element() {
+    // A loop over a user iterator keeps an iterator header in the template;
+    // each instance steps the iterator through the `paramfor_*` stubs and
+    // copies the body once per element.
+    let source = "@fieldwise_init\n\
+         struct Count(Iterator, Copyable):\n\
+         \x20   comptime Element = Int\n\
+         \x20   var n: Int\n\
+         \x20   def __next__(mut self) raises StopIteration -> Int:\n\
+         \x20       if self.n <= 0:\n\
+         \x20           raise StopIteration()\n\
+         \x20       self.n -= 1\n\
+         \x20       return self.n\n\
+         \x20   def __iter__(self) -> Self:\n\
+         \x20       return self.copy()\n\
+         def total[n: Int]() -> Int:\n\
+         \x20   var sum = 0\n\
+         \x20   comptime for x in Count(n):\n\
+         \x20       sum += x\n\
+         \x20   return sum\n\
+         def main():\n\
+         \x20   print(total[3]())\n";
+    let compiler = mojito::Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, std::path::Path::new("mono_test.mojo"))
+        .expect("compile the loop");
+    let iterator_headers = |function: &MirFunction| {
+        function
+            .blocks
+            .iter()
+            .filter(|block| {
+                matches!(
+                    block.term,
+                    MirTerm::ComptimeFor {
+                        source: mojito_checked::checked::ComptimeSequence::Iterator { .. },
+                        ..
+                    }
+                )
+            })
+            .count()
+    };
+    let additions = |function: &MirFunction| {
+        function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instrs)
+            .filter(|instruction| matches!(instruction, MirInstr::BinOp { .. }))
+            .count()
+    };
+    let template = compiled
+        .drop_elaborated_mir()
+        .functions
+        .iter()
+        .find(|(name, _)| name == "total")
+        .map(|(_, function)| function)
+        .expect("the template is lowered");
+    assert_eq!(iterator_headers(template), 1);
+    let specialized = specialize(
+        compiled.drop_elaborated_mir(),
+        &["main".to_string()],
+        host_target().as_ref(),
+    )
+    .expect("specialize the loop");
+    let instance = specialized
+        .program
+        .functions
+        .iter()
+        .find(|(name, _)| name.starts_with("total$"))
+        .map(|(_, function)| function)
+        .expect("the instance is emitted");
+    assert!(
+        instance
+            .blocks
+            .iter()
+            .all(|block| !matches!(block.term, MirTerm::ComptimeFor { .. }))
+    );
+    assert_eq!(additions(instance), 3, "one body copy per element");
+}
+
+#[test]
 fn comptime_for_index_typed_local_takes_a_slot_per_copy() {
     // A `var` whose type names the index is one slot per copy, each at its
     // iteration's type, and the template's slot leaves the instance — even

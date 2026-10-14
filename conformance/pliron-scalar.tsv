@@ -85,13 +85,16 @@ assets/ok/comptime_for_display_element_reads.mojo	-	ineligible	no-scalar-entry-s
 assets/ok/comptime_for_display_method_reads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_display_over_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_index_typed_local.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_for_iterable_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_iteration_scope.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_for_iterator_aggregate_elements.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_named_collection.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_string_aggregates.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_struct_elements.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_tuple_elements.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_unserved_nested.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_for_user_iterator.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_value_struct_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_frozen_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_hash.mojo	-	ineligible	no-scalar-entry-shape

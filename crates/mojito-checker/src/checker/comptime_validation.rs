@@ -512,7 +512,13 @@ impl Checker {
         let element = match (&bound, &names) {
             (Some(display), _) => display.element.clone(),
             (None, Some(_)) => Ty::string_literal(),
-            (None, None) => self.comptime_iteration_element(&iter)?,
+            (None, None) => {
+                let Some(element) = self.comptime_iteration_element(&iter)? else {
+                    drop(position);
+                    return self.check_comptime_iterator_for(stmt, var, (source, &iter), body, ret);
+                };
+                element
+            }
         };
         let before = self.uninitialized.borrow().clone();
         self.push_scope();
@@ -751,7 +757,7 @@ impl Checker {
     /// binder, a `comptime for` variable, or a local `comptime` constant or
     /// display. Such an expression can run in a function the elaborator
     /// evaluates per instance.
-    fn reads_compile_time_alone(&self, expr: &Expr) -> bool {
+    pub(super) fn reads_compile_time_alone(&self, expr: &Expr) -> bool {
         names_read(expr).iter().all(|name| {
             self.binding_scope(name).is_none_or(|scope| scope == 0)
                 || self.is_compile_time_binding(name)
@@ -1603,10 +1609,10 @@ impl Checker {
         let meta = match &value.kind {
             ExprKind::ListLit(_) | ExprKind::TupleLit(_) if !annotated => {
                 match self.comptime_iteration_element(value) {
-                    Ok(element) => mojito_types::param_expr::MetaTy::ParamList(Box::new(
+                    Ok(Some(element)) => mojito_types::param_expr::MetaTy::ParamList(Box::new(
                         mojito_types::param_expr::MetaTy::value(string_element_binder(element)),
                     )),
-                    Err(_) => application.meta().clone(),
+                    Ok(None) | Err(_) => application.meta().clone(),
                 }
             }
             _ => application.meta().clone(),
@@ -1646,7 +1652,7 @@ impl Checker {
         &self,
         value: &Expr,
     ) -> Option<(Ty, Ty, mojito_checked::checked::SemanticAdjustment)> {
-        let element = self.comptime_iteration_element(value).ok()?;
+        let element = self.comptime_iteration_element(value).ok()??;
         if !self.evaluated_display(value, &element) {
             return None;
         }
@@ -2908,13 +2914,15 @@ impl Checker {
         }
     }
 
-    /// The element type a `comptime for` iterable yields.
-    fn comptime_iteration_element(&self, iter: &Expr) -> Result<Ty, TypeError> {
+    /// The element type a `comptime for` iterable yields by the built-in
+    /// iteration rule; `None` for an iterable the rule does not serve, which
+    /// iterates by its iterator ([`Self::check_comptime_iterator_for`]).
+    fn comptime_iteration_element(&self, iter: &Expr) -> Result<Option<Ty>, TypeError> {
         if let ExprKind::Call { name, args, .. } = &iter.kind
             && name == "range"
         {
             self.infer_range(args)?;
-            return Ok(Ty::int());
+            return Ok(Some(Ty::int()));
         }
         // A value pack iterates its elements at compile time; only a
         // runtime read is its `ParameterList`.
@@ -2923,6 +2931,7 @@ impl Checker {
                 mojito_types::param_expr::MetaTy::ParamList(element) => element.as_value().cloned(),
                 _ => None,
             }
+            .map(Some)
             .ok_or_else(|| {
                 TypeError::InvariantViolation(format!(
                     "the value pack `{pack}` is not a parameter list of values"
@@ -2941,12 +2950,16 @@ impl Checker {
             ))
         };
         match ty.kind() {
-            TyKind::ComptimeList(element) | TyKind::VariadicPack(element) => Ok((*element).clone()),
+            TyKind::ComptimeList(element) | TyKind::VariadicPack(element) => {
+                Ok(Some((*element).clone()))
+            }
             // A compile-time dictionary iterates its keys, a set its elements.
             dict if let Some((key, _)) = mojito_types::types::dict_elements(dict) => {
-                Ok(key.clone())
+                Ok(Some(key.clone()))
             }
-            set if let Some(element) = mojito_types::types::set_element(set) => Ok(element.clone()),
+            set if let Some(element) = mojito_types::types::set_element(set) => {
+                Ok(Some(element.clone()))
+            }
             // A list display of literals is a fixed-size array here; the
             // elaborator's list value iterates by element type.
             TyKind::Struct(name, args)
@@ -2954,7 +2967,7 @@ impl Checker {
                     || name == mojito_types::types::ARRAY_TYPE_NAME)
                     && let Some(TyArg::Ty(element)) = args.first() =>
             {
-                Ok(default_literal(element))
+                Ok(Some(default_literal(element)))
             }
             // A compile-time `Tuple` has no `__iter__`, as upstream; the
             // rejection spells the tuple's element types as the elaborator
@@ -2970,9 +2983,7 @@ impl Checker {
                     .collect();
                 Err(not_iterable(&elements))
             }
-            other => Err(TypeError::Unsupported(format!(
-                "'comptime for' iterates a range, a compile-time list, or a pack; found '{other}'"
-            ))),
+            _ => Ok(None),
         }
     }
 
@@ -3075,6 +3086,19 @@ pub(super) fn positional_pack_binding(
                 TyArg::Val(CtValue::Tuple(types)),
             )
         })
+}
+
+/// The owner of a `comptime for`'s own binder, named by the loop's
+/// iterable: each loop owns its binder.
+pub(super) fn comptime_for_owner(iter: &Expr) -> String {
+    let span = iter.source_span();
+    format!(
+        "{}{}:{}..{}",
+        mojito_types::param_expr::COMPTIME_FOR_OWNER,
+        super::overload_support::library_relative(span.source.as_deref().unwrap_or_default()),
+        span.span.0,
+        span.span.1
+    )
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -3320,15 +3344,7 @@ fn pack_element_view_binder(name: &str) -> ParamRef {
 /// so a dependent expression over it (`Ts[i]`, `args[i]`, `x * n`) has a
 /// node. The loop's iterable names the binder: each loop owns its variable.
 fn comptime_index_binder(var: &str, iter: &Expr, element: &Ty) -> ParamExpr {
-    let span = iter.source_span();
-    let owner = format!(
-        "{}{}:{}..{}",
-        mojito_types::param_expr::COMPTIME_FOR_OWNER,
-        super::overload_support::library_relative(span.source.as_deref().unwrap_or_default()),
-        span.span.0,
-        span.span.1
-    );
-    value_binder_expr(ParamId::new(&owner, 0), var, element)
+    value_binder_expr(ParamId::new(&comptime_for_owner(iter), 0), var, element)
 }
 
 /// Whether `iter` is a collection display of scalar `element`s a loop binder

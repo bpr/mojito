@@ -1,5 +1,6 @@
 //! Unrolling a `comptime for`: each instance replaces the loop the template
-//! keeps with one copy of its body per iteration, the index bound in each.
+//! keeps with one copy of its body per iteration, the index bound in each —
+//! or, for an iterator header, the iterator the protocol stepped to.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -443,9 +444,9 @@ impl Specializer<'_> {
 
     /// The values the loop binds under the bindings, in order: the
     /// integers a range spans — a zero step is an empty range, as `range`
-    /// is — or the elements of any other sequence
-    /// ([`CtValue::comptime_iteration_elements`]), each materialized at the
-    /// binder's type.
+    /// is — the iterators an iterator header steps through, or the elements
+    /// of any other sequence ([`CtValue::comptime_iteration_elements`]),
+    /// each materialized at the binder's type.
     fn trip_elements(
         &mut self,
         template: &str,
@@ -490,6 +491,37 @@ impl Specializer<'_> {
                 }
                 return Ok(values);
             }
+            // Upstream's `processParamForOp`: from the iterable's
+            // `__iter__()`, each iterator `paramfor_has_next` accepts is one
+            // iteration's binding, and `paramfor_next_iter` gives the next.
+            // The element is the body's own `paramfor_next_value` read.
+            ComptimeSequence::Iterator {
+                initial,
+                has_next,
+                next_iter,
+            } => {
+                let mut iterator = self.evaluated(template, initial, bindings)?;
+                let mut iterators = Vec::new();
+                loop {
+                    let mut stepping = bindings.clone();
+                    stepping.values.insert(binder.clone(), iterator.clone());
+                    match self.evaluated(template, has_next, &stepping)? {
+                        CtValue::Bool(false) => return Ok(iterators),
+                        CtValue::Bool(true) => {}
+                        other => {
+                            return Err(self.error(
+                                Some(template),
+                                format!(
+                                    "comptime for over `{binder}`: paramfor_has_next gave `{other}`"
+                                ),
+                            ));
+                        }
+                    }
+                    self.spend_unroll_fuel(template)?;
+                    let next = self.evaluated(template, next_iter, &stepping)?;
+                    iterators.push(std::mem::replace(&mut iterator, next));
+                }
+            }
             // A display the check left to evaluate is the application of
             // its thunk, demanded and run here.
             ComptimeSequence::Elements(expression) => self
@@ -509,6 +541,24 @@ impl Specializer<'_> {
             });
         }
         Ok(values)
+    }
+
+    /// The value of a loop header's expression under the bindings: the
+    /// application it is, demanded and run, or its fold.
+    fn evaluated(
+        &mut self,
+        template: &str,
+        expression: &ParamExpr,
+        bindings: &Bindings,
+    ) -> Result<CtValue, MonoError> {
+        self.resolve_application(template, expression, bindings)?
+            .map_or_else(|| eval_ct(expression, bindings).ok(), Some)
+            .ok_or_else(|| {
+                self.error(
+                    Some(template),
+                    format!("comptime for header `{expression}` is not decided by the instance"),
+                )
+            })
     }
 
     /// Spend one unit of compile-time fuel on one unrolled iteration.

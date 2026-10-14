@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.51
+# Mojito Textual MIR Format, Version 1.52
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.51 is implemented end to end for inspection and loading: canonical
+Version 1.52 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.51
+mojito-mir 1.52
 ```
 
-The writer emits 1.51. The reader accepts 1.0 through 1.51; *Schema 1.0*
+The writer emits 1.52. The reader accepts 1.0 through 1.52; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -872,7 +872,7 @@ as explicit options/lists. Backends must not reconstruct omitted selections.
 | `Jump(target)` | `jump { target: bbN }` |
 | `Branch` | `branch { condition: %rN, then: bbN, else: bbN }` |
 | `ComptimeBranch` | `comptime_branch { condition: <constraint>, then: bbN, else: bbN }` — a `comptime if` on a parameter expression over the function's binders (the `availability` constraint grammar), decided by the elaborator; concrete MIR carries none |
-| `ComptimeFor` | `comptime_for { binder: <binder>, slot: $vN, start: <param_expr>, stop: <param_expr>, step: <param_expr>, body: bbN, exit: bbN }` for a `range`, `comptime_for.elements { binder: <binder>, slot: $vN, elements: <param_expr>, body: bbN, exit: bbN }` for any other sequence — a `comptime for` header: a loop whose variable is the binder `binder`, read by the body through the slot `slot`, over the integers the three parameter expressions span as `range` does, or over the elements the `elements` value yields (a list's or a set's elements, a dictionary's keys); the body's back edge jumps to the header, the elaborator unrolls it, and concrete MIR carries none (schema 1.16; the `elements` form and the field name `binder`, `index` before, schema 1.25) |
+| `ComptimeFor` | `comptime_for { binder: <binder>, slot: $vN, start: <param_expr>, stop: <param_expr>, step: <param_expr>, body: bbN, exit: bbN }` for a `range`, `comptime_for.elements { binder: <binder>, slot: $vN, elements: <param_expr>, body: bbN, exit: bbN }` for any other sequence the built-in rule serves, `comptime_for.iterator { binder: <binder>, slot: $vN, initial: <param_expr>, has_next: <param_expr>, next_iter: <param_expr>, body: bbN, exit: bbN }` for upstream's iterator protocol — a `comptime for` header: a loop whose variable is the binder `binder`, read by the body through the slot `slot`, over the integers the three parameter expressions span as `range` does, or over the elements the `elements` value yields (a list's or a set's elements, a dictionary's keys); the iterator form's binder is the iterator, starting at `initial` (the application of the iterable's lifted `__iter__()` call) and replaced by `next_iter` while `has_next` holds, both applications of the `paramfor_*` stubs over the binder, the body reading its element as `paramfor_next_value` over it and nothing reading the slot; the body's back edge jumps to the header, the elaborator unrolls it, and concrete MIR carries none (schema 1.16; the `elements` form and the field name `binder`, `index` before, schema 1.25; the `iterator` form, schema 1.52) |
 | `Return` | `return { value: option<reg> }` |
 | `ReturnWithCleanup` | `return.cleanup { value: option<reg>, cleanup: [var...] }` |
 | `FallOff` | `falloff {}` |
@@ -924,10 +924,10 @@ lowering unit, one record per library declaration, and one module table
 holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 52`.
+MLIR bytecode throughout. The format line is `mojito-package 53`.
 
 ```text
-mojito-package 52
+mojito-package 53
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode, then the type section>

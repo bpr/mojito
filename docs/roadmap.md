@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R791**.
+Next free ID: **R800**.
 
 ## Ordered Work
 
@@ -1660,6 +1660,20 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     this reason, give it a non-discarding read.
   - Found while landing R665 (2026-10-13).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R792 `conforms_to` takes only a parameter name and one trait**
+
+  Problem: `where conforms_to(IteratorType.Element, Movable & Deinitable)`
+  is rejected with "conforms_to requires a parameter name", where the pin
+  accepts a projection subject and a trait composition.
+  - The bundled `std/builtin/_stubs.mojo` omits upstream's clause on
+    `paramfor_has_next` and `paramfor_next_iter` for this reason. Restore
+    it when this lands.
+  - The constraint compiler is `compile_generic_constraint`
+    (`crates/mojito-checker/src/checker/constraints.rs`).
+  - Depends on R667, which first gives an associated projection its real
+    bounds.
   - Model: Opus, Not Planned.
 
 - [ ] **R510 A user trait named like a prelude trait replaces it**
@@ -4064,6 +4078,31 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R793 A compile-time iterator that borrows its collection cannot be
+  frozen**
+
+  Problem: `comptime for k in d.keys()` over a local `comptime d = {"a":
+  1}` fails at elaboration with "VM CTFE returned unsupported runtime value
+  <ref 0:0>", where the pin prints the keys.
+  - The loop's initial iterator is a `_DictKeyIter` holding a reference
+    into the dictionary, and `VmBackend::freeze_value`
+    (`crates/mojito-vm/src/backend/vm.rs`) has no arm for a `Value::Ref`.
+  - A list's or a set's `__iter__()` fails the same way.
+  - Freeze the reference's target as frozen memory, as a pointer's is, and
+    thaw rebuilds it.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R797 `comptime for … else` does not parse**
+
+  Problem: an `else:` after a `comptime for` body is "Unexpected token
+  Else", where the pin runs it once the loop ends without a `break`.
+  - Upstream's `ParamForOp` has an `else` region, reached when
+    `paramfor_has_next` is false.
+  - Tuple targets (`comptime for a, b in …`) are unverified too.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R130 A struct member's `where` clause over `TypeList[Self.Ts.values]()`
   is rejected**
 
@@ -6104,24 +6143,87 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R74.
   - Model: Opus, Planned.
 
-- [ ] **R321 A `comptime for` iterates by a built-in rule, not by its
-  iterable's iterator**
+- [ ] **R791 A `comptime for` over a `range` iterates by a built-in rule,
+  not by the range's iterator**
 
-  Problem: Mojito unrolls a `comptime for` over a `range`, a compile-time
-  list, set, or dictionary, or a pack by a rule of its own
-  (`CtValue::comptime_iteration_elements`, `ComptimeSequence`), and rejects
-  any other iterable with "'comptime for' iterates a range, a compile-time
-  list, or a pack", where the pin runs a user `Iterator & Copyable`
-  (`comptime for x in Count(3)` prints `2`, `1`, `0`).
-  - Upstream's parser desugars every `comptime for` to `seq.__iter__()` in
-    the parameter domain, and the elaborator steps it through the stdlib
-    stubs `paramfor_has_next`, `paramfor_next_iter`, and
-    `paramfor_next_value` (`std/builtin/_stubs.mojo`).
-  - Following it moves the MIR header's binder from the element to the
-    iterator, the element bound as `paramfor_next_value(it)`, with each
-    step a compile-time application the elaborator runs.
-  - Depends on R246.
-  - Model: Fable, Not Planned.
+  Problem: a `range` loop records its bounds as `ComptimeSequence::Range`
+  and the elaborator counts them, where upstream iterates
+  `range(...).__iter__()` through the `paramfor_*` stubs as it does every
+  other iterable.
+  - Route `range(...)` through `Checker::check_comptime_iterator_for`
+    (`crates/mojito-checker/src/checker/comptime_iteration.rs`).
+  - Delete `ComptimeSequence::Range`, `ComptimeSource::EvaluatedRange`, and
+    the bound compilation in `record_comptime_iteration`.
+  - A probe stepped `range(3).__iter__()` correctly through user copies of
+    the stubs under CTFE.
+  - The risk is compile time: about 3N+1 VM calls per loop instance across
+    roughly 240 fixture loops. Measure before and after.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R794 A `comptime for` over a compile-time collection iterates by a
+  built-in rule, not by the collection's iterator**
+
+  Problem: list, set, and dict displays, local display bindings, and applied
+  collections iterate `CtValue::comptime_iteration_elements`, where
+  upstream iterates the collection's own `__iter__()`.
+  - Move `ComptimeSource::{Evaluated, Bound, Applied}` and
+    `ComptimeSequence::Elements` over a list value onto the iterator form.
+  - A collection's iterator borrows the collection, which a CTFE result
+    cannot hold yet (R793).
+  - An `Array` display must be a CTFE value rather than a
+    `CtValue::List` first (R789).
+  - Depends on R793 and R789.
+  - Model: Fable, Planned.
+
+- [ ] **R795 A `comptime for` over a value pack or a reflected name list
+  iterates by a built-in rule**
+
+  Problem: a value pack and `reflect[T].field_names()` are their own
+  `ComptimeSequence::Elements`, where upstream iterates their `__iter__()`
+  through the `paramfor_*` stubs.
+  - A probe stepped a value pack's `values.__iter__()` correctly under CTFE.
+  - The reflected list's upstream return type needs checking first.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R796 The built-in `comptime for` iteration rule still stands beside
+  the iterator protocol**
+
+  Problem: once every iterable iterates by its iterator, the built-in
+  forms remain as dead weight and a non-upstream header shape.
+  - Remove `ComptimeSequence::{Range, Elements}`, the remaining
+    `ComptimeSource` variants, and the loop use of
+    `CtValue::comptime_iteration_elements`.
+  - Remove the header's `slot`, which upstream's `ParamForOp` lacks and
+    nothing reads in the iterator form.
+  - Fold the compile-time `Tuple` rejection into the `__iter__` rule.
+  - Depends on R791, R794, and R795.
+  - Model: Opus, Planned.
+
+- [ ] **R798 The bundled `paramfor_*` stubs bound their iterator by
+  `Deinitable` as well**
+
+  Problem: `stdlib/std/builtin/_stubs.mojo` bounds `IteratorType` by
+  `Iterator & Copyable & Deinitable`, where upstream's bound is `Iterator &
+  Copyable`.
+  - The extra bound stands in for upstream's `trait Iterator(Deinitable,
+    Movable)`, which the bundled `Iterator` does not refine yet (R669).
+  - Drop `& Deinitable` from the three stubs once it does.
+  - Depends on R669.
+  - Model: Opus, Not Planned.
+
+- [ ] **R799 The bundled `paramfor_*` stubs trap through `_mojito_abort`**
+
+  Problem: `paramfor_next_iter` and `paramfor_next_value` in
+  `stdlib/std/builtin/_stubs.mojo` end their `except` arm in
+  `_mojito_abort(...)`, where upstream calls `_abort_base()`, a `-> Never`
+  function.
+  - A call of a `-> Never` function does not end a path for return
+    analysis yet (R50).
+  - Swap in `_abort_base()` and give `std.os` its declaration once it does.
+  - Depends on R50.
+  - Model: Opus, Not Planned.
 
 - [ ] **R492 `ParameterList.get_span` addresses its elements through a
   compiler-private stand-in**
