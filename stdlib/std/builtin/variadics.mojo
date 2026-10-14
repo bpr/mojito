@@ -6,9 +6,12 @@
 # the variadic `*values: type` upstream's own `_ParameterListIter` spells.
 # `get_span` addresses the elements through the compiler-private
 # `__param_list_address[*values]()`, which stands for upstream's
-# `global_constant` over `#pop.variadic_to_array`.
+# `global_constant` over `#pop.variadic_to_array`. `write_repr_to` writes
+# the text upstream's `FormatStruct` builder writes, directly.
 from std.collections.optional import Optional
 from std.iter import Iterable, Iterator, StopIteration
+from std.range import range
+from std.reflection.type_info import _unqualified_type_name
 from std.span import Span
 
 
@@ -49,7 +52,9 @@ struct _ParameterListIter[type: Copyable, //, *values: type](
 
 
 struct ParameterList[type: AnyType, //, *values: type](
-    Sized, TrivialRegisterPassable
+    Sized,
+    TrivialRegisterPassable,
+    Writable where conforms_to(type, Writable),
 ):
     """A utility class to access homogeneous variadic parameters.
 
@@ -107,6 +112,57 @@ struct ParameterList[type: AnyType, //, *values: type](
     def __init__(out self):
         """Constructs a ParameterList."""
         pass
+
+    # ===-------------------------------------------------------------------===#
+    # Other
+    # ===-------------------------------------------------------------------===#
+
+    def _write_elements[
+        is_repr: Bool = False
+    ](self, mut writer: Some[Writer]) where conforms_to(Self.type, Writable):
+        writer.write_string("(")
+        for i in range(len(self)):
+            if i > 0:
+                writer.write_string(", ")
+
+            comptime if is_repr:
+                self[i].write_repr_to(writer)
+            else:
+                self[i].write_to(writer)
+        writer.write_string(")")
+
+    def write_to(
+        self, mut writer: Some[Writer]
+    ) where conforms_to(Self.type, Writable):
+        """Writes the elements of this variadic list to a writer.
+
+        Constraints:
+            `type` must conform to `Writable`.
+
+        Args:
+            writer: The object to write to.
+        """
+        self._write_elements(writer)
+
+    def write_repr_to(
+        self, mut writer: Some[Writer]
+    ) where conforms_to(Self.type, Writable):
+        """Writes the repr of this variadic list to a writer.
+
+        Constraints:
+            `type` must conform to `Writable`.
+
+        Args:
+            writer: The object to write to.
+        """
+        # Upstream's text: `FormatStruct(writer, "ParameterList").params(
+        # TypeNames[Self.type]()).fields(write_fields)`.
+        writer.write(
+            "ParameterList[", _unqualified_type_name[Self.type](), "]"
+        )
+        writer.write_string("(")
+        self._write_elements[is_repr=True](writer)
+        writer.write_string(")")
 
     # We can only support iteration when the elements are Copyable, because
     # iterators currently need to return the elements by value.

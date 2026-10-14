@@ -966,6 +966,7 @@ assets/ok/value_pack_aggregate_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_pack_bracket_spread.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_pack_comptime_for_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_pack_parameter_list_members.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/value_pack_parameter_list_writable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_pack_runtime_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_pack_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_pack_typed_by_type_param.mojo	-	ineligible	no-scalar-entry-shape

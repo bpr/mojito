@@ -1545,6 +1545,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   temporary. `Checker::spells_parameter_list` and
   `admit_parameter_list_brackets` admit `ParameterList`'s brackets only
   there and in its bundled module, since upstream's list is one parameter.
+  The bundled struct conforms to `Writable` where its element type does
+  (`_write_elements`, `write_to`, `write_repr_to`, upstream's members).
   `ParameterList.get_span` takes the elements' static address from the
   module-private `__param_list_address[*values]()`
   (`infer_param_list_address`, `call_inference.rs`;

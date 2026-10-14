@@ -7786,6 +7786,20 @@ fn comptime_type_member_through_an_instance_is_not_a_value() {
 }
 
 #[test]
+fn parameter_list_of_a_non_writable_element_is_not_writable() {
+    // `ParameterList` is `Writable` only where its element type is.
+    let error = err_std(
+        "@fieldwise_init\nstruct Pt(ImplicitlyCopyable):\n    var x: Int\n\n\ndef pts[*ps: Pt]():\n    print(ps)\n\n\ndef main():\n    pts[Pt(1)]()\n",
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("does not conform to trait 'Writable'"),
+        "{error}"
+    );
+}
+
+#[test]
 fn initializer_list_without_a_contextual_type_is_rejected() {
     let error = err("def main():\n    var d = {}\n    print(1)\n");
     assert!(

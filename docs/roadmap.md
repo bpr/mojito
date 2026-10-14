@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R806**.
+Next free ID: **R814**.
 
 ## Ordered Work
 
@@ -3142,6 +3142,60 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     record, so the change bumps the package format and the MIR schema.
   - Found while planning R494 (2026-10-13).
   - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R806 A parameterized alias read through a struct is not parsed**
+
+  Problem: `S.Of[Bool]`, `S[Int].Of[Bool]`, and `ParameterList.of[4, 5, 6]`
+  are rejected, where the pin reads a struct's parameterized `comptime`
+  alias this way.
+  - The expression parser stops at `call_name` (`parser.rs`): "only named
+    functions can be called, found Member".
+  - In type position, `var a: S[Int].Of[Bool]` fails with "a dependent type
+    projection requires exactly one compile-time value index".
+  - With call parentheses, `S[Int].Of[Bool]()` fails in the checker with
+    "a parameterized type is not a value".
+  - Update `docs/grammar.md` first.
+  - It blocks `ParameterList.of` (R809).
+  - Found while planning R493 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R807 `ParameterList` takes a variadic `*values: type`, not
+  upstream's one raw-list parameter**
+
+  Problem: upstream declares `ParameterList[type, //, values:
+  _MLIR.KGENParamListType[type]]`, so `vs.values` and
+  `ParameterList[vs.values]` have no spelling in Mojito.
+  - Port upstream's `struct _MLIR` with `KGENParamListType[elt_type]` as a
+    compiler-known type, the type of today's `MetaTy::ParamList`.
+  - Make `vs.values` project a pack's raw list, and respell the checker's
+    runtime read (`Checker::infer_value_pack_read`) as
+    `ParameterList[vs.values]()`.
+  - Admit a user's `ParameterList[vs.values]`, and delete
+    `admit_parameter_list_brackets` and its helpers.
+  - Port `__iter__`'s `_ParameterListIter[*ParameterList[...]()]` spread.
+  - Likely bumps the MIR schema and the package format.
+  - A session should plan this first and split it if it does not fit.
+  - Found while planning R493 (2026-10-13).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R808 A `__generator_type[...] T` parameter and an unbound
+  application `Alias[a, _]` are not supported**
+
+  Problem: upstream passes parameterized `comptime` aliases as generator
+  values to `ParameterList.tabulate`, `reduce`, `any`, `all`, and
+  `map_to_type`, and Mojito parses neither spelling.
+  - `__generator_type` appears nowhere in `crates/`.
+  - Mojito's `TypeList.any`/`all` predicates are checker builtins
+    (`checker/constraints.rs`), not a parameter type.
+  - The work covers the parser (`docs/grammar.md` first), the checker's
+    parameter type, and the elaborator's application of a generator.
+  - A session should plan this first and split it if it does not fit.
+  - Found while planning R493 (2026-10-13).
+  - Depends on R801, since a generator's body is a parameterized `comptime`
+    value.
   - Model: Fable, Planned.
 
 - [ ] **R802 A struct's `comptime` member over the length of its own value
@@ -6857,23 +6911,68 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R493 The bundled `ParameterList` lacks most of upstream's members**
+- [ ] **R809 `ParameterList.of` and `empty_of` are not ported**
 
-  Problem: `ParameterList.of[4, 5, 6]`, `ParameterList[values.values]`,
-  `args.size`, `print(args)`, and the list algebra are rejected, where the
-  pin's `std/builtin/variadics.mojo` declares them.
-  - The port's list is the variadic `*values: type` upstream's
-    `_ParameterListIter` spells, not upstream's single
-    `KGENParamListType[type]` parameter, so `values.values` and the `of`
-    and `empty_of` aliases have no spelling.
-  - Missing members: `size`, `__getitem_param__`, `of`, `empty_of`,
-    `tabulate`, `splat`, `_concat`, `reduce`, `any`, `all`, `contains`,
-    `map_to_type`, and the `Writable` conformance (`write_to`,
-    `write_repr_to`).
-  - The port reads `len(Self.values)` where upstream reads `Self.size`.
-  - Found while landing R325 (2026-10-08).
+  Problem: `comptime Ints = ParameterList.of[4, 5, 6]` is rejected, where
+  the pin's `std/builtin/variadics.mojo` declares both aliases.
+  - Upstream: `of[type: AnyType, //, *values: type] =
+    ParameterList[type=type, values.values]`, and `empty_of[type] =
+    Self.of[type=type]`.
+  - Found while planning R493 (2026-10-13).
+  - Depends on R806 (the alias read through the struct) and R807 (the raw
+    `values` parameter).
+  - Model: Opus, Not Planned.
+
+- [ ] **R810 `ParameterList.reduce`, `any`, `all`, and `contains` are not
+  ported**
+
+  Problem: the pin's `ParameterList` declares these reductions, and the
+  bundled one does not.
+  - Upstream's `reduce` is `#kgen.param_list.reduce`. Port it through a
+    compiler-private stand-in admitted only in `variadics.mojo`, as
+    `__param_list_address` is, and record the stand-in in the module
+    header.
+  - `contains` also reads `downcast`/`rebind` over `Equatable`.
+  - Found while planning R493 (2026-10-13).
+  - Depends on R808 (generator parameters) and R800 (`__getitem_param__`).
+  - Model: Opus, Not Planned.
+
+- [ ] **R811 `ParameterList.tabulate`, `splat`, and `_concat` are not
+  ported**
+
+  Problem: the pin's `ParameterList` builds lists with these members, and
+  the bundled one has none.
+  - Upstream uses `#kgen.param_list.tabulate` and `.concat`. Port them as
+    variadics-private stand-ins, like R810's.
+  - Found while planning R493 (2026-10-13).
+  - Depends on R807 (the raw list type) and R808 (generator parameters).
+  - Model: Opus, Not Planned.
+
+- [ ] **R812 `ParameterList.map_to_type` is not ported**
+
+  Problem: the pin's `ParameterList.map_to_type` is missing from the
+  bundled struct.
+  - Its body is `TypeList.tabulate[...]`, so it needs a bundled `TypeList`
+    with `tabulate`.
+  - Found while planning R493 (2026-10-13).
+  - Depends on R811 and R805 (a bundled `TypeList`).
+  - Model: Opus, Not Planned.
+
+- [ ] **R813 `FormatStruct` lacks upstream's callback `fields` overload**
+
+  Problem: `ParameterList.write_repr_to` writes its text by hand, where
+  upstream calls `FormatStruct(...).params(TypeNames[Self.type]())
+  .fields(write_fields)` with a capturing `def write_fields`.
+  - The bundled `FormatStruct` (`std/format/_utils.mojo`) has no
+    `fields(fields_fn: Some[def[T: Writer](mut T)])` overload, and
+    `Some[def[...](...)]` is rejected with "unknown type 'Some'".
+  - The bundled `TypeNames[*Ts: Movable]` is narrower than upstream's
+    `AnyType`, so it cannot name `ParameterList`'s element type.
+  - The bundled collections' `write_repr_to` bodies write by hand too.
+  - Done when they and `ParameterList` use upstream's builder text.
+  - Found while landing R493 (2026-10-13).
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R204 An abstract dispatch target that survives elaboration aborts at
   run time**

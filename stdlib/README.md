@@ -76,7 +76,8 @@ point, as upstream's toolchain does.
   compiler-private `__param_list_address[*values]()`, admitted only in this
   module, where upstream calls `global_constant`. Upstream's list is one
   `KGENParamList` parameter, so only the compiler spells this port's
-  brackets.
+  brackets. It is `Writable` where its element type is; `write_repr_to`
+  writes upstream's `FormatStruct` text directly.
 - `std/collections/optional.mojo` — a generic `Optional[T]` using zero-or-one value storage,
   including an empty constructor for generic absent values.
 - `std/iter.mojo` — minimal self-hosted `Iterator`, `Iterable`, and

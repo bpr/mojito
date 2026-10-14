@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The bundled `ParameterList` conforms to `Writable` where its element type
+  does, as upstream's does (R493): `print(vs)`, `String(vs)`, and
+  `repr(vs)` over a value pack now work instead of being rejected, through
+  upstream's `_write_elements`, `write_to`, and `write_repr_to`
+  (`assets/ok/value_pack_parameter_list_writable.mojo`). The list's other
+  missing members are filed as R806–R813.
 - A value pack is its `ParameterList` in more positions, as upstream's is
   (R494): the bundled struct declares upstream's compile-time `size`
   member, `__len__` returns it, and a value pack's runtime `len` or
