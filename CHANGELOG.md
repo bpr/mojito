@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The plan for structured control flow above the MIR waist is recorded in
+  `docs/structured-control-flow-plan.md` (R859): `hlcf`-shaped region ops
+  replace the HIR CFG, and one `lower-control-flow` pass moves down to the
+  native backend, staged as R870–R884. `docs/pliron-future.md` no longer
+  names `kgen.param.if`/`for`, which upstream does not have: its
+  compile-time control flow is `hlcf.comptime.if`/`for`.
 - `canonicalize` now folds an instruction whose operands are each defined
   once by a constant (R842), as MLIR's greedy driver applies an op's `fold`,
   so the first `canonicalize` folds constant operators before `sccp` runs,

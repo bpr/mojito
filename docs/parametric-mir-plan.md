@@ -107,6 +107,9 @@ What this plan does not attempt: a dialect stack, pre-elaboration
 optimization, the lazy three-phase parser, parallel elaboration, and
 parametric debug info. Pre-elaboration optimization has its own plan since
 2026-10-13: [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
+Structured control flow above the waist — `hlcf`-shaped region ops in place
+of the HIR CFG — has its own plan since 2026-10-14:
+[`docs/structured-control-flow-plan.md`](structured-control-flow-plan.md).
 
 ## The generator contract
 
@@ -618,7 +621,7 @@ branch for the class is deleted, and so is its certificate class.
   cloner's class keeps only the loops the template does not serve: over a
   list, a pack, a reflection query, or with a local `comptime` binding in
   the body. Schema 1.16. On 2026-10-05 the header became a sequence
-  (`ComptimeSequence`, schema 1.25), as upstream's `kgen.param.for` iterates
+  (`ComptimeSequence`, schema 1.25), as upstream's `hlcf.comptime.for` iterates
   one, and a loop over a list, set, or dictionary display of literals is
   served too. On 2026-10-06 the remaining sequences followed with no schema
   change: a named closed collection, a `def`'s own value pack, a reflected

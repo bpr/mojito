@@ -1003,7 +1003,7 @@ alias. A thunk reads a local `comptime` value bound before it (`comptime k
 loop as a
 loop whose header is `Terminator::ComptimeLoop` and MIR as the `ComptimeFor`
 terminator — the binder, the slot the body reads it through, and the
-sequence, as upstream's `kgen.param.for` iterates a compile-time sequence —
+sequence, as upstream's `hlcf.comptime.for` iterates a compile-time sequence —
 the ownership analysis and drop
 elaboration decide it as the loop of the same shape with its trip count
 unknown, and `native::mono` unrolls it under the instance's bindings before
@@ -4874,7 +4874,9 @@ second runs `SCCP` and a `Canonicalizer` again, so `PIPELINE` is
   generators keep run-time control flow as structured `hlcf` region ops
   until `LowerControlFlow`, after elaboration, so a join or a loop latch is
   no block there; MIR is a CFG before elaboration, and the rewrites remove
-  the blocks that structure would not have. A `comptime for` header's
+  the blocks that structure would not have. The staged move to that structure, which
+  replaces these rewrites with `hlcf`'s own canonicalizations, is
+  `docs/structured-control-flow-plan.md`. A `comptime for` header's
   targets are never rewritten, since the elaborator finds a loop's body as
   the blocks its `body` target dominates; an escape counts as a
   predecessor and is never rewritten; an edge that would close a cycle of

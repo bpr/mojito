@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R870**.
+Next free ID: **R885**.
 
 ## Ordered Work
 
@@ -56,24 +56,256 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
+Upstream's generators also keep control flow structured, as `hlcf` region
+ops, until `LowerControlFlow` after elaboration, where Mojito's HIR builds a
+CFG. The entries that close that gap are staged in
+[`docs/structured-control-flow-plan.md`](structured-control-flow-plan.md),
+producers first, then the CFG lowering point moving down one consumer at a
+time.
 
-- [ ] **R859 Parametric MIR's run-time control flow is a CFG where
-  upstream's generators keep it structured**
 
-  Upstream's generators hold `if` and loops as `hlcf` region ops until
-  `LowerControlFlow`, after elaboration, while Mojito's HIR lowers every
-  body to a CFG before ownership.
-  - So a join or a loop latch is a block in Mojito's generators and in
-    none of upstream's.
-  - `canonicalize` threads and merges the empty ones (R836), a CFG
-    stand-in, not an upstream pattern.
-  - Upstream's `hlcf` canonicalizations (`HLCFOpsCanonicalizers.cpp`) and
-    `SimplifyCF` act on that structure and have no CFG form here.
-  - `docs/pliron-future.md` describes the `hlcf` layer.
-  - Done when a plan for structured run-time control flow above the waist
-    is recorded and split into entries.
+- [ ] **R870 MIR has no structured region ops beside `try`, so no producer
+  can emit upstream's `hlcf` shape**
+
+  Upstream's generators hold control flow as `hlcf` region ops whose
+  regions are single blocks, and MIR's only region op is `MirInstr::Try`.
+  - Stage 1 of `docs/structured-control-flow-plan.md`.
+  - Add `If`, `Loop`, `ComptimeIf`, and `ComptimeFor` region ops, and the
+    `Yield`, `ElifCond`, `Break`, `Continue`, `ComptimeBreak`,
+    `ComptimeContinue`, and `Unreachable` terminators
+    (`crates/mojito-mir/src/mir/ir.rs`), after `HLCFOps.td`.
+  - Add their MIR text read/write and bump the MIR text version.
+  - Add `mir::verify`'s structured mode: every region one block, only
+    region terminators.
+  - Generalize `try_regions`, `block_successors`, `prune_block_list`, and
+    `renumber_escapes` over every region op.
+  - Add the transitional `lower-control-flow` pass (upstream's
+    `LowerControlFlow`) with cases under
+    `tests/mir_passes/lower-control-flow/`.
+  - After it lands, nothing emits the ops, and the pass is registered but
+    has no producer to lower.
   - Depends on nothing.
-  - Model: Opus, Not Planned.
+  - Model: Fable, Planned.
+
+- [ ] **R871 Short-circuit, ternary, comparison-chain, and comprehension
+  control flow is built as blocks where upstream emits `hlcf.if` with
+  results**
+
+  Upstream's parser emits `and`, `or`, and a ternary as an `hlcf.if` whose
+  arms yield the value (`ExprNodes.cpp`), and Mojito's MIR lowering builds
+  them as branches and join blocks.
+  - Stage 2 of `docs/structured-control-flow-plan.md`.
+  - The lever is `lower_expr/ctrl.rs`: `short_circuit`, `ternary`,
+    `compare_chain`, and `comprehension_clauses` (a comprehension also
+    emits a `Loop`).
+  - The region ops sit inside today's statement blocks.
+  - After it lands, `lower-control-flow` runs right after MIR lowering.
+  - Done when those four builders emit region ops and program output is
+    unchanged.
+  - Depends on R870.
+  - Model: Opus, Planned.
+
+- [ ] **R872 HIR lowers run-time `if`/`while`/`for`/`break`/`continue` to a
+  CFG where upstream emits `hlcf.if` and labelled loops**
+
+  Upstream's parser and `LowerSemanticCF` produce `hlcf.if` and a labelled
+  `hlcf.loop`, and HIR's `Cfg` turns the same checked statements into
+  blocks and jumps.
+  - Stage 3 of `docs/structured-control-flow-plan.md`.
+  - The lever is `Lowerer::stmt` in `crates/mojito-hir/src/hir.rs`, and
+    `mir.rs::lower_cfg`, which walks the result.
+  - `while`/`for` become a `Loop` with an `If` on the condition or has-next
+    flag, and the loop `else` on the normal exit (`lowerLITLoop`).
+  - `break`/`continue` become labelled terminators.
+  - After it lands, `lower-control-flow` runs right after MIR lowering.
+  - The entry's planning session may split it by construct if one session
+    cannot land it, filing the rest as chained entries.
+  - Depends on R870, R871.
+  - Model: Fable, Planned.
+
+- [ ] **R873 `comptime if` and `comptime for` are CFG terminators where
+  upstream holds `hlcf.comptime.if` and `hlcf.comptime.for` region ops**
+
+  MIR holds compile-time control flow as the `ComptimeBranch` and
+  `ComptimeFor` terminators, so the elaborator must rediscover a loop body
+  from the CFG.
+  - Stage 4 of `docs/structured-control-flow-plan.md`.
+  - HIR emits `ComptimeIf`/`ComptimeFor` region ops with
+    `ComptimeBreak`/`ComptimeContinue`.
+  - The transitional `lower-control-flow` lowers them to today's
+    terminators, right after MIR lowering.
+  - `comptime.for.goto.else` stays out until the checker accepts
+    `comptime for … else`.
+  - Depends on R872.
+  - Model: Opus, Planned.
+
+- [ ] **R874 A `try`'s parts are multi-block CFGs left through
+  `EscapeJump`/`FallOff` where upstream's regions are single blocks left
+  through labelled terminators**
+
+  `MirInstr::Try` is already a region op, but each part is a mini-CFG
+  (`build_seeded_checked_region`), and a `break` out of it is an
+  `EscapeJump`.
+  - Stage 5 of `docs/structured-control-flow-plan.md`.
+  - Each part becomes one region. `EscapeJump` becomes a labelled
+    `Break`/`Continue`, and `FallOff` becomes `Yield`.
+  - This is the last producer, so `mir::verify`'s single-block rule
+    switches on.
+  - After it lands, `lower-control-flow` runs right after MIR lowering.
+  - Depends on R872.
+  - Model: Opus, Planned.
+
+- [ ] **R875 The move and initialization checks read a lowered CFG where
+  `CheckLifetimes` walks structured regions**
+
+  `CheckLifetimes` joins an `if`'s arms and iterates a loop to a fixpoint
+  (`checkIfOp`, `checkLoopOp`), and Mojito's checks run block dataflow over
+  the CFG the transitional pass builds.
+  - Stage 6 of `docs/structured-control-flow-plan.md`.
+  - The lever is the move/initialization scan in `crates/mojito-analysis`.
+  - The state at a `Break`/`Continue` flows to its labelled loop.
+  - After it lands, `lower-control-flow` still runs before the borrow
+    checks.
+  - The entry's planning session may split it by analysis if one session
+    cannot land it, filing the rest as chained entries.
+  - Depends on R873, R874.
+  - Model: Fable, Planned.
+
+- [ ] **R876 The borrow checks read a lowered CFG where `CheckLifetimes`
+  walks structured regions**
+
+  Loans, register loans, and interior borrows are block dataflow, and
+  upstream checks them on the structured IR.
+  - Stage 7 of `docs/structured-control-flow-plan.md`.
+  - The lever is `loans`, `register_loans`, and `interior` in
+    `crates/mojito-analysis`.
+  - After it lands, `lower-control-flow` runs after the ownership checks,
+    before drop elaboration.
+  - The entry's planning session may split it by analysis if one session
+    cannot land it, filing the rest as chained entries.
+  - Depends on R875.
+  - Model: Fable, Planned.
+
+- [ ] **R877 Drop elaboration places drops on CFG edges where
+  `DestructorInsertion` places them in structured regions**
+
+  `analysis/drops.rs` puts drops on edges and splits critical edges, and
+  upstream's regions have no edges.
+  - Stage 8 of `docs/structured-control-flow-plan.md`.
+  - A drop goes before a region terminator, at a region's entry, or after
+    the op.
+  - Critical-edge splitting is deleted.
+  - After it lands, `lower-control-flow` runs after drop elaboration,
+    before field drops, store drops, and copy elision.
+  - The entry's planning session may split it if one session cannot land
+    it, filing the rest as chained entries.
+  - Depends on R876.
+  - Model: Fable, Planned.
+
+- [ ] **R878 Field drops, store drops, and copy elision run on a lowered
+  CFG rather than on regions**
+
+  These passes follow drop elaboration and still read the CFG the
+  transitional pass builds.
+  - Stage 9 of `docs/structured-control-flow-plan.md`.
+  - The lever is `field_drops`, `store_drops`, and `copy_elision` in
+    `crates/mojito-analysis`.
+  - After it lands, `lower-control-flow` runs at the start of the
+    pre-elaboration pipeline.
+  - The entry's planning session may split it by pass if one session
+    cannot land it, filing the rest as chained entries.
+  - Depends on R877.
+  - Model: Opus, Planned.
+
+- [ ] **R879 The pre-elaboration pipeline and the package hold CFG bodies,
+  and `canonicalize` simplifies blocks `hlcf` would not have**
+
+  Upstream's generator `Canonicalizer` applies `hlcf`'s structural patterns
+  (`HLCFOpsCanonicalizers.cpp`), and R836's rewrites thread and merge
+  blocks that structured MIR does not have.
+  - Stage 10 of `docs/structured-control-flow-plan.md`.
+  - `canonicalize` gains `RemoveStaticCondition`, `HoistYieldResults`,
+    `RemoveUnusedResults`, `HoistUnconditionalReturn`,
+    `HoistConditionalReturn`, `RemoveDeadLoop`, and `checkTrivialBlocks`.
+  - R836's pass-through threading, identical-successor fold, and
+    single-predecessor merge are deleted, and their
+    `tests/mir_passes/canonicalize/` cases are rewritten as `hlcf`-pattern
+    cases.
+  - `sccp` walks regions.
+  - Package bodies are structured, so `PACKAGE_FORMAT` is bumped.
+  - Updates `docs/architecture.md` §Pre-Elaboration Pipeline and
+    `docs/features.md`'s pipeline row.
+  - After it lands, `lower-control-flow` runs at the elaborator's entry, as
+    each template is materialized.
+  - Depends on R878.
+  - Model: Fable, Planned.
+
+- [ ] **R880 The elaborator unrolls `comptime for` by recovering its body
+  through dominators where upstream clones the op's region**
+
+  `processComptimeForOp` makes one labelled `hlcf.loop` per iteration from
+  the op's region, and `mono/unroll.rs` finds the body as the blocks its
+  `body` target dominates.
+  - Stage 11 of `docs/structured-control-flow-plan.md`.
+  - Instantiation, substitution, `ComptimeIf` (keep the taken arm), and
+    `ComptimeFor` work on regions, with `simplifyParamForLoop`'s folding.
+  - `unroll.rs`'s `loop_body` and `outermost_loop` are deleted.
+  - A CTFE fragment is lowered before `call_concrete`.
+  - After it lands, `lower-control-flow` runs at the end of elaboration.
+  - Depends on R879.
+  - Model: Fable, Planned.
+
+- [ ] **R881 The post-elaboration pipeline runs on a CFG and has no
+  counterpart of `SimplifyCF`'s trivial-loop removal**
+
+  Upstream runs `SimplifyCF` only after elaboration, on functions, and
+  Mojito's post-elaboration `sccp`/`canonicalize` read lowered blocks.
+  - Stage 12 of `docs/structured-control-flow-plan.md`.
+  - `sccp`/`canonicalize` run on regions in `post_elaboration.rs`.
+  - Add `SimplifyCF`'s trivial-loop removal (`lib/Transforms/SimplifyCF.cpp`).
+  - After it lands, `lower-control-flow` runs at the backend boundary
+    (`src/compiler.rs`, `src/artifact.rs`, the Pliron entry).
+  - Depends on R880.
+  - Model: Opus, Planned.
+
+- [ ] **R882 The VM executes only CFG blocks where upstream's interpreter
+  runs `hlcf` ops**
+
+  Every `hlcf` parent op implements `InterpreterOpInterface`, and the VM
+  needs the transitional lowering before it can run a body.
+  - Stage 13 of `docs/structured-control-flow-plan.md`.
+  - Generalize `run_region`/`exec_try`'s `Flow` in
+    `backend/vm/exec.rs` over every region op.
+  - The VM path and CTFE stop lowering, so `lower-control-flow` runs only
+    for Pliron.
+  - Depends on R881.
+  - Model: Opus, Planned.
+
+- [ ] **R883 Pliron lowers a MIR CFG where `LowerControlFlow` lowers
+  structured ops, so `lower-control-flow` and the CFG terminators survive**
+
+  Upstream's first CFG is the one `LowerControlFlow` builds in LLVM, and
+  Mojito's backend still reads `Jump`/`Branch`.
+  - Stage 14 of `docs/structured-control-flow-plan.md`.
+  - `crates/mojito-pliron`'s `lower/term.rs` and `lower/try_flow.rs` lower
+    region ops to LLVM blocks.
+  - The transitional pass and `Jump`, `Branch`, `ComptimeBranch`, the
+    `ComptimeFor` terminator, `FallOff`, and `EscapeJump` are deleted.
+  - Depends on R882.
+  - Model: Opus, Planned.
+
+- [ ] **R884 A `finally` is run by the VM on each exit where upstream
+  copies it before each exiting terminator**
+
+  `LowerSemanticCF`'s `lowerTryFinally` copies a `finally` body before every
+  terminator that leaves the `try`, and Mojito keeps one `finalbody` region
+  the VM runs dynamically.
+  - Gap kept open by `docs/structured-control-flow-plan.md`.
+  - Related to R829 and R830, without depending on them.
+  - Once `try` parts are single regions, the copy can be made in MIR
+    lowering, before the ownership checks.
+  - Depends on R874.
+  - Model: Fable, Planned.
 
 - [ ] **R844 The post-elaboration pipeline re-verifies every concrete
   function, changed or not**

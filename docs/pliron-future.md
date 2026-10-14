@@ -50,8 +50,9 @@ in place. The corrections matter because three of them change the conclusion.
   source module".
 - **Mojo has many dialects, each with a distinct job.** Among them, `lit`
   carries declarations and calls (`lit.fn`, `lit.call`), `kgen` is the meta
-  layer (`kgen.param.if`/`for`/`constant`, `#kgen.param.expr`), `pop` holds
-  base operations, and `hlcf` holds structured control flow; `co`, an
+  layer (`kgen.param.constant`, `#kgen.param.expr`), `pop` holds
+  base operations, and `hlcf` holds structured control flow, compile-time
+  (`hlcf.comptime.if`/`for`) as well as run-time; `co`, an
   interpreter dialect, and upstream MLIR dialects sit beside them. The value types
   (`!kgen.simd<size, dtype>`, `!kgen.pointer`, `!kgen.dtype`) belong to `kgen`,
   not `pop`. Parameter expressions live as uniqued typed *attributes*, so type
@@ -323,9 +324,9 @@ approximate.
 | Dialect | Job | Ops / types / attrs | Real names |
 |---|---|---|---|
 | `lit` | Parser output: declarations, calls, places, origins. There is no AST. | 56 / 17 / 26 | `lit.fn`, `lit.call`, `lit.var.decl`, `lit.ref.load`/`store`, `lit.ownership.mark_initialized`/`mark_destroyed`; `!lit.ref<T, origin>`, `!lit.origin`; `#lit.origin.union`/`field`/`subtree`/`mutcast` |
-| `kgen` | Program structure and the parametric layer; the canonical IR after checking | 35 / 22 / 86 | `kgen.generator`, `kgen.func`, `kgen.call`, `kgen.param.constant`/`if`/`for`/`apply`/`yield`, `kgen.struct.extract`; `!kgen.simd`, `!kgen.pointer`, `!kgen.dtype`, `!kgen.string`, `!kgen.param`; `#kgen.param.expr`, `#kgen.dtype.constant` |
+| `kgen` | Program structure and the parametric layer; the canonical IR after checking | 35 / 22 / 86 | `kgen.generator`, `kgen.func`, `kgen.call`, `kgen.param.constant`/`apply`/`yield`, `kgen.struct.extract`; `!kgen.simd`, `!kgen.pointer`, `!kgen.dtype`, `!kgen.string`, `!kgen.param`; `#kgen.param.expr`, `#kgen.dtype.constant` |
 | `pop` | Base operations, parametric before elaboration and concrete after | 73 / 4 / 36 | `pop.add`, `pop.cmp`, `pop.cast`, `pop.load`/`store`, `pop.simd.splat`, `pop.array.gep`, `pop.stack_allocation`; its only types are `!pop.array`, `!pop.union`, `!pop.int_literal`, `!pop.float_literal` |
-| `hlcf` | Structured run-time control flow; non-parametric, present before and after elaboration | 10 / 0 / 1 | `hlcf.if`/`elif`/`switch`/`for`/`loop`/`break`/`continue`/`yield`; `#hlcf.unroll_level` |
+| `hlcf` | Structured control flow, run-time and compile-time, every region one block; present before and after elaboration | 20 / 0 / 1 | `hlcf.if`/`if.elifcond.yield`/`switch`/`match`/`for`/`loop`/`break`/`continue`/`yield`/`return`/`unreachable`, `hlcf.comptime.if`/`comptime.for`; `#hlcf.unroll_level` |
 
 They are not the whole set.
 - `Mojo/lib` holds a `<Name>Dialect` directory for each of these four plus
@@ -351,17 +352,19 @@ Three facts bear on Mojito's planned dialects:
 - **The parametric layer is mostly attributes.** `kgen` defines more than
   twice as many attributes as ops. That is the landed parameter-expression symbolic form
   (`docs/notes/param-expr-attributes.md`) at framework scale.
-- **Compile-time and run-time control flow are separate dialects.**
-  - `kgen.param.if` and `kgen.param.for` are the compile-time branch and loop.
-    The elaborator's interpreter instantiates their bodies.
+- **Compile-time and run-time control flow are one dialect.**
+  - `hlcf.comptime.if` and `hlcf.comptime.for` are the compile-time branch
+    and loop. The elaborator keeps the taken arm and unrolls the loop into
+    labelled `hlcf.loop`s.
   - Run-time branches and loops stay structured in `hlcf` until
-    `LowerControlFlow`. `hlcf` is non-parametric.
+    `LowerControlFlow`, after elaboration.
   - `#hlcf.unroll_level` steers a separate loop-unrolling transform on
     run-time loops.
-  - Mojito expands `comptime if`/`for` in AST elaboration and builds a CFG for
-    everything else in HIR. So a Mojito parametric layer needs `param.if` and
-    `param.for` analogues from the start. An `hlcf` analogue is needed only if
-    some pass wants loops before the CFG.
+  - Mojito's HIR builds a CFG for both kinds, with `comptime if`/`for` as
+    MIR terminators the elaborator interprets. Upstream's `CheckLifetimes`,
+    `Canonicalizer`, and elaborator all want the structure before any CFG
+    exists, so the `hlcf` analogue is needed above the waist, not only for
+    lowering: `docs/structured-control-flow-plan.md` stages it.
 
 ### What Pliron already provides
 
@@ -454,7 +457,7 @@ onto code Mojito already has:
 | `lit` | Origin algebra, lifetime checking | checker origins, ownership analysis, drop elaboration |
 | `kgen` | Elaboration, compile-time interpreter | comptime elaborator, VM-backed CTFE |
 | `pop` | Parametric type rules, lowering | SIMD and scalar rules, `mojito-pliron` lowering |
-| `hlcf` | Structured-to-CFG lowering | HIR CFG lowering |
+| `hlcf` | Structured-to-CFG lowering | HIR CFG lowering today; the planned `lower-control-flow` pass (`docs/structured-control-flow-plan.md`) |
 
 ### Recommendation for dialect definitions
 
