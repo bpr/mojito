@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `scripts/instantiation-report` records the elaborator's size counters
+  over the corpus (R772): it runs every `assets/ok` and `benchmarks/compile`
+  fixture and writes one row per fixture plus a `total` row to the committed
+  `benchmarks/instantiation.tsv`, so a change's effect on expansion is that
+  file's diff. The first baseline elaborates 1 017 fixtures to 892 391
+  concrete instructions (`docs/performance.md` §3).
 - `benchmarks/compile` gains three instantiation-heavy programs (R774):
   `collections_many.mojo` (803 generator instances), `nested_generics.mojo`,
   and `trait_defaults.mojo`, each checked against the pinned Mojo by hand.

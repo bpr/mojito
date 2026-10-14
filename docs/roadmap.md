@@ -206,20 +206,6 @@ which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
 
-- [ ] **R772 There is no corpus-wide record of instantiation size to
-  compare a change against**
-
-  The counters cover one program at a time, and nothing records them across
-  the corpus, so a change's effect on expansion is unknown.
-  - Add a script that runs the counters over `assets/ok` and
-    `benchmarks/compile` and writes one row per fixture.
-  - Commit its output as the baseline, so a pass's effect is that file's
-    diff.
-  - Record the first numbers in `docs/performance.md`.
-  - Depends on R771, R774, so the baseline includes the instantiation-heavy
-    benchmarks.
-  - Model: Opus, Not Planned.
-
 - [ ] **R773 Nothing stops a change from growing the instantiated program**
 
   No gate notices when the corpus's concrete instruction total grows, so a

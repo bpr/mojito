@@ -66,13 +66,17 @@ leaves the scalar subset — including `print`, until the native runtime stage.
 host; `x86_64-unknown-linux-gnu` is currently the only supported triple) and
 `--native-opt 0|release` (with `1` as a permanent alias of `release`) the
 optimization profile; both also apply to
-`run --backend pliron`. `--timings` works with every command: it prints one
+`run --backend pliron`. `--timings` works with every command (the
+`elaborate` counters appear only for commands that elaborate, `run` and
+`compile`): it prints one
 `timing\t<phase path>\t<inclusive µs>\t<self µs>\t<count>` record per
 pipeline phase (link, each transfer round of the checker, MIR
 lowering, ownership, drop elaboration, VM) plus `count\t<path>\t<n>`
 counters to stderr — the benchmark drivers' channel (`scripts/bench-compile`
 times the compiler over `benchmarks/compile/`; `scripts/bench-pliron` runs
-the native corpus under `benchmarks/native/`; see
+the native corpus under `benchmarks/native/`; `scripts/instantiation-report`
+records the elaborator's size counters per fixture in
+`benchmarks/instantiation.tsv`; see
 [`docs/performance.md`](performance.md)). Executables link the `mojito-runtime`
 static archive, discovered in a fixed order: `--runtime-lib PATH`, then
 `MOJITO_RUNTIME_LIB`, then an installation bundle's `lib/`, then the

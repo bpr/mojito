@@ -799,6 +799,33 @@ Each compiles at the pin with the same output (swept with
 `scripts/sweep-assets-mojo --only`; R814 puts the folder in the nightly
 sweep).
 
+The corpus record (R772, 2026-10-13) is `benchmarks/instantiation.tsv`,
+written by `scripts/instantiation-report`: one row per `assets/ok` and
+`benchmarks/compile` fixture with the six size counters above, then a
+`total` row over the elaborated fixtures. The file holds no date, hash, or
+binary path, so a pass's effect on expansion is `git diff
+benchmarks/instantiation.tsv` after rerunning the script, and a rerun on an
+unchanged tree diffs empty. The first baseline covers 1 018 fixtures, 1 017
+elaborated; `benchmarks/compile/tuple.mojo` is `failed`, since it does not
+compile (R530):
+
+| Total | concrete fns | concrete instrs | generators | instances | generator → instance instrs |
+|---|---:|---:|---:|---:|---|
+| all 1 017 | 42 409 | 892 391 | 16 553 | 26 868 | 241 060 → 396 303 (1.64×) |
+
+`assets/ok` holds 862 289 of the concrete instructions and the ten
+elaborated benchmarks 30 102. The ratio of the totals'
+`generator_instance_instructions` to `generator_instructions` is the corpus
+expansion the `pmir` passes attack. Caveats: the counters come from the
+compiled std package (the script drops `MOJITO_STD_PACKAGE` from the child
+environment) and the debug binary, the script's default; each fixture is
+executed with `run`, the command that reaches the elaborator, with stdin
+from `/dev/null`, and a runtime trap keeps its row; and a summed
+`generators` is not a count of distinct templates, since every fixture
+recounts the std generators it reaches. The rows are the record; the totals
+serve the diff and R773's ratchet. The whole sweep takes about 15 s at the
+default 8 jobs.
+
 ### 4. Profile the dominant measured phase *(done for Hello World: `scripts/sample-stacks`)*
 
 After phase timing identifies the large bucket, build release with debug info
