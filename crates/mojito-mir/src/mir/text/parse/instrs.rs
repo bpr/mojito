@@ -51,6 +51,11 @@ impl Decoder {
             .collect();
         let spans = self.locations(self.field(fields, "locations").ok()?);
         let blocks = self.blocks(self.field(fields, "blocks").ok()?, &name);
+        let removed_params = self
+            .field(fields, "removed_params")
+            .ok()
+            .map(|value| self.param_ids(value))
+            .unwrap_or_default();
         if var_names.len() != n_vars {
             self.error(
                 value.span,
@@ -90,6 +95,7 @@ impl Decoder {
                 "register_types",
                 "locations",
                 "blocks",
+                "removed_params",
             ],
         );
         Some((
@@ -114,8 +120,27 @@ impl Decoder {
                 error_ty,
                 spans,
                 reg_types,
+                removed_params,
             },
         ))
+    }
+
+    /// A function's `removed_params` (schema 1.60): its own binders the
+    /// pre-elaboration pipeline removed.
+    fn param_ids(&mut self, value: &Value) -> Vec<mojito_types::param_expr::ParamId> {
+        let Ok(values) = self.list(value) else {
+            return Vec::new();
+        };
+        values
+            .iter()
+            .filter_map(|value| {
+                let fields = self.record(value, "param_id").ok()?;
+                let owner = self.req(value, fields, "owner", Self::string)?;
+                let slot = self.req(value, fields, "slot", Self::uint)?;
+                self.unknown(fields, &["owner", "slot"]);
+                Some(mojito_types::param_expr::ParamId::new(&owner, slot))
+            })
+            .collect()
     }
 
     pub(super) fn blocks(&mut self, value: &Value, function: &str) -> Vec<MirBlock> {

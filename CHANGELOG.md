@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The pre-elaboration pipeline now ends with `remove-unused-params`,
+  upstream's `RemoveUnusedParams` (R782): a generic function's own
+  compile-time parameters that neither its body nor its signature reads
+  leave the instance key and symbol, so `f[n]` whose body ignores `n` has
+  one instance, `f$mono`, for every `n`. A read that only an `if False`
+  arm or code after a `return` held, or only another parameter's default,
+  keeps no parameter. Program output is unchanged. MIR text is 1.60, which
+  writes a body's `removed_params`; the package format is unchanged.
 - Each pre- and post-elaboration body pass now reports whether it changed
   the body, as an MLIR pass reports what it preserved, and the
   post-elaboration re-admission re-verifies only the changed concrete

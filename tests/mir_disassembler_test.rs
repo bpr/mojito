@@ -41,6 +41,7 @@ fn identity_program() -> MirProgram {
             ),
         )])),
         reg_types: HashMap::from([(0, Ty::int())]),
+        removed_params: Vec::new(),
     };
     MirProgram {
         functions: vec![("identity".into(), function)],
@@ -114,6 +115,7 @@ fn control_flow_program() -> MirProgram {
             (3, Ty::int_literal()),
             (4, Ty::int()),
         ]),
+        removed_params: Vec::new(),
     };
     MirProgram {
         functions: vec![("choose".into(), function)],

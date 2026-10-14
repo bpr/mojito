@@ -190,6 +190,34 @@ impl<'a> Specializer<'a> {
         }
     }
 
+    /// The own parameters of `template` its body never reads, which the
+    /// pre-elaboration pipeline removed: no instance's identity holds them.
+    pub(super) fn removed_params(&self, template: &str) -> &'a [mojito_types::param_expr::ParamId] {
+        self.functions
+            .get(template)
+            .map_or(&[], |function| function.removed_params.as_slice())
+    }
+
+    /// The instance arguments of `target`'s parameters `decls` under
+    /// `bindings`: [`ordered_arguments`] past the `owner_covered` decls that
+    /// restate the owner's parameters, without those the body removed.
+    pub(super) fn own_arguments(
+        &self,
+        decls: &[ParamDecl],
+        bindings: &Bindings,
+        target: &str,
+        owner_covered: usize,
+    ) -> Result<Vec<InstanceArg>, MonoError> {
+        let removed = self.removed_params(target);
+        Ok(decls
+            .iter()
+            .zip(ordered_arguments(decls, bindings, target)?)
+            .skip(owner_covered)
+            .filter(|(decl, _)| !removed.contains(decl.id()))
+            .map(|(_, argument)| argument)
+            .collect())
+    }
+
     /// Demand the instance of `template` under `bindings`. A member whose
     /// `where` clause these bindings disprove is not part of its owner's
     /// instance, so demanding it is an error.
@@ -253,6 +281,9 @@ impl<'a> Specializer<'a> {
         // A generic struct's method takes its concrete owner's spelling
         // (`List$mono$TInt.grow`), so lowering's name-composed lifecycle and
         // overload lookups against the instance struct name keep working.
+        // A template whose removed parameters left no argument is still an
+        // instance (`f$mono`), never the template itself.
+        let spelled = !key.arguments.is_empty() || !self.removed_params(template).is_empty();
         let name = if let Some(owner) = &key.owner {
             let base = mojito_symbol::symbol::retarget_method_symbol(template, owner).ok_or_else(
                 || {
@@ -262,15 +293,15 @@ impl<'a> Specializer<'a> {
                     )
                 },
             )?;
-            if key.arguments.is_empty() {
-                base
-            } else {
+            if spelled {
                 mojito_symbol::symbol::instance_symbol(&base, &key.arguments)
+            } else {
+                base
             }
-        } else if key.arguments.is_empty() {
-            template.to_string()
-        } else {
+        } else if spelled {
             mojito_symbol::symbol::instance_symbol(template, &key.arguments)
+        } else {
+            template.to_string()
         };
         // Two clones of one method whose owner instance and arguments agree
         // differ only in pointer provenance (a clone origin binder with and
@@ -619,6 +650,7 @@ impl<'a> Specializer<'a> {
             }
         };
         let unreached_failures = std::mem::take(&mut self.unreached_failures);
+        function.removed_params.clear();
         expand_pack_spreads(&key.template, &mut function)?;
         self.select_comptime_branches(&key.template, &mut function, bindings)?;
         self.discharge_instantiation_failures(&key.template, &function)?;
@@ -3046,16 +3078,19 @@ impl<'a> Specializer<'a> {
                     if arity_keyed_variadic(function_decl) {
                         continue;
                     }
-                    let Ok(mut method_arguments) =
-                        ordered_arguments(&function_decl.param_decls, &bindings, &candidate)
-                    else {
+                    let covered = if bindings.self_instance.is_some() {
+                        owner_covered_prefix(&template.param_decls, &function_decl.param_decls)
+                    } else {
+                        0
+                    };
+                    let Ok(method_arguments) = self.own_arguments(
+                        &function_decl.param_decls,
+                        &bindings,
+                        &candidate,
+                        covered,
+                    ) else {
                         continue;
                     };
-                    if bindings.self_instance.is_some() {
-                        let covered =
-                            owner_covered_prefix(&template.param_decls, &function_decl.param_decls);
-                        method_arguments.drain(..covered);
-                    }
                     // A member whose `where` clause the instance disproves
                     // is not part of it. A constructor whose clause stays
                     // undecided waits for the call site that reaches it;

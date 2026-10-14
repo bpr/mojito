@@ -4106,6 +4106,43 @@ fn elaboration_counts_name_generators_and_their_instances() {
 }
 
 #[test]
+fn unread_parameters_leave_the_instance_key() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/unused_parameter_instances.mojo");
+    let program = Compiler::default()
+        .compile_path(&path)
+        .expect("compile the fixture");
+    let concrete = program.concrete_mir().expect("elaborate");
+    let instances = |template: &str| {
+        concrete
+            .counts
+            .generators
+            .iter()
+            .find(|row| row.template == template)
+            .map_or(0, |row| row.instances)
+    };
+    for (template, count) in [
+        ("constant", 1),
+        ("add_k", 1),
+        ("Box.get", 1),
+        ("dead_read", 1),
+        ("default_only", 1),
+        ("nested_read", 2),
+    ] {
+        assert_eq!(instances(template), count, "instances of `{template}`");
+    }
+    let names: Vec<&str> = concrete
+        .program
+        .functions
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
+    for name in ["constant$mono", "add_k$mono$V1", "Box$mono$V3.get$mono"] {
+        assert!(names.contains(&name), "no concrete `{name}`: {names:?}");
+    }
+}
+
+#[test]
 fn post_elaboration_folds_parameter_arithmetic() {
     let shape = |compiler: Compiler| {
         let program = compiler

@@ -972,6 +972,7 @@ assets/ok/uint_and_scalar_value_parameters.mojo	main	exe-differential	sanitized
 assets/ok/unsafe_pointer.mojo	main	exe-differential	sanitized
 assets/ok/unspelled_loan_carrying_type_argument.mojo	main	exe-differential	sanitized
 assets/ok/untracked_pointer_ref_params.mojo	main	exe-differential	sanitized
+assets/ok/unused_parameter_instances.mojo	main	exe-differential	sanitized
 assets/ok/user_iterator.mojo	main	exe-differential	sanitized
 assets/ok/value_argument_from_caller_parameter.mojo	main	exe-differential	sanitized
 assets/ok/value_pack_aggregate_served.mojo	main	exe-differential	sanitized

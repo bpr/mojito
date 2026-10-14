@@ -1,8 +1,8 @@
 # Pre-Elaboration Optimization: Staged Plan
 
 **Status:** plan recorded 2026-10-13. Stages 1 (R777), 2 (R778), 3
-(R779), 4 (R780), and 5 (R781) have landed, and so has the post-elaboration
-pipeline (R840). The scheduled
+(R779), 4 (R780), 5 (R781), and 6 (R782, its intraprocedural core) have
+landed, and so has the post-elaboration pipeline (R840). The scheduled
 tasks are [`docs/roadmap.md`](roadmap.md) tracks `measure` (counting and
 testing) and `pmir` (the passes); this document is their design record and
 is updated as stages land.
@@ -189,12 +189,28 @@ folds the operators over it (R840);
    of any width (R847). Generator-instance
    instructions fall by 6.5 % (`docs/performance.md`), almost all of it
    literal materializations.
-6. **Unused parameters** (`RemoveUnusedParams`). A parameter that neither a
-   generic function's body nor its signature reads, once the earlier passes
-   have run, leaves its instance key, so the instances that differ only in it
-   are one instance. This changes instance identity and the symbols built
-   from it, so it needs its own plan. Upstream runs it before
-   `EliminateDeadSymbols`, so it joins the pipeline ahead of stage 2's pass.
+6. **Unused parameters** (`RemoveUnusedParams`) *(done, R782)*. The
+   `remove-unused-params` pass records on each generic body
+   (`MirFunction::removed_params`) its own compile-time parameters that
+   neither its body nor its signature reads, and the elaborator leaves
+   their arguments out of the instance key and the instance symbol
+   (`f$mono` for `f[n]` whose every argument went). The read analysis
+   (`mir::unread_parameters`) is a structural walk of the body's and the
+   signature's serialized form, as MLIR walks every attribute and type,
+   plus a value parameter's slot reads; a parameter read only by another
+   parameter's default is unread, as on the pin, and a drop of a scalar
+   slot is no read. It runs last in `PIPELINE` rather than first: a
+   parameter only grows removable as the cleanup passes erase reads, so
+   one run at the end removes what upstream's runs remove. Upstream also
+   rewrites the generator's signature and its callers' arguments; Mojito
+   keeps both and binds the argument the body never reads. The pin goes
+   further than this core: it removes a parameter only forwarded to a
+   removed callee parameter, one only an unread nested scope carries, and
+   an owner parameter a static method ignores; each is a `pmir` entry.
+   Corpus generator instances fall by 16 of 30 543
+   (`docs/performance.md`): the bundled library has almost no unread
+   parameter, so the stage's effect is the program's own and the
+   interprocedural residues'.
 7. **`@always_inline` reaches MIR.** The pin accepts `@always_inline` and
    `@always_inline("nodebug")`, and Mojito parses and ignores both today. The
    function's MIR declaration records which it carries.

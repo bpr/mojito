@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R907**.
+Next free ID: **R913**.
 
 ## Ordered Work
 
@@ -55,22 +55,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md),
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
-
-- [ ] **R782 Instances that differ only in a parameter their body never
-  reads are made separately**
-
-  The elaborator keys an instance on every parameter argument, so a
-  generic function whose body and signature ignore one of its parameters is
-  instantiated once per value of it, where upstream's `RemoveUnusedParams`
-  removes the parameter first.
-  - The instance key is `InstanceKey` (`mono/specializer.rs`), and the
-    instance's symbol is mangled from it, so the change reaches symbols.
-  - Run it after the cleanup passes, so a use they remove does not keep a
-    parameter alive.
-  - Done when such instances are one, the differential is clean, and the
-    corpus instance count before and after is recorded.
-  - Depends on R781.
-  - Model: Fable, Planned.
 
 - [ ] **R783 `@always_inline` never reaches MIR**
 
@@ -126,6 +110,81 @@ which names the upstream pass each one follows. Each is measured by the
     clean.
   - Depends on R784.
   - Model: Opus, Planned.
+
+- [ ] **R907 A parameter only forwarded to a removed parameter keeps its
+  instances apart**
+
+  `mid[n]` whose body is `return leaf[n]()`, where `leaf` ignores `n`, has
+  one instance per `n`, where the pin removes `n` from both.
+  - `remove-unused-params` (`analysis/unused_params.rs`) decides each body
+    alone, so a forward to a callee's parameter is a read.
+  - The pin's rule is a least fixpoint of removability: a parameter whose
+    every forward targets a removed one is removed, and a cycle keeps it
+    (`rec[n]` calling `rec[n]` keeps two instances).
+  - The analysis needs to match a call's parameter-argument registers to
+    the callee's declarations, which `matched_parameter_arguments`
+    (`mono/unify.rs`) does today inside the elaborator.
+  - A package body is finished alone, so across the package seam the
+    analysis stays conservative unless the pass also runs over a package's
+    bodies as a whole.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R908 A nested function's unread enclosing parameters split its
+  instances and its enclosing function's**
+
+  `outer[n]` whose nested `inner` ignores `n` has two instances of each
+  for `outer[1]` and `outer[2]`, where the pin keeps one of each.
+  - `nested_bindings` (`mono/specializer.rs`) keys a nested body on every
+    binder of its enclosing scope, read or not.
+  - `mir::unread_parameters` (`mir/param_uses.rs`) counts any name of a
+    nested body as a read of every enclosing parameter.
+  - The fix keys a nested body on the enclosing binders it reads, and
+    lets the enclosing function's analysis count only those.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R909 A static method's instances differ by owner parameters it
+  never reads**
+
+  `S[1].st()` and `S[2].st()` call two instances of a static method that
+  ignores `n`, where the pin calls one.
+  - The owner's identity is `InstanceKey::owner` and the method symbol's
+    prefix (`S$mono$V1.st`), not a method argument, so
+    `remove-unused-params` never sees it.
+  - A method whose receiver type spells the owner (`self: Box[n]`) keeps
+    it on the pin too.
+  - Removing it changes how a method instance is named.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R910 An unread callable compile-time parameter still splits
+  instances**
+
+  A generic function that never calls its callable value parameter has
+  one instance per callable bound, where the pin removes the parameter.
+  - `mir::unread_parameters` leaves callable value parameters out,
+    because a binding to a capturing closure promotes the parameter to a
+    runtime one (`promote_to_runtime_parameter`,
+    `append_environment_parameters` in `mono/promote.rs`), which would
+    differ between merged instances.
+  - Removing one needs promotion to skip a parameter its body never reads.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R911 A lifted compile-time function's unread parameters are never
+  removed**
+
+  `$comptime$f$N` and `$default$f$p` declare their owner's binders, whose
+  `ParamId::owner` is `f`, so `remove-unused-params` finds no own
+  parameter in them.
+  - Their instances, and the compile-time evaluations cached by instance
+    name, split on every owner argument.
+  - The candidates should be every declared binder the lifted function
+    binds by its own arguments, as upstream's lifted functions are
+    ordinary generators.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R787 Generic bodies keep slot traffic that registers would carry**
 
@@ -7510,6 +7569,21 @@ follow-ups the landed producer stages filed come last.
   - Found while landing R889 (2026-10-14).
   - Depends on R889.
   - Model: Opus, Not Planned.
+
+- [ ] **R912 A removed parameter stays in its generator's signature and its
+  callers' arguments**
+
+  Upstream's `RemoveUnusedParams` rewrites the generator to drop the
+  parameter and rewrites each caller, where Mojito records
+  `MirFunction::removed_params` and the elaborator keys instances without
+  it.
+  - Every caller still binds the argument, and the instance binds a value
+    its body never reads.
+  - Moving to upstream's shape rewrites the declaration's `param_decls`
+    and every `param_arg` and `instantiated_args` naming the function,
+    which needs the whole program at once, as R907 does.
+  - Depends on R907.
+  - Model: Fable, Not Planned.
 
 ### Grow The CPU Standard Library *(demand-first)*
 

@@ -2396,6 +2396,13 @@ pub struct MirFunction {
     /// control-flow registers are filled by instruction typing before verification.
     #[serde(serialize_with = "super::sorted_map")]
     pub reg_types: HashMap<u32, Ty>,
+    /// The function's own compile-time parameters nothing in its body or
+    /// signature reads, sorted by slot: upstream's `RemoveUnusedParams`
+    /// result, which the elaborator leaves out of an instance's identity.
+    /// Not encoded: a package holds its bodies before the pipeline that
+    /// computes it. Empty on a concrete instance.
+    #[serde(skip)]
+    pub removed_params: Vec<mojito_types::param_expr::ParamId>,
 }
 
 impl MirFunction {
@@ -2494,6 +2501,7 @@ mod tests {
             error_ty: None,
             spans: SpanTable::default(),
             reg_types: HashMap::new(),
+            removed_params: Vec::new(),
         }
     }
 

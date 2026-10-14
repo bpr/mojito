@@ -4895,7 +4895,9 @@ stages the passes that fill it. The list follows upstream's rounds as the
 pinned compiler's `--mlir-timing` report shows them: the first round runs
 `EliminateDeadSymbols` and then a `Canonicalizer` on each generator, the
 second runs `SCCP` and a `Canonicalizer` again, so `PIPELINE` is
-`eliminate-dead-symbols`, `canonicalize`, `sccp`, `canonicalize`.
+`eliminate-dead-symbols`, `canonicalize`, `sccp`, `canonicalize`, then
+`remove-unused-params`, which upstream runs at the head of each round and
+Mojito runs once, last.
 `pass_names` yields a pass that runs twice once, and both runs of
 `canonicalize` count into one `--timings` span.
 
@@ -5063,6 +5065,32 @@ second runs `SCCP` and a `Canonicalizer` again, so `PIPELINE` is
   lattice meet. The pass never rewrites a terminator, which the
   `canonicalize` after it does.
   Its `--timings` counter is `folded_constants`.
+- **`remove-unused-params` runs last** (`analysis::REMOVE_UNUSED_PARAMS`,
+  `analysis/unused_params.rs`, R782), upstream's `RemoveUnusedParams`. It
+  records on each body, as `MirFunction::removed_params`, the function's own
+  compile-time parameters (`ParamId::owner` is its lowered name) that
+  nothing in its body or signature reads, `mir::unread_parameters`'s
+  answer. A read is a binder identity anywhere in the serialized blocks,
+  slot and register types, signature, runtime defaults, `where` clauses,
+  and the other parameters' types and constraints, found by a serde walk
+  as `SymbolTable` finds symbols (MLIR's walk of every attribute and type);
+  a value parameter's slot (matched by name, as the elaborator fills it)
+  addressed by anything but a drop or declaration of a scalar; and any
+  name of a body nested in or lifted from the function (`f$…`,
+  `$comptime$f$…`, `$default$f$…`), which reads every parameter. Another
+  parameter's default is not a read: the call site evaluates it. A
+  nested function, `__toplevel__`, and a callable value parameter, whose
+  binding can add runtime parameters to an instance, have no candidates.
+  Running last loses nothing: a parameter only grows removable as the
+  cleanup passes erase reads. The elaborator leaves a removed parameter's
+  argument out of the instance key wherever it walks the template's own
+  `param_decls` (`Specializer::own_arguments`), so instances that differ
+  only in it are one, and names an instance whose template removed any
+  parameter by `instance_symbol` even when no argument is left (`f$mono`).
+  Every caller still binds every parameter. Upstream instead rewrites the
+  generator's signature and its callers; Mojito keeps both, and an
+  instance clears the field. The verifier takes a removed binder out of the
+  body's scope and reports a removed parameter the body reads.
 - **Two seams, once per body.** `CompiledProgram::elaborated_mir` runs
   `pre_elaborate_program` over the program's own bodies after
   `elaborate_drops_program` (the `pre_elaboration` `--timings` span), and an

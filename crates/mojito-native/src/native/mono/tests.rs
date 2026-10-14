@@ -1638,6 +1638,7 @@ fn method_call_spread_expands_into_the_bound_pack_elements() {
         error_ty: None,
         spans: mojito_mir::mir::SpanTable::default(),
         reg_types: HashMap::from([(0, pack), (2, Ty::int())]),
+        removed_params: Vec::new(),
     };
     expand_pack_spreads("fwd", &mut function).expect("expand the method-call spread");
     let instrs = &function.blocks[0].instrs;

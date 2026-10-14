@@ -413,11 +413,11 @@ impl Specializer<'_> {
             owner_covered =
                 owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
         }
-        let mut arguments = ordered_arguments(&declaration.param_decls, &bindings, target)?;
         // The owner-restating prefix (`__init__` prepends the struct's
         // `param_decls`) is already carried by the instance's `owner`
         // identity; keep only the method's own parameters.
-        arguments.drain(..owner_covered);
+        let mut arguments =
+            self.own_arguments(&declaration.param_decls, &bindings, target, owner_covered)?;
         if let Some(arity) = variadic_arity {
             arguments.push(InstanceArg::Value(CtValue::Int(arity as i64)));
         }
@@ -749,8 +749,8 @@ impl Specializer<'_> {
             owner_covered =
                 owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
         }
-        let mut arguments = ordered_arguments(&declaration.param_decls, &bindings, target)?;
-        arguments.drain(..owner_covered);
+        let arguments =
+            self.own_arguments(&declaration.param_decls, &bindings, target, owner_covered)?;
         let result = substitute_ty(&declaration.ret_ty, &bindings).map_err(|e| {
             self.error(
                 Some(owner),

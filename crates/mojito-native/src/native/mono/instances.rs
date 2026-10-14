@@ -299,8 +299,8 @@ impl Specializer<'_> {
                 bindings.types.insert(binder.clone(), Ty::string_literal());
             }
         }
-        let mut arguments = ordered_arguments(&declaration.param_decls, &bindings, &target)?;
-        arguments.drain(..owner_covered);
+        let arguments =
+            self.own_arguments(&declaration.param_decls, &bindings, &target, owner_covered)?;
         self.enqueue(&target, bindings, arguments)?;
         Ok(())
     }
@@ -438,8 +438,8 @@ impl Specializer<'_> {
                 bindings.types.insert(binder.clone(), Ty::string_literal());
             }
         }
-        let mut arguments = ordered_arguments(&declaration.param_decls, &bindings, &target)?;
-        arguments.drain(..owner_covered);
+        let mut arguments =
+            self.own_arguments(&declaration.param_decls, &bindings, &target, owner_covered)?;
         push_sugar_arguments(declaration, &bindings, &mut arguments);
         self.enqueue(&target, bindings, arguments).map(Some)
     }

@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.59
+# Mojito Textual MIR Format, Version 1.60
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.59 is implemented end to end for inspection and loading: canonical
+Version 1.60 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.59
+mojito-mir 1.60
 ```
 
-The writer emits 1.59. The reader accepts 1.0 through 1.59; *Schema 1.0*
+The writer emits 1.60. The reader accepts 1.0 through 1.60; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -532,6 +532,17 @@ fn {
 Counts are explicit and checked against referenced identities. Parameter masks
 align with `param_types`. Production artifacts require a present return type.
 Register types are explicit and are not re-inferred from mnemonics.
+
+A generic body may carry `removed_params: [param_id { owner: "f", slot: 0 },
+...]` between `locations` and `blocks` (schema 1.60): the function's own
+compile-time parameters, sorted by slot, that the pre-elaboration pass
+`remove-unused-params` (upstream's `RemoveUnusedParams`) found its body and
+signature never read, which the elaborator leaves out of an instance's
+identity. The writer omits the field when it is empty, as it is on every
+concrete function, and the reader takes an absent field as empty. The
+verifier takes each removed binder out of the body's scope and reports a
+removed parameter the body still reads. A package does not encode it: a
+package holds its bodies before the pipeline that computes it.
 
 ## Values, Types, and Semantic Records
 

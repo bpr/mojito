@@ -1581,3 +1581,31 @@ not move. `emit-mir` matched the previous binary on 126 `assets/ok`
 fixtures (every eighth). Every fold `sccp` made there was straight-line;
 its executable-block reasoning will matter once `Mem2Reg` (R787) puts
 values in registers across blocks.
+
+## Unused parameters leave the instance key (2026-10-14, R782)
+
+`remove-unused-params`, upstream's `RemoveUnusedParams`, runs last in the
+pre-elaboration pipeline and records each generic body's own compile-time
+parameters that neither its body nor its signature reads; the elaborator
+leaves their arguments out of the instance key
+(`docs/architecture.md` §Pre-Elaboration Pipeline).
+`scripts/instantiation-report` over the 1 031 fixtures that elaborate,
+debug binary; *before* is a build of the parent commit, since the committed
+baseline had drifted:
+
+| | before | after | change |
+|---|---:|---:|---:|
+| corpus `generator_instances` | 30 543 | 30 527 | −16 |
+| corpus `generator_instance_instructions` | 372 485 | 372 442 | −43 |
+| corpus `concrete_functions` | 46 605 | 46 589 | −16 |
+| corpus `concrete_instructions` | 806 443 | 806 400 | −43 |
+
+Four fixtures change, and no fixture's output, native included:
+`unused_parameter_instances` (16 → 10 instances, the stage's own fixture),
+`trait_requirement_parameter_default` (14 → 8),
+`trait_requirement_default_from_caller_parameter` (7 → 4), and
+`comptime_application_argument` (113 → 112). The bundled library's
+generators read their parameters, so no library instance merges; the
+compile benchmarks do not move. The pin removes more: a parameter only
+forwarded to a removed one (R907), one only a nested function's scope
+carries (R908), and a static method's unread owner parameter (R909).

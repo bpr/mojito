@@ -77,6 +77,8 @@ impl<'t> SymbolTable<'t> {
             returns_reference: _,
             raises: _,
             spans: _,
+            // The function's own binders name no symbol.
+            removed_params: _,
         } = function;
         let mut uses = self.uses(blocks);
         let types = param_types

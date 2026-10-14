@@ -50,6 +50,7 @@ pub use sccp::{SCCP, sccp};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use store_drops::*;
+pub use unused_params::{REMOVE_UNUSED_PARAMS, remove_unused_params};
 
 pub fn check_ownership_checked(
     program: &mojito_checked::checked::CheckedProgram,
@@ -238,6 +239,7 @@ mod register_loans;
 mod scan;
 mod sccp;
 mod store_drops;
+mod unused_params;
 
 #[cfg(test)]
 mod constant_tuple_place_tests {
@@ -288,6 +290,7 @@ mod constant_tuple_place_tests {
             error_ty: None,
             spans: SpanTable::default(),
             reg_types: HashMap::new(),
+            removed_params: Vec::new(),
         };
 
         assert!(!is_droppable_root(&function, 1));
@@ -313,6 +316,7 @@ mod constant_tuple_place_tests {
             error_ty: None,
             spans: SpanTable::default(),
             reg_types: HashMap::new(),
+            removed_params: Vec::new(),
         };
         assert!(is_droppable_root(&function, 0));
         assert!(!is_droppable_root(&function, 1));
@@ -415,6 +419,7 @@ mod interior_origin_tests {
             error_ty: None,
             spans: span_table,
             reg_types: HashMap::new(),
+            removed_params: Vec::new(),
         }
     }
 

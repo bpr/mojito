@@ -563,6 +563,15 @@ fn write_function(
         )
     });
     writeln!(output, "{pad}    locations: {},", list(locations)).unwrap();
+    if !function.removed_params.is_empty() {
+        let removed = function.removed_params.iter().map(|id| {
+            record(
+                "param_id",
+                &[("owner", quote(&id.owner)), ("slot", id.slot.to_string())],
+            )
+        });
+        writeln!(output, "{pad}    removed_params: {},", list(removed)).unwrap();
+    }
     writeln!(output, "{pad}    blocks: [").unwrap();
     write_blocks(output, &function.blocks, indent + 3);
     writeln!(output, "{pad}    ]").unwrap();

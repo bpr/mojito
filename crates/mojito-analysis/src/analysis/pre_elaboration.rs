@@ -13,6 +13,7 @@ use super::canonicalize::CANONICALIZE;
 use super::dead_symbols::ELIMINATE_DEAD_SYMBOLS;
 use super::elaborate_drops_function;
 use super::sccp::SCCP;
+use super::unused_params::REMOVE_UNUSED_PARAMS;
 use mojito_common::timing;
 use mojito_mir::mir::{MirDeclarations, MirFunction, MirProgram};
 
@@ -56,13 +57,16 @@ impl Pass {
 /// Upstream's first round runs `RemoveUnusedParams`, `EliminateDeadSymbols`,
 /// then `SROA`, `Mem2Reg`, and `Canonicalizer` on each generator; its second
 /// runs `SROA`, `Mem2Reg`, `SCCP`, and `Canonicalizer` again. Mojito has
-/// neither `RemoveUnusedParams` nor the two scalar-replacement passes, and,
-/// as upstream does, runs `canonicalize` once in each round.
+/// neither of the two scalar-replacement passes, and, as upstream does, runs
+/// `canonicalize` once in each round. It runs `remove-unused-params` once,
+/// last: a parameter only grows removable as the cleanup passes erase its
+/// reads, so the last run removes what upstream's runs remove together.
 pub const PIPELINE: &[Pass] = &[
     Pass::Program(ELIMINATE_DEAD_SYMBOLS),
     Pass::Body(CANONICALIZE),
     Pass::Body(SCCP),
     Pass::Body(CANONICALIZE),
+    Pass::Body(REMOVE_UNUSED_PARAMS),
 ];
 
 /// Drop elaboration as a named pass, so a pass test can run it over MIR
@@ -223,6 +227,7 @@ mod tests {
         assert!(pass_named("eliminate-dead-symbols").is_some());
         assert!(pass_named("canonicalize").is_some());
         assert!(pass_named("sccp").is_some());
+        assert!(pass_named("remove-unused-params").is_some());
         assert!(pass_named("lower-control-flow").is_some());
         assert!(pass_named("no-such-pass").is_none());
     }

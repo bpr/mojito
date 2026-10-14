@@ -60,6 +60,7 @@ fn function_with(reg_types: Vec<Ty>, instrs: Vec<MirInstr>) -> MirFunction {
             .enumerate()
             .map(|(index, ty)| (index as u32, ty))
             .collect(),
+        removed_params: Vec::new(),
     }
 }
 

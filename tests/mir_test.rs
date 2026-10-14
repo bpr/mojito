@@ -497,6 +497,7 @@ fn verify_rejects_an_untyped_used_slot() {
                     error_ty: None,
                     spans: SpanTable::default(),
                     reg_types: HashMap::from([(0, Ty::int())]),
+                    removed_params: Vec::new(),
                 },
             )],
             declarations: MirDeclarations::default(),

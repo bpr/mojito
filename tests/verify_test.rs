@@ -43,6 +43,7 @@ fn function(blocks: Vec<MirBlock>, n_regs: u32, reg_types: &[(u32, Ty)]) -> MirF
         error_ty: None,
         spans: SpanTable::default(),
         reg_types: reg_types.iter().cloned().collect(),
+        removed_params: Vec::new(),
     }
 }
 

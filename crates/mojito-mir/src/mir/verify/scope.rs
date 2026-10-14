@@ -34,6 +34,20 @@ pub(super) fn verify_scope(
     let mut scope = Scope::of_function(name, declarations);
     scope.declare_loop_binders(&function.blocks);
     let head = format!("MIR function '{name}'");
+    // A removed parameter no longer exists: a reference to it is out of
+    // scope, and its slot is read by nothing.
+    if !function.removed_params.is_empty() {
+        let unread = crate::mir::unread_parameters(name, function, declarations);
+        for id in &function.removed_params {
+            scope.kinds.remove(id);
+            if !unread.contains(id) {
+                errors.push(format!(
+                    "{head} removes parameter slot {} of `{}`, which it reads",
+                    id.slot, id.owner
+                ));
+            }
+        }
+    }
     let mut cx = ScopeCx {
         scope: &scope,
         declarations,
@@ -825,6 +839,7 @@ mod tests {
                 .enumerate()
                 .map(|(index, ty)| (index as u32, ty))
                 .collect(),
+            removed_params: Vec::new(),
         }
     }
 

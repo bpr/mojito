@@ -58,6 +58,8 @@ pub use lower_control_flow::{has_structured_control_flow, lower_control_flow};
 mod lower_expr;
 mod lower_stmt;
 mod node;
+mod param_uses;
+pub use param_uses::unread_parameters;
 mod symbols;
 pub use symbols::SymbolTable;
 
@@ -3693,6 +3695,7 @@ fn lower_cfg_body(
         error_ty: None,
         spans: SpanTable::default(),
         reg_types: HashMap::new(),
+        removed_params: Vec::new(),
     };
 
     {
