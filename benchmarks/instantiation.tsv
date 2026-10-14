@@ -1016,5 +1016,5 @@ benchmarks/compile/nested_generics.mojo	elaborated	217	4098	59	194	1136	3117
 benchmarks/compile/stdlib_heavy.mojo	elaborated	174	3651	57	151	1146	2787
 benchmarks/compile/trait_defaults.mojo	elaborated	185	2058	29	130	323	1165
 benchmarks/compile/tstring.mojo	elaborated	43	914	21	25	229	313
-benchmarks/compile/tuple.mojo	failed						
-total	1017	42409	892391	16553	26868	241060	396303
+benchmarks/compile/tuple.mojo	elaborated	50	952	21	31	218	311
+total	1018	42459	893343	16574	26899	241278	396614

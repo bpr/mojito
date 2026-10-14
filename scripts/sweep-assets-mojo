@@ -7,6 +7,8 @@
 # compile with the pinned Mojo. --extensions inverts that for
 # assets/extensions/, where the pin must reject every fixture instead — an
 # extension the pin starts accepting is the signal that upstream adopted it.
+# --benchmarks holds benchmarks/compile to the same rule, strictly: no
+# burn-down list, so every benchmark must run under both compilers alike.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -18,6 +20,7 @@ jobs="${JOBS:-8}"
 compare=""
 extensions=""
 errors=""
+benchmarks=""
 declare -a folders=() only=()
 
 usage() {
@@ -36,6 +39,9 @@ conformance/assets-mojo-rejects.tsv.
   --extensions               sweep assets/extensions/ expecting rejection
   --errors                   sweep the five assets/ error folders, comparing
                              verdicts against conformance/assets-mojo-errors.tsv
+  --benchmarks               sweep benchmarks/compile; every fixture must run
+                             under both compilers with equal stdout (implies
+                             --compare)
   --jobs N                   parallelism (default 8, or JOBS)
 
 Per-fixture output lands under target/assets-mojo-sweep/<timestamp>/.
@@ -71,6 +77,11 @@ while (($#)); do
             errors=1
             shift
             ;;
+        --benchmarks)
+            benchmarks=1
+            compare=1
+            shift
+            ;;
         --jobs)
             jobs="${2:-}"
             shift 2
@@ -92,6 +103,10 @@ if [[ -z "$mojo_pixi_manifest" || ! -f "$mojo_pixi_manifest" ]]; then
     exit 2
 fi
 
+if [[ -n "$benchmarks" && ( -n "$errors" || -n "$extensions" ) ]]; then
+    echo "--benchmarks excludes --errors and --extensions" >&2
+    exit 2
+fi
 # --compare diffs the stdout of two programs that are both expected to fail, and
 # --extensions selects its own folder list; neither composes with --errors.
 if [[ -n "$errors" && -n "$compare" ]]; then
@@ -106,6 +121,8 @@ fi
 if ((${#folders[@]} == 0)); then
     if [[ -n "$extensions" ]]; then
         folders=(assets/extensions/ok assets/extensions/ownership_ok assets/extensions/origin_ok)
+    elif [[ -n "$benchmarks" ]]; then
+        folders=(benchmarks/compile)
     elif [[ -n "$errors" ]]; then
         folders=(assets/parse_error assets/type_error assets/runtime_error assets/ownership_error assets/origin_error)
     else
@@ -382,7 +399,8 @@ if ((mojito_rejected > 0)); then
     status=1
 fi
 
-if ((${#only[@]})); then
+# --only and --benchmarks keep no ledger: any reject or stdout difference fails.
+if ((${#only[@]})) || [[ -n "$benchmarks" ]]; then
     if ((rejected > 0)); then
         echo
         echo "the pinned Mojo rejects:"
@@ -395,6 +413,7 @@ if ((${#only[@]})); then
         sed 's/^/  /' "$out/output-diffs.tsv"
         status=1
     fi
+    [[ -n "$benchmarks" ]] && ((status == 0)) && echo "benchmarks sweep: ok"
     exit "$status"
 fi
 

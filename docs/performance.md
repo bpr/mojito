@@ -795,9 +795,11 @@ defaults through twelve conformers:
 | `nested_generics` | 217 | 4 098 | 59 | 194 | 1 136 → 3 117 (2.7×) |
 | `trait_defaults` | 185 | 2 058 | 29 | 130 | 323 → 1 165 (3.6×) |
 
-Each compiles at the pin with the same output (swept with
-`scripts/sweep-assets-mojo --only`; R814 puts the folder in the nightly
-sweep).
+Each compiles at the pin with the same output: the overnight gate's
+`benchmarks-mojo-sweep` step runs `scripts/sweep-assets-mojo --benchmarks`,
+which fails on any `benchmarks/compile` fixture the pin rejects, Mojito
+rejects, or whose stdout differs. Benchmarks keep no burn-down ledger: one
+the pin rejects is respelled or deleted.
 
 The corpus record (R772, 2026-10-13) is `benchmarks/instantiation.tsv`,
 written by `scripts/instantiation-report`: one row per `assets/ok` and
@@ -805,16 +807,15 @@ written by `scripts/instantiation-report`: one row per `assets/ok` and
 `total` row over the elaborated fixtures. The file holds no date, hash, or
 binary path, so a pass's effect on expansion is `git diff
 benchmarks/instantiation.tsv` after rerunning the script, and a rerun on an
-unchanged tree diffs empty. The first baseline covers 1 018 fixtures, 1 017
-elaborated; `benchmarks/compile/tuple.mojo` is `failed`, since it does not
-compile (R530):
+unchanged tree diffs empty. The baseline covers 1 018 fixtures, all
+elaborated:
 
 | Total | concrete fns | concrete instrs | generators | instances | generator → instance instrs |
 |---|---:|---:|---:|---:|---|
-| all 1 017 | 42 409 | 892 391 | 16 553 | 26 868 | 241 060 → 396 303 (1.64×) |
+| all 1 018 | 42 459 | 893 343 | 16 574 | 26 899 | 241 278 → 396 614 (1.64×) |
 
-`assets/ok` holds 862 289 of the concrete instructions and the ten
-elaborated benchmarks 30 102. The ratio of the totals'
+`assets/ok` holds 862 289 of the concrete instructions and the eleven
+benchmarks 31 054. The ratio of the totals'
 `generator_instance_instructions` to `generator_instructions` is the corpus
 expansion the `pmir` passes attack. Caveats: the counters come from the
 compiled std package (the script drops `MOJITO_STD_PACKAGE` from the child

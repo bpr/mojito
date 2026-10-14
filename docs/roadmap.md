@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R818**.
+Next free ID: **R819**.
 
 ## Ordered Work
 
@@ -206,14 +206,16 @@ which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
 
-- [ ] **R814 Nothing checks `benchmarks/compile` against the pinned Mojo**
+- [ ] **R818 No run has yet confirmed the pinned Mojo accepts every
+  compile benchmark**
 
-  `scripts/sweep-assets-mojo` sweeps only `assets/` folders, so a compile
-  benchmark the pin rejects goes unnoticed.
-  - Add `benchmarks/compile` to the overnight sweep in
-    `scripts/run-overnight-gates`, with `--compare`.
-  - First confirm the eight older fixtures pass; the three R774 added
-    were swept by hand with `--only` (2026-10-13).
+  The `benchmarks-mojo-sweep` step exists, but the pin env was missing when
+  it landed, so no `--benchmarks` run has passed yet.
+  - Run `scripts/sweep-assets-mojo --mojo-pixi-manifest P --benchmarks`, or
+    read the first nightly log.
+  - Respell any benchmark the pin rejects, including `tuple.mojo`'s
+    `__getitem_param__` rewrite; file a real output difference on the
+    `divergences` track.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

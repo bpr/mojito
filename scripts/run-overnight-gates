@@ -84,6 +84,11 @@ run_step assets-mojo-extensions scripts/sweep-assets-mojo \
 run_step assets-mojo-errors scripts/sweep-assets-mojo \
     --mojo-pixi-manifest "${MOJO_PIXI_MANIFEST}" --errors
 
+# The compile benchmarks must be valid Mojo too, and they keep no burn-down
+# list: any pin reject, Mojito reject, or stdout difference fails the step.
+run_step benchmarks-mojo-sweep scripts/sweep-assets-mojo \
+    --mojo-pixi-manifest "${MOJO_PIXI_MANIFEST}" --benchmarks
+
 # The instantiation ratchet: the concrete-instruction total over the fixtures
 # elaborated both here and in benchmarks/instantiation.tsv must equal the
 # committed one, and no fixture may stop elaborating, so no change grows the
@@ -129,6 +134,10 @@ run_step instantiation-ratchet env RUSTC_WRAPPER= scripts/instantiation-report -
     echo "  whether the row's family still holds before repinning the text."
     echo "  target/assets-mojo-sweep/<run>/ledger.tsv is paste-ready and keeps"
     echo "  the old families; only rows marked ? need a decision."
+    echo "- benchmarks-mojo-sweep failing means a benchmarks/compile program the"
+    echo "  pin rejects, Mojito rejects, or whose stdout differs. Respell the"
+    echo "  benchmark in the pin's spelling (or fix Mojito, if Mojito is wrong);"
+    echo "  never ledger it. Per-fixture output is under target/assets-mojo-sweep/."
     echo "- check-pliron-heavy regenerates nothing: it asserts the two"
     echo "  checked-in manifests match a fresh sweep. A failure is either a"
     echo "  hand-edited row (scripts/check-parity-manifest catches ordering,"

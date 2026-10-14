@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The overnight gate checks `benchmarks/compile` against the pinned Mojo
+  (R814): its `benchmarks-mojo-sweep` step runs the new
+  `scripts/sweep-assets-mojo --benchmarks`, which fails on any benchmark the
+  pin or Mojito rejects or whose stdout differs, with no burn-down list.
+  `benchmarks/compile/tuple.mojo` is respelled as the pin accepts it
+  (`__getitem_param__`, a `Deinitable` bound, R530), so all 1 018 fixtures of
+  `benchmarks/instantiation.tsv` now elaborate.
 - The overnight gate ratchets the instantiated program's size (R773):
   `scripts/instantiation-report --check` fails when the concrete-instruction
   total over the fixtures elaborated in both runs grows past, or shrinks

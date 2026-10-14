@@ -213,6 +213,9 @@ is the burn-down list of fixtures still to respell. `--compare` also runs
 Mojito and diffs stdout, `--only PATH...` narrows it to a few fixtures for an
 in-session check, and `--extensions` inverts the expectation over
 `assets/extensions/`, where the pinned Mojo must reject every fixture.
+`--benchmarks` sweeps `benchmarks/compile` with `--compare` and no burn-down
+list: every benchmark must run under both compilers with equal stdout, as the
+overnight gate's `benchmarks-mojo-sweep` step checks.
 
 `--errors` sweeps the five error folders instead, where an exit code proves
 nothing because both compilers reject the program. It classifies each fixture by
