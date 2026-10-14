@@ -1,9 +1,11 @@
 //! `canonicalize`: upstream's `Canonicalizer`, MLIR's `canonicalize` pass,
 //! which its pre-elaboration pipeline runs after `EliminateDeadSymbols`.
 //!
-//! This is its region simplification, folding, and dead-op erasure: blocks
-//! the entry does not reach go, as MLIR's `eraseUnreachableBlocks` erases
-//! them; an instruction that folds to one of its operands
+//! This is its region simplification, folding, and dead-op erasure: a
+//! `branch` on a constant condition becomes a `jump` to the taken arm, as
+//! the `cf` dialect's `SimplifyConstCondBranchPred` pattern rewrites it;
+//! blocks the entry does not reach go, as MLIR's `eraseUnreachableBlocks`
+//! erases them; an instruction that folds to one of its operands
 //! ([`MirInstr::forwarded_operand`], an identity `value.copy`) is replaced
 //! by that operand in every reader, as MLIR's greedy driver applies a `fold`
 //! that returns an operand; and an instruction whose results nothing reads
@@ -14,10 +16,9 @@ use super::pre_elaboration::BodyPass;
 use mojito_common::timing;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
-    MirBlock, MirDeclarations, MirFunction, MirInstr, Reg, instruction_regs_mut,
+    Const, MirBlock, MirDeclarations, MirFunction, MirInstr, MirTerm, Reg, instruction_regs_mut,
     prune_unreachable_blocks, terminator_regs_mut,
 };
-use mojito_types::types::Ty;
 use std::collections::{HashMap, HashSet};
 
 /// The pass, under MLIR's flag spelling.
@@ -26,12 +27,14 @@ pub const CANONICALIZE: BodyPass = BodyPass {
     run: canonicalize,
 };
 
-/// Erase `function`'s unreachable blocks, forward each identity copy's
-/// operand to its readers, then erase every trivially dead instruction.
+/// Fold each `branch` on a constant to a `jump`, erase `function`'s
+/// unreachable blocks, forward each identity copy's operand to its readers,
+/// then erase every trivially dead instruction.
 ///
 /// Erasure repeats until none is left. A removed instruction's results lose their types and spans;
 /// registers are not renumbered.
 pub fn canonicalize(_name: &str, function: &mut MirFunction, _declarations: &MirDeclarations) {
+    timing::count("folded_branches", fold_constant_branches(function) as u64);
     let blocks = block_count(&mut function.blocks);
     prune_unreachable_blocks(function);
     timing::count(
@@ -73,6 +76,69 @@ fn regions_mut(instruction: &mut MirInstr) -> Vec<&mut Vec<MirBlock>> {
         .collect()
 }
 
+/// Rewrite each `branch` of `function` whose condition is defined once, by
+/// a `const bool`, to a `jump` to the arm it takes; returns how many were
+/// rewritten. The condition's `const`, once unread, is erased as dead.
+fn fold_constant_branches(function: &mut MirFunction) -> usize {
+    let definitions = definition_counts(&mut function.blocks, function.n_regs);
+    let mut conditions = HashMap::new();
+    visit_blocks(&mut function.blocks, &mut |block| {
+        for instruction in &block.instrs {
+            if let MirInstr::Const {
+                dest,
+                k: Const::Bool(value),
+            } = instruction
+                && definitions.get(dest.0 as usize) == Some(&1)
+            {
+                conditions.insert(dest.0, *value);
+            }
+        }
+    });
+    let mut folded = 0;
+    visit_blocks(&mut function.blocks, &mut |block| {
+        if let MirTerm::Branch {
+            cond,
+            then_b,
+            else_b,
+        } = block.term
+            && let Some(taken) = conditions.get(&cond.0)
+        {
+            block.term = MirTerm::Jump(if *taken { then_b } else { else_b });
+            folded += 1;
+        }
+    });
+    folded
+}
+
+/// How many times `blocks` and their regions define each of `n_regs`
+/// registers.
+fn definition_counts(blocks: &mut [MirBlock], n_regs: u32) -> Vec<u32> {
+    let mut definitions = vec![0_u32; n_regs as usize];
+    visit_blocks(blocks, &mut |block| {
+        for instruction in &block.instrs {
+            let mut results = Vec::new();
+            instruction_result_regs(instruction, &mut results);
+            for reg in &results {
+                if let Some(count) = definitions.get_mut(reg.0 as usize) {
+                    *count += 1;
+                }
+            }
+        }
+    });
+    definitions
+}
+
+/// Call `visit` on every block of `blocks`, then on the blocks of the `try`
+/// regions each holds.
+fn visit_blocks(blocks: &mut [MirBlock], visit: &mut impl FnMut(&mut MirBlock)) {
+    for block in blocks {
+        visit(block);
+        for region in block.instrs.iter_mut().flat_map(regions_mut) {
+            visit_blocks(region, visit);
+        }
+    }
+}
+
 /// Replace each register an instruction folds to an operand
 /// ([`MirInstr::forwarded_operand`]) by that operand, chains resolved to
 /// their root, and remove the folding instructions; returns how many went.
@@ -87,9 +153,19 @@ fn forward_copies(function: &mut MirFunction) -> usize {
         n_regs,
         ..
     } = function;
-    let mut definitions = vec![0_u32; *n_regs as usize];
+    let definitions = definition_counts(blocks, *n_regs);
     let mut folds = HashMap::new();
-    collect_folds(blocks, reg_types, &mut definitions, &mut folds);
+    visit_blocks(blocks, &mut |block| {
+        for instruction in &block.instrs {
+            let mut results = Vec::new();
+            instruction_result_regs(instruction, &mut results);
+            if let (Some(operand), [dest]) =
+                (instruction.forwarded_operand(reg_types), results.as_slice())
+            {
+                folds.insert(dest.0, operand);
+            }
+        }
+    });
     let single = |reg: u32, most: u32| definitions.get(reg as usize).is_some_and(|n| *n <= most);
     folds.retain(|dest: &u32, operand: &mut Reg| single(*dest, 1) && single(operand.0, 1));
     let roots: HashMap<u32, Reg> = folds
@@ -177,35 +253,6 @@ fn erase_dead(blocks: &mut [MirBlock], reads: &[u32], erased: &mut HashSet<u32>)
             }
             !dead
         });
-    }
-}
-
-/// Count each register's definitions in `blocks` and their regions, and map
-/// each folding instruction's result to the operand it folds to.
-fn collect_folds(
-    blocks: &mut [MirBlock],
-    reg_types: &HashMap<u32, Ty>,
-    definitions: &mut [u32],
-    folds: &mut HashMap<u32, Reg>,
-) {
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            let mut results = Vec::new();
-            instruction_result_regs(instruction, &mut results);
-            for reg in &results {
-                if let Some(count) = definitions.get_mut(reg.0 as usize) {
-                    *count += 1;
-                }
-            }
-            if let (Some(operand), [dest]) =
-                (instruction.forwarded_operand(reg_types), results.as_slice())
-            {
-                folds.insert(dest.0, operand);
-            }
-            for region in regions_mut(instruction) {
-                collect_folds(region, reg_types, definitions, folds);
-            }
-        }
     }
 }
 

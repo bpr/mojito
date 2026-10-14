@@ -45,6 +45,7 @@ pub use pre_elaboration::{
 use register_loans::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use scan::*;
+pub use sccp::{SCCP, sccp};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use store_drops::*;
@@ -232,6 +233,7 @@ mod opt;
 mod pre_elaboration;
 mod register_loans;
 mod scan;
+mod sccp;
 mod store_drops;
 
 #[cfg(test)]

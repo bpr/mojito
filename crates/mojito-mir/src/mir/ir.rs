@@ -1908,6 +1908,81 @@ impl MirInstr {
         let source = reg_types.get(&value.0)?;
         (reg_types.get(&dest.0) == Some(source) && copy_is_identity(source)).then_some(*value)
     }
+
+    /// The constant this instruction's one result always equals when its
+    /// operands hold the constants `constant` gives: MLIR's `fold` returning
+    /// an attribute, which upstream's `SCCP` asks.
+    ///
+    /// Only a built-in operator, a literal materialization to `Int` or
+    /// `Float64`, and a forwarded copy fold, and only over scalars whose
+    /// constant kind is the one their register's type names (`Int`,
+    /// `Float64`, `Bool`, `IntLiteral`, `FloatLiteral`). The fold is the
+    /// compile-time folder's; where it and the VM could disagree (a zero
+    /// divisor, an out-of-range shift, an overflowing `**`, a NaN or infinite
+    /// comparison, `Float64` `//`, `%`, `**`, and `Bool` operators other
+    /// than `==`/`!=`), nothing folds and the run-time operation stays.
+    pub fn folded_constant(
+        &self,
+        constant: impl Fn(Reg) -> Option<Const>,
+        reg_types: &HashMap<u32, Ty>,
+    ) -> Option<Const> {
+        use mojito_types::param_expr::fold::{fold_infix, fold_invert, fold_neg};
+        let operand = |reg: Reg| const_ct_value(&constant(reg)?, reg_types.get(&reg.0)?);
+        let (dest, value) = match self {
+            Self::BinOp {
+                op,
+                dest,
+                a,
+                b,
+                resolved: None,
+                raises: None,
+            } => {
+                let (left, right) = (operand(*a)?, operand(*b)?);
+                let bool_operands = matches!(left, CtValue::Bool(_));
+                if bool_operands && !matches!(op, InfixOp::Eq | InfixOp::Ne) {
+                    return None;
+                }
+                (dest, fold_infix(*op, &left, &right).ok()?)
+            }
+            Self::UnOp {
+                op,
+                dest,
+                a,
+                raises: None,
+            } => {
+                let value = operand(*a)?;
+                let folded = match (op, value) {
+                    (PrefixOp::Neg, value) => fold_neg(&value).ok()?,
+                    (PrefixOp::Invert, value) => fold_invert(&value).ok()?,
+                    (PrefixOp::Not, CtValue::Bool(value)) => CtValue::Bool(!value),
+                    (PrefixOp::Not, _) => return None,
+                };
+                (dest, folded)
+            }
+            Self::MaterializeLiteral {
+                dest,
+                value,
+                target,
+            } => {
+                let materialized = match (operand(*value)?, target.kind()) {
+                    (CtValue::IntLiteral(value), TyKind::Int) => {
+                        CtValue::Int(value.wrapping_signed(64)?)
+                    }
+                    (CtValue::IntLiteral(value), TyKind::Float64) => {
+                        CtValue::Float(value.to_f64()?.to_bits())
+                    }
+                    (CtValue::FloatLiteral(value), TyKind::Float64) => {
+                        CtValue::Float(value.to_f64()?.to_bits())
+                    }
+                    _ => return None,
+                };
+                (dest, materialized)
+            }
+            Self::CopyValue { dest, .. } => (dest, operand(self.forwarded_operand(reg_types)?)?),
+            _ => return None,
+        };
+        ct_const(value, reg_types.get(&dest.0)?)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -2061,6 +2136,34 @@ impl MirFunction {
 /// origin variable — so borrow-checker diagnostics can point at real code.
 #[derive(Debug, Clone, Default)]
 pub struct SpanTable(pub HashMap<u32 /*reg*/, (SourceSpan, Option<VarId>)>);
+
+/// The scalar `constant` denotes in a register of type `ty`, when its kind
+/// is the one `ty` names.
+fn const_ct_value(constant: &Const, ty: &Ty) -> Option<CtValue> {
+    match (constant, ty.kind()) {
+        (Const::Int(value), TyKind::Int) => Some(CtValue::Int(*value)),
+        (Const::Float(value), TyKind::Float64) => Some(CtValue::Float(value.to_bits())),
+        (Const::Bool(value), TyKind::Bool) => Some(CtValue::Bool(*value)),
+        (Const::IntLiteral(value), TyKind::IntLiteral) => Some(CtValue::IntLiteral(value.clone())),
+        (Const::FloatLiteral(value), TyKind::FloatLiteral) => {
+            Some(CtValue::FloatLiteral(value.clone()))
+        }
+        _ => None,
+    }
+}
+
+/// The constant a register of type `ty` holding the scalar `value` is
+/// defined by, when `ty` names `value`'s kind.
+fn ct_const(value: CtValue, ty: &Ty) -> Option<Const> {
+    match (value, ty.kind()) {
+        (CtValue::Int(value), TyKind::Int) => Some(Const::Int(value)),
+        (CtValue::Float(bits), TyKind::Float64) => Some(Const::Float(f64::from_bits(bits))),
+        (CtValue::Bool(value), TyKind::Bool) => Some(Const::Bool(value)),
+        (CtValue::IntLiteral(value), TyKind::IntLiteral) => Some(Const::IntLiteral(value)),
+        (CtValue::FloatLiteral(value), TyKind::FloatLiteral) => Some(Const::FloatLiteral(value)),
+        _ => None,
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -2228,5 +2331,134 @@ mod tests {
             value: Reg(0),
         };
         assert_eq!(rebind.forwarded_operand(&reg_types), None);
+    }
+
+    #[test]
+    fn folded_constant_folds_only_what_the_vm_computes_alike() {
+        use mojito_common::literal::IntLiteral;
+        let ty = |kind| Ty::new(kind);
+        let binary = |op, a: Const, b: Const, operand: TyKind, dest: TyKind| {
+            let reg_types =
+                HashMap::from([(0, ty(operand.clone())), (1, ty(operand)), (2, ty(dest))]);
+            MirInstr::BinOp {
+                op,
+                dest: Reg(2),
+                a: Reg(0),
+                b: Reg(1),
+                resolved: None,
+                raises: None,
+            }
+            .folded_constant(
+                |reg| [a.clone(), b.clone()].get(reg.0 as usize).cloned(),
+                &reg_types,
+            )
+        };
+        let literal = |value: i64| Const::IntLiteral(IntLiteral::from(value));
+        assert!(matches!(
+            binary(InfixOp::Add, literal(2), literal(3), TyKind::IntLiteral, TyKind::IntLiteral),
+            Some(Const::IntLiteral(value)) if value == IntLiteral::from(5i64)
+        ));
+        assert!(matches!(
+            binary(
+                InfixOp::Lt,
+                literal(1),
+                literal(2),
+                TyKind::IntLiteral,
+                TyKind::Bool
+            ),
+            Some(Const::Bool(true))
+        ));
+        assert!(matches!(
+            binary(
+                InfixOp::Add,
+                Const::Int(i64::MAX),
+                Const::Int(1),
+                TyKind::Int,
+                TyKind::Int
+            ),
+            Some(Const::Int(i64::MIN))
+        ));
+        for (op, a, b) in [
+            (InfixOp::FloorDiv, Const::Int(7), Const::Int(0)),
+            (InfixOp::Shl, Const::Int(1), Const::Int(64)),
+            (InfixOp::Div, Const::Int(1), Const::Int(2)),
+        ] {
+            assert!(binary(op, a, b, TyKind::Int, TyKind::Int).is_none());
+        }
+        assert!(
+            binary(
+                InfixOp::Add,
+                Const::Int(1),
+                Const::Int(2),
+                TyKind::UInt,
+                TyKind::UInt
+            )
+            .is_none()
+        );
+        assert!(
+            binary(
+                InfixOp::BitAnd,
+                Const::Bool(true),
+                Const::Bool(false),
+                TyKind::Bool,
+                TyKind::Bool
+            )
+            .is_none()
+        );
+        let nan = Const::Float(f64::NAN);
+        assert!(binary(InfixOp::Lt, nan.clone(), nan, TyKind::Float64, TyKind::Bool).is_none());
+        let param = Const::Param(
+            ParamContext::new()
+                .constant(CtValue::Int(1))
+                .expect("a closed Int is a parameter expression"),
+        );
+        assert!(binary(InfixOp::Add, param.clone(), param, TyKind::Int, TyKind::Int).is_none());
+
+        let reg_types = HashMap::from([
+            (0, ty(TyKind::Int)),
+            (1, ty(TyKind::Int)),
+            (2, ty(TyKind::Int)),
+        ]);
+        let ones = |_: Reg| Some(Const::Int(1));
+        let raising = MirInstr::BinOp {
+            op: InfixOp::Add,
+            dest: Reg(2),
+            a: Reg(0),
+            b: Reg(1),
+            resolved: None,
+            raises: Some(ty(TyKind::Int)),
+        };
+        assert!(raising.folded_constant(ones, &reg_types).is_none());
+        let dunder = MirInstr::BinOp {
+            op: InfixOp::Add,
+            dest: Reg(2),
+            a: Reg(0),
+            b: Reg(1),
+            resolved: Some("Int.__add__".into()),
+            raises: None,
+        };
+        assert!(dunder.folded_constant(ones, &reg_types).is_none());
+
+        let materialize = |target: TyKind| {
+            let reg_types = HashMap::from([(0, ty(TyKind::IntLiteral)), (1, ty(target.clone()))]);
+            MirInstr::MaterializeLiteral {
+                dest: Reg(1),
+                value: Reg(0),
+                target: ty(target),
+            }
+            .folded_constant(
+                |_| {
+                    Some(Const::IntLiteral(
+                        IntLiteral::from(1i64).shl(&IntLiteral::from(63i64))?,
+                    ))
+                },
+                &reg_types,
+            )
+        };
+        assert!(matches!(
+            materialize(TyKind::Int),
+            Some(Const::Int(i64::MIN))
+        ));
+        assert!(materialize(TyKind::UInt).is_none());
     }
 }

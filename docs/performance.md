@@ -1322,3 +1322,39 @@ readers' operand type.
 The program-seam counter is `pre_elaboration.canonicalize.forwarded_copies`
 (4 on a small probe); package bodies are finished on the elaborator's
 thread, so their counts do not reach `--timings`.
+
+## SCCP folds constants that do not depend on a parameter (2026-10-14, R781)
+
+`sccp`, upstream's `SCCP`, runs after the first `canonicalize`, and a
+second `canonicalize` after it folds each `branch` it decides, as the pin's
+second pre-elaboration round runs `SCCP, Canonicalizer`
+(`docs/architecture.md` §Pre-Elaboration Pipeline).
+`scripts/instantiation-report` over all 1 020 fixtures, debug binary;
+*before* is R780's committed baseline:
+
+| | before | after | change |
+|---|---:|---:|---:|
+| corpus `concrete_instructions` | 872 283 | 802 472 | −69 811 (−8.00 %) |
+| corpus `generator_instructions` | 233 791 | 218 153 | −15 638 (−6.69 %) |
+| corpus `generator_instance_instructions` | 383 656 | 358 548 | −25 108 (−6.54 %) |
+| `collections_many` instance instructions | 15 784 | 14 725 | −1 059 |
+| `nested_generics` instance instructions | 3 029 | 2 806 | −223 |
+| `stdlib_heavy` instance instructions | 2 718 | 2 528 | −190 |
+| `trait_defaults` instance instructions | 1 143 | 1 094 | −49 |
+
+**Almost all of it is literal materialization.** Lowering writes every
+integer or float literal as an `IntLiteral` or `FloatLiteral` `const`
+followed by a `literal.materialize` to its machine type. `sccp` folds the
+pair to one `const int(…)` or `const float(…)`, and `canonicalize` then
+erases the literal. In `collections_many`'s MIR (`emit-mir`, pipeline off
+and on) the pass takes `literal.materialize` from 1 395 to 24, `unary`
+from 98 to 62, `binary` from 1 686 to 1 674, and `branch` from 949 to 946.
+Real arithmetic and decided branches are rare because values cross blocks
+through variable slots, not registers; `Mem2Reg` would widen what the
+lattice sees. The 24 materializations left target `UInt` or a scalar SIMD
+type (R841). Operators over a parameter read stay in every instance until
+the elaborator's output is folded too (R840).
+
+The program-seam counters are `pre_elaboration.sccp.folded_constants` and
+`pre_elaboration.canonicalize.folded_branches` (9 and 3 on a small probe);
+both `canonicalize` runs count into the one span.

@@ -1,0 +1,67 @@
+mojito-mir 1.53
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("cases.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: kept, param_names: [u], param_types: [UInt], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "kept", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: UInt, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: kept,
+        registers: 20,
+        vars: 5,
+        var_names: [u, a, b, n, m],
+        params: 1,
+        param_types: [UInt],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: UInt }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: UInt }, var_type { var: $v3, type: Int }, var_type { var: $v4, type: Int }],
+        return_type: present(UInt),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: IntLiteral }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: IntLiteral }, reg_type { reg: %r9, type: UInt }, reg_type { reg: %r10, type: Int }, reg_type { reg: %r11, type: None }, reg_type { reg: %r12, type: UInt }, reg_type { reg: %r13, type: UInt }, reg_type { reg: %r14, type: UInt }, reg_type { reg: %r15, type: Int }, reg_type { reg: %r16, type: Int }, reg_type { reg: %r17, type: Int }, reg_type { reg: %r18, type: Int }, reg_type { reg: %r19, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 130, end: 131, origin: present($v3) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 134, end: 135, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 134, end: 135, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 130, end: 135, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 148, end: 149, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 152, end: 153, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 152, end: 153, origin: absent }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 148, end: 153, origin: absent }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 172, end: 173, origin: absent }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 172, end: 173, origin: absent }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 184, end: 185, origin: present($v1) }) }, reg_loc { reg: %r11, location: present(loc { file: file0, start: 174, end: 186, origin: absent }) }, reg_loc { reg: %r12, location: present(loc { file: file0, start: 198, end: 199, origin: present($v0) }) }, reg_loc { reg: %r13, location: present(loc { file: file0, start: 202, end: 203, origin: present($v2) }) }, reg_loc { reg: %r14, location: present(loc { file: file0, start: 198, end: 203, origin: absent }) }, reg_loc { reg: %r15, location: absent }, reg_loc { reg: %r16, location: absent }, reg_loc { reg: %r17, location: absent }, reg_loc { reg: %r18, location: absent }, reg_loc { reg: %r19, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r1, value: int_literal(2) },
+              literal.materialize { dest: %r2, value: %r1, target: Int },
+              var.use { dest: %r0, var: $v3, mode: copy },
+              drop.var { var: $v3 },
+              binary { op: mul, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent },
+              var.store { var: $v4, src: %r3, binding_type: present(Int), in_place: false },
+              drop.var { var: $v4 },
+              const { dest: %r5, value: int_literal(1) },
+              literal.materialize { dest: %r6, value: %r5, target: Int },
+              const { dest: %r4, value: param(param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(2)), param_decl_ref { owner: "kept", slot: 0, name: n, type: meta_value(Int) }] }) },
+              binary { op: add, dest: %r7, a: %r4, b: %r6, resolved: absent, raises: absent },
+              var.store { var: $v1, src: %r7, binding_type: present(Int), in_place: true },
+              const { dest: %r8, value: int_literal(3) },
+              literal.materialize { dest: %r9, value: %r8, target: UInt },
+              var.store { var: $v2, src: %r9, binding_type: present(UInt), in_place: false },
+              var.use { dest: %r10, var: $v1, mode: copy },
+              drop.var { var: $v1 },
+              call { dest: %r11, func: print, raises: absent, args: [%r10], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              var.use { dest: %r12, var: $v0, mode: copy },
+              var.use { dest: %r13, var: $v2, mode: copy },
+              drop.var { var: $v2 },
+              const { dest: %r15, value: int(7) },
+              const { dest: %r16, value: int(0) },
+              binary { op: floor_div, dest: %r17, a: %r15, b: %r16, resolved: absent, raises: absent },
+              const { dest: %r18, value: int(64) },
+              binary { op: shl, dest: %r19, a: %r15, b: %r18, resolved: absent, raises: absent },
+              binary { op: add, dest: %r14, a: %r12, b: %r13, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r14) }
+          }
+        ]
+      }
+  ]
+}

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R840**.
+Next free ID: **R844**.
 
 ## Ordered Work
 
@@ -56,18 +56,40 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R781 Constants that do not depend on a parameter are folded per
-  instance instead of once**
+- [ ] **R840 Operators and branches over a folded parameter read run in
+  every instance at run time**
 
-  An operation over values known without the parameters, and a branch it
-  decides, is evaluated again in every instance, where upstream's `SCCP`
-  folds it once on the generator.
-  - What depends on a parameter stays for the elaborator, which already
-    folds it per instance.
-  - Done when the pass runs at both seams, keeps the differential clean, and
-    its corpus effect is recorded.
-  - Depends on R780.
-  - Model: Opus, Planned.
+  The elaborator turns a `Const::Param` into a constant per instance, but
+  nothing then folds the operators over it or the `branch` it decides, where
+  upstream's post-elaboration `'kgen.func'` pipeline runs `SCCP` and
+  `Canonicalizer` on each concrete function.
+  - The pin's `mojo build --mlir-timing` shows that pipeline (`SROA`,
+    `Mem2Reg`, `SCCP`, `Canonicalizer`, `CSEPass`) after
+    `ElaborateGenerators`.
+  - The fix runs `sccp` and `canonicalize` over each instance the
+    elaborator emits; `MirInstr::folded_constant` already serves it.
+  - The same report answers R839's question: upstream's `Canonicalizer`
+    does run on concrete functions.
+  - Done when an instance's `Const::Param` arithmetic folds, the
+    differential is clean, and the concrete-instruction change is recorded.
+  - Depends on R781.
+  - Model: Opus, Not Planned.
+
+- [ ] **R841 A literal materialized to `UInt` or a scalar SIMD type is not
+  folded**
+
+  `sccp` folds a literal materialized to `Int` or `Float64` but leaves one
+  materialized to `UInt` or a one-lane SIMD type, where upstream folds every
+  constant materialization.
+  - MIR has no `UInt` or scalar-SIMD constant whose VM value is the
+    materialization's: `value_parameter_constant` writes a `UInt` as
+    `Const::Int`, which the VM reads as an `Int`.
+  - 24 such materializations remain in `collections_many.mojo`'s MIR.
+  - It needs a `Const` form per kind, read alike by the VM, Pliron, and
+    `register_constant` in `mono/equiv.rs`.
+  - Done when they fold and the native differential is clean on a probe.
+  - Depends on R781.
+  - Model: Opus, Not Planned.
 
 - [ ] **R836 Generic bodies carry empty pass-through blocks into every
   instance**
@@ -120,6 +142,20 @@ which names the upstream pass each one follows. Each is measured by the
   - Done when the answer is recorded and, if upstream folds, the instance
     counters show the fold.
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R842 `canonicalize` does not apply constant folds**
+
+  MLIR's greedy driver folds an op whose operands are all constants, and
+  Mojito's `canonicalize` leaves that to `sccp`.
+  - No output changes while `sccp` precedes the second `canonicalize`.
+  - It matters once a round runs `canonicalize` without `sccp`, as the
+    pin's third round does.
+  - The fold is `MirInstr::folded_constant` over operands defined once by a
+    `const`.
+  - Done when a pass test shows `canonicalize` alone folding a constant
+    operator.
+  - Depends on R781.
   - Model: Opus, Not Planned.
 
 - [ ] **R782 Instances that differ only in a parameter their body never

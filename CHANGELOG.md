@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The pre-elaboration pipeline now runs `sccp` (R781), upstream's `SCCP`,
+  then `canonicalize` again, as upstream's second round does: operators,
+  literal materializations to `Int` and `Float64`, and copies over
+  constants that do not depend on a parameter become one `const` on the
+  generator (`MirInstr::folded_constant`), and a `branch` on a constant
+  becomes a `jump` with its untaken arm erased. Nothing folds where the
+  compile-time folder and the VM could disagree. Corpus concrete
+  instructions fall by 8 %; `benchmarks/instantiation.tsv` is rerun.
+
 - `canonicalize` now forwards an identity copy's operand to its readers
   (R780), as upstream's `Canonicalizer` applies a fold that returns an
   operand: a `value.copy` of a scalar, pointer, `None`, or SIMD lane, typed

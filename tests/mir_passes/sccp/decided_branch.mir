@@ -1,0 +1,62 @@
+mojito-mir 1.53
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("cases.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: decided_branch, param_names: [x], param_types: [param { owner: "decided_branch", slot: 0, name: T, bounds: [ImplicitlyCopyable, Writable], callable_bound: absent }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [type_param { owner: "decided_branch", slot: 0, name: T, bounds: [ImplicitlyCopyable, Writable], callable_bound: absent, default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: decided_branch,
+        registers: 7,
+        vars: 1,
+        var_names: [x],
+        params: 1,
+        param_types: [param { owner: "decided_branch", slot: 0, name: T, bounds: [ImplicitlyCopyable, Writable], callable_bound: absent }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: param { owner: "decided_branch", slot: 0, name: T, bounds: [ImplicitlyCopyable, Writable], callable_bound: absent } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Bool }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: param { owner: "decided_branch", slot: 0, name: T, bounds: [ImplicitlyCopyable, Writable], callable_bound: absent } }, reg_type { reg: %r6, type: None }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 257, end: 258, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 261, end: 262, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 257, end: 262, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 292, end: 293, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 292, end: 293, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 278, end: 279, origin: present($v0) }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 272, end: 280, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(1) },
+              const { dest: %r1, value: int_literal(2) },
+              binary { op: lt, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent }
+            ],
+            terminator: branch { condition: %r2, then: bb2, else: bb3 }
+          },
+          bb1 {
+            instructions: [
+              const { dest: %r3, value: int_literal(0) },
+              literal.materialize { dest: %r4, value: %r3, target: Int }
+            ],
+            terminator: return { value: present(%r4) }
+          },
+          bb2 {
+            instructions: [
+              place.load { dest: %r5, place: place { root: $v0, root_type: present(param { owner: "decided_branch", slot: 0, name: T, bounds: [ImplicitlyCopyable, Writable], callable_bound: absent }), projections: [], type: present(param { owner: "decided_branch", slot: 0, name: T, bounds: [ImplicitlyCopyable, Writable], callable_bound: absent }), through: absent } },
+              call { dest: %r6, func: print, raises: absent, args: [%r5], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb3 {
+            instructions: [
+            ],
+            terminator: jump { target: bb1 }
+          }
+        ]
+      }
+  ]
+}

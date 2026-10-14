@@ -563,6 +563,7 @@ fn register_constant(
             MirInstr::Const { dest, k } if *dest == reg => Some(match k {
                 Const::Int(value) => Some(CtValue::Int(*value)),
                 Const::IntLiteral(literal) => literal.to_i64().map(CtValue::Int),
+                Const::Float(value) => Some(CtValue::Float(value.to_bits())),
                 Const::Bool(value) => Some(CtValue::Bool(*value)),
                 Const::Dtype(value) => Some(CtValue::Dtype(*value)),
                 Const::Function(function) => Some(CtValue::Str(function.clone())),

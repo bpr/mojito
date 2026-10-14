@@ -12,6 +12,7 @@
 use super::canonicalize::CANONICALIZE;
 use super::dead_symbols::ELIMINATE_DEAD_SYMBOLS;
 use super::elaborate_drops_function;
+use super::sccp::SCCP;
 use mojito_common::timing;
 use mojito_mir::mir::{MirDeclarations, MirFunction, MirProgram};
 
@@ -46,14 +47,18 @@ impl Pass {
     }
 }
 
-/// The pre-elaboration pipeline, in order: upstream's pass list
-/// (`docs/pre-elaboration-optimization-plan.md`) as Mojito adopts it.
+/// The pre-elaboration pipeline, in order: upstream's pass rounds
+/// (`docs/pre-elaboration-optimization-plan.md`) as Mojito adopts them.
 ///
-/// Upstream runs `RemoveUnusedParams`, `EliminateDeadSymbols`, `SROA`,
-/// `Mem2Reg`, then `Canonicalizer`; Mojito has neither `RemoveUnusedParams`
-/// nor the two scalar-replacement passes.
+/// Upstream's first round runs `RemoveUnusedParams`, `EliminateDeadSymbols`,
+/// then `SROA`, `Mem2Reg`, and `Canonicalizer` on each generator; its second
+/// runs `SROA`, `Mem2Reg`, `SCCP`, and `Canonicalizer` again. Mojito has
+/// neither `RemoveUnusedParams` nor the two scalar-replacement passes, and,
+/// as upstream does, runs `canonicalize` once in each round.
 pub const PIPELINE: &[Pass] = &[
     Pass::Program(ELIMINATE_DEAD_SYMBOLS),
+    Pass::Body(CANONICALIZE),
+    Pass::Body(SCCP),
     Pass::Body(CANONICALIZE),
 ];
 
@@ -76,9 +81,15 @@ pub fn pass_named(name: &str) -> Option<&'static Pass> {
         .find(|pass| pass.name() == name)
 }
 
-/// Every registered pass's name, pipeline order first.
+/// Every registered pass's name once, in the order the pipeline first runs
+/// it, then the passes run only on request.
 pub fn pass_names() -> impl Iterator<Item = &'static str> {
-    PIPELINE.iter().chain(REGISTERED).map(Pass::name)
+    let mut seen = std::collections::HashSet::new();
+    PIPELINE
+        .iter()
+        .chain(REGISTERED)
+        .map(Pass::name)
+        .filter(move |name| seen.insert(*name))
 }
 
 /// Run [`PIPELINE`]'s body passes over the body `name`. In debug builds
@@ -195,6 +206,7 @@ mod tests {
         assert!(pass_named("elaborate-drops").is_some());
         assert!(pass_named("eliminate-dead-symbols").is_some());
         assert!(pass_named("canonicalize").is_some());
+        assert!(pass_named("sccp").is_some());
         assert!(pass_named("no-such-pass").is_none());
     }
 }

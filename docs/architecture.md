@@ -4798,7 +4798,13 @@ before the elaborator. Mojito's is `analysis::PIPELINE`
 `Pass` rows: a `ProgramPass` rewrites the whole program once and may remove
 functions, as upstream's module passes do, and a `BodyPass` rewrites each
 drop-elaborated parametric body. `docs/pre-elaboration-optimization-plan.md`
-stages the passes that fill it.
+stages the passes that fill it. The list follows upstream's rounds as the
+pinned compiler's `--mlir-timing` report shows them: the first round runs
+`EliminateDeadSymbols` and then a `Canonicalizer` on each generator, the
+second runs `SCCP` and a `Canonicalizer` again, so `PIPELINE` is
+`eliminate-dead-symbols`, `canonicalize`, `sccp`, `canonicalize`.
+`pass_names` yields a pass that runs twice once, and both runs of
+`canonicalize` count into one `--timings` span.
 
 - **`eliminate-dead-symbols` runs first** (`analysis::ELIMINATE_DEAD_SYMBOLS`,
   `analysis/dead_symbols.rs`, R778), upstream's `EliminateDeadSymbols`, which
@@ -4824,7 +4830,11 @@ stages the passes that fill it.
 - **`canonicalize` runs next** (`analysis::CANONICALIZE`,
   `analysis/canonicalize.rs`, R779), upstream's `Canonicalizer` (MLIR's
   `canonicalize`), which upstream runs after `EliminateDeadSymbols`, `SROA`,
-  and `Mem2Reg`. It erases the blocks the entry does not reach, at the
+  and `Mem2Reg`. It first rewrites a `branch` whose condition has one
+  definition, a `const bool`, to a `jump` to the arm it takes (R781, the
+  `cf` dialect's `SimplifyConstCondBranchPred`); the untaken arm keeps its
+  own drops at its entry, so removing it ends nothing twice. It then erases
+  the blocks the entry does not reach, at the
   function level and in each `try` region from its own entry
   (`mir::prune_unreachable_blocks`, MLIR's `eraseUnreachableBlocks`). It
   then folds each `value.copy` that is the identity to its operand (R780,
@@ -4850,8 +4860,33 @@ stages the passes that fill it.
   A register's read count is every register its instruction names but its
   own results, so an operand no enumeration classifies keeps its definition.
   An erased result loses its type and span; registers are not renumbered.
-  Its `--timings` counters are `erased_blocks`, `forwarded_copies`, and
-  `erased_instructions`.
+  Its `--timings` counters are `folded_branches`, `erased_blocks`,
+  `forwarded_copies`, and `erased_instructions`.
+- **`sccp` runs between the two `canonicalize` runs** (`analysis::SCCP`,
+  `analysis/sccp.rs`, R781), upstream's `SCCP` (MLIR's sparse conditional
+  constant propagation). Each register takes a lattice value, unknown, one
+  constant, or overdefined, over the blocks the entry makes executable: a
+  `branch` makes only its taken arm executable while its condition is one
+  constant, a `comptime if` or `comptime for` both of its targets, and a
+  `try` its regions, whose escapes make their function-level targets
+  executable. A scalar `const` (`Int`, `Float64`, `Bool`, `IntLiteral`,
+  `FloatLiteral`) is its constant; a parameter read (`Const::Param`,
+  `Const::Value`) is overdefined, the elaborator's to fold per instance. An
+  instruction is the constant `MirInstr::folded_constant` (MLIR's `fold`
+  returning an attribute) gives over its operands' constants, unknown while
+  an operand is, and overdefined otherwise. The fold covers built-in
+  operators with no checker-selected dunder and no `raises`, `not`, `-`,
+  and `~`, a literal materialized to `Int` or `Float64`, and an identity
+  copy, over scalars whose constant kind is the one their register's type
+  names; it is `param_expr::fold`, the one compile-time folder, and folds
+  nothing where that folder and the VM could disagree (a zero divisor, a
+  shift of 64 or more, an overflowing `**`, a NaN or infinite comparison,
+  `Float64` `//`, `%`, and `**`, `Bool` operators but `==` and `!=`).
+  The rewrite replaces each instruction that folds over the final lattice
+  by a `const` of the same register, which keeps its type and span; the
+  pass never rewrites a terminator, which the `canonicalize` after it does.
+  A literal materialized to `UInt` or a scalar SIMD type is not folded
+  (R841). Its `--timings` counter is `folded_constants`.
 - **Two seams, once per body.** `CompiledProgram::elaborated_mir` runs
   `pre_elaborate_program` over the program's own bodies after
   `elaborate_drops_program` (the `pre_elaboration` `--timings` span), and an
