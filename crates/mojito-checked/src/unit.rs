@@ -170,13 +170,10 @@ pub enum UnitKind {
 ///
 /// Its nodes are the unit's declaration alone: a struct's member holds a
 /// shell of its struct, its name and no method but its own. The struct's
-/// compile-time parameters are its declaration's, beside its origin
-/// parameters, which the unit records.
+/// compile-time parameters are its declaration's.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct CheckedUnit {
     kind: UnitKind,
-    /// A struct member's struct's `Origin` and `OriginSet` parameters.
-    origin_parameters: Vec<String>,
     /// A wrapper's declaration, whose body `tables` holds.
     wrapper: Option<CheckedDefaultWrapper>,
     /// A trait member's declaration, whose syntax `tables` holds.
@@ -200,7 +197,6 @@ impl CheckedUnit {
             checked_types: self.sites.checked_types.into_iter().collect(),
             generic_parameters: self.sites.generic_parameters.into_iter().collect(),
             declaration_effects: self.sites.declaration_effects.into_iter().collect(),
-            origin_parameters: HashMap::new(),
         };
         if matches!(self.kind, UnitKind::Method { .. } | UnitKind::Wrapper)
             && let Some(structure) = self
@@ -215,9 +211,8 @@ impl CheckedUnit {
                 declaration: declaration.name.clone(),
             };
             if let Some(parameters) = struct_parameters(&declaration.name) {
-                sites.generic_parameters.insert(site.clone(), parameters);
+                sites.generic_parameters.insert(site, parameters);
             }
-            sites.origin_parameters.insert(site, self.origin_parameters);
         }
         UnitProgram {
             kind: self.kind,
@@ -279,7 +274,6 @@ impl CheckedUnit {
         unit: &LoweringUnit<'_>,
         statement: &dyn Fn(&CheckedStmtId) -> Option<&'s Stmt>,
     ) -> Option<(Self, Vec<Stmt>, Vec<CheckedDefaultWrapper>)> {
-        let mut origin_parameters = Vec::new();
         let mut wrapper = None;
         let mut trait_member = None;
         let (kind, statements) = match unit {
@@ -294,7 +288,6 @@ impl CheckedUnit {
                 let StmtKind::Struct { methods, .. } = &structure.kind else {
                     return None;
                 };
-                origin_parameters = struct_origin_parameters(structure);
                 (
                     UnitKind::Method { index: *index },
                     member_of(structure, Some(methods.get(*member)?)),
@@ -306,7 +299,6 @@ impl CheckedUnit {
                 ..
             } => {
                 let structure = statement(root)?;
-                origin_parameters = struct_origin_parameters(structure);
                 wrapper = Some((*inherited).clone());
                 (UnitKind::Wrapper, member_of(structure, None))
             }
@@ -319,7 +311,6 @@ impl CheckedUnit {
         Some((
             Self {
                 kind,
-                origin_parameters,
                 wrapper,
                 trait_member,
                 tables: CheckedTables::default(),
@@ -661,14 +652,6 @@ impl mojito_ast::visit::Visitor for Occurrences {
 
     fn visit_expr(&mut self, expression: &Expr) {
         self.0.push(expression.syntax_id);
-    }
-}
-
-/// The `Origin` and `OriginSet` parameters of the struct `structure`.
-fn struct_origin_parameters(structure: &Stmt) -> Vec<String> {
-    match &structure.kind {
-        StmtKind::Struct { type_params, .. } => crate::checked::origin_parameter_names(type_params),
-        _ => Vec::new(),
     }
 }
 

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R761**.
+Next free ID: **R764**.
 
 ## Ordered Work
 
@@ -5641,22 +5641,55 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R631 A struct's origin parameters are a name list beside its
-  parameter list, where upstream's parameter list holds them**
+- [ ] **R761 `ParamDecl` has no origin kind, so the check drops every
+  `Origin` and `OriginSet` parameter from a declaration's parameter list,
+  where upstream's list holds them in declared order**
 
-  The checker leaves `Origin` and `OriginSet` parameters out of a
-  struct's `ParamDecl`s, so `CheckedProgram::origin_parameters_at` answers
-  them as names read from the struct's `type_params` syntax, and a
-  member's package unit repeats them.
-  - MIR tests type-shaped bracket arguments against those names
-    (`names_enclosing_origin_parameter`).
-  - The lever: an origin parameter is a `ParamDecl` in the struct's list,
-    and the checker marks an erased bracket argument on its op (R628 gives
-    the argument a node).
-  - Done when `origin_parameter_names` and the unit's
-    `origin_parameters` are deleted.
-  - Found while landing R616 (2026-10-11).
-  - Depends on R628.
+  `classify_params` (`checker/declarations.rs`) skips each origin
+  parameter and its infer-only `mut` binder, for functions and structs
+  alike, so `ParamDecl` has only `Type` and `Value`.
+  - The lever: add an origin `ParamDecl` kind, emitted in place, with
+    slots numbered by declared position; callers wanting only type and
+    value binders filter on the kind.
+  - Watch for: `ParamId` slots shift for every declaration with an origin
+    parameter, as do `bind_reference` and the package type section, so
+    bump the package format.
+  - Check whether R242 and R726 stem from the dropped binders; unverified.
+  - Found while landing R631 (2026-10-13).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R762 A struct instance's origin arguments are a tail after its
+  type and value arguments, numbered by source position, where upstream's
+  are positional in the declared list**
+
+  `TyKind::Struct`'s arguments put origins after the `ParamDecl`-aligned
+  prefix, which `StructInfo::{origin_slots, origin_tail}`,
+  `struct_origin_slots`, and `tail_origin_bindings` maintain.
+  - The lever: order a struct's arguments by its declared parameter list,
+    origins in place, and delete the tail machinery.
+  - Sites: `checker/origins/{subst,solve,actuals,construct,exclusivity}.rs`,
+    `generics.rs`, `declarations.rs`, `type_resolution.rs`; check whether
+    mangling, layout, MIR verification, or mono index arguments by
+    position.
+  - Split into a checker half and a mono/verify half if it does not fit
+    one session.
+  - Found while landing R631 (2026-10-13).
+  - Depends on R761.
+  - Model: Fable, Not Planned.
+
+- [ ] **R763 The checker keeps a struct's parameter syntax to validate
+  origin arguments, where upstream binds them against the checked
+  parameter list**
+
+  `StructInfo::source_params` holds the struct's `TypeParam`s so direct
+  applications can check explicit origin arguments, and
+  `is_origin_type_param` and `type_resolution::is_origin_parameter`
+  repeat one predicate over that syntax.
+  - The lever: bind and validate origin arguments from the checked
+    `ParamDecl`s, then delete `source_params` and the duplicate predicate.
+  - Found while landing R631 (2026-10-13).
+  - Depends on R762.
   - Model: Fable, Not Planned.
 
 - [ ] **R632 A package unit's node encodes every attribute slot, where

@@ -924,10 +924,10 @@ lowering unit, one record per library declaration, and one module table
 holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 47`.
+MLIR bytecode throughout. The format line is `mojito-package 48`.
 
 ```text
-mojito-package 47
+mojito-package 48
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode, then the type section>

@@ -2611,9 +2611,6 @@ pub struct CheckedProgram {
     implicit_conversion_types: HashMap<SourceSpan, Ty>,
     checked_types: HashMap<AnnotationSite, Ty>,
     generic_parameters: HashMap<GenericSite, Vec<mojito_types::types::ParamDecl>>,
-    /// Each struct's `Origin` and `OriginSet` parameters, by name in
-    /// declaration order, which its `generic_parameters` leave out.
-    origin_parameters: HashMap<GenericSite, Vec<String>>,
     tables: Arc<CheckedTables>,
     explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
     struct_destructors: HashMap<String, HashMap<String, bool>>,
@@ -3017,21 +3014,6 @@ impl CheckedProgram {
         let _declarations = mojito_common::timing::span("declarations");
         let declarations =
             build_checked_declarations(&statements, &trait_members, &checked_types, &node_facts);
-        let origin_parameters = statements
-            .iter()
-            .filter_map(|statement| match &statement.kind {
-                mojito_ast::ast::StmtKind::Struct {
-                    name, type_params, ..
-                } => Some((
-                    GenericSite::Struct {
-                        module: statement.module.clone(),
-                        declaration: name.clone(),
-                    },
-                    origin_parameter_names(type_params),
-                )),
-                _ => None,
-            })
-            .collect();
         Self {
             statements,
             compatibility_overload_targets: fact_index(&node_facts, |facts| {
@@ -3052,7 +3034,6 @@ impl CheckedProgram {
             }),
             checked_types,
             generic_parameters,
-            origin_parameters,
             tables: Arc::new(CheckedTables::new(arena, declarations)),
             explicit_destroy_types,
             struct_destructors,
@@ -3116,7 +3097,6 @@ impl CheckedProgram {
             checked_types,
             generic_parameters,
             declaration_effects,
-            origin_parameters,
         } = sites;
         Self {
             statements: Vec::new(),
@@ -3128,7 +3108,6 @@ impl CheckedProgram {
             implicit_conversion_types,
             checked_types,
             generic_parameters,
-            origin_parameters,
             tables: Arc::new(tables),
             explicit_destroy_types: HashMap::new(),
             struct_destructors: HashMap::new(),
@@ -3222,14 +3201,6 @@ impl CheckedProgram {
         self.generic_parameters.get(site).map(Vec::as_slice)
     }
 
-    /// The `Origin` and `OriginSet` parameters of the struct `site`
-    /// names, in declaration order.
-    pub fn origin_parameters_at(&self, site: &GenericSite) -> &[String] {
-        self.origin_parameters
-            .get(site)
-            .map_or(&[][..], Vec::as_slice)
-    }
-
     /// Checked raising contract and reference-return fact for a callable
     /// declaration site.
     pub fn declaration_effect_at(&self, site: &AnnotationSite) -> Option<&DeclarationEffect> {
@@ -3284,21 +3255,6 @@ pub struct InstalledSites {
     pub checked_types: HashMap<AnnotationSite, Ty>,
     pub generic_parameters: HashMap<GenericSite, Vec<mojito_types::types::ParamDecl>>,
     pub declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
-    pub origin_parameters: HashMap<GenericSite, Vec<String>>,
-}
-
-/// The names of the `Origin` and `OriginSet` parameters among
-/// `parameters`, in order.
-pub fn origin_parameter_names<'a>(
-    parameters: impl IntoIterator<Item = &'a TypeParam>,
-) -> Vec<String> {
-    parameters
-        .into_iter()
-        .filter(|parameter| {
-            matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
-        })
-        .map(|parameter| parameter.name.clone())
-        .collect()
 }
 
 /// The checked tables of one package unit, `statements` and `wrappers`'

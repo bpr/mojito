@@ -157,8 +157,7 @@ import (every compilation that links the bundled library):
   statement nodes, each carrying its own op, type, and attributes as
   upstream's ops do, and its declarations, beside the facts of the unit's
   own declaration sites. A member's struct's parameter list is not in its
-  record: the importer gives it from the struct's declaration record; the
-  struct's origin parameter names ride in the member's record. The
+  record: the importer gives it from the struct's declaration record. The
   encoding numbers each occurrence densely within the unit and the
   decoding draws a fresh identity per number, keeping each derivation
   (`token::{encoding_occurrences, decoding_occurrences}`). A package body

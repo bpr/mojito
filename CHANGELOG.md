@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A package unit no longer records its struct's `Origin` and `OriginSet`
+  parameter names, and the checked program no longer collects them
+  (`CheckedProgram::origin_parameters_at`, `origin_parameter_names`), since
+  nothing has read them since R628 (R631). The bundled package format is
+  48. A struct's origin parameters still stay out of its checked parameter
+  list, where upstream's holds them (R761–R763).
 - A checked declaration op holds what the check resolved for it rather
   than its signature as written, as upstream's function op holds its
   resolved function type (R630). A `def`'s and a method's op hold the
