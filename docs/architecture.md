@@ -846,10 +846,9 @@ forces a pending module constant the loop iterates): the checker types the body
 once with the variable a symbolic binder of the loop's own, of the element's
 type, and records what the loop iterates
 (`SemanticAdjustment::ComptimeIteration`, its `ComptimeSource` a compiled
-`ComptimeSequence` — a closed display's elements, a value pack, a
-reflection query — or `Evaluated` for a display over the binders, which the
-check types and does not close). Every other iterable, `range(...)` among
-them, is iterated by upstream's iterator protocol (`ComptimeSource::Iterator`,
+`ComptimeSequence` — a value pack or a reflection query). Every other
+iterable — a collection display, a display binding, a module constant, an
+application, `range(...)` — is iterated by upstream's iterator protocol (`ComptimeSource::Iterator`,
 `Checker::check_comptime_iterator_for`, `checker/comptime_iteration.rs`):
 the check spells the iterable as its `__iter__()` call, which the checked
 arena hands HIR in the iterable's place and MIR lifts as a thunk over the
@@ -887,14 +886,12 @@ attribute: the checker records it as a `SemanticAdjustment::ParamValue`
 (`Checker::infer_member` over `struct_value_field`), its root never read,
 and `native::mono` answers the `Const::Param` per instance with the
 field's constant, typed by the read's register, a `String` field
-included (`answer_param_constants`). MIR lifts an evaluated display as a
-function over the binders in scope at the header, as it lifts an uncompiled
-condition, and the header's sequence is that function's application, which
-`native::mono` demands, runs on the VM, and freezes
+included (`answer_param_constants`). A display over the binders in a
+loop header is the receiver of the spelled `__iter__()` call MIR lifts,
+which `native::mono` demands, runs on the VM, and freezes
 (`VmBackend::freeze`, which freezes a nominal `Tuple` to its elements, a
-`String` to its text, and other structs to their fields and pointer memory)
-into the collection whose elements `CtValue::comptime_iteration_elements` reads, as
-upstream runs the display on its interpreter per instance. A lifted
+`String` to its text, and other structs to their fields and pointer memory),
+as upstream runs the display on its interpreter per instance. A lifted
 function stores each value it borrows — a local `comptime` binding, a
 materialized receiver or argument temporary — in the VM's compile-time
 memory (`MirInstr::StoreToMem`, upstream's `store_to_mem`), which is never
@@ -902,8 +899,8 @@ destroyed, so a result that borrows it (a `d.keys()` iterator) freezes its
 reference as `CtValue::StoreToMem` rather than dangling. A local
 `comptime` binding of such a display is a compile-time value with no runtime
 form, whatever reads it: the check types the name, records the binding on
-the display (`SemanticAdjustment::ComptimeDisplay`) and each loop over the
-name as `ComptimeSource::Bound`, and rejects a read outside every
+the display (`SemanticAdjustment::ComptimeDisplay`), steps a loop over the
+name by its `__iter__()`, and rejects a read outside every
 compile-time position as the pin does. The binding denotes one value in the
 parameter domain, its sequence: the application of the function MIR lifts
 for the display, which the check names by the binding and applies to every
@@ -1489,9 +1486,8 @@ template body opens the pack (`Elab::def_body`), and the call's solved pack
 binds it below MIR. No method mints an AST clone, per call or per
 instance: every `comptime for` a method's body holds is kept in its template
 (`keep_template_comptime_for`), its sequence and the bindings its body
-declares evaluated per instance below MIR (`ComptimeSource::Applied` for a
-sequence a compile-time application builds, the iterable's thunk for an
-iterator loop, an R7 request for a binding). A method body that still fails to elaborate
+declares evaluated per instance below MIR (the iterable's `__iter__()`
+thunk for a loop, an R7 request for a binding). A method body that still fails to elaborate
 over its own binders or its struct's becomes, on its template, the one
 compiler-private call `_mojito_instantiation_failed("…")`
 (`instantiation_failure_stub`): the failure is the pin's `function

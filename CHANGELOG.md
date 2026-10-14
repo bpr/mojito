@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `comptime for` over a list, set, or dictionary display, a local
+  display binding, a module constant, or a compile-time application such
+  as `mk(n)` now iterates the collection's own `__iter__()` by upstream's
+  iterator protocol (R794), and the built-in collection rule
+  (`ComptimeSource::{Evaluated, Bound, Applied}`) is gone. A display of
+  `SIMD` elements now runs, and a display of non-`Copyable` elements is
+  rejected as on the pin, though with Mojito's wording (R903). The package
+  format is 60. Only value packs and reflected field-name lists keep the
+  built-in rule (R795).
 - A compile-time list read at an `Array` is one frozen value (R789):
   `materialize[L]()` over `comptime L = [M(1), M(2)]` materializes the
   `Array` the display's CTFE built, as the pin's `kgen.param.constant`

@@ -455,39 +455,14 @@ pub struct ComptimeIteration {
     pub source: ComptimeSource,
 }
 
-/// How the check leaves a `comptime for` iterable to the phases below it.
+/// How the check leaves a `comptime for` iterable to the phases below it:
+/// a value pack or a reflected field-name list by the built-in rule, any
+/// other iterable by upstream's iterator protocol.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ComptimeSource {
-    /// A sequence the check compiled over the binders in scope.
+    /// A sequence the check compiled over the binders in scope: a value
+    /// pack or a reflected field-name list.
     Sequence(ComptimeSequence),
-    /// A collection display the check typed and did not close (`[n, n +
-    /// 1]`), whose value binds `element`s: MIR lifts the display as a
-    /// function over the binders in scope, and the loop header iterates its
-    /// application, which the elaborator evaluates per instance.
-    ///
-    /// `construction` is the display's own checked construction, which this
-    /// record stands in for on the display's span.
-    Evaluated {
-        element: mojito_types::param_expr::MetaTy,
-        construction: Box<SemanticAdjustment>,
-    },
-    /// A local `comptime` binding of such a display (`comptime L = [n, n +
-    /// 1]`), which the loop names: MIR lifts the display once, where the
-    /// binding is declared, and every loop over the name iterates that one
-    /// application.
-    ///
-    /// `binding` is the display binding's owner, which MIR lifted the
-    /// display under.
-    Bound {
-        element: mojito_types::param_expr::MetaTy,
-        binding: mojito_types::origin::OwnerId,
-    },
-    /// A sequence a compile-time application builds (`mk(n)`), whose value
-    /// binds `element`s: MIR lifts the iterable as a function over the
-    /// binders in scope, as it lifts an [`Self::Evaluated`] display.
-    Applied {
-        element: mojito_types::param_expr::MetaTy,
-    },
     /// Upstream's iterator protocol: the check spelled the iterable as its
     /// `__iter__()` call, which MIR lifts as a function over the binders in
     /// scope, and the binder is the `iterator`-typed iterator. `has_next`
@@ -508,9 +483,6 @@ impl ComptimeSource {
     pub fn binder_meta(&self) -> mojito_types::param_expr::MetaTy {
         match self {
             Self::Sequence(sequence) => sequence.binder_meta(),
-            Self::Evaluated { element, .. }
-            | Self::Applied { element }
-            | Self::Bound { element, .. } => element.clone(),
             Self::Iterator { iterator, .. } => iterator.clone(),
         }
     }
@@ -520,9 +492,9 @@ impl ComptimeSource {
 /// a compile-time sequence.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ComptimeSequence {
-    /// A compile-time collection, whose value yields the elements
-    /// [`mojito_types::ct::CtValue::comptime_iteration_elements`] names: a
-    /// list's or a set's elements, a dictionary's keys.
+    /// A value pack or a reflected field-name list, whose value yields the
+    /// elements [`mojito_types::ct::CtValue::comptime_iteration_elements`]
+    /// names.
     Elements(mojito_types::param_expr::ParamExpr),
     /// An iterator stepped by upstream's protocol from `initial`, the
     /// iterable's `__iter__()`: while `has_next` over the binder holds, the
@@ -559,25 +531,8 @@ impl ComptimeSequence {
                     nominal(element).map_or_else(|| element.clone(), MetaTy::value)
                 }
                 Some(element) => element.clone(),
-                // A collection an application builds (`mk(n)`) binds its
-                // element type, a string as its literal.
-                None => elements
-                    .meta()
-                    .as_value()
-                    .and_then(|ty| {
-                        mojito_types::types::list_element(ty)
-                            .or_else(|| mojito_types::types::set_element(ty))
-                            .or_else(|| mojito_types::types::dict_elements(ty).map(|(key, _)| key))
-                    })
-                    .map_or_else(MetaTy::int, |element| match element.kind() {
-                        mojito_types::types::TyKind::Struct(name, args)
-                            if args.is_empty()
-                                && mojito_types::types::is_stdlib_string_struct(name) =>
-                        {
-                            MetaTy::value(Ty::new(mojito_types::types::TyKind::StringLiteral))
-                        }
-                        _ => MetaTy::value(element.clone()),
-                    }),
+                // An empty sequence binds no element.
+                None => MetaTy::int(),
             },
         }
     }
@@ -4255,6 +4210,7 @@ impl<'a> ArenaBuilder<'a> {
         if !matches!(
             expression.kind,
             ExprKind::BraceLit(_)
+                | ExprKind::ListLit(_)
                 | ExprKind::TString { .. }
                 | ExprKind::Identifier(_)
                 | ExprKind::Member { .. }

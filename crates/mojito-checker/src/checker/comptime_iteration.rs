@@ -1,5 +1,6 @@
-//! A `comptime for` over an iterable the built-in iteration rule does not
-//! serve: upstream's iterator protocol. The iterable is spelled as its
+//! A `comptime for` over any iterable but a value pack or a reflected
+//! field-name list, which the built-in iteration rule serves: upstream's
+//! iterator protocol. The iterable is spelled as its
 //! `__iter__()` call, as upstream's `parseParamFor` emits it, and the loop
 //! steps that iterator through the bundled `std.builtin._stubs` functions,
 //! named by module path as upstream's `getBuiltinFunction` names them.

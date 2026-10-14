@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R903**.
+Next free ID: **R904**.
 
 ## Ordered Work
 
@@ -6980,20 +6980,19 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R74.
   - Model: Opus, Planned.
 
-- [ ] **R794 A `comptime for` over a compile-time collection iterates by a
-  built-in rule, not by the collection's iterator**
+- [ ] **R903 A `comptime for` over a display of non-`Copyable` elements is
+  rejected with Mojito's wording, not the pin's**
 
-  Problem: list, set, and dict displays, local display bindings, and applied
-  collections iterate `CtValue::comptime_iteration_elements`, where
-  upstream iterates the collection's own `__iter__()`.
-  - Move `ComptimeSource::{Evaluated, Bound, Applied}` and
-    `ComptimeSequence::Elements` over a list value onto the iterator form.
-  - A collection's iterator borrows the collection, which a CTFE result
-    cannot hold yet (R793).
-  - An `Array` display must be a CTFE value rather than a
-    `CtValue::List` first (R789).
-  - Depends on R793 and R789.
-  - Model: Fable, Planned.
+  The bundled `Array.__iter__(ref self)` states its requirement as `where
+  conforms_to(Self.T, Copyable)`, where upstream uses a `comptime assert`.
+  - A non-`Copyable` element therefore selects `__iter__(var self)`, and the
+    `paramfor_*` bound rejects `_ArrayOwnedIter[P]` as not `Copyable`.
+  - The pin reports "Array iteration requires the element to be
+    `Copyable`" from `array.mojo:1153`.
+  - Fixture: `assets/type_error/comptime_for_display_not_copyable.mojo`.
+  - Found while landing R794 (2026-10-14).
+  - Depends on R74.
+  - Model: Opus, Not Planned.
 
 - [ ] **R795 A `comptime for` over a value pack or a reflected name list
   iterates by a built-in rule**

@@ -31,15 +31,11 @@ impl Drop for ParameterListBrackets<'_> {
 /// instance (`comptime L = [n, n + 1]`).
 #[derive(Debug, Clone)]
 pub(in crate::checker) struct BoundDisplay {
-    /// The binding's owner, which an alias of it shares.
-    owner: mojito_types::origin::OwnerId,
-    /// What a `comptime for` over the binding binds.
-    element: Ty,
     /// The display's own type, which a runtime read would materialize.
     ty: Ty,
     /// What the binding denotes in a type or a parameter argument: the
     /// application of the function MIR lifts for the display to the binders
-    /// in scope, a list of `element`s.
+    /// in scope, a list of the display's elements.
     sequence: ParamExpr,
     /// Whether a subscript reads an element by position, as a list
     /// display's does.
@@ -575,11 +571,13 @@ impl Checker {
     }
 
     /// Check a `comptime for` body once, its variable bound to the element
-    /// type of the iterable: the element of a compile-time list or a value
-    /// pack, or for any other iterable (`range(...)` among them) the element
-    /// its iterator gives ([`Self::check_comptime_iterator_for`]). The body
-    /// is a loop body — a compile-time `break` and `continue` are a loop's —
-    /// that may run zero times, so definite initialization is unchanged.
+    /// type of the iterable: the element of a value pack or a reflected
+    /// field-name list, which the built-in rule iterates, or for any other
+    /// iterable (a collection display or binding, an application, `range(...)`)
+    /// the element its `__iter__()` iterator gives
+    /// ([`Self::check_comptime_iterator_for`]). The body is a loop body — a
+    /// compile-time `break` and `continue` are a loop's — that may run zero
+    /// times, so definite initialization is unchanged.
     pub(super) fn check_comptime_for(
         &mut self,
         stmt: &Stmt,
@@ -591,14 +589,10 @@ impl Checker {
         let source = iter;
         let position = self.comptime_position();
         let iter = self.inline_local_comptime_values(iter);
-        // A local binding of an evaluated display is iterated where it is
-        // declared.
-        let bound = self.bound_display(&iter).cloned();
         // A reflected field-name list is its own sequence of strings: the
         // names of a registered struct, or the query over a subject that is
         // still a parameter.
         let names = match self.reflection_list(&iter)? {
-            _ if bound.is_some() => None,
             Some((mojito_types::param_expr::ReflectQuery::FieldNames, list)) => Some(match list {
                 mojito_types::ct::CtValue::Expr(query) => query,
                 closed => self
@@ -608,73 +602,22 @@ impl Checker {
             }),
             _ => None,
         };
-        let element = match (&bound, &names) {
-            (Some(display), _) => display.element.clone(),
-            (None, Some(_)) => Ty::string_literal(),
-            (None, None) => {
-                let Some(element) = self.comptime_iteration_element(&iter)? else {
-                    drop(position);
-                    return self.check_comptime_iterator_for(stmt, var, (source, &iter), body, ret);
-                };
-                element
-            }
+        let element = if names.is_some() {
+            Ty::string_literal()
+        } else if let Some(element) = self.comptime_iteration_element(&iter)? {
+            element
+        } else {
+            drop(position);
+            return self.check_comptime_iterator_for(stmt, var, (source, &iter), body, ret);
         };
         let before = self.uninitialized.borrow().clone();
         self.push_scope();
         if let Some(bindings) = self.compile_time_bindings.last_mut() {
             bindings.insert(var.to_string());
         }
-        let elements = self.closed_iteration_elements(&iter, &element);
-        // A string element binds as a `String` value parameter does.
-        let element = match (&elements, element.kind()) {
-            (Some(_), TyKind::Struct(name, args))
-                if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name) =>
-            {
-                Ty::string_literal()
-            }
-            _ => element,
-        };
-        // A value pack still a parameter is its own sequence, as is a
-        // constant the check lifted (`comptime D = {"a": f(1)}`), which the
-        // elaborator below MIR evaluates.
-        let (sequence, requested) = match elements {
-            Some(elements) => (
-                Some(
-                    self.param_context
-                        .constant(mojito_types::ct::CtValue::List(elements))
-                        .map_err(|error| TypeError::Unsupported(error.to_string()))?,
-                ),
-                false,
-            ),
-            None => names.or_else(|| self.value_pack_named(&iter)).map_or_else(
-                || {
-                    let requested = self.requested_name(&iter);
-                    let named = requested.is_some();
-                    (requested, named)
-                },
-                |sequence| (Some(sequence), false),
-            ),
-        };
-        // A display the check does not close is evaluated per instance, as
-        // is a sequence a compile-time application builds (`mk(n)`).
-        let evaluated = sequence.is_none() && self.evaluated_display(&iter, &element);
-        let applied = sequence.is_none()
-            && !evaluated
-            && bound.is_none()
-            && self.applies_callable(&iter)
-            && self.reads_compile_time_alone(&iter);
-        let element = match element.kind() {
-            TyKind::Struct(name, args)
-                if (evaluated || applied || requested)
-                    && args.is_empty()
-                    && mojito_types::types::is_stdlib_string_struct(name) =>
-            {
-                Ty::string_literal()
-            }
-            _ => element,
-        };
-        let binds_index =
-            element == TyKind::Int || sequence.is_some() || evaluated || applied || bound.is_some();
+        // A value pack still a parameter is its own sequence.
+        let sequence = names.or_else(|| self.value_pack_named(&iter));
+        let binds_index = element == TyKind::Int || sequence.is_some();
         // The loop's variable must be a binder MIR carries.
         if !binds_index {
             return Err(TypeError::Unsupported(format!(
@@ -683,27 +626,21 @@ impl Checker {
                  tuple or struct of them"
             )));
         }
-        let binder = binds_index.then(|| comptime_index_binder(var, &iter, &element));
-        match (&binder, &bound) {
-            (Some(binder), Some(display)) => self.record_bound_iteration(source, binder, display),
-            (Some(binder), None) if applied => self.record_applied_iteration(source, binder),
-            (Some(binder), None) => {
-                self.record_comptime_iteration(source, binder, sequence, evaluated);
-            }
-            (None, _) => {}
+        let binder = comptime_index_binder(var, &iter, &element);
+        if let Some(sequence) = sequence {
+            self.record_comptime_iteration(source, &binder, sequence);
         }
         drop(position);
-        let shadowed = binder.and_then(|binder| {
-            self.innermost_value_scope()
-                .and_then(|scope| scope.insert(var.to_string(), binder))
-        });
+        let shadowed = self
+            .innermost_value_scope()
+            .and_then(|scope| scope.insert(var.to_string(), binder));
         let result = self.declare_immutable(var, element).and_then(|()| {
             // The loop variable's binding, which the MIR header's slot is
             // minted from as a `for` statement's is.
             self.record_statement_binding(stmt, var);
             self.check_block(body, ret, true)
         });
-        if binds_index && let Some(scope) = self.innermost_value_scope() {
+        if let Some(scope) = self.innermost_value_scope() {
             match shadowed {
                 Some(previous) => scope.insert(var.to_string(), previous),
                 None => scope.remove(var),
@@ -715,85 +652,19 @@ impl Checker {
     }
 
     /// Record the loop header's sequence over the binders in scope
-    /// (`SemanticAdjustment::ComptimeIteration`): `elements`, the sequence
-    /// of a closed collection display's constant or a value pack, compiled
-    /// as a parameter expression; an `evaluated` display records its element
-    /// alone.
-    fn record_comptime_iteration(
-        &self,
-        source: &Expr,
-        binder: &ParamExpr,
-        elements: Option<ParamExpr>,
-        evaluated: bool,
-    ) {
-        use mojito_checked::checked::ComptimeSource;
-        let element = binder.meta().clone();
+    /// (`SemanticAdjustment::ComptimeIteration`): `elements`, a value pack
+    /// or a reflected field-name list, compiled as a parameter expression.
+    fn record_comptime_iteration(&self, source: &Expr, binder: &ParamExpr, elements: ParamExpr) {
         let Some(binder) = binder.as_decl_ref() else {
-            return;
-        };
-        let record_source = |source_form| {
-            self.record_at(source.source_span()).adjustment = Some(Box::new(
-                mojito_checked::checked::SemanticAdjustment::ComptimeIteration(Box::new(
-                    mojito_checked::checked::ComptimeIteration {
-                        binder: binder.clone(),
-                        source: source_form,
-                    },
-                )),
-            ));
-        };
-        if evaluated {
-            let construction =
-                self.fact(&source.source_span(), |facts| facts.adjustment.as_deref());
-            if let Some(construction) = construction {
-                record_source(ComptimeSource::Evaluated {
-                    element,
-                    construction: Box::new(construction),
-                });
-            }
-            return;
-        }
-        if let Some(elements) = elements {
-            record_source(ComptimeSource::Sequence(
-                mojito_checked::checked::ComptimeSequence::Elements(elements),
-            ));
-        }
-    }
-
-    /// The application a local `comptime` binding `expr` names denotes
-    /// (`l` after `comptime l = mk(n)`), which a loop over it iterates.
-    fn requested_name(&self, expr: &Expr) -> Option<ParamExpr> {
-        let ExprKind::Identifier(name) = &expr.kind else {
-            return None;
-        };
-        self.local_comptime_parameters
-            .iter()
-            .rev()
-            .find_map(|scope| scope.get(name))
-            .or_else(|| self.installed_comptime_parameter(name))
-            .map(|(_, expression)| expression)
-            .filter(|expression| {
-                matches!(
-                    expression.kind(),
-                    mojito_types::param_expr::ParamKind::Apply { .. }
-                )
-            })
-            .cloned()
-    }
-
-    /// Record the loop header of a sequence a compile-time application
-    /// builds (`ComptimeSource::Applied`), which MIR lifts over the binders
-    /// in scope and the elaborator evaluates per instance.
-    fn record_applied_iteration(&self, source: &Expr, binder: &ParamExpr) {
-        let Some(reference) = binder.as_decl_ref() else {
             return;
         };
         self.record_at(source.source_span()).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::ComptimeIteration(Box::new(
                 mojito_checked::checked::ComptimeIteration {
-                    binder: reference.clone(),
-                    source: mojito_checked::checked::ComptimeSource::Applied {
-                        element: binder.meta().clone(),
-                    },
+                    binder: binder.clone(),
+                    source: mojito_checked::checked::ComptimeSource::Sequence(
+                        mojito_checked::checked::ComptimeSequence::Elements(elements),
+                    ),
                 },
             )),
         ));
@@ -1295,63 +1166,6 @@ impl Checker {
         }
     }
 
-    /// Record the header of a loop over a local binding of an evaluated
-    /// display (`ComptimeSource::Bound`): the sequence is the one MIR lifts
-    /// at the binding.
-    fn record_bound_iteration(&self, source: &Expr, binder: &ParamExpr, display: &BoundDisplay) {
-        use mojito_checked::checked::{ComptimeIteration, ComptimeSource, SemanticAdjustment};
-        let Some(reference) = binder.as_decl_ref() else {
-            return;
-        };
-        self.record_at(source.source_span()).adjustment = Some(Box::new(
-            SemanticAdjustment::ComptimeIteration(Box::new(ComptimeIteration {
-                binder: reference.clone(),
-                source: ComptimeSource::Bound {
-                    element: binder.meta().clone(),
-                    binding: display.owner,
-                },
-            })),
-        ));
-    }
-
-    /// The elements a `comptime for` over a closed collection display binds,
-    /// in order, each materialized at the loop variable's `element` type: a
-    /// list display's elements, a set display's distinct elements, a
-    /// dictionary display's distinct keys. `None` for any other iterable, or
-    /// a display with an element that is not a literal of a type a loop
-    /// binder takes: a scalar (`Int`, `Float64`, `Bool`, `String`), or a
-    /// tuple or struct of them ([`Self::parameter_aggregate_element`]).
-    fn closed_iteration_elements(
-        &self,
-        iter: &Expr,
-        element: &Ty,
-    ) -> Option<Vec<mojito_types::ct::CtValue>> {
-        let scalar = matches!(element.kind(), TyKind::Int | TyKind::Float64 | TyKind::Bool)
-            || matches!(element.kind(), TyKind::Struct(name, args)
-                if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name));
-        if !scalar && !self.parameter_aggregate_element(element) {
-            return None;
-        }
-        let (leaves, distinct): (Vec<&Expr>, bool) = match &iter.kind {
-            ExprKind::ListLit(items) => (items.iter().collect(), false),
-            ExprKind::BraceLit(entries) if !entries.is_empty() => {
-                (entries.iter().map(|(key, _)| key).collect(), true)
-            }
-            _ => return None,
-        };
-        let mut elements = Vec::with_capacity(leaves.len());
-        for leaf in leaves {
-            let value = self
-                .eval_associated_ct(leaf, &HashMap::new())
-                .ok()?
-                .materialize_as(element)?;
-            if !(distinct && elements.contains(&value)) {
-                elements.push(value);
-            }
-        }
-        Some(elements)
-    }
-
     /// Whether `element` is a nominal `Tuple`, or a non-generic fieldwise
     /// struct, whose elements or fields are numbers, booleans, strings, or
     /// such aggregates: a parameter value a loop binder holds, which a
@@ -1512,7 +1326,7 @@ impl Checker {
             // binds the display to.
             self.declare_immutable(name, ty.clone())?;
             self.record_statement_binding(stmt, name);
-            let display = self.record_display_binding(name, value, element, ty, construction)?;
+            let display = self.record_display_binding(name, value, &element, ty, construction)?;
             self.local_comptime_displays
                 .last_mut()
                 .ok_or_else(|| {
@@ -1686,12 +1500,14 @@ impl Checker {
             Some(TyKind::Struct(collection, _)) if collection != mojito_types::types::ARRAY_TYPE_NAME);
         let meta = match &value.kind {
             ExprKind::ListLit(_) | ExprKind::TupleLit(_) if !annotated => {
-                match self.comptime_iteration_element(value) {
-                    Ok(Some(element)) => mojito_types::param_expr::MetaTy::ParamList(Box::new(
-                        mojito_types::param_expr::MetaTy::value(string_element_binder(element)),
-                    )),
-                    Ok(None) | Err(_) => application.meta().clone(),
-                }
+                self.display_listed_element(value).map_or_else(
+                    || application.meta().clone(),
+                    |element| {
+                        mojito_types::param_expr::MetaTy::ParamList(Box::new(
+                            mojito_types::param_expr::MetaTy::value(string_element_binder(element)),
+                        ))
+                    },
+                )
             }
             _ => application.meta().clone(),
         };
@@ -1722,15 +1538,14 @@ impl Checker {
     /// Type the display a local `comptime` binding of a template body holds
     /// (`comptime L = [n, n + 1]`): a collection display of scalar elements,
     /// or a list display of closed aggregates (`[(1, n), (n, 2)]`),
-    /// which the elaborator evaluates per instance as it does one written in
-    /// a loop header. Gives the element a loop over it binds, the display's
-    /// own type, and its checked construction; `None` for any other
-    /// binding, which the ordinary path types.
+    /// which the elaborator evaluates per instance. Gives the element its
+    /// sequence lists, the display's own type, and its checked construction;
+    /// `None` for any other binding, which the ordinary path types.
     fn evaluated_display_binding(
         &self,
         value: &Expr,
     ) -> Option<(Ty, Ty, mojito_checked::checked::SemanticAdjustment)> {
-        let element = self.comptime_iteration_element(value).ok()??;
+        let element = self.display_listed_element(value)?;
         if !self.evaluated_display(value, &element) {
             return None;
         }
@@ -1741,10 +1556,11 @@ impl Checker {
 
     /// Record the display the declared local `comptime` binding `name` holds
     /// for MIR to lift (`SemanticAdjustment::ComptimeDisplay`). It is a
-    /// compile-time value with no runtime form: a `comptime for` iterates
-    /// it, a type or a parameter argument reads an element or the length as
-    /// a parameter expression over its sequence, any other compile-time
-    /// expression reads it in a function the elaborator runs, and
+    /// compile-time value with no runtime form: a type or a parameter
+    /// argument reads an element or the length as a parameter expression
+    /// over its sequence, any other compile-time expression (a `comptime
+    /// for`'s `L.__iter__()` among them) reads it in a function the
+    /// elaborator runs, and
     /// `materialize[L]()` builds it where it is written.
     ///
     /// The sequence is the application of the function MIR lifts for the
@@ -1755,14 +1571,14 @@ impl Checker {
         &self,
         name: &str,
         value: &Expr,
-        element: Ty,
+        element: &Ty,
         ty: Ty,
         construction: mojito_checked::checked::SemanticAdjustment,
     ) -> Result<BoundDisplay, TypeError> {
         let owner = self.lookup_owner(name).ok_or_else(|| {
             TypeError::InvariantViolation(format!("comptime binding '{name}' has no owner"))
         })?;
-        let sequence = self.display_sequence(owner, &element);
+        let sequence = self.display_sequence(owner, element);
         self.record_at(value.source_span()).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::ComptimeDisplay {
                 construction: Box::new(construction),
@@ -1770,8 +1586,6 @@ impl Checker {
             },
         ));
         Ok(BoundDisplay {
-            owner,
-            element,
             ty,
             sequence,
             positional: matches!(value.kind, ExprKind::ListLit(_)),
@@ -3006,8 +2820,9 @@ impl Checker {
     }
 
     /// The element type a `comptime for` iterable yields by the built-in
-    /// iteration rule; `None` for an iterable the rule does not serve, which
-    /// iterates by its iterator ([`Self::check_comptime_iterator_for`]).
+    /// iteration rule, a value pack's; `None` for an iterable the rule does
+    /// not serve, which iterates by its iterator
+    /// ([`Self::check_comptime_iterator_for`]).
     fn comptime_iteration_element(&self, iter: &Expr) -> Result<Option<Ty>, TypeError> {
         // A value pack iterates its elements at compile time; only a
         // runtime read is its `ParameterList`.
@@ -3038,22 +2853,6 @@ impl Checker {
             TyKind::ComptimeList(element) | TyKind::VariadicPack(element) => {
                 Ok(Some((*element).clone()))
             }
-            // A compile-time dictionary iterates its keys, a set its elements.
-            dict if let Some((key, _)) = mojito_types::types::dict_elements(dict) => {
-                Ok(Some(key.clone()))
-            }
-            set if let Some(element) = mojito_types::types::set_element(set) => {
-                Ok(Some(element.clone()))
-            }
-            // A list display of literals is a fixed-size array here; the
-            // elaborator's list value iterates by element type.
-            TyKind::Struct(name, args)
-                if (name == mojito_types::types::LIST_TYPE_NAME
-                    || name == mojito_types::types::ARRAY_TYPE_NAME)
-                    && let Some(TyArg::Ty(element)) = args.first() =>
-            {
-                Ok(Some(default_literal(element)))
-            }
             // A compile-time `Tuple` has no `__iter__`, as upstream; the
             // rejection spells the tuple's element types as the elaborator
             // does for the same program.
@@ -3069,6 +2868,29 @@ impl Checker {
                 Err(not_iterable(&elements))
             }
             _ => Ok(None),
+        }
+    }
+
+    /// The element a compile-time collection display lists: a dictionary
+    /// display's keys, a set display's elements, a list display's elements
+    /// (a fixed-size array of literals here) at their default type. `None`
+    /// for any other value.
+    fn display_listed_element(&self, value: &Expr) -> Option<Ty> {
+        match self.infer(value).ok()?.kind() {
+            dict if let Some((key, _)) = mojito_types::types::dict_elements(dict) => {
+                Some(key.clone())
+            }
+            set if let Some(element) = mojito_types::types::set_element(set) => {
+                Some(element.clone())
+            }
+            TyKind::Struct(name, args)
+                if (name == mojito_types::types::LIST_TYPE_NAME
+                    || name == mojito_types::types::ARRAY_TYPE_NAME)
+                    && let Some(TyArg::Ty(element)) = args.first() =>
+            {
+                Some(default_literal(element))
+            }
+            _ => None,
         }
     }
 

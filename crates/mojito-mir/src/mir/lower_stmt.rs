@@ -2941,7 +2941,6 @@ impl<'a> Flatten<'a> {
                     owner,
                     name: name.to_string(),
                     value,
-                    sequence: sequence.clone(),
                     ty,
                     binders: self.enclosing_binders.clone(),
                     preceding: self.comptime_thunks.evaluated.len(),
@@ -3258,19 +3257,6 @@ impl<'a> Flatten<'a> {
             use mojito_checked::checked::ComptimeSource;
             let source = match iteration.source {
                 ComptimeSource::Sequence(sequence) => sequence,
-                ComptimeSource::Evaluated { element, .. } | ComptimeSource::Applied { element } => {
-                    let ty = self.hir_node(iter).ty.clone()?;
-                    let binders = &self.enclosing_binders;
-                    mojito_checked::checked::ComptimeSequence::Elements(
-                        self.comptime_thunks
-                            .request_sequence(iter.node, binders, ty, element),
-                    )
-                }
-                ComptimeSource::Bound { binding, .. } => {
-                    mojito_checked::checked::ComptimeSequence::Elements(
-                        self.display(binding)?.sequence.clone(),
-                    )
-                }
                 ComptimeSource::Iterator {
                     iterator,
                     has_next,

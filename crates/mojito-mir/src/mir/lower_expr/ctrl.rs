@@ -5,8 +5,7 @@ use super::expr::OperatorDispatch;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_checked::checked::{
-    CheckedComprehensionClause, CheckedExpr, CheckedOp, ComptimeIteration, ComptimeSource,
-    DictLiteral, SemanticAdjustment,
+    CheckedComprehensionClause, CheckedExpr, CheckedOp, DictLiteral, SemanticAdjustment,
 };
 use mojito_types::types::TyKind;
 
@@ -846,19 +845,10 @@ enum ChainMiddle<'a> {
     Slot(VarId, Ty),
 }
 
-/// The checked adjustments of a collection display. A `comptime for` display
-/// the elaborator evaluates carries its construction under the loop's record,
-/// which holds the display's span, as a local `comptime` binding's does under
-/// the binding's.
+/// The checked adjustments of a collection display. A local `comptime`
+/// binding's display carries its construction under the binding's record.
 fn display_adjustments(node: &CheckedExpr) -> impl Iterator<Item = &SemanticAdjustment> {
     node.adjustments.iter().map(|adjustment| match adjustment {
-        SemanticAdjustment::ComptimeIteration(iteration) => match &**iteration {
-            ComptimeIteration {
-                source: ComptimeSource::Evaluated { construction, .. },
-                ..
-            } => &**construction,
-            _ => adjustment,
-        },
         SemanticAdjustment::ComptimeDisplay { construction, .. } => &**construction,
         other => other,
     })

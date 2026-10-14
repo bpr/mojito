@@ -1618,9 +1618,6 @@ struct DisplayBinding<'a> {
     /// The display's value, built in place where it crosses
     /// (`materialize[L]()`).
     value: Node<'a>,
-    /// The application of the display's thunk the loops over the name
-    /// iterate ([`ComptimeThunks::bind_display`]).
-    sequence: mojito_types::param_expr::ParamExpr,
     ty: Ty,
     /// The binders in scope where the binding is declared.
     binders: EnclosingBinders,
@@ -1679,31 +1676,11 @@ impl ComptimeThunks {
         self.application(node, binders, ty, meta, visible)
     }
 
-    /// Register a `comptime for` display of checked type `ty`, of node
-    /// `node`, and give back the sequence its loop header iterates: the
-    /// thunk applied to every binder in scope, a list of `element`s.
-    fn request_sequence(
-        &mut self,
-        node: CheckedNodeId,
-        binders: &EnclosingBinders,
-        ty: Ty,
-        element: mojito_types::param_expr::MetaTy,
-    ) -> mojito_types::param_expr::ParamExpr {
-        let visible = self.evaluated.len();
-        self.application(
-            node,
-            binders,
-            ty,
-            mojito_types::param_expr::MetaTy::ParamList(Box::new(element)),
-            visible,
-        )
-    }
-
     /// Record a local `comptime` binding of a display, declared by
     /// statement node `id`, and lift the display as the function the check named in
-    /// `sequence`, its application to the binders in scope at the binding:
-    /// the loops over the name iterate that sequence, and a type or a
-    /// parameter argument that reads an element or the length carries it.
+    /// `sequence`, its application to the binders in scope at the binding,
+    /// which a type or a parameter argument that reads an element or the
+    /// length carries.
     /// The function's parameters are the binders the application names, in
     /// its argument order.
     fn bind_display(
