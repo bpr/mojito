@@ -1159,11 +1159,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`hir.rs`, lowered in `Lower::comptime_for` with the loop variable declared as a
   `for` variable is), lowered by `Flatten::lower_comptime_for` (`mir/lower_stmt.rs`)
   from the checker's `SemanticAdjustment::ComptimeIteration` (recorded by
-  `Checker::record_comptime_iteration` inside `check_comptime_for`,
-  `checker/comptime_validation.rs`, a value pack by `value_pack_named`, a
-  reflected name list by `reflection_list`, each a
-  `ComptimeSequence::Elements` that `verify/scope.rs` admits as a loop
-  sequence of list meta). A local `comptime` binding of a collection
+  `Checker::check_comptime_iterator_for`, which `check_comptime_for`,
+  `checker/comptime_validation.rs`, calls for every iterable after
+  `reject_compile_time_tuple` rejects a compile-time `Tuple`). A local `comptime` binding of a collection
   display over the binders is typed by
   `Checker::evaluated_display_binding` (its element by
   `display_listed_element`, admitted by `evaluated_display`) from
@@ -1185,9 +1183,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   rejected by `reject_display_crossing`), a condition naming an evaluated
   binding is left uncompiled (`names_evaluated_binding`), and a runtime
   read is rejected (`reject_display_crossing`, from `inference.rs`). Every
-  iterable but a value pack or a reflected name list
-  (`comptime_iteration_element` gives `None`) — a collection display, a
-  display binding, a module constant, an application, `range(...)` — is
+  iterable — a collection display, a display binding, a module constant, an
+  application, `range(...)`, a value pack, a reflected field-name list — is
   iterated by upstream's iterator protocol:
   `Checker::check_comptime_iterator_for` (`checker/comptime_iteration.rs`)
   types the spelled `iterable.__iter__()` call and the three stub calls
@@ -1315,7 +1312,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Flatten::lower_call_receiver` (`mir/calls.rs`) reads it as a value, not
   a place, and `type_receiver_name` takes a receiver for a type only when
   its node is a name the check bound to nothing and typed as no value. The header's `source` is the
-  `mojito_checked::checked::ComptimeSequence` (`Elements(expr)` or
+  `mojito_checked::checked::ComptimeSequence` (`Elements(expr)`, which no
+  check produces and survives as MIR text until roadmap R796, or
   `Iterator { initial, has_next, next_iter, next_value }`, whose
   `binder_meta` types the binder; the elements a
   value yields are `CtValue::comptime_iteration_elements`, `ct.rs`, which the
@@ -1327,7 +1325,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   built from it (`g[i]()`) resolves. A loop binder's owner starts
   `mojito_types::param_expr::COMPTIME_FOR_OWNER`
   (`ParamId::is_comptime_for_binder`), which the checker mints
-  (`comptime_index_binder`) and `mono/substitute.rs::bound_parameter_locals`
+  (`comptime_iterator_binder`) and `mono/substitute.rs::bound_parameter_locals`
   skips. `verify/scope.rs` (`Scope::declare_loop_binders`)
   brings the binders into scope and checks the sequence; `verify/concrete.rs`
   rejects a survivor; the text form is `comptime_for` for a range (schema
@@ -1539,8 +1537,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   through `self_value_pack`, which `infer_member` types as the pack. Only a
   parameter position reads the pack itself: `compile_dependent_ct_expr`'s
   `Index` arm makes `values[i]` a `ListGet` (upstream's
-  `__getitem_param__`, roadmap R800), and `comptime_iteration_element`
-  types a `comptime for` over it. Its length is the bundled
+  `__getitem_param__`, roadmap R800), while a `comptime for` over it steps
+  its `ParameterList` iterator. Its length is the bundled
   `ParameterList.size` member, read through the value (`values.size`) by
   the instance arm of `infer_member` (`indexing.rs`, any struct's value
   member) or, at run time, by `ParameterList.__len__`; a parameter-position

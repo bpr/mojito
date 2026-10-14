@@ -100,6 +100,7 @@ assets/ok/comptime_for_template_served.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_tuple_elements.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_unserved_nested.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_user_iterator.mojo	main	exe-differential	sanitized
+assets/ok/comptime_for_value_pack_iterator.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_value_struct_method.mojo	main	exe-differential	sanitized
 assets/ok/comptime_frozen_struct.mojo	main	exe-differential	sanitized
 assets/ok/comptime_hash.mojo	main	exe-differential	sanitized

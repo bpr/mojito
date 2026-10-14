@@ -3254,30 +3254,20 @@ impl<'a> Flatten<'a> {
     ) {
         let iteration = comptime_iteration(self.checked, iter);
         let sequence = iteration.clone().and_then(|iteration| {
-            use mojito_checked::checked::ComptimeSource;
-            let source = match iteration.source {
-                ComptimeSource::Sequence(sequence) => sequence,
-                ComptimeSource::Iterator {
-                    iterator,
-                    has_next,
-                    next_iter,
-                    next_value,
-                } => {
-                    let ty = iterator.as_value()?.clone();
-                    // The variable is an alias of the element over the
-                    // iterator, which the body's parameter arguments and the
-                    // thunks lifted in it read.
-                    if let Some(owner) = binding {
-                        self.comptime_thunks.bind_value(owner, next_value.clone());
-                    }
-                    let binders = &self.enclosing_binders;
-                    mojito_checked::checked::ComptimeSequence::Iterator {
-                        initial: self.comptime_thunks.request_value(iter.node, binders, ty),
-                        has_next,
-                        next_iter,
-                        next_value,
-                    }
-                }
+            let ty = iteration.iterator.as_value()?.clone();
+            // The variable is an alias of the element over the iterator,
+            // which the body's parameter arguments and the thunks lifted in
+            // it read.
+            if let Some(owner) = binding {
+                self.comptime_thunks
+                    .bind_value(owner, iteration.next_value.clone());
+            }
+            let binders = &self.enclosing_binders;
+            let source = mojito_checked::checked::ComptimeSequence::Iterator {
+                initial: self.comptime_thunks.request_value(iter.node, binders, ty),
+                has_next: iteration.has_next,
+                next_iter: iteration.next_iter,
+                next_value: iteration.next_value,
             };
             Some((iteration.binder, source))
         });

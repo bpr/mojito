@@ -1,6 +1,4 @@
-//! A `comptime for` over any iterable but a value pack or a reflected
-//! field-name list, which the built-in iteration rule serves: upstream's
-//! iterator protocol. The iterable is spelled as its
+//! A `comptime for` over any iterable: upstream's iterator protocol. The iterable is spelled as its
 //! `__iter__()` call, as upstream's `parseParamFor` emits it, and the loop
 //! steps that iterator through the bundled `std.builtin._stubs` functions,
 //! named by module path as upstream's `getBuiltinFunction` names them.
@@ -63,12 +61,10 @@ impl Checker {
         self.record_at(source.source_span()).comptime_iteration =
             Some(Box::new(mojito_checked::checked::ComptimeIteration {
                 binder: reference,
-                source: mojito_checked::checked::ComptimeSource::Iterator {
-                    iterator: mojito_types::param_expr::MetaTy::value(iterator_ty),
-                    has_next,
-                    next_iter,
-                    next_value: element.clone(),
-                },
+                iterator: mojito_types::param_expr::MetaTy::value(iterator_ty),
+                has_next,
+                next_iter,
+                next_value: element.clone(),
             }));
         let before = self.uninitialized.borrow().clone();
         self.push_scope();
@@ -113,6 +109,9 @@ impl Checker {
                 .structs
                 .get(name)
                 .is_some_and(|info| info.methods.contains_key("__iter__")),
+            // A homogeneous variadic is upstream's `VariadicList`, which
+            // iterates; read at run time, it is dynamic.
+            TyKind::VariadicPack(_) => true,
             _ => false,
         };
         if !has_iter {

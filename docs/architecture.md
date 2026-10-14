@@ -843,13 +843,12 @@ thunk's application, which the elaborator evaluates on the VM
 template keeps every `comptime for` in a generic body, as upstream keeps its
 parameter `for` (`comptime/elab.rs::keep_template_comptime_for`, which
 forces a pending module constant the loop iterates): the checker types the body
-once with the variable a symbolic binder of the loop's own, of the element's
-type, and records what the loop iterates
-(`SemanticAdjustment::ComptimeIteration`, its `ComptimeSource` a compiled
-`ComptimeSequence` — a value pack or a reflection query). Every other
-iterable — a collection display, a display binding, a module constant, an
-application, `range(...)` — is iterated by upstream's iterator protocol (`ComptimeSource::Iterator`,
-`Checker::check_comptime_iterator_for`, `checker/comptime_iteration.rs`):
+once and records how the loop iterates
+(`SemanticAdjustment::ComptimeIteration`). Every iterable — a collection
+display, a display binding, a module constant, an application, `range(...)`,
+a value pack, a reflected field-name list — is iterated by upstream's
+iterator protocol (`Checker::check_comptime_iterator_for`,
+`checker/comptime_iteration.rs`):
 the check spells the iterable as its `__iter__()` call, which the checked
 arena hands HIR in the iterable's place and MIR lifts as a thunk over the
 binders in scope, the header's binder is the iterator, and its

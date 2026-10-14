@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `comptime for` over a value pack (`*vals: Int`, a struct's
+  `Self.values`) or a reflected field-name list (`reflect[T].field_names()`,
+  or a `comptime` binding of one) now steps its `__iter__()` iterator by
+  upstream's protocol (R795), so every `comptime for` takes that path and
+  the checker's built-in rule and `ComptimeSource` are gone. A pack of
+  `Copyable` structs that are not `ImplicitlyCopyable` is now rejected, and
+  a loop over a runtime variadic is rejected at the check as a dynamic
+  iterator expression, both as on the pin. The package format is 61. Loops
+  over a type pack or a reflected field-type list still fail with Mojito's
+  own wording (R904).
 - A `comptime for` over a list, set, or dictionary display, a local
   display binding, a module constant, or a compile-time application such
   as `mk(n)` now iterates the collection's own `__iter__()` by upstream's

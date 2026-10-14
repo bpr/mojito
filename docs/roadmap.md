@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R904**.
+Next free ID: **R905**.
 
 ## Ordered Work
 
@@ -6994,16 +6994,23 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R74.
   - Model: Opus, Not Planned.
 
-- [ ] **R795 A `comptime for` over a value pack or a reflected name list
-  iterates by a built-in rule**
+- [ ] **R904 A `comptime for` over a type pack or a reflected field-type
+  list fails with Mojito's own wording**
 
-  Problem: a value pack and `reflect[T].field_names()` are their own
-  `ComptimeSequence::Elements`, where upstream iterates their `__iter__()`
-  through the `paramfor_*` stubs.
-  - A probe stepped a value pack's `values.__iter__()` correctly under CTFE.
-  - The reflected list's upstream return type needs checking first.
+  Problem: the pin rejects both loops because a `TypeList` has no
+  `__iter__`, while Mojito fails somewhere else with its own message.
+  - `comptime for T in reflect[P].field_types()` gives "not a compile-time
+    value: type-valued or symbolic comptime values cannot materialize at
+    runtime"; the pin says "'TypeList[Int, String]' does not implement the
+    '__iter__' method".
+  - `comptime for T in Ts` over `*Ts: AnyType` gives "Undefined variable
+    'Ts'"; the pin says "'TypeList[Ts.values]' does not implement the
+    '__iter__' method".
+  - Add a `type_error` fixture for each once the check gives the pin's
+    wording.
+  - Found while landing R795 (2026-10-14).
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R796 The built-in `comptime for` iteration rule still stands beside
   the iterator protocol**

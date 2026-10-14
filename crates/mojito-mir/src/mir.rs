@@ -2282,15 +2282,14 @@ struct LoopIndex {
 
 impl LoopIndex {
     /// The index of a loop the checker recorded `iteration` on, its
-    /// variable checked as `binding`: a value binder of the element's type.
+    /// variable checked as `binding`: a value binder of the iterator's type.
     fn of(
         iteration: &mojito_checked::checked::ComptimeIteration,
         binding: Option<mojito_types::origin::OwnerId>,
     ) -> Self {
         let binder = &iteration.binder;
         let ty = iteration
-            .source
-            .binder_meta()
+            .iterator
             .as_value()
             .cloned()
             .unwrap_or_else(Ty::int);
@@ -2322,8 +2321,8 @@ fn comptime_binding_value(
         .map(|(_, value)| value.clone())
 }
 
-/// The sequence a `comptime for` iterable was checked as, when the checker
-/// recorded one (`SemanticAdjustment::ComptimeIteration`).
+/// The iterator protocol a `comptime for` iterable was checked by, when the
+/// checker recorded one (`SemanticAdjustment::ComptimeIteration`).
 fn comptime_iteration(
     checked: &mojito_checked::checked::CheckedTables,
     iter: &hir::HirExpr,

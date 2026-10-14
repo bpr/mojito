@@ -1,7 +1,7 @@
 # A `comptime for` bounded by a reflection count, or iterating a reflected
 # field-name list, over a type that is still a parameter is served by the
-# template: the bound and the sequence are queries the elaborator answers
-# per instance. A field name crosses to runtime as one element
+# template: the bound is a query the elaborator answers per instance, and the
+# name list loop steps the list's `Array` iterator. A field name crosses to runtime as one element
 # (`materialize[names[i]]()`, a `comptime` binding of it), and a field type
 # decides a `comptime if` by identity or by conformance.
 @fieldwise_init

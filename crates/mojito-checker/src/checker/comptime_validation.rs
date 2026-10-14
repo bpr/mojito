@@ -570,14 +570,10 @@ impl Checker {
         }
     }
 
-    /// Check a `comptime for` body once, its variable bound to the element
-    /// type of the iterable: the element of a value pack or a reflected
-    /// field-name list, which the built-in rule iterates, or for any other
-    /// iterable (a collection display or binding, an application, `range(...)`)
-    /// the element its `__iter__()` iterator gives
-    /// ([`Self::check_comptime_iterator_for`]). The body is a loop body — a
-    /// compile-time `break` and `continue` are a loop's — that may run zero
-    /// times, so definite initialization is unchanged.
+    /// Check a `comptime for` by upstream's iterator protocol
+    /// ([`Self::check_comptime_iterator_for`]), after rejecting a
+    /// compile-time `Tuple`, which has no `__iter__`
+    /// ([`Self::reject_compile_time_tuple`]).
     pub(super) fn check_comptime_for(
         &mut self,
         stmt: &Stmt,
@@ -587,87 +583,12 @@ impl Checker {
         ret: Option<&Ty>,
     ) -> Result<(), TypeError> {
         let source = iter;
-        let position = self.comptime_position();
         let iter = self.inline_local_comptime_values(iter);
-        // A reflected field-name list is its own sequence of strings: the
-        // names of a registered struct, or the query over a subject that is
-        // still a parameter.
-        let names = match self.reflection_list(&iter)? {
-            Some((mojito_types::param_expr::ReflectQuery::FieldNames, list)) => Some(match list {
-                mojito_types::ct::CtValue::Expr(query) => query,
-                closed => self
-                    .param_context
-                    .constant(closed)
-                    .map_err(|error| TypeError::Unsupported(error.to_string()))?,
-            }),
-            _ => None,
-        };
-        let element = if names.is_some() {
-            Ty::string_literal()
-        } else if let Some(element) = self.comptime_iteration_element(&iter)? {
-            element
-        } else {
-            drop(position);
-            return self.check_comptime_iterator_for(stmt, var, (source, &iter), body, ret);
-        };
-        let before = self.uninitialized.borrow().clone();
-        self.push_scope();
-        if let Some(bindings) = self.compile_time_bindings.last_mut() {
-            bindings.insert(var.to_string());
+        {
+            let _position = self.comptime_position();
+            self.reject_compile_time_tuple(&iter)?;
         }
-        // A value pack still a parameter is its own sequence.
-        let sequence = names.or_else(|| self.value_pack_named(&iter));
-        let binds_index = element == TyKind::Int || sequence.is_some();
-        // The loop's variable must be a binder MIR carries.
-        if !binds_index {
-            return Err(TypeError::Unsupported(format!(
-                "'comptime for' over elements of type '{element}' in a generic body: its \
-                 variable binds an 'Int', 'Float64', 'Bool', or 'String' element, or a \
-                 tuple or struct of them"
-            )));
-        }
-        let binder = comptime_index_binder(var, &iter, &element);
-        if let Some(sequence) = sequence {
-            self.record_comptime_iteration(source, &binder, sequence);
-        }
-        drop(position);
-        let shadowed = self
-            .innermost_value_scope()
-            .and_then(|scope| scope.insert(var.to_string(), binder));
-        let result = self.declare_immutable(var, element).and_then(|()| {
-            // The loop variable's binding, which the MIR header's slot is
-            // minted from as a `for` statement's is.
-            self.record_statement_binding(stmt, var);
-            self.check_block(body, ret, true)
-        });
-        if let Some(scope) = self.innermost_value_scope() {
-            match shadowed {
-                Some(previous) => scope.insert(var.to_string(), previous),
-                None => scope.remove(var),
-            };
-        }
-        self.pop_scope();
-        *self.uninitialized.borrow_mut() = before;
-        result
-    }
-
-    /// Record the loop header's sequence over the binders in scope
-    /// (`SemanticAdjustment::ComptimeIteration`): `elements`, a value pack
-    /// or a reflected field-name list, compiled as a parameter expression.
-    fn record_comptime_iteration(&self, source: &Expr, binder: &ParamExpr, elements: ParamExpr) {
-        let Some(binder) = binder.as_decl_ref() else {
-            return;
-        };
-        self.record_at(source.source_span()).adjustment = Some(Box::new(
-            mojito_checked::checked::SemanticAdjustment::ComptimeIteration(Box::new(
-                mojito_checked::checked::ComptimeIteration {
-                    binder: binder.clone(),
-                    source: mojito_checked::checked::ComptimeSource::Sequence(
-                        mojito_checked::checked::ComptimeSequence::Elements(elements),
-                    ),
-                },
-            )),
-        ));
+        self.check_comptime_iterator_for(stmt, var, (source, &iter), body, ret)
     }
 
     /// Whether every local `expr` names is a compile-time binding: a value
@@ -2819,26 +2740,10 @@ impl Checker {
         }
     }
 
-    /// The element type a `comptime for` iterable yields by the built-in
-    /// iteration rule, a value pack's; `None` for an iterable the rule does
-    /// not serve, which iterates by its iterator
-    /// ([`Self::check_comptime_iterator_for`]).
-    fn comptime_iteration_element(&self, iter: &Expr) -> Result<Option<Ty>, TypeError> {
-        // A value pack iterates its elements at compile time; only a
-        // runtime read is its `ParameterList`.
-        if let Some(pack) = self.value_pack_named(iter) {
-            return match pack.meta() {
-                mojito_types::param_expr::MetaTy::ParamList(element) => element.as_value().cloned(),
-                _ => None,
-            }
-            .map(Some)
-            .ok_or_else(|| {
-                TypeError::InvariantViolation(format!(
-                    "the value pack `{pack}` is not a parameter list of values"
-                ))
-            });
-        }
-        let ty = self.infer(iter)?;
+    /// Reject a `comptime for` over a compile-time `Tuple`, which has no
+    /// `__iter__`, as upstream: the rejection spells the tuple's element
+    /// types as the elaborator does for the same program.
+    fn reject_compile_time_tuple(&self, iter: &Expr) -> Result<(), TypeError> {
         let not_iterable = |elements: &[Ty]| {
             TypeError::Unsupported(format!(
                 "'Tuple[{}]' does not implement the '__iter__' method",
@@ -2849,13 +2754,7 @@ impl Checker {
                     .join(", ")
             ))
         };
-        match ty.kind() {
-            TyKind::ComptimeList(element) | TyKind::VariadicPack(element) => {
-                Ok(Some((*element).clone()))
-            }
-            // A compile-time `Tuple` has no `__iter__`, as upstream; the
-            // rejection spells the tuple's element types as the elaborator
-            // does for the same program.
+        match self.infer(iter)?.kind() {
             TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => Err(not_iterable(elements)),
             TyKind::Struct(name, args) if name == mojito_types::types::TUPLE_TYPE_NAME => {
                 let elements: Vec<Ty> = args
@@ -2867,7 +2766,7 @@ impl Checker {
                     .collect();
                 Err(not_iterable(&elements))
             }
-            _ => Ok(None),
+            _ => Ok(()),
         }
     }
 
@@ -3247,13 +3146,6 @@ fn pack_element_view_binder(name: &str) -> ParamRef {
     }
 }
 
-/// The compile-time binder of a `comptime for` variable of type `element`,
-/// so a dependent expression over it (`Ts[i]`, `args[i]`, `x * n`) has a
-/// node. The loop's iterable names the binder: each loop owns its variable.
-fn comptime_index_binder(var: &str, iter: &Expr, element: &Ty) -> ParamExpr {
-    value_binder_expr(ParamId::new(&comptime_for_owner(iter), 0), var, element)
-}
-
 /// Whether `iter` is a collection display of scalar `element`s a loop binder
 /// takes (`Int`, `Bool`, `Float64`, `String`), which the elaborator evaluates per
 /// instance when the check does not close it.
@@ -3282,8 +3174,7 @@ pub(super) fn string_element_binder(element: Ty) -> Ty {
     }
 }
 
-/// Whether `binder` is a `comptime for` variable of `Bool` elements
-/// ([`comptime_index_binder`]).
+/// Whether `binder` is a `comptime for` variable of `Bool` elements.
 fn is_bool_loop_binder(binder: &ParamExpr) -> bool {
     binder
         .as_decl_ref()

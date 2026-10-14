@@ -100,6 +100,7 @@ assets/ok/comptime_for_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_tuple_elements.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_unserved_nested.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_user_iterator.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_for_value_pack_iterator.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_value_struct_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_frozen_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_hash.mojo	-	ineligible	no-scalar-entry-shape

@@ -442,59 +442,33 @@ pub struct InteriorInvalidation {
     pub include_base_generation: bool,
 }
 
-/// A `comptime for` over a compile-time sequence of parameter expressions.
+/// A `comptime for` by upstream's iterator protocol, recorded on its
+/// iterable.
 ///
-/// The loop's own binder — of the element's type, or the iterator's for an
-/// [`ComptimeSource::Iterator`] — and the sequence it iterates over the
-/// binders in scope. The body is checked once with the
-/// binder symbolic; `native::mono` unrolls it under each instance's
-/// bindings.
+/// The check spelled the iterable as its `__iter__()` call, which MIR lifts
+/// as a function over the binders in scope, and `binder` is the
+/// `iterator`-typed iterator. `has_next` and `next_iter` are the
+/// `paramfor_has_next`/`paramfor_next_iter` applications over the binder,
+/// which the elaborator runs to step it; the loop variable is an alias of
+/// `next_value`, the `paramfor_next_value` application over it. The body
+/// is checked once with the binder symbolic; `native::mono` unrolls it
+/// under each instance's bindings.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ComptimeIteration {
     pub binder: mojito_types::param_expr::ParamRef,
-    pub source: ComptimeSource,
-}
-
-/// How the check leaves a `comptime for` iterable to the phases below it:
-/// a value pack or a reflected field-name list by the built-in rule, any
-/// other iterable by upstream's iterator protocol.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum ComptimeSource {
-    /// A sequence the check compiled over the binders in scope: a value
-    /// pack or a reflected field-name list.
-    Sequence(ComptimeSequence),
-    /// Upstream's iterator protocol: the check spelled the iterable as its
-    /// `__iter__()` call, which MIR lifts as a function over the binders in
-    /// scope, and the binder is the `iterator`-typed iterator. `has_next`
-    /// and `next_iter` are the `paramfor_has_next`/`paramfor_next_iter`
-    /// applications over the binder, which the elaborator runs to step it;
-    /// the loop variable is an alias of `next_value`, the
-    /// `paramfor_next_value` application over it.
-    Iterator {
-        iterator: mojito_types::param_expr::MetaTy,
-        has_next: mojito_types::param_expr::ParamExpr,
-        next_iter: mojito_types::param_expr::ParamExpr,
-        next_value: mojito_types::param_expr::ParamExpr,
-    },
-}
-
-impl ComptimeSource {
-    /// The meta-type of the loop's binder.
-    pub fn binder_meta(&self) -> mojito_types::param_expr::MetaTy {
-        match self {
-            Self::Sequence(sequence) => sequence.binder_meta(),
-            Self::Iterator { iterator, .. } => iterator.clone(),
-        }
-    }
+    pub iterator: mojito_types::param_expr::MetaTy,
+    pub has_next: mojito_types::param_expr::ParamExpr,
+    pub next_iter: mojito_types::param_expr::ParamExpr,
+    pub next_value: mojito_types::param_expr::ParamExpr,
 }
 
 /// What a `comptime for` iterates, as upstream's `kgen.param.for` iterates
 /// a compile-time sequence.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ComptimeSequence {
-    /// A value pack or a reflected field-name list, whose value yields the
-    /// elements [`mojito_types::ct::CtValue::comptime_iteration_elements`]
-    /// names.
+    /// A sequence whose value yields the elements
+    /// [`mojito_types::ct::CtValue::comptime_iteration_elements`] names. No
+    /// check produces it; it survives only as a MIR text form.
     Elements(mojito_types::param_expr::ParamExpr),
     /// An iterator stepped by upstream's protocol from `initial`, the
     /// iterable's `__iter__()`: while `has_next` over the binder holds, the
