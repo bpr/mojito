@@ -282,12 +282,12 @@ pub(super) fn repair_storage_result_types(function: &mut MirFunction) {
                             && !retyped_iterator_slots.contains(&place.root) =>
                     {
                         if let Some(ty) = var_tys.get(&place.root) {
-                            // A load through a reference-holding root
-                            // (`through`) reads the referent, not the handle.
+                            // A whole-root load of a reference-typed root
+                            // reads its referent, as MIR lowering types it and
+                            // both backends execute it; the handle itself is a
+                            // `MakeRef`/`UseVar` borrow, never a load.
                             let ty = match ty.kind() {
-                                TyKind::Ref(reference) if place.through.is_some() => {
-                                    reference.referent.clone()
-                                }
+                                TyKind::Ref(reference) => reference.referent.clone(),
                                 _ => ty.clone(),
                             };
                             reg_repairs.push((dest.0, ty));

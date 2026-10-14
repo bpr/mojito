@@ -1475,6 +1475,61 @@ fn dispatched_copy_of_builtin_instance_is_value_copy() {
 }
 
 #[test]
+fn dispatched_copy_through_reference_binding_is_value_copy() {
+    let source = "def firsts[T: Copyable & Deinitable](*values: T) -> List[T]:\n\
+                  \x20   var out = List[T]()\n\
+                  \x20   for value in values:\n\
+                  \x20       out.append(value.copy())\n\
+                  \x20   return out^\n\
+                  \n\
+                  def main():\n\
+                  \x20   print(len(firsts(1, 2)), len(firsts(String(\"x\"))))\n";
+    let specialized = specialized_main(source);
+    let instances: Vec<_> = specialized
+        .program
+        .functions
+        .iter()
+        .filter(|(name, _)| name.starts_with("firsts$mono$"))
+        .collect();
+    assert_eq!(instances.len(), 2, "one instance per element type");
+    for (name, instance) in instances {
+        let body = instructions(&instance.blocks);
+        let copy_call = body.iter().find_map(|instruction| match instruction {
+            MirInstr::MethodCall {
+                method, resolved, ..
+            } if method == "copy" => Some(resolved.as_deref()),
+            _ => None,
+        });
+        if name.contains("String") {
+            assert!(
+                copy_call.is_some_and(|target| target.is_some_and(|t| t.contains("String.copy"))),
+                "{name}: a struct's copy stays its `copy` call"
+            );
+            continue;
+        }
+        assert_eq!(copy_call, None, "{name}: no dispatched copy call remains");
+        assert!(
+            body.iter()
+                .any(|instruction| matches!(instruction, MirInstr::CopyValue { .. })),
+            "{name}: the copy is a value copy"
+        );
+        for instruction in &body {
+            if let MirInstr::LoadPlace { dest, place } = instruction
+                && place.is_whole_root()
+            {
+                assert!(
+                    !matches!(
+                        instance.reg_types.get(&dest.0).map(Ty::kind),
+                        Some(TyKind::Ref(..))
+                    ),
+                    "{name}: a whole-root load reads the referent, not the handle"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn reflected_field_type_construction_closes_per_unrolled_copy() {
     let source = "struct Zero(Copyable, Defaultable, Writable):\n\
                   \x20   var v: Int\n\

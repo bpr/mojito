@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R865**.
+Next free ID: **R866**.
 
 ## Ordered Work
 
@@ -57,21 +57,21 @@ which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
 
-- [ ] **R864 A dispatched `copy()` through a reference to a built-in
-  stays a method call in its instance**
+- [ ] **R865 An instance retypes loads and uses from variable types, not
+  from the generic register types**
 
-  A generic `value.copy()` whose receiver an instance types `ref` to a
-  built-in stays a `copy` method call with no target, where upstream reads
-  the referent and folds the copy.
-  - Reached by `for value in values: value.copy()` over a `var *values: T`
-    collector at `T = Int` (`assets/ok/template_method_variadic_initializer.mojo`).
-  - `native::mono::substitute::copy_builtin_receivers` skips it, because
-    `types::builtin_copy_is_value_read` rejects `TyKind::Ref`.
-  - The fix makes the reference read explicit before the `CopyValue`
-    (`MirInstr::ReadRef`), which Pliron's "the register carries the scalar
-    itself" convention for such receivers (`lower/methods.rs`) must agree
-    with; then that branch and the VM's non-struct `copy` answer go.
-  - Found while landing R839 (2026-10-14).
+  `native::mono::substitute::repair_storage_result_types` rebuilds each
+  whole-root `LoadPlace` and `UseVar` result type from its variable's
+  type, where the generic MIR already types those registers and upstream
+  only substitutes them.
+  - Its `UseVar` arm keeps the reference blind spot R864 closed for
+    `LoadPlace`: a non-moving `UseVar` of a `ref` variable reads through on
+    the VM yet is typed as the handle.
+  - The fix substitutes the generic register type and drops the
+    variable-driven repair for both arms.
+  - A MIR verifier rule then pins it: in concrete MIR, a whole-root
+    `LoadPlace` of a `Ref`-typed root never defines a `Ref`-typed register.
+  - Found while landing R864 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

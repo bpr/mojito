@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A generic `value.copy()` whose receiver is read through a `ref` binding
+  to a built-in (`for value in values: value.copy()` over a variadic
+  collector) is now a value copy in its instance too (R864): the instance
+  types a whole-root load of a reference root by its referent, as lowering
+  and both backends read it. The Pliron and VM fallbacks that answered the
+  mistyped `copy` call are gone, with no output change.
+
 - A generic `x.copy()` instantiated at a built-in receiver is now a value
   copy in that instance (R839), as upstream's `Copyable.copy` body
   `Self(copy=self)` is, so the post-elaboration `canonicalize` forwards it

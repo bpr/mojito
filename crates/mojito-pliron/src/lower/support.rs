@@ -246,20 +246,6 @@ pub fn collect_loaded_places(blocks: &[MirBlock]) -> HashMap<u32, MirPlace> {
     output
 }
 
-/// The SSA scalar shape of a built-in copyable receiver whose `copy()` is the
-/// value read (the scalar arms of `lower_ty`); references and pointers are
-/// not value copies and aggregates copy through their own lifecycle.
-pub fn scalar_copy_ty(ty: &Ty) -> Option<ScalarTy> {
-    match ty.kind() {
-        TyKind::Int | TyKind::IntLiteral => Some(ScalarTy::Int),
-        TyKind::UInt => Some(ScalarTy::UInt),
-        TyKind::Float64 | TyKind::FloatLiteral => Some(ScalarTy::Float64),
-        TyKind::Bool => Some(ScalarTy::Bool),
-        TyKind::Dtype => Some(ScalarTy::Dtype),
-        ty => scalar_simd_dtype(ty).map(ScalarTy::of_dtype),
-    }
-}
-
 /// The concrete lane dtype and width of a `TyKind::Simd` register type. A
 /// symbolic slot never reaches lowering: the MIR verifier refuses it.
 pub fn simd_dims(ty: &Ty) -> Option<(Dtype, i64)> {

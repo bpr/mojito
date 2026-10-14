@@ -135,24 +135,6 @@ impl FnLowering<'_> {
         {
             return self.lower_str_writer_write(ctx, dest, recv, args, recv_place);
         }
-        // Trait-dispatched `Copyable.copy` on a receiver register typed as a
-        // `ref` to a scalar (a reference result retained in a hidden
-        // `$call_ref` slot, `span[i].copy()`), whose `__trait_dispatch.`
-        // target the specializer clears: the receiver `LoadPlace` read the
-        // referent through the slot, so the register carries the scalar
-        // itself and the copy is that value, as the VM's non-struct `copy`
-        // intrinsic. A scalar receiver's copy arrives as a `CopyValue`.
-        if resolved.is_none()
-            && method == "copy"
-            && args.is_empty()
-            && kwargs.is_empty()
-            && let Some(TyKind::Ref(reference)) = self.func.reg_types.get(&recv.0).map(Ty::kind)
-            && let Some(scalar) = scalar_copy_ty(&reference.referent)
-        {
-            let value = self.reg_value(ctx, recv, scalar)?;
-            self.reg_values.insert(dest.0, value);
-            return Ok(());
-        }
         // The struct-to-literal bridge (the VM's `string_struct_literal`):
         // the declared stub body must never execute, and the bridged bytes
         // would need an owner the literal value model cannot record — the

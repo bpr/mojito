@@ -5021,7 +5021,10 @@ substitution made trivial is forwarded. A dispatched `x.copy()` whose
 instance makes the receiver a built-in arrives as such a copy: the
 elaborator writes it as `value.copy`
 (`mono/substitute.rs:copy_builtin_receivers`), as `Copyable.copy`'s body
-`Self(copy=self)` is at that `Self`.
+`Self(copy=self)` is at that `Self`. A receiver read through a `ref`
+binding (`for value in values: value.copy()`) folds the same way: the
+instance types a whole-root load of a reference root by its referent
+(`repair_storage_result_types`), as lowering and both backends read it.
 
 - **The seam.** `analysis::post_elaborate_program` runs each pass over
   every concrete function but `__toplevel__`, on the driver thread after

@@ -360,14 +360,6 @@ impl VmBackend {
         } else {
             recv
         };
-        // Trait-dispatched `Copyable.copy` through a reference to a non-struct
-        // value (a generic body's `value.copy()` whose receiver an instance
-        // types `ref` to a built-in) is the referent itself. A concrete
-        // built-in receiver is the value read lowering writes, and a generic
-        // one becomes a `CopyValue` in its instance.
-        if method == "copy" && !matches!(recv, Value::Struct { .. }) {
-            return Ok(recv.clone());
-        }
         let keyword_names: Vec<String> = kwargs.iter().map(|(name, _)| name.clone()).collect();
         // Intrinsic dunders on a built-in numeric/hashable value; a struct with
         // its own implementation still dispatches to its method below.

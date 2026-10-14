@@ -1538,7 +1538,13 @@ its MLIR pipeline. On `collections_many`, debug binary:
 The 103 receivers are all scalars or one-lane SIMD: `Int` 20,
 `SIMD[int64, 1]` 16, `Float64` 12, `Bool` 11, `UInt8` 9, `Int32` 7,
 `UInt16` 7, `UInt32` 5, and `Int8`, `Int16`, `UInt64`, `Float32` 4 each.
-A receiver typed `ref` to a built-in still stays a call (R864); a struct
+A receiver read through a `ref` binding (`for value in values:
+value.copy()`) folds too since R864: the instance types a whole-root load
+of a reference root by its referent
+(`native::mono::substitute::repair_storage_result_types`), as lowering and
+both backends read it, so post-elaboration `forwarded_copies` rises from 4
+to 5 on `template_method_variadic_initializer` and from 4 to 6 on
+`instance_constructor_symbols`. A struct
 receiver's `copy` is its copy constructor, a call upstream keeps too. The
 corpus-wide `scripts/instantiation-report` rerun is left to the nightly
 gate.
