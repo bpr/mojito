@@ -1106,6 +1106,29 @@ fn verifier_rejects_top_level_falloff_and_escape() {
 }
 
 #[test]
+fn verifier_rejects_a_branch_to_a_try_region_entry() {
+    let body = vec![
+        block(Vec::new(), MirTerm::Jump(1)),
+        block(Vec::new(), MirTerm::Jump(0)),
+    ];
+    let f = function(
+        vec![block(
+            vec![MirInstr::Try {
+                body,
+                handler: None,
+                orelse: None,
+                finalbody: None,
+                cleanup: Vec::new(),
+            }],
+            MirTerm::Return(None),
+        )],
+        0,
+        &[],
+    );
+    expect_finding(&program(f), "branch to its try region's entry block");
+}
+
+#[test]
 fn verifier_rejects_non_bool_branch_conditions() {
     let f = function(
         vec![

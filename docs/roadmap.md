@@ -187,23 +187,6 @@ which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
 
-- [ ] **R824 Drop elaboration drops slots around a `try` that the `try` already ended**
-
-  A slot bound or defined inside a `try` region is also dropped just
-  before or just after the `Try` instruction.
-  - Reproduce: `mojito emit-mir assets/ok/implicit_conversion_raising.mojo`
-    shows `main` dropping the handler's `e` (`$v2`) both before and after
-    its `try`.
-  - Handler error slots are bound by the `Try` handler, not a `DefVar`, so
-    drop liveness has no def for them.
-  - `drops::region_uses` reports a region-local slot's uses as uses by the
-    `Try`, so the slot's outer death splices a drop the region already did.
-  - `with` desugars to `try` and shows the same pattern
-    (`with_statement.mojo`, `discarded_result_destruction.mojo`).
-  - Cause map: `R822-the-mir-verifier-accepts-a-slot-plan.md`, slice 2.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R825 The MIR verifier accepts a drop of a slot every path already ended**
 
   A `drop.var` of a slot that every path has already dropped, consumed, or

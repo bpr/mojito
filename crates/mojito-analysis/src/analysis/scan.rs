@@ -258,8 +258,9 @@ pub(super) fn consumed_in_place(blocks: &[MirBlock]) -> HashSet<VarId> {
     consumed
 }
 
-/// Count every def site (a `DefVar` write or a `DeclareVar`) per variable
-/// across `blocks`, recursing into nested `try` sub-regions, recording
+/// Count every def site (a `DefVar` write, a `DeclareVar`, or a handler's
+/// error binding) per variable across `blocks`, recursing into nested `try`
+/// sub-regions through [`collect_try_defs`], recording
 /// first-site order and `^`-moved variables. Over a function's top-level
 /// blocks this yields the function-wide def-site counts that region-locality
 /// is judged against.
@@ -280,26 +281,45 @@ pub(super) fn collect_region_defs(
             for v in vars_moved(instr) {
                 moved.insert(v);
             }
-            if let MirInstr::Try {
-                body,
-                handler,
-                orelse,
-                finalbody,
-                ..
-            } = instr
-            {
-                collect_region_defs(body, counts, order, moved);
-                if let Some((_, h)) = handler {
-                    collect_region_defs(h, counts, order, moved);
-                }
-                if let Some(e) = orelse {
-                    collect_region_defs(e, counts, order, moved);
-                }
-                if let Some(fb) = finalbody {
-                    collect_region_defs(fb, counts, order, moved);
-                }
-            }
+            collect_try_defs(instr, counts, order, moved);
         }
+    }
+}
+
+/// Count the def sites of a `try`'s four regions as [`collect_region_defs`]
+/// does. The handler's error binding is one def site, at the handler's entry:
+/// the caught error arrives as that block's argument.
+pub(super) fn collect_try_defs(
+    try_instr: &MirInstr,
+    counts: &mut HashMap<VarId, usize>,
+    order: &mut Vec<VarId>,
+    moved: &mut HashSet<VarId>,
+) {
+    let MirInstr::Try {
+        body,
+        handler,
+        orelse,
+        finalbody,
+        ..
+    } = try_instr
+    else {
+        return;
+    };
+    collect_region_defs(body, counts, order, moved);
+    if let Some((binding, h)) = handler {
+        if let Some(v) = binding {
+            if !counts.contains_key(v) {
+                order.push(*v);
+            }
+            *counts.entry(*v).or_insert(0) += 1;
+        }
+        collect_region_defs(h, counts, order, moved);
+    }
+    if let Some(e) = orelse {
+        collect_region_defs(e, counts, order, moved);
+    }
+    if let Some(fb) = finalbody {
+        collect_region_defs(fb, counts, order, moved);
     }
 }
 

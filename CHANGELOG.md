@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Drop elaboration no longer drops slots around a `try` that the `try`
+  already ended (R824). A handler's error binding is a def site at the
+  handler's entry, every region's locals are scoped to their `try`, and the
+  enclosing walk places no death after a `try`. A handler local used to die
+  one statement late round a loop, a caught error rebound by the next
+  iteration or bound by `except e: pass` was never destroyed, and outer
+  values the regions ended were dropped again after the `try`. The verifier
+  now rejects a branch to a `try` region's entry block.
+
 - Drop elaboration now owns every iterator drop and is idempotent (R822,
   partly): a `GetIter` defines its iterator slot, an input `DropVar` is the
   slot's teardown, and HIR/MIR loop lowering emits no drops of its own

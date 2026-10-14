@@ -13,6 +13,12 @@ pub(super) fn verify_terminator(
     errors: &mut Vec<String>,
 ) {
     let prefix = format!("MIR function '{name}' block {block_index}");
+    // A region's entry block has no predecessors: control enters a `try`
+    // region only from the `try` (the handler's error binding is the entry
+    // block's argument), never from a branch inside it.
+    if context.in_try_region && region_targets(terminator).contains(&0) {
+        errors.push(format!("{prefix}: branch to its try region's entry block"));
+    }
     match terminator {
         MirTerm::Jump(target) => {
             if *target >= context.region_len {
@@ -519,5 +525,20 @@ pub(super) fn verify_place(
         errors.push(format!(
             "{prefix} place terminal type {terminal} does not match projected type {current}"
         ));
+    }
+}
+
+/// The in-region blocks a terminator transfers control to.
+fn region_targets(terminator: &MirTerm) -> Vec<usize> {
+    match terminator {
+        MirTerm::Jump(target) => vec![*target],
+        MirTerm::Branch { then_b, else_b, .. } | MirTerm::ComptimeBranch { then_b, else_b, .. } => {
+            vec![*then_b, *else_b]
+        }
+        MirTerm::ComptimeFor { body, exit, .. } => vec![*body, *exit],
+        MirTerm::Return(_)
+        | MirTerm::ReturnWithCleanup { .. }
+        | MirTerm::FallOff
+        | MirTerm::EscapeJump { .. } => Vec::new(),
     }
 }

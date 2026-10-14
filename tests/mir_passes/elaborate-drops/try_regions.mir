@@ -1,0 +1,181 @@
+mojito-mir 1.52
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("try_regions.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+    struct { name: Res, fields: [field { name: n, type: Int }], mut_self_methods: [], fieldwise_init: false, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [] }], declared: [conformance { trait: Movable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [] }
+  ],
+  decls: [
+    decl { lowered_name: "Res.__deinit__", param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: true, receiver_convention: present(deinit), param_conventions: [], return_type: None, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: "Res.__init__", param_names: [n], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: true, receiver_convention: present(out), param_conventions: [absent], return_type: None, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: fail, param_names: [n], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: None, returns_reference: false, raises: true, error_type: present(Error), ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: main, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: None, returns_reference: false, raises: true, error_type: present(Error), ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: "Res.__init__",
+        registers: 1,
+        vars: 2,
+        var_names: [self, n],
+        params: 2,
+        param_types: [struct_type { name: Res, arguments: [] }, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Res, arguments: [] } }, var_type { var: $v1, type: Int }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 90, end: 91, origin: present($v1) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v1, mode: copy },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: Res, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent }, src: %r0 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: "Res.__deinit__",
+        registers: 3,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: Res, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [true],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Res, arguments: [] } }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: StringLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: None }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 140, end: 145, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 147, end: 153, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 134, end: 154, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: string("del") },
+              place.load { dest: %r1, place: place { root: $v0, root_type: present(struct_type { name: Res, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } },
+              call { dest: %r2, func: print, raises: absent, args: [%r0, %r1], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: fail,
+        registers: 6,
+        vars: 1,
+        var_names: [n],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(None),
+        raises: true,
+        error_type: present(Error),
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Bool }, reg_type { reg: %r4, type: StringLiteral }, reg_type { reg: %r5, type: Error }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 189, end: 190, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 193, end: 194, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 193, end: 194, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 189, end: 194, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 216, end: 222, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 210, end: 223, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r1, value: int_literal(0) },
+              literal.materialize { dest: %r2, value: %r1, target: Int },
+              var.use { dest: %r0, var: $v0, mode: copy },
+              binary { op: gt, dest: %r3, a: %r0, b: %r2, resolved: absent }
+            ],
+            terminator: branch { condition: %r3, then: bb2, else: bb3 }
+          },
+          bb1 {
+            instructions: [
+            ],
+            terminator: return { value: absent }
+          },
+          bb2 {
+            instructions: [
+              const { dest: %r4, value: string("boom") },
+              call { dest: %r5, func: Error, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              raise { src: %r5 }
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb3 {
+            instructions: [
+            ],
+            terminator: jump { target: bb1 }
+          }
+        ]
+      },
+      fn {
+        name: main,
+        registers: 45,
+        vars: 7,
+        var_names: [outer, i, e, local, "e$binding135", r, g],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Res, arguments: [] } }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: Error }, var_type { var: $v3, type: struct_type { name: Res, arguments: [] } }, var_type { var: $v4, type: Error }, var_type { var: $v5, type: struct_type { name: Res, arguments: [] } }, var_type { var: $v6, type: struct_type { name: Res, arguments: [] } }],
+        return_type: present(None),
+        raises: true,
+        error_type: present(Error),
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: Res, arguments: [] } }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: IntLiteral }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: Bool }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r10, type: None }, reg_type { reg: %r11, type: IntLiteral }, reg_type { reg: %r12, type: Int }, reg_type { reg: %r13, type: Int }, reg_type { reg: %r14, type: Int }, reg_type { reg: %r15, type: struct_type { name: Res, arguments: [] } }, reg_type { reg: %r16, type: StringLiteral }, reg_type { reg: %r17, type: Int }, reg_type { reg: %r18, type: None }, reg_type { reg: %r19, type: Int }, reg_type { reg: %r20, type: IntLiteral }, reg_type { reg: %r21, type: Int }, reg_type { reg: %r22, type: Int }, reg_type { reg: %r23, type: None }, reg_type { reg: %r24, type: IntLiteral }, reg_type { reg: %r25, type: Int }, reg_type { reg: %r26, type: None }, reg_type { reg: %r27, type: StringLiteral }, reg_type { reg: %r28, type: Int }, reg_type { reg: %r29, type: None }, reg_type { reg: %r30, type: IntLiteral }, reg_type { reg: %r31, type: Int }, reg_type { reg: %r32, type: None }, reg_type { reg: %r33, type: IntLiteral }, reg_type { reg: %r34, type: Int }, reg_type { reg: %r35, type: struct_type { name: Res, arguments: [] } }, reg_type { reg: %r36, type: StringLiteral }, reg_type { reg: %r37, type: Int }, reg_type { reg: %r38, type: None }, reg_type { reg: %r39, type: IntLiteral }, reg_type { reg: %r40, type: Int }, reg_type { reg: %r41, type: struct_type { name: Res, arguments: [] } }, reg_type { reg: %r42, type: StringLiteral }, reg_type { reg: %r43, type: Int }, reg_type { reg: %r44, type: None }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 265, end: 266, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 265, end: 266, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 261, end: 267, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 280, end: 281, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 280, end: 281, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 292, end: 293, origin: present($v1) }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 296, end: 297, origin: absent }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 296, end: 297, origin: absent }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 292, end: 297, origin: absent }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 329, end: 330, origin: present($v1) }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 324, end: 331, origin: absent }) }, reg_loc { reg: %r11, location: present(loc { file: file0, start: 378, end: 380, origin: absent }) }, reg_loc { reg: %r12, location: present(loc { file: file0, start: 378, end: 380, origin: absent }) }, reg_loc { reg: %r13, location: present(loc { file: file0, start: 383, end: 384, origin: present($v1) }) }, reg_loc { reg: %r14, location: present(loc { file: file0, start: 378, end: 384, origin: absent }) }, reg_loc { reg: %r15, location: present(loc { file: file0, start: 374, end: 385, origin: absent }) }, reg_loc { reg: %r16, location: present(loc { file: file0, start: 404, end: 412, origin: absent }) }, reg_loc { reg: %r17, location: present(loc { file: file0, start: 414, end: 421, origin: present($v3) }) }, reg_loc { reg: %r18, location: present(loc { file: file0, start: 386, end: 422, origin: absent }) }, reg_loc { reg: %r19, location: present(loc { file: file0, start: 431, end: 432, origin: present($v1) }) }, reg_loc { reg: %r20, location: present(loc { file: file0, start: 436, end: 437, origin: absent }) }, reg_loc { reg: %r21, location: present(loc { file: file0, start: 436, end: 437, origin: absent }) }, reg_loc { reg: %r22, location: present(loc { file: file0, start: 431, end: 432, origin: absent }) }, reg_loc { reg: %r23, location: present(loc { file: file0, start: 431, end: 432, origin: present($v1) }) }, reg_loc { reg: %r24, location: present(loc { file: file0, start: 460, end: 461, origin: absent }) }, reg_loc { reg: %r25, location: present(loc { file: file0, start: 460, end: 461, origin: absent }) }, reg_loc { reg: %r26, location: present(loc { file: file0, start: 455, end: 462, origin: absent }) }, reg_loc { reg: %r27, location: present(loc { file: file0, start: 477, end: 483, origin: absent }) }, reg_loc { reg: %r28, location: present(loc { file: file0, start: 485, end: 492, origin: present($v0) }) }, reg_loc { reg: %r29, location: present(loc { file: file0, start: 463, end: 493, origin: absent }) }, reg_loc { reg: %r30, location: present(loc { file: file0, start: 543, end: 544, origin: absent }) }, reg_loc { reg: %r31, location: present(loc { file: file0, start: 543, end: 544, origin: absent }) }, reg_loc { reg: %r32, location: present(loc { file: file0, start: 538, end: 545, origin: absent }) }, reg_loc { reg: %r33, location: present(loc { file: file0, start: 601, end: 602, origin: absent }) }, reg_loc { reg: %r34, location: present(loc { file: file0, start: 601, end: 602, origin: absent }) }, reg_loc { reg: %r35, location: present(loc { file: file0, start: 597, end: 603, origin: absent }) }, reg_loc { reg: %r36, location: present(loc { file: file0, start: 618, end: 624, origin: absent }) }, reg_loc { reg: %r37, location: present(loc { file: file0, start: 626, end: 629, origin: present($v5) }) }, reg_loc { reg: %r38, location: present(loc { file: file0, start: 604, end: 630, origin: absent }) }, reg_loc { reg: %r39, location: present(loc { file: file0, start: 664, end: 665, origin: absent }) }, reg_loc { reg: %r40, location: present(loc { file: file0, start: 664, end: 665, origin: absent }) }, reg_loc { reg: %r41, location: present(loc { file: file0, start: 660, end: 666, origin: absent }) }, reg_loc { reg: %r42, location: present(loc { file: file0, start: 681, end: 690, origin: absent }) }, reg_loc { reg: %r43, location: present(loc { file: file0, start: 692, end: 695, origin: present($v6) }) }, reg_loc { reg: %r44, location: present(loc { file: file0, start: 667, end: 696, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(0) },
+              literal.materialize { dest: %r1, value: %r0, target: Int },
+              call { dest: %r2, func: Res, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              var.store { var: $v0, src: %r2, binding_type: present(struct_type { name: Res, arguments: [] }), in_place: true },
+              const { dest: %r3, value: int_literal(0) },
+              literal.materialize { dest: %r4, value: %r3, target: Int },
+              var.store { var: $v1, src: %r4, binding_type: present(Int), in_place: false }
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb1 {
+            instructions: [
+              const { dest: %r6, value: int_literal(2) },
+              literal.materialize { dest: %r7, value: %r6, target: Int },
+              var.use { dest: %r5, var: $v1, mode: copy },
+              binary { op: lt, dest: %r8, a: %r5, b: %r7, resolved: absent }
+            ],
+            terminator: branch { condition: %r8, then: bb2, else: bb3 }
+          },
+          bb2 {
+            instructions: [
+              try { body: [bb0 { instructions: [var.use { dest: %r9, var: $v1, mode: copy }, call { dest: %r10, func: fail, raises: present(Error), args: [%r9], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: falloff {} }], handler: present(handler { error_var: present($v2), blocks: [bb0 { instructions: [const { dest: %r11, value: int_literal(10) }, literal.materialize { dest: %r12, value: %r11, target: Int }, var.use { dest: %r13, var: $v1, mode: copy }, binary { op: add, dest: %r14, a: %r12, b: %r13, resolved: absent }, call { dest: %r15, func: Res, raises: absent, args: [%r14], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, var.store { var: $v3, src: %r15, binding_type: present(struct_type { name: Res, arguments: [] }), in_place: true }, const { dest: %r16, value: string("caught") }, place.load { dest: %r17, place: place { root: $v3, root_type: present(struct_type { name: Res, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } }, call { dest: %r18, func: print, raises: absent, args: [%r16, %r17], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: falloff {} }] }), orelse: absent, finalbody: absent, cleanup: [] },
+              var.use { dest: %r19, var: $v1, mode: copy },
+              const { dest: %r20, value: int_literal(1) },
+              literal.materialize { dest: %r21, value: %r20, target: Int },
+              binary { op: add, dest: %r22, a: %r19, b: %r21, resolved: absent },
+              interiors.invalidate { base: interior_origin { root: $v1, path: [] }, except: absent, include_base_generation: false, marker: %r23 },
+              var.store { var: $v1, src: %r22, binding_type: absent, in_place: false }
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb3 {
+            instructions: [
+              try { body: [bb0 { instructions: [const { dest: %r24, value: int_literal(0) }, literal.materialize { dest: %r25, value: %r24, target: Int }, call { dest: %r26, func: fail, raises: present(Error), args: [%r25], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, const { dest: %r27, value: string("body") }, place.load { dest: %r28, place: place { root: $v0, root_type: present(struct_type { name: Res, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } }, call { dest: %r29, func: print, raises: absent, args: [%r27, %r28], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: falloff {} }], handler: present(handler { error_var: present($v4), blocks: [bb0 { instructions: [], terminator: falloff {} }] }), orelse: absent, finalbody: absent, cleanup: [] },
+              try { body: [bb0 { instructions: [const { dest: %r30, value: int_literal(0) }, literal.materialize { dest: %r31, value: %r30, target: Int }, call { dest: %r32, func: fail, raises: present(Error), args: [%r31], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: falloff {} }], handler: present(handler { error_var: absent, blocks: [bb0 { instructions: [], terminator: falloff {} }] }), orelse: present([bb0 { instructions: [const { dest: %r33, value: int_literal(7) }, literal.materialize { dest: %r34, value: %r33, target: Int }, call { dest: %r35, func: Res, raises: absent, args: [%r34], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, var.store { var: $v5, src: %r35, binding_type: present(struct_type { name: Res, arguments: [] }), in_place: true }, const { dest: %r36, value: string("else") }, place.load { dest: %r37, place: place { root: $v5, root_type: present(struct_type { name: Res, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } }, call { dest: %r38, func: print, raises: absent, args: [%r36, %r37], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: falloff {} }]), finalbody: present([bb0 { instructions: [const { dest: %r39, value: int_literal(8) }, literal.materialize { dest: %r40, value: %r39, target: Int }, call { dest: %r41, func: Res, raises: absent, args: [%r40], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, var.store { var: $v6, src: %r41, binding_type: present(struct_type { name: Res, arguments: [] }), in_place: true }, const { dest: %r42, value: string("finally") }, place.load { dest: %r43, place: place { root: $v6, root_type: present(struct_type { name: Res, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } }, call { dest: %r44, func: print, raises: absent, args: [%r42, %r43], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: falloff {} }]), cleanup: [] }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      }
+  ]
+}

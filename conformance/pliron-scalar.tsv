@@ -930,6 +930,7 @@ assets/ok/try_in_loop_temporary_drop_order.mojo	-	ineligible	no-scalar-entry-sha
 assets/ok/try_raise_edge_drop_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_reassign_outer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_region_drop_timing.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/try_region_local_drop_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_region_shadowed_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_return.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tstring_forms.mojo	-	ineligible	no-scalar-entry-shape

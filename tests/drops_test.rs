@@ -465,6 +465,19 @@ fn del_runs_when_a_try_body_is_left() {
     assert_eq!(vm(&normal), "have 2\ndel 2\ndone\n");
 }
 
+#[test]
+fn try_region_locals_die_inside_their_region() {
+    // A slot only a `try`'s regions define is scoped to the `try`: a handler
+    // local dies at its last use, not round the loop; the caught error dies
+    // in its handler, and an unread one on arrival; nothing dies twice.
+    // The expected output is the pin's.
+    let src = "struct Boom(Writable, Movable):\n    var n: Int\n    def __init__(out self, n: Int):\n        self.n = n\n    def __deinit__(deinit self):\n        print(\"del boom\", self.n)\n    def write_to(self, mut writer: Some[Writer]):\n        writer.write(\"Boom(\", self.n, \")\")\n\nstruct Res(Movable):\n    var n: Int\n    def __init__(out self, n: Int):\n        self.n = n\n    def __deinit__(deinit self):\n        print(\"del res\", self.n)\n\ndef fail(n: Int) raises Boom:\n    if n > 0:\n        raise Boom(n)\n    print(\"ok\", n)\n\ndef main():\n    var outer = Res(0)\n    for i in range(3):\n        try:\n            fail(i)\n            print(\"body\", outer.n)\n        except e:\n            var local = Res(10 + i)\n            print(\"caught\", e.n, local.n)\n        print(\"after\", i)\n    try:\n        fail(5)\n    except e:\n        pass\n    print(\"after pass\")\n    try:\n        fail(0)\n    except e:\n        print(\"never\")\n    else:\n        var r = Res(7)\n        print(\"else\", r.n)\n    finally:\n        var g = Res(8)\n        print(\"finally\", g.n)\n    print(\"end\")\n";
+    assert_eq!(
+        vm(src),
+        "ok 0\nbody 0\nafter 0\ncaught 1 11\ndel res 11\ndel boom 1\nafter 1\ncaught 2 12\ndel res 12\ndel boom 2\nafter 2\ndel res 0\ndel boom 5\nafter pass\nok 0\nelse 7\ndel res 7\nfinally 8\ndel res 8\nend\n"
+    );
+}
+
 // Copyable/Movable printing struct plus raising helpers for the try-region
 // per-instruction drop-elaboration tests.
 const TRY_NOISY: &str = "struct Noisy(Deinitable, Movable, Copyable):\n    var tag: Int\n    def __init__(out self, tag: Int):\n        self.tag = tag\n    def __deinit__(deinit self):\n        print(\"deinit\", self.tag)\n\ndef may(x: Int) raises -> Int:\n    if x < 0:\n        raise Error(\"neg\")\n    return x\n\ndef make(x: Int) raises -> Noisy:\n    if x < 0:\n        raise Error(\"neg\")\n    return Noisy(x)\n\n";

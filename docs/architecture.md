@@ -4705,6 +4705,13 @@ the enclosing walk (regions entered by raise or completion use the union of
 every state the preceding region can reach — pure over-retention), so owner
 retention and retirement behave identically inside regions.
 
+The enclosing walk places no death after a `try`. Its regions are seeded with
+the liveness after it as their fall-off, so each region path that reaches the
+fall-off already ends what the `try` uses or holds live for an escape target;
+the entry edge, the cleanup lists, and the `EscapeJump` cleanups cover the
+rest. A `try` region's entry block has no predecessors (the verifier rejects
+a branch to it), so a drop at its head runs once per entry.
+
 Per-instruction drops own all *normal-flow* deaths inside regions. The raise
 edge cannot host per-instruction drops, so the scope-exit cleanup lists remain
 and act as raise-edge/scope-exit backstops. The VM's `DropVar` and cleanup
@@ -4737,12 +4744,14 @@ variable consumed in place (`consumed_in_place`: a `ConsumeVar`, a
 whole-root move capture) is left out. The list is stored in descending `VarId`
 order — reverse declaration order, the order of every shared death point and of
 `EscapeJump` cleanups — and both backends run it front to back, so a raise
-destroys the body's live values newest declaration first, as Mojo does. Since
-the cleanup empties every body local on each exit, the outer drop liveness
-does not count a `try` as reading its body's locals: their slots are empty
-whenever the `try` is entered, so a loop's back edge does not hold them live,
-and they die at their last use inside the body, the list being only a
-backstop.
+destroys the body's live values newest declaration first, as Mojo does. A slot only
+a `try`'s regions define is scoped to the `try`, so the outer drop liveness
+does not count a `try` as reading the locals of any of its regions: their
+slots are empty whenever the `try` is entered, so a loop's back edge does not
+hold them live, and they die at their last use inside their region, the list
+being only a backstop. The handler's error binding is one of them: it is a
+def site at the handler's entry, where the caught error arrives as the entry
+block's argument, and an unread binding dies there.
 
 `EscapeJump` also carries cleanup for cross-region loop escapes. This makes
 hidden try-region exits explicit enough for the VM to run destructors before

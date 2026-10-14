@@ -454,10 +454,15 @@ pub(super) fn elaborate_try_interior(
             handler_any.as_ref().unwrap_or(&body_any),
             &RegisterLoanState::default(),
         );
-        // The VM writes the caught error into the binding slot, so its
-        // pre-raise content is never observable.
-        if let Some(bound) = binding {
-            live.remove(bound);
+        // The caught error arrives as the handler entry's block argument, so
+        // the binding's pre-raise content is never observable, and an unread
+        // binding dies on arrival.
+        if let Some(bound) = binding
+            && !live.remove(bound)
+            && ctx.droppable(*bound)
+            && let Some(entry) = h.first_mut()
+        {
+            entry.instrs.insert(0, MirInstr::DropVar { var: *bound });
         }
         live
     });
@@ -779,25 +784,7 @@ pub(super) fn collect_return_cleanups(blocks: &[MirBlock], out: &mut HashSet<Var
 pub(super) fn try_moved_vars(try_instr: &MirInstr) -> HashSet<VarId> {
     let mut counts = HashMap::new();
     let (mut order, mut moved) = (Vec::new(), HashSet::new());
-    if let MirInstr::Try {
-        body,
-        handler,
-        orelse,
-        finalbody,
-        ..
-    } = try_instr
-    {
-        collect_region_defs(body, &mut counts, &mut order, &mut moved);
-        if let Some((_, h)) = handler {
-            collect_region_defs(h, &mut counts, &mut order, &mut moved);
-        }
-        if let Some(e) = orelse {
-            collect_region_defs(e, &mut counts, &mut order, &mut moved);
-        }
-        if let Some(fb) = finalbody {
-            collect_region_defs(fb, &mut counts, &mut order, &mut moved);
-        }
-    }
+    collect_try_defs(try_instr, &mut counts, &mut order, &mut moved);
     moved
 }
 
@@ -981,35 +968,14 @@ pub(super) fn try_region_defs(
     defs: &mut HashSet<VarId>,
     moved: &mut HashSet<VarId>,
 ) {
-    if let MirInstr::Try {
-        body,
-        handler,
-        orelse,
-        finalbody,
-        ..
-    } = try_instr
-    {
-        let mut regions: Vec<&Vec<MirBlock>> = vec![body];
-        if let Some((_, h)) = handler {
-            regions.push(h);
-        }
-        if let Some(e) = orelse {
-            regions.push(e);
-        }
-        if let Some(fb) = finalbody {
-            regions.push(fb);
-        }
-        let mut counts: HashMap<VarId, usize> = HashMap::new();
-        let mut order: Vec<VarId> = Vec::new();
-        for blocks in regions {
-            collect_region_defs(blocks, &mut counts, &mut order, moved);
-        }
-        defs.extend(
-            order
-                .into_iter()
-                .filter(|v| counts.get(v) == function_defs.get(v)),
-        );
-    }
+    let mut counts: HashMap<VarId, usize> = HashMap::new();
+    let mut order: Vec<VarId> = Vec::new();
+    collect_try_defs(try_instr, &mut counts, &mut order, moved);
+    defs.extend(
+        order
+            .into_iter()
+            .filter(|v| counts.get(v) == function_defs.get(v)),
+    );
 }
 
 /// Collect every `EscapeJump` target block (a function-level block id) inside a
@@ -1261,7 +1227,8 @@ impl BlockReplay<'_> {
     /// alive retires there, and it is dead after it. `seed` adds what else an
     /// instruction keeps live (escape-edge and raise-edge observers), and
     /// `at_try` elaborates a `try`'s regions in place, returning the
-    /// variables to drop just before it.
+    /// variables to drop just before it. A `try`'s regions own the deaths of
+    /// what it uses, so a `try` is no death point.
     fn elaborate(
         self,
         live_out: HashSet<VarId>,
@@ -1367,8 +1334,14 @@ impl BlockReplay<'_> {
                 .chain(register_uses.retained.iter().copied())
                 .chain(register_uses.loaded.iter().copied())
                 .chain(retired.iter().copied());
+            // A `try` is no death point. Its regions are elaborated with the
+            // liveness after it as their fall-off seed, so each region path
+            // that reaches the fall-off already ends what the `try` uses or
+            // holds live for an escape target; the entry edge (`at_try`), the
+            // cleanup lists, and the escape cleanups end the rest.
+            let ends_nothing = matches!(instr, MirInstr::Try { .. });
             let mut dying: Vec<VarId> = Vec::new();
-            for v in deaths {
+            for v in deaths.filter(|_| !ends_nothing) {
                 if droppable(v) && !moved.contains(&v) && !live_after(v) && !dying.contains(&v) {
                     dying.push(v);
                 }
@@ -1506,17 +1479,17 @@ const fn teardown(instr: &MirInstr) -> Option<VarId> {
 }
 
 /// The variables an instruction reads, for drop liveness: [`var_uses`], less
-/// a `try` body's locals. `Try.cleanup` destroys those on every exit from
-/// the body, so their slots are empty whenever the `try` is entered and
-/// nothing outside it observes them; counting them as read would hold them
-/// live round a loop's back edge and defer their deaths to the cleanup.
+/// the locals of a `try`'s regions. A slot only a `try`'s regions define —
+/// the handler's error binding included — is scoped to the `try`: its
+/// region's elaboration and the body's `Try.cleanup` end it on every exit,
+/// so nothing outside observes it. Counting it as read would make it live
+/// with no def, held round a loop's back edge and up to the function entry.
 fn drop_liveness_uses(instr: &MirInstr, function_defs: &HashMap<VarId, usize>) -> Vec<VarId> {
     let uses = var_uses(instr).into_iter().map(|(v, _)| v);
     match instr {
-        MirInstr::Try { body, .. } => {
-            let locals: HashSet<VarId> = region_cleanup_vars(body, function_defs)
-                .into_iter()
-                .collect();
+        MirInstr::Try { .. } => {
+            let (mut locals, mut moved) = (HashSet::new(), HashSet::new());
+            try_region_defs(instr, function_defs, &mut locals, &mut moved);
             uses.filter(|v| !locals.contains(v)).collect()
         }
         _ => uses.collect(),
