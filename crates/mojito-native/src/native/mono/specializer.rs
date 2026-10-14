@@ -4,6 +4,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::TyKind;
+use std::collections::BTreeMap;
 
 impl<'a> Specializer<'a> {
     pub(super) fn new(source: &'a MirProgram, target: Option<&'a NativeTarget>) -> Self {
@@ -147,28 +148,11 @@ impl<'a> Specializer<'a> {
                 findings.join("; ")
             ),
         })?;
-        let parametric_bodies = parametric_bodies(self.source);
-        let emitted: HashSet<&str> = program
-            .functions
-            .iter()
-            .map(|(name, _)| name.as_str())
-            .collect();
-        let instance_templates = self
-            .instances
-            .iter()
-            .filter(|(key, name)| {
-                emitted.contains(name.as_str()) && parametric_bodies.contains(key.template.as_str())
-            })
-            .map(|(key, _)| key.template.clone())
-            .collect();
-        let parametric = ParametricInstances {
-            bodies: parametric_bodies.len(),
-            instance_templates,
-        };
+        let counts = elaboration_counts(&self.instances, &self.functions, &program);
         Ok(SpecializedProgram {
             program,
             entries: entry_map,
-            parametric,
+            counts,
         })
     }
 
@@ -3288,5 +3272,44 @@ fn inherit_bindings(bindings: &mut Bindings, inherited: Bindings) {
     }
     if bindings.self_instance.is_none() {
         bindings.self_instance = inherited.self_instance;
+    }
+}
+
+/// The pass statistics of a finished elaboration: every instance minted under
+/// a name other than its template's is a generator instance.
+fn elaboration_counts(
+    instances: &[(InstanceKey, String)],
+    templates: &bodies::Bodies<'_>,
+    program: &MirProgram,
+) -> ElaborationCounts {
+    let output: HashMap<&str, &MirFunction> = program
+        .functions
+        .iter()
+        .map(|(name, function)| (name.as_str(), function))
+        .collect();
+    let mut generators: BTreeMap<&str, GeneratorCount> = BTreeMap::new();
+    for (key, name) in instances {
+        let Some(instance) = output.get(name.as_str()).filter(|_| *name != key.template) else {
+            continue;
+        };
+        let row = generators
+            .entry(key.template.as_str())
+            .or_insert_with(|| GeneratorCount {
+                template: key.template.clone(),
+                template_instructions: templates
+                    .get(&key.template)
+                    .map_or(0, MirFunction::instruction_count),
+                ..GeneratorCount::default()
+            });
+        row.instances += 1;
+        row.instance_instructions += instance.instruction_count();
+    }
+    ElaborationCounts {
+        generators: generators.into_values().collect(),
+        concrete_instructions: program
+            .functions
+            .iter()
+            .map(|(_, function)| function.instruction_count())
+            .sum(),
     }
 }

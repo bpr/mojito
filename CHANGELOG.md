@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `--timings` says how much the elaborator multiplied the program (R771):
+  beside `concrete_functions` it reports `concrete_instructions`,
+  `generators`, `generator_instances`, `generator_instructions`, and
+  `generator_instance_instructions`, and `MOJITO_TIMING_NOTES=1` adds one
+  `generator` note per instantiated template. The elaborator returns them as
+  `SpecializedProgram::counts` (`ElaborationCounts`), replacing the unread
+  `ParametricInstances`, which missed every generator of the imported std
+  package.
 - The bundled `ParameterList` conforms to `Writable` where its element type
   does, as upstream's does (R493): `print(vs)`, `String(vs)`, and
   `repr(vs)` over a value pack now work instead of being rejected, through

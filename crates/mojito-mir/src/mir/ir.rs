@@ -1779,6 +1779,13 @@ pub struct MirFunction {
     pub reg_types: HashMap<u32, Ty>,
 }
 
+impl MirFunction {
+    /// The instructions in this body's blocks, terminators not counted.
+    pub fn instruction_count(&self) -> usize {
+        self.blocks.iter().map(|block| block.instrs.len()).sum()
+    }
+}
+
 /// Maps each generated register to its source span and (if it names one) the
 /// origin variable — so borrow-checker diagnostics can point at real code.
 #[derive(Debug, Clone, Default)]

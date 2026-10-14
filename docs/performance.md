@@ -750,6 +750,38 @@ cheap counters beside the spans:
 Counters must be defined once and tested on tiny fixtures so changes in their
 meaning do not silently invalidate historical results.
 
+The elaborator's counters (R771) are its pass statistics, as upstream's
+elaborator pass keeps them: `native::mono` returns them in
+`SpecializedProgram::counts` (`ElaborationCounts`), and the driver reports
+them under `elaborate`, because the elaborator runs on its own thread and
+the timing log is thread-local. An *instruction* is one `MirInstr` in a
+block, terminators not counted (`MirFunction::instruction_count`, the same
+unit as `mir.lower.instructions`).
+
+- `concrete_instructions`: the instructions of the whole concrete program.
+- `generators`: the templates the elaboration instantiated under a name
+  other than the template's own (`twice` → `twice$mono$TInt`, `Box.get` →
+  `Box$mono$TInt.get`). A body emitted under its own name — `main`, a
+  method of a non-generic struct, a body generic only over origins, which
+  erase from the instance key — is a plain function, not a generator.
+  Unreached generic bodies are not counted.
+- `generator_instances`: the instances of those generators.
+- `generator_instructions`: each generator's template body as the
+  elaborator read it (drop-elaborated), counted once.
+- `generator_instance_instructions`: the instructions of every generator
+  instance in the concrete output. Its ratio to `generator_instructions` is
+  the expansion the pre-elaboration passes attack.
+
+`MOJITO_TIMING_NOTES=1` adds one `generator` note per row:
+`<template> <instances> <template instructions> <instance instructions>`.
+On a `Box[T]` with `__init__`/`get` and a `twice[T]` called at `Int` and
+`String` (2026-10-13, compiled std package): 37 concrete functions of 810
+instructions, 17 generators of 191 instructions, 18 instances of 193;
+`twice 2 2 4`, `Box.get 1 2 2`, the other 15 rows std's (`List`, `Span`,
+`_RawAlloc`, `unsafe_alloc`). The VM and the native lane report the same
+numbers. `tests/compiler_test.rs::elaboration_counts_name_generators_and_their_instances`
+pins the definitions on the program's own rows, never on std totals.
+
 ### 4. Profile the dominant measured phase *(done for Hello World: `scripts/sample-stacks`)*
 
 After phase timing identifies the large bucket, build release with debug info

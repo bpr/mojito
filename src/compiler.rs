@@ -142,6 +142,29 @@ impl CompiledProgram {
                         "concrete_functions",
                         concrete.program.functions.len() as u64,
                     );
+                    let counts = &concrete.counts;
+                    timing::count("concrete_instructions", counts.concrete_instructions as u64);
+                    timing::count("generators", counts.generators.len() as u64);
+                    timing::count("generator_instances", counts.generator_instances() as u64);
+                    timing::count(
+                        "generator_instructions",
+                        counts.generator_instructions() as u64,
+                    );
+                    timing::count(
+                        "generator_instance_instructions",
+                        counts.generator_instance_instructions() as u64,
+                    );
+                    for row in &counts.generators {
+                        timing::note("generator", || {
+                            format!(
+                                "{} {} {} {}",
+                                row.template,
+                                row.instances,
+                                row.template_instructions,
+                                row.instance_instructions
+                            )
+                        });
+                    }
                 }
                 if let Some(package) = &self.package {
                     timing::count(

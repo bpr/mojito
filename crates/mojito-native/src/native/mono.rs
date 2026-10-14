@@ -48,20 +48,55 @@ use mojito_vm::backend::VmBackend;
 pub struct SpecializedProgram {
     pub program: ConcreteMir,
     pub entries: HashMap<String, String>,
-    pub parametric: ParametricInstances,
+    pub counts: ElaborationCounts,
 }
 
-/// What the specialization instantiated from parametric bodies: the source
-/// functions whose types name a parameter, which reach MIR once and run
-/// erased on the VM.
+/// What the elaboration multiplied: each generator it reached and the
+/// instances it made of it, and the size of the concrete output. These are
+/// the elaborator's pass statistics; the driver reports them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ParametricInstances {
-    /// Parametric bodies in the source program, reachable or not.
-    pub bodies: usize,
-    /// The parametric body each concrete function was substituted from, one
-    /// entry per instance: the distinct names are the bodies the entries
-    /// reach.
-    pub instance_templates: Vec<String>,
+pub struct ElaborationCounts {
+    /// One row per reached generator, sorted by template name.
+    pub generators: Vec<GeneratorCount>,
+    /// Instructions in the whole concrete program.
+    pub concrete_instructions: usize,
+}
+
+impl ElaborationCounts {
+    /// The generator instances the elaboration made, over every generator.
+    pub fn generator_instances(&self) -> usize {
+        self.generators.iter().map(|row| row.instances).sum()
+    }
+
+    /// The instructions of the reached generators' template bodies, each
+    /// counted once.
+    pub fn generator_instructions(&self) -> usize {
+        self.generators
+            .iter()
+            .map(|row| row.template_instructions)
+            .sum()
+    }
+
+    /// The instructions of every generator instance in the concrete output.
+    pub fn generator_instance_instructions(&self) -> usize {
+        self.generators
+            .iter()
+            .map(|row| row.instance_instructions)
+            .sum()
+    }
+}
+
+/// One generator: a template the elaboration instantiated under a name of
+/// its own (`twice` as `twice$mono$TInt`). A body instantiated under its
+/// template's name is a plain function, emitted once.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GeneratorCount {
+    pub template: String,
+    pub instances: usize,
+    /// Instructions of the template body, as the elaborator read it.
+    pub template_instructions: usize,
+    /// Instructions of its instances in the concrete output, summed.
+    pub instance_instructions: usize,
 }
 
 /// A source-template-oriented specialization failure.
@@ -166,17 +201,6 @@ pub fn entry_roots(program: &MirProgram) -> Vec<String> {
         .into_iter()
         .filter(|entry| program.functions.iter().any(|(name, _)| name == entry))
         .map(str::to_string)
-        .collect()
-}
-
-/// The names of the parametric bodies of `program`: the functions whose
-/// types name a parameter.
-pub fn parametric_bodies(program: &MirProgram) -> HashSet<&str> {
-    program
-        .functions
-        .iter()
-        .filter(|(_, function)| function_types(function).any(is_symbolic))
-        .map(|(name, _)| name.as_str())
         .collect()
 }
 

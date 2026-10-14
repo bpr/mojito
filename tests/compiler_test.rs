@@ -4043,3 +4043,64 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
     let truncated = bytes[..bytes.len() - 4].to_vec();
     assert!(read_package(PackageBytes::Owned(truncated), &root).is_err());
 }
+
+#[test]
+fn elaboration_counts_name_generators_and_their_instances() {
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            "struct Box[T: Copyable & Deinitable](Movable):\n    var v: Self.T\n    def __init__(out self, v: Self.T):\n        self.v = v.copy()\n    def get(self) -> Self.T:\n        return self.v.copy()\n\ndef twice[T: Copyable & Deinitable](x: T) -> T:\n    return x.copy()\n\ndef main():\n    var a = Box[Int](1)\n    var b = Box[Int](2)\n    print(twice(a.get()) + twice(b.get()))\n    print(twice(String(\"s\")))\n",
+            std::path::Path::new("/tmp/mojito_elaboration_counts.mojo"),
+        )
+        .expect("compile the generators");
+    let concrete = program.concrete_mir().expect("elaborate");
+    let counts = &concrete.counts;
+    let output = |name: &str| {
+        concrete
+            .program
+            .functions
+            .iter()
+            .find(|(function, _)| function == name)
+            .map_or_else(
+                || panic!("no concrete `{name}`"),
+                |(_, function)| function.instruction_count(),
+            )
+    };
+    let row = |template: &str| {
+        counts
+            .generators
+            .iter()
+            .find(|row| row.template == template)
+            .unwrap_or_else(|| panic!("no generator `{template}`: {counts:?}"))
+    };
+    let twice = row("twice");
+    assert_eq!(twice.instances, 2);
+    let template = program
+        .elaborated_mir()
+        .functions
+        .iter()
+        .find(|(name, _)| name == "twice")
+        .map(|(_, function)| function.instruction_count());
+    assert_eq!(Some(twice.template_instructions), template);
+    assert_eq!(
+        twice.instance_instructions,
+        output("twice$mono$TInt") + output("twice$mono$TString")
+    );
+    let get = row("Box.get");
+    assert_eq!(get.instances, 1);
+    assert_eq!(get.instance_instructions, output("Box$mono$TInt.get"));
+    assert!(
+        counts.generators.iter().all(|row| row.template != "main"),
+        "a plain function is not a generator: {counts:?}"
+    );
+    assert_eq!(
+        counts.concrete_instructions,
+        concrete
+            .program
+            .functions
+            .iter()
+            .map(|(_, function)| function.instruction_count())
+            .sum::<usize>()
+    );
+    assert!(counts.generator_instances() < concrete.program.functions.len());
+}

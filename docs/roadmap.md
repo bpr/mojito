@@ -206,23 +206,6 @@ which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
 
-- [ ] **R771 `--timings` does not say how much the elaborator multiplied
-  the program**
-
-  `--timings` counts `concrete_functions` and the package bodies decoded,
-  but not the instances each generator made or how many instructions went
-  in and came out, so a pass meant to shrink instantiation cannot show it
-  did.
-  - Report the generators the elaborator reached, the instances it made,
-    the MIR instruction count of the reached generic bodies, and that of the
-    concrete output.
-  - `ParametricInstances` (`native/mono.rs`) already records each instance's
-    template, and nothing reads it.
-  - Pin each counter's meaning on a tiny fixture, as
-    `docs/performance.md` §3 asks.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R772 There is no corpus-wide record of instantiation size to
   compare a change against**
 

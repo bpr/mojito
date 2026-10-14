@@ -690,7 +690,7 @@ fn lower_program(
         result
             .functions
             .iter()
-            .map(|(_, f)| f.blocks.iter().map(|b| b.instrs.len() as u64).sum::<u64>())
+            .map(|(_, function)| function.instruction_count() as u64)
             .sum(),
     );
     let _verify = timing::span("verify.pre_drop");
