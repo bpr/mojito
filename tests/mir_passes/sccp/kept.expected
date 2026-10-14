@@ -32,7 +32,7 @@
               binary { op: add, dest: %r7, a: %r4, b: %r6, resolved: absent, raises: absent },
               var.store { var: $v1, src: %r7, binding_type: present(Int), in_place: true },
               const { dest: %r8, value: int_literal(3) },
-              literal.materialize { dest: %r9, value: %r8, target: UInt },
+              const { dest: %r9, value: value(ct_uint(3)) },
               var.store { var: $v2, src: %r9, binding_type: present(UInt), in_place: false },
               var.use { dest: %r10, var: $v1, mode: copy },
               drop.var { var: $v1 },

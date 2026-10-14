@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R846**.
+Next free ID: **R849**.
 
 ## Ordered Work
 
@@ -56,20 +56,37 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R841 A literal materialized to `UInt` or a scalar SIMD type is not
+- [ ] **R846 Operators over `UInt` and scalar SIMD constants are not
   folded**
 
-  `sccp` folds a literal materialized to `Int` or `Float64` but leaves one
-  materialized to `UInt` or a one-lane SIMD type, where upstream folds every
-  constant materialization.
-  - MIR has no `UInt` or scalar-SIMD constant whose VM value is the
-    materialization's: `value_parameter_constant` writes a `UInt` as
-    `Const::Int`, which the VM reads as an `Int`.
-  - 24 such materializations remain in `collections_many.mojo`'s MIR.
-  - It needs a `Const` form per kind, read alike by the VM, Pliron, and
-    `register_constant` in `mono/equiv.rs`.
-  - Done when they fold and the native differential is clean on a probe.
-  - Depends on R781.
+  `sccp` folds a literal materialized to `UInt` or a one-lane SIMD type, but
+  not an operator over two such constants (`b + 10` on a `UInt8`), where
+  upstream's `SCCP` folds `pop` arithmetic on constants.
+  - `MirInstr::folded_constant` reads its operator operands through
+    `scalar_operand`, which refuses `UInt` and SIMD constants.
+  - `fold_infix` handles both kinds, but nobody has checked it against the
+    VM's `UInt` and SIMD operators: a zero integer divisor gives a zero lane
+    in the VM, a narrow float rounds per lane, and a SIMD comparison gives a
+    mask.
+  - Audit those three, then let the operands through where the two agree.
+  - Done when a `UInt8` and a `Float32` probe fold and print the same with
+    the pipeline on and off, and natively.
+  - Depends on R841.
+  - Model: Opus, Not Planned.
+
+- [ ] **R847 A literal splatted to a multi-lane SIMD type is not folded**
+
+  `sccp` leaves a literal materialized to a SIMD type of width above one
+  (`var v: SIMD[DType.int32, 4] = 1`), where upstream folds the splat to one
+  constant vector.
+  - The VM's splat arm of `runtime::materialize_literal` builds one lane
+    with `CtLane::of_int_literal` or `of_float_literal`, then fills the
+    vector.
+  - `MirInstr::folded_constant` could build the same `CtValue::Simd` and
+    write it as a `Const::Value`, which the VM and Pliron already lower.
+  - Done when such a splat folds and the native differential is clean on a
+    probe.
+  - Depends on R841.
   - Model: Opus, Not Planned.
 
 - [ ] **R836 Generic bodies carry empty pass-through blocks into every
@@ -3225,6 +3242,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     sized integers want the same.
   - Found while landing an application in a type or a parameter argument
     (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R848 A struct's `Bool` or `Float64` value parameter read as
+  `Self.b` is typed `Int`**
+
+  `struct Flag[b: Bool]` with `def get(self) -> Bool: return Self.b` is
+  rejected with "type mismatch for return: expected Bool, found Int", where
+  the pin prints `True`; `Scale[f: Float64]` with `Self.f * 2` fails the same
+  way.
+  - The checker's `infer_member` (`checker/indexing.rs`) reads a struct
+    value parameter at its declared type only for `UInt`, SIMD, struct, and
+    `DType` parameters, and at `Int` otherwise.
+  - R790 is the same fallback for a `String` parameter, so one fix may close
+    both.
+  - Found while landing R841 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

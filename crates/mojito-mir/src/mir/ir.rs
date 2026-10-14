@@ -884,12 +884,30 @@ pub enum Const {
     /// a symbolic attribute. A generator carries it and the elaborator folds
     /// it under the instance's bindings; concrete MIR has none.
     Param(mojito_types::param_expr::ParamExpr),
-    /// A closed vector- or struct-typed parameter value read as a runtime
-    /// value (`Self.key` of an `AHasher[key: U256]` instance): upstream's
+    /// A closed typed value read as a runtime value: upstream's
     /// `kgen.param.constant` over a constant attribute. The elaborator folds
-    /// a binder read to it; it holds only a `CtValue::Simd` or a
-    /// `CtValue::Struct` of such values and scalars.
+    /// a binder read to it (`Self.key` of an `AHasher[key: U256]` instance,
+    /// a `UInt` parameter), and `sccp` folds a literal materialized to `UInt`
+    /// or a one-lane SIMD type to it. It holds a `CtValue::UInt`, a
+    /// `CtValue::Simd`, or a `CtValue::Struct` of such values and scalars.
     Value(mojito_types::ct::CtValue),
+}
+
+impl Const {
+    /// Whether this is a scalar constant `sccp` tracks: a built-in scalar or
+    /// literal, a `UInt` value, or a one-lane SIMD value.
+    pub const fn is_folded_scalar(&self) -> bool {
+        match self {
+            Self::Int(_)
+            | Self::Float(_)
+            | Self::Bool(_)
+            | Self::IntLiteral(_)
+            | Self::FloatLiteral(_)
+            | Self::Value(CtValue::UInt(_)) => true,
+            Self::Value(CtValue::Simd { lanes, .. }) => lanes.len() == 1,
+            _ => false,
+        }
+    }
 }
 
 /// The callee of a `MirInstr::Call` — a function/struct-constructor/builtin name.
@@ -1913,10 +1931,13 @@ impl MirInstr {
     /// operands hold the constants `constant` gives: MLIR's `fold` returning
     /// an attribute, which upstream's `SCCP` asks.
     ///
-    /// Only a built-in operator, a literal materialization to `Int` or
-    /// `Float64`, and a forwarded copy fold, and only over scalars whose
-    /// constant kind is the one their register's type names (`Int`,
-    /// `Float64`, `Bool`, `IntLiteral`, `FloatLiteral`). The fold is the
+    /// Only a built-in operator, a literal materialization to `Int`, `UInt`,
+    /// `Float64`, or a one-lane SIMD type, and a forwarded copy fold, and
+    /// only over scalars whose constant kind is the one their register's type
+    /// names. A materialization folds to the lane the VM materializes
+    /// (`CtValue::materialize_as`), a `UInt` or SIMD one to a `Const::Value`.
+    /// An operator folds only over `Int`, `Float64`, `Bool`, `IntLiteral`,
+    /// and `FloatLiteral` operands. The fold is the
     /// compile-time folder's; where it and the VM could disagree (a zero
     /// divisor, an out-of-range shift, an overflowing `**`, a NaN or infinite
     /// comparison, `Float64` `//`, `%`, `**`, and `Bool` operators other
@@ -1928,6 +1949,9 @@ impl MirInstr {
     ) -> Option<Const> {
         use mojito_types::param_expr::fold::{fold_infix, fold_invert, fold_neg};
         let operand = |reg: Reg| const_ct_value(&constant(reg)?, reg_types.get(&reg.0)?);
+        let scalar_operand = |reg: Reg| {
+            operand(reg).filter(|value| !matches!(value, CtValue::UInt(_) | CtValue::Simd { .. }))
+        };
         let (dest, value) = match self {
             Self::BinOp {
                 op,
@@ -1937,7 +1961,7 @@ impl MirInstr {
                 resolved: None,
                 raises: None,
             } => {
-                let (left, right) = (operand(*a)?, operand(*b)?);
+                let (left, right) = (scalar_operand(*a)?, scalar_operand(*b)?);
                 let bool_operands = matches!(left, CtValue::Bool(_));
                 if bool_operands && !matches!(op, InfixOp::Eq | InfixOp::Ne) {
                     return None;
@@ -1950,7 +1974,7 @@ impl MirInstr {
                 a,
                 raises: None,
             } => {
-                let value = operand(*a)?;
+                let value = scalar_operand(*a)?;
                 let folded = match (op, value) {
                     (PrefixOp::Neg, value) => fold_neg(&value).ok()?,
                     (PrefixOp::Invert, value) => fold_invert(&value).ok()?,
@@ -1964,18 +1988,16 @@ impl MirInstr {
                 value,
                 target,
             } => {
-                let materialized = match (operand(*value)?, target.kind()) {
-                    (CtValue::IntLiteral(value), TyKind::Int) => {
-                        CtValue::Int(value.wrapping_signed(64)?)
-                    }
-                    (CtValue::IntLiteral(value), TyKind::Float64) => {
-                        CtValue::Float(value.to_f64()?.to_bits())
-                    }
-                    (CtValue::FloatLiteral(value), TyKind::Float64) => {
-                        CtValue::Float(value.to_f64()?.to_bits())
-                    }
-                    _ => return None,
-                };
+                let literal = operand(*value)?;
+                let materializes =
+                    matches!(target.kind(), TyKind::Int | TyKind::UInt | TyKind::Float64)
+                        || mojito_types::types::scalar_simd_dtype(target.kind()).is_some();
+                if !materializes
+                    || !matches!(literal, CtValue::IntLiteral(_) | CtValue::FloatLiteral(_))
+                {
+                    return None;
+                }
+                let materialized = literal.materialize_as(target)?;
                 (dest, materialized)
             }
             Self::CopyValue { dest, .. } => (dest, operand(self.forwarded_operand(reg_types)?)?),
@@ -2148,6 +2170,12 @@ fn const_ct_value(constant: &Const, ty: &Ty) -> Option<CtValue> {
         (Const::FloatLiteral(value), TyKind::FloatLiteral) => {
             Some(CtValue::FloatLiteral(value.clone()))
         }
+        (Const::Value(value @ CtValue::UInt(_)), TyKind::UInt) => Some(value.clone()),
+        (Const::Value(value @ CtValue::Simd { dtype, lanes }), kind)
+            if lanes.len() == 1 && mojito_types::types::scalar_simd_dtype(kind) == Some(*dtype) =>
+        {
+            Some(value.clone())
+        }
         _ => None,
     }
 }
@@ -2161,6 +2189,10 @@ fn ct_const(value: CtValue, ty: &Ty) -> Option<Const> {
         (CtValue::Bool(value), TyKind::Bool) => Some(Const::Bool(value)),
         (CtValue::IntLiteral(value), TyKind::IntLiteral) => Some(Const::IntLiteral(value)),
         (CtValue::FloatLiteral(value), TyKind::FloatLiteral) => Some(Const::FloatLiteral(value)),
+        (value @ (CtValue::UInt(_) | CtValue::Simd { .. }), _) => {
+            let constant = Const::Value(value);
+            const_ct_value(&constant, ty).is_some().then_some(constant)
+        }
         _ => None,
     }
 }
@@ -2336,6 +2368,7 @@ mod tests {
     #[test]
     fn folded_constant_folds_only_what_the_vm_computes_alike() {
         use mojito_common::literal::IntLiteral;
+        use mojito_types::ct::CtLane;
         let ty = |kind| Ty::new(kind);
         let binary = |op, a: Const, b: Const, operand: TyKind, dest: TyKind| {
             let reg_types =
@@ -2459,6 +2492,82 @@ mod tests {
             materialize(TyKind::Int),
             Some(Const::Int(i64::MIN))
         ));
-        assert!(materialize(TyKind::UInt).is_none());
+        assert!(matches!(
+            materialize(TyKind::UInt),
+            Some(Const::Value(CtValue::UInt(value))) if value == 1 << 63
+        ));
+
+        let lane = |dtype| mojito_types::types::canonical_simd_ty(dtype, 1);
+        let materialize_into = |literal: Const, source: TyKind, target: Ty| {
+            let reg_types = HashMap::from([(0, ty(source)), (1, target.clone())]);
+            MirInstr::MaterializeLiteral {
+                dest: Reg(1),
+                value: Reg(0),
+                target,
+            }
+            .folded_constant(|_| Some(literal.clone()), &reg_types)
+        };
+        let simd = |dtype, lane| {
+            Const::Value(CtValue::Simd {
+                dtype,
+                lanes: vec![lane],
+            })
+        };
+        let into_lane =
+            |value: i64, dtype| materialize_into(literal(value), TyKind::IntLiteral, lane(dtype));
+        assert!(matches!(
+            (into_lane(250, Dtype::UInt8), simd(Dtype::UInt8, CtLane::Int(250))),
+            (Some(Const::Value(a)), Const::Value(b)) if a == b
+        ));
+        assert!(matches!(
+            (into_lane(300, Dtype::UInt8), simd(Dtype::UInt8, CtLane::Int(44))),
+            (Some(Const::Value(a)), Const::Value(b)) if a == b
+        ));
+        assert!(matches!(
+            materialize_into(literal(-1), TyKind::IntLiteral, ty(TyKind::UInt)),
+            Some(Const::Value(CtValue::UInt(u64::MAX)))
+        ));
+        let tenth =
+            mojito_common::literal::FloatLiteral::parse_decimal("0.1").expect("decimal literal");
+        assert!(matches!(
+            materialize_into(
+                Const::FloatLiteral(tenth),
+                TyKind::FloatLiteral,
+                lane(Dtype::Float32)
+            ),
+            Some(Const::Value(CtValue::Simd { lanes, .. }))
+                if lanes == [CtLane::Float(f64::from(0.1f32).to_bits())]
+        ));
+        assert!(into_lane(1, Dtype::Bool).is_none());
+        assert!(into_lane(1, Dtype::Int32).is_some());
+        assert!(
+            materialize_into(
+                literal(1),
+                TyKind::IntLiteral,
+                mojito_types::types::canonical_simd_ty(Dtype::Int32, 4)
+            )
+            .is_none()
+        );
+
+        let uint = Const::Value(CtValue::UInt(1));
+        assert!(
+            binary(
+                InfixOp::Add,
+                uint.clone(),
+                uint.clone(),
+                TyKind::UInt,
+                TyKind::UInt
+            )
+            .is_none()
+        );
+        let reg_types = HashMap::from([(0, ty(TyKind::UInt)), (1, ty(TyKind::UInt))]);
+        assert!(matches!(
+            MirInstr::CopyValue {
+                dest: Reg(1),
+                value: Reg(0),
+            }
+            .folded_constant(|_| Some(uint.clone()), &reg_types),
+            Some(Const::Value(CtValue::UInt(1)))
+        ));
     }
 }

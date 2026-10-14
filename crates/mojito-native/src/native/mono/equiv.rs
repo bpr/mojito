@@ -569,6 +569,7 @@ fn register_constant(
                 Const::Function(function) => Some(CtValue::Str(function.clone())),
                 // A reified type argument names its struct as a string.
                 Const::Str(text) => Some(CtValue::Str(text.clone())),
+                Const::Value(value) if k.is_folded_scalar() => Some(value.clone()),
                 _ => None,
             }),
             // A literal takes the value of the type it materializes to (`4`

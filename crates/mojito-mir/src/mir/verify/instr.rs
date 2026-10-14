@@ -103,8 +103,21 @@ pub(super) fn verify_instruction(
             verify_call_instruction(&cx, instruction, errors);
         }
         // A parameter value constant is a closed vector, a struct or tuple
-        // of such values, scalars, and strings, or a string read at the
-        // nominal `String`.
+        // of such values, scalars, and strings, a string read at the
+        // nominal `String`, or a `UInt` read at `UInt`.
+        MirInstr::Const {
+            k: crate::mir::Const::Value(CtValue::UInt(_)),
+            dest,
+        } => {
+            if let Some(ty) = cx.reg_ty(*dest)
+                && !matches!(ty.kind(), mojito_types::types::TyKind::UInt)
+            {
+                errors.push(format!(
+                    "{}: `UInt` value constant is read at `{ty}`",
+                    cx.prefix
+                ));
+            }
+        }
         MirInstr::Const {
             k: crate::mir::Const::Value(CtValue::Str(_)),
             dest,

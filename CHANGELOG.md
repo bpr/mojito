@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `sccp` now folds a literal materialized to `UInt` or a one-lane SIMD
+  type (R841) to a typed `Const::Value`, upstream's `kgen.param.constant`
+  over a typed attribute, using one literal-to-lane rule
+  (`CtLane::of_int_literal`, `of_float_literal`) that the VM's
+  `materialize_literal` now shares. A `UInt` value-parameter read is that
+  constant too, which the verifier, the elaborator, and the native backend
+  accept. As at the pin, a struct's `UInt` value parameter now reads at
+  `UInt` (`Self.n + 1` was rejected as `Int`), and an integer literal bound
+  to a sized-scalar value parameter (`lane[300]()` over
+  `x: Scalar[DType.uint8]`) materializes into its lane instead of being
+  rejected.
+
 - A post-elaboration pipeline, `sccp` then `canonicalize`, now runs over
   every concrete function the elaborator emits (R840), as upstream's
   per-function `'kgen.func'` pipeline runs `SCCP` and `Canonicalizer` after

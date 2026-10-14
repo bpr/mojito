@@ -1844,7 +1844,7 @@ impl Checker {
         object: &Expr,
         field: &str,
     ) -> Result<Ty, TypeError> {
-        // `Self.n` reads the enclosing struct's value parameter (an `Int`).
+        // `Self.n` reads the enclosing struct's value parameter.
         if let ExprKind::Identifier(s) = &object.kind
             && s == "Self"
         {
@@ -1860,13 +1860,14 @@ impl Checker {
                 return Ok(TyKind::VariadicPack(ty.clone()).into());
             }
             return match self.self_decls.iter().find(|d| d.name() == field) {
-                // A vector-, struct-, or `DType`-typed value parameter
-                // (`AHasher[key: U256]`, `Tagged[e: Extent]`) reads as its
-                // declared type; the scalar kinds read as `Int`.
+                // A `UInt`-, vector-, struct-, or `DType`-typed value
+                // parameter (`AHasher[key: U256]`, `Tagged[e: Extent]`)
+                // reads as its declared type; the other scalar kinds read as
+                // `Int`.
                 Some(ParamDecl::Value { ty, .. })
                     if matches!(
                         *ty.kind(),
-                        TyKind::Simd { .. } | TyKind::Struct(..) | TyKind::Dtype
+                        TyKind::UInt | TyKind::Simd { .. } | TyKind::Struct(..) | TyKind::Dtype
                     ) =>
                 {
                     Ok((*ty).clone())

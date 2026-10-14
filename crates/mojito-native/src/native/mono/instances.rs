@@ -36,7 +36,7 @@ impl Specializer<'_> {
         };
         match value {
             CtValue::Int(v) => Some(Const::Int(*v)),
-            CtValue::UInt(v) => Some(Const::Int(*v as i64)),
+            CtValue::UInt(v) => Some(Const::Value(CtValue::UInt(*v))),
             CtValue::Bool(v) => Some(Const::Bool(*v)),
             CtValue::Dtype(v) => Some(Const::Dtype(*v)),
             value @ (CtValue::Simd { .. } | CtValue::Struct { .. }) => {

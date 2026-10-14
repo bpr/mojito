@@ -1360,8 +1360,7 @@ pub(super) fn sub_types(types: &[Ty], bindings: &Bindings) -> Result<Vec<Ty>, Mo
 pub(super) fn value_parameter_constant(value: &CtValue, slot_ty: Option<&Ty>) -> Option<Const> {
     match value {
         CtValue::Int(value) => Some(Const::Int(*value)),
-        // A `UInt` is its 64 bits, in the `UInt`-typed slot it is read into.
-        CtValue::UInt(value) => Some(Const::Int(*value as i64)),
+        CtValue::UInt(value) => Some(Const::Value(CtValue::UInt(*value))),
         CtValue::Float(bits) => Some(Const::Float(f64::from_bits(*bits))),
         CtValue::Bool(value) => Some(Const::Bool(*value)),
         CtValue::Dtype(value) => Some(Const::Dtype(*value)),

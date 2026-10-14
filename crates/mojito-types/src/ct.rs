@@ -67,6 +67,33 @@ impl CtLane {
             }
         }
     }
+
+    /// Materialize an exact integer literal into one lane of `dtype`, as
+    /// upstream's `SIMD.__init__(IntLiteral)` does: an integer lane wraps at
+    /// the dtype's width, a float lane rounds the exact literal once, and a
+    /// `bool` lane is `None`.
+    pub fn of_int_literal(literal: &IntLiteral, dtype: mojito_ast::ast::Dtype) -> Option<Self> {
+        if dtype.is_float() {
+            return Self::of_float_literal(&FloatLiteral::from_int(literal), dtype);
+        }
+        let bits = dtype.bit_width();
+        match dtype {
+            mojito_ast::ast::Dtype::Bool => None,
+            _ if dtype.is_unsigned() => literal.wrapping_unsigned(bits).map(i128::from),
+            _ => literal.wrapping_signed(bits).map(i128::from),
+        }
+        .map(Self::Int)
+    }
+
+    /// Materialize an exact float literal into one lane of a float `dtype`,
+    /// correctly rounded once; `None` for an integer or `bool` lane.
+    pub fn of_float_literal(literal: &FloatLiteral, dtype: mojito_ast::ast::Dtype) -> Option<Self> {
+        dtype
+            .is_float()
+            .then(|| dtype.float_literal_lane(literal))
+            .flatten()
+            .map(|lane| Self::Float(lane.to_bits()))
+    }
 }
 
 /// Wrap an integer to the mathematical value of a `dtype` lane (two's
@@ -571,6 +598,22 @@ impl CtValue {
             (Self::FloatLiteral(value), TyKind::Float64) => {
                 value.to_f64().map(|value| Self::Float(value.to_bits()))
             }
+            (Self::IntLiteral(value), kind)
+                if let Some(dtype) = crate::types::scalar_simd_dtype(kind) =>
+            {
+                CtLane::of_int_literal(&value, dtype).map(|lane| Self::Simd {
+                    dtype,
+                    lanes: vec![lane],
+                })
+            }
+            (Self::FloatLiteral(value), kind)
+                if let Some(dtype) = crate::types::scalar_simd_dtype(kind) =>
+            {
+                CtLane::of_float_literal(&value, dtype).map(|lane| Self::Simd {
+                    dtype,
+                    lanes: vec![lane],
+                })
+            }
             (Self::Tuple(values), TyKind::Tuple(types)) if values.len() == types.len() => values
                 .into_iter()
                 .zip(types)
@@ -1022,5 +1065,37 @@ impl fmt::Display for CtValue {
                 write!(f, "{close}")
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CtLane;
+    use mojito_ast::ast::Dtype;
+    use mojito_common::literal::{FloatLiteral, IntLiteral};
+
+    #[test]
+    fn literal_lanes_materialize_as_the_vm_does() {
+        let int = |value: i64, dtype| CtLane::of_int_literal(&IntLiteral::from(value), dtype);
+        assert_eq!(int(300, Dtype::UInt8), Some(CtLane::Int(44)));
+        assert_eq!(int(-1, Dtype::UInt8), Some(CtLane::Int(255)));
+        assert_eq!(int(70000, Dtype::Int16), Some(CtLane::Int(4464)));
+        assert_eq!(int(-2, Dtype::Int), Some(CtLane::Int(-2)));
+        assert_eq!(int(1, Dtype::Bool), None);
+        let tenth = FloatLiteral::parse_decimal("0.1").expect("decimal literal");
+        assert_eq!(
+            CtLane::of_float_literal(&tenth, Dtype::Float32),
+            Some(CtLane::Float(f64::from(0.1f32).to_bits()))
+        );
+        assert_eq!(CtLane::of_float_literal(&tenth, Dtype::Int32), None);
+        // 2^60 + 2^36 + 1 is just above the midpoint of two `float32`s; a
+        // detour through `f64` lands on the midpoint and rounds to even.
+        let wide = IntLiteral::from((1_i64 << 60) + (1 << 36) + 1);
+        assert_eq!(
+            CtLane::of_int_literal(&wide, Dtype::Float32),
+            Some(CtLane::Float(
+                f64::from(2f32.powi(60) + 2f32.powi(37)).to_bits()
+            ))
+        );
     }
 }

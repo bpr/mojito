@@ -6,11 +6,14 @@
 //! overdefined. Blocks become executable from the entry, a `branch` making
 //! only its taken arm executable while its condition is one constant, and
 //! the instructions of executable blocks are evaluated until nothing
-//! changes: a scalar `const` is its constant, an instruction that folds
-//! ([`MirInstr::folded_constant`]) over constant operands is the folded
-//! constant, one with an unknown operand stays unknown, and every other
-//! result is overdefined. A parameter read (`Const::Param`, `Const::Value`)
-//! is overdefined: it is the elaborator's to fold, per instance.
+//! changes: a scalar `const` ([`Const::is_folded_scalar`], a `UInt` or
+//! one-lane SIMD `Const::Value` included) is its constant, an instruction
+//! that folds ([`MirInstr::folded_constant`]) over constant operands is the
+//! folded constant, one with an unknown operand stays unknown, and every
+//! other result is overdefined. A literal materialized to `UInt` or a scalar
+//! SIMD type folds to a `Const::Value`. A parameter read (`Const::Param`) and
+//! an aggregate `Const::Value` are overdefined: the first is the
+//! elaborator's to fold, per instance.
 //!
 //! The rewrite replaces each instruction that folds over the final lattice
 //! by a `const` defining the same register, as MLIR materializes the
@@ -125,13 +128,10 @@ impl Solver<'_> {
         let mut results = Vec::new();
         instruction_result_regs(instruction, &mut results);
         if let MirInstr::Const { dest, k } = instruction {
-            let value = match k {
-                Const::Int(_)
-                | Const::Float(_)
-                | Const::Bool(_)
-                | Const::IntLiteral(_)
-                | Const::FloatLiteral(_) => Lattice::Constant(k.clone()),
-                _ => Lattice::Overdefined,
+            let value = if k.is_folded_scalar() {
+                Lattice::Constant(k.clone())
+            } else {
+                Lattice::Overdefined
             };
             return self.meet(*dest, value);
         }
@@ -214,6 +214,7 @@ fn same_constant(left: &Const, right: &Const) -> bool {
         (Const::Bool(a), Const::Bool(b)) => a == b,
         (Const::IntLiteral(a), Const::IntLiteral(b)) => a == b,
         (Const::FloatLiteral(a), Const::FloatLiteral(b)) => a == b,
+        (Const::Value(a), Const::Value(b)) => a == b,
         _ => false,
     }
 }

@@ -9,6 +9,7 @@ use std::fmt;
 use std::io::{self, Write};
 
 use mojito_ast::ast::{Dtype, InfixOp, PrefixOp, Type};
+use mojito_types::ct::CtLane;
 use mojito_types::types::{Ty, canonical_simd_ty};
 
 /// A runtime value produced by evaluating an expression.
@@ -1309,29 +1310,18 @@ pub fn materialize_literal(
             .map(Value::Float64)
             .ok_or_else(|| literal_materialization_error(&value, "Float64")),
         (Value::IntLiteral(value), target)
-            if let Some(dtype) = mojito_types::types::scalar_simd_dtype(target)
-                && dtype.is_float() =>
-        {
-            let lane = dtype
-                .float_literal_lane(&mojito_common::literal::FloatLiteral::from_int(&value))
-                .ok_or_else(|| literal_materialization_error(&value, &format!("{dtype:?}")))?;
-            Ok(simd_value(dtype, SimdLanes::Float(vec![lane])))
-        }
-        (Value::FloatLiteral(value), target)
-            if let Some(dtype) = mojito_types::types::scalar_simd_dtype(target)
-                && dtype.is_float() =>
-        {
-            let lane = dtype
-                .float_literal_lane(&value)
-                .ok_or_else(|| literal_materialization_error(&value, &format!("{dtype:?}")))?;
-            Ok(simd_value(dtype, SimdLanes::Float(vec![lane])))
-        }
-        (Value::IntLiteral(value), target)
             if let Some(dtype) = mojito_types::types::scalar_simd_dtype(target) =>
         {
-            let lane = materialize_literal_int_lane(&value, dtype)
-                .ok_or_else(|| literal_materialization_error(&value, &format!("{dtype:?}")))?;
-            Ok(simd_value(dtype, SimdLanes::Int(vec![lane])))
+            CtLane::of_int_literal(&value, dtype)
+                .map(|lane| scalar_lane_value(dtype, &lane))
+                .ok_or_else(|| literal_materialization_error(&value, &format!("{dtype:?}")))
+        }
+        (Value::FloatLiteral(value), target)
+            if let Some(dtype) = mojito_types::types::scalar_simd_dtype(target) =>
+        {
+            CtLane::of_float_literal(&value, dtype)
+                .map(|lane| scalar_lane_value(dtype, &lane))
+                .ok_or_else(|| literal_materialization_error(&value, &format!("{dtype:?}")))
         }
         // Upstream's implicit `SIMD(IntLiteral)`/`(FloatLiteral)` splat: the
         // literal materializes as one lane, then fills the vector.
@@ -1422,6 +1412,18 @@ pub fn coerce_like(new: Value, existing: &Value) -> Value {
         Value::Float64(_) => coerce(new, &Type::Float64),
         _ => new,
     }
+}
+
+/// The one-lane SIMD value of a materialized compile-time lane.
+fn scalar_lane_value(dtype: Dtype, lane: &CtLane) -> Value {
+    simd_value(
+        dtype,
+        match lane {
+            CtLane::Int(value) => SimdLanes::Int(vec![*value]),
+            CtLane::Float(bits) => SimdLanes::Float(vec![f64::from_bits(*bits)]),
+            CtLane::Bool(value) => SimdLanes::Bool(vec![*value]),
+        },
+    )
 }
 
 fn literal_materialization_error(value: &impl fmt::Display, destination: &str) -> RuntimeError {
@@ -2332,18 +2334,6 @@ fn value_to_int(v: &Value) -> Result<i128, RuntimeError> {
             "cannot use {} as an integer SIMD element",
             type_name(other)
         ))),
-    }
-}
-
-fn materialize_literal_int_lane(
-    value: &mojito_common::literal::IntLiteral,
-    dtype: Dtype,
-) -> Option<i128> {
-    let (bits, signed) = integer_dtype_bits(dtype)?;
-    if signed {
-        value.wrapping_signed(bits).map(i128::from)
-    } else {
-        value.wrapping_unsigned(bits).map(i128::from)
     }
 }
 

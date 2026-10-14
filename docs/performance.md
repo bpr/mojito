@@ -1351,9 +1351,12 @@ and on) the pass takes `literal.materialize` from 1 395 to 24, `unary`
 from 98 to 62, `binary` from 1 686 to 1 674, and `branch` from 949 to 946.
 Real arithmetic and decided branches are rare because values cross blocks
 through variable slots, not registers; `Mem2Reg` would widen what the
-lattice sees. The 24 materializations left target `UInt` or a scalar SIMD
-type (R841). Operators over a parameter read are folded in each instance
-by the post-elaboration pipeline (R840, below).
+lattice sees. Of the 24 materializations left, none targets `UInt`: 17
+target a concrete scalar SIMD type (folded by R841, below), 4 a SIMD type
+whose dtype is a parameter (`_StridedRange`/`_ZeroStartingRange`'s
+`dtype`), and 3 `Int` over a `var.use` operand, which needs `Mem2Reg`.
+Operators over a parameter read are folded in each instance by the
+post-elaboration pipeline (R840, below).
 
 The program-seam counters are `pre_elaboration.sccp.folded_constants` and
 `pre_elaboration.canonicalize.folded_branches` (9 and 3 on a small probe);
@@ -1406,3 +1409,17 @@ forwarded_copies, erased_instructions}`. A folded producer's in-place
 binding (`var.store … in_place: true`) is cleared by `sccp` itself, since
 a `const` is no call-family producer; instances hit that case constantly,
 and generators could have.
+
+## Scalar SIMD and `UInt` literal materializations fold (2026-10-14, R841)
+
+`sccp` now folds a literal materialized to `UInt` or a one-lane SIMD type
+to a typed `Const::Value` (`docs/architecture.md` §Pre-Elaboration
+Pipeline). In `collections_many`'s MIR (`emit-mir`, pipeline on)
+`literal.materialize` falls from 24 to 7: the 4 over a parameter dtype and
+the 3 over a `var.use`. The 17 folded sites sit in bundled-library bodies
+(14 in `_c_stat.__init__`), which are finished on the elaborator's thread,
+so `pre_elaboration.sccp.folded_constants` stays 23; the per-instance
+`elaborate.post_elaboration.sccp.folded_constants` goes from 3 to 4, and
+`concrete_instructions` from 15 905 to 15 904 (debug binary, `--timings`).
+The corpus-wide `scripts/instantiation-report` rerun is left to the
+nightly gate.

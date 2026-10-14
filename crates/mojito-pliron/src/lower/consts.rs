@@ -127,7 +127,7 @@ impl FnLowering<'_> {
     }
 
     /// A parameter value constant (`Self.key`, `Self.e`, a `comptime for`
-    /// variable over pairs): a vector built lane by lane as its explicit
+    /// variable over pairs): a `UInt` as its scalar, a vector built lane by lane as its explicit
     /// construction is (a one-lane vector is its lane scalar), and an
     /// aggregate — or a string read at the nominal `String` — written
     /// fieldwise into fresh storage, each string leaf a fresh buffer.
@@ -139,6 +139,12 @@ impl FnLowering<'_> {
     ) -> Result<(), PlironError> {
         use mojito_types::ct::CtValue;
         match value {
+            CtValue::UInt(bits) => {
+                let constant = self.parameter_scalar(ctx, value, ScalarTy::UInt, dest)?;
+                self.reg_values.insert(dest.0, constant);
+                self.int_consts.insert(dest.0, *bits as i64);
+                Ok(())
+            }
             CtValue::Simd { dtype, lanes } => {
                 let vector = self.parameter_vector(ctx, *dtype, lanes, dest)?;
                 // A width-1 SIMD register is its lane scalar, as `lower_ty` lays it out.

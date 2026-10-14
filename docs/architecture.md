@@ -4871,23 +4871,32 @@ second runs `SCCP` and a `Canonicalizer` again, so `PIPELINE` is
   constant, a `comptime if` or `comptime for` both of its targets, and a
   `try` its regions, whose escapes make their function-level targets
   executable. A scalar `const` (`Int`, `Float64`, `Bool`, `IntLiteral`,
-  `FloatLiteral`) is its constant; a parameter read (`Const::Param`,
-  `Const::Value`) is overdefined, the elaborator's to fold per instance. An
+  `FloatLiteral`, or a `UInt` or one-lane SIMD `Const::Value`,
+  `Const::is_folded_scalar`) is its constant; a parameter read
+  (`Const::Param`) and an aggregate `Const::Value` are overdefined, the
+  first the elaborator's to fold per instance. An
   instruction is the constant `MirInstr::folded_constant` (MLIR's `fold`
   returning an attribute) gives over its operands' constants, unknown while
   an operand is, and overdefined otherwise. The fold covers built-in
   operators with no checker-selected dunder and no `raises`, `not`, `-`,
-  and `~`, a literal materialized to `Int` or `Float64`, and an identity
-  copy, over scalars whose constant kind is the one their register's type
-  names; it is `param_expr::fold`, the one compile-time folder, and folds
+  and `~`, a literal materialized to `Int`, `UInt`, `Float64`, or a
+  one-lane SIMD type, and an identity copy, over scalars whose constant kind
+  is the one their register's type names. A materialization folds to the
+  value `CtValue::materialize_as` gives, whose lane rule
+  (`CtLane::of_int_literal`, `CtLane::of_float_literal`) is the VM's own
+  `runtime::materialize_literal`; a `UInt` or SIMD result is a
+  `Const::Value`, upstream's `kgen.param.constant` over a typed attribute.
+  Operators fold only over `Int`, `Float64`, `Bool`, and literal operands,
+  never over `UInt` or SIMD constants. The operator fold is
+  `param_expr::fold`, the one compile-time folder, and folds
   nothing where that folder and the VM could disagree (a zero divisor, a
   shift of 64 or more, an overflowing `**`, a NaN or infinite comparison,
   `Float64` `//`, `%`, and `**`, `Bool` operators but `==` and `!=`).
   The rewrite replaces each instruction that folds over the final lattice
   by a `const` of the same register, which keeps its type and span; the
   pass never rewrites a terminator, which the `canonicalize` after it does.
-  A literal materialized to `UInt` or a scalar SIMD type is not folded
-  (R841). Its `--timings` counter is `folded_constants`.
+  A literal splatted to a multi-lane SIMD type is not folded. Its
+  `--timings` counter is `folded_constants`.
 - **Two seams, once per body.** `CompiledProgram::elaborated_mir` runs
   `pre_elaborate_program` over the program's own bodies after
   `elaborate_drops_program` (the `pre_elaboration` `--timings` span), and an
