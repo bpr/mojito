@@ -9,8 +9,9 @@
 
 use crate::backend::BackendKind;
 use crate::compiler::Execution;
+use crate::mir::entry_roots;
 use crate::mir::text::{ArtifactReport, load_artifact};
-use crate::native::mono::{MonoError, entry_roots, specialize};
+use crate::native::mono::{MonoError, specialize};
 use crate::runtime::RuntimeError;
 use std::fmt;
 

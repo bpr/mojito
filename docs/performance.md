@@ -1210,3 +1210,40 @@ lifecycle rows instead of a row per trait the library asked.
 |---|---:|---:|---:|
 | hello | 3.97 → 3.79 | 0.15 → 0.13 | 0.01 → 0.00 |
 | conforms_to_user_and_unasked_traits | 24.4 → 20.8 | 5.43 → 1.20 | 4.21 → 0.02 |
+
+## Dead generators are removed before the pipeline (2026-10-14, R778)
+
+`eliminate-dead-symbols`, upstream's `EliminateDeadSymbols`, is the first
+pre-elaboration pass: it removes the program's own parametric bodies that no
+concrete function or entry root reaches (`docs/architecture.md`
+§Pre-Elaboration Pipeline). Release binary, 16 cores, `--timings` medians
+of interleaved runs with `MOJITO_PRE_ELABORATION` on and off, milliseconds.
+
+**The corpus report is unchanged by design.** `scripts/instantiation-report`
+over all 1 020 fixtures writes the same file with the pipeline on and off:
+every counter measures what the elaborator reached, and the pass removes
+only bodies it never reaches. In the default package mode the program's own
+functions are all a fixture has, and a fixture uses nearly all of them: the
+pass removes 13 bodies (144 instructions) of 7 068 across the corpus, in 7
+fixtures, and none in any compile benchmark. There it costs 0.01–0.17 ms
+per program, within noise of every total.
+
+**Source mode** (`MOJITO_STD_PACKAGE=0`, three runs) is where dead bodies
+exist: std's generics a program does not reach. The pass removes a quarter
+of the program's functions, and the post-drop verify no longer walks them.
+The walk (`mir::SymbolTable`, which visits every string a body serializes)
+costs about what the verify saves; the gain is the time every later
+per-body pass (R779 onward) would spend on these bodies.
+
+| Benchmark | own functions | removed (instructions) | pass | post-drop verify on / off | total on / off |
+|---|---:|---:|---:|---:|---:|
+| `hello` | 763 | 195 (3 300) | 5.3 | 17.5 / 20.9 | 595 / 593 |
+| `generic` | 768 | 195 (3 300) | 5.4 | 17.4 / 20.7 | 603 / 593 |
+| `collections_many` | 767 | 86 (1 454) | 6.7 | 20.2 / 21.7 | 797 / 785 |
+| `nested_generics` | 768 | 136 (2 150) | 6.3 | 19.2 / 21.1 | 657 / 645 |
+| `stdlib_heavy` | 768 | 136 (2 150) | 6.0 | 18.6 / 21.2 | 629 / 623 |
+| `trait_defaults` | 811 | 195 (3 300) | 5.6 | 17.8 / 21.3 | 624 / 617 |
+
+The totals are within the spread of three-run medians (with the pass on,
+`empty` and `keyed` ran faster). R835 would make the walk visit only typed
+symbol references.

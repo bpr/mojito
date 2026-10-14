@@ -25,7 +25,9 @@ below. Labels are `<pass>/<case>.mir`, so the reports hold no machine path.
 
 1. Write a small Mojo program outside the repository and print its MIR with
    `mojito emit-mir`. A pass in `analysis::PIPELINE` takes this post-drop
-   form. `elaborate-drops` takes pre-drop MIR, which the CLI does not print,
+   form; emit it with `MOJITO_PRE_ELABORATION=0`, or the pipeline will
+   already have run (`eliminate-dead-symbols` would have removed what its
+   case is about). `elaborate-drops` takes pre-drop MIR, which the CLI does not print,
    so for it either remove the `drop.*` lines (when no copy elision or
    deinit refinement is in play) or emit with drop elaboration skipped in a
    scratch build.

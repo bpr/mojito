@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The pre-elaboration pipeline's first pass is `eliminate-dead-symbols`
+  (R778), upstream's `EliminateDeadSymbols`: it removes the program's own
+  generic bodies that no concrete function or entry root reaches before
+  the later passes and the post-drop verify see them, so `emit-mir` no
+  longer prints them. A pipeline pass is now a program pass or a body pass
+  (`analysis::Pass`); the package seam runs only body passes. Every
+  concrete function stays, since Mojito has no `@export` (R834).
+  `entry_roots` moved from `native::mono` to `mir`.
+
 - A cleanup list names only what is still held where it runs (R826). A
   `try`'s list runs on its body's raise edge alone, on both backends, and
   keeps the slots some raise point there holds. A return drops in-region

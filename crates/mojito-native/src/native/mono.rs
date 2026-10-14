@@ -208,20 +208,6 @@ pub fn specialize_importing(
     })
 }
 
-/// The entry roots of a whole program.
-///
-/// They are `main` and the module initializer `__toplevel__`, each when the
-/// program defines it. Source execution, artifact execution, and a native
-/// executable all elaborate from these; any other root is an entry a native
-/// caller requests by name.
-pub fn entry_roots(program: &MirProgram) -> Vec<String> {
-    ["main", "__toplevel__"]
-        .into_iter()
-        .filter(|entry| program.functions.iter().any(|(name, _)| name == entry))
-        .map(str::to_string)
-        .collect()
-}
-
 /// The most instances one elaboration demands. It is the elaborator's only
 /// bound — there is no instantiation-depth limit, as upstream — and it stops
 /// expanding polymorphic recursion (`f[W[T]]` calling `f[W[W[T]]]`), which

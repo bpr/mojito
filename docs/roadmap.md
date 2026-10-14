@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R834**.
+Next free ID: **R836**.
 
 ## Ordered Work
 
@@ -55,19 +55,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md),
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
-
-- [ ] **R778 Generic bodies no entry reaches are kept until elaboration**
-
-  The program's own generic bodies that no entry root reaches are carried
-  to the elaborator, where upstream's `EliminateDeadSymbols` drops them
-  before the other passes run.
-  - The elaborator already ignores them, so the gain is the later passes'
-    time, not output size.
-  - It must not run in a package build, which keeps every export.
-  - Done when the pass runs at the program seam and `docs/performance.md`
-    records its effect on the corpus report.
-  - Depends on R777, R772, R775, R776.
-  - Model: Opus, Not Planned.
 
 - [ ] **R779 Generic bodies carry unreachable blocks and unread pure
   instructions into every instance**
@@ -177,6 +164,35 @@ which names the upstream pass each one follows. Each is measured by the
   - Start it only after the cheaper passes show how much remains.
   - Depends on R781, R785.
   - Model: Fable, Planned.
+
+- [ ] **R835 MIR has no symbol-reference type, so a symbol's uses are found
+  by spelling**
+
+  `mir::SymbolTable` finds uses by walking every string a value serializes,
+  where MLIR's `getSymbolUses` visits only `SymbolRefAttr`s.
+  - A local, a field, or a literal that spells a function keeps it live,
+    which is safe but imprecise.
+  - The serde walk costs about as much as the post-drop verify it saves in
+    source mode (`docs/performance.md`, R778).
+  - A typed reference (callee, closure target, application, struct type)
+    would let the walk visit only those fields.
+  - Depends on R778.
+  - Model: Opus, Not Planned.
+
+- [ ] **R834 Unreferenced concrete functions and struct declarations reach
+  the elaborator**
+
+  Upstream's `EliminateDeadSymbols` removes every non-`export` symbol no
+  live symbol refers to, but Mojito's removes only parametric bodies,
+  because it has no `export`.
+  - Any concrete function can be a native root by name (the scalar sweep's
+    `compute`, `native_compile`'s entries), so each stays a root today.
+  - It needs `@export`, or an explicit entry list at the program seam, so
+    by-name native roots stay live.
+  - Dead struct declarations and declarations of removed bodies should go
+    too; overload lookups read them, so check those first.
+  - Depends on R778.
+  - Model: Opus, Not Planned.
 
 ### Measure Instantiation And Test The Passes That Shrink It
 

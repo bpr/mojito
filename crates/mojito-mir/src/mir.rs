@@ -56,6 +56,8 @@ pub mod link;
 mod lower_expr;
 mod lower_stmt;
 mod node;
+mod symbols;
+pub use symbols::SymbolTable;
 
 /// Lower a whole HIR control-flow graph (one function body) into a
 /// `MirFunction`.
@@ -94,6 +96,20 @@ pub struct MirProgram {
     /// Backends must reject a program with any entry rather than executing a
     /// guessed fallback representation.
     pub invariant_errors: Vec<String>,
+}
+
+/// The entry roots of a whole program.
+///
+/// They are `main` and the module initializer `__toplevel__`, each when the
+/// program defines it. Source execution, artifact execution, and a native
+/// executable all elaborate from these; any other root is an entry a native
+/// caller requests by name.
+pub fn entry_roots(program: &MirProgram) -> Vec<String> {
+    ["main", "__toplevel__"]
+        .into_iter()
+        .filter(|entry| program.functions.iter().any(|(name, _)| name == entry))
+        .map(str::to_string)
+        .collect()
 }
 
 /// Concrete MIR: an elaborator's entry-rooted output, verified concrete.

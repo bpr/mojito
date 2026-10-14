@@ -136,7 +136,7 @@ impl CompiledProgram {
                 let concrete = crate::native::mono::specialize_importing(
                     mir,
                     self.package.as_deref().map(|package| &package.bodies),
-                    &crate::native::mono::entry_roots(mir),
+                    &crate::mir::entry_roots(mir),
                     self.target.as_ref(),
                 );
                 if let Ok(concrete) = &concrete {

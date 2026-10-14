@@ -1,13 +1,17 @@
 //! The pre-elaboration pipeline: passes over parametric MIR whose drops are
-//! inserted, run once per body before the elaborator instantiates it, as
-//! upstream runs its pre-elaboration pass pipeline on parametric IR after
-//! destructor insertion.
+//! inserted, run before the elaborator instantiates it, as upstream runs its
+//! pre-elaboration pass pipeline on parametric IR after destructor
+//! insertion.
 //!
 //! It runs at two seams: over a program's own bodies
-//! ([`pre_elaborate_program`]) and over each imported package body as it is
-//! finished ([`finish_package_body`]). Never per instance.
+//! ([`pre_elaborate_program`]), where a [`ProgramPass`] runs once over the
+//! whole program and a [`BodyPass`] over each body, and over each imported
+//! package body as it is finished ([`finish_package_body`]), where only the
+//! body passes run. Never per instance.
 
+use super::dead_symbols::ELIMINATE_DEAD_SYMBOLS;
 use super::elaborate_drops_function;
+use mojito_common::timing;
 use mojito_mir::mir::{MirDeclarations, MirFunction, MirProgram};
 
 /// One pre-elaboration pass over a parametric body whose drops are
@@ -18,9 +22,36 @@ pub struct BodyPass {
     pub run: fn(&str, &mut MirFunction, &MirDeclarations),
 }
 
+/// One pre-elaboration pass over a whole program, which may remove its
+/// functions: upstream's module passes, such as `EliminateDeadSymbols`.
+pub struct ProgramPass {
+    /// The pass's name, as the verifier's findings after it spell it.
+    pub name: &'static str,
+    pub run: fn(&mut MirProgram),
+}
+
+/// A registered pass, by the unit it rewrites.
+pub enum Pass {
+    Program(ProgramPass),
+    Body(BodyPass),
+}
+
+impl Pass {
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Program(pass) => pass.name,
+            Self::Body(pass) => pass.name,
+        }
+    }
+}
+
 /// The pre-elaboration pipeline, in order: upstream's pass list
 /// (`docs/pre-elaboration-optimization-plan.md`) as Mojito adopts it.
-pub const PIPELINE: &[BodyPass] = &[];
+///
+/// `EliminateDeadSymbols` runs ahead of every pass upstream runs after
+/// destructor insertion but `RemoveUnusedParams`, which Mojito does not
+/// have.
+pub const PIPELINE: &[Pass] = &[Pass::Program(ELIMINATE_DEAD_SYMBOLS)];
 
 /// Drop elaboration as a named pass, so a pass test can run it over MIR
 /// text whose drops are not yet inserted. The pipeline does not list it:
@@ -34,21 +65,24 @@ pub const ELABORATE_DROPS: BodyPass = BodyPass {
 
 /// The pass registered under `name`: a [`PIPELINE`] pass, or one run only
 /// on request (drop elaboration).
-pub fn pass_named(name: &str) -> Option<&'static BodyPass> {
+pub fn pass_named(name: &str) -> Option<&'static Pass> {
     PIPELINE
         .iter()
         .chain(REGISTERED)
-        .find(|pass| pass.name == name)
+        .find(|pass| pass.name() == name)
 }
 
 /// Every registered pass's name, pipeline order first.
 pub fn pass_names() -> impl Iterator<Item = &'static str> {
-    PIPELINE.iter().chain(REGISTERED).map(|pass| pass.name)
+    PIPELINE.iter().chain(REGISTERED).map(Pass::name)
 }
 
-/// Run [`PIPELINE`] over the body `name`. In debug builds the body is
-/// verified after each pass, and each finding, naming the pass, goes to
-/// `findings`.
+/// Run [`PIPELINE`]'s body passes over the body `name`. In debug builds
+/// the body is verified after each pass, and each finding, naming the pass,
+/// goes to `findings`.
+///
+/// A program pass has nothing to do here: a package body is finished only
+/// when the elaborator first reaches it, so no finished body is dead.
 pub fn run_pipeline(
     name: &str,
     function: &mut MirFunction,
@@ -56,30 +90,37 @@ pub fn run_pipeline(
     findings: &mut Vec<String>,
 ) {
     for pass in PIPELINE {
-        (pass.run)(name, function, declarations);
-        if cfg!(debug_assertions) {
-            findings.extend(
-                mojito_mir::mir::verify::verify_function_in(name, function, declarations)
-                    .into_iter()
-                    .map(|finding| pass_finding(pass, &finding)),
-            );
+        if let Pass::Body(pass) = pass {
+            run_body_pass(pass, name, function, declarations, findings);
         }
     }
 }
 
-/// The program seam: [`run_pipeline`] over every function of `program` but
-/// `__toplevel__`, its findings folded into `invariant_errors`.
+/// The program seam: [`PIPELINE`] over `program`, each program pass once
+/// and each body pass over every function but `__toplevel__`, its findings
+/// folded into `invariant_errors`.
 pub fn pre_elaborate_program(program: &mut MirProgram) {
-    let MirProgram {
-        functions,
-        declarations,
-        invariant_errors,
-    } = program;
-    for (name, function) in functions.iter_mut() {
-        // Module-scope (`__toplevel__`) variables keep their final values
-        // for the CLI/`bindings()` global dump, so no pass rewrites them.
-        if name != "__toplevel__" {
-            run_pipeline(name, function, declarations, invariant_errors);
+    for pass in PIPELINE {
+        match pass {
+            Pass::Program(pass) => {
+                let _pass = timing::span(pass.name);
+                (pass.run)(program);
+            }
+            Pass::Body(pass) => {
+                let MirProgram {
+                    functions,
+                    declarations,
+                    invariant_errors,
+                } = &mut *program;
+                for (name, function) in functions.iter_mut() {
+                    // Module-scope (`__toplevel__`) variables keep their final
+                    // values for the CLI/`bindings()` global dump, so no pass
+                    // rewrites them.
+                    if name != "__toplevel__" {
+                        run_body_pass(pass, name, function, declarations, invariant_errors);
+                    }
+                }
+            }
         }
     }
 }
@@ -107,13 +148,32 @@ pub fn finish_package_body_without_pipeline(
     elaborate_drops_function(name, function, declarations)
 }
 
-/// A verifier finding on a body after `pass` ran, naming the pass.
-pub(super) fn pass_finding(pass: &BodyPass, finding: &str) -> String {
-    format!("after pre-elaboration pass `{}`: {finding}", pass.name)
+/// A verifier finding after the pass `pass` ran, naming the pass.
+pub(super) fn pass_finding(pass: &str, finding: &str) -> String {
+    format!("after pre-elaboration pass `{pass}`: {finding}")
 }
 
 /// Passes outside [`PIPELINE`] that [`pass_named`] still answers.
-const REGISTERED: &[BodyPass] = &[ELABORATE_DROPS];
+const REGISTERED: &[Pass] = &[Pass::Body(ELABORATE_DROPS)];
+
+/// Run the body pass `pass` over the body `name`, verifying it after the
+/// pass in debug builds.
+fn run_body_pass(
+    pass: &BodyPass,
+    name: &str,
+    function: &mut MirFunction,
+    declarations: &MirDeclarations,
+    findings: &mut Vec<String>,
+) {
+    (pass.run)(name, function, declarations);
+    if cfg!(debug_assertions) {
+        findings.extend(
+            mojito_mir::mir::verify::verify_function_in(name, function, declarations)
+                .into_iter()
+                .map(|finding| pass_finding(pass.name, &finding)),
+        );
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -125,9 +185,10 @@ mod tests {
         let unique: std::collections::BTreeSet<_> = names.iter().collect();
         assert_eq!(unique.len(), names.len(), "{names:?}");
         for name in names {
-            assert_eq!(pass_named(name).map(|pass| pass.name), Some(name));
+            assert_eq!(pass_named(name).map(Pass::name), Some(name));
         }
         assert!(pass_named("elaborate-drops").is_some());
+        assert!(pass_named("eliminate-dead-symbols").is_some());
         assert!(pass_named("no-such-pass").is_none());
     }
 }

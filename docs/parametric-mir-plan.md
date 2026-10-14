@@ -365,7 +365,7 @@ its output.
   expression over one is rejected too.
 - The three phases of §Phases and their names are
   `CompiledProgram::{mir, drop_elaborated_mir, concrete_mir}`. The entry
-  roots are `native::mono::entry_roots`. The concrete graph is cached, and
+  roots are `mir::entry_roots`. The concrete graph is cached, and
   the native backend takes it and elaborates nothing.
 - The VM runs concrete MIR only, for source programs and for loaded
   artifacts. The erased path was selectable as the differential oracle

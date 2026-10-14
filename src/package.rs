@@ -933,7 +933,7 @@ mod tests {
         crate::native::mono::specialize_importing(
             &mir,
             Some(&package.bodies),
-            &crate::native::mono::entry_roots(&mir),
+            &crate::mir::entry_roots(&mir),
             None,
         )
     }
@@ -974,7 +974,7 @@ mod tests {
         crate::native::mono::specialize_importing(
             mir,
             Some(bodies),
-            &crate::native::mono::entry_roots(mir),
+            &crate::mir::entry_roots(mir),
             None,
         )
     }

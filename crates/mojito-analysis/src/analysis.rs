@@ -15,6 +15,7 @@
 //! to insert ASAP drops and control-flow-edge cleanup.
 
 use copy_elision::elide_dying_copies;
+pub use dead_symbols::{ELIMINATE_DEAD_SYMBOLS, eliminate_dead_symbols};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use drops::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
@@ -35,8 +36,9 @@ use mojito_mir::mir::{
 use moves::*;
 pub use opt::{OptError, opt};
 pub use pre_elaboration::{
-    BodyPass, ELABORATE_DROPS, PIPELINE, finish_package_body, finish_package_body_without_pipeline,
-    pass_named, pass_names, pre_elaborate_program, run_pipeline,
+    BodyPass, ELABORATE_DROPS, PIPELINE, Pass, ProgramPass, finish_package_body,
+    finish_package_body_without_pipeline, pass_named, pass_names, pre_elaborate_program,
+    run_pipeline,
 };
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use register_loans::*;
@@ -218,6 +220,7 @@ pub fn elaborate_drops_function(
 }
 
 mod copy_elision;
+mod dead_symbols;
 mod drops;
 mod field_drops;
 mod interior;

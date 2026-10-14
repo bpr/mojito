@@ -2,7 +2,7 @@
 //! named passes over its bodies in order, and verify the program after
 //! each one, in every build.
 
-use super::pre_elaboration::{BodyPass, pass_finding};
+use super::pre_elaboration::{Pass, pass_finding};
 use mojito_mir::mir::MirProgram;
 use mojito_mir::mir::text::{ArtifactReport, load_artifact};
 use std::fmt;
@@ -40,35 +40,42 @@ impl fmt::Display for OptError {
 
 impl std::error::Error for OptError {}
 
-/// Load the artifact `input` and run `passes` in order over every body but
-/// `__toplevel__`, as the pre-elaboration pipeline does, verifying the
+/// Load the artifact `input` and run `passes` in order, verifying the
 /// whole program after each pass.
+///
+/// As in the pre-elaboration pipeline, a program pass runs over the
+/// program and a body pass over every body but `__toplevel__`.
 pub fn opt(
     input: &[u8],
     source_name: &str,
-    passes: &[&'static BodyPass],
+    passes: &[&'static Pass],
 ) -> Result<MirProgram, OptError> {
     let mut program = load_artifact(input, source_name)
         .map_err(OptError::Load)?
         .program;
     for pass in passes {
-        let MirProgram {
-            functions,
-            declarations,
-            ..
-        } = &mut program;
-        for (name, function) in functions.iter_mut() {
-            if name != "__toplevel__" {
-                (pass.run)(name, function, declarations);
+        match pass {
+            Pass::Program(pass) => (pass.run)(&mut program),
+            Pass::Body(pass) => {
+                let MirProgram {
+                    functions,
+                    declarations,
+                    ..
+                } = &mut program;
+                for (name, function) in functions.iter_mut() {
+                    if name != "__toplevel__" {
+                        (pass.run)(name, function, declarations);
+                    }
+                }
             }
         }
         let findings: Vec<_> = mojito_mir::mir::verify::verify(&program)
             .iter()
-            .map(|finding| pass_finding(pass, finding))
+            .map(|finding| pass_finding(pass.name(), finding))
             .collect();
         if !findings.is_empty() {
             return Err(OptError::Verify {
-                pass: pass.name,
+                pass: pass.name(),
                 findings,
             });
         }
@@ -78,16 +85,16 @@ pub fn opt(
 
 #[cfg(test)]
 mod tests {
-    use super::{BodyPass, OptError, opt};
-    use crate::analysis::ELABORATE_DROPS;
+    use super::{OptError, Pass, opt};
+    use crate::analysis::{BodyPass, ELABORATE_DROPS};
     use mojito_mir::mir::text::disassemble_functions;
     use mojito_mir::mir::{MirDeclarations, MirFunction, MirInstr};
 
     /// A pass that drops every dropped slot twice.
-    const DOUBLE_DROP: BodyPass = BodyPass {
+    const DOUBLE_DROP: Pass = Pass::Body(BodyPass {
         name: "double-drop",
         run: double_drops,
-    };
+    });
 
     fn double_drops(_: &str, function: &mut MirFunction, _: &MirDeclarations) {
         for block in &mut function.blocks {
@@ -134,7 +141,7 @@ mod tests {
         let program = opt(
             input.as_bytes(),
             "already_elaborated.mir",
-            &[&ELABORATE_DROPS],
+            &[&Pass::Body(ELABORATE_DROPS)],
         )
         .expect("the listed slot is held at the return");
         let printed = disassemble_functions(&program).expect("prints");

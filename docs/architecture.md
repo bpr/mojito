@@ -418,7 +418,7 @@ body it materializes reached while it was lowered or finished
 `drop_elaborated_mir`, whose artifact holds the whole package, reports every
 record that does not decode (`PackageDeclarations::failures`).
 
-The entry roots are defined once, by `native::mono::entry_roots`: `main` and
+The entry roots are defined once, by `mir::entry_roots`: `main` and
 the module initializer `__toplevel__`, each when the program defines it.
 Source execution, artifact execution, and a native executable all elaborate
 from them. A native caller that wants another root (a scalar entry under
@@ -4795,10 +4795,32 @@ drop elaboration then ends them there, or lists them on the return when a
 Upstream runs a pass pipeline on parametric IR after destructor insertion and
 before the elaborator. Mojito's is `analysis::PIPELINE`
 (`crates/mojito-analysis/src/analysis/pre_elaboration.rs`), an ordered list of
-`BodyPass` rows, each a per-body rewrite of drop-elaborated parametric MIR. The
-list is empty today; `docs/pre-elaboration-optimization-plan.md` stages the
-passes that fill it.
+`Pass` rows: a `ProgramPass` rewrites the whole program once and may remove
+functions, as upstream's module passes do, and a `BodyPass` rewrites each
+drop-elaborated parametric body. `docs/pre-elaboration-optimization-plan.md`
+stages the passes that fill it.
 
+- **`eliminate-dead-symbols` runs first** (`analysis::ELIMINATE_DEAD_SYMBOLS`,
+  `analysis/dead_symbols.rs`, R778), upstream's `EliminateDeadSymbols`, which
+  runs ahead of every pre-elaboration pass but `RemoveUnusedParams`. It
+  removes the bodies of the program's own parametric functions that no root
+  reaches, leaving their declarations. Upstream's roots are the `export`
+  symbols; Mojito has none, and a native caller may name any concrete
+  function as an entry, so every concrete function is a root (with
+  `mir::entry_roots`), as is any function without a declaration or a method
+  of no struct the program declares. A function is parametric when it, its
+  owner struct, or a body it is nested in declares compile-time parameters.
+  A live function makes live every symbol its body or declaration names, its
+  overload family, and the functions nested in it; a live struct makes live
+  every symbol its declaration names and all its methods, so the
+  elaborator's lifecycle, display, hash, and trait-dispatch edges, which
+  reach a method from its struct's type, stay live. The uses come from
+  `mir::SymbolTable`, MLIR's `SymbolTable::getSymbolUses` over MIR: MIR names
+  a symbol by its spelling, so the walk visits every string in a value's
+  serialized form, and a string that spells a symbol is a use (a type is
+  walked once per table). The pass's `--timings` counters are
+  `dead_functions` and `dead_instructions`. `emit-mir` and
+  `drop_elaborated_mir` therefore omit dead program generators.
 - **Two seams, once per body.** `CompiledProgram::elaborated_mir` runs
   `pre_elaborate_program` over the program's own bodies after
   `elaborate_drops_program` (the `pre_elaboration` `--timings` span), and an
@@ -4807,12 +4829,14 @@ passes that fill it.
   as each body is first materialized. The pipeline runs once per generator,
   never per instance.
 - **Where it does not run.** A package build serializes pre-drop MIR, so it
-  never reaches the program seam; its bodies get the pipeline at import. A
+  never reaches the program seam; its bodies get the body passes at import.
+  The package seam runs no program pass: a package body is finished only when
+  the elaborator first reaches it, so no finished body is dead. A
   serialized artifact is already past the seam and is not run again.
   `__toplevel__` is skipped, as ASAP drops skip it, so its slots keep the
   values `bindings()` reports.
-- **Verification.** In debug builds each body is verified after every pass
-  (`run_pipeline`), each finding naming the pass, into `invariant_errors` or
+- **Verification.** In debug builds each body is verified after every body
+  pass (`run_pipeline`), each finding naming the pass, into `invariant_errors` or
   the package body's verdict (`PackageBodies::findings`), which the
   elaborator refuses when it materializes the body. The post-drop verify
   after the seam runs in every build.
@@ -4820,9 +4844,9 @@ passes that fill it.
   registry does: every `PIPELINE` pass, plus `ELABORATE_DROPS`
   (`elaborate-drops`), drop elaboration run on request. `analysis::opt`,
   the `mlir-opt` analogue behind `mojito opt [--pass NAME]… [FILE]`, loads a
-  MIR artifact, runs the named passes in order over every body but
-  `__toplevel__`, and verifies the whole program after each pass in every
-  build. `tests/mir_pass_test.rs` pins each case under
+  MIR artifact, runs the named passes in order (a program pass over the
+  program, a body pass over every body but `__toplevel__`), and verifies the
+  whole program after each pass in every build. `tests/mir_pass_test.rs` pins each case under
   `tests/mir_passes/<pass>/` by its `functions:` section
   (`mir::text::disassemble_functions`), so a format bump breaks no expected
   file.
