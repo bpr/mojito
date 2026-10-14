@@ -2385,7 +2385,7 @@ impl CheckedStmtOp {
 }
 
 /// A checked `def`: its symbol and checked signature, its parameter
-/// defaults and constraints as nodes, and its body.
+/// defaults and constraints as nodes, its body, and its captures.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedDef {
     pub name: String,
@@ -2400,6 +2400,10 @@ pub struct CheckedDef {
     pub raises: bool,
     pub where_clauses: Vec<CheckedNodeId>,
     pub body: Vec<CheckedStmtId>,
+    /// The explicit captures the check resolved in its enclosing scope, as
+    /// upstream's closure op holds its captured values; default captures
+    /// are found from its body's checked bindings.
+    pub captures: Vec<CheckedCapture>,
 }
 
 /// A declaration's checked signature, as the check recorded it at the
@@ -2613,9 +2617,6 @@ pub struct CheckedDeclaration {
     /// Stable value-binding identity for declarations which introduce a runtime
     /// name. This is independent of spelling and therefore survives shadowing.
     pub binding: Option<mojito_types::origin::OwnerId>,
-    /// Explicit closure captures resolved in the declaration's enclosing scope.
-    /// Default captures are discovered from checked expression bindings.
-    pub captures: Vec<CheckedCapture>,
     pub ty: Option<Ty>,
     pub children: Vec<CheckedDeclId>,
 }
@@ -2668,8 +2669,7 @@ pub struct CheckedTables {
     pub statements: Vec<CheckedStmt>,
     /// Indexed by `CheckedDeclId`.
     pub declarations: Vec<CheckedDeclaration>,
-    /// The module's root statements, parallel to
-    /// [`CheckedProgram::statements`].
+    /// The module's root statement nodes, in order.
     roots: Vec<CheckedStmtId>,
     /// Each default wrapper's root statements, parallel to
     /// [`CheckedProgram::default_wrappers`].
@@ -2689,8 +2689,7 @@ impl CheckedTables {
         self.statements.get(id.0 as usize)
     }
 
-    /// The module's root statements, parallel to
-    /// [`CheckedProgram::statements`].
+    /// The module's root statement nodes, in order.
     pub fn roots(&self) -> &[CheckedStmtId] {
         &self.roots
     }
@@ -2796,41 +2795,80 @@ impl CheckedTables {
                 ..declaration.clone()
             })
             .collect();
-        Self::new(
-            CheckedArena {
-                nodes: copy.expressions,
-                statements: copy.statements,
-                roots: vec![root],
-                wrapper_roots,
-            },
-            declarations,
-        )
+        let mut tables = Self::new(CheckedArena {
+            nodes: copy.expressions,
+            statements: copy.statements,
+            roots: vec![root],
+            wrapper_roots,
+        });
+        for statement in &mut tables.statements {
+            statement.declaration = statement
+                .declaration
+                .and_then(|id| renumbered.get(&id).copied());
+        }
+        tables.declarations = declarations;
+        tables
     }
 
-    /// Each statement node takes the last declaration recorded at its
-    /// location.
-    fn new(arena: CheckedArena, declarations: Vec<CheckedDeclaration>) -> Self {
+    /// The `def` node of trait member `member`, which its trait's op names
+    /// as its method's default.
+    pub(crate) fn trait_member_root(&self, member: &CheckedTraitMember) -> Option<CheckedStmtId> {
+        self.roots.iter().find_map(|root| {
+            let node = self.statement(*root)?;
+            let CheckedStmtOp::Trait(declaration) = &node.op else {
+                return None;
+            };
+            if (&declaration.name, &node.module) != (&member.trait_name, &member.module) {
+                return None;
+            }
+            declaration.methods.get(member.method_index)?.default
+        })
+    }
+
+    /// The tables of `arena`, which declare nothing yet.
+    fn new(arena: CheckedArena) -> Self {
         let CheckedArena {
             nodes: expressions,
-            mut statements,
+            statements,
             roots,
             wrapper_roots,
         } = arena;
-        let declared: HashMap<&SourceSpan, CheckedDeclId> = declarations
-            .iter()
-            .map(|declaration| (&declaration.location, declaration.id))
-            .collect();
-        for statement in &mut statements {
-            statement.declaration = declared.get(&statement.location()).copied();
-        }
-        drop(declared);
         Self {
             expressions,
             statements,
-            declarations,
+            declarations: Vec::new(),
             roots,
             wrapper_roots,
         }
+    }
+
+    /// Make the declarations of the statements under the roots, then of
+    /// the trait members whose `def` nodes are `members`, each declaring
+    /// statement naming its own: in source preorder, the lambdas of a
+    /// statement's own expressions before it, and a declaration before the
+    /// ones its bodies make. A function's type is `function_ty`'s.
+    fn declare(
+        &mut self,
+        members: &[CheckedStmtId],
+        function_ty: &dyn Fn(&CheckedStmt) -> Option<Ty>,
+    ) {
+        let mut declarer = Declarer {
+            tables: self,
+            function_ty,
+            declarations: Vec::new(),
+            declared: Vec::new(),
+        };
+        declarer.block(&self.roots);
+        declarer.block(members);
+        let Declarer {
+            declarations,
+            declared,
+            ..
+        } = declarer;
+        for (statement, declaration) in declared {
+            self.statements[statement.0 as usize].declaration = Some(declaration);
+        }
+        self.declarations = declarations;
     }
 
     /// The tables with each node's identity its position.
@@ -2884,6 +2922,140 @@ impl CheckedTables {
                 }
             }
         }
+    }
+}
+
+/// The declarations [`CheckedTables::declare`] makes, being made.
+struct Declarer<'t> {
+    tables: &'t CheckedTables,
+    function_ty: &'t dyn Fn(&CheckedStmt) -> Option<Ty>,
+    declarations: Vec<CheckedDeclaration>,
+    /// Each declaring statement and its declaration.
+    declared: Vec<(CheckedStmtId, CheckedDeclId)>,
+}
+
+impl Declarer<'_> {
+    /// The declarations `statements` make, the ones their bodies make
+    /// held as their children.
+    fn block(&mut self, statements: &[CheckedStmtId]) -> Vec<CheckedDeclId> {
+        let mut ids = Vec::new();
+        for id in statements {
+            let Some(node) = self.tables.statement(*id) else {
+                continue;
+            };
+            for lambda in self.lambdas(&node.op) {
+                if let Some(def) = self.tables.statement(lambda)
+                    && let CheckedStmtOp::Def(declaration) = &def.op
+                {
+                    ids.push(self.declaration(
+                        def,
+                        CheckedDeclKind::Function,
+                        &declaration.name,
+                        &[&declaration.body],
+                    ));
+                }
+            }
+            let (kind, name, bodies): (_, _, Vec<&[CheckedStmtId]>) = match &node.op {
+                CheckedStmtOp::Def(declaration) => (
+                    CheckedDeclKind::Function,
+                    &declaration.name,
+                    vec![&declaration.body],
+                ),
+                CheckedStmtOp::Struct(declaration) => (
+                    CheckedDeclKind::Struct,
+                    &declaration.name,
+                    declaration
+                        .methods
+                        .iter()
+                        .map(|method| method.body.as_slice())
+                        .collect(),
+                ),
+                CheckedStmtOp::Trait(declaration) => {
+                    (CheckedDeclKind::Trait, &declaration.name, Vec::new())
+                }
+                CheckedStmtOp::VarDecl { name, .. } | CheckedStmtOp::RefDecl { name, .. } => {
+                    (CheckedDeclKind::Binding, name, Vec::new())
+                }
+                CheckedStmtOp::For { var, .. } | CheckedStmtOp::ComptimeFor { var, .. } => {
+                    (CheckedDeclKind::Binding, var, node.op.bodies())
+                }
+                CheckedStmtOp::Try {
+                    except: Some((Some(name), _)),
+                    ..
+                } => (CheckedDeclKind::Binding, name, node.op.bodies()),
+                CheckedStmtOp::Comptime { name, .. } => {
+                    (CheckedDeclKind::CompileTime, name, Vec::new())
+                }
+                // A control-flow statement declares nothing; its bodies'
+                // declarations are its block's.
+                op => {
+                    for body in op.bodies() {
+                        ids.extend(self.block(body));
+                    }
+                    continue;
+                }
+            };
+            ids.push(self.declaration(node, kind, name, &bodies));
+        }
+        ids
+    }
+
+    /// The declaration of kind `kind` and name `name` the statement `node`
+    /// makes, whose children are the declarations of `bodies`.
+    fn declaration(
+        &mut self,
+        node: &CheckedStmt,
+        kind: CheckedDeclKind,
+        name: &str,
+        bodies: &[&[CheckedStmtId]],
+    ) -> CheckedDeclId {
+        let id = CheckedDeclId(self.declarations.len() as u32);
+        let ty = match kind {
+            CheckedDeclKind::Function => (self.function_ty)(node),
+            CheckedDeclKind::Binding | CheckedDeclKind::CompileTime => node.binding_ty.clone(),
+            CheckedDeclKind::Struct | CheckedDeclKind::Trait => None,
+        };
+        self.declarations.push(CheckedDeclaration {
+            id,
+            kind,
+            name: name.to_string(),
+            location: node.location(),
+            binding: node.binding,
+            ty,
+            children: Vec::new(),
+        });
+        self.declared.push((node.id, id));
+        let children = bodies.iter().flat_map(|body| self.block(body)).collect();
+        self.declarations[id.0 as usize].children = children;
+        id
+    }
+
+    /// The `def` nodes of the lambdas in `op`'s own expressions, a
+    /// declaration's signature's and a constant's constraints excepted, in
+    /// source order; a lambda in a lambda is its `def`'s body's.
+    fn lambdas(&self, op: &CheckedStmtOp) -> Vec<CheckedStmtId> {
+        let expressions = match op {
+            CheckedStmtOp::Comptime { value, .. } => vec![*value],
+            CheckedStmtOp::Def(_) | CheckedStmtOp::Struct(_) | CheckedStmtOp::Trait(_) => {
+                Vec::new()
+            }
+            op => op.expressions(),
+        };
+        let mut lambdas = Vec::new();
+        for expression in expressions {
+            self.tables.walk_expression(expression, &mut |node| {
+                if let Walked::Expression(CheckedExpr {
+                    op: CheckedOp::Lambda { def },
+                    ..
+                }) = node
+                {
+                    lambdas.push(*def);
+                    return WalkResult::SkipBodies;
+                }
+                WalkResult::Advance
+            });
+        }
+        lambdas
     }
 }
 
@@ -3000,15 +3172,11 @@ impl mojito_ast::ast::DeclaredParam for SignatureParam {
 /// What one check of an elaborated program established, before the executable
 /// handoff is assembled.
 ///
-/// Discovery needs a round's requests, not its checked expression arena, and
-/// every round but the last is re-elaborated and checked again. A round
-/// therefore ends here: every rejecting check has already run, the request
-/// queries below read the recorded facts directly, and only the round that
-/// converges pays for [`Self::finalize`]. This is not an executable program
-/// and never reaches HIR or MIR.
-///
-/// It is [`CheckedProgram::new`]'s input: the check's facts, one record per
-/// occurrence ([`NodeFacts`]), beside its declaration-site tables.
+/// It is [`CheckedProgram::new`]'s input alone, until the check emits its
+/// nodes itself: the check's facts, one record per occurrence
+/// ([`NodeFacts`]), and the syntax they were recorded at, beside its
+/// declaration-site tables. Every rejecting check has already run. It is
+/// not an executable program and never reaches HIR or MIR.
 #[derive(Debug, Clone)]
 pub struct DiscoveryResult {
     pub statements: Vec<Stmt>,
@@ -3042,44 +3210,12 @@ impl DiscoveryResult {
     pub fn finalize(self) -> CheckedProgram {
         CheckedProgram::new(self)
     }
-
-    /// The generic instantiation recorded at each call.
-    pub fn generic_instantiations(&self) -> HashMap<SourceSpan, GenericInstantiation> {
-        fact_index(&self.node_facts, |facts| {
-            facts.generic_instantiation.as_ref()
-        })
-    }
-
-    /// The method instantiation recorded at each call.
-    pub fn method_instantiations(&self) -> HashMap<SourceSpan, MethodInstantiation> {
-        fact_index(&self.node_facts, |facts| {
-            facts.method_instantiation.as_ref()
-        })
-    }
-
-    pub fn struct_instantiations(&self) -> &[StructInstantiation] {
-        &self.struct_instantiations
-    }
-
-    /// The checked type of every declaration the arena would hold.
-    pub fn declaration_types(&self) -> Vec<Ty> {
-        build_checked_declarations(
-            &self.statements,
-            &self.trait_members,
-            &self.checked_types,
-            &self.node_facts,
-        )
-        .into_iter()
-        .filter_map(|declaration| declaration.ty)
-        .collect()
-    }
 }
 
 /// A successfully checked program plus semantic facts that downstream phases
 /// previously recomputed from AST syntax or checker-private side tables.
 #[derive(Debug, Clone)]
 pub struct CheckedProgram {
-    statements: Vec<Stmt>,
     compatibility_overload_targets: HashMap<SourceSpan, String>,
     generic_instantiations: HashMap<SourceSpan, GenericInstantiation>,
     method_instantiations: HashMap<SourceSpan, MethodInstantiation>,
@@ -3486,11 +3622,23 @@ impl CheckedProgram {
             signatures,
         );
         drop(expressions_span);
-        let _declarations = mojito_common::timing::span("declarations");
-        let declarations =
-            build_checked_declarations(&statements, &trait_members, &checked_types, &node_facts);
+        let declarations_span = mojito_common::timing::span("declarations");
+        let mut tables = CheckedTables::new(arena);
+        let members: Vec<CheckedStmtId> = trait_members
+            .iter()
+            .filter_map(|member| tables.trait_member_root(member))
+            .collect();
+        tables.declare(&members, &|node| {
+            checked_types
+                .get(&AnnotationSite::FunctionType {
+                    module: node.module.clone(),
+                    declaration: node.span,
+                    syntax: node.syntax_id,
+                })
+                .cloned()
+        });
+        drop(declarations_span);
         Self {
-            statements,
             compatibility_overload_targets: fact_index(&node_facts, |facts| {
                 facts.overload_target.as_ref()
             }),
@@ -3509,7 +3657,7 @@ impl CheckedProgram {
             }),
             checked_types,
             generic_parameters,
-            tables: Arc::new(CheckedTables::new(arena, declarations)),
+            tables: Arc::new(tables),
             explicit_destroy_types,
             struct_destructors,
             conformances,
@@ -3574,7 +3722,6 @@ impl CheckedProgram {
             declaration_effects,
         } = sites;
         Self {
-            statements: Vec::new(),
             compatibility_overload_targets: overload_targets,
             generic_instantiations: HashMap::new(),
             method_instantiations: HashMap::new(),
@@ -3593,12 +3740,6 @@ impl CheckedProgram {
             default_wrappers: wrapper.into_iter().collect(),
             trait_members: trait_member.into_iter().collect(),
         }
-    }
-
-    /// Elaborated statements accepted by semantic checking; a package
-    /// unit's program holds none.
-    pub fn statements(&self) -> &[Stmt] {
-        &self.statements
     }
 
     /// The wrapper of every trait default a struct of the program inherits
@@ -3720,6 +3861,20 @@ impl CheckedProgram {
     /// Module identity attached to a declaration or expression location.
     pub fn declaration_module<'a>(&self, location: &'a SourceSpan) -> Option<&'a str> {
         location.source.as_deref()
+    }
+
+    pub(crate) const fn checked_types(&self) -> &HashMap<AnnotationSite, Ty> {
+        &self.checked_types
+    }
+
+    pub(crate) const fn generic_parameters(
+        &self,
+    ) -> &HashMap<GenericSite, Vec<mojito_types::types::ParamDecl>> {
+        &self.generic_parameters
+    }
+
+    pub(crate) const fn declaration_effects(&self) -> &HashMap<AnnotationSite, DeclarationEffect> {
+        &self.declaration_effects
     }
 }
 
@@ -4479,6 +4634,11 @@ impl<'a> ArenaBuilder<'a> {
                 raises: *raises,
                 where_clauses: values(self, where_clauses),
                 body: self.function_body(body),
+                captures: self
+                    .facts(&statement.source_span())
+                    .captures
+                    .clone()
+                    .unwrap_or_default(),
             })),
             StmtKind::Struct {
                 name,
@@ -4928,185 +5088,6 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
 }
 
 /// The declarations of `statements`, then of each trait member's.
-fn build_checked_declarations(
-    statements: &[Stmt],
-    trait_members: &[CheckedTraitMember],
-    annotation_types: &HashMap<AnnotationSite, Ty>,
-    facts: &HashMap<SourceSpan, NodeFacts>,
-) -> Vec<CheckedDeclaration> {
-    fn block(
-        statements: &[Stmt],
-        out: &mut Vec<CheckedDeclaration>,
-        annotation_types: &HashMap<AnnotationSite, Ty>,
-        facts: &HashMap<SourceSpan, NodeFacts>,
-    ) -> Vec<CheckedDeclId> {
-        use mojito_ast::ast::StmtKind;
-        let mut ids = Vec::new();
-        for statement in statements {
-            // Lambda expressions in this statement's own expressions declare
-            // hidden nested functions in this block's scope.
-            let mut lambda_nodes = Vec::new();
-            mojito_ast::ast::lambdas_in_stmt(statement, &mut lambda_nodes);
-            for lambda in lambda_nodes {
-                let mojito_ast::ast::ExprKind::Lambda { def } = &lambda.kind else {
-                    continue;
-                };
-                let StmtKind::Def {
-                    name,
-                    body: def_body,
-                    ..
-                } = &def.kind
-                else {
-                    continue;
-                };
-                let id = CheckedDeclId(out.len() as u32);
-                let location = def.source_span();
-                out.push(CheckedDeclaration {
-                    id,
-                    kind: CheckedDeclKind::Function,
-                    name: name.clone(),
-                    binding: facts
-                        .get(&location)
-                        .and_then(|facts| facts.statement_binding),
-                    captures: facts
-                        .get(&location)
-                        .and_then(|facts| facts.captures.clone())
-                        .unwrap_or_default(),
-                    location,
-                    ty: annotation_types
-                        .get(&AnnotationSite::FunctionType {
-                            module: def.module.clone(),
-                            declaration: def.span,
-                            syntax: def.syntax_id,
-                        })
-                        .cloned(),
-                    children: Vec::new(),
-                });
-                let children = block(def_body, out, annotation_types, facts);
-                out[id.0 as usize].children = children;
-                ids.push(id);
-            }
-            let (kind, name) = match &statement.kind {
-                StmtKind::Def { name, .. } => (CheckedDeclKind::Function, name.clone()),
-                StmtKind::Struct { name, .. } => (CheckedDeclKind::Struct, name.clone()),
-                StmtKind::Trait { name, .. } => (CheckedDeclKind::Trait, name.clone()),
-                StmtKind::VarDecl { name, .. } | StmtKind::RefDecl { name, .. } => {
-                    (CheckedDeclKind::Binding, name.clone())
-                }
-                StmtKind::For { var, .. } | StmtKind::ComptimeFor { var, .. } => {
-                    (CheckedDeclKind::Binding, var.clone())
-                }
-                StmtKind::Try {
-                    except: Some((Some(name), _)),
-                    ..
-                } => (CheckedDeclKind::Binding, name.clone()),
-                StmtKind::Comptime { name, .. } => (CheckedDeclKind::CompileTime, name.clone()),
-                _ => {
-                    // Control-flow declarations are discovered recursively below;
-                    // no fake declaration node is introduced for the container.
-                    let nested: Vec<&[Stmt]> = match &statement.kind {
-                        StmtKind::If { branches, orelse }
-                        | StmtKind::ComptimeIf { branches, orelse } => branches
-                            .iter()
-                            .map(|(_, body)| body.as_slice())
-                            .chain(orelse.iter().map(Vec::as_slice))
-                            .collect(),
-                        StmtKind::While { body, orelse, .. }
-                        | StmtKind::For { body, orelse, .. } => std::iter::once(body.as_slice())
-                            .chain(orelse.iter().map(Vec::as_slice))
-                            .collect(),
-                        StmtKind::Try {
-                            body,
-                            except,
-                            orelse,
-                            finalbody,
-                        } => std::iter::once(body.as_slice())
-                            .chain(except.iter().map(|(_, body)| body.as_slice()))
-                            .chain(orelse.iter().map(Vec::as_slice))
-                            .chain(finalbody.iter().map(Vec::as_slice))
-                            .collect(),
-                        StmtKind::With { body, .. } | StmtKind::Scope(body) => vec![body],
-                        _ => Vec::new(),
-                    };
-                    for body in nested {
-                        ids.extend(block(body, out, annotation_types, facts));
-                    }
-                    continue;
-                }
-            };
-            let id = CheckedDeclId(out.len() as u32);
-            let location = statement.source_span();
-            let ty = match kind {
-                CheckedDeclKind::Function => annotation_types
-                    .get(&AnnotationSite::FunctionType {
-                        module: statement.module.clone(),
-                        declaration: statement.span,
-                        syntax: statement.syntax_id,
-                    })
-                    .cloned(),
-                CheckedDeclKind::Binding | CheckedDeclKind::CompileTime => facts
-                    .get(&location)
-                    .and_then(|facts| facts.binding_ty.clone()),
-                CheckedDeclKind::Struct | CheckedDeclKind::Trait => None,
-            };
-            out.push(CheckedDeclaration {
-                id,
-                kind,
-                name,
-                binding: facts
-                    .get(&location)
-                    .and_then(|facts| facts.statement_binding),
-                captures: facts
-                    .get(&location)
-                    .and_then(|facts| facts.captures.clone())
-                    .unwrap_or_default(),
-                location,
-                ty,
-                children: Vec::new(),
-            });
-            let children = match &statement.kind {
-                StmtKind::Def { body, .. } => block(body, out, annotation_types, facts),
-                StmtKind::Struct { methods, .. } => methods
-                    .iter()
-                    .flat_map(|method| block(&method.body, out, annotation_types, facts))
-                    .collect(),
-                StmtKind::For { body, orelse, .. } => block(body, out, annotation_types, facts)
-                    .into_iter()
-                    .chain(
-                        orelse
-                            .iter()
-                            .flat_map(|body| block(body, out, annotation_types, facts)),
-                    )
-                    .collect(),
-                StmtKind::Try {
-                    body,
-                    except,
-                    orelse,
-                    finalbody,
-                } => std::iter::once(body.as_slice())
-                    .chain(except.iter().map(|(_, body)| body.as_slice()))
-                    .chain(orelse.iter().map(Vec::as_slice))
-                    .chain(finalbody.iter().map(Vec::as_slice))
-                    .flat_map(|body| block(body, out, annotation_types, facts))
-                    .collect(),
-                StmtKind::ComptimeFor { body, .. } => block(body, out, annotation_types, facts),
-                _ => Vec::new(),
-            };
-            out[id.0 as usize].children = children;
-            ids.push(id);
-        }
-        ids
-    }
-    let mut declarations = Vec::new();
-    let _ = block(statements, &mut declarations, annotation_types, facts);
-    let members: Vec<Stmt> = trait_members
-        .iter()
-        .map(|member| member.declaration.clone())
-        .collect();
-    let _ = block(&members, &mut declarations, annotation_types, facts);
-    declarations
-}
-
 /// The capability a materialized temporary's hidden slot is lent with.
 ///
 /// For the adjustments [`materialized_borrow_owner`] accepts: a

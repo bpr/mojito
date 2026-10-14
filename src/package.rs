@@ -301,7 +301,7 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
     let entry = root.join(".package").join("std.mojo");
     let (linked, records) = link_source_recording(&source, &entry, LinkOptions::default())
         .map_err(CompilerError::Module)?;
-    let (compiled, exports) = Compiler::default().compile_for_package(&linked)?;
+    let (compiled, interfaces) = Compiler::default().compile_for_package(&linked)?;
     // A declaration of a module the link recorded no row for is refused
     // when the records encode.
     let modules = records
@@ -342,12 +342,11 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
         }
         program.functions.push((name.clone(), function.clone()));
     }
-    let units = packaged_units(&compiled, &exports.facts)
-        .map_err(|error| CompilerError::Verify(vec![error]))?;
+    let units = packaged_units(&compiled).map_err(|error| CompilerError::Verify(vec![error]))?;
     // The checker encodes its residues inside the package's type encoding,
     // so they refer to the package's type section as its other records do.
     let records = || {
-        exports.interfaces.records(
+        interfaces.records(
             modules,
             program.declarations.structs.clone(),
             program.declarations.functions.clone(),
@@ -378,19 +377,18 @@ fn refuse_install_paths(bytes: &[u8], root: &LibraryRoot) -> Result<(), Compiler
     })
 }
 
-/// Each lowering unit of the library's checked program, with its share of
-/// the check's `facts` and the names of the functions it places: every
+/// Each lowering unit of the library's checked program, with the names of
+/// the functions it places: every
 /// function the library lowers it to, unless an earlier unit lowers to the
 /// same one.
 fn packaged_units(
     compiled: &crate::compiler::CompiledProgram,
-    facts: &crate::checked::DiscoveryResult,
 ) -> Result<Vec<(crate::checked_unit::CheckedUnit, Vec<String>)>, String> {
     let checked = compiled.checked();
     let (lowered, ranges) = crate::mir::lower_checked_program_units(checked);
     let mut placed = std::collections::HashSet::new();
-    Ok(facts
-        .units(checked.tables(), &checked.lowering_units())?
+    Ok(checked
+        .units()?
         .into_iter()
         .zip(ranges)
         .map(|(unit, range)| {

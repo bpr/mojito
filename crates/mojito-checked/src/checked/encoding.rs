@@ -57,7 +57,6 @@ masked_node! {
             binding,
             children,
             ty,
-            captures,
         }
     }
 }

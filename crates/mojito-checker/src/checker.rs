@@ -90,28 +90,10 @@ pub fn check_program_in(
     stmts: &[Stmt],
     context: &mut CheckContext,
 ) -> Result<mojito_checked::checked::CheckedProgram, TypeError> {
-    let discovery = check_program_for_discovery(stmts, context)?;
-    if context.record_interfaces {
-        context.facts = Some(Box::new(discovery.clone()));
-    }
+    let discovery = check_program_carrying(stmts, context).map(PassCarry::into_result)?;
     let _arena = timing::span("arena");
     timing::count("arena_builds", 1);
     Ok(discovery.finalize())
-}
-
-/// Check an elaborated program and stop before the executable handoff is
-/// assembled.
-///
-/// Every check that can reject the program has run: the transfer-effect
-/// fixpoint, reference-result reads, context-manager splicing, and explicit
-/// destruction. What is left is building the checked arena
-/// ([`DiscoveryResult::finalize`](mojito_checked::checked::DiscoveryResult::finalize)),
-/// which a client reading the facts alone need not pay for.
-pub fn check_program_for_discovery(
-    stmts: &[Stmt],
-    context: &mut CheckContext,
-) -> Result<mojito_checked::checked::DiscoveryResult, TypeError> {
-    check_program_carrying(stmts, context).map(PassCarry::into_result)
 }
 
 /// The per-compilation state one check runs in.
@@ -141,9 +123,6 @@ pub struct CheckContext {
     /// The module constants the program's comptime elaboration resolved,
     /// which an exported interface carries.
     elaborated: ElaboratedConstants,
-    /// What the last check that exported interfaces recorded, before its
-    /// checked arena was built: a package keeps each body's share of it.
-    facts: Option<Box<mojito_checked::checked::DiscoveryResult>>,
 }
 
 impl CheckContext {
@@ -156,7 +135,6 @@ impl CheckContext {
             record_interfaces: false,
             interfaces: None,
             elaborated: Vec::new(),
-            facts: None,
         }
     }
 
@@ -189,19 +167,6 @@ impl CheckContext {
         self.interfaces
             .take()
             .unwrap_or_else(|| Err("the check exported no interface".to_string()))
-    }
-
-    /// What the last check that exported interfaces recorded, before its
-    /// checked arena was built.
-    ///
-    /// # Errors
-    ///
-    /// When no check exported interfaces.
-    pub fn take_facts(&mut self) -> Result<mojito_checked::checked::DiscoveryResult, String> {
-        self.facts
-            .take()
-            .map(|facts| *facts)
-            .ok_or_else(|| "the check recorded no facts".to_string())
     }
 
     pub const fn param_context(&self) -> &ParamContext {
@@ -244,7 +209,7 @@ impl Default for CheckContext {
     }
 }
 
-/// [`check_program_for_discovery`]'s passes, returning the last pass's
+/// [`check_program_in`]'s passes, returning the last pass's
 /// carry.
 ///
 /// Each transfer pass after the first starts from the previous pass's

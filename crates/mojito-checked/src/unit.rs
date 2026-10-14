@@ -8,8 +8,8 @@
 
 use crate::checked::{
     AnnotationSite, CheckedDefaultWrapper, CheckedProgram, CheckedStmtId, CheckedStmtOp,
-    CheckedTables, CheckedTraitMember, DeclarationEffect, DiscoveryResult, GenericSite,
-    InstalledSites, StructShell, WalkResult, Walked,
+    CheckedTables, CheckedTraitMember, DeclarationEffect, GenericSite, InstalledSites, StructShell,
+    WalkResult, Walked,
 };
 use crate::package::{LibraryRoot, ProgramConstants, ProgramOverloads};
 use mojito_common::token::SyntaxId;
@@ -127,6 +127,79 @@ impl CheckedProgram {
         }
         units.extend(constants);
         units
+    }
+
+    /// Each lowering unit's checked nodes and site facts, in
+    /// [`Self::lowering_units`]' order.
+    ///
+    /// A unit's nodes are its subtree of the program's tables. A
+    /// site fact belongs to every unit whose nodes hold the occurrence its
+    /// key names, or the occurrence that one was derived from, and a
+    /// member's own sites to the member; a struct's own sites belong to
+    /// none, since its declaration holds them.
+    ///
+    /// # Errors
+    ///
+    /// When a unit names a node the program's tables do not hold.
+    pub fn units(&self) -> Result<Vec<CheckedUnit>, String> {
+        let tables = self.tables();
+        let units = self.lowering_units();
+        let mut owners = Owners::default();
+        let mut syntax = Vec::with_capacity(units.len());
+        let mut sliced: Vec<CheckedUnit> = units
+            .iter()
+            .enumerate()
+            .map(|(position, unit)| {
+                let checked = CheckedUnit::extracted(unit, tables);
+                let nodes = &checked.tables;
+                if nodes.roots().is_empty() || nodes.statements.is_empty() {
+                    return Err("a lowering unit names no statement of the program".to_string());
+                }
+                let mut occurrences = Vec::new();
+                let mut visit = |node: Walked<'_>| {
+                    occurrences.push(match node {
+                        Walked::Statement(statement) => statement.syntax_id,
+                        Walked::Expression(expression) => expression.syntax_id,
+                    });
+                    WalkResult::Advance
+                };
+                nodes.walk(nodes.roots(), &mut visit);
+                nodes.walk(nodes.wrapper_roots(0), &mut visit);
+                let mut ranks = HashMap::new();
+                for occurrence in occurrences {
+                    let next = ranks.len();
+                    ranks.entry(occurrence).or_insert(next);
+                    let units = owners.syntax.entry(occurrence).or_default();
+                    if units.last() != Some(&position) {
+                        units.push(position);
+                    }
+                }
+                syntax.push(UnitSyntax { ranks });
+                if let Some((module, name, member)) = unit.structure(tables) {
+                    owners
+                        .members
+                        .entry((module.clone(), name.to_string(), member))
+                        .or_default()
+                        .push(position);
+                }
+                Ok(checked)
+            })
+            .collect::<Result<_, String>>()?;
+        let checked_types = shares(self.checked_types(), &owners, &syntax);
+        let generic_parameters = shares(self.generic_parameters(), &owners, &syntax);
+        let declaration_effects = shares(self.declaration_effects(), &owners, &syntax);
+        for ((unit, checked_types), (generic_parameters, declaration_effects)) in sliced
+            .iter_mut()
+            .zip(checked_types)
+            .zip(generic_parameters.into_iter().zip(declaration_effects))
+        {
+            unit.sites = SiteFacts {
+                checked_types,
+                generic_parameters,
+                declaration_effects,
+            };
+        }
+        Ok(sliced)
     }
 }
 
@@ -339,82 +412,6 @@ impl UnitProgram {
     }
 }
 
-impl DiscoveryResult {
-    /// Each of `units`' checked nodes and site facts, in order.
-    ///
-    /// A unit's nodes are its subtree of the whole program's `tables`. A
-    /// site fact belongs to every unit whose nodes hold the occurrence its
-    /// key names, or the occurrence that one was derived from, and a
-    /// member's own sites to the member; a struct's own sites belong to
-    /// none, since its declaration holds them.
-    ///
-    /// # Errors
-    ///
-    /// When a unit names a node the program's tables do not hold.
-    pub fn units(
-        &self,
-        tables: &CheckedTables,
-        units: &[LoweringUnit<'_>],
-    ) -> Result<Vec<CheckedUnit>, String> {
-        let mut owners = Owners::default();
-        let mut syntax = Vec::with_capacity(units.len());
-        let mut sliced: Vec<CheckedUnit> = units
-            .iter()
-            .enumerate()
-            .map(|(position, unit)| {
-                let checked = CheckedUnit::extracted(unit, tables);
-                let nodes = &checked.tables;
-                if nodes.roots().is_empty() || nodes.statements.is_empty() {
-                    return Err("a lowering unit names no statement of the program".to_string());
-                }
-                let mut occurrences = Vec::new();
-                let mut visit = |node: Walked<'_>| {
-                    occurrences.push(match node {
-                        Walked::Statement(statement) => statement.syntax_id,
-                        Walked::Expression(expression) => expression.syntax_id,
-                    });
-                    WalkResult::Advance
-                };
-                nodes.walk(nodes.roots(), &mut visit);
-                nodes.walk(nodes.wrapper_roots(0), &mut visit);
-                let mut ranks = HashMap::new();
-                for occurrence in occurrences {
-                    let next = ranks.len();
-                    ranks.entry(occurrence).or_insert(next);
-                    let units = owners.syntax.entry(occurrence).or_default();
-                    if units.last() != Some(&position) {
-                        units.push(position);
-                    }
-                }
-                syntax.push(UnitSyntax { ranks });
-                if let Some((module, name, member)) = unit.structure(tables) {
-                    owners
-                        .members
-                        .entry((module.clone(), name.to_string(), member))
-                        .or_default()
-                        .push(position);
-                }
-                Ok(checked)
-            })
-            .collect::<Result<_, String>>()?;
-        let checked_types = shares(&self.checked_types, &owners, &syntax);
-        let generic_parameters = shares(&self.generic_parameters, &owners, &syntax);
-        let declaration_effects = shares(&self.declaration_effects, &owners, &syntax);
-        for ((unit, checked_types), (generic_parameters, declaration_effects)) in sliced
-            .iter_mut()
-            .zip(checked_types)
-            .zip(generic_parameters.into_iter().zip(declaration_effects))
-        {
-            unit.sites = SiteFacts {
-                checked_types,
-                generic_parameters,
-                declaration_effects,
-            };
-        }
-        Ok(sliced)
-    }
-}
-
 /// The units each fact key belongs to.
 #[derive(Default)]
 struct Owners {
@@ -500,7 +497,7 @@ struct SiteFacts {
     declaration_effects: Vec<(AnnotationSite, DeclarationEffect)>,
 }
 
-/// One lowering unit's syntax as [`DiscoveryResult::units`] orders its
+/// One lowering unit's syntax as [`CheckedProgram::units`] orders its
 /// site facts by it.
 struct UnitSyntax {
     /// Each occurrence's position in the unit's walk.

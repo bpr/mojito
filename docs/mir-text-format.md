@@ -924,10 +924,10 @@ lowering unit, one record per library declaration, and one module table
 holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 49`.
+MLIR bytecode throughout. The format line is `mojito-package 50`.
 
 ```text
-mojito-package 49
+mojito-package 50
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode, then the type section>
@@ -1066,7 +1066,7 @@ mojito-package 49
   method (none for a wrapper). A node's identity is its position, given
   back on decode. Each expression, statement, and declaration node
   encodes as an MLIR bytecode op does behind its `OpEncodingMask`
-  (`checked::encoding`, format 49): an encoding mask (a `u16` varint),
+  (`checked::encoding`, format 50): an encoding mask (a `u16` varint),
   then its always-present parts, then only the attributes the mask
   names, in the mask's bit order; an absent attribute (`None`, empty, or
   default effects) writes nothing. An expression's parts are its op,
@@ -1076,12 +1076,12 @@ mojito-package 49
   and `call_transfers`, most frequent first, so a common node's mask is
   one byte. A statement's parts are its op, span, module, and syntax id,
   bits 0–2 naming `binding`, `declaration`, and `binding_ty`; a
-  declaration's are its kind, name, and location, bits 0–3 naming
-  `binding`, `children`, `ty`, and `captures`. No statement or expression is encoded as syntax: a
-  declaration op encodes its symbol, its registered name for a method,
-  and its checked signature (its compile-time parameters, each declared
-  parameter's type, its result type, and its effect), and a struct shell
-  its fields' checked types. An
+  declaration's are its kind, name, and location, bits 0–2 naming
+  `binding`, `children`, and `ty`. No statement or expression is encoded
+  as syntax: a declaration op encodes its symbol, its registered name for
+  a method, and its checked signature (its compile-time parameters, each
+  declared parameter's type, its result type, and its effect), a `def` op
+  its explicit captures, and a struct shell its fields' checked types. An
   op's type operand encodes as the attribute the check resolved, a type,
   value, or origin. The facts of
   declaration sites (checked annotation types, compile-time parameter

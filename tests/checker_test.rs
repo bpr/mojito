@@ -122,11 +122,18 @@ fn checked_declarations_preserve_shadowed_function_and_unused_capture_identities
         .find(|declaration| declaration.name == "values")
         .and_then(|declaration| declaration.binding)
         .expect("values binding");
-    let take = checked
-        .declarations()
-        .iter()
-        .find(|declaration| declaration.name == "take")
-        .expect("take declaration");
+    let def_named = |name: &str| {
+        checked
+            .tables()
+            .statements
+            .iter()
+            .find_map(|node| match &node.op {
+                mojito::checked::CheckedStmtOp::Def(def) if def.name == name => Some(def),
+                _ => None,
+            })
+            .expect("nested def")
+    };
+    let take = def_named("take");
     assert!(matches!(
         take.captures.as_slice(),
         [capture]
@@ -140,11 +147,7 @@ fn checked_declarations_preserve_shadowed_function_and_unused_capture_identities
         .find(|declaration| declaration.name == "marker")
         .and_then(|declaration| declaration.binding)
         .expect("marker binding");
-    let inspect = checked
-        .declarations()
-        .iter()
-        .find(|declaration| declaration.name == "inspect")
-        .expect("inspect declaration");
+    let inspect = def_named("inspect");
     assert!(matches!(
         inspect.captures.as_slice(),
         [capture]

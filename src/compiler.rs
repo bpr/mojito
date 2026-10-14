@@ -365,17 +365,14 @@ impl Compiler {
     pub(crate) fn compile_for_package(
         &self,
         linked: &[Stmt],
-    ) -> Result<(CompiledProgram, PackageExports), CompilerError> {
+    ) -> Result<(CompiledProgram, crate::checker::InterfaceExport), CompilerError> {
         let mut context = CheckContext::new();
         context.record_interfaces();
         let program = self.compile_importing(linked, None, &mut context, true)?;
         let interfaces = context
             .take_interfaces()
             .map_err(|error| CompilerError::Verify(vec![error]))?;
-        let facts = context
-            .take_facts()
-            .map_err(|error| CompilerError::Verify(vec![error]))?;
-        Ok((program, PackageExports { interfaces, facts }))
+        Ok((program, interfaces))
     }
 
     /// The bundled library's compiled package, when this compiler imports
@@ -560,14 +557,6 @@ impl Compiler {
         let program = self.compile_path(entry)?;
         self.execute(&program)
     }
-}
-
-/// What the compilation of a package's program exports: what its check
-/// recorded of it as a whole and its check's library interface.
-pub(crate) struct PackageExports {
-    pub interfaces: crate::checker::InterfaceExport,
-    /// What its check recorded, before the checked arena was built.
-    pub facts: crate::checked::DiscoveryResult,
 }
 
 /// A source link, which read no package record.

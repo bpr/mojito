@@ -315,7 +315,7 @@ fn analyze_node(
     } else {
         mojito_symbol::symbol::nested_lifted_name(parent_mangled, name)
     };
-    let captures = analyze_captures(declaration);
+    let captures = analyze_captures(def);
 
     let children = analyze_root_children(checked, &mangled, &def.body);
 
@@ -717,11 +717,8 @@ fn mir_nested_callable_ty(mut ty: Ty) -> Ty {
 
 /// Copy the checker-resolved capture environment. This includes unused explicit
 /// entries and any ancestor forwarding selected by enclosing capture policies.
-fn analyze_captures(
-    declaration: &mojito_checked::checked::CheckedDeclaration,
-) -> Vec<NestedCapture> {
-    declaration
-        .captures
+fn analyze_captures(def: &mojito_checked::checked::CheckedDef) -> Vec<NestedCapture> {
+    def.captures
         .iter()
         .map(|capture| NestedCapture {
             name: capture.name.clone(),

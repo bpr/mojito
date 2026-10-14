@@ -1201,21 +1201,22 @@ const TEMPLATE_TWO_TYPES: &str = "def tag[T: Copyable](x: T) -> Int:\n    return
 fn clone_return_values<'a>(
     program: &'a mojito::compiler::CompiledProgram,
     template: &str,
-) -> Vec<&'a mojito::ast::Expr> {
+) -> Vec<&'a mojito::checked::CheckedExpr> {
     let prefix = format!("{template}$");
-    program
-        .checked()
-        .statements()
+    let tables = program.checked().tables();
+    tables
+        .roots()
         .iter()
-        .filter_map(|statement| match &statement.kind {
-            mojito::ast::StmtKind::Def { name, body, .. } if name.starts_with(&prefix) => {
-                Some(body)
+        .filter_map(|root| tables.statement(*root))
+        .filter_map(|node| match &node.op {
+            mojito::checked::CheckedStmtOp::Def(def) if def.name.starts_with(&prefix) => {
+                Some(&def.body)
             }
             _ => None,
         })
-        .flat_map(|body| body.iter())
-        .filter_map(|statement| match &statement.kind {
-            mojito::ast::StmtKind::Return(Some(value)) => Some(value),
+        .flatten()
+        .filter_map(|statement| match &tables.statement(*statement)?.op {
+            mojito::checked::CheckedStmtOp::Return(Some(value)) => tables.expression(*value),
             _ => None,
         })
         .collect()
@@ -2228,42 +2229,6 @@ fn template_value_struct_methods_are_served_on_the_generator() {
         compiler.execute(&program).expect("execute").output,
         "[2, 4, 6, 8]\n8 [4, 4]\n"
     );
-}
-
-#[test]
-fn discovery_matches_the_checked_program() {
-    // A `DiscoveryResult` answers the checked facts before the program is
-    // assembled: its declaration types and recorded instantiations must be
-    // exactly the program's, in its order. A package unit is the
-    // program's subtree, so no query walks expressions the arena does.
-    for benchmark in ["tstring", "generic", "stdlib_heavy"] {
-        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("benchmarks/compile")
-            .join(format!("{benchmark}.mojo"));
-        let linked = mojito::link(&path).expect("link");
-        let program = mojito::elaborate(linked).expect("elaborate");
-        let discovery = mojito::checker::check_program_for_discovery(
-            &program,
-            &mut mojito::checker::CheckContext::default(),
-        )
-        .expect("check");
-        let declaration_types = discovery.declaration_types();
-        let generic = discovery.generic_instantiations().clone();
-        let methods = discovery.method_instantiations().clone();
-        let structs = discovery.struct_instantiations().to_vec();
-
-        let checked = discovery.finalize();
-        assert!(!checked.expressions().is_empty(), "{benchmark}");
-        let arena_declarations: Vec<_> = checked
-            .declarations()
-            .iter()
-            .filter_map(|declaration| declaration.ty.clone())
-            .collect();
-        assert_eq!(declaration_types, arena_declarations, "{benchmark}");
-        assert_eq!(&generic, checked.generic_instantiations(), "{benchmark}");
-        assert_eq!(&methods, checked.method_instantiations(), "{benchmark}");
-        assert_eq!(structs, checked.struct_instantiations(), "{benchmark}");
-    }
 }
 
 /// Compile `source` as a linked entry module, which gives it a module path
@@ -3316,12 +3281,12 @@ fn assert_defs_served_by_template(source: &str, output: &str, served: &[&str]) {
     let compiler = Compiler::default();
     let compiled = compile_entry(&compiler, source);
     assert_eq!(compiler.execute(&compiled).expect("execute").output, output);
-    let defs: Vec<&str> = compiled
-        .checked()
-        .statements()
+    let tables = compiled.checked().tables();
+    let defs: Vec<&str> = tables
+        .roots()
         .iter()
-        .filter_map(|statement| match &statement.kind {
-            mojito::ast::StmtKind::Def { name, .. } => Some(name.as_str()),
+        .filter_map(|root| match &tables.statement(*root)?.op {
+            mojito::checked::CheckedStmtOp::Def(def) => Some(def.name.as_str()),
             _ => None,
         })
         .collect();
@@ -3967,13 +3932,14 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
     use mojito::mir::text::package::{
         LibraryRoot, PackageBytes, PackageHeader, read_package, write_package,
     };
+    let source = "def main():\n    var xs: List[Int] = [1]\n    print(len(xs))\n";
+    let entry = std::path::Path::new("/probe/main.mojo");
     let compiled = Compiler::default()
         .with_std_package(false)
-        .compile_source(
-            "def main():\n    var xs: List[Int] = [1]\n    print(len(xs))\n",
-            std::path::Path::new("/probe/main.mojo"),
-        )
+        .compile_source(source, entry)
         .expect("compile");
+    let elaborated =
+        mojito::elaborate(mojito::link_source(source, entry).expect("link")).expect("elaborate");
     // A package's bodies are its units, which only a package build makes
     // (`package::packaged_units`): this one holds its struct and trait
     // declarations and its module table alone.
@@ -3985,8 +3951,7 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
     // it: under its declaring module, holding the traits it declares. Each
     // module's row holds a link record the container does not read.
     let records = || {
-        let declaring =
-            DeclaringModules::of(compiled.checked().statements()).expect("one module per name");
+        let declaring = DeclaringModules::of(&elaborated).expect("one module per name");
         let paths: std::collections::BTreeSet<&String> = declaring.modules().collect();
         let mut records = DeclarationRecords {
             modules: paths

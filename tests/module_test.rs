@@ -426,18 +426,19 @@ fn linked_declarations_preserve_module_identity_in_checked_program() {
         .compile_path(&main)
         .expect("compile linked modules");
     let checked = program.checked();
-    let answer = checked
-        .statements()
-        .iter()
-        .find(|stmt| matches!(&stmt.kind, mojito::ast::StmtKind::Def { name, .. } if name.ends_with("answer")))
-        .unwrap();
-    let entry = checked
-        .statements()
-        .iter()
-        .find(
-            |stmt| matches!(&stmt.kind, mojito::ast::StmtKind::Def { name, .. } if name == "main"),
-        )
-        .unwrap();
+    let def_named = |matches: &dyn Fn(&str) -> bool| {
+        checked
+            .tables()
+            .roots()
+            .iter()
+            .filter_map(|root| checked.tables().statement(*root))
+            .find(|node| {
+                matches!(&node.op, mojito::checked::CheckedStmtOp::Def(def) if matches(&def.name))
+            })
+            .unwrap()
+    };
+    let answer = def_named(&|name| name.ends_with("answer"));
+    let entry = def_named(&|name| name == "main");
     assert_eq!(answer.module.as_deref(), Some(module.to_str().unwrap()));
     assert_eq!(entry.module.as_deref(), Some(main.to_str().unwrap()));
 }
@@ -467,19 +468,23 @@ fn linked_expression_locations_include_their_source_module() {
     assert!(sources.contains(library.to_str().unwrap()));
     assert!(sources.contains(entry.to_str().unwrap()));
 
-    let from_lib = checked
-        .statements()
+    let tables = checked.tables();
+    let from_lib = tables
+        .roots()
         .iter()
-        .find(|statement| matches!(&statement.kind, mojito::ast::StmtKind::Def { name, .. } if name.ends_with("from_lib")))
+        .filter_map(|root| tables.statement(*root))
+        .find_map(|node| match &node.op {
+            mojito::checked::CheckedStmtOp::Def(def) if def.name.ends_with("from_lib") => Some(def),
+            _ => None,
+        })
         .expect("imported function");
-    let mojito::ast::StmtKind::Def { body, .. } = &from_lib.kind else {
-        unreachable!()
-    };
-    let mojito::ast::StmtKind::Return(Some(call)) = &body[0].kind else {
+    let statement = tables.statement(from_lib.body[0]).unwrap();
+    let mojito::checked::CheckedStmtOp::Return(Some(call)) = &statement.op else {
         panic!("expected return call")
     };
+    let call = tables.expression(*call).unwrap();
     assert_eq!(call.source.as_deref(), Some(library.to_str().unwrap()));
-    assert_eq!(body[0].module.as_deref(), Some(library.to_str().unwrap()));
+    assert_eq!(statement.module.as_deref(), Some(library.to_str().unwrap()));
 }
 
 #[test]

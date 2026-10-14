@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R767**.
+Next free ID: **R769**.
 
 ## Ordered Work
 
@@ -5745,19 +5745,42 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R765.
   - Model: Fable, Not Planned.
 
-- [ ] **R625 `DiscoveryResult` still stands between the check and
-  `CheckedProgram`**
+- [ ] **R767 `DiscoveryResult` still carries the check's records to
+  `CheckedProgram::new`**
 
-  Once the check emits nodes, the handoff record is a leftover.
-  - The lever: `CheckedProgram` is the checked nodes, the site facts, and
-    the declaration-level tables; `build_checked_declarations` is deleted,
-    and `DiscoveryResult::units` becomes `CheckedProgram::units`.
+  Once the check emits sealed tables, the handoff record is a leftover.
+  - The lever: `HandoffStores` builds the `CheckedProgram` from the sealed
+    tables and its declaration-level tables, and `DiscoveryResult`,
+    `finalize`, and `PassCarry::into_result` go.
+  - Delete the syntax half of `with_stmt::splice_with_desugars` if
+    nothing but the arena builder reads the spliced statements.
+  - This also closes R521.
   - Update `docs/pliron-future.md`'s "checker (+ checked handoff)" row to
     say the output is emitted ops.
-  - Then judge whether the node tree's remaining distance from `lit`'s ops
-    in regions earns a new `mojo-shape` entry, and file it if so.
-  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 7.
-  - Depends on R624.
+  - Then judge whether the node tree's remaining distance from `lit`'s
+    ops in regions earns its own entry, and file it if so; the plan
+    expects the distance to be recorded in that row instead.
+  - Plan: `R625-discoveryresult-still-stands-between-the-check-plan.md`,
+    Entry A.
+  - Depends on R766.
+  - Model: Fable, Not Planned.
+
+- [ ] **R768 `CheckedDeclaration` repeats what the statement nodes hold,
+  where upstream's symbol is its op**
+
+  Each declaration's kind, name, binding, and type are its statement
+  node's, and only HIR's `for` binding and MIR's nested `def`s read it.
+  - The lever: those two readers read the node, and
+    `CheckedDeclaration`, `CheckedDeclKind`, `CheckedStmt::declaration`,
+    `CheckedTables::declarations`, and `CheckedTables::declare` go.
+  - A nested `def` sharing its name with a sibling is named by its
+    position among same-named siblings, not by the global
+    `CheckedDeclId`, which a package unit renumbers: a library function
+    with two same-named nested `def`s would be refused by
+    `refuse_unequal_units` (argued from the code, not reproduced).
+  - The package format moves.
+  - Found while landing R625 (2026-10-13).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R611 A package unit's facts name the package check's binding

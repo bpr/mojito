@@ -152,7 +152,7 @@ import (every compilation that links the bundled library):
   `def`, one struct method (with its struct's name and the symbol it
   lowers to), an inherited default's wrapper, a trait default, or a
   module constant's lifted applications; its record holds its checked
-  tables (`DiscoveryResult::units`, which copies each unit's nodes out of
+  tables (`CheckedProgram::units`, which copies each unit's nodes out of
   the whole program's checked tables, as upstream's unit is an op of its
   module, never re-emitted from its source: `CheckedTables::extract`
   renumbers the subtree under the unit's statement node in the order the
@@ -1704,7 +1704,6 @@ Entry point:
 ```rust
 checker::check(program: &[Stmt]) -> Result<(), TypeError>
 checker::check_program(program: &[Stmt]) -> Result<CheckedProgram, TypeError>
-checker::check_program_for_discovery(program, context) -> Result<DiscoveryResult, TypeError>
 checker::check_program_in(program, context) -> Result<CheckedProgram, TypeError>
 ```
 
@@ -1715,13 +1714,19 @@ compilation's context (its `ParamContext`, the body-fact carry switch, and
 the requirement defaults bound at calls through a bound), which runs every
 rejecting check — the transfer-effect fixpoint, reference-result reads,
 context-manager splicing, explicit destruction — and then assembles the
-checked arena. `check_program_for_discovery` stops before the arena: a
-`DiscoveryResult` is `CheckedProgram::new`'s input, the check's facts as
-one `NodeFacts` record per occurrence, as an op holds its attributes,
-beside its declaration-site tables (annotation types, generic parameters,
-declaration effects) and its struct instantiations, with
-`DiscoveryResult::finalize` for the arena. A `DiscoveryResult` is not
-executable and never reaches HIR or MIR.
+checked arena. The check hands the arena builder a `DiscoveryResult`,
+`CheckedProgram::new`'s internal input until the check emits its nodes
+itself: the check's facts as one `NodeFacts` record per occurrence, as an
+op holds its attributes, beside its declaration-site tables (annotation
+types, generic parameters, declaration effects) and its struct
+instantiations, with `DiscoveryResult::finalize` for the arena. A
+`DiscoveryResult` is not executable, never reaches HIR or MIR, and no
+client reads it. `CheckedProgram` holds no syntax: it is the checked
+nodes, the site facts, and the declaration-level tables. Its declarations
+are made by a walk over the statement nodes (`CheckedTables::declare`),
+each declaring node naming its own, and a `def`'s explicit captures are
+its op's (`CheckedDef::captures`), as upstream's closure op holds its
+captured values.
 
 The passes of one check hand each other a `PassCarry`: the pass's fact
 stores, one record per body site, and its binding-identity watermark. The

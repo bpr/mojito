@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The checked program holds no syntax and builds no second table from it
+  (R625): `CheckedProgram::statements` and the syntax walk that made the
+  declarations (`build_checked_declarations`) are gone, the declarations
+  are made by a walk over the checked statement nodes, each declaring
+  node naming its own, and a `def`'s explicit captures are its op's, as
+  upstream's closure op holds its captured values. A package build slices
+  its units from the compiled program (`CheckedProgram::units`) rather
+  than from a copy of the check's fact records, and
+  `check_program_for_discovery` and the discovery queries are gone. The
+  generated MIR is unchanged; the bundled package format is 50. Deleting
+  `DiscoveryResult` itself waits on the check emitting its nodes (R767),
+  and the declaration table's remaining duplication is R768.
 - A package unit's checked tables are copied out of the whole program's
   checked nodes, the subtree under the unit's statement node renumbered
   in build order, as upstream's unit is an op of its module, rather than
