@@ -14,6 +14,7 @@
 //! and VM execution. Backward liveness then builds on this move/init foundation
 //! to insert ASAP drops and control-flow-edge cleanup.
 
+pub use canonicalize::{CANONICALIZE, canonicalize};
 use copy_elision::elide_dying_copies;
 pub use dead_symbols::{ELIMINATE_DEAD_SYMBOLS, eliminate_dead_symbols};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
@@ -219,6 +220,7 @@ pub fn elaborate_drops_function(
     elaborated
 }
 
+mod canonicalize;
 mod copy_elision;
 mod dead_symbols;
 mod drops;

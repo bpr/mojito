@@ -4821,6 +4821,25 @@ stages the passes that fill it.
   walked once per table). The pass's `--timings` counters are
   `dead_functions` and `dead_instructions`. `emit-mir` and
   `drop_elaborated_mir` therefore omit dead program generators.
+- **`canonicalize` runs next** (`analysis::CANONICALIZE`,
+  `analysis/canonicalize.rs`, R779), upstream's `Canonicalizer` (MLIR's
+  `canonicalize`), which upstream runs after `EliminateDeadSymbols`, `SROA`,
+  and `Mem2Reg`. It erases the blocks the entry does not reach, at the
+  function level and in each `try` region from its own entry
+  (`mir::prune_unreachable_blocks`, MLIR's `eraseUnreachableBlocks`), then,
+  until nothing changes, each instruction whose results nothing reads and
+  that `MirInstr::would_be_trivially_dead` declares free of effects but
+  reading (MLIR's `wouldOpBeTriviallyDead`): constants, literal
+  materialization, layout and name queries, borrows, field and reference
+  reads, plain place reads, variant tests, and SIMD value operations. As in
+  MLIR, anything not declared free of effects stays: a copy (it may run
+  `__copyinit__`, which only an instance decides), a move, an operator (a
+  dunder call per instance), a call, every drop, consume, and ownership
+  mark (none of which defines a result), and every loan or interior marker.
+  A register's read count is every register its instruction names but its
+  own results, so an operand no enumeration classifies keeps its definition.
+  An erased result loses its type and span; registers are not renumbered.
+  Its `--timings` counters are `erased_blocks` and `erased_instructions`.
 - **Two seams, once per body.** `CompiledProgram::elaborated_mir` runs
   `pre_elaborate_program` over the program's own bodies after
   `elaborate_drops_program` (the `pre_elaboration` `--timings` span), and an

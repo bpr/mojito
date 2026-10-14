@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R836**.
+Next free ID: **R838**.
 
 ## Ordered Work
 
@@ -55,20 +55,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md),
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
-
-- [ ] **R779 Generic bodies carry unreachable blocks and unread pure
-  instructions into every instance**
-
-  Lowering leaves blocks nothing branches to and instructions whose results
-  nothing reads, and the elaborator copies both into each instance, where
-  upstream's canonicalizer removes them once.
-  - An instruction with an effect stays, and every inserted drop is a call
-    with an effect.
-  - Done when the pass runs at both seams, keeps the corpus differential
-    clean, and `docs/performance.md` records the instance instruction count
-    before and after.
-  - Depends on R777, R772, R775, R776.
-  - Model: Opus, Not Planned.
 
 - [ ] **R780 Register copies lowering introduces survive into every
   instance**
@@ -95,6 +81,23 @@ which names the upstream pass each one follows. Each is measured by the
     its corpus effect is recorded.
   - Depends on R780.
   - Model: Opus, Planned.
+
+- [ ] **R836 Generic bodies carry empty pass-through blocks into every
+  instance**
+
+  An empty block that only jumps on is copied into each instance, where
+  upstream's `Canonicalizer` threads it with the `cf` dialect's branch
+  patterns.
+  - 503 of the 3 612 std blocks `empty.mojo` reaches are such blocks.
+  - The patterns are `SimplifyPassThroughBr` and merging a block into its
+    single predecessor.
+  - It is a pattern in the `canonicalize` pass (`analysis/canonicalize.rs`),
+    not a new pass.
+  - A drop or cleanup placed on an edge must stay on that path.
+  - Done when the pattern runs at both seams, the differential is clean, and
+    the corpus block and instruction counts are recorded.
+  - Depends on R779.
+  - Model: Opus, Not Planned.
 
 - [ ] **R782 Instances that differ only in a parameter their body never
   reads are made separately**
@@ -164,6 +167,22 @@ which names the upstream pass each one follows. Each is measured by the
   - Start it only after the cheaper passes show how much remains.
   - Depends on R781, R785.
   - Model: Fable, Planned.
+
+- [ ] **R837 Lifetime-only markers survive into every instance**
+
+  `interiors.invalidate`, `lifetime.keep_alive`, and `var.declare` do
+  nothing on either backend, yet every instance carries them, where upstream
+  checks lifetimes on LIT and lowers to KGEN without them before
+  pre-elaboration.
+  - std's bodies `empty.mojo` reaches hold 970 `interiors.invalidate`
+    alone.
+  - The MIR verifier and `loans.establish`'s native lowering still read some
+    of them, so first find which reader needs each one after the lifetime
+    check.
+  - Done when the markers end where the lifetime check ends, both backends
+    run the differential clean, and the corpus effect is recorded.
+  - Depends on R779.
+  - Model: Fable, Not Planned.
 
 - [ ] **R835 MIR has no symbol-reference type, so a symbol's uses are found
   by spelling**

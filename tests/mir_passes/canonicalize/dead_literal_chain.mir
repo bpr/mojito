@@ -1,0 +1,43 @@
+mojito-mir 1.53
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("cases.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: literal_statement, param_names: [x], param_types: [param { owner: "literal_statement", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [type_param { owner: "literal_statement", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent, default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: param { owner: "literal_statement", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: literal_statement,
+        registers: 3,
+        vars: 1,
+        var_names: [x],
+        params: 1,
+        param_types: [param { owner: "literal_statement", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: param { owner: "literal_statement", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent } }],
+        return_type: present(param { owner: "literal_statement", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: param { owner: "literal_statement", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent } }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 210, end: 212, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 224, end: 225, origin: present($v0) }) }, reg_loc { reg: %r2, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(42) },
+              literal.materialize { dest: %r2, value: %r0, target: Int },
+              var.use { dest: %r1, var: $v0, mode: copy }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      }
+  ]
+}

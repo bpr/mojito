@@ -9,6 +9,7 @@
 //! package body as it is finished ([`finish_package_body`]), where only the
 //! body passes run. Never per instance.
 
+use super::canonicalize::CANONICALIZE;
 use super::dead_symbols::ELIMINATE_DEAD_SYMBOLS;
 use super::elaborate_drops_function;
 use mojito_common::timing;
@@ -48,10 +49,13 @@ impl Pass {
 /// The pre-elaboration pipeline, in order: upstream's pass list
 /// (`docs/pre-elaboration-optimization-plan.md`) as Mojito adopts it.
 ///
-/// `EliminateDeadSymbols` runs ahead of every pass upstream runs after
-/// destructor insertion but `RemoveUnusedParams`, which Mojito does not
-/// have.
-pub const PIPELINE: &[Pass] = &[Pass::Program(ELIMINATE_DEAD_SYMBOLS)];
+/// Upstream runs `RemoveUnusedParams`, `EliminateDeadSymbols`, `SROA`,
+/// `Mem2Reg`, then `Canonicalizer`; Mojito has neither `RemoveUnusedParams`
+/// nor the two scalar-replacement passes.
+pub const PIPELINE: &[Pass] = &[
+    Pass::Program(ELIMINATE_DEAD_SYMBOLS),
+    Pass::Body(CANONICALIZE),
+];
 
 /// Drop elaboration as a named pass, so a pass test can run it over MIR
 /// text whose drops are not yet inserted. The pipeline does not list it:
@@ -107,6 +111,7 @@ pub fn pre_elaborate_program(program: &mut MirProgram) {
                 (pass.run)(program);
             }
             Pass::Body(pass) => {
+                let _pass = timing::span(pass.name);
                 let MirProgram {
                     functions,
                     declarations,
@@ -189,6 +194,7 @@ mod tests {
         }
         assert!(pass_named("elaborate-drops").is_some());
         assert!(pass_named("eliminate-dead-symbols").is_some());
+        assert!(pass_named("canonicalize").is_some());
         assert!(pass_named("no-such-pass").is_none());
     }
 }

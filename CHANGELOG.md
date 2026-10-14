@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The pre-elaboration pipeline's second pass is `canonicalize` (R779),
+  upstream's `Canonicalizer`: it erases blocks the entry does not reach and
+  instructions whose results nothing reads when
+  `MirInstr::would_be_trivially_dead` declares them free of effects, before
+  the elaborator copies them into each instance. Copies, operators, calls,
+  drops, and loan markers stay. Corpus generator-instance instructions fall
+  by about 1 %; `benchmarks/instantiation.tsv` is rerun.
+
 - The pre-elaboration pipeline's first pass is `eliminate-dead-symbols`
   (R778), upstream's `EliminateDeadSymbols`: it removes the program's own
   generic bodies that no concrete function or entry root reaches before

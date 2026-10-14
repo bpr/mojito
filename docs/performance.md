@@ -1247,3 +1247,39 @@ per-body pass (R779 onward) would spend on these bodies.
 The totals are within the spread of three-run medians (with the pass on,
 `empty` and `keyed` ran faster). R835 would make the walk visit only typed
 symbol references.
+
+## Canonicalize removes unreachable blocks and dead instructions (2026-10-14, R779)
+
+`canonicalize`, upstream's `Canonicalizer`, is the second pre-elaboration
+pass: it erases blocks the entry does not reach and instructions with no
+effect but reading whose results nothing reads (`docs/architecture.md`
+§Pre-Elaboration Pipeline). `scripts/instantiation-report` over all 1 020
+fixtures, debug binary, with `MOJITO_PRE_ELABORATION=0` for *before*:
+
+| | before | after | change |
+|---|---:|---:|---:|
+| corpus `concrete_instructions` | 892 673 | 888 654 | −4 019 (−0.45 %) |
+| corpus `generator_instructions` | 241 048 | 239 094 | −1 954 (−0.81 %) |
+| corpus `generator_instance_instructions` | 396 159 | 392 282 | −3 877 (−0.98 %) |
+| `collections_many` instance instructions | 16 043 | 15 982 | −61 |
+| `nested_generics` instance instructions | 3 113 | 3 092 | −21 |
+| `stdlib_heavy` instance instructions | 2 779 | 2 761 | −18 |
+| `trait_defaults` instance instructions | 1 165 | 1 161 | −4 |
+
+**The effect is small, and that is what lowering leaves.** In the std
+bodies `empty.mojo` reaches (3 612 blocks, 19 805 instructions), only 2
+blocks are unreachable, both empty, and 21 instructions are dead: 20
+`const none` left by statement-position intrinsics and one `place.load`.
+An unreachable block holds no counted instruction (terminators are not
+counted), so only the dead instructions move the counters. Nearly every
+unread result belongs to an instruction with an effect the pass keeps: 970
+`interiors.invalidate` and 250 `loans.establish` markers, and 372 call
+results. Drops define no result and are never unread. The pass is mainly
+the frame R780's copy patterns and R781's decided branches join.
+
+The committed baseline had drifted from HEAD before this change (it held
+1 018 fixtures and 893 343 concrete instructions); the rerun committed here
+absorbs that. The pass's program-seam counters are
+`pre_elaboration.canonicalize.erased_blocks` and `.erased_instructions`;
+package bodies are finished on the elaborator's thread, so their counts do
+not reach `--timings`.

@@ -1,0 +1,28 @@
+  functions: [
+      fn {
+        name: literal_statement,
+        registers: 3,
+        vars: 1,
+        var_names: [x],
+        params: 1,
+        param_types: [param { owner: "literal_statement", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: param { owner: "literal_statement", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent } }],
+        return_type: present(param { owner: "literal_statement", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r1, type: param { owner: "literal_statement", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 224, end: 225, origin: present($v0) }) }, reg_loc { reg: %r2, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r1, var: $v0, mode: copy }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      }
+  ]

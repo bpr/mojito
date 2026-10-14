@@ -1,0 +1,58 @@
+mojito-mir 1.53
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("cases.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: pick, param_names: [a, b, first], param_types: [param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }, param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }, Bool], defaults: [absent, absent, absent], required: [true, true, true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [type_param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent, default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent, absent, absent], return_type: param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }, returns_reference: false, raises: false, error_type: absent, ref_params: [false, false, false], param_writes: [false, false, false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: pick,
+        registers: 3,
+        vars: 3,
+        var_names: [a, b, first],
+        params: 3,
+        param_types: [param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }, param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }, Bool],
+        owned_params: [false, false, false],
+        deinit_params: [false, false, false],
+        ref_params: [false, false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent } }, var_type { var: $v1, type: param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent } }, var_type { var: $v2, type: Bool }],
+        return_type: present(param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Bool }, reg_type { reg: %r1, type: param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent } }, reg_type { reg: %r2, type: param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 83, end: 88, origin: present($v2) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 105, end: 106, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 132, end: 133, origin: present($v1) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v2, mode: copy }
+            ],
+            terminator: branch { condition: %r0, then: bb2, else: bb3 }
+          },
+          bb1 {
+            instructions: [
+            ],
+            terminator: return { value: absent }
+          },
+          bb2 {
+            instructions: [
+              var.use { dest: %r1, var: $v0, mode: copy }
+            ],
+            terminator: return { value: present(%r1) }
+          },
+          bb3 {
+            instructions: [
+              var.use { dest: %r2, var: $v1, mode: copy }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      }
+  ]
+}

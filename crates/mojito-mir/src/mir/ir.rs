@@ -1796,6 +1796,100 @@ impl MirInstr {
     pub fn is_raise_point(&self) -> bool {
         matches!(self, Self::Raise { .. }) || self.call_error().is_some()
     }
+
+    /// Whether the instruction has no effect but reading, so it can be
+    /// erased once nothing reads its results: MLIR's
+    /// `wouldOpBeTriviallyDead`, which upstream's `Canonicalizer` asks.
+    ///
+    /// As in MLIR, an instruction that does not declare itself free of
+    /// effects has them. These stay:
+    /// - a copy (`var.use` in copy mode, `value.copy`): it may run
+    ///   `__copyinit__`, which only an instance decides;
+    /// - a move, forward, or place move: each ends a slot;
+    /// - an operator: a generic operand's becomes a dunder call per instance,
+    ///   and built-in division traps;
+    /// - a tuple, variant, or closure construction: it takes or copies owned
+    ///   operands; a type construction runs an initializer;
+    /// - `rebind`, a place read through an index, variant, uninit-payload, or
+    ///   rebind projection: each calls `__getitem__`, traps, or is an
+    ///   assertion the elaborator judges per instance;
+    /// - every call, store, drop, consume, ownership mark, loan or interior
+    ///   marker, keep-alive, scope start, iterator step, `raise`, `try`, and
+    ///   unsupported instruction.
+    pub fn would_be_trivially_dead(&self) -> bool {
+        let reads_storage = |place: &MirPlace| {
+            place
+                .proj
+                .iter()
+                .all(|step| matches!(step, Proj::Field(_) | Proj::ConstIndex(_)))
+        };
+        match self {
+            Self::Const { .. }
+            | Self::MaterializeLiteral { .. }
+            | Self::SizeOf { .. }
+            | Self::TypeName { .. }
+            | Self::ParamListAddress { .. }
+            | Self::GetField { .. }
+            | Self::ReadRef { .. }
+            | Self::VariantIs { .. }
+            | Self::MakeSimd { .. }
+            | Self::SimdCast { .. }
+            | Self::SimdBitcast { .. }
+            | Self::SimdShuffle { .. } => true,
+            Self::UseVar { mode, .. } => matches!(mode, UseMode::BorrowShared | UseMode::BorrowMut),
+            Self::LoadPlace { place, .. } | Self::MakeRef { place, .. } => reads_storage(place),
+            Self::EstablishLoans { .. }
+            | Self::InvalidateInteriors { .. }
+            | Self::Rebind { .. }
+            | Self::CopyValue { .. }
+            | Self::WriteRef { .. }
+            | Self::MakeClosure { .. }
+            | Self::KeepAlive { .. }
+            | Self::ConstructTypeParam { .. }
+            | Self::ConstructType { .. }
+            | Self::MovePlace { .. }
+            | Self::DefVar { .. }
+            | Self::DeclareVar { .. }
+            | Self::UnOp { .. }
+            | Self::BinOp { .. }
+            | Self::Call { .. }
+            | Self::CallIndirect { .. }
+            | Self::MethodCall { .. }
+            | Self::PointerStorageTake { .. }
+            | Self::PointerStorageDestroy { .. }
+            | Self::UninitStorage { .. }
+            | Self::UninitStorageTake { .. }
+            | Self::UninitStorageDestroy { .. }
+            | Self::Index { .. }
+            | Self::Slice { .. }
+            | Self::MultiIndex { .. }
+            | Self::MultiSet { .. }
+            | Self::Store { .. }
+            | Self::StoreRef { .. }
+            | Self::MakeTuple { .. }
+            | Self::MakeVariant { .. }
+            | Self::VariantGet { .. }
+            | Self::VariantSet { .. }
+            | Self::VariantTake { .. }
+            | Self::VariantSetInitWith { .. }
+            | Self::VariantDeinitWith { .. }
+            | Self::VariantReplace { .. }
+            | Self::Raise { .. }
+            | Self::Try { .. }
+            | Self::Drop { .. }
+            | Self::DropVar { .. }
+            | Self::ConsumeVar { .. }
+            | Self::ConsumePlace { .. }
+            | Self::MarkInitialized { .. }
+            | Self::MarkDestroyed { .. }
+            | Self::DropPlace { .. }
+            | Self::Unsupported(_)
+            | Self::GetIter { .. }
+            | Self::HasNext { .. }
+            | Self::Next { .. }
+            | Self::TryNext { .. } => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -2050,5 +2144,27 @@ mod tests {
             body[0].term,
             MirTerm::EscapeJump { target: 1, .. }
         ));
+    }
+
+    #[test]
+    fn only_an_instruction_free_of_effects_would_be_trivially_dead() {
+        let constant = MirInstr::Const {
+            dest: Reg(0),
+            k: Const::Int(1),
+        };
+        let copy = MirInstr::UseVar {
+            dest: Reg(1),
+            var: 0,
+            mode: UseMode::Copy,
+        };
+        let borrow = MirInstr::UseVar {
+            dest: Reg(2),
+            var: 0,
+            mode: UseMode::BorrowShared,
+        };
+        assert!(constant.would_be_trivially_dead());
+        assert!(borrow.would_be_trivially_dead());
+        assert!(!copy.would_be_trivially_dead());
+        assert!(!MirInstr::DropVar { var: 0 }.would_be_trivially_dead());
     }
 }
