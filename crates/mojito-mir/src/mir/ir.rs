@@ -1162,7 +1162,7 @@ pub enum Const {
     FloatLiteral(mojito_common::literal::FloatLiteral),
     Bool(bool),
     Str(String),
-    Function(String),
+    Function(#[serde(serialize_with = "mojito_types::symbol_ref::serialize")] String),
     /// A `DType` value.
     Dtype(mojito_ast::ast::Dtype),
     None,
@@ -1209,7 +1209,7 @@ impl Const {
 /// The callee of a `MirInstr::Call` — a function/struct-constructor/builtin name.
 /// (Resolution to a concrete target happens in the backend's assembler.)
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct FuncRef(pub String);
+pub struct FuncRef(#[serde(serialize_with = "mojito_types::symbol_ref::serialize")] pub String);
 impl FuncRef {
     pub fn named(name: &str) -> Self {
         Self(name.to_string())
@@ -1360,6 +1360,7 @@ pub struct MirLoan {
 /// Intrinsic pointer/SIMD/private-storage operations carry no such payload.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MirSubscriptCall {
+    #[serde(serialize_with = "mojito_types::symbol_ref::serialize")]
     pub target: String,
     pub raises: Option<Ty>,
     /// Checker-selected executable result type, including the instantiated
@@ -1439,6 +1440,7 @@ pub enum MirInstr {
     /// a reference handle, an owned snapshot, or a transferred value.
     MakeClosure {
         dest: Reg,
+        #[serde(serialize_with = "mojito_types::symbol_ref::serialize")]
         function: String,
         captures: Vec<MirClosureCapture>,
     },
@@ -1584,6 +1586,7 @@ pub enum MirInstr {
         /// Checker-selected operator implementation when nominal overload
         /// resolution was required (notably a concrete Tuple membership
         /// overload). Backends must not reselect it by name/arity.
+        #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
         resolved: Option<String>,
         /// The checked error type the operator call raises, as a call's
         /// `raises`; `None` for a built-in or non-raising operator.
@@ -1649,6 +1652,7 @@ pub enum MirInstr {
         /// Exact checker-selected nominal `__call__` target, or a
         /// signature-qualified abstract target for a `def(...)` value. The VM
         /// consults this only when `callee` is a nominal callable struct.
+        #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
         resolved: Option<String>,
         /// Checker-selected error contract of the callable value.
         raises: Option<Ty>,
@@ -1697,6 +1701,7 @@ pub enum MirInstr {
         dest: Reg,
         recv: Reg,
         method: String,
+        #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
         resolved: Option<String>,
         /// Checker-selected concrete or trait-requirement error contract.
         raises: Option<Ty>,
@@ -2121,6 +2126,7 @@ pub enum MirInstr {
         source: VarId,
         dest: VarId,
         mode: mojito_checked::checked::IterationMode,
+        #[serde(serialize_with = "mojito_types::symbol_ref::serialize_seq")]
         prepare: Vec<String>,
     },
     /// Iterator protocol over compiler-private iterator storage (a runtime

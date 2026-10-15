@@ -1,17 +1,21 @@
 //! Symbol uses: which of a program's symbols a MIR value names, after
 //! MLIR's `SymbolTable::getSymbolUses`, which walks every attribute and type
-//! an operation holds, nested, for symbol references.
+//! an operation holds, nested, and visits its `SymbolRefAttr`s.
 //!
-//! MIR names a function or a struct by its spelling wherever it refers to
-//! one: a call's callee, a closure's function, a compile-time application,
-//! a default's evaluator, a struct type. So the walk is structural: it
-//! visits every string in the value's serialized form, and a string that
-//! spells a symbol of the table is a use of it. A string that only happens
-//! to spell a symbol counts too, which keeps a symbol live and never drops
-//! one. A leaf whose encoding needs a compilation's context (a check-local
-//! binding owner, a source location) names no symbol and is skipped.
+//! Every field that refers to a function or a struct — a call's callee, a
+//! selected method or operator, a closure's function, a function constant,
+//! a compile-time application, a default's evaluator, a struct type —
+//! encodes its spelling as a symbol reference
+//! ([`mojito_types::symbol_ref`]). So the walk is structural: it visits the
+//! value's serialized form, and a symbol reference that spells a symbol of
+//! the table is a use of it. A local, a field, a keyword, or a literal that
+//! spells a symbol is not a reference, so it keeps nothing live. Neither is
+//! a parameter's binder, which names the declaration that owns it. A leaf
+//! whose encoding needs a compilation's context (a check-local binding
+//! owner, a source location) names no symbol and is skipped.
 
 use crate::mir::MirFunction;
+use mojito_types::symbol_ref::SYMBOL_REF;
 use mojito_types::types::Ty;
 use serde::Serialize;
 use serde::ser;
@@ -49,6 +53,7 @@ impl<'t> SymbolTable<'t> {
         let mut walker = Walker {
             table: self,
             uses: Vec::new(),
+            reference: false,
         };
         walker.visit(value);
         walker.uses
@@ -116,11 +121,13 @@ const fn length_bit(name: &str) -> u128 {
     1 << length
 }
 
-/// The serializer [`SymbolTable::uses`] walks a value with: every string is
-/// looked up, everything else is passed over.
+/// The serializer [`SymbolTable::uses`] walks a value with: the string of
+/// every symbol reference is looked up, everything else is passed over.
 struct Walker<'w, 't> {
     table: &'w SymbolTable<'t>,
     uses: Vec<&'t str>,
+    /// Whether the string being visited is a symbol reference's.
+    reference: bool,
 }
 
 impl Walker<'_, '_> {
@@ -162,7 +169,9 @@ impl ser::Serializer for &mut Walker<'_, '_> {
     type SerializeStructVariant = Self;
 
     fn serialize_str(self, value: &str) -> Result<(), Skipped> {
-        self.uses.extend(self.table.lookup(value));
+        if self.reference {
+            self.uses.extend(self.table.lookup(value));
+        }
         Ok(())
     }
 
@@ -254,10 +263,12 @@ impl ser::Serializer for &mut Walker<'_, '_> {
 
     fn serialize_newtype_struct<T: Serialize + ?Sized>(
         self,
-        _: &'static str,
+        name: &'static str,
         value: &T,
     ) -> Result<(), Skipped> {
+        let reference = std::mem::replace(&mut self.reference, name == SYMBOL_REF);
         self.visit(value);
+        self.reference = reference;
         Ok(())
     }
 
@@ -428,6 +439,7 @@ impl ser::SerializeStructVariant for &mut Walker<'_, '_> {
 mod tests {
     use super::SymbolTable;
     use crate::mir::{Const, FuncRef, MirBlock, MirFunction, MirInstr, MirTerm, Reg};
+    use mojito_types::param_expr::{ParamId, ParamRef};
     use mojito_types::types::{Ty, TyKind};
     use std::collections::HashSet;
 
@@ -476,6 +488,32 @@ mod tests {
         ]);
         let uses: HashSet<_> = table.function_uses(&function).into_iter().collect();
         assert_eq!(uses, HashSet::from(["f", "g", "h"]));
+    }
+
+    #[test]
+    fn a_literal_keyword_local_or_binder_spelling_a_symbol_is_not_a_use() {
+        let mut table = SymbolTable::new(["f", "g", "h", "k"]);
+        let mut keyword = call("not_in_the_table");
+        if let MirInstr::Call { kwargs, .. } = &mut keyword {
+            kwargs.push(("g".to_string(), Reg(1)));
+        }
+        let mut function = body(vec![
+            MirInstr::Const {
+                dest: Reg(1),
+                k: Const::Str("f".to_string()),
+            },
+            keyword,
+        ]);
+        function.var_names.push("h".to_string());
+        function.param_types.push(Ty::new(TyKind::Param {
+            binder: ParamRef {
+                id: ParamId::new("k", 0),
+                name: "T".into(),
+            },
+            bounds: Vec::new(),
+            callable_bound: None,
+        }));
+        assert_eq!(table.function_uses(&function), Vec::<&str>::new());
     }
 
     #[test]

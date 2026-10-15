@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R934**.
+Next free ID: **R936**.
 
 ## Ordered Work
 
@@ -433,18 +433,31 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R835 MIR has no symbol-reference type, so a symbol's uses are found
-  by spelling**
+- [ ] **R934 A symbol reference is an encoding tag, not a MIR type**
 
-  `mir::SymbolTable` finds uses by walking every string a value serializes,
-  where MLIR's `getSymbolUses` visits only `SymbolRefAttr`s.
-  - A local, a field, or a literal that spells a function keeps it live,
-    which is safe but imprecise.
-  - The serde walk costs about as much as the post-drop verify it saves in
-    source mode (`docs/performance.md`, R778).
-  - A typed reference (callee, closure target, application, struct type)
-    would let the walk visit only those fields.
-  - Depends on R778.
+  Each MIR and checked field that names a function is a `String` whose
+  serde encoding `mojito_types::symbol_ref` tags, where MLIR's
+  `SymbolRefAttr` is a typed attribute.
+  - A new symbol-naming field added untagged is invisible to
+    `eliminate-dead-symbols`, which then removes a live body.
+  - No pass can rename references in place, as MLIR's
+    `replaceAllSymbolUses` does, without re-serializing.
+  - Retype `MakeClosure::function`, `Const::Function`, every `resolved`,
+    `MirSubscriptCall::target`, `GetIter::prepare`, and the checked
+    `CheckedIteratorCall::target` and `CheckedConst` targets as one
+    `SymbolRef` type that serializes tagged, beside `FuncRef`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R935 A struct type's name is an untyped string**
+
+  `TyKind::Struct`, `CtValue::Struct`, and `ParamKind::Apply` hold their
+  symbol as a `String` that only a `serialize_with` tags as a reference.
+  - Upstream's struct type and `kgen.param` application hold a typed
+    symbol reference.
+  - `TyKind::Struct` has some 630 construction and match sites, so it is its
+    own session after the MIR fields.
+  - Depends on R934.
   - Model: Opus, Not Planned.
 
 - [ ] **R834 Unreferenced concrete functions and struct declarations reach

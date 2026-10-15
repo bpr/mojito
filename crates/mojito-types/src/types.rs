@@ -511,7 +511,10 @@ pub enum TyKind {
     /// order. The tail is part of the checked identity (`P[origin_of(xs)]` and
     /// `P[origin_of(ys)]` are different types, as upstream) and erases from
     /// the runtime ABI: mangling, layout, and MIR verification ignore it.
-    Struct(String, Vec<TyArg>),
+    Struct(
+        #[serde(serialize_with = "crate::symbol_ref::serialize")] String,
+        Vec<TyArg>,
+    ),
     /// A SIMD vector type `SIMD[DType.<dtype>, width]`. Either slot is a
     /// parameter expression while the declaration it belongs to is symbolic;
     /// a symbolic slot never crosses the MIR waist.

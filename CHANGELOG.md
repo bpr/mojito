@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `eliminate-dead-symbols` follows typed symbol references (R835): every
+  MIR, checked, and type field that names a function or struct encodes its
+  spelling as a `SymbolRef` (`mojito_types::symbol_ref`, MLIR's
+  `SymbolRefAttr`), and `mir::SymbolTable` looks up only those, so a local,
+  field, keyword, literal, or parameter binder spelling a function no
+  longer keeps it live. In source mode 14 more of std's bodies go and the
+  pass is about 15 % cheaper. Program output is unchanged; the MIR text and
+  package formats are unchanged.
 - Adds `lower-lit` (R837), the part of upstream's `LowerLIT` that MIR has:
   right after drop elaboration, at the program and package seams and with
   the pre-elaboration pipeline on or off, it erases every

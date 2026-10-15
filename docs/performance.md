@@ -1252,6 +1252,31 @@ The totals are within the spread of three-run medians (with the pass on,
 `empty` and `keyed` ran faster). R835 would make the walk visit only typed
 symbol references.
 
+## Symbol uses follow typed references (2026-10-14, R835)
+
+`mir::SymbolTable` now looks up only the strings a field encodes as a
+symbol reference (`mojito_types::symbol_ref`), rather than every string a
+body serializes. The walk still visits the whole serialized value, as
+MLIR's `getSymbolUses` walks every attribute; it skips the hash lookups for
+locals, fields, keywords, and literals. Source mode (`MOJITO_STD_PACKAGE=0`),
+release binary, `--timings` medians of five interleaved runs against the
+same tree looking up every string, milliseconds; the pass column sums its
+four rounds.
+
+| Benchmark | removed functions old / new | pass old / new | total old / new |
+|---|---:|---:|---:|
+| `hello` | 190 / 204 | 19.6 / 16.8 | 673 / 674 |
+| `generic` | 190 / 204 | 19.5 / 16.7 | 680 / 674 |
+| `collections_many` | 81 / 95 | 25.3 / 20.9 | 925 / 922 |
+| `nested_generics` | 131 / 145 | 23.7 / 19.8 | 742 / 740 |
+| `stdlib_heavy` | 131 / 145 | 23.0 / 19.0 | 724 / 712 |
+| `trait_defaults` | 190 / 204 | 20.2 / 17.4 | 709 / 702 |
+
+The 14 more bodies are `TString`'s and `ParameterList`'s methods and
+`_ParameterListIter`'s, which a parameter binder or a field spelled by name
+kept live. Every executable fixture prints, fails, and exits the same in
+source mode; in package mode the live sets are identical.
+
 ## Canonicalize removes unreachable blocks and dead instructions (2026-10-14, R779)
 
 `canonicalize`, upstream's `Canonicalizer`, is the second pre-elaboration

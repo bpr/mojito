@@ -2098,6 +2098,7 @@ pub enum ParamKind {
     /// layout query is the application of `size_of` to one type. Only the
     /// elaborator below MIR evaluates one, on first demand.
     Apply {
+        #[serde(serialize_with = "crate::symbol_ref::serialize")]
         function: String,
         args: Vec<ParamExpr>,
     },

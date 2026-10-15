@@ -280,6 +280,7 @@ pub struct CheckedIterationBinding {
 /// records the selected exhaustion effect.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedIteratorCall {
+    #[serde(serialize_with = "mojito_types::symbol_ref::serialize")]
     pub target: String,
     pub result_ty: Ty,
     pub reference_result: Option<mojito_types::origin::RefTy>,
@@ -3499,6 +3500,7 @@ pub enum CheckedConst {
     /// the empty-Optional constructor). Produced only when the checker recorded
     /// an implicit conversion at the default expression's span.
     Construct {
+        #[serde(serialize_with = "mojito_types::symbol_ref::serialize")]
         target: String,
         arg: Box<Self>,
     },
@@ -3514,6 +3516,7 @@ pub enum CheckedConst {
     /// default's owner declares the function, whose binders it binds by
     /// identity.
     Evaluate {
+        #[serde(serialize_with = "mojito_types::symbol_ref::serialize")]
         function: String,
         arguments: Vec<mojito_types::types::TyArg>,
     },

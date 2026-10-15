@@ -373,6 +373,7 @@ pub enum CtValue {
     /// freezable fields, so materialization is always the fieldwise
     /// construction call.
     Struct {
+        #[serde(serialize_with = "crate::symbol_ref::serialize")]
         name: String,
         fields: Vec<(String, Self)>,
     },

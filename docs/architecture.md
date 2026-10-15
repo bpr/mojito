@@ -4949,12 +4949,19 @@ point where a slot declared in a loop is uninitialized again.
   every symbol its declaration names and all its methods, so the
   elaborator's lifecycle, display, hash, and trait-dispatch edges, which
   reach a method from its struct's type, stay live. The uses come from
-  `mir::SymbolTable`, MLIR's `SymbolTable::getSymbolUses` over MIR: MIR names
-  a symbol by its spelling, so the walk visits every string in a value's
-  serialized form, and a string that spells a symbol is a use (a type is
-  walked once per table). The pass's `--timings` counters are
-  `dead_functions` and `dead_instructions`. `emit-mir` and
-  `drop_elaborated_mir` therefore omit dead program generators.
+  `mir::SymbolTable`, MLIR's `SymbolTable::getSymbolUses` over MIR: every
+  field that refers to a function or struct (a callee, a selected method or
+  operator, a subscript or iterator target, a closure's function, a
+  function constant, a compile-time application, a default's evaluator or
+  conversion, a struct type or frozen struct value) encodes its spelling as
+  a symbol reference (`mojito_types::symbol_ref`, MLIR's `SymbolRefAttr`),
+  a newtype every encoding passes through, so package bytes are unchanged.
+  The walk visits a value's serialized form and looks up only those
+  references (a type is walked once per table); a local, field, keyword,
+  literal, or parameter binder that spells a symbol is no use (R835). The
+  pass's `--timings` counters are `dead_functions` and `dead_instructions`.
+  `emit-mir` and `drop_elaborated_mir` therefore omit dead program
+  generators.
 - **`canonicalize` runs next** (`analysis::CANONICALIZE`,
   `analysis/canonicalize.rs`, R779), upstream's `Canonicalizer` (MLIR's
   `canonicalize`), which upstream runs after `EliminateDeadSymbols`, `SROA`,
