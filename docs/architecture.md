@@ -5540,7 +5540,11 @@ concrete verifier rejects a reference slot read as its handle.
   references an instruction holds itself; that can make callers
   identical, so the pass repeats until no set merges. A function stays
   under its own name when anything else reaches it: an entry root, an
-  export, a struct's method (reached from its type, R992), or a use
+  export, a struct's method the backends reach from its type
+  (`mir::MirDeclarations::reached_from_type`, R992: a special method, or
+  a requirement of a trait the struct declares, directly or through a
+  parent; any method of a struct conforming to a trait no declaration
+  answers for), or a use
   `mir::SymbolTable` finds that the rewrite does not reach, such as an
   implicit callee or a symbol a type names, found by counting one against
   the other. Upstream's call carries a compile-time argument as an

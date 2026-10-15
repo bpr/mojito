@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct's method no longer stays apart from an identical instance
+  merely for being a method (R992): `eliminate-duplicate-functions` pins
+  only the methods the backends reach from the struct's type, its special
+  methods and its traits' requirements (`MirDeclarations::reached_from_type`),
+  so `Shelf[Int]` and `Shelf[String]`'s nested defs and static methods
+  merge (corpus concrete functions −23, `benchmarks/instantiation.tsv`).
+  Pinned members stay apart until R1006.
 - A caller no longer stays apart from an identical instance by the
   constant its call's compile-time argument was read into (R991): the
   elaborator erases that constant with the argument slot it drops, as

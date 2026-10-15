@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1006**.
+Next free ID: **R1007**.
 
 ## Ordered Work
 
@@ -678,18 +678,22 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R992 Struct methods are never merged as duplicates**
+- [ ] **R1006 Special methods and trait requirements are never merged as
+  duplicates**
 
-  `eliminate-duplicate-functions` keeps every method of the program's
-  structs under its own name, so two identical instances of one method
+  `eliminate-duplicate-functions` keeps a struct's special methods and its
+  traits' requirements under their own names, so two identical instances of
+  one (`Sparrow.fly` and `Sparrow.eat` in `assets/ok/trait_inheritance.mojo`)
   stay apart.
-  - The elaborator and the backends reach a struct's lifecycle and trait
-    methods by a name derived from its type, which no symbol reference
-    records, so the pass cannot tell which methods are safe to redirect.
-  - Letting it merge methods removes 24 more functions in `assets/ok` with
-    no change in output.
-  - The fix records each method reached from its type, as upstream nests a
-    struct's members under its symbol, and pins only those.
+  - The VM and the Pliron backend reach these from the struct's type by a
+    name they derive (`call_dunder`, `has_lifecycle_method`, `write_to`
+    printing), which no symbol reference records
+    (`MirDeclarations::reached_from_type` pins them).
+  - Upstream's calls and conformance witness tables name each such member
+    by symbol, so its `replaceAllSymbolUses` redirects them.
+  - The fix records each struct's type-reached members as symbol
+    references in its declaration, which the backends look up and the pass
+    rewrites.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

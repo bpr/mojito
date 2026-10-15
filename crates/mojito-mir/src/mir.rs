@@ -351,6 +351,53 @@ impl MirDeclarations {
         None
     }
 
+    /// Whether the struct `owner`'s method `method` (its symbol's part after
+    /// the receiver separator) is reached from `owner`'s type rather than
+    /// only through a symbol reference: a special method (lifecycle,
+    /// operator, or protocol), or a requirement of a trait `owner` declares,
+    /// directly or through a parent, as upstream nests these members under
+    /// the struct's symbol and its conformances' witness tables. A
+    /// conformance to a trait no declaration answers for reaches every
+    /// method. A method of no struct is reached from no type.
+    pub fn reached_from_type(&self, owner: &str, method: &str) -> bool {
+        let Some(declaration) = self.structure(owner) else {
+            return false;
+        };
+        let source = method.split('$').next().unwrap_or(method);
+        if source.len() > 4 && source.starts_with("__") && source.ends_with("__") {
+            return true;
+        }
+        let mut visited = BTreeSet::new();
+        let mut pending: VecDeque<&str> = declaration
+            .declared
+            .iter()
+            .map(|row| row.trait_name.as_str())
+            .collect();
+        while let Some(name) = pending.pop_front() {
+            if !visited.insert(name) {
+                continue;
+            }
+            let Some(declaration) = self
+                .trait_declaration(name)
+                .or_else(|| compiler_trait_declaration(name))
+            else {
+                if mojito_types::conformance::LIFECYCLE_TRAITS.contains(&name) {
+                    continue;
+                }
+                return true;
+            };
+            if declaration
+                .requirements
+                .iter()
+                .any(|requirement| requirement.name == source)
+            {
+                return true;
+            }
+            pending.extend(declaration.refines.iter().map(String::as_str));
+        }
+        false
+    }
+
     /// Every declaration, the imported package's decoded and joined to the
     /// program's own: own structs, then the package's in package order;
     /// own functions, then the package's the program does not lower. For a

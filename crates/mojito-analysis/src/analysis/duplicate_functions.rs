@@ -28,11 +28,12 @@ pub const ELIMINATE_DUPLICATE_FUNCTIONS: ProgramPass = ProgramPass {
 ///
 /// A function stays, whatever its duplicates, when something reaches it by
 /// name other than a reference [`replace_symbol_uses`] rewrites: an entry
-/// root, one of `exports`, a struct's method (the elaborator and the
-/// backends reach a struct's lifecycle and trait methods from its type), a
-/// body the instructions call implicitly, or a symbol a type, a
-/// compile-time value, or a declaration names. Such a function can still
-/// absorb its duplicates.
+/// root, one of `exports`, a struct's method the backends reach from its
+/// type (its special methods and its traits' requirements,
+/// [`mojito_mir::mir::MirDeclarations::reached_from_type`]), a body the
+/// instructions call implicitly, or a symbol a type, a compile-time value,
+/// or a declaration names. Such a function can still absorb its
+/// duplicates.
 pub fn eliminate_duplicate_functions(program: &mut MirProgram, exports: &[String]) {
     let pinned = pinned(program, exports);
     let mut identities: HashMap<String, Option<FunctionIdentity>> = HashMap::new();
@@ -118,13 +119,10 @@ fn pinned(program: &mut MirProgram, exports: &[String]) -> HashSet<String> {
             *uses.entry(name).or_default() += 1;
         }
     }
-    let structs: HashSet<&str> = declarations
-        .structs
-        .iter()
-        .map(|declaration| declaration.name.as_str())
-        .collect();
-    let method =
-        |name: &str| split_method_symbol(name).is_some_and(|(owner, _)| structs.contains(owner));
+    let method = |name: &str| {
+        split_method_symbol(name)
+            .is_some_and(|(owner, method)| declarations.reached_from_type(owner, method))
+    };
     let unreached = |name: &str| {
         uses.get(name).copied().unwrap_or_default()
             != rewritten.get(name).copied().unwrap_or_default()
