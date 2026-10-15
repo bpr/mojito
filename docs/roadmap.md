@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R982**.
+Next free ID: **R985**.
 
 ## Ordered Work
 
@@ -563,17 +563,33 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R977.
   - Model: Fable, Not Planned.
 
-- [ ] **R911 A lifted compile-time function's unread parameters are never
-  removed**
+- [ ] **R982 A parameter read only by its function's evaluated default is
+  kept**
 
-  `$comptime$f$N` and `$default$f$p` declare their owner's binders, whose
-  `ParamId::owner` is `f`, so `remove-unused-params` finds no own
-  parameter in them.
-  - Their instances, and the compile-time evaluations cached by instance
-    name, split on every owner argument.
-  - The candidates should be every declared binder the lifted function
-    binds by its own arguments, as upstream's lifted functions are
-    ordinary generators.
+  `scaled[n, m](x: Int = m * 2)` keeps `m`, and `scaled[1, 3]` and
+  `scaled[1, 4]` are two instances, where the pin removes `m`
+  (`scaled[...]_REMOVED_ARG,n=1`).
+  - `mir::unread_parameters` reads a function that names a body lifted from
+    it (`$default$f$x`, `$comptime$f$k`) as reading every parameter.
+  - It should read only the binders that lifted body kept, as it reads a
+    nested body's (R908); the call-graph walk then needs an edge to the
+    lifted body, which it already processes as a generator (R911).
+  - A runtime default is the call site's on the pin, so a binder only it
+    reads is no read of the function at all.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R983 With the pre-elaboration pipeline off, a capturing callable
+  parameter its body never calls fails to elaborate**
+
+  `assets/ok/unread_callable_parameter_instances.mojo` fails under
+  `MOJITO_PRE_ELABORATION=0` with "value parameter `f` is not compile-time
+  constant" in `ignore_capturing`, so its `pre_elaboration::*` on/off trial
+  fails.
+  - With the pipeline on, `remove-unused-params` removes `f` and the
+    elaborator binds no closure for it (R910), which hides the gap.
+  - The elaborator should bind a capturing closure's environment for an
+    uncalled parameter as it does for a called one.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

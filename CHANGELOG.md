@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A function lifted from a compile-time expression no longer splits
+  instances on its owner's parameters it never reads (R911):
+  `remove-unused-params` treats an evaluated default (`$default$f$x`) or
+  a lifted application (`$comptime$f$k`) as a generator over every binder
+  it declares, and the elaborator keys its instances, and the compile-time
+  evaluations cached by instance name, on the binders it kept, so
+  `scaled[1, 3]()` and `scaled[2, 3]()` share the instance of the default
+  `x: Int = m * 2` (assets/ok/lifted_unread_parameter_instances.mojo). The
+  owner itself still keeps a parameter only its evaluated default reads,
+  where the pin removes it (R982).
 - A callable compile-time parameter its body never calls no longer splits
   instances (R910): `remove-unused-params` now considers callable value
   parameters, the elaborator binds no runtime closure or environment for

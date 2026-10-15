@@ -5282,7 +5282,14 @@ point where a slot declared in a loop is uninitialized again.
   off the struct template with its kept struct arguments leading its own
   (`S.st$mono`, `Specializer::enqueue`), so it names no owner instance. A
   static call's spelled receiver `S[n]` is a forward of `n` to the struct
-  parameter the callee removed. The pass follows nested bodies, and a closure or function value counts as a
+  parameter the callee removed. A body lifted from a compile-time
+  expression (`$comptime$f$…`, `$default$f$…`) is a generator over every
+  binder it declares, whoever owns it (R911): its candidates are its
+  declaration's `param_decls`, and the elaborator keys its instances, and
+  the evaluations cached by instance name, on the binders it kept
+  (`Specializer::{demand_application, default_function_bindings}`), still
+  binding a removed one, as a call's instance does. The pass follows
+  nested bodies, and a closure or function value counts as a
   call-graph edge, so a nested body runs before the function naming it;
   one whose run is not at hand reads every parameter. Another parameter's
   default is not a read: the call site evaluates it. A function in a

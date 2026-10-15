@@ -40,7 +40,8 @@ use std::fmt;
 /// For a top-level function they are its own compile-time parameters and,
 /// for a method, its struct's, as upstream's method generator lists them
 /// before its own; for a nested one the parameters of the declarations it
-/// is nested in; each that nothing in its body `function` or its
+/// is nested in; for a lifted one (`$comptime$f$…`, `$default$f$…`) every
+/// binder it declares; each that nothing in its body `function` or its
 /// declaration's signature reads, sorted by owner and slot. A nested body `function` names reads
 /// the candidates its own removals `nested` keep; one `nested` does not
 /// answer reads them all.
@@ -188,12 +189,17 @@ pub fn without_removed_forwards<'a>(
 
 /// The parameters `unread_parameters` may remove from `name`: its own
 /// compile-time parameters and, for a method, its struct's, or a nested
-/// function's enclosing declarations' parameters, each once.
+/// function's enclosing declarations' parameters, each once. A lifted
+/// function binds every binder it declares by its own arguments, whoever
+/// owns it, as upstream's lifted function is an ordinary generator.
 fn candidate_parameters<'d>(
     name: &'d str,
     declaration: &'d MirFunctionDeclaration,
     declarations: &'d MirDeclarations,
 ) -> Vec<&'d ParamDecl> {
+    if mojito_symbol::symbol::lifted_owner(name).is_some() {
+        return declaration.param_decls.iter().collect();
+    }
     let mut candidates: Vec<&ParamDecl> = Vec::new();
     if declaration.enclosing.is_none() {
         candidates.extend(

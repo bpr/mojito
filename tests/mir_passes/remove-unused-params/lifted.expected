@@ -1,0 +1,167 @@
+  functions: [
+      fn {
+        name: is_big,
+        registers: 4,
+        vars: 1,
+        var_names: [k],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Bool),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Bool }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 39, end: 40, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 43, end: 45, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 43, end: 45, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 39, end: 45, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r1, value: int_literal(10) },
+              literal.materialize { dest: %r2, value: %r1, target: Int },
+              var.use { dest: %r0, var: $v0, mode: copy },
+              binary { op: gt, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r3) }
+          }
+        ]
+      },
+      fn {
+        name: "$default$scaled$x",
+        registers: 4,
+        vars: 1,
+        var_names: [m],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 84, end: 85, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 88, end: 89, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 88, end: 89, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 84, end: 89, origin: absent }) }],
+        removed_params: [param_id { owner: "scaled", slot: 0 }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r1, value: int_literal(2) },
+              literal.materialize { dest: %r2, value: %r1, target: Int },
+              var.use { dest: %r0, var: $v0, mode: copy },
+              drop.var { var: $v0 },
+              binary { op: mul, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r3) }
+          }
+        ]
+      },
+      fn {
+        name: scaled,
+        registers: 3,
+        vars: 2,
+        var_names: [x, n],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 110, end: 111, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 114, end: 115, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 110, end: 115, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              var.use { dest: %r1, var: $v1, mode: copy },
+              drop.var { var: $v1 },
+              binary { op: add, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      },
+      fn {
+        name: "$comptime$pick$0",
+        registers: 2,
+        vars: 1,
+        var_names: [m],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Bool),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Bool }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 176, end: 177, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 169, end: 178, origin: absent }) }],
+        removed_params: [param_id { owner: "pick", slot: 0 }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              drop.var { var: $v0 },
+              call { dest: %r1, func: is_big, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: pick,
+        registers: 5,
+        vars: 1,
+        var_names: [n],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 195, end: 196, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 208, end: 209, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 212, end: 213, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 212, end: 213, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 208, end: 213, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+            ],
+            terminator: comptime_branch { condition: eq { left: operand_expr(param_apply { function: "$comptime$pick$0", type: meta_value(Bool), args: [param_decl_ref { owner: "pick", slot: 0, name: n, type: meta_value(Int) }, param_decl_ref { owner: "pick", slot: 1, name: m, type: meta_value(Int) }] }), right: operand_value(ct_bool(true)) }, then: bb2, else: bb3 }
+          },
+          bb1 {
+            instructions: [
+              const { dest: %r2, value: int_literal(1) },
+              literal.materialize { dest: %r3, value: %r2, target: Int },
+              var.use { dest: %r1, var: $v0, mode: copy },
+              drop.var { var: $v0 },
+              binary { op: add, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r4) }
+          },
+          bb2 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              drop.var { var: $v0 }
+            ],
+            terminator: return { value: present(%r0) }
+          },
+          bb3 {
+            instructions: [
+            ],
+            terminator: jump { target: bb1 }
+          }
+        ]
+      }
+  ]

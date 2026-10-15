@@ -1003,7 +1003,8 @@ impl<'a> Specializer<'a> {
     /// frozen result is cached by the instance's name. The
     /// arguments past the function's compile-time parameters are the values
     /// of its runtime ones (`h(n)`, a `def` the check applied by name), which
-    /// the call passes and the cache keys beside the name. A demand on an
+    /// the call passes and the cache keys beside the name. A binder the
+    /// function removed is bound but not keyed, as a call's is. A demand on an
     /// instance being materialized is a cycle in the parameter domain.
     fn demand_application(
         &mut self,
@@ -1073,8 +1074,10 @@ impl<'a> Specializer<'a> {
                 .map_err(|error| self.error(Some(template), error))?;
             instance_bindings.self_instance = Some((nominal_template(name).to_string(), ty));
         }
+        let removed = self.removed_params(function);
         let mut arguments = Vec::new();
         for (decl, arg) in declaration.param_decls.iter().zip(args) {
+            let keyed = !removed.contains(decl.id());
             let binder = decl.binder();
             let unresolved = |what: &str| unresolved(what, arg);
             match decl {
@@ -1089,7 +1092,9 @@ impl<'a> Specializer<'a> {
                         _ => None,
                     }
                     .ok_or_else(|| unresolved("an unresolved type"))?;
-                    arguments.push(InstanceArg::Ty(ty.clone()));
+                    if keyed {
+                        arguments.push(InstanceArg::Ty(ty.clone()));
+                    }
                     // A type pack binds its element tuple too, which the
                     // thunk's reads over the pack (`len(Ts)`) fold under.
                     match ty.kind() {
@@ -1107,7 +1112,9 @@ impl<'a> Specializer<'a> {
                         _ => eval_ct(arg, bindings).ok(),
                     }
                     .ok_or_else(|| unresolved("an unresolved value"))?;
-                    arguments.push(InstanceArg::Value(value.clone()));
+                    if keyed {
+                        arguments.push(InstanceArg::Value(value.clone()));
+                    }
                     instance_bindings.values.insert(binder, value);
                 }
             }
@@ -1867,7 +1874,8 @@ impl<'a> Specializer<'a> {
     /// the owner's solution, or a lifted body's folded capture of its name.
     /// A default `applied` to arguments (a wrapper reaching its trait
     /// member's default) takes each binder's solution from its argument,
-    /// substituted under the owner's `bindings`.
+    /// substituted under the owner's `bindings`. A binder the function
+    /// removed is bound but not keyed.
     fn default_function_bindings(
         &self,
         function: &str,
@@ -1894,7 +1902,9 @@ impl<'a> Specializer<'a> {
             applied_bindings = own;
             &applied_bindings
         };
+        let removed = self.removed_params(function);
         for decl in scope {
+            let keyed = !removed.contains(decl.id());
             let binder = decl.binder();
             let unresolved = || {
                 self.error(
@@ -1905,12 +1915,16 @@ impl<'a> Specializer<'a> {
             match decl {
                 ParamDecl::Type { .. } => {
                     let ty = bindings.types.get(&binder).ok_or_else(unresolved)?;
-                    arguments.push(InstanceArg::Ty(ty.clone()));
+                    if keyed {
+                        arguments.push(InstanceArg::Ty(ty.clone()));
+                    }
                     default_bindings.types.insert(binder, ty.clone());
                 }
                 ParamDecl::Value { .. } => {
                     let value = bindings.values.get(&binder).ok_or_else(unresolved)?;
-                    arguments.push(InstanceArg::Value(value.clone()));
+                    if keyed {
+                        arguments.push(InstanceArg::Value(value.clone()));
+                    }
                     default_bindings.values.insert(binder, value.clone());
                 }
             }

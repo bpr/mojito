@@ -21,6 +21,11 @@
 //! function reads through a nested body it names only the binders that
 //! body kept. Those removals join the snapshot the verifier reads.
 //!
+//! A lifted compile-time function (`$comptime$f$…`, `$default$f$…`) is a
+//! generator over every binder it declares, whoever owns it: the
+//! elaborator keys its instances, and the evaluations cached by instance
+//! name, on the binders it kept.
+//!
 //! A method is a generator over its struct's parameters as well: the
 //! elaborator keys and names one that removed any of them off the struct
 //! template rather than the owner instance, and a static call's spelled
@@ -117,13 +122,16 @@ pub fn remove_unused_params(
 }
 
 /// Whether the function so declared has a compile-time parameter of its
-/// own or, as a method, its struct's, which a call of it may pass on, or is
-/// nested in another, whose parameters it may read.
+/// own or, as a method, its struct's, which a call of it may pass on, is
+/// nested in another, whose parameters it may read, or is lifted and
+/// declares binders, which its application binds.
 fn has_own_parameters(
     declaration: &MirFunctionDeclaration,
     declarations: &MirDeclarations,
 ) -> bool {
     declaration.enclosing.is_some()
+        || (!declaration.param_decls.is_empty()
+            && mojito_symbol::symbol::lifted_owner(&declaration.lowered_name).is_some())
         || declaration
             .param_decls
             .iter()
