@@ -5294,13 +5294,32 @@ point where a slot declared in a loop is uninitialized again.
   keys its instances on the rest (`Specializer::nested_bindings`). A
   method is a generator over its struct's parameters as well, as
   upstream's method generator lists them before its own
-  (`mir::method_owner_params`, R909): they join its candidates, the
+  (`mir::method_owner_params`, R909): they join its candidates. The
   struct spelled with no arguments (a receiver, `out self`, or `Self`
-  result) reads them all, and a method that removed one is keyed and named
-  off the struct template with its kept struct arguments leading its own
-  (`S.st$mono`, `Specializer::enqueue`), so it names no owner instance. A
-  static call's spelled receiver `S[n]` is a forward of `n` to the struct
-  parameter the callee removed. A body lifted from a compile-time
+  result) reads them as the struct spelled at its own parameters does
+  (R978): where a struct type reads its layout, the ones its layout reads,
+  as upstream walks `self`'s lowered structural type, and where it reads
+  nominally, all of them; the lifecycle member a copy, move, or drop of
+  `Self` runs reads what it reads of `S[own parameters]`
+  (`Walker::member_reads`), and `Self.n`, lowered as the projection
+  `self.n` of the receiver's reified parameter, reads `n`
+  (`receiver_parameter_reads`). So `get(self)`, `take(var self)`, and
+  `bump(mut self)` over `Box[n]{v: Int}` remove `n`. A method that removed
+  one is keyed and named off the struct template with its kept struct
+  arguments leading its own (`S.st$mono`, `Specializer::enqueue`), so it
+  names no owner instance, and the bare spelling in its body stands for
+  the struct with the removed arguments erased
+  (`Specializer::erase_removed_owner`, `Box$mono$V$REMOVED$ARG`), which
+  every receiver's instance agrees with. A member the backends find by
+  composing `{struct}.{member}` from a value's type rather than from the
+  instance a call names (`mir::composed_member`: the constructors and
+  lifecycle members, display, hashing, equality, `__int__`, a keyword
+  collector's `__setitem__`, `__call__`) keeps its owner instance and its
+  name, removals and all, until each struct instance carries its members'
+  instance symbols (R1001). A static call's spelled receiver `S[n]` is a
+  forward of `n` to the struct parameter the callee removed; in a body
+  that removed `n` it is the erased `S[_REMOVED_ARG]`, which binds nothing
+  and names the erased instance (`Specializer::bind_static_receiver`). A body lifted from a compile-time
   expression (`$comptime$f$…`, `$default$f$…`) is a generator over every
   binder it declares, whoever owns it (R911): its candidates are its
   declaration's `param_decls`, and the elaborator keys its instances, and
@@ -5372,7 +5391,9 @@ point where a slot declared in a loop is uninitialized again.
   `Bindings::removed` instead, and `apply_defaults` skips it) and is
   declared with its substituted fields (`Specializer::discover_structs`),
   so it lays out as every instance agreeing on the kept arguments, upstream's
-  structural layout type; a field or a member body that reads an erased
+  structural layout type; one only a struct argument or a pointee names
+  needs no layout and is declared only if it has one. A field or a member
+  body that reads an erased
   parameter fails the instance explicitly (`Specializer::erased_layout`,
   `substitute::removed_parameter_read`). A pointer field whose pointee
   names a removed parameter or erases an argument points to `None`

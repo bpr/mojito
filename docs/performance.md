@@ -1867,3 +1867,28 @@ before (the parent commit) and after:
 pin keeps one (R998). No other fixture under `assets/ok/` changes its
 instance count, output, or diagnostics, so `benchmarks/instantiation.tsv`
 gains only the fixture's row.
+
+## A method's receiver reads only what its struct's layout reads (2026-10-15, R978)
+
+`remove-unused-params` now reads a method's `Self` (its receiver, `out
+self`, or `Self` result) as the struct spelled at its own parameters, and
+an owner-less method instance takes its struct with the removed arguments
+erased (`docs/architecture.md` §Pre-Elaboration Pipeline). The stage
+fixture, `assets/ok/receiver_unread_struct_parameter_instances.mojo`,
+debug binary, before (the parent commit) and after:
+
+| | before | after | change |
+|---|---:|---:|---:|
+| `concrete_functions` | 31 | 27 | −4 |
+| `generator_instances` | 26 | 22 | −4 |
+| `generator_instance_instructions` | 74 | 66 | −8 |
+
+`Box.get`, `Box.take`, `Box.bump`, and `Wrap.get` each fall to one
+instance, as on the pin. `Box.reads` and `Arr.first` keep one per
+argument, as on the pin. `Box.twice` (R998), `Wrap.take` (R999), and the
+constructors and destructors (R1000, R1001) keep one per argument where the
+pin keeps one. Over the corpus, `benchmarks/instantiation.tsv`'s shared
+`concrete_functions` total falls from 40418 to 40054 and no fixture grows:
+bundled methods such as `List.__len__` merge too. Two fixtures that failed
+at the parent commit elaborate again (a static call's erased receiver,
+`static_method_unread_owner_instances.mojo`, `static_call_through_self.mojo`).

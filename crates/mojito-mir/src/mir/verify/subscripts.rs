@@ -361,10 +361,16 @@ pub(super) fn verify_subscript_call(
         },
         _ => None,
     };
+    // A generator that removed one of its struct's parameters is named
+    // after the struct's template rather than the receiver's instance.
     if !abstract_trait_dispatch
         && let Some(receiver) = concrete_receiver
-        && mojito_symbol::symbol::split_method_symbol(&call.target)
-            .is_some_and(|(owner, _)| owner != receiver)
+        && mojito_symbol::symbol::split_method_symbol(&call.target).is_some_and(|(owner, _)| {
+            owner != receiver
+                && !receiver
+                    .strip_prefix(owner)
+                    .is_some_and(|instance| instance.starts_with("$mono$"))
+        })
     {
         errors.push(format!(
             "{prefix}: selected subscript target '{}' does not belong to receiver type {receiver}",

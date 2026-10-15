@@ -67,7 +67,9 @@ pub use param_uses::{
     without_removed_forwards,
 };
 mod struct_reads;
-pub use struct_reads::{LayoutReads, StructReads, struct_layout_reads, struct_member};
+pub use struct_reads::{
+    LayoutReads, StructReads, composed_member, struct_layout_reads, struct_member,
+};
 mod symbols;
 pub use symbols::{SymbolTable, implicit_callees, replace_symbol_uses};
 

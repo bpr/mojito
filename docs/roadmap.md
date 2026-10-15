@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1000**.
+Next free ID: **R1004**.
 
 ## Ordered Work
 
@@ -525,24 +525,79 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R978 An instance method's instances differ by struct parameters
-  it never reads**
+- [ ] **R1001 A destructor or copy or move constructor that reads no
+  struct parameter keeps one instance per struct instance**
 
-  `Box[1](1).get()` and `Box[2](2).get()` reach two instances of a `get`
-  that ignores `n`, where the pin keeps one, as it does for
-  `Box.__init__`, a static `Box.make() -> Self`, `Box.take(var self)`,
-  and `Arr.first`.
-  - A static method's unread struct parameter is removed (R909); a
-    method's receiver, `out self`, or `Self` result spells the struct with
-    no arguments, which `mir::unread_parameters` reads as every struct
-    parameter.
-  - That spelling should count as a read only where R977's layout rule
-    says the parameter is needed.
-  - Upstream's method generator lists its struct's parameters before its
-    own; Mojito's method declarations do not restate them, which is the
-    structural end state.
-  - Depends on R977.
+  `DBox[1]` and `DBox[2]` reach two `DBox.__deinit__`, whose body prints
+  only `self.v`, where the pin keeps one; the same holds for
+  `__copyinit__`, `__moveinit__`, and a copy `__init__`.
+  - `remove-unused-params` removes `n` from them, but the elaborator keeps
+    them keyed and named by their struct instance
+    (`mir::composed_member`), because the backends find them by composing
+    `{struct}.{member}` from a value's type (`pliron` `drops.rs`,
+    `release.rs`, `pointers.rs`, `places.rs`; the VM's `values.rs`,
+    `dispatch.rs`).
+  - Upstream names the generator instance at every death, copy, and move.
+  - Record each concrete struct declaration's lifecycle-member instance
+    symbols and have every composing site look them up there, then drop
+    these members from `composed_member`.
+  - Pinned by `assets/ok/receiver_unread_struct_parameter_instances.mojo`
+    (`DBox.__deinit__`).
+  - Found while landing R978 (2026-10-15).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1003 A display, hash, or equality member that reads no struct
+  parameter keeps one instance per struct instance**
+
+  `WBox[1]` and `WBox[2]` reach two `WBox.write_to`, whose body prints only
+  `self.v`, where the pin keeps one; the same holds for `write_repr_to`,
+  `__hash__`, `__eq__`, `__int__`, a keyword collector's `__setitem__`,
+  and `__call__`.
+  - The elaborator keeps them keyed by their struct instance
+    (`mir::composed_member`) because `print`, hashing, `!=`, scalar
+    construction, `**kwargs`, and callable dispatch compose
+    `{struct}.{member}` (`pliron` `lib.rs`, `print.rs`, `methods.rs`; the
+    VM's `dispatch.rs`, `invoke.rs`, `vm.rs`).
+  - Look these up through the member table R1001 adds, then delete
+    `composed_member` once R1000 lands too.
+  - Found while landing R978 (2026-10-15).
+  - Depends on R1001.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1000 A constructor that reads no struct parameter keeps one
+  instance per struct instance**
+
+  `Box[1](1)` and `Box[2](2)` reach two `Box.__init__`, which only stores
+  `v`, where the pin keeps one.
+  - `remove-unused-params` removes `n`, but struct discovery demands every
+    constructor of every struct instance by composed name
+    (`Specializer::enqueue_struct_members`), so an owner-less instance
+    would sit beside them (R459).
+  - Respell the constructor call (`specializer.rs`, beside `arity_keyed`)
+    and the `@implicit` conversion path to the owner-less instance.
+  - Name the VM's constructed value by the call's destination type, not by
+    the symbol or the erased receiver (`Prog::lifecycle_constructor`,
+    `construct_via_init`).
+  - Then drop `__init__` from `mir::composed_member`.
+  - Found while landing R978 (2026-10-15).
+  - Depends on R459, R1001.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1002 A method call on a field reads the root struct's arguments
+  whole**
+
+  `SBox[n].take(var self)` returning `self.s.byte_length()` keeps `n`,
+  where the pin removes it.
+  - `Walker::nominal_instruction` reads every type a member-dispatch
+    instruction names nominally, the receiver place's root and projection
+    types included.
+  - Only the type whose member runs (the projected receiver's) is
+    nominal; the root and the projections only address it, so they read
+    their layout.
+  - Found while landing R978 (2026-10-15).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R998 A method call or a constructor reads its struct's arguments
   whole, whatever the member removed**

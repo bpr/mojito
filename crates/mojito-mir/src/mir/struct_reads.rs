@@ -59,6 +59,43 @@ pub fn struct_member(name: &str, member: &str) -> String {
     format!("{name}.{member}")
 }
 
+/// Whether the backends find the struct method `method` by composing
+/// [`struct_member`] from a value's type, not from the instance a call
+/// names.
+///
+/// Those are the lifecycle members a construction, a copy, a move, or a
+/// drop runs (`__init__`, `__copyinit__`, `__moveinit__`, `__deinit__` or
+/// `__del__`), display (`write_to`, `write_repr_to`, `write_string`),
+/// hashing (`__hash__`, `_update_with_simd`), equality (`__eq__`, and
+/// `__ne__` through it), the `__int__` a scalar construction converts
+/// through, a keyword collector's `__setitem__`, and the `__call__` a
+/// callable value dispatches. Such a member keeps one instance per struct
+/// instance, named after it, whatever parameters it removed.
+pub fn composed_member(method: &str) -> bool {
+    mojito_symbol::symbol::split_method_symbol(method)
+        .map(|(_, member)| member.split('$').next().unwrap_or(member))
+        .is_some_and(|member| {
+            matches!(
+                member,
+                "__init__"
+                    | "__copyinit__"
+                    | "__moveinit__"
+                    | "__deinit__"
+                    | "__del__"
+                    | "write_to"
+                    | "write_repr_to"
+                    | "write_string"
+                    | "__hash__"
+                    | "_update_with_simd"
+                    | "__eq__"
+                    | "__ne__"
+                    | "__int__"
+                    | "__setitem__"
+                    | "__call__"
+            )
+        })
+}
+
 /// [`struct_layout_reads`] and the member reads of one walk's struct types,
 /// each struct answered once.
 pub struct StructReads<'d> {

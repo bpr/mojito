@@ -2139,3 +2139,72 @@ fn a_struct_type_argument_erases_its_own_arguments() {
         "the list keeps its element type and erases the box's argument: {param}"
     );
 }
+
+/// The names of the instances of `template` the program holds, sorted.
+fn instances_of(program: &SpecializedProgram, template: &str) -> Vec<String> {
+    let mut names: Vec<String> = program
+        .program
+        .functions
+        .iter()
+        .map(|(name, _)| name.clone())
+        .filter(|name| {
+            name.strip_prefix(template)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('$'))
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn a_receiver_method_that_reads_no_struct_parameter_is_one_instance() {
+    let source = "struct Box[n: Int](Copyable, Movable):\n\
+         \x20   var v: Int\n\
+         \x20   def __init__(out self, v: Int):\n\
+         \x20       self.v = v\n\
+         \x20   @no_inline\n\
+         \x20   def get(self) -> Int:\n\
+         \x20       return self.v\n\
+         def main():\n\
+         \x20   print(Box[1](1).get(), Box[2](2).get())\n";
+    let specialized = specialized_with_removed(source, &[]).expect("specialize");
+    assert_eq!(
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
+    );
+    assert_eq!(instances_of(&specialized, "Box.get"), ["Box.get$mono"]);
+    let [receiver] = function(&specialized, "Box.get$mono")
+        .param_types
+        .as_slice()
+    else {
+        panic!("`get` takes its receiver");
+    };
+    assert!(
+        mojito_types::types::erases_an_argument(peel_refs(receiver)),
+        "the receiver erases `n`: {receiver}"
+    );
+}
+
+#[test]
+fn a_destructor_that_reads_no_struct_parameter_keeps_its_instance_name() {
+    let source = "struct DBox[n: Int](Movable):\n\
+         \x20   var v: Int\n\
+         \x20   def __init__(out self, v: Int):\n\
+         \x20       self.v = v\n\
+         \x20   def __del__(deinit self):\n\
+         \x20       print(self.v)\n\
+         def main():\n\
+         \x20   var a = DBox[1](1)\n\
+         \x20   var b = DBox[2](2)\n\
+         \x20   print(a.v, b.v)\n";
+    let specialized = specialized_with_removed(source, &[]).expect("specialize");
+    // The backends find a destructor by composing its struct instance's
+    // name, so it stays one per instance under that name.
+    assert_eq!(
+        [
+            instances_of(&specialized, "DBox$mono$V1.__deinit__"),
+            instances_of(&specialized, "DBox$mono$V2.__deinit__"),
+        ],
+        [["DBox$mono$V1.__deinit__"], ["DBox$mono$V2.__deinit__"]]
+    );
+}

@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A method no longer splits instances by struct parameters its receiver
+  never reads (R978): `remove-unused-params` reads a method's `Self` as its
+  struct spelled at its own parameters, so `get(self)`, `take(var self)`,
+  and `bump(mut self)` over a `Box[n]` holding an `Int` have one instance
+  each, taking the erased `Box[_REMOVED_ARG]`, while one reading `Self.n`
+  or over `Arr[n]` holding a `SIMD[int64, n]` keeps one per `n`, as on the
+  pin. A copy, move, or drop of `self` reads what its struct's members
+  read, and `Self.n` read through the receiver reads `n`. Constructors,
+  lifecycle, display, hash, and equality members keep one instance per
+  struct instance, since the backends find them by name (R1000, R1001,
+  R1003). A static call's receiver whose argument a body removed now names
+  the erased instance, fixing `static_method_unread_owner_instances.mojo`
+  and `static_call_through_self.mojo`, and an erased instance only a
+  pointee or a struct argument names needs no layout
+  (`assets/ok/receiver_unread_struct_parameter_instances.mojo`).
 - A parameter that only a struct type's spelling names no longer splits
   instances where the struct's layout does not read it (R977):
   `remove-unused-params` reads a struct type's arguments as upstream's walk

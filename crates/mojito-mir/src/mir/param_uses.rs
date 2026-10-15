@@ -11,7 +11,8 @@
 //! is a read of it. A pair that only happens to spell one counts too, which
 //! keeps a parameter and never drops one. A method's struct spelled with
 //! no arguments is its `Self` (a receiver, `out self`, a `Self` result),
-//! which reads every parameter of the struct.
+//! which reads the struct's parameters as the struct spelled with them
+//! does.
 //!
 //! Upstream's walk runs over the structural types `LowerLIT` left, so a
 //! struct type in a signature, a slot, a register, or a place reads only
@@ -31,10 +32,10 @@
 //! analysis is not at hand, reads every parameter.
 
 use crate::mir::struct_reads::{LayoutReads, StructReads};
-use crate::mir::verify::{instruction_operand_regs, instruction_result_regs};
+use crate::mir::verify::{instruction_operand_regs, instruction_places, instruction_result_regs};
 use crate::mir::{
     MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg,
-    MirPlace, MirSubscriptArg, MirTerm, Reg, TyArg, UseMode, count_register_reads,
+    MirPlace, MirSubscriptArg, MirTerm, Proj, Reg, TyArg, UseMode, count_register_reads,
     destroyed_structs, instruction_regions, instruction_regions_mut, instruction_slots,
     instruction_subscript_call, matched_parameter_arguments, supplied_parameter_arguments,
 };
@@ -107,6 +108,13 @@ pub fn unread_parameters(
             spelled,
             decls.iter().map(|decl| (owner, decl.id().slot)).collect(),
         ));
+        walker.self_type = Some(
+            TyKind::Struct(
+                spelled.to_string(),
+                decls.iter().map(ParamDecl::own_argument).collect(),
+            )
+            .into(),
+        );
     }
     walker.signature(declaration);
     walker.body(function);
@@ -115,6 +123,9 @@ pub fn unread_parameters(
         return Vec::new();
     }
     let read_by_slot = slot_reads(function, &candidates);
+    let read_from_receiver = structure
+        .map(|(spelled, decls)| receiver_parameter_reads(function, spelled, decls, declarations))
+        .unwrap_or_default();
     let read = |decl: &ParamDecl| {
         let id = decl.id();
         walker
@@ -123,6 +134,7 @@ pub fn unread_parameters(
             .position(|owner| **owner == *id.owner)
             .is_some_and(|owner| walker.slots.contains(&(owner, id.slot)))
             || read_by_slot.contains(decl.name().trim_start_matches('*'))
+            || read_from_receiver.contains(id)
             || walker
                 .nested_removals
                 .iter()
@@ -713,6 +725,54 @@ fn slot_reads(function: &MirFunction, candidates: &[&ParamDecl]) -> HashSet<Stri
     reads
 }
 
+/// The parameters of the struct `spelled` (`decls`) that `function` reads
+/// through a projection of a value of it: `Self.n` is the receiver's
+/// reified parameter, `self.n`, which reads `n` as the binder does.
+fn receiver_parameter_reads<'d>(
+    function: &MirFunction,
+    spelled: &str,
+    decls: &'d [ParamDecl],
+    declarations: &MirDeclarations,
+) -> HashSet<&'d ParamId> {
+    fn walk<'f>(blocks: &'f [MirBlock], places: &mut Vec<&'f MirPlace>) {
+        for block in blocks {
+            for instruction in &block.instrs {
+                places.extend(instruction_places(instruction));
+                for region in instruction_regions(instruction) {
+                    walk(region, places);
+                }
+            }
+        }
+    }
+    let fields = declarations
+        .structure(spelled)
+        .map_or(&[][..], |structure| structure.fields.as_slice());
+    let mut places = Vec::new();
+    walk(&function.blocks, &mut places);
+    let mut reads = HashSet::new();
+    for place in places {
+        let bases = place.root_ty.iter().chain(&place.projection_tys);
+        for (projection, base) in place.proj.iter().zip(bases) {
+            if let Proj::Field(name) = projection
+                && let TyKind::Struct(base, _) = match base.kind() {
+                    TyKind::Ref(reference) => reference.referent.kind(),
+                    kind => kind,
+                }
+                && base == spelled
+                && !fields.iter().any(|(field, _)| field == name)
+            {
+                reads.extend(
+                    decls
+                        .iter()
+                        .filter(|decl| decl.name() == name)
+                        .map(ParamDecl::id),
+                );
+            }
+        }
+    }
+    reads
+}
+
 /// The type of the storage `place` designates.
 fn place_ty<'f>(function: &'f MirFunction, place: &'f MirPlace) -> Option<&'f Ty> {
     place
@@ -807,8 +867,12 @@ struct Walker<'o, 'a, 'n> {
     bodies: Vec<&'o str>,
     /// The struct whose method the function is, and its binders as `slots`
     /// entries: the struct spelled with no arguments is the method's `Self`,
-    /// which reads them all.
+    /// which reads the ones its layout reads, and under a nominal read all
+    /// of them.
     self_spelling: Option<(&'o str, Vec<(usize, usize)>)>,
+    /// The struct whose method the function is, spelled at its own
+    /// parameters: the lifecycle members its `Self` runs read them.
+    self_type: Option<Ty>,
     /// Each tuple variant the walk is inside: for a struct type, how many of
     /// its fields were walked, whether its name is `self_spelling`'s, and,
     /// under `layout`, what its layout reads of its arguments.
@@ -882,6 +946,7 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
             bodies: owners.clone(),
             owners,
             self_spelling: None,
+            self_type: None,
             variants: Vec::new(),
             self_arguments: false,
             structs: None,
@@ -964,9 +1029,9 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
     /// instruction that runs a member reads or names, and the parts of a
     /// copied, moved, or dropped value's type its lifecycle member reads.
     fn nominal_reads(&mut self, function: &MirFunction, declarations: &MirDeclarations) {
-        let Some(structs) = self.structs else {
+        if self.structs.is_none() {
             return;
-        };
+        }
         let layout = std::mem::replace(&mut self.layout, false);
         self.nominal_blocks(function, declarations, &function.blocks);
         let destroyed = destroyed_structs(function, &|name| {
@@ -975,9 +1040,27 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
                 .map(|structure| structure.fields.as_slice())
         });
         for ty in &destroyed.structs {
-            self.visit(&structs.member_reads(ty, "__deinit__"));
+            if let Some(reads) = self.member_reads(ty, "__deinit__") {
+                self.visit(&reads);
+            }
         }
         self.layout = layout;
+    }
+
+    /// [`StructReads::member_reads`] of `ty`, where the method's `Self`
+    /// (its struct spelled with no arguments) runs the member over the
+    /// struct at its own parameters.
+    fn member_reads(&self, ty: &Ty, member: &'static str) -> Option<Vec<TyArg>> {
+        let ty = match (ty.kind(), &self.self_type) {
+            (TyKind::Struct(name, arguments), Some(self_type))
+                if arguments.is_empty()
+                    && matches!(self_type.kind(), TyKind::Struct(spelled, _) if spelled == name) =>
+            {
+                self_type
+            }
+            _ => ty,
+        };
+        self.structs.map(|structs| structs.member_reads(ty, member))
     }
 
     fn nominal_blocks(
@@ -1015,10 +1098,7 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
         declarations: &MirDeclarations,
         instruction: &MirInstr,
     ) {
-        let member = |ty: Option<&Ty>, member| {
-            ty.zip(self.structs)
-                .map(|(ty, structs)| structs.member_reads(ty, member))
-        };
+        let member = |ty: Option<&Ty>, member| ty.and_then(|ty| self.member_reads(ty, member));
         match instruction {
             MirInstr::Call {
                 func,
@@ -1382,14 +1462,21 @@ impl ser::Serializer for &mut Walker<'_, '_, '_> {
     }
 
     fn serialize_seq(self, length: Option<usize>) -> Result<Self, Unwalkable> {
+        let arguments = self.struct_arguments.take();
         if std::mem::take(&mut self.self_arguments)
             && length == Some(0)
             && self.unread == 0
             && let Some((_, slots)) = &self.self_spelling
         {
-            self.slots.extend(slots.iter().copied());
+            let reads = arguments.as_ref().unwrap_or(&LayoutReads::All);
+            self.slots.extend(
+                slots
+                    .iter()
+                    .enumerate()
+                    .filter(|(position, _)| reads.reads(*position))
+                    .map(|(_, slot)| *slot),
+            );
         }
-        let arguments = self.struct_arguments.take();
         self.sequences
             .push(arguments.map(|arguments| (arguments, 0)));
         Ok(self.compound())

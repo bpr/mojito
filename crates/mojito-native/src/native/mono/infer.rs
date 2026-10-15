@@ -454,7 +454,20 @@ impl Specializer<'_> {
             )
         })?;
         if bindings.self_instance.is_none() {
-            let owner_arguments = ordered_arguments(&struct_decl.param_decls, bindings, template)?;
+            // An erased argument (`S[_REMOVED_ARG]`, spelled where the body
+            // removed the parameter it named) binds nothing and names the
+            // erased instance.
+            let owner_arguments = struct_decl
+                .param_decls
+                .iter()
+                .enumerate()
+                .map(|(position, decl)| match arguments.get(position) {
+                    Some(TyArg::Val(CtValue::RemovedArg)) => {
+                        Ok(InstanceArg::Value(CtValue::RemovedArg))
+                    }
+                    _ => bound_argument(decl, bindings, template),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             let ty_arguments = owner_arguments
                 .iter()
                 .map(|argument| match argument {

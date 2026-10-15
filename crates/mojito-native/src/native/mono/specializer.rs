@@ -230,6 +230,37 @@ impl<'a> Specializer<'a> {
             .collect()
     }
 
+    /// Erase the parameters of the struct an owner-less method instance
+    /// removed from the `self` its bare struct spelling stands for: the
+    /// instance takes every struct instance agreeing on the kept arguments
+    /// (`Box[_REMOVED_ARG]`), as upstream's generator takes its `self`.
+    fn erase_removed_owner(&self, bindings: &mut Bindings) -> Result<(), MonoError> {
+        let Some((owner, _)) = &bindings.self_instance else {
+            return Ok(());
+        };
+        let Some(decls) = self
+            .structs
+            .get(owner.as_str())
+            .map(|owner| &owner.param_decls)
+        else {
+            return Ok(());
+        };
+        if !decls
+            .iter()
+            .any(|decl| bindings.removed.contains(&decl.binder()))
+        {
+            return Ok(());
+        }
+        let spelled: Ty = TyKind::Struct(
+            owner.clone(),
+            decls.iter().map(ParamDecl::own_argument).collect(),
+        )
+        .into();
+        let erased = substitute_ty(&spelled, bindings)?;
+        bindings.self_instance = Some((owner.clone(), erased));
+        Ok(())
+    }
+
     /// The instance arguments of `target`'s parameters `decls` under
     /// `bindings`: [`bound_argument`] of each past the `owner_covered` decls that
     /// restate the owner's parameters, without those the body removed.
@@ -279,12 +310,15 @@ impl<'a> Specializer<'a> {
             // A method that removed one of its struct's parameters is a
             // generator over the ones it kept, as upstream's method
             // generator lists them before its own: it names no owner
-            // instance, and its kept owner arguments lead its own.
+            // instance, and its kept owner arguments lead its own. A member
+            // the backends find by its struct instance's name keeps that
+            // name.
             Some((owner_template, _))
-                if self
-                    .removed_params(template)
-                    .iter()
-                    .any(|id| *id.owner == **owner_template) =>
+                if !mojito_mir::mir::composed_member(template)
+                    && self
+                        .removed_params(template)
+                        .iter()
+                        .any(|id| *id.owner == **owner_template) =>
             {
                 let removed = self.removed_params(template);
                 let decls = self
@@ -338,7 +372,11 @@ impl<'a> Specializer<'a> {
         // overload lookups against the instance struct name keep working.
         // A template whose removed parameters left no argument is still an
         // instance (`f$mono`), never the template itself.
-        let spelled = !key.arguments.is_empty() || !self.removed_params(template).is_empty();
+        let spelled = !key.arguments.is_empty()
+            || self
+                .removed_params(template)
+                .iter()
+                .any(|id| key.owner.is_none() || !self.structs.contains_key(&id.owner));
         let name = if let Some(owner) = &key.owner {
             let base = mojito_symbol::symbol::retarget_method_symbol(template, owner).ok_or_else(
                 || {
@@ -692,13 +730,23 @@ impl<'a> Specializer<'a> {
         }
         let scope = &self.binder_scope(&key.template);
         let mut removed = bindings.removed.clone();
-        removed.extend(self.removed_binders(&key.template));
-        let bindings = &Bindings {
+        removed.extend(
+            self.removed_binders(&key.template)
+                .into_iter()
+                .filter(|binder| {
+                    key.owner.is_none() || !self.structs.contains_key(&binder.id.owner)
+                }),
+        );
+        let mut bindings = Bindings {
             layout: self.layout_oracle(),
             applications: Some(Rc::clone(&self.applications)),
             removed,
             ..bindings.clone()
         };
+        if key.owner.is_none() {
+            self.erase_removed_owner(&mut bindings)?;
+        }
+        let bindings = &bindings;
         // A type or a parameter argument may carry the application of a
         // lowered function (`SIMD[dt, L[0]]`), which only running it
         // answers: each one a substitution meets is demanded, and the
@@ -2955,18 +3003,24 @@ impl<'a> Specializer<'a> {
         owner: &str,
         function: &MirFunction,
     ) -> Result<(), MonoError> {
-        let mut types = function_types(function).cloned().collect::<Vec<_>>();
+        let mut seeds = function_types(function).cloned().collect::<Vec<_>>();
         // Storage take/destroy intrinsics name their element type directly on
         // the instruction; seed it so the element's struct lays out and its
         // lifecycle members join the walk even when no register or variable
         // carries the bare element type.
-        push_instruction_types(&function.blocks, &mut types);
-        while let Some(ty) = types.pop() {
+        push_instruction_types(&function.blocks, &mut seeds);
+        // Each type beside whether a value of it is held: a struct's
+        // argument and a pointee are not laid out by the type naming them.
+        let mut types = seeds.into_iter().map(|ty| (ty, true)).collect::<Vec<_>>();
+        while let Some((ty, held)) = types.pop() {
             if matches!(ty.kind(), TyKind::Struct(..)) && !self.discovered_types.insert(ty.clone())
             {
                 continue;
             }
-            collect_nested_types(&ty, &mut types);
+            let mut nested = Vec::new();
+            collect_nested_types(&ty, &mut nested);
+            let opaque = matches!(ty.kind(), TyKind::Struct(..) | TyKind::Pointer { .. });
+            types.extend(nested.into_iter().map(|nested| (nested, held && !opaque)));
             let TyKind::Struct(name, _) = ty.kind() else {
                 continue;
             };
@@ -3023,8 +3077,7 @@ impl<'a> Specializer<'a> {
             // A field type may apply a function to the struct's parameters
             // (`SIMD[dt, h(Self.n)]`): the application is demanded as a
             // body's is, and the fields are substituted again.
-            let mut declaration = template.clone();
-            declaration.fields = loop {
+            let fields = loop {
                 self.applications.pending.borrow_mut().clear();
                 let fields = template
                     .fields
@@ -3032,9 +3085,20 @@ impl<'a> Specializer<'a> {
                     .map(|(field, ty)| Ok((field.clone(), substitute_field(ty, &bindings)?)))
                     .collect::<Result<Vec<_>, MonoError>>();
                 if !self.answer_pending(owner, &bindings)? {
-                    break self.erased_layout(owner, template, &bindings, fields)?;
+                    break self.erased_layout(owner, template, &bindings, fields);
                 }
             };
+            // An erased instance no value holds needs no layout, as upstream
+            // lays out no pointee; one a value reaches later lays out then.
+            let fields = match fields {
+                Err(_) if !held => {
+                    self.discovered_types.remove(&ty);
+                    continue;
+                }
+                fields => fields?,
+            };
+            let mut declaration = template.clone();
+            declaration.fields = fields;
             declaration.name.clone_from(name);
             declaration.param_decls.clear();
             declaration.associated_types.clear();
@@ -3085,7 +3149,7 @@ impl<'a> Specializer<'a> {
                 }
                 continue;
             }
-            types.extend(declaration.fields.iter().map(|(_, ty)| ty.clone()));
+            types.extend(declaration.fields.iter().map(|(_, ty)| (ty.clone(), true)));
             declaration.conformances =
                 self.instance_conformances(&template.conformances, &bindings);
             declaration.declared = self.instance_conformances(&template.declared, &bindings);
