@@ -5264,7 +5264,25 @@ point where a slot declared in a loop is uninitialized again.
   slot and register types, signature, runtime defaults, `where` clauses,
   and the other parameters' types and constraints, found by a serde walk
   as `SymbolTable` finds symbols (MLIR's walk of every attribute and type);
-  a value parameter's slot (matched by name, as the elaborator fills it)
+  a struct type, though, reads only the arguments its lowered layout reads
+  (R977), as upstream's walk runs after `LowerLIT` made each struct the
+  structural type of its fields (`mir::StructReads`,
+  `mir::struct_layout_reads`): a field type reads what it spells, a struct
+  field only what that struct's layout reads, and a pointer field nothing
+  of its pointee, so `fb[n](b: Box[n])` over `Box[n]{v: Int}` removes `n`
+  while `Arr[n]{data: SIMD[int64, n]}` and `Holder[T]{x: T}` keep theirs.
+  A struct type is read whole where upstream's IR keeps it nominal: a
+  declared callee's compile-time arguments and receiver, a constant, a
+  compile-time condition or sequence, an instruction that may run a
+  member of a struct it names (a method call, a subscript, an iteration,
+  a resolved operator, a call of an undeclared callee such as a
+  constructor or the builtin `len`), and the parts of a dropped, copied,
+  or moved value's type its lifecycle member reads
+  (`StructReads::member_reads`): every argument of a struct declaring the
+  member, and through one that does not what its fields' members read,
+  as upstream synthesizes it. A value argument, a dependent type, and a
+  projection read their binders whole as well; a
+  value parameter's slot (matched by name, as the elaborator fills it)
   addressed by anything but a drop or declaration of a scalar or of a
   callable parameter, whose value is a compile-time one; a name of
   a body lifted from the function (`$comptime$f$…`, `$default$f$…`), which
@@ -5309,7 +5327,8 @@ point where a slot declared in a loop is uninitialized again.
   Every caller still binds every parameter. Upstream instead rewrites the
   generator's signature and its callers; Mojito keeps both, and an
   instance clears the field. The verifier takes a removed binder out of the
-  body's scope and reports a removed parameter the body reads.
+  body's scope but inside a struct argument, which an instance erases
+  (R996), and reports a removed parameter the body reads.
   The pass is a `CallGraphPass` (R907), as upstream's walks its call graph
   callees first and rewrites each call of a generator it pruned before
   reaching the caller: a caller reads its body as that rewrite leaves it
@@ -5355,16 +5374,21 @@ point where a slot declared in a loop is uninitialized again.
   so it lays out as every instance agreeing on the kept arguments, upstream's
   structural layout type; a field or a member body that reads an erased
   parameter fails the instance explicitly (`Specializer::erased_layout`,
-  `substitute::removed_parameter_read`). Nothing constructs an erased
-  instance, so its `__init__` and `__call__` are not enqueued; its copy,
-  move, and destructor members are, for the backends that call them by
-  type. The verifier takes it as the type of any instance of the same
+  `substitute::removed_parameter_read`). A pointer field whose pointee
+  names a removed parameter or erases an argument points to `None`
+  instead (`substitute::substitute_field`), as `LowerLIT` lowers every
+  pointer field's pointee, so `PtrBox[_REMOVED_ARG]` and
+  `List[Box[_REMOVED_ARG]]` lay out their addresses alone. Nothing
+  constructs, calls, copies, or moves through a declared member an erased
+  instance or one over an erased type (`Holder[Box[_REMOVED_ARG]]`), since
+  each would read the erased arguments, so none of `__init__`, `__call__`,
+  `__copyinit__`, and `__moveinit__` is enqueued for it; its destructor is
+  the drops' to demand. The verifier takes it as the type of any instance of the same
   template whose other arguments agree (`verify/types.rs`'s
   `erased_struct_agrees`), and the VM destroys a value in a slot of an
   erased type through that type's members (`dispatch::erased_instance_value`),
   as upstream's destructor call is static, rather than by the value's own
-  instance name. Nothing removes such a parameter yet: every struct
-  spelling is a read until R977.
+  instance name.
 - **Two seams, once per body.** `CompiledProgram::elaborated_mir` runs
   `pre_elaborate_program` over the program's own bodies after
   `elaborate_drops_program` (the `pre_elaboration` `--timings` span), and an

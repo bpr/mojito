@@ -50,11 +50,15 @@ pub(super) fn verify_scope(
     scope.declare_loop_binders(&function.blocks);
     let head = format!("MIR function '{name}'");
     // A removed parameter no longer exists: a reference to it is out of
-    // scope, and its slot is read by nothing.
+    // scope but inside a struct argument, which an instance erases
+    // (`_REMOVED_ARG`) as upstream's generator spells it, and its slot is
+    // read by nothing.
     if !function.removed_params.is_empty() {
         let unread = crate::mir::unread_parameters(name, function, declarations, &snapshot);
         for id in &function.removed_params {
-            scope.kinds.remove(id);
+            if let Some(kind) = scope.kinds.remove(id) {
+                scope.erased.insert(id.clone(), kind);
+            }
             if !unread.contains(id) {
                 errors.push(format!(
                     "{head} removes parameter slot {} of `{}`, which it reads",
@@ -68,6 +72,7 @@ pub(super) fn verify_scope(
         declarations,
         head: &head,
         errors,
+        struct_arguments: 0,
     };
     let signature = function
         .param_types
@@ -241,6 +246,9 @@ pub(super) fn is_contract_binder(id: &ParamId) -> bool {
 /// The binders a body may name, with the kind each declares.
 struct Scope {
     kinds: HashMap<ParamId, MetaTy>,
+    /// The binders the body's generator removed, which only a struct
+    /// argument may still name.
+    erased: HashMap<ParamId, MetaTy>,
 }
 
 impl Scope {
@@ -250,6 +258,7 @@ impl Scope {
     fn of_function(name: &str, declarations: &MirDeclarations) -> Self {
         let mut scope = Self {
             kinds: HashMap::new(),
+            erased: HashMap::new(),
         };
         let mut link = Some(name);
         while let Some(current) = link {
@@ -307,6 +316,8 @@ struct ScopeCx<'a> {
     declarations: &'a MirDeclarations,
     head: &'a str,
     errors: &'a mut Vec<String>,
+    /// How many struct arguments the walk is inside.
+    struct_arguments: usize,
 }
 
 impl ScopeCx<'_> {
@@ -523,7 +534,9 @@ impl ScopeCx<'_> {
                     .declarations
                     .structure(name)
                     .map(|declaration| &declaration.param_decls[..]);
+                self.struct_arguments += 1;
                 self.arguments(role, declared, args, nested);
+                self.struct_arguments -= 1;
             }
             TyKind::GenericFunc(generic) => {
                 let GenericFuncTy {
@@ -784,7 +797,12 @@ impl ScopeCx<'_> {
             .rev()
             .find(|(nested, _)| nested == id)
             .map(|(_, kind)| kind)
-            .or_else(|| self.scope.kinds.get(id));
+            .or_else(|| self.scope.kinds.get(id))
+            .or_else(|| {
+                (self.struct_arguments > 0)
+                    .then(|| self.scope.erased.get(id))
+                    .flatten()
+            });
         match declared {
             None => self.errors.push(format!(
                 "{} {role} names parameter `{name}` of `{}` that no enclosing declaration binds",
@@ -1026,6 +1044,49 @@ mod tests {
                     && finding.contains("no enclosing declaration binds")),
             "{:?}",
             findings(&function, &declarations)
+        );
+    }
+
+    /// A parameter the generator removed stays in scope inside a struct
+    /// argument whose layout does not read it, which an instance erases
+    /// (`_REMOVED_ARG`), and nowhere else.
+    #[test]
+    fn scope_keeps_a_removed_parameter_in_struct_arguments_only() {
+        let context = ParamContext::detached();
+        let n = context.decl_ref(ParamId::new("f", 0), "n", MetaTy::int());
+        let mut declarations = declarations("f", vec![value_decl("f", 0, "n", Ty::int())]);
+        declarations.structs.push(MirStructDeclaration {
+            name: "Box".into(),
+            fields: vec![("v".into(), Ty::int())],
+            mut_self_methods: HashSet::new(),
+            fieldwise_init: false,
+            param_decls: vec![value_decl("Box", 0, "n", Ty::int())],
+            explicit_destructors: HashMap::new(),
+            explicit_destroy: None,
+            conformances: Vec::new(),
+            declared: Vec::new(),
+            associated_types: Vec::new(),
+            parameterized_associated_types: Vec::new(),
+            associated_values: Vec::new(),
+        });
+        let boxed = TyKind::Struct("Box".into(), vec![TyArg::Val(CtValue::Expr(n.clone()))]);
+        let mut erased = function_with(vec![boxed.into()]);
+        erased.removed_params = vec![ParamId::new("f", 0)];
+        assert_eq!(findings(&erased, &declarations), Vec::<String>::new());
+        let mut read = function_with(vec![
+            TyKind::Simd {
+                dtype: SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
+                width: SimdWidth::Expr(n),
+            }
+            .into(),
+        ]);
+        read.removed_params = vec![ParamId::new("f", 0)];
+        let found = findings(&read, &declarations);
+        assert!(
+            found
+                .iter()
+                .any(|finding| finding.contains("no enclosing declaration binds")),
+            "{found:?}"
         );
     }
 

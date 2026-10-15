@@ -1,0 +1,158 @@
+mojito-mir 1.63
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("struct_layout.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+    struct { name: Arr, fields: [field { name: data, type: simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "Arr", slot: 0, name: n, type: meta_value(Int) }) } }], mut_self_methods: [], fieldwise_init: false, param_decls: [value_param { owner: "Arr", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [and { left: constraint_bool(true), right: trivial { lifecycle: copyable, operand: operand_type(simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "Arr", slot: 0, name: n, type: meta_value(Int) }) }) } }] }, conformance { trait: IsTriviallyMovable, conditions: [and { left: constraint_bool(true), right: trivial { lifecycle: movable, operand: operand_type(simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "Arr", slot: 0, name: n, type: meta_value(Int) }) }) } }] }, conformance { trait: IsTriviallyDeinitable, conditions: [and { left: constraint_bool(true), right: trivial { lifecycle: deinitable, operand: operand_type(simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "Arr", slot: 0, name: n, type: meta_value(Int) }) }) } }] }], declared: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [] },
+    struct { name: Box, fields: [field { name: v, type: Int }], mut_self_methods: [], fieldwise_init: false, param_decls: [value_param { owner: "Box", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [and { left: constraint_bool(true), right: trivial { lifecycle: copyable, operand: operand_type(Int) } }] }, conformance { trait: IsTriviallyMovable, conditions: [and { left: constraint_bool(true), right: trivial { lifecycle: movable, operand: operand_type(Int) } }] }, conformance { trait: IsTriviallyDeinitable, conditions: [and { left: constraint_bool(true), right: trivial { lifecycle: deinitable, operand: operand_type(Int) } }] }], declared: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [] },
+    struct { name: Holder, fields: [field { name: k, type: Int }, field { name: x, type: param { owner: "Holder", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent } }], mut_self_methods: [], fieldwise_init: false, param_decls: [type_param { owner: "Holder", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent, default: absent, infer_only: false, variadic: false, constraints: [] }], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [and { left: and { left: constraint_bool(true), right: trivial { lifecycle: copyable, operand: operand_type(Int) } }, right: trivial { lifecycle: copyable, operand: operand_type(param { owner: "Holder", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent }) } }] }, conformance { trait: IsTriviallyMovable, conditions: [and { left: and { left: constraint_bool(true), right: trivial { lifecycle: movable, operand: operand_type(Int) } }, right: trivial { lifecycle: movable, operand: operand_type(param { owner: "Holder", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent }) } }] }, conformance { trait: IsTriviallyDeinitable, conditions: [and { left: and { left: constraint_bool(true), right: trivial { lifecycle: deinitable, operand: operand_type(Int) } }, right: trivial { lifecycle: deinitable, operand: operand_type(param { owner: "Holder", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent }) } }] }], declared: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [] }
+  ],
+  decls: [
+    decl { lowered_name: fa, param_names: [a], param_types: [struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fa", slot: 0, name: n, type: meta_value(Int) }))] }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "fa", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [], inline: never },
+    decl { lowered_name: fb, param_names: [b], param_types: [struct_type { name: Box, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fb", slot: 0, name: n, type: meta_value(Int) }))] }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "fb", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [], inline: never },
+    decl { lowered_name: fh, param_names: [h], param_types: [struct_type { name: Holder, arguments: [type_arg(param { owner: "fh", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent })] }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [type_param { owner: "fh", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent, default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [], inline: never },
+    decl { lowered_name: fhb, param_names: [h], param_types: [struct_type { name: Holder, arguments: [type_arg(struct_type { name: Box, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fhb", slot: 0, name: n, type: meta_value(Int) }))] })] }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "fhb", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [], inline: never },
+    decl { lowered_name: fv, param_names: [b], param_types: [struct_type { name: Box, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fv", slot: 0, name: n, type: meta_value(Int) }))] }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "fv", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [present(var)], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [true], availability: [], enclosing: absent, region_binders: [], inline: never }
+  ],
+  functions: [
+      fn {
+        name: fb,
+        registers: 2,
+        vars: 1,
+        var_names: [b],
+        params: 1,
+        param_types: [struct_type { name: Box, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fb", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Box, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fb", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 743, end: 746, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 743, end: 746, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fb", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
+              value.copy { dest: %r1, value: %r0 }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: fa,
+        registers: 2,
+        vars: 1,
+        var_names: [a],
+        params: 1,
+        param_types: [struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fa", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fa", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 805, end: 806, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 805, end: 806, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(3) },
+              literal.materialize { dest: %r1, value: %r0, target: Int }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: fh,
+        registers: 2,
+        vars: 1,
+        var_names: [h],
+        params: 1,
+        param_types: [struct_type { name: Holder, arguments: [type_arg(param { owner: "fh", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent })] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Holder, arguments: [type_arg(param { owner: "fh", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent })] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 886, end: 889, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 886, end: 889, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Holder, arguments: [type_arg(param { owner: "fh", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent })] }), projections: [projection { op: field(k), type: Int }], type: present(Int), through: absent } },
+              value.copy { dest: %r1, value: %r0 }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: fhb,
+        registers: 2,
+        vars: 1,
+        var_names: [h],
+        params: 1,
+        param_types: [struct_type { name: Holder, arguments: [type_arg(struct_type { name: Box, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fhb", slot: 0, name: n, type: meta_value(Int) }))] })] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Holder, arguments: [type_arg(struct_type { name: Box, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fhb", slot: 0, name: n, type: meta_value(Int) }))] })] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 957, end: 960, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 957, end: 960, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Holder, arguments: [type_arg(struct_type { name: Box, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fhb", slot: 0, name: n, type: meta_value(Int) }))] })] }), projections: [projection { op: field(k), type: Int }], type: present(Int), through: absent } },
+              value.copy { dest: %r1, value: %r0 }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: fv,
+        registers: 2,
+        vars: 1,
+        var_names: [b],
+        params: 1,
+        param_types: [struct_type { name: Box, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fv", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [true],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Box, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fv", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 1023, end: 1026, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 1023, end: 1026, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fv", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
+              drop.var { var: $v0 },
+              value.copy { dest: %r1, value: %r0 }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      }
+  ]
+}

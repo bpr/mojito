@@ -1936,8 +1936,8 @@ fn an_instance_binds_origin_erased_types() {
 }
 
 /// Elaborate `source` from `main` with the parameters `removed` names
-/// (function, parameter) removed by hand, as `remove-unused-params` would
-/// once a struct spelling stops counting as a read.
+/// (function, parameter) removed by hand, beside those
+/// `remove-unused-params` removed.
 fn specialized_with_removed(
     source: &str,
     removed: &[(&str, &str)],
@@ -2022,10 +2022,10 @@ fn an_instance_erases_the_struct_argument_of_a_removed_parameter() {
         .find(|declaration| declaration.name == "Box$mono$V$REMOVED$ARG")
         .expect("the erased instance is declared");
     assert_eq!(declared.fields, [("v".to_string(), Ty::int())]);
-    // Without the removal each box keeps its own instance.
-    let kept = specialized_with_removed(BOX_SOURCE, &[]).expect("specialize");
-    assert_eq!(main_callees(&kept, "fb").len(), 2);
-    assert_ne!(main_callees(&kept, "fb")[0], main_callees(&kept, "fb")[1]);
+    // `remove-unused-params` removes `n` itself: `Box` lays out an `Int`
+    // whatever `n` is.
+    let removed = specialized_with_removed(BOX_SOURCE, &[]).expect("specialize");
+    assert_eq!(main_callees(&removed, "fb"), ["fb$mono", "fb$mono"]);
 }
 
 #[test]
@@ -2064,6 +2064,44 @@ fn an_erased_struct_whose_layout_reads_the_removed_parameter_is_an_error() {
     assert!(
         error.construct.contains("lays out parameter `n`"),
         "{error:?}"
+    );
+}
+
+#[test]
+fn an_erased_pointer_field_points_to_none() {
+    let source = "from std.memory.alloc import unsafe_alloc\n\
+         struct PtrBox[T: Copyable & Deinitable](Copyable, Movable):\n\
+         \x20   var k: Int\n\
+         \x20   var p: UnsafePointer[Self.T, MutUntrackedOrigin]\n\
+         \x20   def __init__(out self, k: Int):\n\
+         \x20       self.k = k\n\
+         \x20       self.p = unsafe_alloc[Self.T](1)\n\
+         def fpb[T: Copyable & Deinitable](p: PtrBox[T]) -> Int:\n\
+         \x20   return p.k\n\
+         def main():\n\
+         \x20   print(fpb(PtrBox[Int](8)))\n\
+         \x20   print(fpb(PtrBox[Float64](9)))\n";
+    let specialized =
+        specialized_with_removed(source, &[("fpb", "T")]).expect("one `fpb` for both boxes");
+    assert_eq!(main_callees(&specialized, "fpb"), ["fpb$mono", "fpb$mono"]);
+    let declared = specialized
+        .program
+        .declarations
+        .structs
+        .iter()
+        .find(|declaration| {
+            mojito_types::types::struct_template(&declaration.name) == "PtrBox"
+                && declaration.name.contains("REMOVED")
+        })
+        .expect("the erased instance is declared");
+    assert!(
+        matches!(
+            declared.fields.as_slice(),
+            [(_, k), (_, p)] if *k == Ty::int()
+                && matches!(p.kind(), TyKind::Pointer { element, .. } if *element == Ty::none())
+        ),
+        "the pointer field points to `None`: {:?}",
+        declared.fields
     );
 }
 

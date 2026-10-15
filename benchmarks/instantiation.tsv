@@ -748,6 +748,7 @@ assets/ok/stropping.mojo	elaborated	6	74	0	0	0	0	14	0	0
 assets/ok/struct_generator_lane_symbolic_width.mojo	elaborated	8	88	2	3	11	12	16	2	3
 assets/ok/struct_generator_struct_value.mojo	elaborated	17	129	4	11	19	34	25	6	11
 assets/ok/struct_generator_vector_value.mojo	elaborated	10	128	3	5	24	46	18	3	5
+assets/ok/struct_layout_unread_parameter_instances.mojo	elaborated	108	1224	37	94	205	686	255	54	159
 assets/ok/struct_method_comptime_template_served.mojo	elaborated	44	689	18	26	177	188	146	42	40
 assets/ok/struct_method_instance_clone_unreached.mojo	elaborated	9	80	3	4	4	6	17	7	4
 assets/ok/struct_operator_operand_owner_drop.mojo	elaborated	14	158	3	3	9	9	22	3	3
@@ -1040,4 +1041,4 @@ benchmarks/compile/stdlib_heavy.mojo	elaborated	171	2529	57	149	853	1946	480	148
 benchmarks/compile/trait_defaults.mojo	elaborated	183	1872	29	129	281	1199	304	53	162
 benchmarks/compile/tstring.mojo	elaborated	40	614	20	24	164	214	136	44	38
 benchmarks/compile/tuple.mojo	elaborated	48	645	20	30	157	215	144	38	44
-total	1041	40310	608270	15930	25314	176911	261105	125131	36348	52842
+total	1042	40418	609494	15967	25408	177116	261791	125386	36402	53001

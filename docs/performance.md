@@ -1824,7 +1824,7 @@ binary, before (the parent commit) and after:
 `assets/`, twelve move, all through static methods of parametric structs,
 for 394 → 364 generator instances in total, and none changes its output or
 diagnostics. A method with a receiver keeps its struct's parameters, where
-the pin removes them (R977, R978).
+the pin removes them (R978).
 
 ## Unread callable parameters are removed (2026-10-15, R910)
 
@@ -1846,3 +1846,24 @@ before (the parent commit) and after:
 `defaulted` each fall to one instance, as on the pin; `call` and
 `forward_called` keep one per binding. No other fixture under `assets/`
 changes its instance count, output, or diagnostics.
+
+## A struct type reads only what its layout reads (2026-10-15, R977)
+
+`remove-unused-params` now reads a struct type's arguments only where the
+struct's lowered layout reads them, and whole where a member runs on it
+(`docs/architecture.md` §Pre-Elaboration Pipeline). The stage fixture,
+`assets/ok/struct_layout_unread_parameter_instances.mojo`, debug binary,
+before (the parent commit) and after:
+
+| | before | after | change |
+|---|---:|---:|---:|
+| `concrete_functions` | 117 | 108 | −9 |
+| `generator_instances` | 103 | 94 | −9 |
+| `generator_instance_instructions` | 708 | 686 | −22 |
+
+`fb`, `fwd`, `fhb`, `fpb`, `tag_of`, `boxed_tag`, `fp`, `fv`, and
+`fm` each fall to one instance, as on the pin; `fh`, `fs`, `pass_`, and
+`fn_` keep one per argument, as on the pin, and `fg` keeps two where the
+pin keeps one (R998). No other fixture under `assets/ok/` changes its
+instance count, output, or diagnostics, so `benchmarks/instantiation.tsv`
+gains only the fixture's row.

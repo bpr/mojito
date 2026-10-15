@@ -66,6 +66,8 @@ pub use param_uses::{
     NestedRemovals, has_no_destructor, method_owner_params, unread_parameters,
     without_removed_forwards,
 };
+mod struct_reads;
+pub use struct_reads::{LayoutReads, StructReads, struct_layout_reads, struct_member};
 mod symbols;
 pub use symbols::{SymbolTable, implicit_callees, replace_symbol_uses};
 

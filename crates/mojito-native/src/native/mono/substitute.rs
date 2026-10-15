@@ -738,6 +738,39 @@ pub(super) fn substitute_arg(arg: &TyArg, bindings: &Bindings) -> Result<TyArg, 
         TyArg::Origin(origin) => TyArg::Origin(origin.clone()),
     })
 }
+/// A struct field's type under `bindings`. A pointer field whose pointee
+/// names a parameter the instance removed, or erases an argument
+/// (`Optional[Entry[_REMOVED_ARG]]`), points to `None`, as `LowerLIT`
+/// lowers a pointer field's pointee: the instance's layout holds its
+/// address alone, and no layout of the pointee is needed.
+pub(super) fn substitute_field(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoError> {
+    let TyKind::Pointer { element, origin } = ty.kind() else {
+        return substitute_ty(ty, bindings);
+    };
+    let erased = || TyKind::Pointer {
+        element: Ty::none(),
+        origin: origin.clone(),
+    };
+    if bindings
+        .removed
+        .iter()
+        .any(|binder| mojito_types::types::names_binder(element, binder))
+    {
+        return substitute_ty(&erased().into(), bindings);
+    }
+    let substituted = substitute_ty(ty, bindings)?;
+    match substituted.kind() {
+        TyKind::Pointer { element, origin } if mojito_types::types::erases_an_argument(element) => {
+            Ok(TyKind::Pointer {
+                element: Ty::none(),
+                origin: origin.clone(),
+            }
+            .into())
+        }
+        _ => Ok(substituted),
+    }
+}
+
 pub(super) fn sub_types(types: &[Ty], bindings: &Bindings) -> Result<Vec<Ty>, MonoError> {
     types.iter().map(|ty| substitute_ty(ty, bindings)).collect()
 }

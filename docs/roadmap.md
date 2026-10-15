@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R997**.
+Next free ID: **R1000**.
 
 ## Ordered Work
 
@@ -509,37 +509,20 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R909.
   - Model: Fable, Not Planned.
 
-- [ ] **R996 The parametric verifier rejects a removed parameter that a
-  struct argument still spells**
+- [ ] **R997 An argument a body never uses keeps the parameters its type
+  names**
 
-  `fb[n](b: Box[n])` with `n` removed fails `verify/scope.rs`: "parameter
-  type names parameter `n` of `fb` that no enclosing declaration binds".
-  - The verifier takes every removed binder out of the body's scope, so
-    each slot, register, and place typed `Box[n]` is a finding.
-  - The elaborator erases such an argument (`_REMOVED_ARG`, R976), so a
-    spelling inside a struct argument is the generator's own, as upstream's
-    `Box[$0]` is: keep the binder in scope there and nowhere else.
-  - R977 cannot land without it; a scratch override of the removal hit it.
-  - Done when a `verify/scope.rs` unit test accepts a removed `n` spelled
-    in `Box[n]` and still rejects a removed `n` read as a value.
-  - Found while landing R976 (2026-10-15).
+  `fa[n](a: Arr[n])` and `fav[n](var a: Arr[n])` return `3` and keep one
+  instance per `n`, where the pin keeps one.
+  - Upstream's `RemoveUnusedParams` first removes each runtime argument
+    with no non-debug user (`identifyUnusedArguments`), from the generator
+    and from every call, and then the parameters only its type named.
+  - `Arr[n]` holds a `SIMD[int64, n]`, so its layout reads `n` and
+    `mir::unread_parameters` rightly keeps `n` while the argument stays.
+  - Mojito keeps every signature and call (`unused_params.rs`), so it has
+    no way to drop an argument from an instance and its calls.
+  - Found while landing R977 (2026-10-15).
   - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R977 A parameter that only spells a by-address argument's or a
-  result's struct type still splits instances**
-
-  `fb[n](b: Box[n])`, `fa[n](a: Arr[n])`, `fav[n](var a: Arr[n])`, and
-  `mk[n]() -> Box[n]` each keep `n` in `remove-unused-params`, where the
-  pin removes it from all four.
-  - `pass_[n](var a: Arr[n]) -> Arr[n]`, whose by-value result's layout
-    depends on `n`, keeps it on the pin.
-  - At `--no-optimization` the pin keeps `n` in `fa` and `fav`, whose
-    `Arr[n]` holds a `SIMD[int64, n]` field, but still drops it in `fb`
-    and `mk`.
-  - `mir::unread_parameters` counts every struct type spelling a binder as
-    a read; it should skip a spelling whose layout the body never needs.
-  - Depends on R976.
   - Model: Fable, Not Planned.
 
 - [ ] **R978 An instance method's instances differ by struct parameters
@@ -559,6 +542,37 @@ which names the upstream pass each one follows. Each is measured by the
     own; Mojito's method declarations do not restate them, which is the
     structural end state.
   - Depends on R977.
+  - Model: Fable, Not Planned.
+
+- [ ] **R998 A method call or a constructor reads its struct's arguments
+  whole, whatever the member removed**
+
+  `fg[n](b: NBox[n])` returning `b.get()` and `mk[n]() -> Box[n]`
+  returning `Box[n](5)` keep `n`, where the pin removes it because `get`
+  and `Box.__init__` are themselves `_REMOVED_ARG`.
+  - `mir::unread_parameters` reads every struct type a method call,
+    subscript, iteration, resolved operator, or undeclared callee (a
+    constructor, a builtin such as `len`) names, as member dispatch.
+  - Upstream's call passes the member's parameters as values, so a
+    removed one is no read: read the member's kept parameters instead, as
+    `without_removed_forwards` does for a declared callee.
+  - Found while landing R977 (2026-10-15).
+  - Depends on R978.
+  - Model: Fable, Not Planned.
+
+- [ ] **R999 A drop, copy, or move reads a declared lifecycle member's
+  struct arguments whole**
+
+  `fd[n](var b: DBox[n])`, whose `DBox.__del__` prints only `self.v`,
+  keeps `n`, where the pin removes it because the destructor is
+  `_REMOVED_ARG`.
+  - `mir::StructReads::member_reads` reads every argument of a struct that
+    declares the member, and through a synthesized one what its fields'
+    members read.
+  - Read the declared member's kept parameters instead, once R978 lets a
+    member remove its struct's parameters.
+  - Found while landing R977 (2026-10-15).
+  - Depends on R978.
   - Model: Fable, Not Planned.
 
 - [ ] **R982 A parameter read only by its function's evaluated default is

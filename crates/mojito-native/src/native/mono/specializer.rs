@@ -3029,7 +3029,7 @@ impl<'a> Specializer<'a> {
                 let fields = template
                     .fields
                     .iter()
-                    .map(|(field, ty)| Ok((field.clone(), substitute_ty(ty, &bindings)?)))
+                    .map(|(field, ty)| Ok((field.clone(), substitute_field(ty, &bindings)?)))
                     .collect::<Result<Vec<_>, MonoError>>();
                 if !self.answer_pending(owner, &bindings)? {
                     break self.erased_layout(owner, template, &bindings, fields)?;
@@ -3096,13 +3096,16 @@ impl<'a> Specializer<'a> {
             // function type is expected is called through its dispatch
             // symbol, which names no instance. The destructor is the drops'
             // to demand.
-            // Nothing constructs or calls an erased instance (`Box[_REMOVED_ARG]`):
-            // a construction spells the struct's arguments, which reads them.
-            let erased = !bindings.removed.is_empty();
+            // Nothing constructs, calls, copies, or moves through a member
+            // an erased instance (`Box[_REMOVED_ARG]`) or one over an erased
+            // type (`Holder[Box[_REMOVED_ARG]]`): a construction spells the
+            // struct's arguments, and a copy or a move that runs a declared
+            // member reads them (`mir::StructReads::member_reads`), so no
+            // generator that does either removed them.
+            if !bindings.removed.is_empty() || mojito_types::types::erases_an_argument(&ty) {
+                continue;
+            }
             for method in ["__init__", "__copyinit__", "__moveinit__", "__call__"] {
-                if erased && matches!(method, "__init__" | "__call__") {
-                    continue;
-                }
                 self.enqueue_struct_members(&template_name, &bindings, method)?;
             }
         }

@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A parameter that only a struct type's spelling names no longer splits
+  instances where the struct's layout does not read it (R977):
+  `remove-unused-params` reads a struct type's arguments as upstream's walk
+  over `LowerLIT`'s structural types does, so `fb[n](b: Box[n])` over a
+  `Box` holding an `Int`, one over `Holder[Box[n]]`, over a struct whose
+  pointer field points to `T`, or over one holding a `List[T]` has one
+  instance, while `Arr[n]` holding a `SIMD[int64, n]` keeps one per `n`.
+  A struct type is still read whole where a type value, a member call, a
+  constructor, a builtin, or a destructor, copy, or move the struct
+  declares names it. The verifier keeps a removed parameter in scope
+  inside a struct argument (R996), and an erased instance's pointer field
+  points to `None` where its pointee would name an erased argument
+  (`assets/ok/struct_layout_unread_parameter_instances.mojo`).
 - An instance whose generator removed a parameter that a struct argument
   names can now take that struct (R976): the elaborator erases each such
   argument, as upstream's generator spells `_REMOVED_ARG`, so one `fb$mono`

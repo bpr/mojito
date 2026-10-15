@@ -141,7 +141,7 @@ pub fn inline_parametric(
 /// up: its struct's `__deinit__`.
 pub fn destructor_of(ty: &Ty) -> Option<String> {
     match ty.kind() {
-        TyKind::Struct(name, _) => Some(format!("{name}.__deinit__")),
+        TyKind::Struct(name, _) => Some(mojito_mir::mir::struct_member(name, "__deinit__")),
         _ => None,
     }
 }

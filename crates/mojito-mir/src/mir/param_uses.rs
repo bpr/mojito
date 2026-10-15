@@ -11,21 +11,32 @@
 //! is a read of it. A pair that only happens to spell one counts too, which
 //! keeps a parameter and never drops one. A method's struct spelled with
 //! no arguments is its `Self` (a receiver, `out self`, a `Self` result),
-//! which reads every parameter of the struct. Two further reads are not
-//! identities: a value parameter's runtime reads go through the slot its
-//! name binds, and a body nested in the function (named `f$…`) reads the
-//! binders of its enclosing scope its own analysis kept, as upstream's
-//! `RemoveUnusedParams` reads a lifted closure's generator after removing
-//! its unused parameters. A body lifted from the function (named
-//! `$comptime$f$…`, `$default$f$…`), and a nested body whose analysis is not
-//! at hand, reads every parameter.
+//! which reads every parameter of the struct.
+//!
+//! Upstream's walk runs over the structural types `LowerLIT` left, so a
+//! struct type in a signature, a slot, a register, or a place reads only
+//! the arguments its lowered layout reads ([`StructReads`]). A struct type
+//! is read whole where upstream's IR keeps it nominal: a type value (a
+//! call's parameter arguments, a compile-time constant or condition), an
+//! instruction that runs a member of the struct (a method call, a
+//! subscript, an iteration, a resolved operator), and the lifecycle member
+//! a copy, a move, or a drop runs, which reads what that member reads.
+//!
+//! Two further reads are not identities: a value parameter's runtime reads
+//! go through the slot its name binds, and a body nested in the function
+//! (named `f$…`) reads the binders of its enclosing scope its own analysis
+//! kept, as upstream's `RemoveUnusedParams` reads a lifted closure's
+//! generator after removing its unused parameters. A body lifted from the
+//! function (named `$comptime$f$…`, `$default$f$…`), and a nested body whose
+//! analysis is not at hand, reads every parameter.
 
+use crate::mir::struct_reads::{LayoutReads, StructReads};
 use crate::mir::verify::{instruction_operand_regs, instruction_result_regs};
 use crate::mir::{
     MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg,
-    MirSubscriptArg, MirTerm, Reg, TyArg, count_register_reads, instruction_regions,
-    instruction_regions_mut, instruction_slots, instruction_subscript_call,
-    matched_parameter_arguments, supplied_parameter_arguments,
+    MirPlace, MirSubscriptArg, MirTerm, Reg, TyArg, UseMode, count_register_reads,
+    destroyed_structs, instruction_regions, instruction_regions_mut, instruction_slots,
+    instruction_subscript_call, matched_parameter_arguments, supplied_parameter_arguments,
 };
 use mojito_ast::ast::InfixOp;
 use mojito_hir::hir::VarId;
@@ -84,8 +95,11 @@ pub fn unread_parameters(
     if !bodies.contains(&name) {
         bodies.push(name);
     }
+    let structs = StructReads::new(declarations);
     let mut walker = Walker::new(owners, nested);
     walker.bodies = bodies;
+    walker.structs = Some(&structs);
+    walker.layout = true;
     if let Some((spelled, decls)) = structure
         && let Some(owner) = walker.owners.iter().position(|owner| *owner == spelled)
     {
@@ -96,6 +110,7 @@ pub fn unread_parameters(
     }
     walker.signature(declaration);
     walker.body(function);
+    walker.nominal_reads(function, declarations);
     if walker.reads_all {
         return Vec::new();
     }
@@ -698,6 +713,22 @@ fn slot_reads(function: &MirFunction, candidates: &[&ParamDecl]) -> HashSet<Stri
     reads
 }
 
+/// The type of the storage `place` designates.
+fn place_ty<'f>(function: &'f MirFunction, place: &'f MirPlace) -> Option<&'f Ty> {
+    place
+        .ty
+        .as_ref()
+        .or_else(|| place.projection_tys.last())
+        .or_else(|| place.root_ty.as_ref().filter(|_| place.proj.is_empty()))
+        .or_else(|| {
+            place
+                .proj
+                .is_empty()
+                .then(|| function.var_tys.get(&place.root))
+                .flatten()
+        })
+}
+
 struct SlotReads<'a> {
     function: &'a MirFunction,
     slots: &'a HashMap<VarId, &'a str>,
@@ -779,11 +810,32 @@ struct Walker<'o, 'a, 'n> {
     /// which reads them all.
     self_spelling: Option<(&'o str, Vec<(usize, usize)>)>,
     /// Each tuple variant the walk is inside: for a struct type, how many of
-    /// its fields were walked and whether its name is `self_spelling`'s.
-    variants: Vec<Option<(usize, bool)>>,
+    /// its fields were walked, whether its name is `self_spelling`'s, and,
+    /// under `layout`, what its layout reads of its arguments.
+    variants: Vec<Option<StructFrame>>,
     /// Whether the next sequence is the arguments of a struct type spelling
     /// `self_spelling`'s name.
     self_arguments: bool,
+    /// The struct reads a `layout` walk consults.
+    structs: Option<&'n StructReads<'n>>,
+    /// Whether a struct type reads only the arguments its lowered layout
+    /// reads, as upstream's walk over `LowerLIT`'s structural types does.
+    layout: bool,
+    /// What the struct whose arguments the next sequence holds reads of
+    /// them, under `layout`.
+    struct_arguments: Option<LayoutReads>,
+    /// Each sequence the walk is inside: for a struct's arguments under
+    /// `layout`, what its layout reads and how many were walked.
+    sequences: Vec<Option<(LayoutReads, usize)>>,
+    /// How many struct arguments the walk is inside that their struct's
+    /// layout does not read: a binder named there is no read.
+    unread: usize,
+    /// How many values the walk is inside that name their binders whole
+    /// whatever a layout reads: a value argument, a dependent type, a
+    /// projection.
+    nominal: usize,
+    /// Each struct variant the walk is inside, and whether it is nominal.
+    struct_variants: Vec<bool>,
     /// The removals of the nested bodies a walked value names.
     nested: &'n NestedRemovals<'a>,
     /// The binders a walked value names, as the index of their owner in
@@ -803,11 +855,19 @@ struct Walker<'o, 'a, 'n> {
     tuples: Vec<(usize, usize, Option<usize>)>,
     /// The reads each type walked so far makes: a type is a uniqued handle
     /// that many registers and slots share.
-    types: HashMap<Ty, TypeReads<'a>>,
+    types: HashMap<(Ty, bool), TypeReads<'a>>,
 }
 
 /// The binders, nested bodies' removals, and opacity of one walked type.
 type TypeReads<'a> = (BTreeSet<(usize, usize)>, Vec<&'a [ParamId]>, bool);
+
+/// A struct type the walk is inside: how many of its fields were walked,
+/// whether its name is `self_spelling`'s, and what its layout reads.
+struct StructFrame {
+    field: usize,
+    self_named: bool,
+    reads: Option<LayoutReads>,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Leaf {
@@ -824,6 +884,13 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
             self_spelling: None,
             variants: Vec::new(),
             self_arguments: false,
+            structs: None,
+            layout: false,
+            struct_arguments: None,
+            sequences: Vec::new(),
+            unread: 0,
+            nominal: 0,
+            struct_variants: Vec::new(),
             nested,
             slots: BTreeSet::new(),
             nested_removals: Vec::new(),
@@ -835,9 +902,10 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
     }
 
     /// The declaration's signature: its runtime parameters, collectors,
-    /// result, error, runtime defaults, and `where` clauses, and each
-    /// compile-time parameter's type and constraints. Not a compile-time
-    /// parameter's default, which the call site evaluates.
+    /// result, and error, as the walk's mode reads them, and whole its
+    /// runtime defaults, `where` clauses, and each compile-time parameter's
+    /// type and constraints. Not a compile-time parameter's default, which
+    /// the call site evaluates.
     fn signature(&mut self, declaration: &MirFunctionDeclaration) {
         for ty in declaration
             .param_types
@@ -849,6 +917,7 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
         {
             self.ty(ty);
         }
+        let layout = std::mem::replace(&mut self.layout, false);
         self.visit(&declaration.defaults);
         self.visit(&declaration.availability);
         for decl in &declaration.param_decls {
@@ -871,6 +940,7 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
                 }
             }
         }
+        self.layout = layout;
     }
 
     /// The body: its blocks, and the types of its signature, slots, and
@@ -889,18 +959,171 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
         }
     }
 
+    /// The reads the layout walk leaves out of `function`: each type value
+    /// and compile-time condition its instructions hold, every type an
+    /// instruction that runs a member reads or names, and the parts of a
+    /// copied, moved, or dropped value's type its lifecycle member reads.
+    fn nominal_reads(&mut self, function: &MirFunction, declarations: &MirDeclarations) {
+        let Some(structs) = self.structs else {
+            return;
+        };
+        let layout = std::mem::replace(&mut self.layout, false);
+        self.nominal_blocks(function, declarations, &function.blocks);
+        let destroyed = destroyed_structs(function, &|name| {
+            declarations
+                .structure(name)
+                .map(|structure| structure.fields.as_slice())
+        });
+        for ty in &destroyed.structs {
+            self.visit(&structs.member_reads(ty, "__deinit__"));
+        }
+        self.layout = layout;
+    }
+
+    fn nominal_blocks(
+        &mut self,
+        function: &MirFunction,
+        declarations: &MirDeclarations,
+        blocks: &[MirBlock],
+    ) {
+        for block in blocks {
+            for instruction in &block.instrs {
+                self.nominal_instruction(function, declarations, instruction);
+                for region in instruction_regions(instruction) {
+                    self.nominal_blocks(function, declarations, region);
+                }
+            }
+            if matches!(
+                block.term,
+                MirTerm::ComptimeBranch { .. } | MirTerm::ComptimeFor { .. }
+            ) {
+                self.visit(&block.term);
+            }
+        }
+    }
+
+    /// What `instruction` reads whole: a declared callee's parameter
+    /// arguments, a constant, a compile-time condition or sequence, the
+    /// lifecycle member a copy or a move runs, and, for an instruction that
+    /// may run a member of a struct it names (a builtin such as `len`
+    /// dispatches to its argument's `__len__`), the instruction and every
+    /// type of its registers and slots. Drops are
+    /// [`Self::nominal_reads`]'s.
+    fn nominal_instruction(
+        &mut self,
+        function: &MirFunction,
+        declarations: &MirDeclarations,
+        instruction: &MirInstr,
+    ) {
+        let member = |ty: Option<&Ty>, member| {
+            ty.zip(self.structs)
+                .map(|(ty, structs)| structs.member_reads(ty, member))
+        };
+        match instruction {
+            MirInstr::Call {
+                func,
+                raises,
+                receiver,
+                param_arg_regs,
+                instantiated_args,
+                ..
+            } if declarations.function(&func.0).is_some() => {
+                self.visit(raises);
+                self.visit(receiver);
+                self.visit(param_arg_regs);
+                self.visit(instantiated_args);
+            }
+            MirInstr::Const { k, .. } => self.visit(k),
+            MirInstr::ComptimeIf { conds, .. } => self.visit(conds),
+            MirInstr::ComptimeFor { binder, source, .. } => {
+                self.visit(binder);
+                self.visit(source);
+            }
+            MirInstr::UseVar { var, mode, .. } => {
+                let lifecycle = match mode {
+                    UseMode::Copy => Some("__copyinit__"),
+                    UseMode::Move => Some("__moveinit__"),
+                    UseMode::BorrowShared | UseMode::BorrowMut | UseMode::Forward => None,
+                };
+                if let Some(reads) =
+                    lifecycle.and_then(|lifecycle| member(function.var_tys.get(var), lifecycle))
+                {
+                    self.visit(&reads);
+                }
+            }
+            MirInstr::CopyValue { dest, .. } => {
+                if let Some(reads) = member(function.reg_types.get(&dest.0), "__copyinit__") {
+                    self.visit(&reads);
+                }
+            }
+            MirInstr::MovePlace { place, .. } => {
+                if let Some(reads) = member(place_ty(function, place), "__moveinit__") {
+                    self.visit(&reads);
+                }
+            }
+            MirInstr::UnOp { raises: None, .. }
+            | MirInstr::BinOp {
+                resolved: None,
+                raises: None,
+                ..
+            }
+            | MirInstr::EstablishLoans { .. }
+            | MirInstr::InvalidateInteriors { .. }
+            | MirInstr::MakeRef { .. }
+            | MirInstr::ReadRef { .. }
+            | MirInstr::Rebind { .. }
+            | MirInstr::WriteRef { .. }
+            | MirInstr::KeepAlive { .. }
+            | MirInstr::DeclareVar { .. }
+            | MirInstr::DefVar { .. }
+            | MirInstr::GetField { .. }
+            | MirInstr::Store { .. }
+            | MirInstr::StoreRef { .. }
+            | MirInstr::LoadPlace { .. }
+            | MirInstr::MakeTuple { .. }
+            | MirInstr::MarkInitialized { .. }
+            | MirInstr::MarkDestroyed { .. }
+            | MirInstr::DropVar { .. }
+            | MirInstr::DropPlace { .. }
+            | MirInstr::ConsumeVar { .. }
+            | MirInstr::ConsumePlace { .. }
+            | MirInstr::If { .. }
+            | MirInstr::Loop { .. }
+            | MirInstr::Try { .. } => {}
+            _ => {
+                self.visit(instruction);
+                let mut registers = Vec::new();
+                instruction_operand_regs(instruction, &mut registers);
+                instruction_result_regs(instruction, &mut registers);
+                for register in registers {
+                    if let Some(ty) = function.reg_types.get(&register.0) {
+                        self.ty(ty);
+                    }
+                }
+                for slot in instruction_slots(instruction) {
+                    if let Some(ty) = function.var_tys.get(&slot) {
+                        self.ty(ty);
+                    }
+                }
+            }
+        }
+    }
+
     fn ty(&mut self, ty: &Ty) {
-        if !self.types.contains_key(ty) {
+        let key = (ty.clone(), self.layout);
+        if !self.types.contains_key(&key) {
             let mut walker = Walker::new(self.owners.clone(), self.nested);
             walker.bodies.clone_from(&self.bodies);
             walker.self_spelling.clone_from(&self.self_spelling);
+            walker.structs = self.structs;
+            walker.layout = self.layout;
             walker.visit(ty);
             self.types.insert(
-                ty.clone(),
+                key.clone(),
                 (walker.slots, walker.nested_removals, walker.reads_all),
             );
         }
-        let (slots, nested_removals, reads_all) = &self.types[ty];
+        let (slots, nested_removals, reads_all) = &self.types[&key];
         self.slots.extend(slots);
         self.nested_removals.extend(nested_removals);
         self.reads_all |= reads_all;
@@ -913,19 +1136,31 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
     fn visit<T: Serialize + ?Sized>(&mut self, value: &T) {
         let depth = self.tuples.len();
         let variants = self.variants.len();
+        let sequences = self.sequences.len();
+        let struct_variants = self.struct_variants.len();
+        let (unread, nominal) = (self.unread, self.nominal);
         if let Err(Unwalkable(opaque)) = value.serialize(&mut *self) {
             self.reads_all |= opaque;
         }
         self.tuples.truncate(depth);
         self.variants.truncate(variants);
+        self.sequences.truncate(sequences);
+        self.struct_variants.truncate(struct_variants);
+        (self.unread, self.nominal) = (unread, nominal);
     }
 
     fn string(&mut self, value: &str) {
-        if let Some(Some((0, named))) = self.variants.last_mut() {
-            *named = self
+        let layout = (self.layout && self.nominal == 0 && self.unread == 0)
+            .then_some(self.structs)
+            .flatten();
+        if let Some(Some(frame)) = self.variants.last_mut()
+            && frame.field == 0
+        {
+            frame.self_named = self
                 .self_spelling
                 .as_ref()
                 .is_some_and(|(spelled, _)| *spelled == value);
+            frame.reads = layout.map(|structs| structs.layout(value));
         }
         let owned = |name: &str| {
             self.bodies.iter().any(|owner| {
@@ -958,7 +1193,10 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
             if *length == 2 {
                 match (*index, self.leaf) {
                     (0, Leaf::Owner(named)) => *owner = Some(named),
-                    (1, Leaf::Slot(slot)) if let Some(named) = *owner => {
+                    (1, Leaf::Slot(slot))
+                        if let Some(named) = *owner
+                            && self.unread == 0 =>
+                    {
                         self.slots.insert((named, slot as usize));
                     }
                     _ => {}
@@ -1131,10 +1369,14 @@ impl ser::Serializer for &mut Walker<'_, '_, '_> {
         self,
         _: &'static str,
         _: u32,
-        _: &'static str,
+        variant: &'static str,
         value: &T,
     ) -> Result<(), Unwalkable> {
+        // A value argument and a dependent type name their binders whole.
+        let nominal = usize::from(matches!(variant, "Val" | "Dependent"));
+        self.nominal += nominal;
         self.visit(value);
+        self.nominal -= nominal;
         self.leaf = Leaf::Other;
         Ok(())
     }
@@ -1142,10 +1384,14 @@ impl ser::Serializer for &mut Walker<'_, '_, '_> {
     fn serialize_seq(self, length: Option<usize>) -> Result<Self, Unwalkable> {
         if std::mem::take(&mut self.self_arguments)
             && length == Some(0)
+            && self.unread == 0
             && let Some((_, slots)) = &self.self_spelling
         {
             self.slots.extend(slots.iter().copied());
         }
+        let arguments = self.struct_arguments.take();
+        self.sequences
+            .push(arguments.map(|arguments| (arguments, 0)));
         Ok(self.compound())
     }
 
@@ -1166,7 +1412,11 @@ impl ser::Serializer for &mut Walker<'_, '_, '_> {
         _: usize,
     ) -> Result<Self, Unwalkable> {
         self.variants
-            .push((variant == "Struct" && self.self_spelling.is_some()).then_some((0, false)));
+            .push((variant == "Struct").then_some(StructFrame {
+                field: 0,
+                self_named: false,
+                reads: None,
+            }));
         Ok(self.compound())
     }
 
@@ -1182,9 +1432,13 @@ impl ser::Serializer for &mut Walker<'_, '_, '_> {
         self,
         _: &'static str,
         _: u32,
-        _: &'static str,
+        variant: &'static str,
         _: usize,
     ) -> Result<Self, Unwalkable> {
+        // A projection off a type names its binders whole.
+        let nominal = variant == "Assoc";
+        self.nominal += usize::from(nominal);
+        self.struct_variants.push(nominal);
         Ok(self.compound())
     }
 }
@@ -1194,11 +1448,21 @@ impl ser::SerializeSeq for &mut Walker<'_, '_, '_> {
     type Error = Unwalkable;
 
     fn serialize_element<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Unwalkable> {
+        let unread = match self.sequences.last_mut() {
+            Some(Some((reads, position))) => {
+                *position += 1;
+                usize::from(!reads.reads(*position - 1))
+            }
+            _ => 0,
+        };
+        self.unread += unread;
         self.visit(value);
+        self.unread -= unread;
         Ok(())
     }
 
     fn end(self) -> Result<(), Unwalkable> {
+        self.sequences.pop();
         self.leaf = Leaf::Other;
         Ok(())
     }
@@ -1240,11 +1504,17 @@ impl ser::SerializeTupleVariant for &mut Walker<'_, '_, '_> {
     type Error = Unwalkable;
 
     fn serialize_field<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Unwalkable> {
-        self.self_arguments = matches!(self.variants.last(), Some(Some((1, true))));
+        if let Some(Some(frame)) = self.variants.last_mut()
+            && frame.field == 1
+        {
+            self.self_arguments = frame.self_named;
+            self.struct_arguments = frame.reads.take();
+        }
         self.visit(value);
         self.self_arguments = false;
-        if let Some(Some((field, _))) = self.variants.last_mut() {
-            *field += 1;
+        self.struct_arguments = None;
+        if let Some(Some(frame)) = self.variants.last_mut() {
+            frame.field += 1;
         }
         Ok(())
     }
@@ -1309,6 +1579,9 @@ impl ser::SerializeStructVariant for &mut Walker<'_, '_, '_> {
     }
 
     fn end(self) -> Result<(), Unwalkable> {
+        if self.struct_variants.pop() == Some(true) {
+            self.nominal -= 1;
+        }
         self.leaf = Leaf::Other;
         Ok(())
     }
