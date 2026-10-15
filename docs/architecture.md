@@ -5105,11 +5105,24 @@ point where a slot declared in a loop is uninitialized again.
   after the body. Callee registers are renumbered before a place-bound
   parameter is composed, so the caller's index registers in that place
   stay the caller's. The callee must have no enclosing body or region
-  binders and a struct receiver if it has one, be called
-  positionally into every `read` or owned parameter with no capture
-  accesses, return a value rather than a reference, and hold
+  binders, a struct receiver if it has one, and no variadic or keyword
+  collector, be called with no capture accesses or spread, return a value
+  rather than a reference, and hold
   plain control flow with no `try`, region op, or closure; any other call
-  stays a call. A raising callee's `raise`s and raising calls stay raise
+  stays a call. The call's positional and keyword arguments bind to the
+  callee's regular parameters through `mojito_ast::call::match_call_slots`,
+  the matcher the VM's `bind_args` applies; a call it does not bind (a
+  forwarded `**kwargs` among them) stays a call. Each omitted argument
+  binds a fresh slot that the call's block initializes from its default
+  (the declaration's `CheckedConst`), materialized as upstream's parser
+  materializes it in the caller: a literal as a `const`, crossing the
+  literal boundary with a `literal.materialize` at a scalar parameter, or
+  a converting constructor's `call` (naming the struct for its one
+  `__init__`) run on such a literal. The slot is dropped after the body
+  when the parameter only borrows a type with a destructor. A default
+  computed by a lowered default function (`CheckedConst::Evaluate`), or a
+  literal the parameter's type does not hold, keeps the call. A raising
+  callee's `raise`s and raising calls stay raise
   points of the inlined body. Inlining into a `try`'s body adds to that
   `try`'s raise-edge cleanup each inlined slot with a destructor that some
   inlined raise point may hold (a forward walk from the bound parameters'

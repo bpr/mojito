@@ -29,6 +29,16 @@ def clamp(x: Int, low: Int, high: Int) -> Int:
 
 
 @always_inline("nodebug")
+def scale(x: Int, factor: Int = 2, *, offset: Int = 0) -> Int:
+    return x * factor + offset
+
+
+@always_inline("nodebug")
+def label(s: String = "plain") -> String:
+    return s + "!"
+
+
+@always_inline("nodebug")
 def triangle(n: Int) -> Int:
     var total = 0
     for i in range(n + 1):
@@ -159,3 +169,5 @@ def main() raises:
     meter.advance()
     bump(meter.value)
     print(y, meter.reading(), meter.title())
+    print(scale(3), scale(3, factor=4), scale(offset=1, x=3), clamp(x=12, low=0, high=10))
+    print(label(), label(s="given"))

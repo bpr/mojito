@@ -11,8 +11,14 @@
 //!
 //! A callee this pass inlines is a function, a method, or a struct's one
 //! `__init__`, which a call naming the struct calls, whose own compile-time
-//! parameters the call binds in full; it takes its arguments positionally
-//! into `read`, owned, `mut`, or `ref` parameters, and returns a value.
+//! parameters the call binds in full; it takes its arguments into `read`,
+//! owned, `mut`, or `ref` parameters, declares no variadic collector, and
+//! returns a value. The call's positional and keyword arguments bind to
+//! the callee's parameters through `mojito_ast::call`'s matcher, as the VM
+//! binds them, and an omitted argument takes its default, materialized at
+//! the call as upstream's parser materializes it in the caller: a literal,
+//! or a converting constructor run on one. A default computed by a
+//! function of its own keeps the call.
 //! The call's compile-time arguments replace the callee's binders through
 //! every type and parameter site of the body, as upstream substitutes them
 //! through MLIR's `AttrTypeReplacer`; an argument over the caller's own
@@ -32,9 +38,10 @@
 //! other `read` parameter the caller's place the argument was loaded from,
 //! as upstream's inliner substitutes the argument's address for the
 //! callee's. A place-bound parameter the callee names other than as a
-//! place's root keeps the call. An
-//! initializer's `out self` is a fresh slot the body initializes, and the
-//! call's result moves out of it. A call of any other shape stays a call.
+//! place's root keeps the call. A default is a fresh slot, dropped after
+//! the body when the parameter only borrows it. An initializer's
+//! `out self` is a fresh slot the body initializes, and the call's result
+//! moves out of it. A call of any other shape stays a call.
 //!
 //! A raising callee's raises propagate from the inlined body as from the
 //! call. Each raise point of a body inlined into a `try`'s body adds the
@@ -44,17 +51,20 @@
 //! leaving a function does (R20).
 
 use super::pre_elaboration::{CallGraphPass, Callees};
-use mojito_ast::ast::ArgConvention;
+use mojito_ast::ast::{ArgConvention, Dtype};
+use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
+use mojito_checked::checked::CheckedConst;
 use mojito_checked::checked::ComptimeSequence;
 use mojito_checked::declaration::InlineLevel;
+use mojito_common::token::SourceSpan;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::{instruction_places, instruction_places_mut};
 use mojito_mir::mir::visit::{
     MutTypeVisitor, ParamArgSite, ParamDeclSite, TySite, walk_function_mut,
 };
 use mojito_mir::mir::{
-    Const, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg,
-    MirPlace, MirTerm, Proj, Reg, UseMode, has_no_destructor, instruction_regions_mut,
+    Const, FuncRef, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
+    MirParamArg, MirPlace, MirTerm, Proj, Reg, UseMode, has_no_destructor, instruction_regions_mut,
     instruction_regs_mut, instruction_slots, renumber_block_slots, terminator_regs_mut,
     terminator_targets, terminator_targets_mut,
 };
@@ -62,8 +72,8 @@ use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{ParamBindings, ParamContext, ParamError, ParamExpr, ParamRef};
 use mojito_types::types::{
     GenericConstraint, LaneMask, ParamDecl, Ty, TyArg, TyKind, TyRewrite, VariantIndex,
-    replace_argument_parameters, replace_constraint_parameters, replace_parameters,
-    replace_value_parameters, rewrite_ty,
+    is_scalar_simd, replace_argument_parameters, replace_constraint_parameters, replace_parameters,
+    replace_value_parameters, rewrite_ty, scalar_simd_dtype,
 };
 use std::borrow::Cow;
 
@@ -133,6 +143,196 @@ enum Binding {
     /// A constructor's `out self`: a fresh slot the body initializes and
     /// the call's result moves out of.
     Out,
+    /// A fresh slot, initialized from the omitted argument's default
+    /// materialized at the call, and dropped after the body when the
+    /// parameter only borrows it.
+    Default { value: DefaultValue, dropped: bool },
+}
+
+/// The runtime arguments a call passes, positionally and by keyword, with
+/// the caller's places each retains.
+struct CallArguments<'a> {
+    args: &'a [Reg],
+    arg_places: &'a [Option<MirPlace>],
+    kwargs: &'a [(String, Reg)],
+    kwarg_places: &'a [Option<MirPlace>],
+}
+
+impl CallArguments<'_> {
+    /// The argument each of `declaration`'s regular parameters takes, as
+    /// the shared call matcher binds it; `None` when the call does not
+    /// bind (a forwarded `**kwargs` among them).
+    fn slots(&self, declaration: &MirFunctionDeclaration) -> Option<Vec<ArgSlot>> {
+        if declaration.required.len() != declaration.param_names.len() {
+            return None;
+        }
+        let keywords: Vec<&str> = self.kwargs.iter().map(|(name, _)| name.as_str()).collect();
+        match_call_slots(
+            &declaration.param_names,
+            &declaration.required,
+            declaration.positional_only,
+            declaration.keyword_only,
+            self.args.len(),
+            &keywords,
+            CallVariadics {
+                positional: false,
+                keyword: false,
+            },
+        )
+        .ok()
+        .map(|matched| matched.slots)
+    }
+}
+
+/// An omitted argument's default, as the call materializes it.
+enum DefaultValue {
+    Literal(Literal),
+    /// The converting constructor `target`, or the one `__init__` of the
+    /// struct it names, run on a literal, at the parameter's type `ty`
+    /// (`None` for an `Optional[T]`).
+    Constructed {
+        target: String,
+        arg: Literal,
+        ty: Ty,
+    },
+}
+
+impl DefaultValue {
+    /// `default` materialized at a parameter of type `ty`; `None` for a
+    /// default this pass does not materialize.
+    fn of(default: &CheckedConst, ty: &Ty, declarations: &MirDeclarations) -> Option<Self> {
+        let CheckedConst::Construct { target, arg } = default else {
+            return Literal::of(default, ty).map(Self::Literal);
+        };
+        let constructor = match declarations.structure(target) {
+            Some(_) => declarations.function(&format!("{target}.__init__"))?,
+            None => declarations.function(target)?,
+        };
+        let [parameter] = constructor.param_types.as_slice() else {
+            return None;
+        };
+        if constructor.raises || constructor.ref_params.iter().any(|&reference| reference) {
+            return None;
+        }
+        Some(Self::Constructed {
+            target: target.clone(),
+            arg: Literal::of(arg, parameter)?,
+            ty: ty.clone(),
+        })
+    }
+
+    /// Append to `instructions` the materialization of this value into
+    /// fresh registers of `function` taking `span`; returns the register
+    /// holding it.
+    fn materialize(
+        &self,
+        function: &mut MirFunction,
+        span: Option<&SourceSpan>,
+        instructions: &mut Vec<MirInstr>,
+    ) -> Reg {
+        match self {
+            Self::Literal(literal) => literal.materialize(function, span, instructions),
+            Self::Constructed { target, arg, ty } => {
+                let arg = arg.materialize(function, span, instructions);
+                let dest = fresh_register(function, ty.clone(), span);
+                instructions.push(MirInstr::Call {
+                    dest,
+                    func: FuncRef::named(target),
+                    raises: None,
+                    args: vec![arg],
+                    kwargs: Vec::new(),
+                    arg_places: vec![None],
+                    kwarg_places: Vec::new(),
+                    capture_accesses: Vec::new(),
+                    param_arg_regs: Vec::new(),
+                    receiver: None,
+                    instantiated_args: Vec::new(),
+                    spread: None,
+                });
+                dest
+            }
+        }
+    }
+}
+
+/// A literal default: its constant, the constant's type, and the scalar
+/// type it materializes as, if it crosses the literal boundary.
+struct Literal {
+    k: Const,
+    ty: Ty,
+    materialized: Option<Ty>,
+}
+
+impl Literal {
+    /// `default` read at a parameter of type `ty`, when it is a literal
+    /// that type holds or a scalar materializes it as.
+    fn of(default: &CheckedConst, ty: &Ty) -> Option<Self> {
+        let scalar =
+            matches!(ty.kind(), TyKind::Int | TyKind::UInt | TyKind::Float64) || is_scalar_simd(ty);
+        let (k, own) = match (default, ty.kind()) {
+            (CheckedConst::Int(value), TyKind::IntLiteral) => {
+                (Const::IntLiteral(value.clone()), None)
+            }
+            (CheckedConst::Int(value), _) if scalar => {
+                (Const::IntLiteral(value.clone()), Some(TyKind::IntLiteral))
+            }
+            (CheckedConst::Float(value), TyKind::FloatLiteral) => {
+                (Const::FloatLiteral(value.clone()), None)
+            }
+            (CheckedConst::Float(value), _)
+                if matches!(ty.kind(), TyKind::Float64)
+                    || scalar_simd_dtype(ty).is_some_and(Dtype::is_float) =>
+            {
+                (
+                    Const::FloatLiteral(value.clone()),
+                    Some(TyKind::FloatLiteral),
+                )
+            }
+            (CheckedConst::Bool(value), TyKind::Bool) => (Const::Bool(*value), None),
+            (CheckedConst::String(value), TyKind::StringLiteral) => {
+                (Const::Str(value.clone()), None)
+            }
+            (CheckedConst::Dtype(value), TyKind::Dtype) => (Const::Dtype(*value), None),
+            (CheckedConst::None, TyKind::None) => (Const::None, None),
+            _ => return None,
+        };
+        Some(match own {
+            Some(own) => Self {
+                k,
+                ty: own.into(),
+                materialized: Some(ty.clone()),
+            },
+            None => Self {
+                k,
+                ty: ty.clone(),
+                materialized: None,
+            },
+        })
+    }
+
+    fn materialize(
+        &self,
+        function: &mut MirFunction,
+        span: Option<&SourceSpan>,
+        instructions: &mut Vec<MirInstr>,
+    ) -> Reg {
+        let dest = fresh_register(function, self.ty.clone(), span);
+        instructions.push(MirInstr::Const {
+            dest,
+            k: self.k.clone(),
+        });
+        let Some(target) = &self.materialized else {
+            return dest;
+        };
+        let value = dest;
+        let dest = fresh_register(function, target.clone(), span);
+        instructions.push(MirInstr::MaterializeLiteral {
+            dest,
+            value,
+            target: target.clone(),
+        });
+        dest
+    }
 }
 
 /// Where a call's callee takes its receiver from.
@@ -294,7 +494,7 @@ impl<'c> Inliner<'_, 'c> {
         block: &MirBlock,
         index: usize,
     ) -> Option<(Reg, Cow<'c, MirFunction>, Vec<Binding>)> {
-        let (dest, target, arguments, arg_places, compile_time, receiver, receiver_place) =
+        let (dest, target, call, compile_time, receiver, receiver_place) =
             match &block.instrs[index] {
                 MirInstr::Call {
                     dest,
@@ -302,12 +502,13 @@ impl<'c> Inliner<'_, 'c> {
                     args,
                     kwargs,
                     arg_places,
+                    kwarg_places,
                     capture_accesses,
                     receiver: None,
                     instantiated_args,
                     spread: None,
                     ..
-                } if kwargs.is_empty() && capture_accesses.is_empty() => {
+                } if capture_accesses.is_empty() => {
                     let constructed = self.declarations.structure(&func.0).is_some();
                     let target = if constructed {
                         Cow::Owned(format!("{}.__init__", func.0))
@@ -318,8 +519,12 @@ impl<'c> Inliner<'_, 'c> {
                     (
                         *dest,
                         target,
-                        args,
-                        arg_places,
+                        CallArguments {
+                            args,
+                            arg_places,
+                            kwargs,
+                            kwarg_places,
+                        },
                         instantiated_args,
                         receiver,
                         None,
@@ -335,15 +540,20 @@ impl<'c> Inliner<'_, 'c> {
                     kwargs,
                     recv_place,
                     arg_places,
+                    kwarg_places,
                     capture_accesses,
                     instantiated_args,
                     spread: None,
                     ..
-                } if kwargs.is_empty() && capture_accesses.is_empty() => (
+                } if capture_accesses.is_empty() => (
                     *dest,
                     Cow::Borrowed(target.as_str()),
-                    args,
-                    arg_places,
+                    CallArguments {
+                        args,
+                        arg_places,
+                        kwargs,
+                        kwarg_places,
+                    },
                     instantiated_args,
                     Some(Receiver::Argument(*recv)),
                     recv_place.as_deref(),
@@ -363,10 +573,11 @@ impl<'c> Inliner<'_, 'c> {
             None => None,
         };
         if !is_closed(callee, declaration)
-            || arguments.len() + usize::from(receiver.is_some()) != callee.n_params
+            || declaration.param_names.len() + usize::from(receiver.is_some()) != callee.n_params
         {
             return None;
         }
+        let slots = call.slots(declaration)?;
         let owner = match owner_ty.map(|ty| self.owner(callee, ty)) {
             Some(Some(Owner::Applied(owner))) => Some(owner),
             Some(Some(Owner::Unbound)) | None => None,
@@ -383,15 +594,24 @@ impl<'c> Inliner<'_, 'c> {
             }
             None => {}
         }
-        for (position, &argument) in arguments.iter().enumerate() {
-            let place = arg_places.get(position).and_then(Option::as_ref);
+        for (position, slot) in slots.into_iter().enumerate() {
+            let param = position + skip;
+            let (argument, place) = match slot {
+                ArgSlot::Positional(source) => (call.args[source], call.arg_places.get(source)),
+                ArgSlot::Keyword(source) => (call.kwargs[source].1, call.kwarg_places.get(source)),
+                ArgSlot::Default => {
+                    let default = declaration.defaults.get(position)?.as_ref()?;
+                    bindings.push(default_binding(&callee, param, default, self.declarations)?);
+                    continue;
+                }
+            };
             bindings.push(argument_binding(
                 &callee,
                 block,
                 index,
-                position + skip,
+                param,
                 argument,
-                place,
+                place.and_then(Option::as_ref),
             )?);
         }
         Some((dest, callee, bindings))
@@ -450,7 +670,7 @@ impl<'c> Inliner<'_, 'c> {
         }
         let bound = |var: VarId| match bindings.get(var.checked_sub(base)? as usize)? {
             Binding::Place(place) => Some(place),
-            Binding::Value(_) | Binding::Out => None,
+            Binding::Value(_) | Binding::Default { .. } | Binding::Out => None,
         };
         for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
             for place in instruction_places_mut(instruction) {
@@ -569,6 +789,11 @@ impl<'c> Inliner<'_, 'c> {
                 });
             }
         }
+        resumed.extend(bindings.iter().enumerate().filter_map(|(param, binding)| {
+            matches!(binding, Binding::Default { dropped: true, .. }).then_some(MirInstr::DropVar {
+                var: param as VarId + var_base,
+            })
+        }));
         resumed.extend(after.into_iter().map(|instruction| match instruction {
             MirInstr::DefVar {
                 var,
@@ -599,6 +824,15 @@ impl<'c> Inliner<'_, 'c> {
                     binding_ty: ty,
                     in_place: false,
                 }),
+                Binding::Default { value, .. } => {
+                    let src = value.materialize(function, call_span.as_ref(), &mut caller.instrs);
+                    caller.instrs.push(MirInstr::DefVar {
+                        var: var + var_base,
+                        src,
+                        binding_ty: ty,
+                        in_place: false,
+                    });
+                }
                 Binding::Out => caller.instrs.push(MirInstr::MarkInitialized {
                     place: MirPlace::root(var + var_base, ty),
                 }),
@@ -648,6 +882,28 @@ fn argument_binding(
         return Some(Binding::Value(argument));
     }
     loaded_place(block, index, argument).map(Binding::Place)
+}
+
+/// How the callee's parameter `param`, which the call omits, binds its
+/// `default`: a fresh slot the materialized default initializes, dropped
+/// after the body unless the parameter owns it; `None` for a reference or
+/// `deinit` parameter, or a default the pass does not materialize.
+fn default_binding(
+    callee: &MirFunction,
+    param: usize,
+    default: &CheckedConst,
+    declarations: &MirDeclarations,
+) -> Option<Binding> {
+    if is_reference_parameter(callee, param)
+        || callee.deinit_params.get(param).copied().unwrap_or(true)
+    {
+        return None;
+    }
+    let ty = callee.param_types.get(param)?;
+    let value = DefaultValue::of(default, ty, declarations)?;
+    let dropped =
+        !callee.owned_params.get(param).copied().unwrap_or(false) && !has_no_destructor(ty);
+    Some(Binding::Default { value, dropped })
 }
 
 /// Whether the callee's parameter `param` is a `mut` or `ref` one, whose
@@ -714,7 +970,9 @@ fn raise_held(
     };
     let mut entry = vec![false; callee.n_vars];
     for (param, binding) in bindings.iter().enumerate() {
-        if let (Binding::Value(_), Some(held)) = (binding, entry.get_mut(param)) {
+        if let (Binding::Value(_) | Binding::Default { .. }, Some(held)) =
+            (binding, entry.get_mut(param))
+        {
             *held = true;
         }
     }
@@ -844,6 +1102,17 @@ fn composed_place(outer: &MirPlace, inner: &MirPlace) -> MirPlace {
     place.ty.clone_from(&inner.ty);
     place.through = outer.through.or(through);
     place
+}
+
+/// A fresh register of `function` of type `ty`, located at `span`.
+fn fresh_register(function: &mut MirFunction, ty: Ty, span: Option<&SourceSpan>) -> Reg {
+    let reg = Reg(function.n_regs);
+    function.n_regs += 1;
+    function.reg_types.insert(reg.0, ty);
+    if let Some(span) = span {
+        function.spans.0.insert(reg.0, (span.clone(), None));
+    }
+    reg
 }
 
 /// What the callee returns through: nothing when it returns `None`, its

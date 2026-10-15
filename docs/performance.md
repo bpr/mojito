@@ -1687,7 +1687,7 @@ No `generator_instances` count moves. The shared corpus total of
 `scripts/instantiation-report` falls by 8 concrete instructions, and
 `benchmarks/instantiation.tsv` is regenerated with this change. The
 bundled library's own wrappers are variadic `write` forwards, which the
-inliner keeps until keyword and variadic calls inline (R920).
+inliner keeps until variadic calls inline (R957, R958).
 
 ## Mem2Reg promotes trivially register-passable slots (2026-10-14, R787)
 

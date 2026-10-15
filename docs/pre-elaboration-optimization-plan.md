@@ -272,7 +272,7 @@ folds the operators over it (R840);
      post-elaboration pipeline has no inliner.
    - The pin also inlines a parametric conformer's wrapper (`B[k].m`) and
      the `mut self`, raising, generic, and keyword-call shapes, which
-     Mojito keeps until R917, R918, R919, R916, and R920 land.
+     Mojito inlines too (R916–R920).
 10. **The bundled library marks what upstream marks.** Upstream's std puts
     `@always_inline` on most small methods. Mojito's bundled std has none, so
     the inliner has nothing to act on until the library carries upstream's

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R957**.
+Next free ID: **R962**.
 
 ## Ordered Work
 
@@ -134,15 +134,74 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R920 A `nodebug` call with keywords, a default, a variadic
-  collector, or a spread is not inlined**
+- [ ] **R957 A `nodebug` callee with a homogeneous variadic collector is
+  called, not inlined**
 
-  `inline-parametric` inlines only a positional call that fills every
-  parameter, where the pin inlines all four shapes.
-  - Bind the arguments through `mojito_ast::call`'s matcher, which owns
-    that policy (invariant 6), and materialize each omitted default.
-  - Done when each shape inlines in a pass test and the differential is
+  `inline-parametric` keeps a call whose callee declares `*xs: T`, where
+  the pin inlines it.
+  - The VM packs the call's positional overflow into the collector at
+    binding, and the pliron lowering builds the same storage.
+  - Bind the collector slot to a pack the caller builds from the
+    overflow registers, so the body's `len(xs)`, `xs[i]`, and `for`
+    read it.
+  - Done when `total(1, 2, 3)` over `def total(*xs: Int)` inlines in a
+    pass test and the differential is clean.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R958 A `nodebug` call spreading a pack (`show(*args)`) is called,
+  not inlined**
+
+  `inline-parametric` keeps a call with a `spread`, where the pin inlines
+  it.
+  - The spread passes the caller's own collector whole, so the callee's
+    collector binds to that place and its `*Ts` binder to the caller's
+    pack.
+  - Done when a spread call of a `nodebug` callee inlines in a pass test
+    and the differential is clean.
+  - Depends on R946, R957.
+  - Model: Opus, Not Planned.
+
+- [ ] **R959 A `nodebug` callee with a keyword collector is called, not
+  inlined**
+
+  `inline-parametric` keeps a call whose callee declares `**kwargs`, or
+  that forwards one (`**kwargs^`), where the pin inlines it.
+  - The VM builds the collector's `StringDict` at binding, one
+    `__setitem__` per collected keyword.
+  - Emit that construction in the caller and bind the collector slot to
+    it; a forwarded dictionary binds as an owned argument.
+  - Done when each form inlines in a pass test and the differential is
     clean.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R960 An omitted argument whose default is computed is not
+  inlined**
+
+  `inline-parametric` keeps a call that omits an argument whose default
+  is a lowered default function (`s: String = String("a")`,
+  `x: Int = Self.n * 2`), where the pin inlines it.
+  - The pin evaluates such a default at compile time, where the VM runs
+    the function at each call; the elaborator rejects one that does I/O.
+  - Materialize it as the function's compile-time value under the
+    callee's bindings, upstream's `kgen.param.constant`, not as a call.
+  - Done when both defaults above inline in a pass test and the
+    differential is clean.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R961 A literal default at a SIMD vector or a constructor's binder
+  is not inlined**
+
+  `inline-parametric` keeps a call omitting a literal default at a
+  multi-lane SIMD parameter (`v: SIMD[DType.int32, 4] = 1`) or a
+  converting-constructor default whose literal its owner's binder types
+  (`x: Optional[Int] = 5`), where the pin inlines both.
+  - The VM splats the first and passes the second to `T` bound at `Int`.
+  - Materialize the splat, and the literal at the constructed type's
+    argument for the binder.
+  - Done when both inline in a pass test and the differential is clean.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

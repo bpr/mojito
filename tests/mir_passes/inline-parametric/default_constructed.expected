@@ -1,0 +1,124 @@
+  functions: [
+      fn {
+        name: "Wrap.__init__",
+        registers: 1,
+        vars: 2,
+        var_names: [self, v],
+        params: 2,
+        param_types: [struct_type { name: Wrap, arguments: [] }, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Wrap, arguments: [] } }, var_type { var: $v1, type: Int }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 524, end: 525, origin: present($v1) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v1, mode: copy },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: Wrap, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent }, src: %r0 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: "Wrap.__deinit__",
+        registers: 0,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: Wrap, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [true],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Wrap, arguments: [] } }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [],
+        locations: [],
+        blocks: [
+          bb0 {
+            instructions: [
+              consume.var { var: $v0 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: peek,
+        registers: 2,
+        vars: 1,
+        var_names: [w],
+        params: 1,
+        param_types: [struct_type { name: Wrap, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Wrap, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 638, end: 641, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 638, end: 641, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Wrap, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
+              value.copy { dest: %r1, value: %r0 }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: constructed_default,
+        registers: 6,
+        vars: 1,
+        var_names: ["w$inline0"],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Wrap, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: struct_type { name: Wrap, arguments: [] } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 688, end: 694, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 688, end: 694, origin: absent }) }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 688, end: 694, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 688, end: 694, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 688, end: 694, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r3, value: int_literal(3) },
+              literal.materialize { dest: %r4, value: %r3, target: Int },
+              call { dest: %r5, func: Wrap, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              var.store { var: $v0, src: %r5, binding_type: present(struct_type { name: Wrap, arguments: [] }), in_place: false }
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb1 {
+            instructions: [
+              place.load { dest: %r1, place: place { root: $v0, root_type: present(struct_type { name: Wrap, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
+              value.copy { dest: %r0, value: %r1 }
+            ],
+            terminator: jump { target: bb2 }
+          },
+          bb2 {
+            instructions: [
+              drop.var { var: $v0 }
+            ],
+            terminator: return { value: present(%r0) }
+          }
+        ]
+      }
+  ]

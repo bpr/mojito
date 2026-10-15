@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `nodebug` call passing keywords or omitting a defaulted argument is
+  inlined before elaboration (R920): `inline-parametric` binds the call's
+  arguments through the shared call matcher, and materializes each
+  omitted default at the call, a literal or a converting constructor run
+  on one, dropping it after the body when the parameter only borrows it
+  (assets/ok/always_inline_nodebug_calls.mojo). A trait default's
+  wrapper called by keyword now inlines too. Variadic collectors, spreads,
+  keyword collectors, computed defaults, and literal defaults at a SIMD
+  vector or a constructor's binder keep the call (R957–R961).
 - A raising `nodebug` callee is inlined before elaboration (R919): its
   raises propagate as the call's, and inlined into a `try`'s body it adds
   the callee's slots a raise may hold to that `try`'s raise-edge cleanup,
