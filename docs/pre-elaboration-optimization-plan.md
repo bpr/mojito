@@ -206,10 +206,13 @@ folds the operators over it (R840);
    grows removable as the cleanup passes erase reads, so the last round's
    run decides (R869). Upstream also
    rewrites the generator's signature and its callers' arguments; Mojito
-   keeps both and binds the argument the body never reads. The pin goes
-   further than this core: it removes a parameter only forwarded to a
-   removed callee parameter, one only an unread nested scope carries, and
-   an owner parameter a static method ignores; each is a `pmir` entry.
+   keeps both and binds the argument the body never reads. The pass walks
+   the call graph callees first, as upstream's does, so a parameter only
+   forwarded to a removed callee parameter is removed too (R907); a
+   forward around a cycle stays a read, as on the pin. The pin goes
+   further than this core: it removes a parameter only an unread nested
+   scope carries, and an owner parameter a static method ignores, and a
+   few forwards Mojito still counts; each is a `pmir` entry.
    Corpus generator instances fall by 16 of 30 543
    (`docs/performance.md`): the bundled library has almost no unread
    parameter, so the stage's effect is the program's own and the

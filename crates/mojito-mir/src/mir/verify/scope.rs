@@ -31,6 +31,21 @@ pub(super) fn verify_scope(
     declarations: &MirDeclarations,
     errors: &mut Vec<String>,
 ) {
+    // A forward to a callee's removed parameter is no read: upstream's
+    // `RemoveUnusedParams` rewrote the call without it. The body reads as
+    // that rewrite leaves it, for the callees its snapshot names.
+    let view = (!function.removed_params.is_empty())
+        .then(|| {
+            crate::mir::without_removed_forwards(function, declarations, &|callee| {
+                function
+                    .callee_removed_params
+                    .iter()
+                    .find(|(name, _)| name == callee)
+                    .map(|(_, ids)| ids.as_slice())
+            })
+        })
+        .flatten();
+    let function = view.as_ref().map_or(function, |(view, _)| view);
     let mut scope = Scope::of_function(name, declarations);
     scope.declare_loop_binders(&function.blocks);
     let head = format!("MIR function '{name}'");
@@ -840,6 +855,7 @@ mod tests {
                 .map(|(index, ty)| (index as u32, ty))
                 .collect(),
             removed_params: Vec::new(),
+            callee_removed_params: Vec::new(),
         }
     }
 

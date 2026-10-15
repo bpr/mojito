@@ -308,6 +308,7 @@ mod constant_tuple_place_tests {
             spans: SpanTable::default(),
             reg_types: HashMap::new(),
             removed_params: Vec::new(),
+            callee_removed_params: Vec::new(),
         };
 
         assert!(!is_droppable_root(&function, 1));
@@ -334,6 +335,7 @@ mod constant_tuple_place_tests {
             spans: SpanTable::default(),
             reg_types: HashMap::new(),
             removed_params: Vec::new(),
+            callee_removed_params: Vec::new(),
         };
         assert!(is_droppable_root(&function, 0));
         assert!(!is_droppable_root(&function, 1));
@@ -437,6 +439,7 @@ mod interior_origin_tests {
             spans: span_table,
             reg_types: HashMap::new(),
             removed_params: Vec::new(),
+            callee_removed_params: Vec::new(),
         }
     }
 

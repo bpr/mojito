@@ -5282,6 +5282,25 @@ point where a slot declared in a loop is uninitialized again.
   generator's signature and its callers; Mojito keeps both, and an
   instance clears the field. The verifier takes a removed binder out of the
   body's scope and reports a removed parameter the body reads.
+  The pass is a `CallGraphPass` (R907), as upstream's walks its call graph
+  callees first and rewrites each call of a generator it pruned before
+  reaching the caller: a caller reads its body as that rewrite leaves it
+  (`mir::without_removed_forwards`), each call or resolved method call to
+  a finished callee with removed parameters dropping their arguments (the argument's register and
+  expression, and the `instantiated_args` entry when those align with the
+  callee's declarations) and then the instructions that only computed one
+  (an unread copy of a slot whose type has no destructor, a built-in
+  operator that cannot trap, anything trivially dead). So `mid[n]` that
+  only calls `leaf[n]()`, where `leaf` ignores `n`, removes `n` too. A
+  removed parameter a kept parameter's default reads keeps its argument.
+  The callee's removals come only from `Callees::unit_body`: a body of the
+  same unit (the program's own at the program seam, never a package's, as
+  upstream skips an external generator) off any cycle, so a forward around
+  a recursive call stays a read, as the pin keeps the parameter. Since the
+  calls are not rewritten (R912), the body records the removals it relied
+  on as `MirFunction::callee_removed_params`, the verifier reads the body
+  through the same view built from that snapshot, and `inline-parametric`
+  merges an inlined callee's snapshot into its caller's.
 - **Two seams, once per body.** `CompiledProgram::elaborated_mir` runs
   `pre_elaborate_program` over the program's own bodies after
   `elaborate_drops_program` (the `pre_elaboration` `--timings` span), and an
@@ -5295,7 +5314,11 @@ point where a slot declared in a loop is uninitialized again.
   from the imported package (`pre_elaborate_program`'s `package`), finished
   on first use. The finishing hook is given the package's bodies, so a
   package body's callees come finished from the same package; a package
-  body never calls a program body, so no cycle crosses the seam.
+  body never calls a program body, so no cycle crosses the seam. Finishing
+  a package body runs every call-graph pass, so a package callee's cycle
+  check (`PackageBodies::on_cycle`, memoized by row) follows the calls any
+  `PIPELINE` call-graph pass follows: a cycle mixing two passes' edges
+  would otherwise re-enter a body still being finished.
 - **Where it does not run.** A package build serializes pre-drop MIR, so it
   never reaches the program seam; its bodies get the body and call-graph
   passes at import.

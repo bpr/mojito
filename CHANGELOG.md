@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A compile-time parameter only forwarded to a parameter its callee never
+  reads no longer splits instances (R907): `remove-unused-params` walks
+  the call graph callees first, as upstream's `RemoveUnusedParams` does,
+  and reads each body as if its calls dropped the arguments of the
+  callee's removed parameters, so `mid[n]` calling `leaf[n]()` has one
+  instance (assets/ok/forwarded_parameter_instances.mojo). A forward
+  around a recursive call still counts, as on the pin, and so does one
+  into the package, whose generators upstream treats as external; a
+  forward through a trapping operator, to a removed parameter a kept
+  default reads, or through a subscript call still counts where the pin
+  removes it (R969–R971). MIR text is now schema 1.62, which adds a
+  body's `callee_removed_params`.
 - A drop of a value whose `__deinit__` is `nodebug`, `String`'s
   included, is inlined before elaboration (R922): `inline-parametric`
   expands the drop into the destructor's body where the value dies,

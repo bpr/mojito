@@ -631,6 +631,7 @@ mod tests {
                     spans: crate::mir::SpanTable::default(),
                     reg_types: std::collections::HashMap::new(),
                     removed_params: Vec::new(),
+                    callee_removed_params: Vec::new(),
                 },
             )],
             declarations: MirDeclarations::default(),

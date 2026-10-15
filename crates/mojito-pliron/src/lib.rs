@@ -1464,6 +1464,7 @@ mod tests {
                 spans: mojito_mir::mir::SpanTable::default(),
                 reg_types: HashMap::new(),
                 removed_params: Vec::new(),
+                callee_removed_params: Vec::new(),
             }
         }
 

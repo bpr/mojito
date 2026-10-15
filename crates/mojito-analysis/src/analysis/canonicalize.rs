@@ -36,8 +36,8 @@ use mojito_common::timing;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
     Const, MirBlock, MirBlockId, MirDeclarations, MirFunction, MirInstr, MirTerm, Reg,
-    block_successors, instruction_regions_mut, instruction_regs_mut, prune_unreachable_blocks,
-    terminator_regs_mut, terminator_targets, terminator_targets_mut,
+    block_successors, count_register_reads, instruction_regions_mut, instruction_regs_mut,
+    prune_unreachable_blocks, terminator_regs_mut, terminator_targets, terminator_targets_mut,
 };
 use mojito_types::types::copy_is_identity;
 use std::collections::{HashMap, HashSet};
@@ -122,37 +122,6 @@ pub(super) fn definition_counts(blocks: &mut [MirBlock], n_regs: u32) -> Vec<u32
         }
     });
     definitions
-}
-
-/// Add every register read in `blocks`, their regions included, to
-/// `reads`. Each register an instruction names counts as a read but its
-/// own results, so an operand no enumeration classifies is kept alive.
-pub(super) fn count_reads(blocks: &mut [MirBlock], reads: &mut [u32]) {
-    let count = |reads: &mut [u32], reg: &Reg| {
-        if let Some(count) = reads.get_mut(reg.0 as usize) {
-            *count += 1;
-        }
-    };
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            let mut results = Vec::new();
-            instruction_result_regs(instruction, &mut results);
-            for reg in instruction_regs_mut(instruction) {
-                match results.iter().position(|result| result == reg) {
-                    Some(at) => {
-                        results.swap_remove(at);
-                    }
-                    None => count(reads, reg),
-                }
-            }
-            for region in instruction_regions_mut(instruction) {
-                count_reads(region, reads);
-            }
-        }
-        for reg in terminator_regs_mut(&mut block.term) {
-            count(reads, reg);
-        }
-    }
 }
 
 /// How many edges [`simplify_control_flow`] threaded, branches it folded to
@@ -433,7 +402,7 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
     } = function;
     let definitions = definition_counts(blocks, *n_regs);
     let mut reads = vec![0_u32; *n_regs as usize];
-    count_reads(blocks, &mut reads);
+    count_register_reads(blocks, &mut reads);
     let mut folds = HashMap::new();
     visit_blocks(blocks, &mut |block| {
         for instruction in &block.instrs {
@@ -496,7 +465,7 @@ fn block_count(blocks: &mut [MirBlock]) -> usize {
 fn erase_dead_until_none(function: &mut MirFunction, erased: &mut HashSet<u32>) {
     loop {
         let mut reads = vec![0_u32; function.n_regs as usize];
-        count_reads(&mut function.blocks, &mut reads);
+        count_register_reads(&mut function.blocks, &mut reads);
         let before = erased.len();
         erase_dead(&mut function.blocks, &reads, erased);
         if erased.len() == before {

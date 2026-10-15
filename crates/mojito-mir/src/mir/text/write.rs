@@ -579,6 +579,21 @@ fn write_function(
         });
         writeln!(output, "{pad}    removed_params: {},", list(removed)).unwrap();
     }
+    if !function.callee_removed_params.is_empty() {
+        let callees = function.callee_removed_params.iter().map(|(callee, ids)| {
+            let params = ids.iter().map(|id| {
+                record(
+                    "param_id",
+                    &[("owner", quote(&id.owner)), ("slot", id.slot.to_string())],
+                )
+            });
+            record(
+                "callee_params",
+                &[("callee", quote(callee)), ("params", list(params))],
+            )
+        });
+        writeln!(output, "{pad}    callee_removed_params: {},", list(callees)).unwrap();
+    }
     writeln!(output, "{pad}    blocks: [").unwrap();
     write_blocks(output, &function.blocks, indent + 3);
     writeln!(output, "{pad}    ]").unwrap();

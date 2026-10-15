@@ -1,0 +1,333 @@
+mojito-mir 1.62
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("forwarded.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: div_fwd, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "div_fwd", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: dleaf, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "dleaf", slot: 0, name: a, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }, value_param { owner: "dleaf", slot: 1, name: b, type: Int, default: present(param_decl_ref { owner: "dleaf", slot: 0, name: a, type: meta_value(Int) }), callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: dmid, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "dmid", slot: 0, name: x, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: expr_fwd, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "expr_fwd", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: leaf, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "leaf", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: mid, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "mid", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: mixed, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "mixed", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: rec, param_names: [k], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "rec", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: tleaf, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [type_param { owner: "tleaf", slot: 0, name: T, bounds: [AnyType], callable_bound: absent, default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: tmid, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [type_param { owner: "tmid", slot: 0, name: T, bounds: [AnyType], callable_bound: absent, default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: leaf,
+        registers: 2,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 38, end: 39, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 38, end: 39, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(1) },
+              literal.materialize { dest: %r1, value: %r0, target: Int }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: mid,
+        registers: 2,
+        vars: 1,
+        var_names: [n],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 83, end: 84, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 78, end: 87, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              drop.var { var: $v0 },
+              call { dest: %r1, func: leaf, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: present(%r0), expr: present(param_decl_ref { owner: "mid", slot: 0, name: n, type: meta_value(Int) }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "mid", slot: 0, name: n, type: meta_value(Int) }))], spread: absent }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: expr_fwd,
+        registers: 5,
+        vars: 1,
+        var_names: [n],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 136, end: 137, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 140, end: 141, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 140, end: 141, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 136, end: 141, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 131, end: 144, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r1, value: int_literal(1) },
+              literal.materialize { dest: %r2, value: %r1, target: Int },
+              var.use { dest: %r0, var: $v0, mode: copy },
+              drop.var { var: $v0 },
+              binary { op: add, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent },
+              call { dest: %r4, func: leaf, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: present(%r3), expr: present(param_expr { op: add, type: meta_value(Int), operands: [param_decl_ref { owner: "expr_fwd", slot: 0, name: n, type: meta_value(Int) }, param_constant(ct_int(1))] }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_expr { op: add, type: meta_value(Int), operands: [param_decl_ref { owner: "expr_fwd", slot: 0, name: n, type: meta_value(Int) }, param_constant(ct_int(1))] }))], spread: absent }
+            ],
+            terminator: return { value: present(%r4) }
+          }
+        ]
+      },
+      fn {
+        name: div_fwd,
+        registers: 5,
+        vars: 1,
+        var_names: [n],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 192, end: 194, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 192, end: 194, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 198, end: 199, origin: present($v0) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 192, end: 199, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 187, end: 202, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(10) },
+              literal.materialize { dest: %r1, value: %r0, target: Int },
+              var.use { dest: %r2, var: $v0, mode: copy },
+              drop.var { var: $v0 },
+              binary { op: floor_div, dest: %r3, a: %r1, b: %r2, resolved: absent, raises: absent },
+              call { dest: %r4, func: leaf, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: present(%r3), expr: present(param_expr { op: floordiv, type: meta_value(Int), operands: [param_constant(ct_int_literal(10)), param_decl_ref { owner: "div_fwd", slot: 0, name: n, type: meta_value(Int) }] }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_expr { op: floordiv, type: meta_value(Int), operands: [param_constant(ct_int_literal(10)), param_decl_ref { owner: "div_fwd", slot: 0, name: n, type: meta_value(Int) }] }))], spread: absent }
+            ],
+            terminator: return { value: present(%r4) }
+          }
+        ]
+      },
+      fn {
+        name: tleaf,
+        registers: 2,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 247, end: 248, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 247, end: 248, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(3) },
+              literal.materialize { dest: %r1, value: %r0, target: Int }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: tmid,
+        registers: 1,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 292, end: 302, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              call { dest: %r0, func: tleaf, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [type_arg(param { owner: "tmid", slot: 0, name: T, bounds: [AnyType], callable_bound: absent })], spread: absent }
+            ],
+            terminator: return { value: present(%r0) }
+          }
+        ]
+      },
+      fn {
+        name: mixed,
+        registers: 4,
+        vars: 1,
+        var_names: [n],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 348, end: 349, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 343, end: 352, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 355, end: 356, origin: present($v0) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 343, end: 356, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              call { dest: %r1, func: leaf, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: present(%r0), expr: present(param_decl_ref { owner: "mixed", slot: 0, name: n, type: meta_value(Int) }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "mixed", slot: 0, name: n, type: meta_value(Int) }))], spread: absent },
+              var.use { dest: %r2, var: $v0, mode: copy },
+              drop.var { var: $v0 },
+              binary { op: add, dest: %r3, a: %r1, b: %r2, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r3) }
+          }
+        ]
+      },
+      fn {
+        name: dleaf,
+        registers: 1,
+        vars: 1,
+        var_names: [b],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 409, end: 410, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              drop.var { var: $v0 }
+            ],
+            terminator: return { value: present(%r0) }
+          }
+        ]
+      },
+      fn {
+        name: dmid,
+        registers: 2,
+        vars: 1,
+        var_names: [x],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 456, end: 457, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 450, end: 463, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              drop.var { var: $v0 },
+              call { dest: %r1, func: dleaf, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: present(%r0), expr: present(param_decl_ref { owner: "dmid", slot: 0, name: x, type: meta_value(Int) }) }, param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "dmid", slot: 0, name: x, type: meta_value(Int) })), value_arg(ct_int(2))], spread: absent }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: rec,
+        registers: 12,
+        vars: 2,
+        var_names: [k, n],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Bool }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: IntLiteral }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r10, type: Int }, reg_type { reg: %r11, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 504, end: 505, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 509, end: 510, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 509, end: 510, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 504, end: 510, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 532, end: 533, origin: present($v1) }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 527, end: 536, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 552, end: 553, origin: present($v1) }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 555, end: 556, origin: present($v0) }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 559, end: 560, origin: absent }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 559, end: 560, origin: absent }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 555, end: 560, origin: absent }) }, reg_loc { reg: %r11, location: present(loc { file: file0, start: 548, end: 561, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r1, value: int_literal(0) },
+              literal.materialize { dest: %r2, value: %r1, target: Int },
+              var.use { dest: %r0, var: $v0, mode: copy },
+              binary { op: eq, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent }
+            ],
+            terminator: branch { condition: %r3, then: bb2, else: bb3 }
+          },
+          bb1 {
+            instructions: [
+              var.use { dest: %r6, var: $v1, mode: copy },
+              drop.var { var: $v1 },
+              const { dest: %r8, value: int_literal(1) },
+              literal.materialize { dest: %r9, value: %r8, target: Int },
+              var.use { dest: %r7, var: $v0, mode: copy },
+              binary { op: sub, dest: %r10, a: %r7, b: %r9, resolved: absent, raises: absent },
+              call { dest: %r11, func: rec, raises: absent, args: [%r10], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: present(%r6), expr: present(param_decl_ref { owner: "rec", slot: 0, name: n, type: meta_value(Int) }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "rec", slot: 0, name: n, type: meta_value(Int) }))], spread: absent }
+            ],
+            terminator: return { value: present(%r11) }
+          },
+          bb2 {
+            instructions: [
+              var.use { dest: %r4, var: $v1, mode: copy },
+              drop.var { var: $v1 },
+              call { dest: %r5, func: leaf, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: present(%r4), expr: present(param_decl_ref { owner: "rec", slot: 0, name: n, type: meta_value(Int) }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "rec", slot: 0, name: n, type: meta_value(Int) }))], spread: absent }
+            ],
+            terminator: return { value: present(%r5) }
+          },
+          bb3 {
+            instructions: [
+            ],
+            terminator: jump { target: bb1 }
+          }
+        ]
+      }
+  ]
+}

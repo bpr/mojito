@@ -88,6 +88,7 @@ impl<'t> SymbolTable<'t> {
             spans: _,
             // The function's own binders name no symbol.
             removed_params: _,
+            callee_removed_params: _,
         } = function;
         let mut uses = self.uses(blocks);
         uses.extend(self.implicit_uses(blocks, reg_types));

@@ -60,7 +60,7 @@ mod lower_expr;
 mod lower_stmt;
 mod node;
 mod param_uses;
-pub use param_uses::{has_no_destructor, unread_parameters};
+pub use param_uses::{has_no_destructor, unread_parameters, without_removed_forwards};
 mod symbols;
 pub use symbols::{SymbolTable, implicit_callees};
 
@@ -3704,6 +3704,7 @@ fn lower_cfg_body(
         spans: SpanTable::default(),
         reg_types: HashMap::new(),
         removed_params: Vec::new(),
+        callee_removed_params: Vec::new(),
     };
 
     {

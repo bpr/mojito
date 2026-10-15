@@ -56,6 +56,11 @@ impl Decoder {
             .ok()
             .map(|value| self.param_ids(value))
             .unwrap_or_default();
+        let callee_removed_params = self
+            .field(fields, "callee_removed_params")
+            .ok()
+            .map(|value| self.callee_params(value))
+            .unwrap_or_default();
         if var_names.len() != n_vars {
             self.error(
                 value.span,
@@ -96,6 +101,7 @@ impl Decoder {
                 "locations",
                 "blocks",
                 "removed_params",
+                "callee_removed_params",
             ],
         );
         Some((
@@ -121,6 +127,7 @@ impl Decoder {
                 spans,
                 reg_types,
                 removed_params,
+                callee_removed_params,
             },
         ))
     }
@@ -139,6 +146,27 @@ impl Decoder {
                 let slot = self.req(value, fields, "slot", Self::uint)?;
                 self.unknown(fields, &["owner", "slot"]);
                 Some(mojito_types::param_expr::ParamId::new(&owner, slot))
+            })
+            .collect()
+    }
+
+    /// A function's `callee_removed_params` (schema 1.62): each callee whose
+    /// removed parameters its `removed_params` discounted a forward to.
+    fn callee_params(
+        &mut self,
+        value: &Value,
+    ) -> Vec<(String, Vec<mojito_types::param_expr::ParamId>)> {
+        let Ok(values) = self.list(value) else {
+            return Vec::new();
+        };
+        values
+            .iter()
+            .filter_map(|value| {
+                let fields = self.record(value, "callee_params").ok()?;
+                let callee = self.req(value, fields, "callee", Self::string)?;
+                let params = self.param_ids(self.field(fields, "params").ok()?);
+                self.unknown(fields, &["callee", "params"]);
+                Some((callee, params))
             })
             .collect()
     }

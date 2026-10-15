@@ -1635,6 +1635,33 @@ compile benchmarks do not move. The pin removes more: a parameter only
 forwarded to a removed one (R907), one only a nested function's scope
 carries (R908), and a static method's unread owner parameter (R909).
 
+## Forwarded parameters leave the instance key (2026-10-14, R907)
+
+`remove-unused-params` now walks the call graph callees first, as upstream's
+`RemoveUnusedParams` does, so a parameter only forwarded, by a call or a
+resolved method call, to a parameter the callee removed is removed too
+(`docs/architecture.md` §Pre-Elaboration Pipeline). Its stage fixture,
+`assets/ok/forwarded_parameter_instances.mojo`, debug binary, before
+(the parent commit) and after:
+
+| | before | after | change |
+|---|---:|---:|---:|
+| `concrete_functions` | 26 | 21 | −5 |
+| `generator_instances` | 21 | 16 | −5 |
+| `generator_instance_instructions` | 47 | 37 | −10 |
+
+`mid`, `two_hop`, `expr_fwd`, `tmid`, and `method_fwd` each fall from two
+instances to one, as on the pin; `mixed` (which reads `n` itself),
+`to_reader` (whose callee reads it), and `rec` (which forwards it around a
+self-call) keep two, as the pin does. On the pin a cycle member's calls out
+of the cycle are not rewritten either, so `rec[2]` reaches a second `leaf`
+instance there; Mojito's `leaf` removes its own `n`, so it keeps one, with
+no observable difference (R912 adopts upstream's rewrite).
+`scripts/instantiation-report` over the rest of the corpus moves no
+fixture: no bundled-library generator only forwards a parameter to one its
+callee drops, and a program-to-package forward still counts, as upstream
+treats a package generator as external.
+
 ## `nodebug` callees inline before elaboration (2026-10-14, R784)
 
 `inline-parametric`, upstream's `InlineParametric`, opens the

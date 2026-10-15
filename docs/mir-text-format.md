@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.61
+# Mojito Textual MIR Format, Version 1.62
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.61 is implemented end to end for inspection and loading: canonical
+Version 1.62 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.61
+mojito-mir 1.62
 ```
 
-The writer emits 1.61. The reader accepts 1.0 through 1.61; *Schema 1.0*
+The writer emits 1.62. The reader accepts 1.0 through 1.62; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -552,6 +552,17 @@ concrete function, and the reader takes an absent field as empty. The
 verifier takes each removed binder out of the body's scope and reports a
 removed parameter the body still reads. A package does not encode it: a
 package holds its bodies before the pipeline that computes it.
+
+Such a body may also carry `callee_removed_params: [callee_params { callee:
+"leaf", params: [param_id { owner: "leaf", slot: 0 }] }, ...]` right after
+`removed_params` (schema 1.62): each callee whose removed parameters
+`removed_params` discounted a forward to, with those parameters, sorted by
+callee. Upstream's `RemoveUnusedParams` rewrites such a call without the
+arguments; Mojito keeps the call, so the verifier reads the body with those
+arguments, and the instructions that only computed them, dropped
+(`mir::without_removed_forwards`) before it checks `removed_params`. The
+writer omits the field when it is empty, the reader takes an absent field as
+empty, and a package does not encode it.
 
 ## Values, Types, and Semantic Records
 

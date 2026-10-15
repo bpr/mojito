@@ -224,6 +224,94 @@ pub fn instruction_param_args_mut(instruction: &mut MirInstr) -> Vec<&mut MirPar
     }
 }
 
+/// Add every register read in `blocks`, their regions included, to
+/// `reads`. Each register an instruction names counts as a read but its
+/// own results, so an operand no enumeration classifies is kept alive.
+pub fn count_register_reads(blocks: &mut [MirBlock], reads: &mut [u32]) {
+    let count = |reads: &mut [u32], reg: &Reg| {
+        if let Some(count) = reads.get_mut(reg.0 as usize) {
+            *count += 1;
+        }
+    };
+    for block in blocks {
+        for instruction in &mut block.instrs {
+            let mut results = Vec::new();
+            verify::instruction_result_regs(instruction, &mut results);
+            for reg in instruction_regs_mut(instruction) {
+                match results.iter().position(|result| result == reg) {
+                    Some(at) => {
+                        results.swap_remove(at);
+                    }
+                    None => count(reads, reg),
+                }
+            }
+            for region in instruction_regions_mut(instruction) {
+                count_register_reads(region, reads);
+            }
+        }
+        for reg in terminator_regs_mut(&mut block.term) {
+            count(reads, reg);
+        }
+    }
+}
+
+/// Each supplied compile-time argument paired with the declaration it fills.
+///
+/// Positional arguments skip the inferred-only declarations
+/// (`hash[T: Hashable, //, HasherType]` binds `HasherType` first), as the
+/// checker's binder does; an argument matching no declaration is dropped.
+pub fn matched_parameter_arguments<'a>(
+    decls: &'a [ParamDecl],
+    arguments: &'a [MirParamArg],
+) -> Vec<(&'a ParamDecl, Reg, &'a MirParamArg)> {
+    let explicit: Vec<&ParamDecl> = decls
+        .iter()
+        .filter(|declaration| {
+            !matches!(
+                declaration,
+                ParamDecl::Type {
+                    infer_only: true,
+                    ..
+                } | ParamDecl::Value {
+                    infer_only: true,
+                    ..
+                }
+            )
+        })
+        .collect();
+    let mut positional = 0;
+    let mut matched = Vec::new();
+    for argument in arguments {
+        let Some(value_reg) = argument.value else {
+            if argument.name.is_none() {
+                positional += 1;
+            }
+            continue;
+        };
+        let declaration = if let Some(name) = &argument.name {
+            decls.iter().find(|declaration| declaration.name() == name)
+        } else {
+            let declaration = explicit.get(positional).copied();
+            // A type or value pack takes every positional argument from its
+            // slot on.
+            if !matches!(
+                declaration,
+                Some(
+                    ParamDecl::Type { variadic: true, .. }
+                        | ParamDecl::Value { variadic: true, .. }
+                )
+            ) {
+                positional += 1;
+            }
+            declaration
+        };
+        if let Some(declaration) = declaration {
+            matched.push((declaration, value_reg, argument));
+        }
+    }
+    matched
+}
+
 /// Every register an instruction defines or reads, mutably.
 ///
 /// The registers of its places and subscript arguments are included, and
@@ -2714,6 +2802,13 @@ pub struct MirFunction {
     /// computes it. Empty on a concrete instance.
     #[serde(skip)]
     pub removed_params: Vec<mojito_types::param_expr::ParamId>,
+    /// Each callee whose removed parameters `removed_params` discounted a
+    /// forward to, with those parameters, sorted by callee: the calls
+    /// upstream's `RemoveUnusedParams` would have rewritten to drop the
+    /// arguments, which the verifier masks in turn. Not encoded, as
+    /// `removed_params`. Empty on a concrete instance.
+    #[serde(skip)]
+    pub callee_removed_params: Vec<(String, Vec<mojito_types::param_expr::ParamId>)>,
 }
 
 impl MirFunction {
@@ -2813,6 +2908,7 @@ mod tests {
             spans: SpanTable::default(),
             reg_types: HashMap::new(),
             removed_params: Vec::new(),
+            callee_removed_params: Vec::new(),
         }
     }
 

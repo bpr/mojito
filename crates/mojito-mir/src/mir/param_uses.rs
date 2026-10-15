@@ -14,10 +14,13 @@
 //! `f$…`, `$comptime$f$…`, `$default$f$…`) reads whatever of the function's
 //! scope it likes, so naming one reads every parameter.
 
+use crate::mir::verify::instruction_result_regs;
 use crate::mir::{
-    MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirTerm,
-    instruction_regions, instruction_slots,
+    MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg, MirTerm,
+    TyArg, count_register_reads, instruction_regions, instruction_regions_mut, instruction_slots,
+    matched_parameter_arguments,
 };
+use mojito_ast::ast::InfixOp;
 use mojito_hir::hir::VarId;
 use mojito_types::param_expr::ParamId;
 use mojito_types::types::{ParamDecl, Ty, TyKind};
@@ -91,6 +94,36 @@ pub fn has_no_destructor(ty: &Ty) -> bool {
     )
 }
 
+/// `function` with every call dropping the arguments of the callee's
+/// removed parameters, `removed(callee)`; `None` when no call drops one.
+///
+/// It is the body upstream's `RemoveUnusedParams` reads once it has
+/// rewritten each call of a callee it processed before. Returns the view and the callees whose calls dropped an argument. The
+/// view drops each such argument's register and expression, its entry in
+/// the call's `instantiated_args` (when they align with the callee's
+/// declarations), and then the instructions that only computed a dropped
+/// argument: an unread copy of a slot whose type has no destructor, a
+/// built-in operator that cannot trap, and anything trivially dead. A
+/// removed parameter that a kept parameter's default reads keeps its
+/// argument, which the call's omission of the kept one may need.
+pub fn without_removed_forwards<'a>(
+    function: &MirFunction,
+    declarations: &MirDeclarations,
+    removed: &dyn Fn(&str) -> Option<&'a [ParamId]>,
+) -> Option<(MirFunction, Vec<String>)> {
+    if !calls_with_removed(&function.blocks, removed) {
+        return None;
+    }
+    let mut view = function.clone();
+    let mut discounted = BTreeSet::new();
+    drop_removed_arguments(&mut view.blocks, declarations, removed, &mut discounted);
+    if discounted.is_empty() {
+        return None;
+    }
+    erase_forward_chains(&mut view);
+    Some((view, discounted.into_iter().collect()))
+}
+
 fn is_callable_value(decl: &ParamDecl) -> bool {
     matches!(
         decl,
@@ -98,6 +131,221 @@ fn is_callable_value(decl: &ParamDecl) -> bool {
             if callable_default.is_some()
                 || matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
     )
+}
+
+/// Whether `blocks` or their regions call a callee `removed` names
+/// parameters of.
+fn calls_with_removed<'a>(
+    blocks: &[MirBlock],
+    removed: &dyn Fn(&str) -> Option<&'a [ParamId]>,
+) -> bool {
+    blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .any(|instruction| {
+            let target = match instruction {
+                MirInstr::Call { func, .. } => Some(func.0.as_str()),
+                MirInstr::MethodCall { resolved, .. } => resolved.as_deref(),
+                _ => None,
+            };
+            target.and_then(removed).is_some_and(|ids| !ids.is_empty())
+                || instruction_regions(instruction)
+                    .into_iter()
+                    .any(|region| calls_with_removed(region, removed))
+        })
+}
+
+/// Drop from each call in `blocks` and their regions the arguments of the
+/// callee's removed parameters, adding each callee that lost one to
+/// `discounted`.
+fn drop_removed_arguments<'a>(
+    blocks: &mut [MirBlock],
+    declarations: &MirDeclarations,
+    removed: &dyn Fn(&str) -> Option<&'a [ParamId]>,
+    discounted: &mut BTreeSet<String>,
+) {
+    for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+        for region in instruction_regions_mut(instruction) {
+            drop_removed_arguments(region, declarations, removed, discounted);
+        }
+        let (target, decls, param_arg_regs, instantiated_args) = match instruction {
+            MirInstr::Call {
+                func,
+                param_arg_regs,
+                instantiated_args,
+                ..
+            } => {
+                let Some(callee) = declarations.function(&func.0) else {
+                    continue;
+                };
+                (
+                    &func.0,
+                    callee.param_decls.as_slice(),
+                    param_arg_regs,
+                    instantiated_args,
+                )
+            }
+            MirInstr::MethodCall {
+                resolved: Some(target),
+                param_arg_regs,
+                param_decls,
+                instantiated_args,
+                ..
+            } => (
+                &*target,
+                param_decls.as_slice(),
+                param_arg_regs,
+                instantiated_args,
+            ),
+            _ => continue,
+        };
+        if let Some(ids) = removed(target)
+            && drop_arguments(target, decls, ids, param_arg_regs, instantiated_args)
+        {
+            discounted.insert(target.clone());
+        }
+    }
+}
+
+/// Drop from one call of `target`, whose compile-time parameters are
+/// `decls`, the arguments of its removed parameters `ids`; returns whether
+/// it dropped one.
+fn drop_arguments(
+    target: &str,
+    decls: &[ParamDecl],
+    ids: &[ParamId],
+    param_arg_regs: &mut [MirParamArg],
+    instantiated_args: &mut Vec<TyArg>,
+) -> bool {
+    let mut defaulted = Walker::new(target);
+    for decl in decls.iter().filter(|decl| !ids.contains(decl.id())) {
+        match decl {
+            ParamDecl::Type { default, .. } => defaulted.visit(default),
+            ParamDecl::Value { default, .. } => defaulted.visit(default),
+        }
+    }
+    let dropped: Vec<usize> = decls
+        .iter()
+        .enumerate()
+        .filter(|(_, decl)| {
+            ids.contains(decl.id())
+                && !defaulted.reads_all
+                && !defaulted.slots.contains(&decl.id().slot)
+        })
+        .map(|(index, _)| index)
+        .collect();
+    let arguments: Vec<usize> = matched_parameter_arguments(decls, param_arg_regs)
+        .into_iter()
+        .filter(|(decl, _, _)| dropped.iter().any(|index| decls[*index].id() == decl.id()))
+        .filter_map(|(_, _, argument)| {
+            param_arg_regs
+                .iter()
+                .position(|candidate| std::ptr::eq(candidate, argument))
+        })
+        .collect();
+    let mut changed = false;
+    for index in arguments {
+        let argument = &mut param_arg_regs[index];
+        changed |= argument.value.take().is_some() | argument.expr.take().is_some();
+    }
+    if instantiated_args.len() == decls.len() {
+        for &index in dropped.iter().rev() {
+            instantiated_args.remove(index);
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Erase from `function` every instruction that only computes a value
+/// nothing reads and that may go without a trace: one
+/// [`MirInstr::would_be_trivially_dead`] allows, a copy of a slot whose
+/// type has no destructor, or a built-in operator over such operands that
+/// cannot trap (integer arithmetic wraps). Repeats until nothing changes,
+/// and drops the erased registers' types.
+fn erase_forward_chains(function: &mut MirFunction) {
+    let mut erased = HashSet::new();
+    loop {
+        let mut reads = vec![0_u32; function.n_regs as usize];
+        count_register_reads(&mut function.blocks, &mut reads);
+        let before = erased.len();
+        let MirFunction {
+            blocks,
+            var_tys,
+            reg_types,
+            ..
+        } = &mut *function;
+        let trivial = |reg: &crate::mir::Reg| reg_types.get(&reg.0).is_some_and(has_no_destructor);
+        erase_unread(
+            blocks,
+            &mut |instruction| match instruction {
+                MirInstr::UseVar { var, .. } => var_tys.get(var).is_some_and(has_no_destructor),
+                MirInstr::UnOp {
+                    a, raises: None, ..
+                } => trivial(a),
+                MirInstr::BinOp {
+                    op,
+                    a,
+                    b,
+                    resolved: None,
+                    raises: None,
+                    ..
+                } => {
+                    matches!(
+                        op,
+                        InfixOp::Add
+                            | InfixOp::Sub
+                            | InfixOp::Mul
+                            | InfixOp::BitAnd
+                            | InfixOp::BitOr
+                            | InfixOp::BitXor
+                            | InfixOp::Eq
+                            | InfixOp::Ne
+                            | InfixOp::Lt
+                            | InfixOp::Gt
+                            | InfixOp::Le
+                            | InfixOp::Ge
+                    ) && trivial(a)
+                        && trivial(b)
+                }
+                _ => instruction.would_be_trivially_dead(),
+            },
+            &reads,
+            &mut erased,
+        );
+        if erased.len() == before {
+            break;
+        }
+    }
+    function.reg_types.retain(|reg, _| !erased.contains(reg));
+}
+
+/// Remove each instruction of `blocks` and their regions that `erasable`
+/// accepts and that defines only unread results, adding them to `erased`.
+fn erase_unread(
+    blocks: &mut [MirBlock],
+    erasable: &mut dyn FnMut(&MirInstr) -> bool,
+    reads: &[u32],
+    erased: &mut HashSet<u32>,
+) {
+    for block in blocks {
+        block.instrs.retain_mut(|instruction| {
+            for region in instruction_regions_mut(instruction) {
+                erase_unread(region, erasable, reads, erased);
+            }
+            let mut results = Vec::new();
+            instruction_result_regs(instruction, &mut results);
+            let dead = !results.is_empty()
+                && results
+                    .iter()
+                    .all(|reg| reads.get(reg.0 as usize) == Some(&0))
+                && erasable(instruction);
+            if dead {
+                erased.extend(results.iter().map(|reg| reg.0));
+            }
+            !dead
+        });
+    }
 }
 
 /// The names of the value parameters among `candidates` whose slot the body

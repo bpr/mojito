@@ -499,6 +499,7 @@ fn verify_rejects_an_untyped_used_slot() {
                     spans: SpanTable::default(),
                     reg_types: HashMap::from([(0, Ty::int())]),
                     removed_params: Vec::new(),
+                    callee_removed_params: Vec::new(),
                 },
             )],
             declarations: MirDeclarations::default(),

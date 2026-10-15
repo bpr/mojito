@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R969**.
+Next free ID: **R973**.
 
 ## Ordered Work
 
@@ -415,24 +415,55 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R907 A parameter only forwarded to a removed parameter keeps its
+- [ ] **R969 A parameter forwarded through a trapping operator keeps its
   instances apart**
 
-  `mid[n]` whose body is `return leaf[n]()`, where `leaf` ignores `n`, has
-  one instance per `n`, where the pin removes `n` from both.
-  - `remove-unused-params` (`analysis/unused_params.rs`) decides each body
-    alone, so a forward to a callee's parameter is a read.
-  - The pin's rule is a least fixpoint of removability: a parameter whose
-    every forward targets a removed one is removed, and a cycle keeps it
-    (`rec[n]` calling `rec[n]` keeps two instances).
-  - The analysis needs to match a call's parameter-argument registers to
-    the callee's declarations, which `matched_parameter_arguments`
-    (`mono/unify.rs`) does today inside the elaborator.
-  - A package body is finished alone, so across the package seam the
-    analysis stays conservative unless the pass also runs over a package's
-    bodies as a whole.
+  `div_fwd[n]` whose body is `return leaf[10 // n]()`, where `leaf` ignores
+  `n`, has one instance per `n`, where the pin keeps one.
+  - `mir::without_removed_forwards` (`mir/param_uses.rs`) drops the
+    argument, but erases only the operators that cannot trap, so the
+    run-time `floordiv` that recomputes the argument still reads `n`'s slot.
+  - The call's parameter expression already carries the value the
+    elaborator binds, so the register chain only feeds a removed argument.
+  - Decide whether the masked view may erase a trapping built-in operator
+    whose only reader is a dropped argument, matching the pin's attribute
+    rewrite, and pin `div_fwd` in `forwarded_parameter_instances.mojo`.
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R970 A forward to a removed parameter that a kept default reads
+  keeps its instances apart**
+
+  `dmid[x]` whose body is `return dleaf[x, 2]()`, where
+  `dleaf[a: Int, b: Int = a]` reads only `b`, has one instance per `x`,
+  where the pin keeps one.
+  - `mir::without_removed_forwards` keeps the argument of every removed
+    parameter some kept parameter's default reads, since a call omitting
+    the kept one takes its default from it.
+  - The test is per callee, not per call: this call passes `b`
+    explicitly, so `a`'s argument is unused.
+  - Keep the argument only when the call omits a kept parameter whose
+    default reads it, using `matched_parameter_arguments` to see which
+    parameters the call supplies.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R971 A parameter forwarded through a subscript call keeps its
+  instances apart**
+
+  A forward to a removed parameter of a resolved `__getitem__` or
+  `__setitem__` still counts as a read, where calls and resolved method
+  calls no longer do.
+  - `mir::without_removed_forwards` masks `call` and resolved
+    `call.method` only; a `MirSubscriptCall` carries `target`,
+    `param_arg_regs`, and `param_decls` as well.
+  - `remove-unused-params`'s `call_targets` must also collect the
+    subscript target, and the elaborator's subscript instance key must
+    leave the removed argument out, which needs checking first.
+  - An unresolved method call and a `call.indirect` have no callee before
+    elaboration, so the pin keeps those forwards too.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R908 A nested function's unread enclosing parameters split its
   instances and its enclosing function's**
@@ -3266,6 +3297,20 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - It should decide through `param_expr::fold`, the one folder, which now
     folds lane comparisons to a `bool` mask, or fail.
   - Found while landing R846 (2026-10-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R972 A generic caller omitting a parameter whose default reads
+  an earlier one is rejected**
+
+  `fwd[x]` whose body is `return default_only[x]()`, where
+  `default_only[a: Int, b: Int = a]`, fails with "not a compile-time Int
+  constant: default for parameter 'b'", where the pin prints `1`.
+  - The same call from `main` with a literal argument works, so the
+    default is evaluated before `a` is bound to the caller's symbolic `x`.
+  - The default should stay a parameter expression over the caller's
+    binders, as an explicit `default_only[x, x]()` does.
+  - Add the probe as an `assets/ok` fixture once it runs.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

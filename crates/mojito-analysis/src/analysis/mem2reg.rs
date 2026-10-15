@@ -29,16 +29,16 @@
 //! every register renumbered, so in a generator no promoted read may sit on
 //! the other side of a loop body's boundary from its store.
 
-use super::canonicalize::{count_reads, definition_counts};
+use super::canonicalize::definition_counts;
 use super::pre_elaboration::BodyPass;
 use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
     MirBlock, MirBlockId, MirDeclarations, MirFunction, MirInstr, MirTerm, Reg, UseMode,
-    block_successors, comptime_for_body, has_structured_control_flow, instruction_regions,
-    instruction_regions_mut, instruction_slots, region_escape_targets, renumber_block_slots,
-    retire_slots, terminator_targets,
+    block_successors, comptime_for_body, count_register_reads, has_structured_control_flow,
+    instruction_regions, instruction_regions_mut, instruction_slots, region_escape_targets,
+    renumber_block_slots, retire_slots, terminator_targets,
 };
 use mojito_types::types::{Ty, is_symbolic};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -241,7 +241,7 @@ fn promotable(
 ) -> Promotion {
     let definitions = definition_counts(&mut function.blocks, function.n_regs);
     let mut reads = vec![0_u32; function.n_regs as usize];
-    count_reads(&mut function.blocks, &mut reads);
+    count_register_reads(&mut function.blocks, &mut reads);
     let mut lists = Vec::new();
     collect_lists(&function.blocks, true, &mut lists);
     let mut census: HashMap<VarId, Census> = HashMap::new();

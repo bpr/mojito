@@ -506,7 +506,9 @@ impl<'a> Specializer<'a> {
         let Some(declaration) = self.declarations.get(target) else {
             return Ok(trailing);
         };
-        for (decl, reg, _) in matched_parameter_arguments(&declaration.param_decls, param_args) {
+        for (decl, reg, _) in
+            mojito_mir::mir::matched_parameter_arguments(&declaration.param_decls, param_args)
+        {
             let ParamDecl::Value { ty, .. } = decl else {
                 continue;
             };
@@ -651,6 +653,7 @@ impl<'a> Specializer<'a> {
         };
         let unreached_failures = std::mem::take(&mut self.unreached_failures);
         function.removed_params.clear();
+        function.callee_removed_params.clear();
         expand_pack_spreads(&key.template, &mut function)?;
         self.select_comptime_branches(&key.template, &mut function, bindings)?;
         self.discharge_instantiation_failures(&key.template, &function)?;

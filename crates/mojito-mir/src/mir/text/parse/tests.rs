@@ -61,6 +61,7 @@ fn function_with(reg_types: Vec<Ty>, instrs: Vec<MirInstr>) -> MirFunction {
             .map(|(index, ty)| (index as u32, ty))
             .collect(),
         removed_params: Vec::new(),
+        callee_removed_params: Vec::new(),
     }
 }
 

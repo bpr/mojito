@@ -48,8 +48,10 @@ pub struct ProgramPass {
 }
 
 /// One pre-elaboration pass over a body that reads the finished bodies of
-/// its callees, as MLIR's inliner walks the call graph: upstream's
-/// `InlineParametric`.
+/// its callees, as MLIR's inliner walks the call graph.
+///
+/// Upstream's `InlineParametric` is one, and so is its `RemoveUnusedParams`,
+/// which walks its own call graph callees first.
 ///
 /// A seam runs it over each body after every callee the body calls through
 /// a callee it `follows`, so the callee arrives already rewritten. A callee
@@ -80,7 +82,11 @@ impl Callees<'_> {
     /// A program callee comes rewritten, since the seam runs callees first.
     /// A package callee is finished on first use, which runs the pass over
     /// it in turn; a package body never calls a program body, so no cycle
-    /// crosses the seam.
+    /// crosses the seam. Finishing a body runs every call-graph pass, so a
+    /// package callee's cycle is one of the calls any of them follows
+    /// ([`followed_by_a_call_graph_pass`]): a cycle that mixes the passes'
+    /// edges would otherwise reach the body being finished, and the
+    /// package's cycle memo, by row, would answer one pass for another.
     pub fn body(&self, name: &str) -> Option<&MirFunction> {
         if let Some(program) = &self.program
             && let Some(&row) = program.rows.get(name)
@@ -92,15 +98,28 @@ impl Callees<'_> {
         if !package.contains(name) || !self.declarations.function(name).is_some_and(self.follows) {
             return None;
         }
-        let (declarations, follows) = (self.declarations, self.follows);
+        let declarations = self.declarations;
         if package.on_cycle(name, &|function| {
             followed_callees(function, |callee| {
-                declarations.function(callee).is_some_and(follows)
+                declarations
+                    .function(callee)
+                    .is_some_and(followed_by_a_call_graph_pass)
             })
         }) {
             return None;
         }
         package.get(name)
+    }
+
+    /// The finished body of a callee compiled in the caller's own unit, as
+    /// [`Self::body`] finds it: the program's at the program seam, never a
+    /// package's, as upstream's `RemoveUnusedParams` skips an external
+    /// generator; the package's at the package seam.
+    pub fn unit_body(&self, name: &str) -> Option<&MirFunction> {
+        match &self.program {
+            Some(program) if !program.rows.contains_key(name) => None,
+            _ => self.body(name),
+        }
     }
 }
 
@@ -133,22 +152,22 @@ impl Pass {
 /// but neither `SROA` nor a CSE pass, so its fourth round has no generator
 /// pipeline.
 pub const PIPELINE: &[Pass] = &[
-    Pass::Body(REMOVE_UNUSED_PARAMS),
+    Pass::CallGraph(REMOVE_UNUSED_PARAMS),
     Pass::Program(ELIMINATE_DEAD_SYMBOLS),
     Pass::Body(MEM_2_REG),
     Pass::Body(CANONICALIZE),
     Pass::CallGraph(INLINE_PARAMETRIC),
-    Pass::Body(REMOVE_UNUSED_PARAMS),
+    Pass::CallGraph(REMOVE_UNUSED_PARAMS),
     Pass::Program(ELIMINATE_DEAD_SYMBOLS),
     Pass::Body(MEM_2_REG),
     Pass::Body(SCCP),
     Pass::Body(CANONICALIZE),
-    Pass::Body(REMOVE_UNUSED_PARAMS),
+    Pass::CallGraph(REMOVE_UNUSED_PARAMS),
     Pass::Program(ELIMINATE_DEAD_SYMBOLS),
     Pass::CallGraph(INLINE_PARAMETRIC),
     Pass::Body(MEM_2_REG),
     Pass::Body(CANONICALIZE),
-    Pass::Body(REMOVE_UNUSED_PARAMS),
+    Pass::CallGraph(REMOVE_UNUSED_PARAMS),
     Pass::Program(ELIMINATE_DEAD_SYMBOLS),
 ];
 
@@ -452,6 +471,14 @@ fn followed_callees(function: &MirFunction, followed: impl Fn(&str) -> bool) -> 
     let mut seen = HashSet::new();
     callees.retain(|callee| followed(callee) && seen.insert(callee.clone()));
     callees
+}
+
+/// Whether some [`PIPELINE`] call-graph pass follows a callee so declared.
+fn followed_by_a_call_graph_pass(declaration: &MirFunctionDeclaration) -> bool {
+    PIPELINE.iter().any(|pass| match pass {
+        Pass::CallGraph(pass) => (pass.follows)(declaration),
+        _ => false,
+    })
 }
 
 /// The rows of `functions` callees first along the calls to `followed`

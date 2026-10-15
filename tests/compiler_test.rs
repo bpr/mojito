@@ -4143,6 +4143,38 @@ fn unread_parameters_leave_the_instance_key() {
 }
 
 #[test]
+fn forwarded_parameters_leave_the_instance_key() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/forwarded_parameter_instances.mojo");
+    let program = Compiler::default()
+        .compile_path(&path)
+        .expect("compile the fixture");
+    let concrete = program.concrete_mir().expect("elaborate");
+    let instances = |template: &str| {
+        concrete
+            .counts
+            .generators
+            .iter()
+            .find(|row| row.template == template)
+            .map_or(0, |row| row.instances)
+    };
+    for (template, count) in [
+        ("leaf", 1),
+        ("mid", 1),
+        ("two_hop", 1),
+        ("expr_fwd", 1),
+        ("tmid", 1),
+        ("method_fwd", 1),
+        ("Holder.get", 1),
+        ("mixed", 2),
+        ("to_reader", 2),
+        ("rec", 2),
+    ] {
+        assert_eq!(instances(template), count, "instances of `{template}`");
+    }
+}
+
+#[test]
 fn post_elaboration_folds_parameter_arithmetic() {
     let shape = |compiler: Compiler| {
         let program = compiler

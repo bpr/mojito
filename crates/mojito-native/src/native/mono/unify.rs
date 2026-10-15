@@ -115,62 +115,6 @@ pub(super) fn owner_instance_ty(
     Ok(TyKind::Struct(name, ty_arguments).into())
 }
 
-/// Each supplied compile-time argument paired with the declaration it fills.
-/// Positional arguments skip the inferred-only declarations
-/// (`hash[T: Hashable, //, HasherType]` binds `HasherType` first), as the
-/// checker's binder does; an argument matching no declaration is dropped.
-pub(super) fn matched_parameter_arguments<'a>(
-    decls: &'a [ParamDecl],
-    arguments: &'a [mojito_mir::mir::MirParamArg],
-) -> Vec<(&'a ParamDecl, Reg, &'a mojito_mir::mir::MirParamArg)> {
-    let explicit: Vec<&ParamDecl> = decls
-        .iter()
-        .filter(|declaration| {
-            !matches!(
-                declaration,
-                ParamDecl::Type {
-                    infer_only: true,
-                    ..
-                } | ParamDecl::Value {
-                    infer_only: true,
-                    ..
-                }
-            )
-        })
-        .collect();
-    let mut positional = 0;
-    let mut matched = Vec::new();
-    for argument in arguments {
-        let Some(value_reg) = argument.value else {
-            if argument.name.is_none() {
-                positional += 1;
-            }
-            continue;
-        };
-        let declaration = if let Some(name) = &argument.name {
-            decls.iter().find(|declaration| declaration.name() == name)
-        } else {
-            let declaration = explicit.get(positional).copied();
-            // A type or value pack takes every positional argument from its
-            // slot on.
-            if !matches!(
-                declaration,
-                Some(
-                    ParamDecl::Type { variadic: true, .. }
-                        | ParamDecl::Value { variadic: true, .. }
-                )
-            ) {
-                positional += 1;
-            }
-            declaration
-        };
-        if let Some(declaration) = declaration {
-            matched.push((declaration, value_reg, argument));
-        }
-    }
-    matched
-}
-
 pub(super) fn bind_explicit_value_arguments(
     decls: &[ParamDecl],
     arguments: &[mojito_mir::mir::MirParamArg],
@@ -180,7 +124,9 @@ pub(super) fn bind_explicit_value_arguments(
     enclosing: &Bindings,
 ) -> Result<(), MonoError> {
     let mut packs: Vec<(ParamRef, Vec<CtValue>)> = Vec::new();
-    for (declaration, value_reg, argument) in matched_parameter_arguments(decls, arguments) {
+    for (declaration, value_reg, argument) in
+        mojito_mir::mir::matched_parameter_arguments(decls, arguments)
+    {
         match declaration {
             // A constant register is the value; an argument built from the
             // caller's value binders is its recorded expression under the

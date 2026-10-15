@@ -932,6 +932,10 @@ impl<'c> Inliner<'_, 'c> {
         mut blocks: Vec<MirBlock>,
     ) {
         let function = &mut *self.function;
+        merge_callee_removals(
+            &mut function.callee_removed_params,
+            &callee.callee_removed_params,
+        );
         let CallSite { block, index, dest } = *site;
         let after = list[block].instrs.split_off(index + 1);
         list[block].instrs.truncate(index);
@@ -1073,6 +1077,26 @@ impl<'c> Inliner<'_, 'c> {
 
 /// The constant a read of the parameter value `value` at `ty` is: its
 /// typed constant when closed, the parameter expression otherwise.
+/// Add to a caller's `callee_removed_params` an inlined callee's: the
+/// spliced body forwards to the callee's callees as the callee did, by
+/// their removals then.
+fn merge_callee_removals(
+    into: &mut Vec<(String, Vec<mojito_types::param_expr::ParamId>)>,
+    from: &[(String, Vec<mojito_types::param_expr::ParamId>)],
+) {
+    for (callee, ids) in from {
+        match into.binary_search_by(|(name, _)| name.as_str().cmp(callee)) {
+            Ok(at) => {
+                let held = &mut into[at].1;
+                held.extend(ids.iter().cloned());
+                held.sort_by_key(|id| id.slot);
+                held.dedup();
+            }
+            Err(at) => into.insert(at, (callee.clone(), ids.clone())),
+        }
+    }
+}
+
 fn parameter_constant(value: &ParamExpr, ty: Option<&Ty>) -> Const {
     value
         .as_constant()
