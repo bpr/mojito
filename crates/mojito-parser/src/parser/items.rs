@@ -433,7 +433,17 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     self.next_token()?;
                     self.expect_stmt_end()?;
                 }
-                Token::Def => methods.push(self.parse_trait_method()?),
+                Token::Def => methods.push(self.parse_trait_method(Vec::new())?),
+                Token::At => {
+                    let decorators = self.parse_decorators()?;
+                    if !matches!(self.peek_token()?, Some(Token::Def)) {
+                        return Err(ParseError::UnexpectedToken(
+                            self.peek_token()?.cloned().unwrap_or(Token::Eof),
+                            "a decorator in a trait body must precede a 'def' method".into(),
+                        ));
+                    }
+                    methods.push(self.parse_trait_method(decorators)?);
+                }
                 Token::Comptime => comptime_members.push(self.parse_trait_comptime()?),
                 other => {
                     return Err(ParseError::UnexpectedToken(
@@ -495,9 +505,11 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
     /// `def name([convention] self [, params]) -> ret:` followed by an indented
     /// body that is either `...` (a pure requirement) or real statements (a
-    /// **default implementation**, stored in `default_body`).
+    /// **default implementation**, stored in `default_body`), after the
+    /// `decorators` already parsed before it.
     pub(super) fn parse_trait_method(
         &mut self,
+        decorators: Vec<Decorator>,
     ) -> Result<mojito_ast::ast::TraitMethod, ParseError> {
         self.expect(&Token::Def, "Expected 'def'")?;
         let name = {
@@ -582,6 +594,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
         Ok(mojito_ast::ast::TraitMethod {
             name,
+            decorators,
             type_params,
             self_convention,
             self_origin,

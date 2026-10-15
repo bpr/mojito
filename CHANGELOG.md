@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A trait method may carry inline-level decorators (R914): `@always_inline`,
+  `@no_inline`, and `@inline(level)` on a requirement or a default parse
+  and are validated as a function's are, and a default's member function
+  (`Trait.m`) records the level in its MIR declaration. Any other
+  decorator on a trait method is rejected as unsupported (R942, R943).
 - `@inline(level)` now sets a function's inline level (R913): `.always`,
   `.nodebug`, `.never`, and `.automatic`, or the same members spelled
   `InlineLevel.member`, reach its MIR declaration and the package as

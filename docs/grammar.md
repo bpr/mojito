@@ -541,6 +541,11 @@ matching methods and associated `comptime` members. Receiver conventions and
 associated type/value facts participate in conformance and generic bounds.
 Raising requirements retain their optional concrete error family. A nonraising
 implementation may satisfy one; a raising implementation may not widen it.
+A trait method, requirement or default, may carry decorators, parsed as a struct
+method's are; the checker accepts the inline-level ones (`@always_inline`,
+`@no_inline`, `@inline(level)`), validated as a function's are, and a default's
+member function takes the level they name. Any other decorator on a trait method
+is rejected as unsupported.
 
 Two further valid-Mojo trait forms are parsed but rejected by the checker:
 **trait inheritance / refinement** (`trait Bird(Animal, Named):` — a
@@ -564,7 +569,7 @@ least one member; fields and methods may interleave.
   that callers receive like an ordinary return value. Receiver conventions
   include lifecycle `out self` and `deinit self` plus `var`/`ref self`.
 - **Decorators** use a **general grammar** — any dotted name with optional call
-  arguments, one or more, stacked before a `def` or `struct` (or a struct method).
+  arguments, one or more, stacked before a `def` or `struct` (or a struct or trait method).
   They are parsed into the AST, and the parser acts on `@fieldwise_init` only: it generates
   a constructor taking the fields in declaration order, so `NAME(v1, v2, ...)` builds an
   instance (an ordinary call — see `primary`). A struct without it has no constructor (a

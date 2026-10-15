@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R942**.
+Next free ID: **R944**.
 
 ## Ordered Work
 
@@ -55,20 +55,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md),
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
-
-- [ ] **R914 A decorated trait method is a parse error**
-
-  The pin accepts `@always_inline` on a trait method, and Mojito's parser
-  rejects any decorator in a trait body, so a trait default cannot carry
-  the inline level upstream's std gives it.
-  - `docs/grammar.md` first, then the parser keeps a trait method's
-    decorators.
-  - The lifted `Trait$default$m` function takes the default's inline
-    level, validated as a method's is.
-  - Done when a marked trait default's declaration records its level in
-    MIR text.
-  - Depends on R783.
-  - Model: Opus, Not Planned.
 
 - [ ] **R915 MIR has no type visitor below the elaborator**
 
@@ -2127,6 +2113,34 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - A trait default reads every module function (R551), since the check
     checks it after the walk.
   - Found while landing R551 (2026-10-10).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R942 A `@staticmethod` trait requirement is rejected**
+
+  Problem: `trait T:` declaring `@staticmethod def make() -> Int: ...` is
+  valid at the pin, and upstream's std uses it (`UnsafeNicheable`,
+  `DevicePassable`), but Mojito rejects it.
+  - The parser requires `self` first in a trait method, so a static
+    requirement is a parse error, and the checker rejects
+    `@staticmethod` on a trait method as unsupported.
+  - A requirement needs a static shape in `TraitRequirement`, conformance
+    matching against a struct's `@staticmethod`, and `T.make()` dispatch
+    over a bound binder.
+  - Found while landing R914 (2026-10-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R943 A documentation decorator on a trait method is rejected**
+
+  Problem: `@doc_hidden` or `@stable(since="1.0")` on a trait method is
+  accepted at the pin, but Mojito rejects it as an unsupported
+  trait-method decorator.
+  - The checker accepts only inline-level decorators on a trait method
+    (`check_trait`), so an unknown one stays an error as at the pin.
+  - The fix accepts the pin's documentation decorators by name and keeps
+    rejecting the rest.
+  - Found while landing R914 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

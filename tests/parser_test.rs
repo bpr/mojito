@@ -684,6 +684,7 @@ fn parses_trait_with_method_requirements() {
             methods: vec![
                 TraitMethod {
                     where_clauses: Vec::new(),
+                    decorators: Vec::new(),
                     type_params: vec![],
                     name: "quack".into(),
                     self_convention: None,
@@ -698,6 +699,7 @@ fn parses_trait_with_method_requirements() {
                 },
                 TraitMethod {
                     where_clauses: Vec::new(),
+                    decorators: Vec::new(),
                     type_params: vec![],
                     name: "volume".into(),
                     self_convention: None,
@@ -727,6 +729,29 @@ fn parses_single_line_trait_method_requirement() {
         }
         other => panic!("expected a trait, got {other:?}"),
     }
+}
+
+#[test]
+fn parses_decorated_trait_methods() {
+    let stmts = parse(
+        "trait Tr:\n    @always_inline(\"nodebug\")\n    def m(self) -> Int:\n        return 1\n\
+         \n    @no_inline\n    def n(self): ...\n",
+    );
+    match &stmts[0].kind {
+        StmtKind::Trait { methods, .. } => {
+            let paths: Vec<_> = methods
+                .iter()
+                .map(|method| method.decorators[0].path.join("."))
+                .collect();
+            assert_eq!(paths, ["always_inline", "no_inline"]);
+            assert_eq!(methods[0].decorators[0].args.len(), 1);
+        }
+        other => panic!("expected a trait, got {other:?}"),
+    }
+    let mut parser = Parser::new(Lexer::new(
+        "trait Tr:\n    @always_inline\n    comptime n: Int\n",
+    ));
+    assert!(parser.parse_program().is_err());
 }
 
 #[test]

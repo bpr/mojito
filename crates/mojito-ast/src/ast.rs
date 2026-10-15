@@ -911,6 +911,8 @@ pub enum MethodProvenance {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TraitMethod {
     pub name: String,
+    /// The method's decorators, outermost first, as a struct method's are.
+    pub decorators: Vec<Decorator>,
     pub type_params: Vec<TypeParam>,
     /// The receiver's argument convention: `None` = plain read-only `self`,
     /// or one of Mojo's explicit receiver conventions (`mut self`, `var self`,
@@ -2442,6 +2444,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                         for condition in &mut method.where_clauses {
                             self.expr(condition);
                         }
+                        self.decorators(&mut method.decorators);
                         if let Some(body) = &mut method.default_body {
                             self.block(body);
                         }

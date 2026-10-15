@@ -3976,6 +3976,31 @@ fn inline_decorator_operands_match_the_pin() {
 }
 
 #[test]
+fn trait_method_inline_decorators_match_the_pin() {
+    let trait_method = |decorator: &str, body: &str| {
+        format!("trait Tr:\n    {decorator}\n    def m(self) -> Int:\n        {body}\n")
+    };
+    ok(&trait_method("@always_inline", "return 1"));
+    ok(&trait_method("@always_inline(\"nodebug\")", "..."));
+    let invalid = |source: &str| match err(source) {
+        TypeError::InvalidDecorator(message) => message,
+        other => panic!("expected an invalid decorator, found {other:?}"),
+    };
+    assert_eq!(
+        invalid(&trait_method("@always_inline(\"bogus\")", "return 1")),
+        "'@always_inline' operand must be \"nodebug\" or \"builtin\""
+    );
+    assert_eq!(
+        invalid(&trait_method("@always_inline\n    @no_inline", "...")),
+        "function has conflicting inline level from a previous '@no_inline' decorator"
+    );
+    assert!(matches!(
+        err(&trait_method("@doc_hidden", "...")),
+        TypeError::Unsupported(message) if message == "decorator '@doc_hidden' on a trait method"
+    ));
+}
+
+#[test]
 fn flags_out_self_and_accepts_static_methods() {
     // `out self` on a non-__init__ method is still unsupported (only `__init__`
     // may initialize the receiver).

@@ -2263,6 +2263,31 @@ fn default_wrapper_declaration_is_nodebug() {
 }
 
 #[test]
+fn trait_default_declaration_takes_its_inline_level() {
+    let program = parse(
+        "trait Tr:\n    @always_inline\n    def m(self) -> Int:\n        return 7\n\
+         \n    @no_inline\n    def n(self) -> Int:\n        return 8\n\
+         struct S(Tr):\n    var v: Int\n",
+    )
+    .expect("parse");
+    let checked = mojito::check_program(&program).expect("check");
+    let mir = mojito::mir::lower_checked_program(&checked);
+
+    let inline = |name: &str| {
+        mir.declarations
+            .functions
+            .iter()
+            .find(|declaration| declaration.lowered_name == name)
+            .unwrap_or_else(|| panic!("declaration {name}"))
+            .inline
+    };
+    use mojito::declaration::InlineLevel;
+    assert_eq!(inline("Tr.m"), InlineLevel::Always);
+    assert_eq!(inline("Tr.n"), InlineLevel::Never);
+    assert_eq!(inline("S.m"), InlineLevel::NoDebug);
+}
+
+#[test]
 fn inline_decorator_level_reaches_declaration() {
     let program = parse(
         "@inline(.always)\ndef a() -> Int:\n    return 1\n\

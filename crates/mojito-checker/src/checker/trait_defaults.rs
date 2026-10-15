@@ -75,7 +75,7 @@ pub fn trait_member_declaration(trait_stmt: &Stmt, index: usize, name: String) -
     let mut function = Stmt {
         kind: StmtKind::Def {
             name,
-            decorators: Vec::new(),
+            decorators: method.decorators.clone(),
             type_params: std::iter::once(self_param)
                 .chain(method.type_params.iter().cloned())
                 .collect(),

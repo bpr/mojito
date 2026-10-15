@@ -342,6 +342,12 @@ pub enum InlineLevel {
 }
 
 impl InlineLevel {
+    /// Whether `decorator` is one that names an inline level.
+    pub fn names(decorator: &Decorator) -> bool {
+        matches!(decorator.path.as_slice(),
+            [name] if matches!(name.as_str(), "always_inline" | "inline" | "no_inline"))
+    }
+
     /// The level `decorators` name, or the pin's diagnostic for an operand
     /// it rejects or for two decorators that name different levels.
     /// Decorators apply innermost first, so the later of two conflicting

@@ -519,7 +519,10 @@ pub fn walk_method<V: Visitor>(visitor: &mut V, method: &Method) {
     walk_block(visitor, &method.body);
 }
 
+/// A trait method: its decorators, then everything inside the scope of its
+/// own parameters.
 pub fn walk_trait_method<V: Visitor>(visitor: &mut V, method: &TraitMethod) {
+    walk_decorators(visitor, &method.decorators);
     let names = method
         .type_params
         .iter()
@@ -912,6 +915,7 @@ pub fn walk_stmt_mut<V: MutVisitor>(visitor: &mut V, statement: &mut Stmt) {
                 for condition in &mut method.where_clauses {
                     walk_expr_mut(visitor, condition);
                 }
+                walk_decorators_mut(visitor, &mut method.decorators);
                 if let Some(body) = &mut method.default_body {
                     walk_block_mut(visitor, body);
                 }

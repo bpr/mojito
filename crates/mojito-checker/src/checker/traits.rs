@@ -5,6 +5,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_checked::declaration::InlineLevel;
 use mojito_types::conformance::{LIFECYCLE_TRAITS, StructTraitRule, struct_trait_rule};
 use mojito_types::types::TyKind;
 
@@ -151,6 +152,13 @@ impl Checker {
                 }
             }
             for m in methods {
+                if let Some(decorator) = m.decorators.iter().find(|d| !InlineLevel::names(d)) {
+                    return Err(TypeError::Unsupported(format!(
+                        "decorator '@{}' on a trait method",
+                        decorator.path.join(".")
+                    )));
+                }
+                InlineLevel::of(&m.decorators)?;
                 self.validate_origin_signature(&m.type_params, &m.params, m.self_origin.as_ref())?;
                 if ct_members.contains_key(&m.name) {
                     return Err(TypeError::Redeclaration(m.name.clone()));
