@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R967**.
+Next free ID: **R969**.
 
 ## Ordered Work
 
@@ -337,17 +337,34 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R922 A drop of a type whose destructor is `nodebug` is not
-  inlined**
+- [ ] **R967 A drop inside a region of a slot stored outside it keeps its
+  `nodebug` destructor's call**
 
-  The pin inlines a `nodebug` `__deinit__` where the value dies, so a
-  `comptime assert` in it fails inside the caller's instantiation, and
-  Mojito's `drop.var` stays a destructor call.
-  - Expand the drop into the destructor's call first, then inline it as
-    any call.
-  - Done when `D[k]`'s destructor in the plan's `c_del_inline.mojo` probe
-    inlines and the differential is clean.
-  - Depends on R917.
+  `inline-parametric` treats every slot as empty where a region's body is
+  entered, so `var t = String("x")` dropped inside a later `try` body
+  still runs `String.__deinit__` as a call, where the pin inlines it.
+  - Seed the region body's entry state from the enclosing list's state at
+    the region instruction (`is_whole_at`), instead of all-empty.
+  - Done when that `try` probe's drop of `t` inlines and the differential
+    is clean.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R968 A drop of a struct with no destructor of its own does not
+  inline its fields' `nodebug` destructors**
+
+  The pin inlines a struct's synthesized destructor at the drop, so a
+  `comptime assert` in a field's `nodebug` `__deinit__` fails as a call
+  expansion at `struct S` with no instantiation note, and Mojito's
+  `drop.var` runs the field destructors inside the VM.
+  - Expand such a drop into a drop of each field in declaration order, the
+    VM's `drop_value` order, then inline each field's destructor as a
+    drop of a whole slot's is.
+  - A field drop is a `drop.place`, which `inline-parametric` does not
+    expand yet; the whole-value test must then cover places.
+  - Done when `S[k]` holding a `D[k]` field drops through `D`'s inlined
+    destructor and the differential is clean.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R923 Small `@always_inline` callees are not inlined before

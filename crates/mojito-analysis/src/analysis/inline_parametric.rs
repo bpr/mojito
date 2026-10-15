@@ -55,6 +55,15 @@
 //! end on the raise edge, as the callee's own frame ends them at the pin;
 //! one outside any `try` leaves the function holding them, as every raise
 //! leaving a function does (R20).
+//!
+//! A drop of a slot whose struct's `__deinit__` is such a function holds the
+//! destructor's body, as upstream inserts the destructor's call at the death
+//! point and inlines it as any call: its `deinit self` is the dropped slot
+//! itself, which the body's own consumption ends. Only a drop of a slot
+//! holding a whole value on every path to it, stored and not since moved
+//! from, is so expanded, since a drop of any other tests at run time what
+//! the slot still holds; a slot of a region's body counts as empty where the
+//! region is entered.
 
 use super::pre_elaboration::{CallGraphPass, Callees};
 use mojito_ast::ast::{ArgConvention, Dtype};
@@ -72,8 +81,8 @@ use mojito_mir::mir::{
     Const, FuncRef, MirBlock, MirCaptureMode, MirClosureCapture, MirDeclarations, MirFunction,
     MirFunctionDeclaration, MirInstr, MirParamArg, MirPlace, MirTerm, Proj, Reg, UseMode,
     has_no_destructor, instruction_regions, instruction_regions_mut, instruction_regs_mut,
-    instruction_slots, renumber_block_slots, terminator_regs_mut, terminator_targets,
-    terminator_targets_mut,
+    instruction_slots, region_escape_targets, renumber_block_slots, terminator_regs_mut,
+    terminator_targets, terminator_targets_mut,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{
@@ -123,9 +132,18 @@ pub fn inline_parametric(
         closures,
         raise_held: Vec::new(),
     };
-    let changed = inliner.block_list(&mut blocks);
+    let changed = inliner.block_list(&mut blocks, true);
     function.blocks = blocks;
     changed
+}
+
+/// The destructor a drop of a value of type `ty` runs, as the VM looks it
+/// up: its struct's `__deinit__`.
+pub fn destructor_of(ty: &Ty) -> Option<String> {
+    match ty.kind() {
+        TyKind::Struct(name, _) => Some(format!("{name}.__deinit__")),
+        _ => None,
+    }
 }
 
 /// The caller, its blocks taken out, and where its callees come from.
@@ -154,6 +172,9 @@ enum Binding {
     Value(Reg),
     /// The caller's place the argument was loaded from.
     Place(MirPlace),
+    /// The caller's slot itself: a destructor's `deinit self` at a drop of
+    /// the slot, which upstream passes by address.
+    Slot(VarId),
     /// A constructor's `out self`: a fresh slot the body initializes and
     /// the call's result moves out of.
     Out,
@@ -511,14 +532,27 @@ enum Returned {
 
 impl<'c> Inliner<'_, 'c> {
     /// Inline every inlinable call of `list`, a block list of the caller
-    /// whose ids are its own; returns whether it inlined one.
-    fn block_list(&mut self, list: &mut Vec<MirBlock>) -> bool {
+    /// whose ids are its own, and the destructor of every drop
+    /// [`Self::destructor`] answers; returns whether it inlined one. `top`
+    /// says `list` is the function's own, entered with its parameters bound.
+    fn block_list(&mut self, list: &mut Vec<MirBlock>, top: bool) -> bool {
         let mut changed = false;
         let mut block = 0;
         while block < list.len() {
             let mut index = 0;
             while index < list[block].instrs.len() {
                 changed |= self.regions(&mut list[block].instrs[index]);
+                if let Some((var, callee)) = self.destructor(list, block, index, top) {
+                    let span = death_span(self.function, var);
+                    let dest = fresh_register(self.function, TyKind::None.into(), span.as_ref());
+                    let bindings = [Binding::Slot(var)];
+                    if let Some(blocks) = self.inlined_blocks(&callee, &bindings, dest) {
+                        let site = CallSite { block, index, dest };
+                        self.splice(list, &site, &callee, &bindings, blocks);
+                        changed = true;
+                        break;
+                    }
+                }
                 if let Some((dest, callee, bindings)) = self.inlinable(&list[block], index)
                     && let Some(blocks) = self.inlined_blocks(&callee, &bindings, dest)
                 {
@@ -557,10 +591,12 @@ impl<'c> Inliner<'_, 'c> {
         else {
             return instruction_regions_mut(instruction)
                 .into_iter()
-                .fold(false, |changed, region| self.block_list(region) | changed);
+                .fold(false, |changed, region| {
+                    self.block_list(region, false) | changed
+                });
         };
         let outer = std::mem::take(&mut self.raise_held);
-        let mut changed = self.block_list(body);
+        let mut changed = self.block_list(body, false);
         let held = std::mem::replace(&mut self.raise_held, outer);
         if !held.is_empty() {
             cleanup.extend(held);
@@ -573,9 +609,53 @@ impl<'c> Inliner<'_, 'c> {
             .chain(orelse.iter_mut())
             .chain(finalbody.iter_mut())
         {
-            changed |= self.block_list(region);
+            changed |= self.block_list(region, false);
         }
         changed
+    }
+
+    /// The slot the drop at `index` of `block` in `list` ends, and its
+    /// type's destructor, its owner's parameters bound to the slot type's,
+    /// when the pass inlines the destructor there: upstream inserts the
+    /// destructor's call at the death point, and inlines it as any call.
+    ///
+    /// The drop runs the destructor only of a whole value, so the slot must
+    /// hold one on every path to the drop; one a move may have left partial
+    /// or empty keeps the drop, which tests its state as it runs.
+    fn destructor(
+        &self,
+        list: &[MirBlock],
+        block: usize,
+        index: usize,
+        top: bool,
+    ) -> Option<(VarId, Cow<'c, MirFunction>)> {
+        let MirInstr::DropVar { var } = list[block].instrs[index] else {
+            return None;
+        };
+        let ty = self.function.var_tys.get(&var)?;
+        let target = destructor_of(ty)?;
+        let callee = self.callees.body(&target)?;
+        let declaration = self.declarations.function(&target)?;
+        if !is_closed(callee, declaration)
+            || callee.raises
+            || callee.n_params != 1
+            || !declaration.param_names.is_empty()
+            || callee.deinit_params.first() != Some(&true)
+        {
+            return None;
+        }
+        let owner = match self.owner(callee, ty)? {
+            Owner::Applied(owner) => Some(owner),
+            Owner::Unbound => None,
+        };
+        let entry = top
+            && (var as usize) < self.function.n_params
+            && self.function.owned_params.get(var as usize) == Some(&true);
+        if !is_whole_at(list, block, index, var, entry) {
+            return None;
+        }
+        let callee = instantiated(callee, declaration, owner.as_ref(), &[])?;
+        Some((var, callee))
     }
 
     /// The callee of the call at `index` of `block`, its compile-time
@@ -796,7 +876,10 @@ impl<'c> Inliner<'_, 'c> {
     ) -> Option<Vec<MirBlock>> {
         let base = self.function.n_vars as VarId;
         let mut blocks = callee.blocks.clone();
-        renumber_block_slots(&mut blocks, &|var| var + base);
+        renumber_block_slots(&mut blocks, &|var| match bindings.get(var as usize) {
+            Some(Binding::Slot(slot)) => *slot,
+            _ => var + base,
+        });
         let registers = Registers::new(self.function, callee, bindings, dest);
         for block in &mut blocks {
             for instruction in &mut block.instrs {
@@ -810,7 +893,7 @@ impl<'c> Inliner<'_, 'c> {
         }
         let bound = |var: VarId| match bindings.get(var.checked_sub(base)? as usize)? {
             Binding::Place(place) => Some(place),
-            Binding::Value(_) | Binding::Default { .. } | Binding::Out => None,
+            Binding::Value(_) | Binding::Default { .. } | Binding::Out | Binding::Slot(_) => None,
         };
         for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
             for place in instruction_places_mut(instruction) {
@@ -976,7 +1059,7 @@ impl<'c> Inliner<'_, 'c> {
                 Binding::Out => caller.instrs.push(MirInstr::MarkInitialized {
                     place: MirPlace::root(var + var_base, ty),
                 }),
-                Binding::Place(_) => {}
+                Binding::Place(_) | Binding::Slot(_) => {}
             }
         }
         let term = std::mem::replace(&mut caller.term, MirTerm::Jump(entry));
@@ -1190,11 +1273,13 @@ fn raise_held(
     held.iter()
         .enumerate()
         .filter(|&(var, &held)| {
-            held && !matches!(bindings.get(var), Some(Binding::Out | Binding::Place(_)))
-                && callee
-                    .var_tys
-                    .get(&(var as VarId))
-                    .is_none_or(|ty| !has_no_destructor(ty))
+            held && !matches!(
+                bindings.get(var),
+                Some(Binding::Out | Binding::Place(_) | Binding::Slot(_))
+            ) && callee
+                .var_tys
+                .get(&(var as VarId))
+                .is_none_or(|ty| !has_no_destructor(ty))
         })
         .map(|(var, _)| (var + base) as VarId)
         .collect()
@@ -1223,6 +1308,100 @@ fn loaded_place(block: &MirBlock, index: usize, argument: Reg) -> Option<MirPlac
                     .any(|var| roots.contains(&Some(*var)))
         })
         .then(|| place.clone())
+}
+
+/// Whether the slot `var` holds a whole value on every path through `list`
+/// to the instruction at `index` of `block`: stored whole, and neither moved
+/// from, in whole or in part, nor ended since. `entry` says it holds one as
+/// `list` is entered.
+fn is_whole_at(list: &[MirBlock], block: usize, index: usize, var: VarId, entry: bool) -> bool {
+    let through = |state: bool, instructions: &[MirInstr]| {
+        instructions.iter().fold(state, |state, instruction| {
+            whole_after(state, instruction, var)
+        })
+    };
+    let mut inputs = vec![true; list.len()];
+    inputs[0] = entry;
+    let mut pending: Vec<usize> = (0..list.len()).rev().collect();
+    while let Some(current) = pending.pop() {
+        let state = through(inputs[current], &list[current].instrs);
+        let escapes = list[current]
+            .instrs
+            .iter()
+            .flat_map(region_escape_targets)
+            .map(|target| (target, false));
+        let successors = terminator_targets(&list[current].term)
+            .into_iter()
+            .map(|target| (target, state));
+        for (target, state) in successors.chain(escapes) {
+            if let Some(input) = inputs.get_mut(target)
+                && *input
+                && !state
+            {
+                *input = false;
+                pending.push(target);
+            }
+        }
+    }
+    through(inputs[block], &list[block].instrs[..index])
+}
+
+/// Whether the slot `var` holds a whole value after `instruction`, given
+/// whether it held one before: a whole store fills it, and anything but a
+/// read, a borrow, or a store into it leaves it possibly partial or empty.
+fn whole_after(state: bool, instruction: &MirInstr, var: VarId) -> bool {
+    match instruction {
+        MirInstr::DefVar { var: slot, .. } if *slot == var => true,
+        MirInstr::UseVar {
+            var: slot, mode, ..
+        } if *slot == var => state && !mode.moves(),
+        MirInstr::MakeClosure { captures, .. } => {
+            state
+                && captures.iter().all(|capture| {
+                    capture.mode == MirCaptureMode::Reference || capture.place.root != var
+                })
+        }
+        MirInstr::LoadPlace { .. }
+        | MirInstr::Store { .. }
+        | MirInstr::StoreRef { .. }
+        | MirInstr::MakeRef { .. }
+        | MirInstr::KeepAlive { .. }
+        | MirInstr::EstablishLoans { .. }
+        | MirInstr::VariantSet { .. }
+        | MirInstr::VariantSetInitWith { .. }
+        | MirInstr::VariantReplace { .. }
+        | MirInstr::Call { .. }
+        | MirInstr::CallIndirect { .. }
+        | MirInstr::MethodCall { .. }
+        | MirInstr::Index { .. }
+        | MirInstr::Slice { .. }
+        | MirInstr::MultiIndex { .. }
+        | MirInstr::MultiSet { .. }
+        | MirInstr::ConstructTypeParam { .. } => state,
+        _ => state && !names_slot(instruction, var),
+    }
+}
+
+/// Whether `instruction` names the slot `var`, in its regions too.
+fn names_slot(instruction: &MirInstr, var: VarId) -> bool {
+    instruction_slots(instruction).contains(&var)
+        || instruction_regions(instruction)
+            .into_iter()
+            .flatten()
+            .flat_map(|block| &block.instrs)
+            .any(|instruction| names_slot(instruction, var))
+}
+
+/// Where the slot `var` dies: the location of its last read, which a drop
+/// of it follows.
+fn death_span(function: &MirFunction, var: VarId) -> Option<SourceSpan> {
+    function
+        .spans
+        .0
+        .iter()
+        .filter(|(_, (_, origin))| *origin == Some(var))
+        .max_by_key(|(reg, _)| **reg)
+        .map(|(_, (span, _))| span.clone())
 }
 
 /// The callee's place `inner`, rooted at a parameter bound to the caller's

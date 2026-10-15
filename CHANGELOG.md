@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A drop of a value whose `__deinit__` is `nodebug`, `String`'s
+  included, is inlined before elaboration (R922): `inline-parametric`
+  expands the drop into the destructor's body where the value dies,
+  binding its `deinit self` to the dropped variable and the struct's
+  parameters to the variable type's
+  (assets/ok/always_inline_nodebug_destructor.mojo). A variable a path may
+  have moved from keeps the destructor call; a drop inside a region of a
+  variable stored before it, and a struct with no destructor of its own,
+  keep it too (R967, R968).
 - A call to a nested `nodebug` `def` is inlined before elaboration
   (R921): `inline-parametric` follows the call through the closure its
   caller makes, binds each capture by reference to the captured place,

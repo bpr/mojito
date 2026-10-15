@@ -14,7 +14,7 @@ use super::canonicalize::CANONICALIZE;
 use super::cse::CSE;
 use super::dead_symbols::ELIMINATE_DEAD_SYMBOLS;
 use super::elaborate_drops_function;
-use super::inline_parametric::INLINE_PARAMETRIC;
+use super::inline_parametric::{INLINE_PARAMETRIC, destructor_of};
 use super::lower_lit::{LOWER_LIT, lower_lit};
 use super::mem2reg::{LOWER_ARG_CONVENTIONS, MEM_2_REG};
 use super::sccp::SCCP;
@@ -423,10 +423,10 @@ fn verify_after(
 }
 
 /// The callees `function` calls directly, by a call or a resolved method
-/// call, or through a closure it makes, that `followed` accepts, each once,
-/// in its regions too.
+/// call, through a closure it makes, or as the destructor a drop of one of
+/// its slots runs, that `followed` accepts, each once, in its regions too.
 fn followed_callees(function: &MirFunction, followed: impl Fn(&str) -> bool) -> Vec<String> {
-    fn walk(blocks: &[mojito_mir::mir::MirBlock], out: &mut Vec<String>) {
+    fn walk(blocks: &[mojito_mir::mir::MirBlock], function: &MirFunction, out: &mut Vec<String>) {
         for block in blocks {
             for instruction in &block.instrs {
                 match instruction {
@@ -436,16 +436,19 @@ fn followed_callees(function: &MirFunction, followed: impl Fn(&str) -> bool) -> 
                         ..
                     } => out.push(target.clone()),
                     MirInstr::MakeClosure { function, .. } => out.push(function.clone()),
+                    MirInstr::DropVar { var } => {
+                        out.extend(function.var_tys.get(var).and_then(destructor_of));
+                    }
                     _ => {}
                 }
                 for region in instruction_regions(instruction) {
-                    walk(region, out);
+                    walk(region, function, out);
                 }
             }
         }
     }
     let mut callees = Vec::new();
-    walk(&function.blocks, &mut callees);
+    walk(&function.blocks, function, &mut callees);
     let mut seen = HashSet::new();
     callees.retain(|callee| followed(callee) && seen.insert(callee.clone()));
     callees

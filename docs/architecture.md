@@ -5142,7 +5142,24 @@ point where a slot declared in a loop is uninitialized again.
   pin; the handler, `else`, and `finally` raise past it to the next
   enclosing `try`. An initializer's `out self` is never listed, being
   partly initialized at a raise. Outside any `try` the slots leave the
-  function held, as every raise leaving a function does (R20). A callee on a cycle of followed calls is never inlined: at
+  function held, as every raise leaving a function does (R20). A
+  `drop.var` of a slot whose struct's `__deinit__` is followed (the
+  private `destructor_of` names it, as the VM's `drop_value` looks it up)
+  is expanded into that destructor's body, as upstream inserts the
+  destructor's call at the death point and inlines it as any call: its
+  `deinit self` binds the dropped slot itself (`Binding::Slot`, the slot
+  renumbered to the caller's), so the body's `consume.var` ends it, and
+  the struct's binders bind to the slot type's arguments as a method's
+  bind to its receiver's. The inlined registers take the location of the
+  slot's last read, where the pin reports a destructor's failed
+  constraint. Since a `drop.var` tests at run time whether its slot is
+  whole, partial, or empty, only a drop of a slot whole on every path to
+  it is expanded (`is_whole_at`, a must-dataflow over the block list in
+  which a `var.store` fills the slot, reads, borrows, calls, and stores
+  into it keep it, and anything else naming it, a moving `var.use`
+  included, empties it); a region's body starts with every slot empty
+  but the region's own (R967). The call-graph walk follows such a drop
+  as an edge to the destructor. A callee on a cycle of followed calls is never inlined: at
   the program seam the cycles are the strongly connected components of the
   program's followed calls, and at the package seam `PackageBodies::on_cycle`
   decides one from lowered bodies, memoized by row, so a finishing hook
