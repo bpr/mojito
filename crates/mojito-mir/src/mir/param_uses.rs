@@ -10,9 +10,12 @@
 //! is a read of it. A pair that only happens to spell one counts too, which
 //! keeps a parameter and never drops one. Two further reads are not
 //! identities: a value parameter's runtime reads go through the slot its
-//! name binds, and a body nested in or lifted from the function (named
-//! `f$…`, `$comptime$f$…`, `$default$f$…`) reads whatever of the function's
-//! scope it likes, so naming one reads every parameter.
+//! name binds, and a body nested in the function (named `f$…`) reads the
+//! binders of its enclosing scope its own analysis kept, as upstream's
+//! `RemoveUnusedParams` reads a lifted closure's generator after removing
+//! its unused parameters. A body lifted from the function (named
+//! `$comptime$f$…`, `$default$f$…`), and a nested body whose analysis is not
+//! at hand, reads every parameter.
 
 use crate::mir::verify::instruction_result_regs;
 use crate::mir::{
@@ -31,51 +34,72 @@ use std::fmt;
 
 /// The parameters upstream's `RemoveUnusedParams` removes from `name`.
 ///
-/// They are its own compile-time parameters that nothing in its body
-/// `function` or its declaration's signature reads, sorted by slot.
+/// For a top-level function they are its own compile-time parameters, and
+/// for a nested one the parameters of the declarations it is nested in,
+/// that nothing in its body `function` or its declaration's signature
+/// reads, sorted by owner and slot. A nested body `function` names reads
+/// the candidates its own removals `nested` keep; one `nested` does not
+/// answer reads them all.
 ///
 /// A default of another parameter is not a read, since a default is the
-/// call site's. A nested function, `__toplevel__`, and a function without a
-/// declaration have no candidates, nor has a callable value parameter,
-/// whose binding can add runtime parameters to the instance.
+/// call site's. A function inside a `comptime for`, `__toplevel__`, and a
+/// function without a declaration have no candidates, nor has a nested
+/// function's own parameter or a callable value parameter, whose binding
+/// can add runtime parameters to the instance.
 pub fn unread_parameters(
     name: &str,
     function: &MirFunction,
     declarations: &MirDeclarations,
+    nested: &NestedRemovals<'_>,
 ) -> Vec<ParamId> {
     let Some(declaration) = declarations.function(name) else {
         return Vec::new();
     };
-    if name == "__toplevel__"
-        || declaration.enclosing.is_some()
-        || !declaration.region_binders.is_empty()
-    {
+    if name == "__toplevel__" || !declaration.region_binders.is_empty() {
         return Vec::new();
     }
-    let candidates: Vec<&ParamDecl> = declaration
-        .param_decls
-        .iter()
-        .filter(|decl| &*decl.id().owner == name && !is_callable_value(decl))
-        .collect();
+    let candidates = candidate_parameters(name, declaration, declarations);
     if candidates.is_empty() {
         return Vec::new();
     }
-    let mut walker = Walker::new(name);
+    let mut owners: Vec<&str> = Vec::new();
+    for decl in &candidates {
+        if !owners.contains(&&*decl.id().owner) {
+            owners.push(&decl.id().owner);
+        }
+    }
+    let mut walker = Walker::new(owners, nested);
     walker.signature(declaration);
     walker.body(function);
     if walker.reads_all {
         return Vec::new();
     }
     let read_by_slot = slot_reads(function, &candidates);
+    let read = |decl: &ParamDecl| {
+        let id = decl.id();
+        walker
+            .owners
+            .iter()
+            .position(|owner| **owner == *id.owner)
+            .is_some_and(|owner| walker.slots.contains(&(owner, id.slot)))
+            || read_by_slot.contains(decl.name().trim_start_matches('*'))
+            || walker
+                .nested_removals
+                .iter()
+                .any(|removed| !removed.contains(id))
+    };
     let mut unread: Vec<ParamId> = candidates
         .into_iter()
-        .filter(|decl| !walker.slots.contains(&decl.id().slot))
-        .filter(|decl| !read_by_slot.contains(decl.name().trim_start_matches('*')))
+        .filter(|decl| !read(decl))
         .map(|decl| decl.id().clone())
         .collect();
-    unread.sort_by_key(|id| id.slot);
+    unread.sort();
     unread
 }
+
+/// The removals of a body nested in the function being analysed, by its
+/// name: `None` when its analysis is not at hand.
+pub type NestedRemovals<'a> = dyn Fn(&str) -> Option<&'a [ParamId]> + 'a;
 
 /// A compiler-known scalar, whose drop runs no code.
 pub fn has_no_destructor(ty: &Ty) -> bool {
@@ -122,6 +146,42 @@ pub fn without_removed_forwards<'a>(
     }
     erase_forward_chains(&mut view);
     Some((view, discounted.into_iter().collect()))
+}
+
+/// The parameters `unread_parameters` may remove from `name`: its own
+/// compile-time parameters, or a nested function's enclosing declarations'
+/// parameters, each once, but a callable value parameter.
+fn candidate_parameters<'d>(
+    name: &str,
+    declaration: &'d MirFunctionDeclaration,
+    declarations: &'d MirDeclarations,
+) -> Vec<&'d ParamDecl> {
+    let mut candidates: Vec<&ParamDecl> = Vec::new();
+    if declaration.enclosing.is_none() {
+        candidates.extend(
+            declaration
+                .param_decls
+                .iter()
+                .filter(|decl| &*decl.id().owner == name),
+        );
+    }
+    let mut link = declaration
+        .enclosing
+        .as_deref()
+        .and_then(|enclosing| declarations.function(enclosing));
+    while let Some(enclosing) = link {
+        for decl in &enclosing.param_decls {
+            if !candidates.iter().any(|seen| seen.id() == decl.id()) {
+                candidates.push(decl);
+            }
+        }
+        link = enclosing
+            .enclosing
+            .as_deref()
+            .and_then(|enclosing| declarations.function(enclosing));
+    }
+    candidates.retain(|decl| !is_callable_value(decl));
+    candidates
 }
 
 fn is_callable_value(decl: &ParamDecl) -> bool {
@@ -217,7 +277,7 @@ fn drop_arguments(
     param_arg_regs: &mut [MirParamArg],
     instantiated_args: &mut Vec<TyArg>,
 ) -> bool {
-    let mut defaulted = Walker::new(target);
+    let mut defaulted = Walker::new(vec![target], &|_| None);
     for decl in decls.iter().filter(|decl| !ids.contains(decl.id())) {
         match decl {
             ParamDecl::Type { default, .. } => defaulted.visit(default),
@@ -230,7 +290,7 @@ fn drop_arguments(
         .filter(|(_, decl)| {
             ids.contains(decl.id())
                 && !defaulted.reads_all
-                && !defaulted.slots.contains(&decl.id().slot)
+                && !defaulted.slots.contains(&(0, decl.id().slot))
         })
         .map(|(index, _)| index)
         .collect();
@@ -443,37 +503,48 @@ impl SlotReads<'_> {
 }
 
 /// The serializer [`unread_parameters`] walks a value with, looking for the
-/// identities of the binders of `owner`.
-struct Walker<'a> {
-    owner: &'a str,
-    /// The slots of `owner`'s binders a walked value names.
-    slots: BTreeSet<usize>,
-    /// Whether a walked value names a body nested in or lifted from
-    /// `owner`, or holds a leaf no walk can see into, so that every
-    /// parameter counts as read.
+/// identities of the binders of `owners`.
+struct Walker<'o, 'a, 'n> {
+    owners: Vec<&'o str>,
+    /// The removals of the nested bodies a walked value names.
+    nested: &'n NestedRemovals<'a>,
+    /// The binders a walked value names, as the index of their owner in
+    /// `owners` and their slot.
+    slots: BTreeSet<(usize, usize)>,
+    /// The removals of each body nested in an owner that a walked value
+    /// names: it reads every candidate they do not hold.
+    nested_removals: Vec<&'a [ParamId]>,
+    /// Whether a walked value names a body lifted from an owner, or nested
+    /// in one with no removals at hand, or holds a leaf no walk can see
+    /// into, so that every parameter counts as read.
     reads_all: bool,
     /// The last leaf a walk visited.
     leaf: Leaf,
     /// Each tuple the walk is inside: its length, how many of its elements
-    /// were walked, and whether its first was `owner`.
-    tuples: Vec<(usize, usize, bool)>,
-    /// The slots each type walked so far names: a type is a uniqued handle
+    /// were walked, and the owner its first named.
+    tuples: Vec<(usize, usize, Option<usize>)>,
+    /// The reads each type walked so far makes: a type is a uniqued handle
     /// that many registers and slots share.
-    types: HashMap<Ty, (BTreeSet<usize>, bool)>,
+    types: HashMap<Ty, TypeReads<'a>>,
 }
+
+/// The binders, nested bodies' removals, and opacity of one walked type.
+type TypeReads<'a> = (BTreeSet<(usize, usize)>, Vec<&'a [ParamId]>, bool);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Leaf {
     Other,
-    Owner,
+    Owner(usize),
     Slot(u64),
 }
 
-impl<'a> Walker<'a> {
-    fn new(owner: &'a str) -> Self {
+impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
+    fn new(owners: Vec<&'o str>, nested: &'n NestedRemovals<'a>) -> Self {
         Self {
-            owner,
+            owners,
+            nested,
             slots: BTreeSet::new(),
+            nested_removals: Vec::new(),
             reads_all: false,
             leaf: Leaf::Other,
             tuples: Vec::new(),
@@ -538,13 +609,16 @@ impl<'a> Walker<'a> {
 
     fn ty(&mut self, ty: &Ty) {
         if !self.types.contains_key(ty) {
-            let mut walker = Walker::new(self.owner);
+            let mut walker = Walker::new(self.owners.clone(), self.nested);
             walker.visit(ty);
-            self.types
-                .insert(ty.clone(), (walker.slots, walker.reads_all));
+            self.types.insert(
+                ty.clone(),
+                (walker.slots, walker.nested_removals, walker.reads_all),
+            );
         }
-        let (slots, reads_all) = &self.types[ty];
+        let (slots, nested_removals, reads_all) = &self.types[ty];
         self.slots.extend(slots);
+        self.nested_removals.extend(nested_removals);
         self.reads_all |= reads_all;
     }
 
@@ -561,21 +635,28 @@ impl<'a> Walker<'a> {
     }
 
     fn string(&mut self, value: &str) {
-        let owned = |rest: Option<&str>| {
-            rest.and_then(|rest| rest.strip_prefix(self.owner))
-                .is_some_and(|rest| rest.starts_with('$'))
+        let owned = |name: &str| {
+            self.owners.iter().any(|owner| {
+                name.strip_prefix(owner)
+                    .is_some_and(|rest| rest.starts_with('$'))
+            })
         };
-        if owned(Some(value))
-            || owned(value.strip_prefix("$comptime$"))
-            || owned(value.strip_prefix("$default$"))
+        match value
+            .strip_prefix("$comptime$")
+            .or_else(|| value.strip_prefix("$default$"))
         {
-            self.reads_all = true;
+            Some(lifted) => self.reads_all |= owned(lifted),
+            None if owned(value) => match (self.nested)(value) {
+                Some(removed) => self.nested_removals.push(removed),
+                None => self.reads_all = true,
+            },
+            None => {}
         }
-        self.leaf = if value == self.owner {
-            Leaf::Owner
-        } else {
-            Leaf::Other
-        };
+        self.leaf = self
+            .owners
+            .iter()
+            .position(|owner| *owner == value)
+            .map_or(Leaf::Other, Leaf::Owner);
     }
 
     fn element<T: Serialize + ?Sized>(&mut self, value: &T) {
@@ -584,9 +665,9 @@ impl<'a> Walker<'a> {
         if let Some((length, index, owner)) = self.tuples.last_mut() {
             if *length == 2 {
                 match (*index, self.leaf) {
-                    (0, Leaf::Owner) => *owner = true,
-                    (1, Leaf::Slot(slot)) if *owner => {
-                        self.slots.insert(slot as usize);
+                    (0, Leaf::Owner(named)) => *owner = Some(named),
+                    (1, Leaf::Slot(slot)) if let Some(named) = *owner => {
+                        self.slots.insert((named, slot as usize));
                     }
                     _ => {}
                 }
@@ -622,7 +703,7 @@ impl ser::Error for Unwalkable {
     }
 }
 
-impl ser::Serializer for &mut Walker<'_> {
+impl ser::Serializer for &mut Walker<'_, '_, '_> {
     type Ok = ();
     type Error = Unwalkable;
     type SerializeSeq = Self;
@@ -771,7 +852,7 @@ impl ser::Serializer for &mut Walker<'_> {
     }
 
     fn serialize_tuple(self, length: usize) -> Result<Self, Unwalkable> {
-        self.tuples.push((length, 0, false));
+        self.tuples.push((length, 0, None));
         Ok(self.compound())
     }
 
@@ -808,7 +889,7 @@ impl ser::Serializer for &mut Walker<'_> {
     }
 }
 
-impl ser::SerializeSeq for &mut Walker<'_> {
+impl ser::SerializeSeq for &mut Walker<'_, '_, '_> {
     type Ok = ();
     type Error = Unwalkable;
 
@@ -823,7 +904,7 @@ impl ser::SerializeSeq for &mut Walker<'_> {
     }
 }
 
-impl ser::SerializeTuple for &mut Walker<'_> {
+impl ser::SerializeTuple for &mut Walker<'_, '_, '_> {
     type Ok = ();
     type Error = Unwalkable;
 
@@ -839,7 +920,7 @@ impl ser::SerializeTuple for &mut Walker<'_> {
     }
 }
 
-impl ser::SerializeTupleStruct for &mut Walker<'_> {
+impl ser::SerializeTupleStruct for &mut Walker<'_, '_, '_> {
     type Ok = ();
     type Error = Unwalkable;
 
@@ -854,7 +935,7 @@ impl ser::SerializeTupleStruct for &mut Walker<'_> {
     }
 }
 
-impl ser::SerializeTupleVariant for &mut Walker<'_> {
+impl ser::SerializeTupleVariant for &mut Walker<'_, '_, '_> {
     type Ok = ();
     type Error = Unwalkable;
 
@@ -869,7 +950,7 @@ impl ser::SerializeTupleVariant for &mut Walker<'_> {
     }
 }
 
-impl ser::SerializeMap for &mut Walker<'_> {
+impl ser::SerializeMap for &mut Walker<'_, '_, '_> {
     type Ok = ();
     type Error = Unwalkable;
 
@@ -889,7 +970,7 @@ impl ser::SerializeMap for &mut Walker<'_> {
     }
 }
 
-impl ser::SerializeStruct for &mut Walker<'_> {
+impl ser::SerializeStruct for &mut Walker<'_, '_, '_> {
     type Ok = ();
     type Error = Unwalkable;
 
@@ -908,7 +989,7 @@ impl ser::SerializeStruct for &mut Walker<'_> {
     }
 }
 
-impl ser::SerializeStructVariant for &mut Walker<'_> {
+impl ser::SerializeStructVariant for &mut Walker<'_, '_, '_> {
     type Ok = ();
     type Error = Unwalkable;
 

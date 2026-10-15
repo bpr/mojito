@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A nested `def` that never reads its enclosing function's compile-time
+  parameter no longer splits instances (R908): `remove-unused-params`
+  records on a nested body the enclosing parameters it never reads, the
+  elaborator keys the body's instances on the rest, and the enclosing
+  function reads through a nested body only those, so `outer[1]` and
+  `outer[2]` share one instance of `outer` and of its `inner`
+  (assets/ok/nested_unread_enclosing_instances.mojo). A nested generic
+  `def`'s own parameters, a `def` in a `comptime for`, and one nested in
+  a parametric struct's method still split instances (R973–R975).
 - A compile-time parameter only forwarded to a parameter its callee never
   reads no longer splits instances (R907): `remove-unused-params` walks
   the call graph callees first, as upstream's `RemoveUnusedParams` does,

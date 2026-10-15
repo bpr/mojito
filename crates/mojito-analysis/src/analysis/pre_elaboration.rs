@@ -22,7 +22,8 @@ use super::unused_params::REMOVE_UNUSED_PARAMS;
 use mojito_common::timing;
 use mojito_mir::mir::text::package::PackageBodies;
 use mojito_mir::mir::{
-    MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirProgram, instruction_regions,
+    Const, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirProgram,
+    instruction_regions,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -442,7 +443,7 @@ fn verify_after(
 }
 
 /// The callees `function` calls directly, by a call or a resolved method
-/// call, through a closure it makes, or as the destructor a drop of one of
+/// call, through a closure or a function value it makes, or as the destructor a drop of one of
 /// its slots runs, that `followed` accepts, each once, in its regions too.
 fn followed_callees(function: &MirFunction, followed: impl Fn(&str) -> bool) -> Vec<String> {
     fn walk(blocks: &[mojito_mir::mir::MirBlock], function: &MirFunction, out: &mut Vec<String>) {
@@ -454,7 +455,11 @@ fn followed_callees(function: &MirFunction, followed: impl Fn(&str) -> bool) -> 
                         resolved: Some(target),
                         ..
                     } => out.push(target.clone()),
-                    MirInstr::MakeClosure { function, .. } => out.push(function.clone()),
+                    MirInstr::MakeClosure { function, .. }
+                    | MirInstr::Const {
+                        k: Const::Function(function),
+                        ..
+                    } => out.push(function.clone()),
                     MirInstr::DropVar { var } => {
                         out.extend(function.var_tys.get(var).and_then(destructor_of));
                     }

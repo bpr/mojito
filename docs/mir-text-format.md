@@ -544,7 +544,8 @@ Register types are explicit and are not re-inferred from mnemonics.
 
 A generic body may carry `removed_params: [param_id { owner: "f", slot: 0 },
 ...]` between `locations` and `blocks` (schema 1.60): the function's own
-compile-time parameters, sorted by slot, that the pre-elaboration pass
+compile-time parameters, or a nested function's enclosing declarations'
+parameters, sorted by owner and slot, that the pre-elaboration pass
 `remove-unused-params` (upstream's `RemoveUnusedParams`) found its body and
 signature never read, which the elaborator leaves out of an instance's
 identity. The writer omits the field when it is empty, as it is on every
@@ -556,11 +557,13 @@ package holds its bodies before the pipeline that computes it.
 Such a body may also carry `callee_removed_params: [callee_params { callee:
 "leaf", params: [param_id { owner: "leaf", slot: 0 }] }, ...]` right after
 `removed_params` (schema 1.62): each callee whose removed parameters
-`removed_params` discounted a forward to, with those parameters, sorted by
-callee. Upstream's `RemoveUnusedParams` rewrites such a call without the
-arguments; Mojito keeps the call, so the verifier reads the body with those
-arguments, and the instructions that only computed them, dropped
-(`mir::without_removed_forwards`) before it checks `removed_params`. The
+`removed_params` discounted a forward to, with those parameters, and each
+nested body it names that removed a parameter, sorted by callee. Upstream's
+`RemoveUnusedParams` rewrites such a call without the arguments; Mojito
+keeps the call, so the verifier reads the body with those arguments, and
+the instructions that only computed them, dropped
+(`mir::without_removed_forwards`), and a named nested body reading only
+what its listed removals keep, before it checks `removed_params`. The
 writer omits the field when it is empty, the reader takes an absent field as
 empty, and a package does not encode it.
 

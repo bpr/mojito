@@ -1793,7 +1793,8 @@ impl<'a> Specializer<'a> {
     /// The bindings and instance arguments of the nested body `target` under
     /// `bindings`, those of the instance (or the unrolled region copy) it is
     /// declared in: keyed by the solution of each binder of the scope it is
-    /// declared in, its enclosing declarations' and its regions'.
+    /// declared in, its enclosing declarations' and its regions', but those
+    /// the body removed.
     pub(super) fn nested_bindings(
         &self,
         target: &str,
@@ -1806,8 +1807,10 @@ impl<'a> Specializer<'a> {
             .get(target)
             .map_or(0, |declaration| declaration.param_decls.len());
         scope.truncate(scope.len().saturating_sub(own));
+        let removed = self.removed_params(target);
         let arguments = scope
             .iter()
+            .filter(|decl| !removed.contains(decl.id()))
             .map(|decl| {
                 let binder = decl.binder();
                 let argument = match decl {

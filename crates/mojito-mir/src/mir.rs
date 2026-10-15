@@ -60,7 +60,9 @@ mod lower_expr;
 mod lower_stmt;
 mod node;
 mod param_uses;
-pub use param_uses::{has_no_destructor, unread_parameters, without_removed_forwards};
+pub use param_uses::{
+    NestedRemovals, has_no_destructor, unread_parameters, without_removed_forwards,
+};
 mod symbols;
 pub use symbols::{SymbolTable, implicit_callees};
 

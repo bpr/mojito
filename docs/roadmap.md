@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R973**.
+Next free ID: **R976**.
 
 ## Ordered Work
 
@@ -465,19 +465,52 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R908 A nested function's unread enclosing parameters split its
-  instances and its enclosing function's**
+- [ ] **R973 A nested generic `def`'s own unread parameters split its
+  instances**
 
-  `outer[n]` whose nested `inner` ignores `n` has two instances of each
-  for `outer[1]` and `outer[2]`, where the pin keeps one of each.
-  - `nested_bindings` (`mono/specializer.rs`) keys a nested body on every
-    binder of its enclosing scope, read or not.
-  - `mir::unread_parameters` (`mir/param_uses.rs`) counts any name of a
-    nested body as a read of every enclosing parameter.
-  - The fix keys a nested body on the enclosing binders it reads, and
-    lets the enclosing function's analysis count only those.
+  `gen_inner[m]` nested in `gen_outer` and never reading `m` has one
+  instance per `m`, where the pin keeps one.
+  - `mir::unread_parameters` (`mir/param_uses.rs`) offers a nested
+    function only its enclosing declarations' parameters as candidates,
+    never its own.
+  - The elaborator already leaves a removed own parameter out of the key
+    (`Specializer::own_arguments`); the spelled-application path in
+    `specializer.rs` that splices `nested_bindings` before the own
+    arguments needs checking with one removed.
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R974 A nested `def` in a `comptime for` splits its instances by
+  binders it never reads**
+
+  `looped[n]` whose `comptime for` body declares a `def` reading neither
+  `n` nor the loop index has four instances of it for `looped[1]` and
+  `looped[2]`, and two of `looped`, where the pin keeps one of each.
+  - `mir::unread_parameters` gives a function with `region_binders` no
+    candidates, so such a body removes nothing and its enclosing function
+    reads every parameter through it.
+  - The region binders would become candidates too, and
+    `Specializer::nested_bindings`, which both `instantiate_nested_bodies`
+    and the unroller (`mono/unroll.rs`) call, already drops removed ones.
+  - The unroller's generic case names a generator by the arguments, so it
+    must agree.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R975 A `def` nested in a parametric struct's method splits its
+  instances by the owner's parameters**
+
+  `Counter[1](1).get()` and `Counter[2](2).get()` reach two instances of
+  `get` and of its nested `bump`, which read no owner parameter, where the
+  pin keeps one of each.
+  - A nested body's instance takes `InstanceKey::owner` and the owner's
+    method-symbol prefix from the enclosing method's `self_instance`, so
+    removing the struct's binders from its arguments still leaves the
+    owner in its key.
+  - It is the same owner identity R909 drops for a static method, and for
+    `get` itself.
+  - Depends on R909.
+  - Model: Fable, Not Planned.
 
 - [ ] **R909 A static method's instances differ by owner parameters it
   never reads**

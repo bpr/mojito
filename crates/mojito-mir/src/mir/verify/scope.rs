@@ -33,17 +33,17 @@ pub(super) fn verify_scope(
 ) {
     // A forward to a callee's removed parameter is no read: upstream's
     // `RemoveUnusedParams` rewrote the call without it. The body reads as
-    // that rewrite leaves it, for the callees its snapshot names.
+    // that rewrite leaves it, for the callees its snapshot names, and a
+    // nested body it names reads what that body's snapshotted removals keep.
+    let snapshot = |callee: &str| {
+        function
+            .callee_removed_params
+            .iter()
+            .find(|(name, _)| name == callee)
+            .map(|(_, ids)| ids.as_slice())
+    };
     let view = (!function.removed_params.is_empty())
-        .then(|| {
-            crate::mir::without_removed_forwards(function, declarations, &|callee| {
-                function
-                    .callee_removed_params
-                    .iter()
-                    .find(|(name, _)| name == callee)
-                    .map(|(_, ids)| ids.as_slice())
-            })
-        })
+        .then(|| crate::mir::without_removed_forwards(function, declarations, &snapshot))
         .flatten();
     let function = view.as_ref().map_or(function, |(view, _)| view);
     let mut scope = Scope::of_function(name, declarations);
@@ -52,7 +52,7 @@ pub(super) fn verify_scope(
     // A removed parameter no longer exists: a reference to it is out of
     // scope, and its slot is read by nothing.
     if !function.removed_params.is_empty() {
-        let unread = crate::mir::unread_parameters(name, function, declarations);
+        let unread = crate::mir::unread_parameters(name, function, declarations, &snapshot);
         for id in &function.removed_params {
             scope.kinds.remove(id);
             if !unread.contains(id) {

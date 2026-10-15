@@ -5265,12 +5265,21 @@ point where a slot declared in a loop is uninitialized again.
   and the other parameters' types and constraints, found by a serde walk
   as `SymbolTable` finds symbols (MLIR's walk of every attribute and type);
   a value parameter's slot (matched by name, as the elaborator fills it)
-  addressed by anything but a drop or declaration of a scalar; and any
-  name of a body nested in or lifted from the function (`f$…`,
-  `$comptime$f$…`, `$default$f$…`), which reads every parameter. Another
-  parameter's default is not a read: the call site evaluates it. A
-  nested function, `__toplevel__`, and a callable value parameter, whose
-  binding can add runtime parameters to an instance, have no candidates.
+  addressed by anything but a drop or declaration of a scalar; a name of
+  a body lifted from the function (`$comptime$f$…`, `$default$f$…`), which
+  reads every parameter; and a name of a body nested in it (`f$…`), which
+  reads the parameters that body's own run kept (R908). A nested body is
+  a generator over its enclosing scope, as upstream lifts a closure to
+  one: its candidates are its enclosing declarations' parameters, which it
+  records as `removed_params` when it never reads them, and the elaborator
+  keys its instances on the rest (`Specializer::nested_bindings`). The
+  pass follows nested bodies, and a closure or function value counts as a
+  call-graph edge, so a nested body runs before the function naming it;
+  one whose run is not at hand reads every parameter. Another parameter's
+  default is not a read: the call site evaluates it. A function in a
+  `comptime for` (R974), a nested function's own parameters (R973),
+  `__toplevel__`, and a callable value parameter, whose binding can add
+  runtime parameters to an instance, have no candidates.
   Each run records the unread set afresh, and a parameter only grows
   removable as the cleanup passes erase reads, so the last round's run,
   after every cleanup pass, decides it. The elaborator leaves a removed parameter's
@@ -5298,7 +5307,7 @@ point where a slot declared in a loop is uninitialized again.
   upstream skips an external generator) off any cycle, so a forward around
   a recursive call stays a read, as the pin keeps the parameter. Since the
   calls are not rewritten (R912), the body records the removals it relied
-  on as `MirFunction::callee_removed_params`, the verifier reads the body
+  on, a callee's or a nested body's, as `MirFunction::callee_removed_params`, the verifier reads the body
   through the same view built from that snapshot, and `inline-parametric`
   merges an inlined callee's snapshot into its caller's.
 - **Two seams, once per body.** `CompiledProgram::elaborated_mir` runs
