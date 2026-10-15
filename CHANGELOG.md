@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Adds `lower-lit` (R837), the part of upstream's `LowerLIT` that MIR has:
+  right after drop elaboration, at the program and package seams and with
+  the pre-elaboration pipeline on or off, it erases every
+  `lifetime.keep_alive` and `interiors.invalidate`, which only the
+  ownership analysis and drop elaboration read. No generator or instance
+  carries them; concrete verification, the VM, and the Pliron backend
+  refuse one, so an artifact written by an older binary that still holds
+  them no longer runs. `var.declare` stays, as upstream lowers
+  `lit.var.decl` to an allocation. `loans.establish` (R931) and the
+  ownership marks (R932) still reach the backends. Corpus concrete
+  instructions fall 8.9 %. Program output is unchanged; the MIR text and
+  package formats are unchanged.
 - Adds MLIR's `CSE` as the `cse` pass (R845), last in the post-elaboration
   pipeline, as upstream's `'kgen.func'` pipeline ends with `CSEPass`. It
   walks each block list's dominator tree and erases an instruction free of

@@ -9,14 +9,14 @@
 # Regenerate: UPDATE_EXPECT=1 CARGO_WORKSPACE_DIR=$PWD \
 #   cargo nextest run --features backend-pliron capability_matrix
 instruction	loans.establish	supported	ownership fact; erased after validation
-instruction	interiors.invalidate	supported	ownership fact; erased after validation
+instruction	interiors.invalidate	unsupported	`lower-lit` erases every lifetime marker; one that survives rejects
 instruction	ref.make	supported	materializes a verified place address
 instruction	ref.read	partial	typed referent registers
 instruction	value.copy	partial	compiled `__copyinit__` only; raising or uncompiled copy constructors reject
 instruction	value.rebind	unsupported	the elaborator judges and erases every rebind; one that survives rejects
 instruction	ref.write	partial	typed referent registers
 instruction	closure.make	partial	two-word `{invoke, env}` values over per-target thunks with frame-local capture records; owned droppable captures drop through the tombstoning record header; projected move captures and owned captures with a user copy/move constructor reject
-instruction	lifetime.keep_alive	supported	erased
+instruction	lifetime.keep_alive	unsupported	`lower-lit` erases every lifetime marker; one that survives rejects
 instruction	const	partial	Int/Float/Bool/Str/DType/None (literals stay pending until materialization) and function references as two-word callable values
 instruction	layout.size_of	unsupported	the elaborator answers every layout query under the target; one that survives rejects
 instruction	type.name	unsupported	the elaborator spells every type name as a constant; one that survives rejects

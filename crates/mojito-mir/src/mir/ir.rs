@@ -1395,7 +1395,8 @@ pub enum MirInstr {
     /// `include_base_generation` also replaces the exact named generation at
     /// `base`; `except` preserves the generation used to perform an ordinary
     /// mutation through an interior reference while still invalidating nested
-    /// interiors.
+    /// interiors. `lower-lit` erases it after drop elaboration; concrete MIR
+    /// holds none.
     InvalidateInteriors {
         base: MirInteriorOrigin,
         except: Option<VarId>,
@@ -1442,7 +1443,8 @@ pub enum MirInstr {
         captures: Vec<MirClosureCapture>,
     },
     /// Extend an owner's MIR live range through a closure invocation without
-    /// performing a value-level copy. This is erased by execution.
+    /// performing a value-level copy. `lower-lit` erases it after drop
+    /// elaboration; concrete MIR holds none.
     KeepAlive {
         var: VarId,
     },

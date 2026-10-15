@@ -458,9 +458,14 @@ impl FnLowering<'_> {
                 self.erased.insert(marker.0);
                 Ok(())
             }
-            MirInstr::InvalidateInteriors { marker, .. } => {
-                self.erased.insert(marker.0);
-                Ok(())
+            // `lower-lit` erases every lifetime-only marker; concrete
+            // verification refuses one that survives.
+            MirInstr::InvalidateInteriors { marker, .. } => Err(self.unsupported_reg(
+                "an interior invalidation after lower-lit".to_string(),
+                *marker,
+            )),
+            MirInstr::KeepAlive { .. } => {
+                Err(self.unsupported("a keep-alive marker after lower-lit".to_string(), None))
             }
             MirInstr::EstablishLoans {
                 reference,
@@ -468,7 +473,6 @@ impl FnLowering<'_> {
                 marker,
                 ..
             } => self.lower_establish_loans(ctx, *reference, loans, *marker),
-            MirInstr::KeepAlive { .. } => Ok(()),
             MirInstr::CopyValue { dest, value } => self.lower_copy_value(ctx, *dest, *value),
             // Pointer subscripts are runtime intrinsics; every other
             // subscript form routes through nominal `__getitem__` calls the

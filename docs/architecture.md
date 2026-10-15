@@ -3698,7 +3698,9 @@ forwards only captures permitted by its own explicit/default policy. Capturing a
 sibling captures the already materialized sibling closure slot, not a rebuilt or
 flattened copy of its transitive environment, so declaration-time snapshots and
 moved state remain stable. `KeepAlive` retains exact existing callable/reference
-slots and never fabricates a slot for a transitive capture. Lifted
+slots and never fabricates a slot for a transitive capture; it extends a live
+range for the lifetime check and is erased by `lower-lit` after drop
+elaboration. Lifted
 specializations retain their exact regular/default/variadic/keyword/marker/effect
 ABI; reference returns and a named `out` result remain part of that checked ABI.
 The checker rejects undeclared captures and every path that would let an
@@ -4188,7 +4190,9 @@ updates the storage those references designate.
 The checker, rather than MIR syntax inspection, records every operation that may
 redefine an interior. Lowering preserves those facts as
 `InvalidateInteriors { base, except, include_base_generation, marker }`
-immediately before the operation.
+immediately before the operation. The facts serve the ownership analysis
+and drop elaboration only; `lower-lit` erases them after drop elaboration
+(§Pre-Elaboration Pipeline).
 Whole-owner replacement (including writes through references, reference-valued
 aggregate fields, and origin-bearing pointers), replacement of an interior that
 owns deeper interiors, structural List mutation, mutable/ref calls, Dict
@@ -4914,6 +4918,22 @@ fourth only `CSEPass`. So `PIPELINE` is `remove-unused-params`,
 yields a pass that runs more than once once, and all of a pass's runs count
 into one `--timings` span.
 
+Before the pipeline, at both seams and whether or not the pipeline is on,
+`lower-lit` (`analysis::LOWER_LIT`, `analysis/lower_lit.rs`, R837) erases
+the lifetime-only markers, as upstream's `LowerLIT` erases the LIT
+ownership ops after `CheckLifetimes`: every `lifetime.keep_alive`
+(upstream's `lit.ownership.use`) and every `interiors.invalidate` (state
+upstream keeps inside `CheckLifetimes`, with no op) goes, with its marker
+register's type and span. Mojito's lifetime check is the ownership
+analysis plus drop elaboration, which both read the markers, so they end
+right after `elaborate_drops_function`: `CompiledProgram::elaborated_mir`
+runs `lower_lit_program` over every body, `__toplevel__` included, and
+`finish_package_body` runs `lower_lit` on each package body. Below it
+concrete verification and both backends refuse either marker.
+`var.declare` stays: it is `lit.var.decl`, which upstream lowers to a
+stack allocation rather than erasing, and `mem-2-reg` reads it as the
+point where a slot declared in a loop is uninitialized again.
+
 - **`eliminate-dead-symbols` runs in each round** (`analysis::ELIMINATE_DEAD_SYMBOLS`,
   `analysis/dead_symbols.rs`, R778), upstream's `EliminateDeadSymbols`, which
   follows `RemoveUnusedParams` in each round. It
@@ -5062,8 +5082,8 @@ into one `--timings` span.
   part) and is a `var.store` of a register defined once, earlier in its
   block, and read by the store alone; a `var.use` (copy, move, or forward)
   or a whole-root `place.load` at the slot's type; or a `var.declare`,
-  `drop.var`, `var.consume`, or `interiors.invalidate` whose marker nothing
-  reads, all of which do nothing to such a type once drops are elaborated.
+  `drop.var`, or `var.consume`, all of which do nothing to such a type
+  once drops are elaborated.
   A destructor or copy constructor takes the slot's address, so its type is
   never one, as upstream's never is; a borrow, capture, loan, projection,
   iterator, or cleanup list keeps the slot. A forward dataflow over the

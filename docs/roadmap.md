@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R931**.
+Next free ID: **R934**.
 
 ## Ordered Work
 
@@ -385,21 +385,53 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R837 Lifetime-only markers survive into every instance**
+- [ ] **R931 `loans.establish` survives into every instance**
 
-  `interiors.invalidate`, `lifetime.keep_alive`, and `var.declare` do
-  nothing on either backend, yet every instance carries them, where upstream
-  checks lifetimes on LIT and lowers to KGEN without them before
-  pre-elaboration.
-  - std's bodies `empty.mojo` reaches hold 970 `interiors.invalidate`
-    alone.
-  - The MIR verifier and `loans.establish`'s native lowering still read some
-    of them, so first find which reader needs each one after the lifetime
-    check.
-  - Done when the markers end where the lifetime check ends, both backends
-    run the differential clean, and the corpus effect is recorded.
-  - Depends on R779.
-  - Model: Fable, Not Planned.
+  `lower-lit` erases the other lifetime-only markers, but every
+  `loans.establish` still reaches the elaborator and both backends, where
+  upstream's `LowerLIT` leaves no loan op behind.
+  - std's bodies `empty.mojo` reaches hold 253 of them.
+  - The VM ignores each one. Pliron reads one only where a `ref` binding's
+    sole definition is the marker (`lower_establish_loans`,
+    `crates/mojito-pliron/src/lower/vars.rs`).
+  - The lever: give that binding a `ref.make` plus `var.store` at MIR
+    lowering, then let `lower-lit` erase every `loans.establish`.
+  - Done when concrete MIR holds none and `--backend pliron` matches the VM
+    on the `ref`-binding fixtures.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R932 Ownership marks outlive the point where upstream erases them**
+
+  `ownership.mark_initialized`, `ownership.mark_destroyed`, and
+  `consume.place` reach both backends, where upstream's `LowerLIT` erases
+  their LIT counterparts once `CheckLifetimes` has decided every
+  destruction.
+  - The VM executes all three (`crates/mojito-vm/src/backend/vm/exec.rs`).
+  - Pliron clears a presence flag at `ownership.mark_destroyed`
+    (`crates/mojito-pliron/src/lower/instr.rs`).
+  - The cause is runtime drop flags where upstream's `DestructorInsertion`
+    decides statically.
+  - Done when drop elaboration leaves no instance that needs a mark, and
+    `lower-lit` erases all three.
+  - Depends on R931, which settles how `lower-lit` grows past the markers.
+  - Model: Fable, Planned.
+
+- [ ] **R933 A span origin can name a slot no instruction addresses**
+
+  `mir::addressed_slots`, the guard before `retire_slots`, ignores the
+  slots that `function.spans` origins name, but `renumber_slots` renumbers
+  them, so retiring a slot only a span names trips its debug assertion.
+  - The unroller retires slots typed over a loop binder
+    (`crates/mojito-native/src/native/mono/unroll.rs`), past its own "used
+    outside its loop" check.
+  - R837's probe hit it on `comptime_for_index_typed_local.mojo` when an
+    erased marker kept its span. `lower-lit` now drops those spans.
+  - Fix either side: the verifier refuses a span for a register no
+    instruction defines, or `retire_slots` clears a retired slot's span
+    origins, as `mem_2_reg` does.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R835 MIR has no symbol-reference type, so a symbol's uses are found
   by spelling**

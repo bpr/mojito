@@ -7,6 +7,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use crate::mir::text::instruction_mnemonic;
 use crate::mir::{Const, MirParamArg, MirSubscriptCall, UseMode, VarId};
 use mojito_types::types::TyKind;
 
@@ -229,6 +230,12 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
     match instruction {
         MirInstr::Rebind { .. } => {
             errors.push(format!("{head} keeps a value rebind in elaborated MIR"));
+        }
+        MirInstr::KeepAlive { .. } | MirInstr::InvalidateInteriors { .. } => {
+            errors.push(format!(
+                "{head} keeps the lifetime marker `{}` in elaborated MIR",
+                instruction_mnemonic(instruction)
+            ));
         }
         MirInstr::ConstructTypeParam { param, .. } => errors.push(format!(
             "{head} constructs compile-time parameter `{}` in elaborated MIR",
@@ -489,6 +496,30 @@ mod tests {
         let findings = load(ref_int());
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert!(findings[0].contains("loads the handle of reference slot $0"));
+    }
+
+    #[test]
+    fn lifetime_markers_are_refused_in_elaborated_mir() {
+        let markers = [
+            MirInstr::KeepAlive { var: 0 },
+            MirInstr::InvalidateInteriors {
+                base: crate::mir::MirInteriorOrigin {
+                    root: 0,
+                    path: Vec::new(),
+                },
+                except: None,
+                include_base_generation: false,
+                marker: Reg(0),
+            },
+        ];
+        for (marker, mnemonic) in markers
+            .into_iter()
+            .zip(["lifetime.keep_alive", "interiors.invalidate"])
+        {
+            let findings = concrete_function_findings("f", &function_with(marker, Ty::none()));
+            assert_eq!(findings.len(), 1, "{findings:?}");
+            assert!(findings[0].contains(&format!("keeps the lifetime marker `{mnemonic}`")));
+        }
     }
 
     #[test]

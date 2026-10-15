@@ -27,6 +27,7 @@ pub use inline_parametric::{INLINE_PARAMETRIC, inline_parametric, is_inlined_bef
 use interior::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use loans::*;
+pub use lower_lit::{LOWER_LIT, lower_lit};
 pub use mem2reg::{LOWER_ARG_CONVENTIONS, MEM_2_REG, lower_arg_conventions, mem_2_reg};
 use mojito_common::error::OwnershipError;
 use mojito_common::timing;
@@ -209,6 +210,15 @@ pub fn elaborate_drops_program(prog: MirProgram) -> MirProgram {
     }
 }
 
+/// Erase the lifetime-only markers from every function of `program`,
+/// `__toplevel__` included, once drop elaboration has read them: [`lower_lit`]
+/// over each body.
+pub fn lower_lit_program(program: &mut MirProgram) {
+    for (name, function) in &mut program.functions {
+        lower_lit(name, function, &program.declarations);
+    }
+}
+
 /// [`elaborate_drops_program`] for the one function `name` of a program
 /// whose declarations are `declarations`: an imported package's body is
 /// drop-elaborated as it is materialized.
@@ -236,6 +246,7 @@ mod fold;
 mod inline_parametric;
 mod interior;
 mod loans;
+mod lower_lit;
 mod mem2reg;
 mod moves;
 mod opt;

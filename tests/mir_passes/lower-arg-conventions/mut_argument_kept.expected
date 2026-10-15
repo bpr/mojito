@@ -14,8 +14,8 @@
         return_type: present(None),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: None }, reg_type { reg: %r6, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 287, end: 288, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 287, end: 288, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 292, end: 293, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 292, end: 293, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 287, end: 288, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 287, end: 288, origin: present($v0) }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 287, end: 288, origin: present($v0) }) }],
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r6, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 287, end: 288, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 287, end: 288, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 292, end: 293, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 292, end: 293, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 287, end: 288, origin: absent }) }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 287, end: 288, origin: present($v0) }) }],
         blocks: [
           bb0 {
             instructions: [
@@ -24,7 +24,6 @@
               const { dest: %r2, value: int_literal(1) },
               literal.materialize { dest: %r3, value: %r2, target: Int },
               binary { op: add, dest: %r4, a: %r0, b: %r3, resolved: absent, raises: absent },
-              interiors.invalidate { base: interior_origin { root: $v0, path: [] }, except: absent, include_base_generation: false, marker: %r5 },
               ref.make { dest: %r6, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: present($v0) } },
               ref.write { reference: %r6, value: %r4 }
             ],

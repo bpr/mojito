@@ -1688,3 +1688,32 @@ generator-instance instructions 372,899 → 348,661 (−6.5 %), and concrete
 blocks 135,912 → 135,782. Two fixtures lose a concrete function
 (`pliron_int_pow`, `pliron_uint_pow`): once `b` and `e` are registers,
 `canonicalize` folds `b ** e`, and the power function is no longer reached.
+
+## Lifetime-only markers end at `lower-lit` (2026-10-14, R837)
+
+`lower-lit`, the part of upstream's `LowerLIT` that MIR has, erases every
+`lifetime.keep_alive` and `interiors.invalidate` right after drop
+elaboration, at both seams, so neither reaches the pre-elaboration
+pipeline, the elaborator, or an instance (`docs/architecture.md`
+§Pre-Elaboration Pipeline). The std bodies `empty.mojo` reaches held
+1,037 of them; they now hold none, and `loans.establish` stays at 253.
+Over the corpus (`scripts/instantiation-report`, regenerated with this
+change; every fixture still elaborates, output identical):
+
+| corpus total | before | after | change |
+|---|---:|---:|---:|
+| `concrete_instructions` | 710,775 | 647,616 | −63,159 (−8.9 %) |
+| `generator_instructions` | 228,153 | 206,725 | −21,428 (−9.4 %) |
+| `generator_instance_instructions` | 340,240 | 305,643 | −34,597 (−10.2 %) |
+| blocks (all three counters) | unchanged | unchanged | 0 |
+
+Per benchmark, concrete instructions: `collections_many` 13,740 → 12,238,
+`nested_generics` 3,274 → 2,929, `stdlib_heavy` 2,902 → 2,592,
+`trait_defaults` 1,763 → 1,671. `mem-2-reg` promotes the same slots.
+
+Erasing only the instructions is not enough: an erased invalidation's
+marker register keeps a span whose origin names a slot, and when the
+unroller retires that slot (`mir::retire_slots`) its guard, which reads no
+span origin, lets `renumber_slots` hit a retired slot. `lower-lit` drops
+the erased markers' types and spans, as `canonicalize` does (R933 files
+the guard's gap).

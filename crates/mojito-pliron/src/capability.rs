@@ -86,8 +86,8 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     ),
     (
         "interiors.invalidate",
-        CapabilityStatus::Supported,
-        "ownership fact; erased after validation",
+        CapabilityStatus::Unsupported,
+        "`lower-lit` erases every lifetime marker; one that survives rejects",
     ),
     (
         "ref.make",
@@ -119,7 +119,11 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         CapabilityStatus::Partial,
         "two-word `{invoke, env}` values over per-target thunks with frame-local capture records; owned droppable captures drop through the tombstoning record header; projected move captures and owned captures with a user copy/move constructor reject",
     ),
-    ("lifetime.keep_alive", CapabilityStatus::Supported, "erased"),
+    (
+        "lifetime.keep_alive",
+        CapabilityStatus::Unsupported,
+        "`lower-lit` erases every lifetime marker; one that survives rejects",
+    ),
     (
         "const",
         CapabilityStatus::Partial,

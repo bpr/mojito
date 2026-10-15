@@ -164,11 +164,11 @@ a body — and the VM rejects one as unsupported.
 | Mnemonic | MIR operation | Purpose |
 |---|---|---|
 | `loans.establish` | `EstablishLoans` | Establish one grouped reference/aggregate loan generation; a VM no-op after ownership checking |
-| `interiors.invalidate` | `InvalidateInteriors` | Invalidate matching collection-owned interior generations, optionally replacing the exact named generation; a VM no-op after ownership checking |
+| `interiors.invalidate` | `InvalidateInteriors` | Invalidate matching collection-owned interior generations, optionally replacing the exact named generation; absent from concrete MIR (erased by `lower-lit`), so the VM refuses one |
 | `ref.make` | `MakeRef` | Materialize or extend a verified frame/slot reference handle |
 | `ref.read` | `ReadRef` | Read through a runtime reference handle |
 | `ref.write` | `WriteRef` | Write through a runtime reference handle |
-| `lifetime.keep_alive` | `KeepAlive` | Extend an owner's MIR live range without copying it; a VM no-op after checking |
+| `lifetime.keep_alive` | `KeepAlive` | Extend an owner's MIR live range without copying it; absent from concrete MIR (erased by `lower-lit`), so the VM refuses one |
 | `drop.var` | `DropVar` | Destroy the value in a variable slot |
 | `consume.var` | `ConsumeVar` | Consume an explicitly destroyed aggregate — the named destructor's own receiver at its last use; then destroy its residual fields in declaration order |
 | `consume.place` | `ConsumePlace` | Consume one projected subobject after its named destructor succeeds |

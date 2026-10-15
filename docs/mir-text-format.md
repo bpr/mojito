@@ -849,10 +849,10 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | MIR variant | Mnemonic |
 |---|---|
 | `EstablishLoans` | `loans.establish` |
-| `InvalidateInteriors` | `interiors.invalidate` |
+| `InvalidateInteriors` | `interiors.invalidate` (pre-drop and drop-elaborated only: `lower-lit` erases it before the pre-elaboration pipeline, and concrete verification refuses one) |
 | `MakeRef` / `ReadRef` / `WriteRef` | `ref.make` / `ref.read` / `ref.write` |
 | `CopyValue` / `Rebind` | `value.copy` / `value.rebind` |
-| `MakeClosure` / `KeepAlive` | `closure.make` / `lifetime.keep_alive` |
+| `MakeClosure` / `KeepAlive` | `closure.make` / `lifetime.keep_alive` (`lifetime.keep_alive` as `interiors.invalidate`: `lower-lit` erases it) |
 | `Const` / `MaterializeLiteral` / `SizeOf` / `TypeName` | `const` / `literal.materialize` / `layout.size_of` / `type.name` |
 | `ConstructType` | `type.construct_expr` (schema 1.33: `{ dest, type }`) |
 | `ParamListAddress` | `param_list.address` (schema 1.34: `{ dest, values }`, `values` a parameter or closed-tuple constant) |
@@ -873,7 +873,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `VariantTake` / `VariantSetInitWith` / `VariantDeinitWith` / `VariantReplace` | `variant.take` / `variant.set_init_with` / `variant.deinit_with` / `variant.replace` |
 | `MakeSimd` / `SimdCast` / `SimdBitcast` / `SimdShuffle` | `simd.make` / `simd.cast` / `simd.bits` / `simd.shuffle` — `dtype` is a dtype name or `ct_expr(...)`, `width` a lane count or `ct_expr(...)` (schema 1.18); a shuffle's `mask` is a list of lane indices, or a template's `lane_shuffle { lanes: [<param_expr>, ...] }`, `lane_slice { offset: <param_expr>, width: <width> }`, or `lane_join {}`, which elaboration closes (schema 1.26) |
 | `Raise` / `Try` | `raise` / `try` |
-| `DeclareVar` | `var.declare` (schema 1.50: a `var x: T` slot's declaration point; no def, no use, a no-op on both backends, counted as a def site by region locality) |
+| `DeclareVar` | `var.declare` (schema 1.50: a `var x: T` slot's declaration point; no def, no use, a no-op on both backends, counted as a def site by region locality; unlike the lifetime markers it survives `lower-lit`, as upstream lowers `lit.var.decl` to an allocation) |
 | `Drop` / `DropVar` | `drop.reg` / `drop.var` |
 | `ConsumeVar` / `ConsumePlace` | `consume.var` / `consume.place` |
 | `Unsupported` | `unsupported { message: string }` |

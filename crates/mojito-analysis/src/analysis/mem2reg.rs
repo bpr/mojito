@@ -9,8 +9,8 @@
 //! ([`MirDeclarations::copy_is_identity`], never symbolic), and every
 //! mention of it, in one block list, is a store (`var.store`), a read
 //! (`var.use`, or a whole-root `place.load`), or a mention with no effect
-//! on such a type once drops are elaborated (`var.declare`, `drop.var`,
-//! `var.consume`, and an `interiors.invalidate` whose marker nothing reads).
+//! on such a type once drops are elaborated (`var.declare`, `drop.var`, and
+//! `var.consume`).
 //! A destructor or copy constructor would take the slot's address, so a
 //! type with either is never one, as upstream's never is; a borrow, a
 //! capture, a loan, or a projected place keeps the slot too.
@@ -197,9 +197,6 @@ enum Mention {
     Read { dest: Reg, ends: bool },
     /// A declaration, drop, or consumption: the slot holds nothing after it.
     Kill,
-    /// An interior invalidation, a no-op on a slot of this type, defining
-    /// this marker.
-    Marker(Reg),
 }
 
 /// A candidate's reaching store at a point of its list.
@@ -264,7 +261,6 @@ fn promotable(
                 }
                 Mention::Read { dest, .. } => function.reg_types.get(&dest.0) == typed,
                 Mention::Kill => true,
-                Mention::Marker(marker) => reads.get(marker.0 as usize) == Some(&0),
             })
     };
     let mut candidates: Vec<Vec<VarId>> = vec![Vec::new(); lists.len()];
@@ -412,12 +408,6 @@ const fn slot_use(instruction: &MirInstr) -> Option<(VarId, Mention)> {
         MirInstr::DeclareVar { var } | MirInstr::DropVar { var } | MirInstr::ConsumeVar { var } => {
             Some((*var, Mention::Kill))
         }
-        MirInstr::InvalidateInteriors {
-            base,
-            except: None,
-            marker,
-            ..
-        } => Some((base.root, Mention::Marker(*marker))),
         _ => None,
     }
 }
@@ -481,7 +471,6 @@ fn solve(flow: &ListFlow<'_>, entry: Vec<Reaching>, promotion: &mut Promotion) {
                     Event::Kill { slot }
                 }
                 Mention::Kill => Event::Kill { slot },
-                Mention::Marker(_) => continue,
             };
             events[block].push((at, event));
         }

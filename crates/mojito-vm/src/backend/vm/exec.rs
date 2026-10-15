@@ -32,7 +32,10 @@ impl VmBackend {
         let caller_function = function;
         self.burn_ctfe()?;
         match i {
-            MirInstr::EstablishLoans { .. } | MirInstr::InvalidateInteriors { .. } => {}
+            MirInstr::EstablishLoans { .. } => {}
+            MirInstr::InvalidateInteriors { .. } => {
+                return Err(parametric_instruction("interior invalidation"));
+            }
             MirInstr::MakeRef { dest, place } => {
                 let root = vars[place.root as usize].clone();
                 // A tracked pointer variable holding a heap pointer (a
@@ -151,7 +154,9 @@ impl VmBackend {
                     captures: environment,
                 };
             }
-            MirInstr::KeepAlive { .. } => {}
+            MirInstr::KeepAlive { .. } => {
+                return Err(parametric_instruction("keep-alive marker"));
+            }
             MirInstr::Const { dest, k } => {
                 let value = match k {
                     Const::Value(value) => self.thaw(

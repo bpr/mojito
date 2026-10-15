@@ -67,7 +67,7 @@ vocabulary.
 | Witness requests | The abstract receiver `symbol::TRAIT_DISPATCH` (`__trait_dispatch.copy$ov$…`) on those same fields, and type-directed operations (§The inventory) | Yes |
 | Compile-time arguments of a call | The call's instantiated arguments, a forwarded binder a `Ty::Param` among them; a `MirParamArg` slot only for a value argument over the caller's binders or a callable; and the spelled receiver type of a static call (`MirInstr::Call::receiver`) | Yes |
 | Lifecycle requirements | `var.use` modes, `CopyValue`, `DropVar`, `DropPlace`, `ConsumeVar`, `ConsumePlace` over a symbolic type | Yes |
-| Origin and loan facts of a body | `EstablishLoans`, `InvalidateInteriors`, `arg_places`, `capture_accesses`, `MethodCall.reference_result` | Yes |
+| Origin and loan facts of a body | `EstablishLoans`, `arg_places`, `capture_accesses`, `MethodCall.reference_result` | Yes. `InvalidateInteriors` serves the lifetime check alone and ends at `lower-lit`, before a body becomes a generator |
 | Transfer and call-through summaries | `mojito_checked::checked::{TransferEffect, CallThroughEffect}`, keyed by lowered symbol | **No.** Checker tables only |
 | Provenance | Source and module ids on every MIR location (`AGENTS.md` invariant 7) | Yes. Instantiation provenance is the instance symbol only |
 

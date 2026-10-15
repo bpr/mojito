@@ -27,8 +27,8 @@ use std::sync::{Arc, OnceLock};
 /// and ownership analysis and is therefore ready for any backend.
 ///
 /// It holds the three MIR phases apart: parametric MIR ([`Self::mir`]),
-/// drop-elaborated MIR ([`Self::drop_elaborated_mir`], drops inserted and
-/// the pre-elaboration pipeline run), and concrete MIR
+/// drop-elaborated MIR ([`Self::drop_elaborated_mir`], drops inserted,
+/// lifetime-only markers erased, and the pre-elaboration pipeline run), and concrete MIR
 /// ([`Self::concrete_mir`]). The last two are computed once, on first use.
 #[derive(Debug, Clone)]
 pub struct CompiledProgram {
@@ -71,7 +71,8 @@ impl CompiledProgram {
     }
 
     /// The program's own drop-elaborated MIR, re-verified: [`Self::mir`]
-    /// with drops inserted and the pre-elaboration pipeline run. It is the
+    /// with drops inserted, the lifetime-only markers erased (`lower-lit`),
+    /// and the pre-elaboration pipeline run. It is the
     /// elaborator's input, beside an imported package's bodies, which are
     /// finished the same way as each is materialized.
     /// Post-drop verification findings are folded into `invariant_errors`;
@@ -82,6 +83,10 @@ impl CompiledProgram {
                 let _drops = timing::span("drops.elaborate");
                 crate::analysis::elaborate_drops_program(self.mir.clone())
             };
+            {
+                let _lower = timing::span("lower-lit");
+                crate::analysis::lower_lit_program(&mut mir);
+            }
             if self.pre_elaboration {
                 let _passes = timing::span("pre_elaboration");
                 crate::analysis::pre_elaborate_program(
@@ -96,8 +101,9 @@ impl CompiledProgram {
         })
     }
 
-    /// Drop-elaborated MIR: parametric MIR with drops inserted and the
-    /// pre-elaboration pipeline run, re-verified.
+    /// Drop-elaborated MIR: parametric MIR with drops inserted, the
+    /// lifetime-only markers erased, and the pre-elaboration pipeline run,
+    /// re-verified.
     /// It may still be generic. It is the whole program: an imported
     /// package's bodies, every one lowered, join [`Self::elaborated_mir`],
     /// so it serializes as one artifact.

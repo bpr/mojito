@@ -15,6 +15,7 @@ use super::cse::CSE;
 use super::dead_symbols::ELIMINATE_DEAD_SYMBOLS;
 use super::elaborate_drops_function;
 use super::inline_parametric::INLINE_PARAMETRIC;
+use super::lower_lit::{LOWER_LIT, lower_lit};
 use super::mem2reg::{LOWER_ARG_CONVENTIONS, MEM_2_REG};
 use super::sccp::SCCP;
 use super::unused_params::REMOVE_UNUSED_PARAMS;
@@ -174,8 +175,8 @@ pub const LOWER_CONTROL_FLOW: BodyPass = BodyPass {
 };
 
 /// The pass registered under `name`: a [`PIPELINE`] pass, or one run only
-/// on request (drop elaboration, control-flow lowering, and the
-/// post-elaboration argument lowering).
+/// on request (drop elaboration, `lower-lit`, control-flow lowering, and
+/// the post-elaboration argument lowering).
 pub fn pass_named(name: &str) -> Option<&'static Pass> {
     PIPELINE
         .iter()
@@ -274,7 +275,7 @@ pub fn pre_elaborate_program(program: &mut MirProgram, package: Option<&PackageB
 }
 
 /// The package seam's finishing hook: [`elaborate_drops_function`], then
-/// [`run_pipeline`].
+/// [`lower_lit`], then [`run_pipeline`].
 pub fn finish_package_body(
     name: &str,
     function: MirFunction,
@@ -283,11 +284,13 @@ pub fn finish_package_body(
     findings: &mut Vec<String>,
 ) -> MirFunction {
     let mut function = elaborate_drops_function(name, function, declarations);
+    lower_lit(name, &mut function, declarations);
     run_pipeline(name, &mut function, declarations, bodies, findings);
     function
 }
 
-/// [`finish_package_body`] with the pipeline switched off: drops only.
+/// [`finish_package_body`] with the pipeline switched off: drops and
+/// [`lower_lit`] only.
 pub fn finish_package_body_without_pipeline(
     name: &str,
     function: MirFunction,
@@ -295,7 +298,9 @@ pub fn finish_package_body_without_pipeline(
     _bodies: &PackageBodies,
     _findings: &mut Vec<String>,
 ) -> MirFunction {
-    elaborate_drops_function(name, function, declarations)
+    let mut function = elaborate_drops_function(name, function, declarations);
+    lower_lit(name, &mut function, declarations);
+    function
 }
 
 /// A verifier finding after the pass `pass` ran, naming the pass.
@@ -371,6 +376,7 @@ struct ProgramCallees<'a> {
 /// Passes outside [`PIPELINE`] that [`pass_named`] still answers.
 const REGISTERED: &[Pass] = &[
     Pass::Body(ELABORATE_DROPS),
+    Pass::Body(LOWER_LIT),
     Pass::Body(LOWER_CONTROL_FLOW),
     Pass::Body(LOWER_ARG_CONVENTIONS),
     Pass::Body(CSE),
