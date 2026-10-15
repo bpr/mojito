@@ -106,8 +106,8 @@ impl Callees<'_> {
             return None;
         }
         let declarations = self.declarations;
-        if package.on_cycle(name, &|function| {
-            followed_callees(function, |callee| {
+        if package.on_cycle(name, &|caller, function| {
+            followed_callees(caller, function, declarations, |callee| {
                 declarations.function(callee).is_some_and(|declaration| {
                     followed_by_a_call_graph_pass(declaration, declarations)
                 })
@@ -370,7 +370,7 @@ pub(super) fn run_call_graph_pass(
         .filter(|declaration| (pass.follows)(declaration, declarations))
         .filter_map(|declaration| rows.get(&declaration.lowered_name).copied())
         .collect();
-    let (order, cyclic) = bottom_up_order(functions, &rows, &followed);
+    let (order, cyclic) = bottom_up_order(functions, declarations, &rows, &followed);
     let mut changed = Vec::new();
     for row in order {
         if functions[row].0 == "__toplevel__" {
@@ -449,10 +449,18 @@ fn verify_after(
     }
 }
 
-/// The callees `function` calls directly, by a call, a resolved method
-/// call, or a subscript call, through a closure or a function value it makes, or as the destructor a drop of one of
-/// its slots runs, that `followed` accepts, each once, in its regions too.
-fn followed_callees(function: &MirFunction, followed: impl Fn(&str) -> bool) -> Vec<String> {
+/// The callees `function`, the body of `name`, calls directly, by a call,
+/// a resolved method call, or a subscript call, through a closure or a
+/// function value it makes, or as the destructor a drop of one of its slots
+/// runs, and the lifted bodies it or its signature names
+/// ([`mojito_mir::mir::named_lifted_bodies`]), that `followed` accepts,
+/// each once, in its regions too.
+fn followed_callees(
+    name: &str,
+    function: &MirFunction,
+    declarations: &MirDeclarations,
+    followed: impl Fn(&str) -> bool,
+) -> Vec<String> {
     fn walk(blocks: &[mojito_mir::mir::MirBlock], function: &MirFunction, out: &mut Vec<String>) {
         for block in blocks {
             for instruction in &block.instrs {
@@ -483,6 +491,11 @@ fn followed_callees(function: &MirFunction, followed: impl Fn(&str) -> bool) -> 
     }
     let mut callees = Vec::new();
     walk(&function.blocks, function, &mut callees);
+    callees.extend(mojito_mir::mir::named_lifted_bodies(
+        name,
+        function,
+        declarations,
+    ));
     let mut seen = HashSet::new();
     callees.retain(|callee| followed(callee) && seen.insert(callee.clone()));
     callees
@@ -504,6 +517,7 @@ fn followed_by_a_call_graph_pass(
 /// and the followed rows on a cycle of such calls.
 fn bottom_up_order(
     functions: &[(String, MirFunction)],
+    declarations: &MirDeclarations,
     rows: &HashMap<String, usize>,
     followed: &HashSet<usize>,
 ) -> (Vec<usize>, HashSet<usize>) {
@@ -559,8 +573,8 @@ fn bottom_up_order(
     }
     let edges = functions
         .iter()
-        .map(|(_, function)| {
-            followed_callees(function, |callee| {
+        .map(|(name, function)| {
+            followed_callees(name, function, declarations, |callee| {
                 rows.get(callee).is_some_and(|row| followed.contains(row))
             })
             .iter()

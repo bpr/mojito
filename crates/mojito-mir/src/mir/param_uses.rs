@@ -28,8 +28,10 @@
 //! (named `f$…`) reads the binders of its enclosing scope its own analysis
 //! kept, as upstream's `RemoveUnusedParams` reads a lifted closure's
 //! generator after removing its unused parameters. A body lifted from the
-//! function (named `$comptime$f$…`, `$default$f$…`), and a nested body whose
-//! analysis is not at hand, reads every parameter.
+//! function (named `$comptime$f$…`, `$default$f$…`) reads the binders it
+//! declares that its own analysis kept, as upstream's lifted function is an
+//! ordinary generator. A nested or lifted body whose analysis is not at hand
+//! reads every parameter.
 
 use crate::mir::struct_reads::{LayoutReads, StructReads};
 use crate::mir::verify::{instruction_operand_regs, instruction_places, instruction_result_regs};
@@ -56,8 +58,9 @@ use std::fmt;
 /// is nested in; for a lifted one (`$comptime$f$…`, `$default$f$…`) every
 /// binder it declares; each that nothing in its body `function` or its
 /// declaration's signature reads, sorted by owner and slot. A nested body `function` names reads
-/// the candidates its own removals `nested` keep; one `nested` does not
-/// answer reads them all.
+/// the candidates its own removals `nested` keep, and a lifted body the
+/// binders it declares that they keep; one `nested` does not answer reads
+/// them all.
 ///
 /// A default of another parameter is not a read, since a default is the
 /// call site's. A function inside a `comptime for`, `__toplevel__`, and a
@@ -99,6 +102,7 @@ pub fn unread_parameters(
     let structs = StructReads::new(declarations);
     let mut walker = Walker::new(owners, nested);
     walker.bodies = bodies;
+    walker.declarations = Some(declarations);
     walker.structs = Some(&structs);
     walker.layout = true;
     if let Some((spelled, decls)) = structure
@@ -152,6 +156,23 @@ pub fn unread_parameters(
 /// The removals of a body nested in the function being analysed, by its
 /// name: `None` when its analysis is not at hand.
 pub type NestedRemovals<'a> = dyn Fn(&str) -> Option<&'a [ParamId]> + 'a;
+
+/// The lifted bodies `function`, the body of `name`, or its signature names.
+///
+/// They are `$comptime$f$…` and `$default$f$…` bodies, of which
+/// [`unread_parameters`] reads the binders each kept.
+pub fn named_lifted_bodies(
+    name: &str,
+    function: &MirFunction,
+    declarations: &MirDeclarations,
+) -> BTreeSet<String> {
+    let mut walker = Walker::new(Vec::new(), &|_| None);
+    if let Some(declaration) = declarations.function(name) {
+        walker.signature(declaration);
+    }
+    walker.body(function);
+    walker.lifted
+}
 
 /// The compile-time parameters of the struct whose method `name`, or the
 /// method `name` is nested in, is: upstream's method generator lists them
@@ -908,10 +929,14 @@ struct Walker<'o, 'a, 'n> {
     /// The removals of each body nested in an owner that a walked value
     /// names: it reads every candidate they do not hold.
     nested_removals: Vec<&'a [ParamId]>,
-    /// Whether a walked value names a body lifted from an owner, or nested
+    /// Whether a walked value names a body lifted from an owner or nested
     /// in one with no removals at hand, or holds a leaf no walk can see
     /// into, so that every parameter counts as read.
     reads_all: bool,
+    /// The declarations a lifted body a walked value names is read from.
+    declarations: Option<&'n MirDeclarations>,
+    /// The lifted bodies a walked value names.
+    lifted: BTreeSet<String>,
     /// The last leaf a walk visited.
     leaf: Leaf,
     /// Each tuple the walk is inside: its length, how many of its elements
@@ -922,8 +947,14 @@ struct Walker<'o, 'a, 'n> {
     types: HashMap<(Ty, bool), TypeReads<'a>>,
 }
 
-/// The binders, nested bodies' removals, and opacity of one walked type.
-type TypeReads<'a> = (BTreeSet<(usize, usize)>, Vec<&'a [ParamId]>, bool);
+/// The binders, nested bodies' removals, opacity, and lifted bodies of one
+/// walked type.
+type TypeReads<'a> = (
+    BTreeSet<(usize, usize)>,
+    Vec<&'a [ParamId]>,
+    bool,
+    BTreeSet<String>,
+);
 
 /// A struct type the walk is inside: how many of its fields were walked,
 /// whether its name is `self_spelling`'s, and what its layout reads.
@@ -960,6 +991,8 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
             slots: BTreeSet::new(),
             nested_removals: Vec::new(),
             reads_all: false,
+            declarations: None,
+            lifted: BTreeSet::new(),
             leaf: Leaf::Other,
             tuples: Vec::new(),
             types: HashMap::new(),
@@ -1196,17 +1229,24 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
             walker.bodies.clone_from(&self.bodies);
             walker.self_spelling.clone_from(&self.self_spelling);
             walker.structs = self.structs;
+            walker.declarations = self.declarations;
             walker.layout = self.layout;
             walker.visit(ty);
             self.types.insert(
                 key.clone(),
-                (walker.slots, walker.nested_removals, walker.reads_all),
+                (
+                    walker.slots,
+                    walker.nested_removals,
+                    walker.reads_all,
+                    walker.lifted,
+                ),
             );
         }
-        let (slots, nested_removals, reads_all) = &self.types[&key];
+        let (slots, nested_removals, reads_all, lifted) = &self.types[&key];
         self.slots.extend(slots);
         self.nested_removals.extend(nested_removals);
         self.reads_all |= reads_all;
+        self.lifted.extend(lifted.iter().cloned());
     }
 
     /// Walk `value`. A leaf that encodes only in its compilation's context
@@ -1252,7 +1292,12 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
             .strip_prefix("$comptime$")
             .or_else(|| value.strip_prefix("$default$"))
         {
-            Some(lifted) => self.reads_all |= owned(lifted),
+            Some(lifted) => {
+                if owned(lifted) {
+                    self.lifted_reads(value);
+                }
+                self.lifted.insert(value.to_string());
+            }
             None if owned(value) => match (self.nested)(value) {
                 Some(removed) => self.nested_removals.push(removed),
                 None => self.reads_all = true,
@@ -1264,6 +1309,28 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
             .iter()
             .position(|owner| *owner == value)
             .map_or(Leaf::Other, Leaf::Owner);
+    }
+
+    /// The binders of an owner the lifted body `name` declares and its
+    /// removals keep; every one when they are not at hand.
+    fn lifted_reads(&mut self, name: &str) {
+        let Some((removed, declaration)) = (self.nested)(name).zip(
+            self.declarations
+                .and_then(|declarations| declarations.function(name)),
+        ) else {
+            self.reads_all = true;
+            return;
+        };
+        for id in declaration
+            .param_decls
+            .iter()
+            .map(ParamDecl::id)
+            .filter(|id| !removed.contains(id))
+        {
+            if let Some(owner) = self.owners.iter().position(|owner| **owner == *id.owner) {
+                self.slots.insert((owner, id.slot));
+            }
+        }
     }
 
     fn element<T: Serialize + ?Sized>(&mut self, value: &T) {

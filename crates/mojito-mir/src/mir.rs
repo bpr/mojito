@@ -63,7 +63,7 @@ mod lower_stmt;
 mod node;
 mod param_uses;
 pub use param_uses::{
-    NestedRemovals, has_no_destructor, method_owner_params, unread_parameters,
+    NestedRemovals, has_no_destructor, method_owner_params, named_lifted_bodies, unread_parameters,
     without_removed_forwards,
 };
 mod struct_reads;

@@ -177,14 +177,18 @@ impl PackageBodies {
     }
 
     /// Whether the function `name` reaches itself through the calls
-    /// `successors` lists of each body, as its unit lowers to it, and so
+    /// `successors` lists of each body by its name, as its unit lowers to it, and so
     /// lies on a cycle of them; memoized by row.
     ///
     /// It reads lowered bodies, never finished ones, so the answer is the
     /// same whichever body finishes first, and a finishing hook may ask it
     /// of a callee before finishing that callee: a callee on no cycle never
     /// reaches the body being finished.
-    pub fn on_cycle(&self, name: &str, successors: &dyn Fn(&MirFunction) -> Vec<String>) -> bool {
+    pub fn on_cycle(
+        &self,
+        name: &str,
+        successors: &dyn Fn(&str, &MirFunction) -> Vec<String>,
+    ) -> bool {
         let Some(row) = self.package.body_row(name) else {
             return false;
         };
@@ -203,7 +207,7 @@ impl PackageBodies {
             let Ok(function) = self.lowered(&next) else {
                 continue;
             };
-            for callee in successors(&function) {
+            for callee in successors(&next, &function) {
                 if callee == name {
                     cyclic = true;
                     pending.clear();

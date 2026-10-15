@@ -24,7 +24,9 @@
 //! A lifted compile-time function (`$comptime$f$…`, `$default$f$…`) is a
 //! generator over every binder it declares, whoever owns it: the
 //! elaborator keys its instances, and the evaluations cached by instance
-//! name, on the binders it kept.
+//! name, on the binders it kept. A function that names one reads only
+//! those, and its removals join the snapshot, empty or not, since the
+//! verifier reads a lifted body it has none for as reading every binder.
 //!
 //! A method is a generator over its struct's parameters as well: the
 //! elaborator keys and names one that removed any of them off the struct
@@ -41,8 +43,8 @@
 use super::pre_elaboration::{CallGraphPass, Callees};
 use mojito_mir::mir::{
     Const, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
-    instruction_regions, instruction_subscript_call, method_owner_params, unread_parameters,
-    without_removed_forwards,
+    instruction_regions, instruction_subscript_call, method_owner_params, named_lifted_bodies,
+    unread_parameters, without_removed_forwards,
 };
 use mojito_types::param_expr::ParamId;
 use std::collections::{BTreeMap, BTreeSet};
@@ -58,7 +60,8 @@ pub const REMOVE_UNUSED_PARAMS: CallGraphPass = CallGraphPass {
 ///
 /// A forward to a callee's removed parameter is no read, and the callees
 /// whose removals discounted one become its `callee_removed_params`, as do
-/// the nested bodies it names that removed a parameter.
+/// the nested bodies it names that removed a parameter and the lifted
+/// bodies it names.
 pub fn remove_unused_params(
     name: &str,
     function: &mut MirFunction,
@@ -78,8 +81,10 @@ pub fn remove_unused_params(
         .collect();
     let mut nested_targets = BTreeSet::new();
     nested_bodies(&function.blocks, declarations, &mut nested_targets);
+    let lifted_targets = named_lifted_bodies(name, function, declarations);
     let nested: BTreeMap<&str, &[ParamId]> = nested_targets
         .into_iter()
+        .chain(lifted_targets.iter().map(String::as_str))
         .filter_map(|target| {
             callees
                 .unit_body(target)
@@ -107,7 +112,9 @@ pub fn remove_unused_params(
         Vec::new()
     } else {
         for (body, ids) in nested {
-            if !ids.is_empty() && !discounted.iter().any(|(callee, _)| callee == body) {
+            if (!ids.is_empty() || lifted_targets.contains(body))
+                && !discounted.iter().any(|(callee, _)| callee == body)
+            {
                 discounted.push((body.to_string(), ids.to_vec()));
             }
         }

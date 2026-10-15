@@ -5286,8 +5286,9 @@ point where a slot declared in a loop is uninitialized again.
   addressed by anything but a drop or declaration of a scalar or of a
   callable parameter, whose value is a compile-time one; a name of
   a body lifted from the function (`$comptime$f$…`, `$default$f$…`), which
-  reads every parameter; and a name of a body nested in it (`f$…`), which
-  reads the parameters that body's own run kept (R908). A nested body is
+  reads the binders it declares that its own run kept (R982); and a name
+  of a body nested in it (`f$…`), which reads the parameters that body's
+  own run kept (R908). A nested body is
   a generator over its enclosing scope, as upstream lifts a closure to
   one: its candidates are its enclosing declarations' parameters, which it
   records as `removed_params` when it never reads them, and the elaborator
@@ -5326,9 +5327,14 @@ point where a slot declared in a loop is uninitialized again.
   the evaluations cached by instance name, on the binders it kept
   (`Specializer::{demand_application, default_function_bindings}`), still
   binding a removed one, as a call's instance does. The pass follows
-  nested bodies, and a closure or function value counts as a
-  call-graph edge, so a nested body runs before the function naming it;
-  one whose run is not at hand reads every parameter. Another parameter's
+  nested and lifted bodies, a closure or function value and a lifted body
+  a body or its signature names (`mir::named_lifted_bodies`) count as
+  call-graph edges, so either runs before the function naming it, and its
+  removals join that function's `callee_removed_params`, a lifted body's
+  even when empty; one whose run is not at hand reads every parameter. An
+  evaluated default still reads its kept binders through the callee,
+  which holds it, where upstream evaluates it at the call site and the
+  callee reads none of them (R1004, R1005). Another parameter's
   default is not a read: the call site evaluates it. A function in a
   `comptime for` (R974), a nested function's own parameters (R973), and
   `__toplevel__` have no candidates. A callable value parameter is one

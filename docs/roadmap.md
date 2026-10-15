@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1004**.
+Next free ID: **R1006**.
 
 ## Ordered Work
 
@@ -630,20 +630,38 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R978.
   - Model: Fable, Not Planned.
 
-- [ ] **R982 A parameter read only by its function's evaluated default is
-  kept**
+- [ ] **R1004 An omitted evaluated default is evaluated by the callee
+  instance, not at the call site**
 
-  `scaled[n, m](x: Int = m * 2)` keeps `m`, and `scaled[1, 3]` and
-  `scaled[1, 4]` are two instances, where the pin removes `m`
-  (`scaled[...]_REMOVED_ARG,n=1`).
-  - `mir::unread_parameters` reads a function that names a body lifted from
-    it (`$default$f$x`, `$comptime$f$k`) as reading every parameter.
-  - It should read only the binders that lifted body kept, as it reads a
-    nested body's (R908); the call-graph walk then needs an edge to the
-    lifted body, which it already processes as a generator (R911).
-  - A runtime default is the call site's on the pin, so a binder only it
-    reads is no read of the function at all.
+  `scaled[1, 3]()` runs `$default$scaled$x` as the `scaled[1, 3]`
+  instance's declaration names it, where upstream fills the default in at
+  the call site, under the call's own parameter arguments.
+  - The VM (`invoke.rs`'s `make_default`) and the native backend
+    (`evaluated_default_value`) read the default off the callee
+    instance's declaration, which `instantiate_constructed_defaults`
+    respells per owner instance.
+  - The call site should evaluate the lifted default's instance under
+    the call's `instantiated_args`, so the callee's declaration need not
+    name one per instance.
+  - No output changes; R1005 builds on it.
+  - Found while landing R982 (2026-10-15).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1005 A parameter read only by an evaluated default is kept**
+
+  `scaled[n, m](x: Int = m * 2)` keeps `m`, and `dflt[n, m](x: Int = n * 2)`
+  returning `x` keeps `n`, where the pin removes both
+  (`scaled[...]_REMOVED_ARG,n=1`, `dflt[...]_REMOVED_ARG`).
+  - `mir::unread_parameters` reads a `$default$f$x` the signature names
+    as reading the binders that body kept (R982).
+  - Once the call site evaluates the default (R1004), a binder only it
+    reads is no read of the function, and the signature's name of it
+    should read nothing.
+  - `assets/ok/lifted_body_owner_instances.mojo`'s `dflt` then has one
+    instance.
+  - Found while landing R982 (2026-10-15).
+  - Depends on R1004.
   - Model: Opus, Not Planned.
 
 - [ ] **R983 With the pre-elaboration pipeline off, a capturing callable

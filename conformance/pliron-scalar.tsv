@@ -321,6 +321,7 @@ assets/ok/lane_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/late_initialized_local.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/layout_allocation.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/lifecycle_deprecated_spellings.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/lifted_body_owner_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/lifted_unread_parameter_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/line_continuation.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_and_struct.mojo	-	ineligible	no-scalar-entry-shape

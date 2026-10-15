@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A parameter that only a body lifted from its function would read, were
+  its other binders removed, no longer splits instances (R982):
+  `remove-unused-params` reads a `$comptime$f$k` or `$default$f$x` the
+  function names as reading only the binders that body kept, rather than
+  every parameter, and walks such bodies first. So `lifted[n, m]` whose
+  `comptime k` reads only `n` has one instance per `n`, and `Box[n].get[m]`
+  whose default reads only `Self.n` one, as on the pin. A parameter only an
+  evaluated default reads is still kept, since the callee, not the call
+  site, evaluates it (R1004, R1005;
+  `assets/ok/lifted_body_owner_instances.mojo`).
 - A method no longer splits instances by struct parameters its receiver
   never reads (R978): `remove-unused-params` reads a method's `Self` as its
   struct spelled at its own parameters, so `get(self)`, `take(var self)`,
