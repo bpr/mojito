@@ -1,0 +1,77 @@
+mojito-mir 1.61
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("cases.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+    struct { name: Box, fields: [field { name: value, type: Int }], mut_self_methods: [], fieldwise_init: false, param_decls: [value_param { owner: "Box", slot: 0, name: k, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [] }, conformance { trait: IsTriviallyMovable, conditions: [and { left: constraint_bool(true), right: trivial { lifecycle: movable, operand: operand_type(Int) } }] }, conformance { trait: IsTriviallyDeinitable, conditions: [and { left: constraint_bool(true), right: trivial { lifecycle: deinitable, operand: operand_type(Int) } }] }], declared: [], associated_types: [], parameterized_associated_types: [], associated_values: [] }
+  ],
+  decls: [
+    decl { lowered_name: "Box.__init__", param_names: [value], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "Box", slot: 0, name: k, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: true, receiver_convention: present(out), param_conventions: [absent], return_type: None, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [], inline: nodebug },
+    decl { lowered_name: constructor, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: "Box.__init__",
+        registers: 3,
+        vars: 3,
+        var_names: [self, value, Self],
+        params: 2,
+        param_types: [struct_type { name: Box, arguments: [] }, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Box, arguments: [] } }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: struct_type { name: Box, arguments: [value_arg(ct_expr(param_decl_ref { owner: "Box", slot: 0, name: k, type: meta_value(Int) }))] } }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 131, end: 136, origin: present($v1) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 139, end: 145, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 131, end: 145, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v1, mode: copy },
+              place.load { dest: %r1, place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [] }), projections: [projection { op: field(k), type: Int }], type: present(Int), through: absent } },
+              binary { op: mul, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [] }), projections: [projection { op: field(value), type: Int }], type: present(Int), through: absent }, src: %r2 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: constructor,
+        registers: 4,
+        vars: 2,
+        var_names: [x, b],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: struct_type { name: Box, arguments: [value_arg(ct_int(4))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: Box, arguments: [value_arg(ct_int(4))] } }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 463, end: 464, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 456, end: 465, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 477, end: 484, origin: present($v1) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 477, end: 484, origin: present($v1) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              call { dest: %r1, func: Box, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [value_arg(ct_int(4))], spread: absent },
+              var.store { var: $v1, src: %r1, binding_type: present(struct_type { name: Box, arguments: [value_arg(ct_int(4))] }), in_place: true },
+              place.load { dest: %r2, place: place { root: $v1, root_type: present(struct_type { name: Box, arguments: [value_arg(ct_int(4))] }), projections: [projection { op: field(value), type: Int }], type: present(Int), through: absent } },
+              drop.var { var: $v1 },
+              value.copy { dest: %r3, value: %r2 }
+            ],
+            terminator: return { value: present(%r3) }
+          }
+        ]
+      }
+  ]
+}

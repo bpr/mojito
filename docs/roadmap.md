@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R951**.
+Next free ID: **R953**.
 
 ## Ordered Work
 
@@ -56,18 +56,35 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R917 A `nodebug` method of a parametric struct, or a constructor,
-  is called, not inlined**
+- [ ] **R951 A `nodebug` constructor of a struct with several
+  `__init__`s is called, not inlined**
 
-  `inline-parametric` inlines a method only when its struct has no
-  parameters, and never a `Call` naming a struct, where the pin inlines
-  `Box[k].get` and `C[k](…)` marked `nodebug`.
-  - The owner's binders come from the receiver type or the constructed
-    type.
-  - A constructor call resolves to its `__init__`, whose `out self` is the
-    call's result.
-  - Done when both shapes inline and the differential is clean.
-  - Depends on R916.
+  `inline-parametric` inlines a call naming a struct only when the struct
+  declares one `__init__`, because MIR's `call` names the struct and not
+  the overload the check selected, where the pin inlines whichever
+  `C.__init__` the call resolves to.
+  - The elaborator and the VM each re-resolve the overload by arity
+    (`resolve_callable_symbol`, `constructor_name`).
+  - Carry the checked `__init__` symbol on the MIR call, as upstream's call
+    names it, and have the inliner read it.
+  - Done when a `nodebug` overloaded constructor (`String`'s) inlines and
+    the differential is clean.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R952 A `nodebug` member of a struct with an origin parameter is
+  called, not inlined**
+
+  `inline-parametric` keeps a call whose owner struct declares an origin
+  binder, or an infer-only one the type's arguments omit, where the pin
+  inlines `Span.__len__` and `Span.unsafe_ptr`, marked `builtin`.
+  - `Span[Int, origin]`'s arguments do not align with its three binders,
+    and `ParamBindings` binds no origin.
+  - Bind an origin binder to the receiver's origin argument, and an
+    infer-only binder to what the type determines.
+  - Done when `s.__len__()` over a `Span` inlines and the differential is
+    clean.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R918 A `nodebug` call through a reference parameter is not

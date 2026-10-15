@@ -1876,11 +1876,12 @@ impl VmBackend {
             // replaces lives wherever `p.src` points).
             // An initializer's receiver enters with every field's storage
             // present and unwritten, which the pointer writes that follow
-            // fill. A named result marked whole has no storage yet: it gets
-            // the same unwritten skeleton here.
+            // fill. A named result marked whole, or an inlined
+            // initializer's receiver, has no storage yet, or only what a
+            // move left: it gets the same unwritten skeleton here.
             MirInstr::MarkInitialized { place } => {
                 if place.is_whole_root()
-                    && matches!(vars[place.root as usize], Value::None)
+                    && matches!(vars[place.root as usize], Value::None | Value::Moved)
                     && let Some(TyKind::Struct(name, _)) = place.ty.as_ref().map(Ty::kind)
                     && let Some(skeleton) = Self::uninitialized_struct(prog, name)
                 {

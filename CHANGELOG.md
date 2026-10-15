@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `nodebug` method of a parametric struct, and a `nodebug` constructor,
+  are inlined before elaboration (R917): `inline-parametric` binds the
+  struct's parameters to the receiver's or the constructed type's
+  arguments, folds `Self.k` to its constant, and initializes the
+  constructed value in a fresh `out self` slot
+  (assets/ok/always_inline_nodebug_struct_calls.mojo). Composing a
+  place-bound parameter with an indexed caller place no longer misnumbers
+  the caller's index register. A struct with several `__init__`s, and one
+  with an origin parameter such as `Span`, keep the call (R951, R952).
+  Program output is unchanged.
 - A generic `nodebug` callee is inlined before elaboration (R916):
   `inline-parametric` binds a callee's own compile-time parameters, and a
   non-parametric struct method's, to the call's arguments through

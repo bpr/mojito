@@ -5088,9 +5088,20 @@ point where a slot declared in a loop is uninitialized again.
   slot's drops are deleted. The binding keeps the call for a callable or
   variadic binder, a `where` clause or binder constraint, a `T()` or
   `T(copy=x)` at a concrete `T`, a conformance test of a concrete binding,
-  or a value binder's slot used other than as a read. The callee must have
-  no enclosing body or region binders and a receiver struct without
-  parameters, be called
+  or a value binder's slot used other than as a read. A method of a
+  parametric struct binds the struct's binders to its receiver type's
+  arguments, and a call naming a struct whose one `__init__` is followed
+  binds them to the constructed type's, past the binders the initializer
+  restates; the member's bare spelling of its owner becomes that type, and
+  a read of an owner value binder through `self` (`Self.k`, a member
+  load) becomes its argument as a constant. An origin argument, or a type
+  whose arguments do not align with the binders, keeps the call. The
+  initializer's `out self` is a fresh slot that an
+  `ownership.mark_initialized` opens and the call's register moves from
+  after the body. Callee registers are renumbered before a place-bound
+  parameter is composed, so the caller's index registers in that place
+  stay the caller's. The callee must have no enclosing body or region
+  binders and a struct receiver if it has one, be called
   positionally into every `read` or owned parameter with no capture
   accesses, not raise, return a value rather than a reference, and hold
   plain control flow with no `try`, region op, or closure; any other call
