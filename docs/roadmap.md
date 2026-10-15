@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R962**.
+Next free ID: **R967**.
 
 ## Ordered Work
 
@@ -205,16 +205,75 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R921 A nested `nodebug` def, or a call carrying captures, is not
+- [ ] **R962 A `nodebug` nested `def` with a copied or moved capture is
+  called, not inlined**
+
+  `inline-parametric` keeps a call through a closure that captures a
+  value by copy or move (`{var x}`, `{x^}`), where the pin inlines it.
+  - The lifted body borrows that capture from the closure's own
+    environment, which MIR names by no place the splice could bind.
+  - Bind the capture parameter to the closure's environment entry, as
+    upstream reads the closure object's field.
+  - Done when a `{var x}` capture's call inlines in a pass test and the
+    differential is clean.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R963 A call through a closure the caller does not make is not
   inlined**
 
-  `inline-parametric` keeps a call to a function with an enclosing
-  declaration or region binders, or one carrying capture accesses, where
-  the pin inlines a `nodebug` nested `def` into its enclosing body.
-  - The nested body reads the enclosing scope's binders and captured
-    places, which the splice must map to the caller's.
-  - Done when a nested `nodebug` def inlines and the differential is clean.
-  - Depends on R916.
+  `inline-parametric` inlines a nested `nodebug` def only through a
+  `closure.make` in the caller, so a call through a sibling closure the
+  caller captured (`def twice() {get}`) keeps the call.
+  - The callee slot is a capture parameter of the caller, bound to the
+    enclosing frame's closure, whose target and captures the caller's
+    body does not show.
+  - The callee's declared captures are the caller's own capture
+    parameters' places, as the enclosing body's closure made them.
+  - Done when the sibling call inlines in a pass test and the
+    differential is clean.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R964 A `nodebug` nested `def` declared in a `comptime for` is
+  called, not inlined**
+
+  `inline-parametric` keeps a call to a nested def whose declaration has
+  region binders, where the pin inlines it.
+  - The body reads the loop's index by a slot of its own, which must
+    become the caller's `comptime for` binder, as an enclosing
+    declaration's value binder already does.
+  - Done when a nested def reading the loop index inlines in a pass test
+    and the differential is clean.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R965 A `nodebug` callee passed a capturing closure as its
+  callable binder is called, not inlined**
+
+  `inline-parametric` keeps a `call` carrying capture accesses
+  (`apply[plus](3)` with `plus` capturing), where the pin inlines it.
+  - The accesses record the closure's captured places the callee's body
+    reaches through its callable binder.
+  - Once the binder binds (R945), the body's call through it is a call
+    through the closure, which the splice can inline in turn.
+  - Done when that call inlines in a pass test and the differential is
+    clean.
+  - Depends on R945.
+  - Model: Opus, Not Planned.
+
+- [ ] **R966 An inlined nested `def`'s closure stays constructed**
+
+  After `inline-parametric` inlines every call through a closure, the
+  caller still makes it, stores it, and drops it.
+  - Upstream's pipeline erases the dead closure construction after
+    inlining.
+  - Erase a closure slot no remaining instruction reads but its drop, and
+    its `closure.make`.
+  - Done when `tests/mir_passes/inline-parametric/nested_captures.mir`'s
+    callers keep no closure after the round, and the differential is
+    clean.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R945 A `nodebug` callee with a callable compile-time parameter

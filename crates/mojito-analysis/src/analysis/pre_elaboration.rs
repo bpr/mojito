@@ -423,7 +423,8 @@ fn verify_after(
 }
 
 /// The callees `function` calls directly, by a call or a resolved method
-/// call, that `followed` accepts, each once, in its regions too.
+/// call, or through a closure it makes, that `followed` accepts, each once,
+/// in its regions too.
 fn followed_callees(function: &MirFunction, followed: impl Fn(&str) -> bool) -> Vec<String> {
     fn walk(blocks: &[mojito_mir::mir::MirBlock], out: &mut Vec<String>) {
         for block in blocks {
@@ -434,6 +435,7 @@ fn followed_callees(function: &MirFunction, followed: impl Fn(&str) -> bool) -> 
                         resolved: Some(target),
                         ..
                     } => out.push(target.clone()),
+                    MirInstr::MakeClosure { function, .. } => out.push(function.clone()),
                     _ => {}
                 }
                 for region in instruction_regions(instruction) {

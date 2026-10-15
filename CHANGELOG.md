@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call to a nested `nodebug` `def` is inlined before elaboration
+  (R921): `inline-parametric` follows the call through the closure its
+  caller makes, binds each capture by reference to the captured place,
+  and reads an enclosing declaration's value parameter as that binder
+  (assets/ok/always_inline_nodebug_nested_calls.mojo). A copied or moved
+  capture, a closure the caller does not make, a nested `def` in a
+  `comptime for`, and a capturing closure passed as a callable binder
+  keep the call (R962–R965); the inlined closure is still constructed
+  (R966).
 - A `nodebug` call passing keywords or omitting a defaulted argument is
   inlined before elaboration (R920): `inline-parametric` binds the call's
   arguments through the shared call matcher, and materializes each

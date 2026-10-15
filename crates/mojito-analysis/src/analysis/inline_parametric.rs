@@ -9,11 +9,12 @@
 //! The pin inlines such a callee at any size, and refuses one that lies on a
 //! cycle of such calls or holds a `try`.
 //!
-//! A callee this pass inlines is a function, a method, or a struct's one
-//! `__init__`, which a call naming the struct calls, whose own compile-time
-//! parameters the call binds in full; it takes its arguments into `read`,
-//! owned, `mut`, or `ref` parameters, declares no variadic collector, and
-//! returns a value. The call's positional and keyword arguments bind to
+//! A callee this pass inlines is a function, a method, a struct's one
+//! `__init__`, which a call naming the struct calls, or a nested `def`,
+//! which a call through a closure the caller makes calls, whose own
+//! compile-time parameters the call binds in full; it takes its arguments
+//! into `read`, owned, `mut`, or `ref` parameters, declares no variadic
+//! collector, and returns a value. The call's positional and keyword arguments bind to
 //! the callee's parameters through `mojito_ast::call`'s matcher, as the VM
 //! binds them, and an omitted argument takes its default, materialized at
 //! the call as upstream's parser materializes it in the caller: a literal,
@@ -41,7 +42,12 @@
 //! place's root keeps the call. A default is a fresh slot, dropped after
 //! the body when the parameter only borrows it. An initializer's
 //! `out self` is a fresh slot the body initializes, and the call's result
-//! moves out of it. A call of any other shape stays a call.
+//! moves out of it. A nested `def`'s captures, its leading parameters, are
+//! the places the closure captures by reference, and a read of an
+//! enclosing declaration's value binder is a reference to that binder, in
+//! whose scope the caller lies; a copied or moved capture, a closure the
+//! caller does not make, and a body nested in a `comptime for` keep the
+//! call. A call of any other shape stays a call.
 //!
 //! A raising callee's raises propagate from the inlined body as from the
 //! call. Each raise point of a body inlined into a `try`'s body adds the
@@ -63,19 +69,23 @@ use mojito_mir::mir::visit::{
     MutTypeVisitor, ParamArgSite, ParamDeclSite, TySite, walk_function_mut,
 };
 use mojito_mir::mir::{
-    Const, FuncRef, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
-    MirParamArg, MirPlace, MirTerm, Proj, Reg, UseMode, has_no_destructor, instruction_regions_mut,
-    instruction_regs_mut, instruction_slots, renumber_block_slots, terminator_regs_mut,
-    terminator_targets, terminator_targets_mut,
+    Const, FuncRef, MirBlock, MirCaptureMode, MirClosureCapture, MirDeclarations, MirFunction,
+    MirFunctionDeclaration, MirInstr, MirParamArg, MirPlace, MirTerm, Proj, Reg, UseMode,
+    has_no_destructor, instruction_regions, instruction_regions_mut, instruction_regs_mut,
+    instruction_slots, renumber_block_slots, terminator_regs_mut, terminator_targets,
+    terminator_targets_mut,
 };
 use mojito_types::ct::CtValue;
-use mojito_types::param_expr::{ParamBindings, ParamContext, ParamError, ParamExpr, ParamRef};
+use mojito_types::param_expr::{
+    MetaTy, ParamBindings, ParamContext, ParamError, ParamExpr, ParamRef,
+};
 use mojito_types::types::{
     GenericConstraint, LaneMask, ParamDecl, Ty, TyArg, TyKind, TyRewrite, VariantIndex,
     is_scalar_simd, replace_argument_parameters, replace_constraint_parameters, replace_parameters,
     replace_value_parameters, rewrite_ty, scalar_simd_dtype,
 };
 use std::borrow::Cow;
+use std::collections::HashMap;
 
 pub const INLINE_PARAMETRIC: CallGraphPass = CallGraphPass {
     name: "inline-parametric",
@@ -105,10 +115,12 @@ pub fn inline_parametric(
     callees: &Callees<'_>,
 ) -> bool {
     let mut blocks = std::mem::take(&mut function.blocks);
+    let closures = Closures::of(&blocks);
     let mut inliner = Inliner {
         function,
         declarations,
         callees,
+        closures,
         raise_held: Vec::new(),
     };
     let changed = inliner.block_list(&mut blocks);
@@ -121,6 +133,8 @@ struct Inliner<'f, 'c> {
     function: &'f mut MirFunction,
     declarations: &'c MirDeclarations,
     callees: &'c Callees<'c>,
+    /// The closures the caller makes, which a call through one calls.
+    closures: Closures,
     /// The inlined slots a raise leaving the block list being inlined into
     /// may hold, for the nearest enclosing `try`'s raise-edge cleanup.
     raise_held: Vec<VarId>,
@@ -159,19 +173,23 @@ struct CallArguments<'a> {
 }
 
 impl CallArguments<'_> {
-    /// The argument each of `declaration`'s regular parameters takes, as
-    /// the shared call matcher binds it; `None` when the call does not
-    /// bind (a forwarded `**kwargs` among them).
-    fn slots(&self, declaration: &MirFunctionDeclaration) -> Option<Vec<ArgSlot>> {
+    /// The argument each of `declaration`'s regular parameters past its
+    /// first `captured`, a nested `def`'s captures, takes, as the shared
+    /// call matcher binds it; `None` when the call does not bind (a
+    /// forwarded `**kwargs` among them).
+    fn slots(&self, declaration: &MirFunctionDeclaration, captured: usize) -> Option<Vec<ArgSlot>> {
         if declaration.required.len() != declaration.param_names.len() {
             return None;
         }
         let keywords: Vec<&str> = self.kwargs.iter().map(|(name, _)| name.as_str()).collect();
+        let marker = |index: Option<usize>| {
+            index.map_or(Some(None), |index| index.checked_sub(captured).map(Some))
+        };
         match_call_slots(
-            &declaration.param_names,
-            &declaration.required,
-            declaration.positional_only,
-            declaration.keyword_only,
+            declaration.param_names.get(captured..)?,
+            declaration.required.get(captured..)?,
+            marker(declaration.positional_only)?,
+            marker(declaration.keyword_only)?,
             self.args.len(),
             &keywords,
             CallVariadics {
@@ -182,6 +200,83 @@ impl CallArguments<'_> {
         .ok()
         .map(|matched| matched.slots)
     }
+}
+
+/// The closures a caller makes: each register a `closure.make` defines,
+/// and each slot whose one store is such a register.
+struct Closures {
+    made: HashMap<u32, Closure>,
+    slots: HashMap<VarId, u32>,
+}
+
+impl Closures {
+    /// The closures `blocks`, a caller's body, makes, its regions included.
+    fn of(blocks: &[MirBlock]) -> Self {
+        let mut closures = Self {
+            made: HashMap::new(),
+            slots: HashMap::new(),
+        };
+        let mut stored = HashMap::new();
+        closures.collect(blocks, &mut stored);
+        closures.slots = stored
+            .into_iter()
+            .filter_map(|(var, src)| {
+                src.filter(|src| closures.made.contains_key(src))
+                    .map(|src| (var, src))
+            })
+            .collect();
+        closures
+    }
+
+    /// Record the closures `blocks` makes, and each slot's store: its
+    /// source register when it is stored once, `None` when more often.
+    fn collect(&mut self, blocks: &[MirBlock], stored: &mut HashMap<VarId, Option<u32>>) {
+        for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+            for region in instruction_regions(instruction) {
+                self.collect(region, stored);
+            }
+            match instruction {
+                MirInstr::MakeClosure {
+                    dest,
+                    function,
+                    captures,
+                } => {
+                    self.made.insert(
+                        dest.0,
+                        Closure {
+                            function: function.clone(),
+                            captures: captures.clone(),
+                        },
+                    );
+                }
+                MirInstr::DefVar { var, src, .. } => {
+                    stored
+                        .entry(*var)
+                        .and_modify(|source| *source = None)
+                        .or_insert(Some(src.0));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The closure a call through `callee`, the value of the place `place`
+    /// if it has one, calls: one the register holds, or the one its slot
+    /// was stored once.
+    fn called(&self, callee: Reg, place: Option<&MirPlace>) -> Option<&Closure> {
+        self.made.get(&callee.0).or_else(|| {
+            let place = place.filter(|place| place.is_whole_root() && place.through.is_none())?;
+            self.made.get(self.slots.get(&place.root)?)
+        })
+    }
+}
+
+/// A closure a caller makes: the lifted nested `def` it calls, and the
+/// caller's places it captures, which the lifted body takes as its leading
+/// parameters.
+struct Closure {
+    function: String,
+    captures: Vec<MirClosureCapture>,
 }
 
 /// An omitted argument's default, as the call materializes it.
@@ -488,13 +583,15 @@ impl<'c> Inliner<'_, 'c> {
     /// each of its parameters, when the pass inlines the call.
     ///
     /// A call naming a struct is a call of its `__init__`, whose `out self`
-    /// is the call's result.
+    /// is the call's result. A call through a closure the caller makes is a
+    /// call of the nested `def` it lifts, whose captures bind the places the
+    /// closure captures.
     fn inlinable(
         &self,
         block: &MirBlock,
         index: usize,
     ) -> Option<(Reg, Cow<'c, MirFunction>, Vec<Binding>)> {
-        let (dest, target, call, compile_time, receiver, receiver_place) =
+        let (dest, target, call, compile_time, receiver, receiver_place, captures) =
             match &block.instrs[index] {
                 MirInstr::Call {
                     dest,
@@ -528,6 +625,7 @@ impl<'c> Inliner<'_, 'c> {
                         instantiated_args,
                         receiver,
                         None,
+                        &[][..],
                     )
                 }
                 MirInstr::MethodCall {
@@ -557,7 +655,36 @@ impl<'c> Inliner<'_, 'c> {
                     instantiated_args,
                     Some(Receiver::Argument(*recv)),
                     recv_place.as_deref(),
+                    &[][..],
                 ),
+                MirInstr::CallIndirect {
+                    dest,
+                    callee,
+                    args,
+                    kwargs,
+                    callee_place,
+                    arg_places,
+                    kwarg_places,
+                    instantiated_args,
+                    spread: None,
+                    ..
+                } => {
+                    let closure = self.closures.called(*callee, callee_place.as_deref())?;
+                    (
+                        *dest,
+                        Cow::Borrowed(closure.function.as_str()),
+                        CallArguments {
+                            args,
+                            arg_places,
+                            kwargs,
+                            kwarg_places,
+                        },
+                        instantiated_args,
+                        None,
+                        None,
+                        closure.captures.as_slice(),
+                    )
+                }
                 _ => return None,
             };
         let callee = self.callees.body(&target)?;
@@ -577,14 +704,17 @@ impl<'c> Inliner<'_, 'c> {
         {
             return None;
         }
-        let slots = call.slots(declaration)?;
+        let slots = call.slots(declaration, captures.len())?;
         let owner = match owner_ty.map(|ty| self.owner(callee, ty)) {
             Some(Some(Owner::Applied(owner))) => Some(owner),
             Some(Some(Owner::Unbound)) | None => None,
             Some(None) => return None,
         };
-        let callee = instantiated(callee, declaration, owner.as_ref(), compile_time)?;
-        let skip = usize::from(receiver.is_some());
+        let mut callee = instantiated(callee, declaration, owner.as_ref(), compile_time)?;
+        if declaration.enclosing.is_some() {
+            read_enclosing_binders(callee.to_mut(), declaration, self.declarations)?;
+        }
+        let skip = usize::from(receiver.is_some()) + captures.len();
         let mut bindings = Vec::with_capacity(callee.n_params);
         match receiver {
             Some(Receiver::Constructed) => bindings.push(Binding::Out),
@@ -594,13 +724,23 @@ impl<'c> Inliner<'_, 'c> {
             }
             None => {}
         }
+        for (param, capture) in captures.iter().enumerate() {
+            if capture.mode != MirCaptureMode::Reference || !is_reference_parameter(&callee, param)
+            {
+                return None;
+            }
+            bindings.push(Binding::Place(capture.place.clone()));
+        }
         for (position, slot) in slots.into_iter().enumerate() {
             let param = position + skip;
             let (argument, place) = match slot {
                 ArgSlot::Positional(source) => (call.args[source], call.arg_places.get(source)),
                 ArgSlot::Keyword(source) => (call.kwargs[source].1, call.kwarg_places.get(source)),
                 ArgSlot::Default => {
-                    let default = declaration.defaults.get(position)?.as_ref()?;
+                    let default = declaration
+                        .defaults
+                        .get(position + captures.len())?
+                        .as_ref()?;
                     bindings.push(default_binding(&callee, param, default, self.declarations)?);
                     continue;
                 }
@@ -913,7 +1053,7 @@ fn is_reference_parameter(callee: &MirFunction, param: usize) -> bool {
 }
 
 /// Whether the callee has a shape the splice handles: a struct
-/// receiver if any, no enclosing declaration's binders, no reference
+/// receiver if any, no binders of an enclosing region, no reference
 /// result, no variadic collector, and blocks of plain control flow with no
 /// `try`, region, or closure.
 fn is_closed(callee: &MirFunction, declaration: &MirFunctionDeclaration) -> bool {
@@ -923,7 +1063,6 @@ fn is_closed(callee: &MirFunction, declaration: &MirFunctionDeclaration) -> bool
             .first()
             .is_some_and(|receiver| matches!(receiver.kind(), TyKind::Struct(..)));
     receiver_closed
-        && declaration.enclosing.is_none()
         && declaration.region_binders.is_empty()
         && declaration.variadic.is_none()
         && declaration.kw_variadic.is_none()
@@ -1153,6 +1292,63 @@ fn instantiated<'c>(
     walk_function_mut(&mut instantiation, &mut function).ok()?;
     instantiation.read_binders(&mut function)?;
     Some(Cow::Owned(function))
+}
+
+/// Rewrite each read of an enclosing declaration's value binder in
+/// `callee`, a nested `def`'s body, which spells it as a slot of its own,
+/// into a reference to that binder, which the caller, a body in the
+/// binder's scope, reads as its own; `None` when such a slot is used
+/// otherwise.
+fn read_enclosing_binders(
+    callee: &mut MirFunction,
+    declaration: &MirFunctionDeclaration,
+    declarations: &MirDeclarations,
+) -> Option<()> {
+    let mut shadowed: Vec<&str> = declaration
+        .param_decls
+        .iter()
+        .map(ParamDecl::name)
+        .collect();
+    let mut enclosing = declaration.enclosing.as_deref();
+    while let Some(name) = enclosing {
+        let scope = declarations.function(name)?;
+        for decl in &scope.param_decls {
+            let ParamDecl::Value {
+                id,
+                name,
+                ty,
+                variadic: false,
+                ..
+            } = decl
+            else {
+                continue;
+            };
+            if shadowed.contains(&name.as_str())
+                || matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
+            {
+                continue;
+            }
+            shadowed.push(name);
+            let Some(slot) = callee
+                .var_names
+                .iter()
+                .skip(callee.n_params)
+                .position(|var| var == name)
+            else {
+                continue;
+            };
+            let value =
+                ParamContext::detached().decl_ref(id.clone(), name, MetaTy::value(ty.clone()));
+            read_binder(
+                &mut callee.blocks,
+                (slot + callee.n_params) as VarId,
+                &value,
+                &callee.reg_types,
+            )?;
+        }
+        enclosing = scope.enclosing.as_deref();
+    }
+    Some(())
 }
 
 /// What a binder was bound to.

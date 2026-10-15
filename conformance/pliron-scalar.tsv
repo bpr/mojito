@@ -12,6 +12,7 @@ assets/ok/add.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/allocation_tracked_unsafe_ptr.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_nodebug_calls.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_nodebug_generic_calls.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/always_inline_nodebug_nested_calls.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_nodebug_struct_calls.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/arithmetic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/array_comparable.mojo	-	ineligible	no-scalar-entry-shape

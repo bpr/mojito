@@ -5104,12 +5104,22 @@ point where a slot declared in a loop is uninitialized again.
   `ownership.mark_initialized` opens and the call's register moves from
   after the body. Callee registers are renumbered before a place-bound
   parameter is composed, so the caller's index registers in that place
-  stay the caller's. The callee must have no enclosing body or region
-  binders, a struct receiver if it has one, and no variadic or keyword
-  collector, be called with no capture accesses or spread, return a value
-  rather than a reference, and hold
-  plain control flow with no `try`, region op, or closure; any other call
-  stays a call. The call's positional and keyword arguments bind to the
+  stay the caller's. A `call.indirect` through a closure the caller makes
+  (the private `Closures` table: a `closure.make` register, or a slot
+  stored once from one) calls the nested `def` the closure lifts. Its
+  leading parameters, the captures, bind to the places the closure
+  captures by reference, as a `mut` parameter binds the caller's place,
+  and a read of an enclosing declaration's value binder, which the lifted
+  body spells as a slot of its own, becomes a `Const::Param` reference to
+  that binder, which the caller, a body in its scope, binds. The
+  call-graph walk follows a `closure.make` as an edge, so the nested body
+  is finished first and a nested `def` that makes its own closure lies on
+  a cycle. The callee must have no region binders, a struct receiver if
+  it has one, and no variadic or keyword collector, be called with no
+  spread (and, unless through a closure, no capture accesses), capture
+  nothing by copy or move, return a value rather than a reference, and
+  hold plain control flow with no `try`, region op, or closure; any other
+  call stays a call. The call's positional and keyword arguments bind to the
   callee's regular parameters through `mojito_ast::call::match_call_slots`,
   the matcher the VM's `bind_args` applies; a call it does not bind (a
   forwarded `**kwargs` among them) stays a call. Each omitted argument

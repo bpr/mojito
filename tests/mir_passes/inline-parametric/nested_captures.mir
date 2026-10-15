@@ -1,0 +1,149 @@
+mojito-mir 1.61
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("cases.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: captured, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: "captured$plus", param_names: [base, y], param_types: [Int, Int], defaults: [absent, absent], required: [true, true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [present(ref), absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [true, false], param_writes: [true, false], availability: [], enclosing: present(captured), region_binders: [], inline: nodebug },
+    decl { lowered_name: counted, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: "counted$bump", param_names: [count], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [present(ref)], return_type: None, returns_reference: false, raises: false, error_type: absent, ref_params: [true], param_writes: [true], availability: [], enclosing: present(counted), region_binders: [], inline: nodebug }
+  ],
+  functions: [
+      fn {
+        name: captured,
+        registers: 6,
+        vars: 3,
+        var_names: [x, base, plus],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v127, path: [] }, access: read }])), param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v127, path: [] }, access: read }])), param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }, reg_type { reg: %r2, type: func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v127, path: [] }, access: read }])), param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 44, end: 45, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 47, end: 136, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 149, end: 156, origin: present($v2) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 154, end: 155, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 154, end: 155, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 149, end: 156, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              var.store { var: $v1, src: %r0, binding_type: present(Int), in_place: false },
+              closure.make { dest: %r1, function: "captured$plus", captures: [closure_capture { place: place { root: $v1, root_type: present(Int), projections: [], type: present(Int), through: absent }, mode: reference }] },
+              var.store { var: $v2, src: %r1, binding_type: present(func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v127, path: [] }, access: read }])), param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] }), in_place: false },
+              var.use { dest: %r2, var: $v2, mode: borrow_shared },
+              const { dest: %r3, value: int_literal(3) },
+              literal.materialize { dest: %r4, value: %r3, target: Int },
+              call.indirect { dest: %r5, callee: %r2, resolved: absent, raises: absent, args: [%r4], kwargs: [], callee_place: present(place { root: $v2, root_type: present(func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v127, path: [] }, access: read }])), param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] }), projections: [], type: present(func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v127, path: [] }, access: read }])), param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] }), through: absent }), arg_places: [absent], kwarg_places: [], capture_accesses: [capture_access { root: $v1, path: [], access: read }], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent },
+              drop.var { var: $v2 },
+              drop.var { var: $v1 }
+            ],
+            terminator: return { value: present(%r5) }
+          }
+        ]
+      },
+      fn {
+        name: "captured$plus",
+        registers: 4,
+        vars: 2,
+        var_names: [base, y],
+        params: 2,
+        param_types: [Int, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [true, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 128, end: 132, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 128, end: 132, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 135, end: 136, origin: present($v1) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 128, end: 136, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              ref.make { dest: %r1, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: present($v0) } },
+              ref.read { dest: %r0, reference: %r1 },
+              var.use { dest: %r2, var: $v1, mode: copy },
+              binary { op: add, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r3) }
+          }
+        ]
+      },
+      fn {
+        name: counted,
+        registers: 6,
+        vars: 2,
+        var_names: [count, bump],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v131, path: [] }, access: write }])), param_decls: [], params: [], names: [], return_type: None, required: [], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [], ref_params: [], ref_return: absent, transfers: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v131, path: [] }, access: write }])), param_decls: [], params: [], names: [], return_type: None, required: [], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [], ref_params: [], ref_return: absent, transfers: [] } }, reg_type { reg: %r3, type: func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v131, path: [] }, access: write }])), param_decls: [], params: [], names: [], return_type: None, required: [], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [], ref_params: [], ref_return: absent, transfers: [] } }, reg_type { reg: %r4, type: None }, reg_type { reg: %r5, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 197, end: 198, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 197, end: 198, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 200, end: 276, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 282, end: 288, origin: present($v1) }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 282, end: 288, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 300, end: 305, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(0) },
+              literal.materialize { dest: %r1, value: %r0, target: Int },
+              var.store { var: $v0, src: %r1, binding_type: present(Int), in_place: false },
+              closure.make { dest: %r2, function: "counted$bump", captures: [closure_capture { place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent }, mode: reference }] },
+              var.store { var: $v1, src: %r2, binding_type: present(func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v131, path: [] }, access: write }])), param_decls: [], params: [], names: [], return_type: None, required: [], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [], ref_params: [], ref_return: absent, transfers: [] }), in_place: false },
+              var.use { dest: %r3, var: $v1, mode: borrow_shared },
+              call.indirect { dest: %r4, callee: %r3, resolved: absent, raises: absent, args: [], kwargs: [], callee_place: present(place { root: $v1, root_type: present(func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v131, path: [] }, access: write }])), param_decls: [], params: [], names: [], return_type: None, required: [], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [], ref_params: [], ref_return: absent, transfers: [] }), projections: [], type: present(func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v131, path: [] }, access: write }])), param_decls: [], params: [], names: [], return_type: None, required: [], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [], ref_params: [], ref_return: absent, transfers: [] }), through: absent }), arg_places: [], kwarg_places: [], capture_accesses: [capture_access { root: $v0, path: [], access: write }], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent },
+              drop.var { var: $v1 },
+              var.use { dest: %r5, var: $v0, mode: copy },
+              drop.var { var: $v0 }
+            ],
+            terminator: return { value: present(%r5) }
+          }
+        ]
+      },
+      fn {
+        name: "counted$bump",
+        registers: 7,
+        vars: 1,
+        var_names: [count],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [true],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r6, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 266, end: 271, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 266, end: 271, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 275, end: 276, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 275, end: 276, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 266, end: 271, origin: absent }) }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 266, end: 271, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              ref.make { dest: %r1, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: present($v0) } },
+              ref.read { dest: %r0, reference: %r1 },
+              const { dest: %r2, value: int_literal(1) },
+              literal.materialize { dest: %r3, value: %r2, target: Int },
+              binary { op: add, dest: %r4, a: %r0, b: %r3, resolved: absent, raises: absent },
+              ref.make { dest: %r6, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: present($v0) } },
+              ref.write { reference: %r6, value: %r4 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      }
+  ]
+}
