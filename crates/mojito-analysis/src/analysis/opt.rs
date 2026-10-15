@@ -2,7 +2,7 @@
 //! named passes over its bodies in order, and verify the program after
 //! each one, in every build.
 
-use super::pre_elaboration::{Pass, pass_finding};
+use super::pre_elaboration::{Pass, pass_finding, run_call_graph_pass};
 use mojito_mir::mir::MirProgram;
 use mojito_mir::mir::text::{ArtifactReport, load_artifact};
 use std::fmt;
@@ -44,7 +44,9 @@ impl std::error::Error for OptError {}
 /// whole program after each pass.
 ///
 /// As in the pre-elaboration pipeline, a program pass runs over the
-/// program and a body pass over every body but `__toplevel__`.
+/// program, a body pass over every body but `__toplevel__`, and a
+/// call-graph pass over the same bodies callees first, with no package to
+/// read callees from.
 pub fn opt(
     input: &[u8],
     source_name: &str,
@@ -56,6 +58,9 @@ pub fn opt(
     for pass in passes {
         match pass {
             Pass::Program(pass) => (pass.run)(&mut program),
+            Pass::CallGraph(pass) => {
+                run_call_graph_pass(pass, &mut program, None);
+            }
             Pass::Body(pass) => {
                 let MirProgram {
                     functions,

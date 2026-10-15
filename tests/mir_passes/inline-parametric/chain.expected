@@ -1,0 +1,155 @@
+  functions: [
+      fn {
+        name: add_one,
+        registers: 4,
+        vars: 1,
+        var_names: [x],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 65, end: 66, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 69, end: 70, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 69, end: 70, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 65, end: 70, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r1, value: int_literal(1) },
+              literal.materialize { dest: %r2, value: %r1, target: Int },
+              var.use { dest: %r0, var: $v0, mode: copy },
+              binary { op: add, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r3) }
+          }
+        ]
+      },
+      fn {
+        name: twice,
+        registers: 11,
+        vars: 3,
+        var_names: [x, "x$inline1", "x$inline2"],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: IntLiteral }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: IntLiteral }, reg_type { reg: %r9, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 434, end: 435, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 426, end: 436, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 418, end: 437, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 426, end: 436, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 426, end: 436, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 426, end: 436, origin: absent }) }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 418, end: 437, origin: absent }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 418, end: 437, origin: absent }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 418, end: 437, origin: absent }) }, reg_loc { reg: %r10, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              var.store { var: $v1, src: %r0, binding_type: present(Int), in_place: false }
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb1 {
+            instructions: [
+              const { dest: %r4, value: int_literal(1) },
+              literal.materialize { dest: %r5, value: %r4, target: Int },
+              var.use { dest: %r3, var: $v1, mode: copy },
+              binary { op: add, dest: %r1, a: %r3, b: %r5, resolved: absent, raises: absent }
+            ],
+            terminator: jump { target: bb2 }
+          },
+          bb2 {
+            instructions: [
+              var.store { var: $v2, src: %r1, binding_type: present(Int), in_place: false }
+            ],
+            terminator: jump { target: bb3 }
+          },
+          bb3 {
+            instructions: [
+              const { dest: %r8, value: int_literal(1) },
+              literal.materialize { dest: %r9, value: %r8, target: Int },
+              var.use { dest: %r7, var: $v2, mode: copy },
+              binary { op: add, dest: %r2, a: %r7, b: %r9, resolved: absent, raises: absent }
+            ],
+            terminator: jump { target: bb4 }
+          },
+          bb4 {
+            instructions: [
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      },
+      fn {
+        name: chain,
+        registers: 13,
+        vars: 4,
+        var_names: [x, "x$inline1", "x$inline1$inline1", "x$inline2$inline1"],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: Int }, var_type { var: $v3, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: IntLiteral }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r10, type: IntLiteral }, reg_type { reg: %r11, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 483, end: 484, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 477, end: 485, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 477, end: 485, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 477, end: 485, origin: absent }) }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 477, end: 485, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 477, end: 485, origin: absent }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 477, end: 485, origin: absent }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 477, end: 485, origin: absent }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 477, end: 485, origin: absent }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 477, end: 485, origin: absent }) }, reg_loc { reg: %r11, location: present(loc { file: file0, start: 477, end: 485, origin: absent }) }, reg_loc { reg: %r12, location: present(loc { file: file0, start: 477, end: 485, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              var.store { var: $v1, src: %r0, binding_type: present(Int), in_place: false }
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb1 {
+            instructions: [
+              var.use { dest: %r2, var: $v1, mode: copy },
+              var.store { var: $v2, src: %r2, binding_type: present(Int), in_place: false }
+            ],
+            terminator: jump { target: bb2 }
+          },
+          bb2 {
+            instructions: [
+              const { dest: %r6, value: int_literal(1) },
+              literal.materialize { dest: %r7, value: %r6, target: Int },
+              var.use { dest: %r5, var: $v2, mode: copy },
+              binary { op: add, dest: %r3, a: %r5, b: %r7, resolved: absent, raises: absent }
+            ],
+            terminator: jump { target: bb3 }
+          },
+          bb3 {
+            instructions: [
+              var.store { var: $v3, src: %r3, binding_type: present(Int), in_place: false }
+            ],
+            terminator: jump { target: bb4 }
+          },
+          bb4 {
+            instructions: [
+              const { dest: %r10, value: int_literal(1) },
+              literal.materialize { dest: %r11, value: %r10, target: Int },
+              var.use { dest: %r9, var: $v3, mode: copy },
+              binary { op: add, dest: %r1, a: %r9, b: %r11, resolved: absent, raises: absent }
+            ],
+            terminator: jump { target: bb5 }
+          },
+          bb5 {
+            instructions: [
+            ],
+            terminator: jump { target: bb6 }
+          },
+          bb6 {
+            instructions: [
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      }
+  ]

@@ -21,6 +21,7 @@ pub use dead_symbols::{ELIMINATE_DEAD_SYMBOLS, eliminate_dead_symbols};
 use drops::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use field_drops::*;
+pub use inline_parametric::{INLINE_PARAMETRIC, inline_parametric, is_inlined_before_elaboration};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use interior::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
@@ -38,8 +39,8 @@ use moves::*;
 pub use opt::{OptError, opt};
 pub use post_elaboration::{POST_ELABORATION_PIPELINE, post_elaborate_program};
 pub use pre_elaboration::{
-    BodyPass, ELABORATE_DROPS, LOWER_CONTROL_FLOW, PIPELINE, Pass, ProgramPass,
-    finish_package_body, finish_package_body_without_pipeline, pass_named, pass_names,
+    BodyPass, CallGraphPass, Callees, ELABORATE_DROPS, LOWER_CONTROL_FLOW, PIPELINE, Pass,
+    ProgramPass, finish_package_body, finish_package_body_without_pipeline, pass_named, pass_names,
     pre_elaborate_program, run_pipeline,
 };
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
@@ -229,6 +230,7 @@ mod dead_symbols;
 mod drops;
 mod field_drops;
 mod fold;
+mod inline_parametric;
 mod interior;
 mod loans;
 mod moves;

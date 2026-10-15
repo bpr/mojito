@@ -629,6 +629,52 @@ pub fn for_each_instruction_slot_mut(
     }
 }
 
+/// Renumber every slot `blocks` name: each instruction's
+/// ([`for_each_instruction_slot_mut`]), a `try`'s handler binding and
+/// cleanup, every region's, and each cleanup list a terminator carries.
+pub fn renumber_block_slots(blocks: &mut [MirBlock], renumber: &dyn Fn(VarId) -> VarId) {
+    for block in blocks {
+        for instruction in &mut block.instrs {
+            for_each_instruction_slot_mut(instruction, &mut |var| *var = renumber(*var));
+            if let MirInstr::Try {
+                handler, cleanup, ..
+            } = instruction
+            {
+                if let Some((Some(slot), _)) = handler {
+                    *slot = renumber(*slot);
+                }
+                for var in cleanup {
+                    *var = renumber(*var);
+                }
+            }
+            for region in instruction_regions_mut(instruction) {
+                renumber_block_slots(region, renumber);
+            }
+        }
+        match &mut block.term {
+            MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } => {
+                for var in cleanup {
+                    *var = renumber(*var);
+                }
+            }
+            MirTerm::ComptimeFor { .. }
+            | MirTerm::Jump(_)
+            | MirTerm::Branch { .. }
+            | MirTerm::ComptimeBranch { .. }
+            | MirTerm::Return(_)
+            | MirTerm::TryYield
+            | MirTerm::Yield(_)
+            | MirTerm::ElifCond(_)
+            | MirTerm::Break { .. }
+            | MirTerm::Continue { .. }
+            | MirTerm::ComptimeYield(_)
+            | MirTerm::ComptimeBreak
+            | MirTerm::ComptimeContinue
+            | MirTerm::Unreachable => {}
+        }
+    }
+}
+
 /// The capture accesses an instruction records: static ownership facts
 /// whose roots name the same slots the body addresses.
 fn capture_accesses(instruction: &MirInstr) -> &[MirCaptureAccess] {

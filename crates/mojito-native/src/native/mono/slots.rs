@@ -7,8 +7,8 @@ use std::collections::BTreeSet;
 
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
-    MirBlock, MirFunction, MirInstr, MirTerm, for_each_instruction_slot_mut, instruction_regions,
-    instruction_regions_mut, instruction_slots,
+    MirBlock, MirFunction, MirInstr, MirTerm, instruction_regions, instruction_slots,
+    renumber_block_slots,
 };
 
 /// Remove the `retired` slots from `function`, none of them a parameter nor
@@ -52,58 +52,11 @@ pub(super) fn addressed_slots<'a>(
 }
 
 pub(super) fn renumber_slots(function: &mut MirFunction, renumber: &dyn Fn(VarId) -> VarId) {
-    renumber_blocks(&mut function.blocks, renumber);
+    renumber_block_slots(&mut function.blocks, renumber);
     for (_, origin) in function.spans.0.values_mut() {
         if let Some(var) = origin {
             *var = renumber(*var);
         }
-    }
-}
-
-pub(super) fn renumber_blocks(blocks: &mut [MirBlock], renumber: &dyn Fn(VarId) -> VarId) {
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            renumber_instruction(instruction, renumber);
-        }
-        match &mut block.term {
-            MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } => {
-                for var in cleanup {
-                    *var = renumber(*var);
-                }
-            }
-            MirTerm::ComptimeFor { .. }
-            | MirTerm::Jump(_)
-            | MirTerm::Branch { .. }
-            | MirTerm::ComptimeBranch { .. }
-            | MirTerm::Return(_)
-            | MirTerm::TryYield
-            | MirTerm::Yield(_)
-            | MirTerm::ElifCond(_)
-            | MirTerm::Break { .. }
-            | MirTerm::Continue { .. }
-            | MirTerm::ComptimeYield(_)
-            | MirTerm::ComptimeBreak
-            | MirTerm::ComptimeContinue
-            | MirTerm::Unreachable => {}
-        }
-    }
-}
-
-fn renumber_instruction(instruction: &mut MirInstr, renumber: &dyn Fn(VarId) -> VarId) {
-    for_each_instruction_slot_mut(instruction, &mut |var| *var = renumber(*var));
-    if let MirInstr::Try {
-        handler, cleanup, ..
-    } = instruction
-    {
-        if let Some((Some(slot), _)) = handler {
-            *slot = renumber(*slot);
-        }
-        for var in cleanup {
-            *var = renumber(*var);
-        }
-    }
-    for region in instruction_regions_mut(instruction) {
-        renumber_blocks(region, renumber);
     }
 }
 

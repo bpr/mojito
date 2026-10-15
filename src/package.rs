@@ -946,10 +946,16 @@ mod tests {
             name: &str,
             function: crate::mir::MirFunction,
             declarations: &MirDeclarations,
+            bodies: &PackageBodies,
             findings: &mut Vec<String>,
         ) -> crate::mir::MirFunction {
-            let function =
-                crate::analysis::finish_package_body(name, function, declarations, findings);
+            let function = crate::analysis::finish_package_body(
+                name,
+                function,
+                declarations,
+                bodies,
+                findings,
+            );
             findings.push(format!("probe finding in `{name}`"));
             function
         }

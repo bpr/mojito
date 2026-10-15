@@ -84,7 +84,10 @@ impl CompiledProgram {
             };
             if self.pre_elaboration {
                 let _passes = timing::span("pre_elaboration");
-                crate::analysis::pre_elaborate_program(&mut mir);
+                crate::analysis::pre_elaborate_program(
+                    &mut mir,
+                    self.package.as_deref().map(|package| &package.bodies),
+                );
             }
             let _verify = timing::span("mir.verify.post_drop");
             let findings = crate::mir::verify::verify(&mir);

@@ -1609,3 +1609,32 @@ generators read their parameters, so no library instance merges; the
 compile benchmarks do not move. The pin removes more: a parameter only
 forwarded to a removed one (R907), one only a nested function's scope
 carries (R908), and a static method's unread owner parameter (R909).
+
+## `nodebug` callees inline before elaboration (2026-10-14, R784)
+
+`inline-parametric`, upstream's `InlineParametric`, opens the
+pre-elaboration pipeline's second round and replaces a call to an
+`@always_inline("nodebug")` or `@always_inline("builtin")` callee that names
+none of its own compile-time parameters with the callee's finished body
+(`docs/architecture.md` §Pre-Elaboration Pipeline). Its stage fixture,
+`assets/ok/always_inline_nodebug_calls.mojo`, debug binary, with the pass
+and without it (the rest of the pipeline on in both):
+
+| | without | with | change |
+|---|---:|---:|---:|
+| `concrete_functions` | 88 | 77 | −11 |
+| `concrete_instructions` | 1 935 | 1 969 | +34 |
+| `generator_instances` | 36 | 36 | 0 |
+| `generator_instance_instructions` | 445 | 457 | +12 |
+
+The eleven inlined callees leave the concrete program, since nothing calls
+them any more; each inlined copy costs a few parameter bindings, and the
+two instances of `generic_sum` each hold an inlined `add_one` and `square`.
+No instance count falls: a generic callee is not yet inlined (R916).
+
+The corpus does not move. No fixture under `assets/` or `benchmarks/`, and
+nothing in the bundled library, marks a function `nodebug` or `builtin`
+apart from the stage fixture, so the pass rewrites no other body; the
+corpus `scripts/instantiation-report` row waits for the nightly report. The
+pass's effect on the corpus arrives with the bundled library's markings
+(R786, R913).

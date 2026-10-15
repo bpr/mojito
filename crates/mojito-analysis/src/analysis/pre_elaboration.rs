@@ -5,17 +5,23 @@
 //!
 //! It runs at two seams: over a program's own bodies
 //! ([`pre_elaborate_program`]), where a [`ProgramPass`] runs once over the
-//! whole program and a [`BodyPass`] over each body, and over each imported
-//! package body as it is finished ([`finish_package_body`]), where only the
-//! body passes run. Never per instance.
+//! whole program, a [`BodyPass`] over each body, and a [`CallGraphPass`]
+//! over each body callees first, and over each imported package body as it
+//! is finished ([`finish_package_body`]), where the body and call-graph
+//! passes run. Never per instance.
 
 use super::canonicalize::CANONICALIZE;
 use super::dead_symbols::ELIMINATE_DEAD_SYMBOLS;
 use super::elaborate_drops_function;
+use super::inline_parametric::INLINE_PARAMETRIC;
 use super::sccp::SCCP;
 use super::unused_params::REMOVE_UNUSED_PARAMS;
 use mojito_common::timing;
-use mojito_mir::mir::{MirDeclarations, MirFunction, MirProgram};
+use mojito_mir::mir::text::package::PackageBodies;
+use mojito_mir::mir::{
+    MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirProgram, instruction_regions,
+};
+use std::collections::{HashMap, HashSet};
 
 /// One pre-elaboration pass over a parametric body whose drops are
 /// inserted.
@@ -36,10 +42,68 @@ pub struct ProgramPass {
     pub run: fn(&mut MirProgram),
 }
 
+/// One pre-elaboration pass over a body that reads the finished bodies of
+/// its callees, as MLIR's inliner walks the call graph: upstream's
+/// `InlineParametric`.
+///
+/// A seam runs it over each body after every callee the body calls through
+/// a callee it `follows`, so the callee arrives already rewritten. A callee
+/// on a cycle of such calls has no body to read ([`Callees::body`]).
+pub struct CallGraphPass {
+    /// The pass's name, as the verifier's findings after it spell it.
+    pub name: &'static str,
+    /// Whether the pass reads the body of a callee so declared: the calls
+    /// to one are the edges of the call graph it walks.
+    pub follows: fn(&MirFunctionDeclaration) -> bool,
+    /// Rewrite the body, and say whether it changed, as [`BodyPass::run`].
+    pub run: fn(&str, &mut MirFunction, &MirDeclarations, &Callees<'_>) -> bool,
+}
+
+/// The finished callee bodies a [`CallGraphPass`] reads: the program's own,
+/// at the program seam, and the imported package's.
+pub struct Callees<'a> {
+    program: Option<ProgramCallees<'a>>,
+    package: Option<&'a PackageBodies>,
+    declarations: &'a MirDeclarations,
+    follows: fn(&MirFunctionDeclaration) -> bool,
+}
+
+impl Callees<'_> {
+    /// The finished body of the callee `name`, when the pass follows it and
+    /// it lies on no cycle of followed calls.
+    ///
+    /// A program callee comes rewritten, since the seam runs callees first.
+    /// A package callee is finished on first use, which runs the pass over
+    /// it in turn; a package body never calls a program body, so no cycle
+    /// crosses the seam.
+    pub fn body(&self, name: &str) -> Option<&MirFunction> {
+        if let Some(program) = &self.program
+            && let Some(&row) = program.rows.get(name)
+        {
+            return (program.followed.contains(&row) && !program.cyclic.contains(&row))
+                .then(|| &program.functions[row].1);
+        }
+        let package = self.package?;
+        if !package.contains(name) || !self.declarations.function(name).is_some_and(self.follows) {
+            return None;
+        }
+        let (declarations, follows) = (self.declarations, self.follows);
+        if package.on_cycle(name, &|function| {
+            followed_callees(function, |callee| {
+                declarations.function(callee).is_some_and(follows)
+            })
+        }) {
+            return None;
+        }
+        package.get(name)
+    }
+}
+
 /// A registered pass, by the unit it rewrites.
 pub enum Pass {
     Program(ProgramPass),
     Body(BodyPass),
+    CallGraph(CallGraphPass),
 }
 
 impl Pass {
@@ -47,6 +111,7 @@ impl Pass {
         match self {
             Self::Program(pass) => pass.name,
             Self::Body(pass) => pass.name,
+            Self::CallGraph(pass) => pass.name,
         }
     }
 }
@@ -56,14 +121,16 @@ impl Pass {
 ///
 /// Upstream's first round runs `RemoveUnusedParams`, `EliminateDeadSymbols`,
 /// then `SROA`, `Mem2Reg`, and `Canonicalizer` on each generator; its second
-/// runs `SROA`, `Mem2Reg`, `SCCP`, and `Canonicalizer` again. Mojito has
-/// neither of the two scalar-replacement passes, and, as upstream does, runs
-/// `canonicalize` once in each round. It runs `remove-unused-params` once,
-/// last: a parameter only grows removable as the cleanup passes erase its
-/// reads, so the last run removes what upstream's runs remove together.
+/// opens with `InlineParametric`, then runs `SROA`, `Mem2Reg`, `SCCP`, and
+/// `Canonicalizer` again. Mojito has neither of the two scalar-replacement
+/// passes, and, as upstream does, runs `canonicalize` once in each round. It
+/// runs `remove-unused-params` once, last: a parameter only grows removable
+/// as the cleanup passes erase its reads, so the last run removes what
+/// upstream's runs remove together.
 pub const PIPELINE: &[Pass] = &[
     Pass::Program(ELIMINATE_DEAD_SYMBOLS),
     Pass::Body(CANONICALIZE),
+    Pass::CallGraph(INLINE_PARAMETRIC),
     Pass::Body(SCCP),
     Pass::Body(CANONICALIZE),
     Pass::Body(REMOVE_UNUSED_PARAMS),
@@ -113,9 +180,11 @@ pub fn pass_names() -> impl Iterator<Item = &'static str> {
         .filter(move |name| seen.insert(*name))
 }
 
-/// Run [`PIPELINE`]'s body passes over the body `name`. In debug builds
-/// the body is verified after each pass, and each finding, naming the pass,
-/// goes to `findings`.
+/// Run [`PIPELINE`]'s body and call-graph passes over the body `name` of
+/// the package `bodies`.
+///
+/// In debug builds the body is verified after each pass, and each finding,
+/// naming the pass, goes to `findings`.
 ///
 /// A program pass has nothing to do here: a package body is finished only
 /// when the elaborator first reaches it, so no finished body is dead.
@@ -123,24 +192,52 @@ pub fn run_pipeline(
     name: &str,
     function: &mut MirFunction,
     declarations: &MirDeclarations,
+    bodies: &PackageBodies,
     findings: &mut Vec<String>,
 ) {
     for pass in PIPELINE {
-        if let Pass::Body(pass) = pass {
-            run_body_pass(pass, name, function, declarations, findings);
+        match pass {
+            Pass::Program(_) => {}
+            Pass::Body(pass) => run_body_pass(pass, name, function, declarations, findings),
+            Pass::CallGraph(pass) => {
+                let callees = Callees {
+                    program: None,
+                    package: Some(bodies),
+                    declarations,
+                    follows: pass.follows,
+                };
+                if (pass.run)(name, function, declarations, &callees) {
+                    verify_after(pass.name, name, function, declarations, findings);
+                }
+            }
         }
     }
 }
 
-/// The program seam: [`PIPELINE`] over `program`, each program pass once
-/// and each body pass over every function but `__toplevel__`, its findings
-/// folded into `invariant_errors`.
-pub fn pre_elaborate_program(program: &mut MirProgram) {
+/// The program seam: [`PIPELINE`] over `program`, its findings folded into
+/// `invariant_errors`.
+///
+/// Each program pass runs once, each body pass over every function but
+/// `__toplevel__`, and each call-graph pass over the same functions callees
+/// first, reading callees the program does not define from `package`.
+pub fn pre_elaborate_program(program: &mut MirProgram, package: Option<&PackageBodies>) {
     for pass in PIPELINE {
         match pass {
             Pass::Program(pass) => {
                 let _pass = timing::span(pass.name);
                 (pass.run)(program);
+            }
+            Pass::CallGraph(pass) => {
+                let _pass = timing::span(pass.name);
+                for row in run_call_graph_pass(pass, program, package) {
+                    let MirProgram {
+                        functions,
+                        declarations,
+                        invariant_errors,
+                    } = &mut *program;
+                    let (name, function) = &functions[row];
+                    verify_after(pass.name, name, function, declarations, invariant_errors);
+                }
             }
             Pass::Body(pass) => {
                 let _pass = timing::span(pass.name);
@@ -168,10 +265,11 @@ pub fn finish_package_body(
     name: &str,
     function: MirFunction,
     declarations: &MirDeclarations,
+    bodies: &PackageBodies,
     findings: &mut Vec<String>,
 ) -> MirFunction {
     let mut function = elaborate_drops_function(name, function, declarations);
-    run_pipeline(name, &mut function, declarations, findings);
+    run_pipeline(name, &mut function, declarations, bodies, findings);
     function
 }
 
@@ -180,6 +278,7 @@ pub fn finish_package_body_without_pipeline(
     name: &str,
     function: MirFunction,
     declarations: &MirDeclarations,
+    _bodies: &PackageBodies,
     _findings: &mut Vec<String>,
 ) -> MirFunction {
     elaborate_drops_function(name, function, declarations)
@@ -188,6 +287,71 @@ pub fn finish_package_body_without_pipeline(
 /// A verifier finding after the pass `pass` ran, naming the pass.
 pub(super) fn pass_finding(pass: &str, finding: &str) -> String {
     format!("after pre-elaboration pass `{pass}`: {finding}")
+}
+
+/// Run the call-graph pass `pass` over every function of `program` but
+/// `__toplevel__`, each after the callees it follows, and return the rows
+/// of the functions it changed.
+///
+/// The order is the call graph's strongly connected components bottom-up,
+/// as MLIR's inliner walks them; a function in a component of more than
+/// one, or calling itself, is no callee's body ([`Callees::body`]).
+pub(super) fn run_call_graph_pass(
+    pass: &CallGraphPass,
+    program: &mut MirProgram,
+    package: Option<&PackageBodies>,
+) -> Vec<usize> {
+    let MirProgram {
+        functions,
+        declarations,
+        ..
+    } = program;
+    let rows: HashMap<String, usize> = functions
+        .iter()
+        .enumerate()
+        .map(|(row, (name, _))| (name.clone(), row))
+        .collect();
+    let followed: HashSet<usize> = declarations
+        .functions
+        .iter()
+        .filter(|declaration| (pass.follows)(declaration))
+        .filter_map(|declaration| rows.get(&declaration.lowered_name).copied())
+        .collect();
+    let (order, cyclic) = bottom_up_order(functions, &rows, &followed);
+    let mut changed = Vec::new();
+    for row in order {
+        if functions[row].0 == "__toplevel__" {
+            continue;
+        }
+        let mut function = std::mem::take(&mut functions[row].1);
+        let callees = Callees {
+            program: Some(ProgramCallees {
+                functions,
+                rows: &rows,
+                followed: &followed,
+                cyclic: &cyclic,
+            }),
+            package,
+            declarations,
+            follows: pass.follows,
+        };
+        if (pass.run)(&functions[row].0, &mut function, declarations, &callees) {
+            changed.push(row);
+        }
+        functions[row].1 = function;
+    }
+    changed.sort_unstable();
+    changed
+}
+
+/// The program's own bodies, as a [`CallGraphPass`] reads them.
+struct ProgramCallees<'a> {
+    functions: &'a [(String, MirFunction)],
+    rows: &'a HashMap<String, usize>,
+    /// The rows of the functions the pass follows.
+    followed: &'a HashSet<usize>,
+    /// The rows of the followed functions on a cycle of followed calls.
+    cyclic: &'a HashSet<usize>,
 }
 
 /// Passes outside [`PIPELINE`] that [`pass_named`] still answers.
@@ -202,13 +366,142 @@ fn run_body_pass(
     declarations: &MirDeclarations,
     findings: &mut Vec<String>,
 ) {
-    if (pass.run)(name, function, declarations) && cfg!(debug_assertions) {
+    if (pass.run)(name, function, declarations) {
+        verify_after(pass.name, name, function, declarations, findings);
+    }
+}
+
+/// In debug builds, verify the body `name` the pass `pass` changed, each
+/// finding, naming the pass, going to `findings`.
+fn verify_after(
+    pass: &str,
+    name: &str,
+    function: &MirFunction,
+    declarations: &MirDeclarations,
+    findings: &mut Vec<String>,
+) {
+    if cfg!(debug_assertions) {
         findings.extend(
             mojito_mir::mir::verify::verify_function_in(name, function, declarations)
                 .into_iter()
-                .map(|finding| pass_finding(pass.name, &finding)),
+                .map(|finding| pass_finding(pass, &finding)),
         );
     }
+}
+
+/// The callees `function` calls directly, by a call or a resolved method
+/// call, that `followed` accepts, each once, in its regions too.
+fn followed_callees(function: &MirFunction, followed: impl Fn(&str) -> bool) -> Vec<String> {
+    fn walk(blocks: &[mojito_mir::mir::MirBlock], out: &mut Vec<String>) {
+        for block in blocks {
+            for instruction in &block.instrs {
+                match instruction {
+                    MirInstr::Call { func, .. } => out.push(func.0.clone()),
+                    MirInstr::MethodCall {
+                        resolved: Some(target),
+                        ..
+                    } => out.push(target.clone()),
+                    _ => {}
+                }
+                for region in instruction_regions(instruction) {
+                    walk(region, out);
+                }
+            }
+        }
+    }
+    let mut callees = Vec::new();
+    walk(&function.blocks, &mut callees);
+    let mut seen = HashSet::new();
+    callees.retain(|callee| followed(callee) && seen.insert(callee.clone()));
+    callees
+}
+
+/// The rows of `functions` callees first along the calls to `followed`
+/// rows (Tarjan's strongly connected components, which come out bottom-up),
+/// and the followed rows on a cycle of such calls.
+fn bottom_up_order(
+    functions: &[(String, MirFunction)],
+    rows: &HashMap<String, usize>,
+    followed: &HashSet<usize>,
+) -> (Vec<usize>, HashSet<usize>) {
+    struct Tarjan<'a> {
+        edges: Vec<Vec<usize>>,
+        index: Vec<Option<usize>>,
+        lowlink: Vec<usize>,
+        on_stack: Vec<bool>,
+        stack: Vec<usize>,
+        next: usize,
+        order: Vec<usize>,
+        cyclic: HashSet<usize>,
+        followed: &'a HashSet<usize>,
+    }
+    impl Tarjan<'_> {
+        fn visit(&mut self, row: usize) {
+            self.index[row] = Some(self.next);
+            self.lowlink[row] = self.next;
+            self.next += 1;
+            self.stack.push(row);
+            self.on_stack[row] = true;
+            for callee in self.edges[row].clone() {
+                match self.index[callee] {
+                    None => {
+                        self.visit(callee);
+                        self.lowlink[row] = self.lowlink[row].min(self.lowlink[callee]);
+                    }
+                    Some(index) if self.on_stack[callee] => {
+                        self.lowlink[row] = self.lowlink[row].min(index);
+                    }
+                    Some(_) => {}
+                }
+            }
+            if Some(self.lowlink[row]) == self.index[row] {
+                let mut component = Vec::new();
+                while let Some(member) = self.stack.pop() {
+                    self.on_stack[member] = false;
+                    component.push(member);
+                    if member == row {
+                        break;
+                    }
+                }
+                if component.len() > 1 || self.edges[row].contains(&row) {
+                    self.cyclic.extend(
+                        component
+                            .iter()
+                            .filter(|member| self.followed.contains(member)),
+                    );
+                }
+                self.order.extend(component);
+            }
+        }
+    }
+    let edges = functions
+        .iter()
+        .map(|(_, function)| {
+            followed_callees(function, |callee| {
+                rows.get(callee).is_some_and(|row| followed.contains(row))
+            })
+            .iter()
+            .map(|callee| rows[callee])
+            .collect()
+        })
+        .collect();
+    let mut tarjan = Tarjan {
+        edges,
+        index: vec![None; functions.len()],
+        lowlink: vec![0; functions.len()],
+        on_stack: vec![false; functions.len()],
+        stack: Vec::new(),
+        next: 0,
+        order: Vec::with_capacity(functions.len()),
+        cyclic: HashSet::new(),
+        followed,
+    };
+    for row in 0..functions.len() {
+        if tarjan.index[row].is_none() {
+            tarjan.visit(row);
+        }
+    }
+    (tarjan.order, tarjan.cyclic)
 }
 
 #[cfg(test)]
@@ -228,6 +521,7 @@ mod tests {
         assert!(pass_named("canonicalize").is_some());
         assert!(pass_named("sccp").is_some());
         assert!(pass_named("remove-unused-params").is_some());
+        assert!(pass_named("inline-parametric").is_some());
         assert!(pass_named("lower-control-flow").is_some());
         assert!(pass_named("no-such-pass").is_none());
     }

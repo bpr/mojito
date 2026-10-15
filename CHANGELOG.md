@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The pre-elaboration pipeline's second round now opens with
+  `inline-parametric`, upstream's `InlineParametric` (R784): a call to an
+  `@always_inline("nodebug")` or `@always_inline("builtin")` function that
+  names none of its own compile-time parameters, called positionally into
+  `read` or owned parameters, non-raising and value-returning, is replaced
+  by the callee's finished body, its registers at the call's location, at
+  both the program seam and the package seam. A callee on a cycle of such
+  calls stays a call. Program output is unchanged; the MIR text and package
+  formats are unchanged.
 - A function's MIR declaration now records the inline level its decorator
   names, as upstream's function op does (R783): `@always_inline` is
   `always`, `@always_inline("nodebug")` `nodebug`, `@always_inline("builtin")`

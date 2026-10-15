@@ -4889,15 +4889,17 @@ Upstream runs a pass pipeline on parametric IR after destructor insertion and
 before the elaborator. Mojito's is `analysis::PIPELINE`
 (`crates/mojito-analysis/src/analysis/pre_elaboration.rs`), an ordered list of
 `Pass` rows: a `ProgramPass` rewrites the whole program once and may remove
-functions, as upstream's module passes do, and a `BodyPass` rewrites each
-drop-elaborated parametric body. `docs/pre-elaboration-optimization-plan.md`
+functions, as upstream's module passes do, a `BodyPass` rewrites each
+drop-elaborated parametric body, and a `CallGraphPass` rewrites each body
+after its callees, reading their finished bodies through `Callees`, as
+MLIR's inliner walks the call graph. `docs/pre-elaboration-optimization-plan.md`
 stages the passes that fill it. The list follows upstream's rounds as the
 pinned compiler's `--mlir-timing` report shows them: the first round runs
 `EliminateDeadSymbols` and then a `Canonicalizer` on each generator, the
-second runs `SCCP` and a `Canonicalizer` again, so `PIPELINE` is
-`eliminate-dead-symbols`, `canonicalize`, `sccp`, `canonicalize`, then
-`remove-unused-params`, which upstream runs at the head of each round and
-Mojito runs once, last.
+second opens with `InlineParametric` and runs `SCCP` and a `Canonicalizer`
+again, so `PIPELINE` is `eliminate-dead-symbols`, `canonicalize`,
+`inline-parametric`, `sccp`, `canonicalize`, then `remove-unused-params`,
+which upstream runs at the head of each round and Mojito runs once, last.
 `pass_names` yields a pass that runs twice once, and both runs of
 `canonicalize` count into one `--timings` span.
 
@@ -5004,6 +5006,40 @@ Mojito runs once, last.
   Its `--timings` counters are `folded_constants`, `folded_branches`, `threaded_branches`,
   `folded_successors`, `merged_blocks`, `erased_blocks`,
   `forwarded_copies`, and `erased_instructions`.
+- **`inline-parametric` opens the second round**
+  (`analysis::INLINE_PARAMETRIC`, `analysis/inline_parametric.rs`, R784),
+  upstream's `InlineParametric`. It follows the callees whose declaration's
+  `InlineLevel` is `NoDebug` or `Builtin` (`is_inlined_before_elaboration`),
+  which the pin inlines at any size, and replaces a call to one with the
+  callee's finished body, drops already inserted. The callee's blocks are
+  appended to the block list holding the call, the function's or a `try`
+  part's, with its registers and slots moved past the caller's
+  (`mir::renumber_block_slots`); its slot names gain `$inline{n}`, so no
+  binder name or `self` matches them. The call's block binds each owned
+  parameter, and each `read` parameter of a scalar type
+  (`mir::has_no_destructor`), with a `var.store` of the argument into the
+  parameter's fresh slot, and every other `read` parameter is the caller's
+  place the argument was `place.load`ed from, composed into each of the
+  callee's places rooted at it, as upstream substitutes the borrowed
+  address; a parameter bound so that the callee names other than as a
+  place's root keeps the call. The callee's one returned register becomes
+  the call's; several returns store to a `$inline{n}$result` slot the
+  call's register moves from, and a `None` result is a constant. What
+  followed the call moves to a new block every return jumps to, and an
+  `in_place` binding of the call's result drops the flag. Every inlined
+  register takes the call's location with no origin slot, which is what
+  `nodebug` asks for and keeps the native debug attach's per-function call
+  correlation in the caller's file. The callee must name none of its own
+  compile-time parameters (no `param_decls`, no enclosing body or region
+  binders, and a receiver struct without parameters), be called
+  positionally into every `read` or owned parameter with no capture
+  accesses, not raise, return a value rather than a reference, and hold
+  plain control flow with no `try`, region op, or closure; any other call
+  stays a call. A callee on a cycle of followed calls is never inlined: at
+  the program seam the cycles are the strongly connected components of the
+  program's followed calls, and at the package seam `PackageBodies::on_cycle`
+  decides one from lowered bodies, memoized by row, so a finishing hook
+  never re-enters the body it finishes.
 - **`sccp` runs between the two `canonicalize` runs** (`analysis::SCCP`,
   `analysis/sccp.rs`, R781), upstream's `SCCP` (MLIR's sparse conditional
   constant propagation). Each register takes a lattice value, unknown, one
@@ -5097,16 +5133,25 @@ Mojito runs once, last.
   imported package's finishing hook (`finish_package_body`, a
   `mir::text::package::BodyFinish`) runs it after `elaborate_drops_function`
   as each body is first materialized. The pipeline runs once per generator,
-  never per instance.
+  never per instance. At the program seam a call-graph pass runs over the
+  program's bodies in the bottom-up order of the strongly connected
+  components of the calls it follows (`run_call_graph_pass`), each callee
+  rewritten before its callers; a callee the program does not define comes
+  from the imported package (`pre_elaborate_program`'s `package`), finished
+  on first use. The finishing hook is given the package's bodies, so a
+  package body's callees come finished from the same package; a package
+  body never calls a program body, so no cycle crosses the seam.
 - **Where it does not run.** A package build serializes pre-drop MIR, so it
-  never reaches the program seam; its bodies get the body passes at import.
+  never reaches the program seam; its bodies get the body and call-graph
+  passes at import.
   The package seam runs no program pass: a package body is finished only when
   the elaborator first reaches it, so no finished body is dead. A
   serialized artifact is already past the seam and is not run again.
   `__toplevel__` is skipped, as ASAP drops skip it, so its slots keep the
   values `bindings()` reports.
 - **Verification.** In debug builds each body is verified after every body
-  pass (`run_pipeline`), each finding naming the pass, into `invariant_errors` or
+  or call-graph pass that changed it (`run_pipeline`), each finding naming
+  the pass, into `invariant_errors` or
   the package body's verdict (`PackageBodies::findings`), which the
   elaborator refuses when it materializes the body. The post-drop verify
   after the seam runs in every build.
@@ -5118,7 +5163,8 @@ Mojito runs once, last.
   each body. `analysis::opt`,
   the `mlir-opt` analogue behind `mojito opt [--pass NAME]… [FILE]`, loads a
   MIR artifact, runs the named passes in order (a program pass over the
-  program, a body pass over every body but `__toplevel__`), and verifies the
+  program, a body pass over every body but `__toplevel__`, a call-graph pass
+  over the same bodies callees first, with no package), and verifies the
   whole program after each pass in every build. `tests/mir_pass_test.rs` pins each case under
   `tests/mir_passes/<pass>/` by its `functions:` section
   (`mir::text::disassemble_functions`), so a format bump breaks no expected

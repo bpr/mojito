@@ -74,6 +74,23 @@ pub fn unread_parameters(
     unread
 }
 
+/// A compiler-known scalar, whose drop runs no code.
+pub fn has_no_destructor(ty: &Ty) -> bool {
+    matches!(
+        ty.kind(),
+        TyKind::Int
+            | TyKind::UInt
+            | TyKind::Bool
+            | TyKind::Float64
+            | TyKind::StringLiteral
+            | TyKind::None
+            | TyKind::IntLiteral
+            | TyKind::FloatLiteral
+            | TyKind::Dtype
+            | TyKind::Simd { .. }
+    )
+}
+
 fn is_callable_value(decl: &ParamDecl) -> bool {
     matches!(
         decl,
@@ -175,22 +192,6 @@ impl SlotReads<'_> {
             self.reads.insert((*name).to_string());
         }
     }
-}
-
-/// A compiler-known scalar, whose drop runs no code.
-fn has_no_destructor(ty: &Ty) -> bool {
-    matches!(
-        ty.kind(),
-        TyKind::Int
-            | TyKind::UInt
-            | TyKind::Bool
-            | TyKind::StringLiteral
-            | TyKind::None
-            | TyKind::IntLiteral
-            | TyKind::FloatLiteral
-            | TyKind::Dtype
-            | TyKind::Simd { .. }
-    )
 }
 
 /// The serializer [`unread_parameters`] walks a value with, looking for the

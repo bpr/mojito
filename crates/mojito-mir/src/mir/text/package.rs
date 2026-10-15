@@ -107,16 +107,21 @@ pub struct PackageBodies {
     units: Mutex<HashMap<usize, Arc<OnceLock<LoweredUnit>>>>,
     /// Each function table row's body, once finished.
     decoded: Vec<OnceLock<FinishedBody>>,
+    /// Whether each row's function lies on a cycle of the calls
+    /// [`Self::on_cycle`] was asked about, once answered.
+    cycles: Mutex<HashMap<usize, bool>>,
     finish: Option<BodyFinish>,
 }
 
 /// What an importer does to a lowered body before using it: insert its
 /// drops and run the pre-elaboration pipeline.
 ///
-/// It is given the body's name and the package's declarations, and pushes
-/// the findings of its own verification to the vector. A plain function,
-/// since the phases it runs sit above MIR.
-pub type BodyFinish = fn(&str, MirFunction, &MirDeclarations, &mut Vec<String>) -> MirFunction;
+/// It is given the body's name, the package's declarations, and the
+/// package's bodies, whose finished callees a pass may read, and pushes the
+/// findings of its own verification to the vector. A plain function, since
+/// the phases it runs sit above MIR.
+pub type BodyFinish =
+    fn(&str, MirFunction, &MirDeclarations, &PackageBodies, &mut Vec<String>) -> MirFunction;
 
 impl PackageBodies {
     /// The body of `name`, lowered and finished on first use, whether or
@@ -169,6 +174,51 @@ impl PackageBodies {
     pub fn finishing(mut self, finish: BodyFinish) -> Self {
         self.finish = Some(finish);
         self
+    }
+
+    /// Whether the function `name` reaches itself through the calls
+    /// `successors` lists of each body, as its unit lowers to it, and so
+    /// lies on a cycle of them; memoized by row.
+    ///
+    /// It reads lowered bodies, never finished ones, so the answer is the
+    /// same whichever body finishes first, and a finishing hook may ask it
+    /// of a callee before finishing that callee: a callee on no cycle never
+    /// reaches the body being finished.
+    pub fn on_cycle(&self, name: &str, successors: &dyn Fn(&MirFunction) -> Vec<String>) -> bool {
+        let Some(row) = self.package.body_row(name) else {
+            return false;
+        };
+        if let Some(&cyclic) = self
+            .cycles
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&row)
+        {
+            return cyclic;
+        }
+        let mut seen = std::collections::HashSet::new();
+        let mut pending = vec![name.to_string()];
+        let mut cyclic = false;
+        while let Some(next) = pending.pop() {
+            let Ok(function) = self.lowered(&next) else {
+                continue;
+            };
+            for callee in successors(&function) {
+                if callee == name {
+                    cyclic = true;
+                    pending.clear();
+                    break;
+                }
+                if self.contains(&callee) && seen.insert(callee.clone()) {
+                    pending.push(callee);
+                }
+            }
+        }
+        self.cycles
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(row, cyclic);
+        cyclic
     }
 
     /// Whether the package has a function `name`.
@@ -264,7 +314,7 @@ impl PackageBodies {
                 let view = self.view();
                 let function = {
                     let _finish = timing::span("package.body.finish");
-                    finish(name, function, &view.declarations, &mut findings)
+                    finish(name, function, &view.declarations, self, &mut findings)
                 };
                 let _verify = timing::span("package.body.verify");
                 findings.extend(crate::mir::verify::verify_function_in(
@@ -600,6 +650,7 @@ pub fn read_package(bytes: PackageBytes, root: &LibraryRoot) -> Result<Package, 
                 .collect(),
             modules,
             units: Mutex::new(HashMap::new()),
+            cycles: Mutex::new(HashMap::new()),
             package: declarations,
             finish: None,
         },

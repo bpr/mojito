@@ -239,3 +239,16 @@ fn pliron_debug_info_is_deterministic() {
         "two clean debug builds must be byte-identical"
     );
 }
+
+/// A `nodebug` callee inlined before elaboration brings its registers at
+/// the call's location, so the caller's line table still correlates with
+/// its MIR calls and nothing degrades.
+#[test]
+fn pliron_debug_inlined_nodebug_calls_degrade_nothing() {
+    let source = include_str!("../assets/ok/always_inline_nodebug_calls.mojo");
+    let module = native_compile(source);
+    assert_eq!(
+        module.debug_degradations().expect("debug attach"),
+        Vec::<String>::new()
+    );
+}

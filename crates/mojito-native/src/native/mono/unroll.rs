@@ -8,8 +8,8 @@ use super::*;
 use mojito_checked::checked::ComptimeSequence;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
-    MirBlockId, SpanTable, instruction_regs_mut, terminator_regs_mut, terminator_targets,
-    terminator_targets_mut,
+    MirBlockId, SpanTable, instruction_regs_mut, renumber_block_slots, terminator_regs_mut,
+    terminator_targets, terminator_targets_mut,
 };
 
 impl Specializer<'_> {
@@ -272,7 +272,7 @@ impl Specializer<'_> {
         let slots = fresh_slots(&addressed, tables, iteration);
         if !slots.is_empty() {
             let renumber = |var: VarId| slots.get(&var).copied().unwrap_or(var);
-            renumber_blocks(&mut blocks[first..], &renumber);
+            renumber_block_slots(&mut blocks[first..], &renumber);
             for register in registers.values() {
                 if let Some((_, Some(origin))) = tables.spans.0.get_mut(register) {
                     *origin = renumber(*origin);

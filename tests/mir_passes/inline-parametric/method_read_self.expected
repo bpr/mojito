@@ -1,0 +1,71 @@
+  functions: [
+      fn {
+        name: "Meter.reading",
+        registers: 4,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: Meter, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Meter, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 665, end: 675, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 678, end: 680, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 678, end: 680, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 665, end: 680, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r1, value: int_literal(10) },
+              literal.materialize { dest: %r2, value: %r1, target: Int },
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Meter, arguments: [] }), projections: [projection { op: field(value), type: Int }], type: present(Int), through: absent } },
+              binary { op: mul, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r3) }
+          }
+        ]
+      },
+      fn {
+        name: method_read_self,
+        registers: 6,
+        vars: 2,
+        var_names: [m, "self$inline1"],
+        params: 1,
+        param_types: [struct_type { name: Meter, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Meter, arguments: [] } }, var_type { var: $v1, type: struct_type { name: Meter, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: Meter, arguments: [] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 733, end: 734, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 733, end: 744, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 733, end: 744, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 733, end: 744, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 733, end: 744, origin: absent }) }, reg_loc { reg: %r5, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Meter, arguments: [] }), projections: [], type: present(struct_type { name: Meter, arguments: [] }), through: absent } }
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb1 {
+            instructions: [
+              const { dest: %r3, value: int_literal(10) },
+              literal.materialize { dest: %r4, value: %r3, target: Int },
+              place.load { dest: %r2, place: place { root: $v0, root_type: present(struct_type { name: Meter, arguments: [] }), projections: [projection { op: field(value), type: Int }], type: present(Int), through: absent } },
+              binary { op: mul, dest: %r1, a: %r2, b: %r4, resolved: absent, raises: absent }
+            ],
+            terminator: jump { target: bb2 }
+          },
+          bb2 {
+            instructions: [
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      }
+  ]

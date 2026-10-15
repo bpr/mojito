@@ -59,7 +59,7 @@ mod lower_expr;
 mod lower_stmt;
 mod node;
 mod param_uses;
-pub use param_uses::unread_parameters;
+pub use param_uses::{has_no_destructor, unread_parameters};
 mod symbols;
 pub use symbols::SymbolTable;
 

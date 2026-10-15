@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R915**.
+Next free ID: **R926**.
 
 ## Ordered Work
 
@@ -88,21 +88,146 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R783.
   - Model: Opus, Not Planned.
 
-- [ ] **R784 Generic bodies call `nodebug` inline functions instead of
-  holding their bodies**
+- [ ] **R915 MIR has no type visitor below the elaborator**
 
-  A call to an `@always_inline("nodebug")` function is kept as a call in
-  every instance, where upstream's `InlineParametric` inlines it into the
-  generator before elaboration.
-  - Inline only what upstream's restriction allows. Too much inlining here
-    multiplies the instances' size instead of cutting it.
-  - The callee's drops come with it, and each inlined instruction takes the
-    call site's span.
-  - Done when the pass runs at both seams, the differential is clean, the
-    heavy lane's debug-correlation premise holds, and the corpus effect is
-    recorded.
-  - Depends on R783, R779, R772, R775, R776.
-  - Model: Fable, Planned.
+  `inline-parametric` cannot substitute a callee's binders, because the only
+  walk over every type an instruction holds is `mono::substitute`'s, in
+  `mojito-native`, which `mojito-analysis` cannot depend on.
+  - Move the type-walking half of `substitute_instruction` into
+    `mojito-mir` as a `MirInstr` visitor over `&mut Ty`, places,
+    `GenericConstraint`, and `ComptimeSequence` included.
+  - The elaborator substitutes through it, so the move changes no output.
+  - Done when `mono::substitute` and the visitor share one walk and the
+    differential is clean.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R916 A generic `nodebug` callee is called, not inlined**
+
+  `inline-parametric` inlines only a callee that names none of its own
+  compile-time parameters, where the pin inlines a generic
+  `@always_inline("nodebug")` callee into its caller before elaboration.
+  - Bind the callee's binders to the call's `instantiated_args` and
+    `param_arg_regs` (`types::replace_parameters` over R915's visitor).
+  - Seed each value-parameter slot from its argument register or a
+    constant, and rename the slots binder names address (`k`, `Self`).
+  - This is the entry that removes instances: an inlined generic callee
+    is no longer instantiated per caller instance.
+  - Done when `scaled[k]` in `tests/mir_passes/inline-parametric/generic_kept.mir`
+    inlines and the corpus instance counts are recorded.
+  - Depends on R915.
+  - Model: Fable, Not Planned.
+
+- [ ] **R917 A `nodebug` method of a parametric struct, or a constructor,
+  is called, not inlined**
+
+  `inline-parametric` inlines a method only when its struct has no
+  parameters, and never a `Call` naming a struct, where the pin inlines
+  `Box[k].get` and `C[k](…)` marked `nodebug`.
+  - The owner's binders come from the receiver type or the constructed
+    type.
+  - A constructor call resolves to its `__init__`, whose `out self` is the
+    call's result.
+  - Done when both shapes inline and the differential is clean.
+  - Depends on R916.
+  - Model: Opus, Not Planned.
+
+- [ ] **R918 A `nodebug` call through a reference parameter is not
+  inlined**
+
+  `inline-parametric` keeps a call whose callee takes a `mut`, `ref`, or
+  `deinit` parameter, a `mut self`, or returns a reference, where the pin
+  inlines each.
+  - Bind the parameter's slot as a reference to the argument's place, as
+    the VM binds a `mut` argument.
+  - A `read` argument of a type with a destructor that is not loaded from
+    a place, or a `read` parameter the callee names other than as a
+    place's root, is kept for the same reason.
+  - Done when `bump(mut x)` in `assets/ok/always_inline_nodebug_calls.mojo`
+    inlines and the differential is clean.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R919 A raising `nodebug` callee is not inlined**
+
+  `inline-parametric` keeps a call to a callee that raises, where the pin
+  inlines it.
+  - An inlined raise inside the caller's `try` must add the inlined
+    locals live at it to that `try`'s raise-edge cleanup, and one outside
+    any `try` must end them on the function's raise edge.
+  - Done when `checked` in `assets/ok/always_inline_nodebug_calls.mojo`
+    inlines and the differential is clean.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R920 A `nodebug` call with keywords, a default, a variadic
+  collector, or a spread is not inlined**
+
+  `inline-parametric` inlines only a positional call that fills every
+  parameter, where the pin inlines all four shapes.
+  - Bind the arguments through `mojito_ast::call`'s matcher, which owns
+    that policy (invariant 6), and materialize each omitted default.
+  - Done when each shape inlines in a pass test and the differential is
+    clean.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R921 A nested `nodebug` def, or a call carrying captures, is not
+  inlined**
+
+  `inline-parametric` keeps a call to a function with an enclosing
+  declaration or region binders, or one carrying capture accesses, where
+  the pin inlines a `nodebug` nested `def` into its enclosing body.
+  - The nested body reads the enclosing scope's binders and captured
+    places, which the splice must map to the caller's.
+  - Done when a nested `nodebug` def inlines and the differential is clean.
+  - Depends on R916.
+  - Model: Opus, Not Planned.
+
+- [ ] **R922 A drop of a type whose destructor is `nodebug` is not
+  inlined**
+
+  The pin inlines a `nodebug` `__deinit__` where the value dies, so a
+  `comptime assert` in it fails inside the caller's instantiation, and
+  Mojito's `drop.var` stays a destructor call.
+  - Expand the drop into the destructor's call first, then inline it as
+    any call.
+  - Done when `D[k]`'s destructor in the plan's `c_del_inline.mojo` probe
+    inlines and the differential is clean.
+  - Depends on R917.
+  - Model: Opus, Not Planned.
+
+- [ ] **R923 Small `@always_inline` callees are not inlined before
+  elaboration**
+
+  The pin inlines a plain `@always_inline` callee below a size bound (16
+  `s += i` statements, but not 24, nor a `for range` loop), and
+  `inline-parametric` follows only `nodebug` and `builtin`.
+  - Calibrate a cost measure against such probes instead of inventing a
+    heuristic.
+  - Unlike `nodebug`, upstream keeps such a callee's locations as
+    `inlinedAt` scopes, so the pliron debug attach needs an answer for a
+    callee span in another file first.
+  - Done when the probes' boundary matches the pin's and the heavy lane's
+    debug premise holds.
+  - Depends on R916.
+  - Model: Fable, Not Planned.
+
+- [ ] **R924 Mojito inlines `nodebug` callees the pin refuses**
+
+  The pin keeps a call to a `nodebug` callee holding `"abc"`-literal
+  storage, `print("big")`, a `String` local or `var String` parameter, or
+  a local whose `nodebug` destructor branches, and `inline-parametric`
+  inlines them.
+  - The instances hold more inlined code than the pin's, and no output
+    differs.
+  - Probe: `gen[n]` calls `leaf[n](x)`, whose body adds the shape to
+    `comptime assert k < 3`, and `main` calls `gen[5]`; the callee was
+    inlined when the error trace has no `("k": 5)` instantiation note.
+  - Find the pin's legality rule before matching it.
+  - Done when Mojito's veto list matches those probes.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R869 The pre-elaboration pipeline does not repeat upstream's
   rounds around `InlineParametric`**
@@ -4944,6 +5069,24 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - The fix rejects `read` in the parser's argument-name position with the
     pin's message, and moves the case to an `assets/parse_error` fixture.
   - Found while landing R789 (2026-10-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R925 A recursive `@always_inline` function is accepted**
+
+  Problem: a reached `@always_inline` function that calls itself, directly
+  or through other `@always_inline` functions, compiles and runs, where the
+  pin rejects it: "function has recursive call to 'always_inline'
+  function", with a note at the recursing call.
+  - Mojito accepts a program the pin rejects, so this is a divergence.
+  - Ledger name: `recursive-always-inline`
+    (`conformance/fixtures/recursive_always_inline.mojo`).
+  - The pin rejects plain, `nodebug`, and `builtin` alike, and only when
+    the function is reached; `inline-parametric` already finds such cycles
+    and keeps their calls.
+  - Fix: report the cycle as an error when an elaboration root reaches it,
+    and move the case to an error fixture.
+  - Found while landing R784 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

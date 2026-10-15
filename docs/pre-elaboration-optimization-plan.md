@@ -218,11 +218,43 @@ folds the operators over it (R840);
    The checker rejects the operands and conflicting pairs the pin rejects.
    `@inline(level)`, which the pinned std spells far more often, is not yet
    read, so the bundled library's markings wait on it.
-8. **Restricted inlining** (`InlineParametric`). Inline a callee marked
-   `@always_inline("nodebug")` into a generic body before elaboration, under
-   upstream's restriction. The callee's drops come with it. Whether plain
-   `@always_inline` joins it, or "small functions" gets a rule, follows
-   what upstream's pass is found to do, not a Mojito heuristic.
+8. **Restricted inlining** (`InlineParametric`, landed for closed
+   callees). `inline-parametric` opens the second round, after the first
+   `canonicalize`, and runs at both seams: over the program's own bodies
+   callees first (the call graph's strongly connected components
+   bottom-up), and over each package body as it is finished. It replaces a
+   call to an `@always_inline("nodebug")` or `@always_inline("builtin")`
+   function with the callee's finished body, so the callee's drops come
+   with it, and every inlined register takes the call site's location. A
+   callee on a cycle of such calls stays a call. The pin's restriction,
+   observed through elaboration diagnostics (a `comptime assert` in the
+   callee fails inside the caller's instantiation once it is inlined):
+   - `nodebug` and `builtin` callees inline at any size (640 statements
+     still inline), with loops, branches, early returns, `raises`, `mut`
+     and owned parameters, `ref` results, keyword and default arguments,
+     variadics, value parameters, struct methods and constructors, nested
+     `def`s, transitive chains, and calls inside the caller's `try`; a
+     `nodebug` destructor is inlined at the value's death.
+   - Plain `@always_inline` callees inline only below a size bound (16
+     `s += i` statements inline, 24 do not, nor does a `for range` loop).
+   - Nothing else inlines: a plain `def`, `@no_inline`, a trait-dispatched
+     call, a callee holding a `try`, and a few `String`-literal shapes stay
+     calls; a recursive `@always_inline` function is an error.
+
+   Mojito inlines the callees that name none of their own compile-time
+   parameters (a concrete function or a method of a non-parametric struct),
+   called positionally into `read` or owned parameters, that do not raise,
+   return a value rather than a reference, and hold no `try`. An owned
+   parameter, or a `read` one of a scalar type, is a fresh slot the argument
+   initializes; any other `read` parameter is the caller's place the
+   argument was loaded from. The remaining shapes are `pmir` entries R915
+   through R923; the pin's refusals Mojito lacks are R924 (shapes it keeps
+   as calls) and R925 (a recursive `@always_inline` function, an error on
+   the pin). The
+   corpus holds no `nodebug` or `builtin` callee outside
+   `assets/ok/always_inline_nodebug_calls.mojo`, so the stage's corpus
+   effect waits on the bundled library's markings (stage 10), as
+   `EliminateDeadSymbols`' waits on the passes after it.
 9. **Trait default wrappers.** A trait default is a lifted
    `Trait$default$m` function reached through a forwarding wrapper per
    conformer (R544's arrangement), so every instance carries both. Inlining
