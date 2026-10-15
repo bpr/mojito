@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R956**.
+Next free ID: **R957**.
 
 ## Ordered Work
 
@@ -131,18 +131,6 @@ which names the upstream pass each one follows. Each is measured by the
     caller already drops.
   - Done when each shape inlines in a pass test and the differential is
     clean.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R919 A raising `nodebug` callee is not inlined**
-
-  `inline-parametric` keeps a call to a callee that raises, where the pin
-  inlines it.
-  - An inlined raise inside the caller's `try` must add the inlined
-    locals live at it to that `try`'s raise-edge cleanup, and one outside
-    any `try` must end them on the function's raise edge.
-  - Done when `checked` in `assets/ok/always_inline_nodebug_calls.mojo`
-    inlines and the differential is clean.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1202,6 +1190,24 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     (`docs/notes/comptime-region-ownership.md`, `c7`).
   - Depends on nothing.
   - Model: Fable, Planned.
+
+- [ ] **R956 A raising initializer's initialized fields are not destroyed
+  when it raises**
+
+  Problem: `self.a = Tracer("a")` then `raise` in a raising `__init__`
+  leaks `a`, where the pin destroys each field initialized before the
+  raise.
+  - Inlined into a `try`'s body (`inline-parametric`), the `out self` slot
+    stays off the raise-edge cleanup, since a slot list cannot end part of
+    a value.
+  - Kept as a call, the raise leaves the initializer holding the fields,
+    which R20 covers for every function.
+  - Fix: end the fields the raise holds, one `DropPlace` each, on the
+    raise edge R20 settles.
+  - Probe: a `Pair.__init__` setting `a`, raising, then setting `b`,
+    called in a `try` (found while landing R919, 2026-10-14).
+  - Depends on R20.
+  - Model: Opus, Not Planned.
 
 - [ ] **R30 A `var` of an opaque type is not required to be `Deinitable`**
 

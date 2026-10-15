@@ -76,6 +76,24 @@ def checked(x: Int) raises -> Int:
     return x
 
 
+struct Tracer(Movable):
+    var name: String
+
+    def __init__(out self, name: String):
+        self.name = name
+
+    def __deinit__(deinit self):
+        print("end", self.name)
+
+
+@always_inline("nodebug")
+def traced(x: Int) raises -> Int:
+    var tracer = Tracer("traced")
+    if x < 0:
+        raise Error("traced negative")
+    return x + tracer.name.byte_length()
+
+
 struct Meter:
     var label: String
     var value: Int
@@ -126,6 +144,12 @@ def main() raises:
     try:
         print(add_one(checked(2)))
         print(checked(-1))
+    except e:
+        print("caught", e)
+    try:
+        var outer = Tracer("outer")
+        print(traced(1))
+        print(traced(-1), outer.name)
     except e:
         print("caught", e)
     var y = 3

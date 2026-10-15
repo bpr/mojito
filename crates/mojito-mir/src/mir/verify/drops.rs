@@ -16,10 +16,45 @@
 //! crosses; a return's runs after the last `finally` it crosses, as the
 //! function is left. A `finally` that returns itself overrides a pending
 //! return, whose list it then runs unchecked here.
+//!
+//! The same walk cuts a `try`'s list once its body's raise points change
+//! ([`cut_try_cleanups`]): an entry every raise path has already ended is
+//! one only an erased raise point held.
 
 use super::{MirBlock, MirFunction, MirInstr, MirTerm};
 use crate::mir::{MirBlockId, MirCaptureMode, VarId, instruction_slots, terminator_targets};
 use std::collections::HashMap;
+
+/// Remove from each `try`'s raise-edge cleanup in `function` the slots
+/// every path to its body's raise points has already ended, as erasing a
+/// raise point erases the destructors on its edge.
+///
+/// A structured body is left alone: the walk reads lowered blocks.
+pub fn cut_try_cleanups(function: &mut MirFunction) {
+    if crate::mir::has_structured_control_flow(function)
+        || !function
+            .blocks
+            .iter()
+            .any(|block| holds_cleanup(&block.instrs))
+    {
+        return;
+    }
+    let ended = {
+        let mut walk = Walk {
+            name: "",
+            function,
+            refills: HashMap::new(),
+            findings: Vec::new(),
+            ended_cleanups: Vec::new(),
+        };
+        collect_refills(&function.blocks, &mut walk.refills);
+        walk.region(&vec![false; function.n_vars], &function.blocks, true, true);
+        walk.ended_cleanups
+    };
+    if !ended.is_empty() {
+        cut_listed(&mut function.blocks, &ended);
+    }
+}
 
 /// Report every `drop.var` or `var.consume` in `function` whose slot every
 /// path reaching it has already ended. A structured body is checked through
@@ -38,6 +73,7 @@ pub(super) fn verify_slot_ends(name: &str, function: &MirFunction, errors: &mut 
         function,
         refills,
         findings: Vec::new(),
+        ended_cleanups: Vec::new(),
     };
     let flow = walk.region(&vec![false; function.n_vars], &function.blocks, true, true);
     for (index, cleanup, state) in flow.returns {
@@ -79,6 +115,9 @@ struct Walk<'a> {
     /// stores into that slot again.
     refills: HashMap<u32, VarId>,
     findings: Vec<String>,
+    /// Each `try`, by address, and a slot its cleanup lists that every
+    /// path to its raise edge has already ended.
+    ended_cleanups: Vec<(*const MirInstr, VarId)>,
 }
 
 impl<'a> Walk<'a> {
@@ -225,6 +264,14 @@ impl<'a> Walk<'a> {
         let mut body_flow = self.region(&entry, body, false, report);
         let body_normal = body_flow.normal.take();
         let body_raises = body_flow.raises.take().map(|mut state| {
+            if report {
+                self.ended_cleanups.extend(
+                    cleanup
+                        .iter()
+                        .filter(|&&var| state.get(var as usize) == Some(&true))
+                        .map(|&var| (std::ptr::from_ref(instruction), var)),
+                );
+            }
             self.end_listed(index, "try.cleanup", &mut state, cleanup, report);
             state
         });
@@ -403,6 +450,32 @@ fn meet(target: &mut Option<Ended>, source: Option<&Ended>) {
 fn set(state: &mut Ended, slot: VarId, ended: bool) {
     if let Some(bit) = state.get_mut(slot as usize) {
         *bit = ended;
+    }
+}
+
+/// Whether `instructions` hold a `try` with a raise-edge cleanup, at any
+/// depth.
+fn holds_cleanup(instructions: &[MirInstr]) -> bool {
+    instructions.iter().any(|instruction| {
+        matches!(instruction, MirInstr::Try { cleanup, .. } if !cleanup.is_empty())
+            || crate::mir::instruction_regions(instruction)
+                .into_iter()
+                .flatten()
+                .any(|block| holds_cleanup(&block.instrs))
+    })
+}
+
+/// Drop from each `try` of `blocks`, at any depth, the cleanup entries
+/// `ended` names for it.
+fn cut_listed(blocks: &mut [MirBlock], ended: &[(*const MirInstr, VarId)]) {
+    for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+        let address = std::ptr::from_ref::<MirInstr>(instruction);
+        if let MirInstr::Try { cleanup, .. } = instruction {
+            cleanup.retain(|&var| !ended.contains(&(address, var)));
+        }
+        for region in crate::mir::instruction_regions_mut(instruction) {
+            cut_listed(region, ended);
+        }
     }
 }
 

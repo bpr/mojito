@@ -1,3 +1,16 @@
+mojito-mir 1.61
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("cases.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: checked, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: true, error_type: present(Error), ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [], inline: nodebug },
+    decl { lowered_name: raising_caller, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: true, error_type: present(Error), ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] }
+  ],
   functions: [
       fn {
         name: checked,
@@ -48,7 +61,7 @@
         ]
       },
       fn {
-        name: raising_kept,
+        name: raising_caller,
         registers: 2,
         vars: 1,
         var_names: [x],
@@ -75,3 +88,4 @@
         ]
       }
   ]
+}

@@ -115,6 +115,7 @@ mod types;
 use calls::*;
 pub use concrete::concrete_function_findings;
 use concrete::verify_concrete_program;
+pub(crate) use drops::cut_try_cleanups;
 use drops::verify_slot_ends;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use instr::*;

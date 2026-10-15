@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A raising `nodebug` callee is inlined before elaboration (R919): its
+  raises propagate as the call's, and inlined into a `try`'s body it adds
+  the callee's slots a raise may hold to that `try`'s raise-edge cleanup,
+  so a callee's local is destroyed on the raise edge as at the pin
+  (assets/ok/always_inline_nodebug_calls.mojo). Erasing unreachable blocks
+  now cuts a `try`'s cleanup list to what its remaining raise points hold,
+  which a `try` holding a raise in a constant-false branch failed the MIR
+  verifier for.
 - A `nodebug` call through a `mut` or `ref` parameter, or a `mut self`
   receiver, is inlined before elaboration (R918): `inline-parametric`
   binds the parameter to the caller's place the call passes, as the VM

@@ -42,10 +42,13 @@ pub(super) const fn is_deinit(c: &Option<ArgConvention>) -> bool {
 ///
 /// The function level and each region are pruned alike, a region from
 /// its own entry. A block a region's `EscapeJump` names is reachable through
-/// the block holding the region. Registers, slots, and spans are untouched.
+/// the block holding the region. A `try`'s raise-edge cleanup loses the
+/// slots only a pruned raise point held. Registers, slots, and spans are
+/// untouched.
 pub fn prune_unreachable_blocks(function: &mut MirFunction) {
     let kept = prune_block_list(&mut function.blocks);
     renumber_escapes(&mut function.blocks, &kept);
+    super::verify::cut_try_cleanups(function);
 }
 
 /// Every region an instruction holds, each a block list with local block

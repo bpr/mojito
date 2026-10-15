@@ -1,16 +1,3 @@
-mojito-mir 1.61
-artifact {
-  features: [],
-  files: [
-    file { id: file0, path: present("cases.mojo"), module: absent }
-  ],
-  traits: [],
-  structs: [
-  ],
-  decls: [
-    decl { lowered_name: checked, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: true, error_type: present(Error), ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [], inline: nodebug },
-    decl { lowered_name: raising_kept, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: true, error_type: present(Error), ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] }
-  ],
   functions: [
       fn {
         name: checked,
@@ -61,31 +48,63 @@ artifact {
         ]
       },
       fn {
-        name: raising_kept,
-        registers: 2,
-        vars: 1,
-        var_names: [x],
+        name: raising_caller,
+        registers: 9,
+        vars: 2,
+        var_names: [x, "x$inline1"],
         params: 1,
         param_types: [Int],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }],
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }],
         return_type: present(Int),
         raises: true,
         error_type: present(Error),
-        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 1732, end: 1733, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 1724, end: 1734, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Bool }, reg_type { reg: %r6, type: StringLiteral }, reg_type { reg: %r7, type: Error }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 1732, end: 1733, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 1724, end: 1734, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 1724, end: 1734, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 1724, end: 1734, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 1724, end: 1734, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 1724, end: 1734, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 1724, end: 1734, origin: absent }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 1724, end: 1734, origin: absent }) }, reg_loc { reg: %r8, location: absent }],
         blocks: [
           bb0 {
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
-              call { dest: %r1, func: checked, raises: present(Error), args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              var.store { var: $v1, src: %r0, binding_type: present(Int), in_place: false }
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb1 {
+            instructions: [
+              const { dest: %r3, value: int_literal(0) },
+              literal.materialize { dest: %r4, value: %r3, target: Int },
+              var.use { dest: %r2, var: $v1, mode: copy },
+              binary { op: lt, dest: %r5, a: %r2, b: %r4, resolved: absent, raises: absent }
+            ],
+            terminator: branch { condition: %r5, then: bb3, else: bb4 }
+          },
+          bb2 {
+            instructions: [
+              var.use { dest: %r1, var: $v1, mode: copy }
+            ],
+            terminator: jump { target: bb5 }
+          },
+          bb3 {
+            instructions: [
+              const { dest: %r6, value: string("negative") },
+              call { dest: %r7, func: Error, raises: absent, args: [%r6], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              raise { src: %r7 }
+            ],
+            terminator: jump { target: bb2 }
+          },
+          bb4 {
+            instructions: [
+            ],
+            terminator: jump { target: bb2 }
+          },
+          bb5 {
+            instructions: [
             ],
             terminator: return { value: present(%r1) }
           }
         ]
       }
   ]
-}

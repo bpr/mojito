@@ -5011,7 +5011,11 @@ point where a slot declared in a loop is uninitialized again.
   return's cleanup, stays on its path. It then erases
   the blocks the entry does not reach, at the
   function level and in each `try` region from its own entry
-  (`mir::prune_unreachable_blocks`, MLIR's `eraseUnreachableBlocks`). It
+  (`mir::prune_unreachable_blocks`, MLIR's `eraseUnreachableBlocks`), and
+  cuts each `try`'s raise-edge cleanup to the slots a remaining raise path
+  still holds (`verify::cut_try_cleanups`, over the slot-ends walk of
+  `verify/drops.rs`), as erasing a raise point erases the destructors on
+  its edge. It
   then folds each `value.copy` that is the identity to its operand (R780,
   `MirInstr::forwarded_operand`, MLIR's `fold` returning an operand): when
   source and destination are typed alike by a type
@@ -5103,9 +5107,19 @@ point where a slot declared in a loop is uninitialized again.
   stay the caller's. The callee must have no enclosing body or region
   binders and a struct receiver if it has one, be called
   positionally into every `read` or owned parameter with no capture
-  accesses, not raise, return a value rather than a reference, and hold
+  accesses, return a value rather than a reference, and hold
   plain control flow with no `try`, region op, or closure; any other call
-  stays a call. A callee on a cycle of followed calls is never inlined: at
+  stays a call. A raising callee's `raise`s and raising calls stay raise
+  points of the inlined body. Inlining into a `try`'s body adds to that
+  `try`'s raise-edge cleanup each inlined slot with a destructor that some
+  inlined raise point may hold (a forward walk from the bound parameters'
+  slots, a slot held from an instruction naming it until a drop, consume,
+  or whole-slot move ends it, as `verify/drops.rs` counts ends), so the
+  callee's locals end on the raise edge as its own frame ends them at the
+  pin; the handler, `else`, and `finally` raise past it to the next
+  enclosing `try`. An initializer's `out self` is never listed, being
+  partly initialized at a raise. Outside any `try` the slots leave the
+  function held, as every raise leaving a function does (R20). A callee on a cycle of followed calls is never inlined: at
   the program seam the cycles are the strongly connected components of the
   program's followed calls, and at the package seam `PackageBodies::on_cycle`
   decides one from lowered bodies, memoized by row, so a finishing hook

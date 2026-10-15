@@ -12,8 +12,7 @@
 //! A callee this pass inlines is a function, a method, or a struct's one
 //! `__init__`, which a call naming the struct calls, whose own compile-time
 //! parameters the call binds in full; it takes its arguments positionally
-//! into `read`, owned, `mut`, or `ref` parameters, does not raise, and
-//! returns a value.
+//! into `read`, owned, `mut`, or `ref` parameters, and returns a value.
 //! The call's compile-time arguments replace the callee's binders through
 //! every type and parameter site of the body, as upstream substitutes them
 //! through MLIR's `AttrTypeReplacer`; an argument over the caller's own
@@ -36,6 +35,13 @@
 //! place's root keeps the call. An
 //! initializer's `out self` is a fresh slot the body initializes, and the
 //! call's result moves out of it. A call of any other shape stays a call.
+//!
+//! A raising callee's raises propagate from the inlined body as from the
+//! call. Each raise point of a body inlined into a `try`'s body adds the
+//! inlined slots it may hold to that `try`'s raise-edge cleanup, so they
+//! end on the raise edge, as the callee's own frame ends them at the pin;
+//! one outside any `try` leaves the function holding them, as every raise
+//! leaving a function does (R20).
 
 use super::pre_elaboration::{CallGraphPass, Callees};
 use mojito_ast::ast::ArgConvention;
@@ -50,7 +56,7 @@ use mojito_mir::mir::{
     Const, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg,
     MirPlace, MirTerm, Proj, Reg, UseMode, has_no_destructor, instruction_regions_mut,
     instruction_regs_mut, instruction_slots, renumber_block_slots, terminator_regs_mut,
-    terminator_targets_mut,
+    terminator_targets, terminator_targets_mut,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{ParamBindings, ParamContext, ParamError, ParamExpr, ParamRef};
@@ -93,6 +99,7 @@ pub fn inline_parametric(
         function,
         declarations,
         callees,
+        raise_held: Vec::new(),
     };
     let changed = inliner.block_list(&mut blocks);
     function.blocks = blocks;
@@ -104,6 +111,9 @@ struct Inliner<'f, 'c> {
     function: &'f mut MirFunction,
     declarations: &'c MirDeclarations,
     callees: &'c Callees<'c>,
+    /// The inlined slots a raise leaving the block list being inlined into
+    /// may hold, for the nearest enclosing `try`'s raise-edge cleanup.
+    raise_held: Vec<VarId>,
 }
 
 /// Where an inlined call stands: its block, its index there, and the
@@ -213,13 +223,19 @@ impl<'c> Inliner<'_, 'c> {
         while block < list.len() {
             let mut index = 0;
             while index < list[block].instrs.len() {
-                for region in instruction_regions_mut(&mut list[block].instrs[index]) {
-                    changed |= self.block_list(region);
-                }
+                changed |= self.regions(&mut list[block].instrs[index]);
                 if let Some((dest, callee, bindings)) = self.inlinable(&list[block], index)
                     && let Some(blocks) = self.inlined_blocks(&callee, &bindings, dest)
                 {
                     let site = CallSite { block, index, dest };
+                    if callee.raises {
+                        self.raise_held.extend(raise_held(
+                            &blocks,
+                            &callee,
+                            &bindings,
+                            self.function.n_vars,
+                        ));
+                    }
                     self.splice(list, &site, &callee, &bindings, blocks);
                     changed = true;
                     break;
@@ -227,6 +243,42 @@ impl<'c> Inliner<'_, 'c> {
                 index += 1;
             }
             block += 1;
+        }
+        changed
+    }
+
+    /// Inline into the regions `instruction` holds; returns whether it
+    /// inlined a call. A `try`'s raise-edge cleanup takes the inlined slots
+    /// a raise in its body may hold, which its handler, `else`, and
+    /// `finally` raise past.
+    fn regions(&mut self, instruction: &mut MirInstr) -> bool {
+        let MirInstr::Try {
+            body,
+            handler,
+            orelse,
+            finalbody,
+            cleanup,
+        } = instruction
+        else {
+            return instruction_regions_mut(instruction)
+                .into_iter()
+                .fold(false, |changed, region| self.block_list(region) | changed);
+        };
+        let outer = std::mem::take(&mut self.raise_held);
+        let mut changed = self.block_list(body);
+        let held = std::mem::replace(&mut self.raise_held, outer);
+        if !held.is_empty() {
+            cleanup.extend(held);
+            cleanup.sort_unstable_by(|a, b| b.cmp(a));
+            cleanup.dedup();
+        }
+        for region in handler
+            .iter_mut()
+            .map(|(_, blocks)| blocks)
+            .chain(orelse.iter_mut())
+            .chain(finalbody.iter_mut())
+        {
+            changed |= self.block_list(region);
         }
         changed
     }
@@ -247,7 +299,6 @@ impl<'c> Inliner<'_, 'c> {
                 MirInstr::Call {
                     dest,
                     func,
-                    raises: None,
                     args,
                     kwargs,
                     arg_places,
@@ -278,7 +329,6 @@ impl<'c> Inliner<'_, 'c> {
                     dest,
                     recv,
                     resolved: Some(target),
-                    raises: None,
                     reference_result: None,
                     result_adapter: None,
                     args,
@@ -607,9 +657,9 @@ fn is_reference_parameter(callee: &MirFunction, param: usize) -> bool {
 }
 
 /// Whether the callee has a shape the splice handles: a struct
-/// receiver if any, no enclosing declaration's binders, no
-/// raise, no reference result, no variadic collector, and blocks of
-/// plain control flow with no `try`, region, or closure.
+/// receiver if any, no enclosing declaration's binders, no reference
+/// result, no variadic collector, and blocks of plain control flow with no
+/// `try`, region, or closure.
 fn is_closed(callee: &MirFunction, declaration: &MirFunctionDeclaration) -> bool {
     let receiver_closed = !declaration.has_receiver
         || callee
@@ -622,7 +672,6 @@ fn is_closed(callee: &MirFunction, declaration: &MirFunctionDeclaration) -> bool
         && declaration.variadic.is_none()
         && declaration.kw_variadic.is_none()
         && !declaration.returns_reference
-        && !callee.raises
         && !callee.returns_reference
         && callee.blocks.iter().all(|block| {
             block.instrs.iter().all(|instruction| {
@@ -634,7 +683,6 @@ fn is_closed(callee: &MirFunction, declaration: &MirFunctionDeclaration) -> bool
                         | MirInstr::ComptimeIf { .. }
                         | MirInstr::ComptimeFor { .. }
                         | MirInstr::MakeClosure { .. }
-                        | MirInstr::Raise { .. }
                 )
             }) && matches!(
                 block.term,
@@ -645,6 +693,114 @@ fn is_closed(callee: &MirFunction, declaration: &MirFunctionDeclaration) -> bool
                     | MirTerm::Unreachable
             )
         })
+}
+
+/// The slots of `blocks`, `callee`'s body moved past the caller's first
+/// `base` slots with its parameters bound by `bindings`, that some raise
+/// point of it may hold with a destructor to run: a parameter's fresh slot
+/// from the entry on, a local from an instruction naming it, until one ends
+/// it. An `out self` is left out, since a raise leaves it partly
+/// initialized.
+fn raise_held(
+    blocks: &[MirBlock],
+    callee: &MirFunction,
+    bindings: &[Binding],
+    base: usize,
+) -> Vec<VarId> {
+    let local = |var: VarId| {
+        (var as usize)
+            .checked_sub(base)
+            .filter(|&local| local < callee.n_vars)
+    };
+    let mut entry = vec![false; callee.n_vars];
+    for (param, binding) in bindings.iter().enumerate() {
+        if let (Binding::Value(_), Some(held)) = (binding, entry.get_mut(param)) {
+            *held = true;
+        }
+    }
+    let mut inputs: Vec<Option<Vec<bool>>> = vec![None; blocks.len()];
+    let mut held = vec![false; callee.n_vars];
+    let mut pending = vec![(0, entry)];
+    while let Some((index, state)) = pending.pop() {
+        let Some(input) = inputs.get_mut(index) else {
+            continue;
+        };
+        let merged = match input {
+            Some(known) => {
+                let grown = state
+                    .iter()
+                    .zip(known.iter())
+                    .any(|(&new, &old)| new && !old);
+                if !grown {
+                    continue;
+                }
+                known
+                    .iter()
+                    .zip(&state)
+                    .map(|(&old, &new)| old || new)
+                    .collect()
+            }
+            None => state,
+        };
+        *input = Some(merged.clone());
+        let mut state = merged;
+        let block = &blocks[index];
+        let mut raised = false;
+        for instruction in &block.instrs {
+            let mut set = |var: VarId, value: bool| {
+                if let Some(bit) = local(var).and_then(|local| state.get_mut(local)) {
+                    *bit = value;
+                }
+            };
+            match instruction {
+                MirInstr::DropVar { var } | MirInstr::ConsumeVar { var } => set(*var, false),
+                _ => {
+                    for var in instruction_slots(instruction) {
+                        set(var, true);
+                    }
+                    match instruction {
+                        MirInstr::UseVar { var, mode, .. } if mode.moves() => set(*var, false),
+                        MirInstr::MovePlace { place, .. }
+                        | MirInstr::ConsumePlace { place, .. }
+                        | MirInstr::DropPlace { place }
+                        | MirInstr::MarkDestroyed { place }
+                            if place.is_whole_root() =>
+                        {
+                            set(place.root, false);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            if instruction.is_raise_point() {
+                for (held, &live) in held.iter_mut().zip(&state) {
+                    *held |= live;
+                }
+            }
+            if matches!(instruction, MirInstr::Raise { .. }) {
+                raised = true;
+                break;
+            }
+        }
+        if !raised {
+            pending.extend(
+                terminator_targets(&block.term)
+                    .into_iter()
+                    .map(|target| (target, state.clone())),
+            );
+        }
+    }
+    held.iter()
+        .enumerate()
+        .filter(|&(var, &held)| {
+            held && !matches!(bindings.get(var), Some(Binding::Out | Binding::Place(_)))
+                && callee
+                    .var_tys
+                    .get(&(var as VarId))
+                    .is_none_or(|ty| !has_no_destructor(ty))
+        })
+        .map(|(var, _)| (var + base) as VarId)
+        .collect()
 }
 
 /// The place the register `argument` was loaded from in `block` before the
