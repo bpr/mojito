@@ -70,7 +70,7 @@ fn scalar_capability_manifest_and_differential() {
                 "no-scalar-entry-shape".into(),
             );
         }
-        let compiler = Compiler::default();
+        let compiler = Compiler::default().with_exports(["compute"]);
         let compiled = compiler
             .compile_source(&src, Path::new(&rel))
             .unwrap_or_else(|error| panic!("{rel}: ok fixture must compile: {error}"));

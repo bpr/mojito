@@ -47,6 +47,8 @@ pub struct CompiledProgram {
     /// Run the pre-elaboration pipeline over the program's own bodies, and
     /// the post-elaboration pipeline over the concrete program.
     pre_elaboration: bool,
+    /// The symbols the compilation exports beside its entry roots.
+    exports: Vec<String>,
 }
 impl CompiledProgram {
     /// The semantically checked program carried by this ownership-verified
@@ -92,6 +94,7 @@ impl CompiledProgram {
                 crate::analysis::pre_elaborate_program(
                     &mut mir,
                     self.package.as_deref().map(|package| &package.bodies),
+                    &self.exports,
                 );
             }
             let _verify = timing::span("mir.verify.post_drop");
@@ -281,6 +284,11 @@ pub struct Compiler {
     /// elaborator. `None` defers to the `MOJITO_PRE_ELABORATION`
     /// environment variable (`0` disables).
     pre_elaboration: Option<bool>,
+    /// The functions the compilation exports by name beside its entry
+    /// roots, which `eliminate-dead-symbols` keeps, as upstream keeps its
+    /// `export` symbols: a native entry a caller compiles from
+    /// [`CompiledProgram::drop_elaborated_mir`].
+    exports: Vec<String>,
 }
 /// Reject runtime statements at module scope, matching Mojo's source rules.
 /// Declarations, imports, compile-time constants, and `pass` are permitted.
@@ -332,6 +340,7 @@ impl Compiler {
             body_fact_reuse: None,
             std_package: None,
             pre_elaboration: None,
+            exports: Vec::new(),
             target: match crate::native::target::Triple::host() {
                 Some(triple) => Some(crate::native::target::NativeTarget::new(triple)),
                 None => None,
@@ -366,6 +375,14 @@ impl Compiler {
     #[must_use]
     pub const fn with_pre_elaboration(mut self, run: bool) -> Self {
         self.pre_elaboration = Some(run);
+        self
+    }
+    /// Export the functions `names` beside the entry roots, so the
+    /// pre-elaboration pipeline keeps them for a caller that compiles them
+    /// by name.
+    #[must_use]
+    pub fn with_exports<S: Into<String>>(mut self, names: impl IntoIterator<Item = S>) -> Self {
+        self.exports = names.into_iter().map(Into::into).collect();
         self
     }
     /// Permit executable module-scope statements for isolated compiler tests.
@@ -593,6 +610,7 @@ impl Compiler {
             target: self.target,
             package,
             pre_elaboration: self.pre_elaboration(),
+            exports: self.exports.clone(),
         })
     }
     /// Execute an ownership-verified program using the configured backend.

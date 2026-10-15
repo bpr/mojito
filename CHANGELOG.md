@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `eliminate-dead-symbols` removes every program function and struct no
+  root reaches, with its declaration (R834), as upstream's
+  `EliminateDeadSymbols` removes every unreachable non-`export` symbol. Its
+  roots are `main`, `__toplevel__`, and the functions a compilation
+  exports by name with the new `Compiler::with_exports`, which a caller
+  compiling a native entry such as `compute` from `drop_elaborated_mir`
+  must now pass. An instruction that calls a bundled body unnamed (`**`
+  on integers, a scalar display) keeps it live, by
+  `mir::implicit_callees`, which the elaborator now shares.
+  `ProgramPass::run` and `pre_elaborate_program` take the exports. Program
+  output is unchanged.
 - `eliminate-dead-symbols` follows typed symbol references (R835): every
   MIR, checked, and type field that names a function or struct encodes its
   spelling as a `SymbolRef` (`mojito_types::symbol_ref`, MLIR's

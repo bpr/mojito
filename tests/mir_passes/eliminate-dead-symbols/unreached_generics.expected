@@ -58,32 +58,6 @@
         ]
       },
       fn {
-        name: lonely,
-        registers: 1,
-        vars: 0,
-        var_names: [],
-        params: 0,
-        param_types: [],
-        owned_params: [],
-        deinit_params: [],
-        ref_params: [],
-        returns_reference: false,
-        var_types: [],
-        return_type: present(Int),
-        raises: false,
-        error_type: absent,
-        register_types: [reg_type { reg: %r0, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 173, end: 182, origin: absent }) }],
-        blocks: [
-          bb0 {
-            instructions: [
-              call { dest: %r0, func: used, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [value_arg(ct_int(7))], spread: absent }
-            ],
-            terminator: return { value: present(%r0) }
-          }
-        ]
-      },
-      fn {
         name: "Held.__init__",
         registers: 0,
         vars: 1,

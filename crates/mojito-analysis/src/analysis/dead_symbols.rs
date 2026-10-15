@@ -3,11 +3,10 @@
 //! over a program's own MIR.
 //!
 //! Upstream roots the walk at the `export` symbols and removes every other
-//! symbol no live symbol refers to. Mojito has no `export`, and a native
-//! caller may ask for any concrete function by name, so every concrete
-//! function is a root: only the parametric bodies no root reaches go. A
-//! declaration stays, without its body, as an unreached package
-//! declaration does.
+//! symbol no live symbol refers to. Here the roots are the program's entry
+//! roots and the symbols its compilation exports by name (a native entry
+//! a caller compiles, such as a scalar `compute`): every function and
+//! struct nothing reachable from them names goes, its declaration with it.
 
 use super::pre_elaboration::ProgramPass;
 use mojito_common::timing;
@@ -23,8 +22,8 @@ pub const ELIMINATE_DEAD_SYMBOLS: ProgramPass = ProgramPass {
     run: eliminate_dead_symbols,
 };
 
-/// Remove the bodies of `program`'s parametric functions that no root
-/// reaches, keeping the rest in order.
+/// Remove `program`'s functions and structs that neither its entry roots
+/// nor `exports` reach, with their declarations, keeping the rest in order.
 ///
 /// A live function makes live every symbol its body or declaration names,
 /// every member of its overload family, and every function nested in it. A
@@ -32,24 +31,38 @@ pub const ELIMINATE_DEAD_SYMBOLS: ProgramPass = ProgramPass {
 /// methods: the elaborator reaches a struct's lifecycle, display, hash, and
 /// trait-requirement methods from its type alone, as upstream nests a
 /// struct's members under its symbol.
-pub fn eliminate_dead_symbols(program: &mut MirProgram) {
-    let live: HashSet<String> = Symbols::of(program)
-        .live()
-        .into_iter()
-        .map(str::to_string)
-        .collect();
-    let mut functions = 0;
+pub fn eliminate_dead_symbols(program: &mut MirProgram, exports: &[String]) {
+    let (live, live_structs) = {
+        let (functions, structs) = Symbols::of(program).live(exports);
+        let owned = |names: HashSet<&str>| -> HashSet<String> {
+            names.into_iter().map(str::to_string).collect()
+        };
+        (owned(functions), owned(structs))
+    };
+    let mut dead = HashSet::new();
     let mut instructions = 0;
     program.functions.retain(|(name, function)| {
         let keep = live.contains(name);
         if !keep {
-            functions += 1;
             instructions += function.instruction_count();
+            dead.insert(name.clone());
         }
         keep
     });
-    timing::count("dead_functions", functions);
+    let declarations = &mut program.declarations;
+    declarations
+        .functions
+        .retain(|declaration| !dead.contains(&declaration.lowered_name));
+    let structs = declarations.structs.len();
+    declarations
+        .structs
+        .retain(|declaration| live_structs.contains(&declaration.name));
+    timing::count("dead_functions", dead.len() as u64);
     timing::count("dead_instructions", instructions as u64);
+    timing::count(
+        "dead_structs",
+        (structs - declarations.structs.len()) as u64,
+    );
 }
 
 /// A program's own symbols, indexed for the liveness walk.
@@ -118,20 +131,15 @@ impl<'p> Symbols<'p> {
         }
     }
 
-    /// The live functions: the roots and everything they reach.
-    fn live(mut self) -> HashSet<&'p str> {
-        let mut pending: Vec<&'p str> = self
-            .functions
-            .keys()
-            .copied()
-            .filter(|name| !self.parametric(name))
+    /// The live functions and structs: the roots, the entry roots and
+    /// `exports`, and everything they reach.
+    fn live(mut self, exports: &[String]) -> (HashSet<&'p str>, HashSet<&'p str>) {
+        let mut pending: Vec<&'p str> = entry_roots(self.program)
+            .iter()
+            .chain(exports)
+            .filter_map(|root| self.functions.get_key_value(root.as_str()))
+            .map(|(&name, _)| name)
             .collect();
-        pending.extend(
-            entry_roots(self.program)
-                .iter()
-                .filter_map(|root| self.functions.get_key_value(root.as_str()))
-                .map(|(&name, _)| name),
-        );
         let mut live = HashSet::new();
         let mut live_structs = HashSet::new();
         while let Some(name) = pending.pop() {
@@ -152,27 +160,7 @@ impl<'p> Symbols<'p> {
                 pending.extend(self.methods.get(name).into_iter().flatten());
             }
         }
-        live
-    }
-
-    /// Whether the function `name` is parametric: it, the struct it is a
-    /// method of, or a body it is nested in declares compile-time
-    /// parameters. A function without a declaration, or a method of no
-    /// struct the program declares, counts as concrete, so it stays a root.
-    fn parametric(&self, name: &str) -> bool {
-        let Some(declaration) = self.declarations.get(name) else {
-            return false;
-        };
-        let owner = split_method_symbol(name).map(|(owner, _)| owner);
-        if owner.is_some_and(|owner| !self.structs.contains_key(owner)) {
-            return false;
-        }
-        !declaration.param_decls.is_empty()
-            || !declaration.region_binders.is_empty()
-            || declaration.enclosing.is_some()
-            || owner
-                .and_then(|owner| self.structs.get(owner))
-                .is_some_and(|owner| !owner.param_decls.is_empty())
+        (live, live_structs)
     }
 }
 

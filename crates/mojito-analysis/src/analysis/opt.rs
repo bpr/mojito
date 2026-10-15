@@ -44,9 +44,9 @@ impl std::error::Error for OptError {}
 /// whole program after each pass.
 ///
 /// As in the pre-elaboration pipeline, a program pass runs over the
-/// program, a body pass over every body but `__toplevel__`, and a
-/// call-graph pass over the same bodies callees first, with no package to
-/// read callees from.
+/// program, exporting nothing beyond its entry roots; a body pass over
+/// every body but `__toplevel__`; and a call-graph pass over the same
+/// bodies callees first, with no package to read callees from.
 pub fn opt(
     input: &[u8],
     source_name: &str,
@@ -57,7 +57,7 @@ pub fn opt(
         .program;
     for pass in passes {
         match pass {
-            Pass::Program(pass) => (pass.run)(&mut program),
+            Pass::Program(pass) => (pass.run)(&mut program, &[]),
             Pass::CallGraph(pass) => {
                 run_call_graph_pass(pass, &mut program, None);
             }

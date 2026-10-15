@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R936**.
+Next free ID: **R939**.
 
 ## Ordered Work
 
@@ -460,21 +460,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R934.
   - Model: Opus, Not Planned.
 
-- [ ] **R834 Unreferenced concrete functions and struct declarations reach
-  the elaborator**
-
-  Upstream's `EliminateDeadSymbols` removes every non-`export` symbol no
-  live symbol refers to, but Mojito's removes only parametric bodies,
-  because it has no `export`.
-  - Any concrete function can be a native root by name (the scalar sweep's
-    `compute`, `native_compile`'s entries), so each stays a root today.
-  - It needs `@export`, or an explicit entry list at the program seam, so
-    by-name native roots stay live.
-  - Dead struct declarations and declarations of removed bodies should go
-    too; overload lookups read them, so check those first.
-  - Depends on R778.
-  - Model: Opus, Not Planned.
-
 - [ ] **R868 A method instance's bare `Self` erases its owner's origin
   binders**
 
@@ -721,6 +706,18 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Found while landing R826 (2026-10-14).
   - Depends on R831 (one list over several raise points needs the flag).
   - Model: Fable, Planned.
+
+- [ ] **R936 A program cannot declare a native root with `@export`**
+
+  Upstream's `@export` marks a function as a root of its
+  `EliminateDeadSymbols`, but Mojito rejects the decorator.
+  - A native entry compiled by name (the scalar sweep's `compute`) stays
+    live only because its caller passes `Compiler::with_exports`.
+  - Confirm at the pin which `@export` spellings it accepts, then accept
+    those, record the flag on the function's declaration, and root the
+    pass at it as well as at the compilation's exports.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R18 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
@@ -7820,6 +7817,20 @@ follow-ups the landed producer stages filed come last.
     which needs the whole program at once, as R907 does.
   - Depends on R907.
   - Model: Fable, Not Planned.
+
+- [ ] **R937 `**` on integers and scalar displays call bundled bodies
+  that no instruction names**
+
+  `**` on `Int`/`UInt` calls `_pow_int`, and a scalar display calls the
+  digit bodies, but the MIR instruction names neither, where upstream calls
+  `Int.__pow__` and `write_to`, whose callees are ordinary symbol uses.
+  - The elaborator, Pliron's reachable set, and `eliminate-dead-symbols`
+    each read the edge from `mir::implicit_callees`, a rule outside the
+    symbol walk.
+  - The fix lowers each to a call that names its callee, then deletes
+    `implicit_callees`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### Grow The CPU Standard Library *(demand-first)*
 

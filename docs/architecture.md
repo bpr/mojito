@@ -4937,14 +4937,14 @@ point where a slot declared in a loop is uninitialized again.
 - **`eliminate-dead-symbols` runs in each round** (`analysis::ELIMINATE_DEAD_SYMBOLS`,
   `analysis/dead_symbols.rs`, R778), upstream's `EliminateDeadSymbols`, which
   follows `RemoveUnusedParams` in each round. It
-  removes the bodies of the program's own parametric functions that no root
-  reaches, leaving their declarations. Upstream's roots are the `export`
-  symbols; Mojito has none, and a native caller may name any concrete
-  function as an entry, so every concrete function is a root (with
-  `mir::entry_roots`), as is any function without a declaration or a method
-  of no struct the program declares. A function is parametric when it, its
-  owner struct, or a body it is nested in declares compile-time parameters.
-  A live function makes live every symbol its body or declaration names, its
+  removes the program's own functions and structs that no root reaches,
+  each with its declaration (R834). Upstream's roots are the `export`
+  symbols; Mojito's are `mir::entry_roots` (`main`, `__toplevel__`) and the
+  functions the compilation exports by name, `Compiler::with_exports`,
+  which `pre_elaborate_program` hands each `ProgramPass`: a native caller
+  that compiles a root by name from `drop_elaborated_mir` (the scalar
+  sweep's `compute`) exports it. `mojito opt` exports nothing. A live
+  function makes live every symbol its body or declaration names, its
   overload family, and the functions nested in it; a live struct makes live
   every symbol its declaration names and all its methods, so the
   elaborator's lifecycle, display, hash, and trait-dispatch edges, which
@@ -4958,10 +4958,14 @@ point where a slot declared in a loop is uninitialized again.
   a newtype every encoding passes through, so package bytes are unchanged.
   The walk visits a value's serialized form and looks up only those
   references (a type is walked once per table); a local, field, keyword,
-  literal, or parameter binder that spells a symbol is no use (R835). The
-  pass's `--timings` counters are `dead_functions` and `dead_instructions`.
-  `emit-mir` and `drop_elaborated_mir` therefore omit dead program
-  generators.
+  literal, or parameter binder that spells a symbol is no use (R835). An
+  instruction that calls a bundled body without naming it — `**` on
+  integers calls `_pow_int`, a scalar display the digit bodies — uses it
+  too, by `mir::implicit_callees`, the rule the elaborator enqueues those
+  bodies by. The pass's `--timings` counters are `dead_functions`,
+  `dead_instructions`, and `dead_structs`. `emit-mir` and
+  `drop_elaborated_mir` therefore omit every dead program function and
+  struct.
 - **`canonicalize` runs next** (`analysis::CANONICALIZE`,
   `analysis/canonicalize.rs`, R779), upstream's `Canonicalizer` (MLIR's
   `canonicalize`), which upstream runs after `EliminateDeadSymbols`, `SROA`,

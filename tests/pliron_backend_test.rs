@@ -34,10 +34,10 @@ fn runtime_jit_symbols_cover_the_contract() {
     assert_eq!(mapped, contract);
 }
 
-/// Compile `src` through the production pipeline and hand its cached
-/// post-drop MIR to the Pliron backend with the given entries.
+/// Compile `src` through the production pipeline, exporting `entries`, and
+/// hand its cached post-drop MIR to the Pliron backend with them.
 fn native_compile(src: &str, entries: &[&str]) -> NativeModule {
-    let compiler = Compiler::default();
+    let compiler = Compiler::default().with_exports(entries.iter().copied());
     let compiled = compiler
         .compile_source(src, Path::new(FIXTURE_NAME))
         .unwrap_or_else(|error| panic!("fixture must compile: {error}"));
@@ -829,7 +829,7 @@ fn capability_matrix_is_current() {
 
 /// Compile a fixture expecting a backend diagnostic; return its rendering.
 fn native_error(src: &str, entries: &[&str]) -> String {
-    let compiler = Compiler::default();
+    let compiler = Compiler::default().with_exports(entries.iter().copied());
     let compiled = compiler
         .compile_source(src, Path::new(FIXTURE_NAME))
         .unwrap_or_else(|error| panic!("fixture must reach the backend: {error}"));

@@ -151,8 +151,9 @@ In order:
    program's own generic bodies that no root reaches before the other
    passes run. The elaborator already ignores them, so this saves pass
    time, not output size. It never applies to a package build, which never
-   reaches the program seam. Upstream also drops dead concrete functions and
-   struct declarations, rooted at `export`, which Mojito lacks (R834).
+   reaches the program seam. Dead concrete functions and struct
+   declarations go too, rooted at the entry roots and the compilation's
+   exports (R834).
 3. **Cleanup** (`Canonicalizer`, first part) *(done, R779)*. Remove
    unreachable blocks and instructions whose results nothing reads and that
    have no effect, in the `canonicalize` pass, which the later

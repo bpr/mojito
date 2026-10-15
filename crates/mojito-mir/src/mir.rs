@@ -61,7 +61,7 @@ mod node;
 mod param_uses;
 pub use param_uses::{has_no_destructor, unread_parameters};
 mod symbols;
-pub use symbols::SymbolTable;
+pub use symbols::{SymbolTable, implicit_callees};
 
 /// Lower a whole HIR control-flow graph (one function body) into a
 /// `MirFunction`.

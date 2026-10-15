@@ -42,7 +42,9 @@ pub struct BodyPass {
 pub struct ProgramPass {
     /// The pass's name, as the verifier's findings after it spell it.
     pub name: &'static str,
-    pub run: fn(&mut MirProgram),
+    /// Rewrite the program, given the symbols it exports beside its entry
+    /// roots.
+    pub run: fn(&mut MirProgram, &[String]),
 }
 
 /// One pre-elaboration pass over a body that reads the finished bodies of
@@ -232,15 +234,21 @@ pub fn run_pipeline(
 /// The program seam: [`PIPELINE`] over `program`, its findings folded into
 /// `invariant_errors`.
 ///
-/// Each program pass runs once, each body pass over every function but
-/// `__toplevel__`, and each call-graph pass over the same functions callees
-/// first, reading callees the program does not define from `package`.
-pub fn pre_elaborate_program(program: &mut MirProgram, package: Option<&PackageBodies>) {
+/// Each program pass runs once, given `exports`, the symbols the
+/// compilation exports beside its entry roots; each body pass over every
+/// function but `__toplevel__`; and each call-graph pass over the same
+/// functions callees first, reading callees the program does not define
+/// from `package`.
+pub fn pre_elaborate_program(
+    program: &mut MirProgram,
+    package: Option<&PackageBodies>,
+    exports: &[String],
+) {
     for pass in PIPELINE {
         match pass {
             Pass::Program(pass) => {
                 let _pass = timing::span(pass.name);
-                (pass.run)(program);
+                (pass.run)(program, exports);
             }
             Pass::CallGraph(pass) => {
                 let _pass = timing::span(pass.name);

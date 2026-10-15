@@ -278,6 +278,7 @@ fn dying_copy_receiver_forwards_its_source() {
     // into the forwarding slot, which the call then forwards.
     let source = "struct M(Copyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def consume(var self):\n        pass\n    def with_arg(var self, n: Int):\n        pass\n\ndef might(n: Int) raises -> Int:\n    return n\n\ndef forwards():\n    var d = M(1)\n    M(copy=d).consume()\n\ndef moves() raises:\n    var c = M(2)\n    M(copy=c).with_arg(might(3))\n";
     let compiled = Compiler::default()
+        .with_exports(["forwards", "moves"])
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile");
     let modes = |function: &str, name: &str| {

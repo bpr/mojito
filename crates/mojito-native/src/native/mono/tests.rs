@@ -1724,7 +1724,9 @@ def main():
 
 #[test]
 fn failed_method_instance_is_reported_only_where_reached() {
-    let compiler = mojito::Compiler::default().with_snippet_module_scope();
+    let compiler = mojito::Compiler::default()
+        .with_snippet_module_scope()
+        .with_exports(["reaches"]);
     let compiled = compiler
         .compile_source(FAILED_INSTANCE, std::path::Path::new("mono_test.mojo"))
         .expect("the check accepts every instance");

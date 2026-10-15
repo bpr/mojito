@@ -2148,39 +2148,12 @@ impl<'a> Specializer<'a> {
                         },
                     ));
                 }
-                // `**` on Int/UInt calls the bundled `_pow_int` body rather
-                // than an emitted helper, so the operator is a use of that
-                // function even though the instruction stays a `BinOp`.
-                if let MirInstr::BinOp { op, a, b, .. } = instruction
-                    && *op == mojito_ast::ast::InfixOp::Pow
-                    && mojito_symbol::symbol::calls_pow_int(
-                        function.reg_types.get(&a.0).map(peel_refs),
-                        function.reg_types.get(&b.0).map(peel_refs),
-                    )
-                {
-                    self.enqueue(
-                        mojito_symbol::symbol::POW_INT_SYMBOL,
-                        self.base_bindings(),
-                        Vec::new(),
-                    )?;
-                }
-                // The expansions that display a scalar — `print`,
-                // `String(...)`, `repr`, `os.abort`, and a `Writer.write` —
-                // call the bundled digit bodies without naming them; the
-                // backend's reachable set follows the same rule.
-                if matches!(instruction, MirInstr::Call { func, .. }
-                    if matches!(func.0.as_str(), "print" | "String" | "repr" | "_mojito_abort"))
-                    || matches!(instruction,
-                        MirInstr::MethodCall { method, .. }
-                            if matches!(method.as_str(), "write" | mojito_symbol::symbol::WRITE_FORMATTED))
-                {
-                    for symbol in [
-                        mojito_symbol::symbol::INT_DIGITS_SYMBOL,
-                        mojito_symbol::symbol::UINT_DIGITS_SYMBOL,
-                    ] {
-                        if self.functions.contains_key(symbol) {
-                            self.enqueue(symbol, self.base_bindings(), Vec::new())?;
-                        }
+                // `**` on Int/UInt and the expansions that display a scalar
+                // call bundled bodies without naming them, so the
+                // instruction is a use of each.
+                for symbol in mojito_mir::mir::implicit_callees(instruction, &function.reg_types) {
+                    if self.functions.contains_key(symbol) {
+                        self.enqueue(symbol, self.base_bindings(), Vec::new())?;
                     }
                 }
                 match instruction {

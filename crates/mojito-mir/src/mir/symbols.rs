@@ -14,13 +14,17 @@
 //! whose encoding needs a compilation's context (a check-local binding
 //! owner, a source location) names no symbol and is skipped.
 
-use crate::mir::MirFunction;
+use crate::mir::{MirBlock, MirFunction, MirInstr, instruction_regions};
+use mojito_symbol::symbol::{
+    INT_DIGITS_SYMBOL, POW_INT_SYMBOL, UINT_DIGITS_SYMBOL, WRITE_FORMATTED, calls_pow_int,
+};
 use mojito_types::symbol_ref::SYMBOL_REF;
-use mojito_types::types::Ty;
+use mojito_types::types::{Ty, TyKind};
 use serde::Serialize;
 use serde::ser;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::hash::BuildHasher;
 
 /// A program's symbols, by name, and the uses a walk finds of them: MLIR's
 /// `SymbolTable` over a MIR program.
@@ -86,6 +90,7 @@ impl<'t> SymbolTable<'t> {
             removed_params: _,
         } = function;
         let mut uses = self.uses(blocks);
+        uses.extend(self.implicit_uses(blocks, reg_types));
         let types = param_types
             .iter()
             .chain(var_tys.values())
@@ -94,6 +99,23 @@ impl<'t> SymbolTable<'t> {
             .chain(reg_types.values());
         for ty in types {
             uses.extend(self.type_uses(ty));
+        }
+        uses
+    }
+
+    /// The table's symbols the instructions of `blocks`, in their regions
+    /// too, call without naming ([`implicit_callees`]).
+    fn implicit_uses(&self, blocks: &[MirBlock], reg_types: &HashMap<u32, Ty>) -> Vec<&'t str> {
+        let mut uses = Vec::new();
+        for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+            uses.extend(
+                implicit_callees(instruction, reg_types)
+                    .iter()
+                    .filter_map(|name| self.lookup(name)),
+            );
+            for region in instruction_regions(instruction) {
+                uses.extend(self.implicit_uses(region, reg_types));
+            }
         }
         uses
     }
@@ -112,6 +134,48 @@ impl<'t> SymbolTable<'t> {
             return None;
         }
         self.names.get(name).copied()
+    }
+}
+
+/// The bundled bodies `instruction` calls without naming them.
+///
+/// The elaborator and the backends reach them from the instruction alone:
+/// `**` on integers calls `_pow_int`, and the expansions that display a
+/// scalar — `print`, `String(...)`, `repr`, `os.abort`, and a
+/// `Writer.write` — call the digit bodies. `reg_types` types the
+/// instruction's registers.
+pub fn implicit_callees<S: BuildHasher>(
+    instruction: &MirInstr,
+    reg_types: &HashMap<u32, Ty, S>,
+) -> &'static [&'static str] {
+    fn peel_refs(ty: &Ty) -> &Ty {
+        match ty.kind() {
+            TyKind::Ref(reference) => peel_refs(&reference.referent),
+            _ => ty,
+        }
+    }
+    match instruction {
+        MirInstr::BinOp { op, a, b, .. }
+            if *op == mojito_ast::ast::InfixOp::Pow
+                && calls_pow_int(
+                    reg_types.get(&a.0).map(peel_refs),
+                    reg_types.get(&b.0).map(peel_refs),
+                ) =>
+        {
+            &[POW_INT_SYMBOL]
+        }
+        MirInstr::Call { func, .. }
+            if matches!(
+                func.0.as_str(),
+                "print" | "String" | "repr" | "_mojito_abort"
+            ) =>
+        {
+            &[INT_DIGITS_SYMBOL, UINT_DIGITS_SYMBOL]
+        }
+        MirInstr::MethodCall { method, .. } if method == "write" || method == WRITE_FORMATTED => {
+            &[INT_DIGITS_SYMBOL, UINT_DIGITS_SYMBOL]
+        }
+        _ => &[],
     }
 }
 
