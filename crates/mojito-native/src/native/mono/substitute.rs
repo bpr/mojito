@@ -3,10 +3,17 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_checked::checked::ComptimeSequence;
 use mojito_checked::declaration::AssociatedParameter;
-use mojito_mir::mir::Proj;
+use mojito_mir::mir::MirParamArg;
+use mojito_mir::mir::visit::{
+    MutTypeVisitor, ParamArgSite, ParamDeclSite, TySite, walk_blocks_mut, walk_function_mut,
+    walk_instruction_mut,
+};
+use mojito_types::param_expr::ParamRef;
 use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, VariantIndex};
+use mojito_types::types::{GenericConstraint, LaneMask};
 
 /// The declarations a reflected field-name list's construction names: the
 /// list-literal initializer ([`array_display_construction`]).
@@ -117,22 +124,7 @@ pub(super) fn substitute_function(
             reject_parameter_storage_reads(&function.blocks, var as u32, value)?;
         }
     }
-    for ty in &mut function.param_types {
-        *ty = substitute_ty(ty, bindings)?;
-    }
-    for ty in function.var_tys.values_mut() {
-        *ty = substitute_ty(ty, bindings)?;
-    }
-    for ty in function.reg_types.values_mut() {
-        *ty = substitute_ty(ty, bindings)?;
-    }
-    if let Some(ty) = &mut function.ret_ty {
-        *ty = substitute_ty(ty, bindings)?;
-    }
-    if let Some(ty) = &mut function.error_ty {
-        *ty = substitute_ty(ty, bindings)?;
-    }
-    substitute_blocks_metadata(&mut function.blocks, bindings)?;
+    walk_function_mut(&mut Substitution { bindings }, function)?;
     check_reinterpretation_widths(&function.blocks, &function.reg_types)?;
     copy_builtin_receivers(&mut function.blocks, &function.reg_types);
     Ok(())
@@ -141,7 +133,7 @@ pub(super) fn substitute_function(
 /// Rewrite each dispatched `copy()` whose receiver this instance makes a
 /// built-in with a value-read copy into that value copy. `Copyable.copy` is
 /// `Self(copy=self)`, so at such a `Self` it is the [`MirInstr::CopyValue`]
-/// the `T(copy=x)` arm of [`substitute_instruction`] writes. The copy is no
+/// [`construct_type_parameter`] writes for `T(copy=x)`. The copy is no
 /// call, so a binding of its result is no longer in place.
 pub(super) fn copy_builtin_receivers(blocks: &mut [MirBlock], reg_types: &HashMap<u32, Ty>) {
     for block in blocks {
@@ -346,484 +338,7 @@ pub(super) fn substitute_blocks_metadata(
     blocks: &mut [MirBlock],
     bindings: &Bindings,
 ) -> Result<(), MonoError> {
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            substitute_instruction(instruction, bindings)?;
-        }
-    }
-    Ok(())
-}
-
-pub(super) fn substitute_instruction(
-    instruction: &mut MirInstr,
-    bindings: &Bindings,
-) -> Result<(), MonoError> {
-    use MirInstr::{
-        BinOp, Call, CallIndirect, Const, ConstructTypeParam, ConsumePlace, DefVar, DropPlace,
-        EstablishLoans, Index, LoadPlace, MakeClosure, MakeRef, MakeSimd, MakeTuple, MakeVariant,
-        MarkDestroyed, MarkInitialized, MaterializeLiteral, MethodCall, MovePlace, MultiIndex,
-        MultiSet, PointerStorageDestroy, PointerStorageTake, SimdBitcast, SimdCast, SimdShuffle,
-        SizeOf, Slice, Store, StoreRef, Try, TryNext, TypeName, UnOp, UninitStorageDestroy,
-        UninitStorageTake, VariantReplace, VariantSet, VariantSetInitWith,
-    };
-    close_instruction_variant_indices(instruction, bindings)?;
-    match instruction {
-        // A SIMD instruction's slots close as the vector type they build
-        // does; one the bindings leave symbolic stays for the concreteness
-        // check to name.
-        MakeSimd { dtype, width, .. }
-        | SimdCast { dtype, width, .. }
-        | SimdBitcast { dtype, width, .. } => {
-            let built = substitute_ty(
-                &Ty::new(TyKind::Simd {
-                    dtype: dtype.clone(),
-                    width: width.clone(),
-                }),
-                bindings,
-            )?;
-            if let Some((closed_dtype, closed_width)) = mojito_types::types::simd_slots(&built) {
-                *dtype = closed_dtype;
-                *width = closed_width;
-            }
-        }
-        // A template's lane mask closes part by part; the instance checks
-        // the closed mask against its receiver (`close_lane_masks`).
-        SimdShuffle { mask, .. } => {
-            *mask = mask.close_with(&|expr| match eval_ct(expr, bindings) {
-                Ok(CtValue::Int(value)) => Some(value),
-                _ => None,
-            });
-        }
-        EstablishLoans { loans, .. } => {
-            for loan in loans {
-                substitute_place(&mut loan.place, bindings)?;
-            }
-        }
-        MakeRef { place, .. }
-        | MovePlace { place, .. }
-        | Store { place, .. }
-        | StoreRef { place, .. }
-        | LoadPlace { place, .. }
-        | ConsumePlace { place, .. }
-        | DropPlace { place }
-        | MarkInitialized { place }
-        | MarkDestroyed { place } => substitute_place(place, bindings)?,
-        MakeClosure { captures, .. } => {
-            for capture in captures {
-                substitute_place(&mut capture.place, bindings)?;
-            }
-        }
-        MaterializeLiteral { target, .. }
-        | SizeOf { ty: target, .. }
-        | PointerStorageTake {
-            element: target, ..
-        }
-        | PointerStorageDestroy {
-            element: target, ..
-        }
-        | UninitStorageTake {
-            element: target, ..
-        }
-        | UninitStorageDestroy {
-            element: target, ..
-        } => *target = substitute_ty(target, bindings)?,
-        TryNext {
-            call, exhaustion, ..
-        } => {
-            substitute_iterator_call(call, bindings)?;
-            *exhaustion = substitute_ty(exhaustion, bindings)?;
-        }
-        DefVar {
-            binding_ty: Some(ty),
-            ..
-        } => *ty = substitute_ty(ty, bindings)?,
-        Call {
-            raises,
-            arg_places,
-            kwarg_places,
-            receiver,
-            instantiated_args,
-            ..
-        } => {
-            sub_opt_ty(raises.as_mut(), bindings)?;
-            sub_places(arg_places, bindings)?;
-            sub_places(kwarg_places, bindings)?;
-            sub_opt_ty(receiver.as_mut(), bindings)?;
-            for arg in instantiated_args {
-                *arg = substitute_arg(arg, bindings)?;
-            }
-        }
-        // A type name is spelled from the instance's type; a type the
-        // bindings leave symbolic stays for the verifier's concrete mode.
-        TypeName { dest, ty } => {
-            *ty = substitute_ty(ty, bindings)?;
-            if !mojito_types::types::is_symbolic(ty) {
-                *instruction = Const {
-                    dest: *dest,
-                    k: mojito_mir::mir::Const::Str(
-                        mojito_symbol::symbol::unqualified_instance_name(ty),
-                    ),
-                };
-            }
-        }
-        // `H()` on a type parameter constructs the bound struct: once the
-        // binding is concrete this is an ordinary nullary constructor call,
-        // which the call rewriting below then instantiates.
-        // `T(copy=x)` copies its source through the bound type's copy
-        // initializer: a built-in value copies by the value read, a struct
-        // by the ordinary `Name(copy=x)` construction.
-        ConstructTypeParam {
-            dest,
-            param,
-            kwargs,
-            kwarg_places,
-            ..
-        } if !kwargs.is_empty() => {
-            let binding = bindings.types.get(&*param);
-            let source = match kwargs.as_slice() {
-                [(keyword, source)] if keyword == "copy" => *source,
-                _ => {
-                    return Err(MonoError {
-                        kind: MonoErrorKind::Unsupported,
-                        function: None,
-                        construct: format!(
-                            "constructing type parameter `{}` through an initializer other than `copy=`",
-                            param.name
-                        ),
-                    });
-                }
-            };
-            match binding.map(Ty::kind) {
-                Some(ty) if mojito_types::types::builtin_copy_is_value_read(ty) => {
-                    *instruction = MirInstr::CopyValue {
-                        dest: *dest,
-                        value: source,
-                    };
-                }
-                Some(TyKind::Struct(struct_name, _)) => {
-                    sub_places(kwarg_places, bindings)?;
-                    *instruction = Call {
-                        dest: *dest,
-                        func: mojito_mir::mir::FuncRef::named(struct_name),
-                        raises: None,
-                        args: Vec::new(),
-                        kwargs: std::mem::take(kwargs),
-                        arg_places: Vec::new(),
-                        kwarg_places: std::mem::take(kwarg_places),
-                        capture_accesses: Vec::new(),
-                        param_arg_regs: Vec::new(),
-                        receiver: None,
-                        instantiated_args: Vec::new(),
-                        spread: None,
-                    };
-                }
-                _ => {
-                    return Err(MonoError {
-                        kind: MonoErrorKind::Unsupported,
-                        function: None,
-                        construct: format!(
-                            "copying through type parameter `{}` without a concrete binding",
-                            param.name
-                        ),
-                    });
-                }
-            }
-        }
-        // Every construction the bindings decide was written as its type's
-        // default construction (`default_construct_parameters`). One left
-        // sits in a compile-time branch not yet selected, or its type stays
-        // symbolic for the verifier's concrete mode to name.
-        MirInstr::ConstructType { ty, .. } => {
-            if let Ok(closed) = substitute_ty(ty, bindings) {
-                *ty = closed;
-            }
-        }
-        // Every nullary construction the bindings decide was written as its
-        // type's default construction (`default_construct_parameters`).
-        ConstructTypeParam { param, element, .. } => {
-            return Err(MonoError {
-                kind: MonoErrorKind::Unsupported,
-                function: None,
-                construct: match element {
-                    Some(_) => format!(
-                        "constructing an element of pack `{}` at an index the instance does not decide",
-                        param.name
-                    ),
-                    None => format!(
-                        "constructing type parameter `{}` without a concrete binding",
-                        param.name
-                    ),
-                },
-            });
-        }
-        CallIndirect {
-            raises,
-            callee_place,
-            arg_places,
-            kwarg_places,
-            instantiated_contract,
-            instantiated_args,
-            ..
-        } => {
-            sub_opt_ty(raises.as_mut(), bindings)?;
-            sub_place_opt(callee_place.as_deref_mut(), bindings)?;
-            sub_places(arg_places, bindings)?;
-            sub_places(kwarg_places, bindings)?;
-            sub_opt_ty(instantiated_contract.as_mut(), bindings)?;
-            for arg in instantiated_args {
-                *arg = substitute_arg(arg, bindings)?;
-            }
-        }
-        UnOp { raises, .. } | BinOp { raises, .. } => sub_opt_ty(raises.as_mut(), bindings)?,
-        MethodCall {
-            raises,
-            reference_result,
-            recv_place,
-            arg_places,
-            kwarg_places,
-            instantiated_args,
-            ..
-        } => {
-            sub_opt_ty(raises.as_mut(), bindings)?;
-            sub_ref_opt(reference_result.as_deref_mut(), bindings)?;
-            sub_place_opt(recv_place.as_deref_mut(), bindings)?;
-            sub_places(arg_places, bindings)?;
-            sub_places(kwarg_places, bindings)?;
-            for arg in instantiated_args {
-                *arg = substitute_arg(arg, bindings)?;
-            }
-        }
-        Index {
-            base_place,
-            index_place,
-            call,
-            ..
-        } => {
-            sub_place_opt(base_place.as_deref_mut(), bindings)?;
-            sub_place_opt(index_place.as_deref_mut(), bindings)?;
-            if let Some(call) = call {
-                substitute_subscript_call(call, bindings)?;
-            }
-        }
-        Slice {
-            object_place,
-            arg_places,
-            call,
-            ..
-        }
-        | MultiIndex {
-            object_place,
-            arg_places,
-            call,
-            ..
-        } => {
-            sub_place_opt(object_place.as_deref_mut(), bindings)?;
-            sub_places(arg_places, bindings)?;
-            if let Some(call) = call {
-                substitute_subscript_call(call, bindings)?;
-            }
-        }
-        MultiSet {
-            receiver_place,
-            arg_places,
-            value_place,
-            call,
-            ..
-        } => {
-            sub_place_opt(receiver_place.as_deref_mut(), bindings)?;
-            sub_places(arg_places, bindings)?;
-            sub_place_opt(value_place.as_deref_mut(), bindings)?;
-            substitute_subscript_call(call, bindings)?;
-        }
-        MakeTuple {
-            element_types: Some(types),
-            ..
-        } => {
-            for ty in types {
-                *ty = substitute_ty(ty, bindings)?;
-            }
-        }
-        MakeVariant { alternatives, .. } => {
-            *alternatives = sub_spread_types(alternatives, bindings)?;
-        }
-        VariantSet { place, .. }
-        | VariantSetInitWith { place, .. }
-        | VariantReplace { place, .. } => substitute_place(place, bindings)?,
-        Try {
-            body,
-            handler,
-            orelse,
-            finalbody,
-            ..
-        } => {
-            substitute_blocks_metadata(body, bindings)?;
-            if let Some((_, b)) = handler {
-                substitute_blocks_metadata(b, bindings)?;
-            }
-            if let Some(b) = orelse {
-                substitute_blocks_metadata(b, bindings)?;
-            }
-            if let Some(b) = finalbody {
-                substitute_blocks_metadata(b, bindings)?;
-            }
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-pub(super) fn substitute_subscript_call(
-    call: &mut mojito_mir::mir::MirSubscriptCall,
-    bindings: &Bindings,
-) -> Result<(), MonoError> {
-    sub_opt_ty(call.raises.as_mut(), bindings)?;
-    call.result_ty = substitute_ty(&call.result_ty, bindings)?;
-    // A parameter type closes under the caller's bindings when the checker
-    // instantiated it at the call; one naming the callee's own binder stays
-    // as the contract wrote it.
-    for argument in &mut call.arguments {
-        if let Ok(ty) = substitute_ty(&argument.parameter_ty, bindings) {
-            argument.parameter_ty = ty;
-        }
-    }
-    // A compile-time index over binders the bindings close (a `comptime
-    // for` index in its iteration's copy) is its value from here.
-    for argument in &mut call.param_arg_regs {
-        if let Some(value) = argument
-            .expr
-            .as_ref()
-            .and_then(|expr| eval_ct(expr, bindings).ok())
-            .and_then(|value| ParamContext::detached().constant(value).ok())
-        {
-            argument.expr = Some(value);
-        }
-    }
-    sub_ref_opt(call.reference_result.as_mut(), bindings)
-}
-
-pub(super) fn substitute_place(place: &mut MirPlace, bindings: &Bindings) -> Result<(), MonoError> {
-    sub_opt_ty(place.root_ty.as_mut(), bindings)?;
-    for ty in &mut place.projection_tys {
-        *ty = substitute_ty(ty, bindings)?;
-    }
-    for projection in &mut place.proj {
-        if let Proj::Variant(index) = projection {
-            close_variant_index(index, bindings)?;
-        }
-    }
-    sub_opt_ty(place.ty.as_mut(), bindings)
-}
-
-/// Close the alternatives a `Variant` operation selects.
-fn close_instruction_variant_indices(
-    instruction: &mut MirInstr,
-    bindings: &Bindings,
-) -> Result<(), MonoError> {
-    match instruction {
-        MirInstr::MakeVariant { index, .. }
-        | MirInstr::VariantIs { index, .. }
-        | MirInstr::VariantGet { index, .. }
-        | MirInstr::VariantSet { index, .. }
-        | MirInstr::VariantTake { index, .. }
-        | MirInstr::VariantSetInitWith { index, .. }
-        | MirInstr::VariantDeinitWith { index, .. } => close_variant_index(index, bindings),
-        MirInstr::VariantReplace {
-            input_index,
-            output_index,
-            ..
-        } => {
-            close_variant_index(input_index, bindings)?;
-            close_variant_index(output_index, bindings)
-        }
-        _ => Ok(()),
-    }
-}
-
-/// Close a template's `_get_type_index[T, *Ts]()` once the instance binds
-/// the pack and `T`. A `T` the pack lacks fails the instance, as upstream's
-/// `Variant._check[T]()` does; an index the bindings leave open stays for
-/// the concreteness check to name.
-fn close_variant_index(index: &mut VariantIndex, bindings: &Bindings) -> Result<(), MonoError> {
-    let VariantIndex::Expr(expr) = &*index else {
-        return Ok(());
-    };
-    let ParamKind::PackQuery {
-        pack,
-        query: PackQuery::IndexOf(element),
-    } = expr.kind()
-    else {
-        return Ok(());
-    };
-    let Some(TyKind::RuntimePack(alternatives)) = bindings.types.get(pack).map(Ty::kind) else {
-        return Ok(());
-    };
-    let alternatives = sub_types(alternatives, bindings)?;
-    let selected = match element.kind() {
-        ParamKind::TypeShape(ty) => substitute_ty(ty, bindings)?,
-        ParamKind::Constant(CtValue::Type(ty)) => ty.clone(),
-        _ => return Ok(()),
-    };
-    if is_symbolic(&selected) || alternatives.iter().any(is_symbolic) {
-        return Ok(());
-    }
-    *index = VariantIndex::Known(
-        alternatives
-            .iter()
-            .position(|alternative| super::equiv::ty_equal_modulo_origins(alternative, &selected))
-            .ok_or_else(|| MonoError {
-                kind: MonoErrorKind::Instantiation,
-                function: None,
-                construct: format!(
-                    "constraint failed: Type does not exist in Variant. ('{selected}' is not \
-                     one of {})",
-                    TyKind::Variant(alternatives.clone())
-                ),
-            })?,
-    );
-    Ok(())
-}
-pub(super) fn sub_places(
-    places: &mut [Option<MirPlace>],
-    bindings: &Bindings,
-) -> Result<(), MonoError> {
-    for place in places {
-        sub_place_opt(place.as_mut(), bindings)?;
-    }
-    Ok(())
-}
-pub(super) fn sub_place_opt(
-    place: Option<&mut MirPlace>,
-    bindings: &Bindings,
-) -> Result<(), MonoError> {
-    if let Some(place) = place {
-        substitute_place(place, bindings)?;
-    }
-    Ok(())
-}
-pub(super) fn sub_opt_ty(ty: Option<&mut Ty>, bindings: &Bindings) -> Result<(), MonoError> {
-    if let Some(ty) = ty {
-        *ty = substitute_ty(ty, bindings)?;
-    }
-    Ok(())
-}
-pub(super) fn sub_ref_opt(
-    ty: Option<&mut mojito_types::origin::RefTy>,
-    bindings: &Bindings,
-) -> Result<(), MonoError> {
-    if let Some(ty) = ty {
-        ty.referent = substitute_ty(&ty.referent, bindings)?;
-    }
-    Ok(())
-}
-
-pub(super) fn substitute_iterator_call(
-    call: &mut mojito_checked::checked::CheckedIteratorCall,
-    bindings: &Bindings,
-) -> Result<(), MonoError> {
-    call.result_ty = substitute_ty(&call.result_ty, bindings)?;
-    sub_opt_ty(call.raises.as_mut(), bindings)?;
-    sub_ref_opt(call.reference_result.as_mut(), bindings)?;
-    Ok(())
+    walk_blocks_mut(&mut Substitution { bindings }, blocks)
 }
 
 /// A closed struct type's source declaration, with its own parameters bound
@@ -1409,6 +924,253 @@ pub(super) fn bound_parameter_locals<'a>(
             Some((binder.name.trim_start_matches('*').to_string(), value))
         })
         .collect()
+}
+
+/// `bindings` substituted through every type and parameter site of a body,
+/// as upstream's elaborator substitutes through MLIR's `AttrTypeReplacer`.
+struct Substitution<'b> {
+    bindings: &'b Bindings,
+}
+
+impl MutTypeVisitor for Substitution<'_> {
+    type Error = MonoError;
+
+    fn visit_ty(&mut self, ty: &mut Ty, site: TySite) -> Result<(), MonoError> {
+        match (substitute_ty(ty, self.bindings), site) {
+            (Ok(closed), _) => *ty = closed,
+            // A construction left sits in a compile-time branch not yet
+            // selected, or its type stays symbolic for the verifier's
+            // concrete mode to name; a subscript parameter type naming the
+            // callee's own binder stays as the contract wrote it.
+            (Err(_), TySite::ConstructedType | TySite::SubscriptParameter) => {}
+            (Err(error), _) => return Err(error),
+        }
+        Ok(())
+    }
+
+    fn visit_ty_arg(&mut self, arg: &mut TyArg) -> Result<(), MonoError> {
+        *arg = substitute_arg(arg, self.bindings)?;
+        Ok(())
+    }
+
+    fn visit_variant_alternatives(&mut self, alternatives: &mut Vec<Ty>) -> Result<(), MonoError> {
+        *alternatives = sub_spread_types(alternatives, self.bindings)?;
+        Ok(())
+    }
+
+    fn visit_variant_index(&mut self, index: &mut VariantIndex) -> Result<(), MonoError> {
+        close_variant_index(index, self.bindings)
+    }
+
+    /// A template's lane mask closes part by part; the instance checks the
+    /// closed mask against its receiver (`close_lane_masks`).
+    fn visit_lane_mask(&mut self, mask: &mut LaneMask) -> Result<(), MonoError> {
+        *mask = mask.close_with(&|expr| match eval_ct(expr, self.bindings) {
+            Ok(CtValue::Int(value)) => Some(value),
+            _ => None,
+        });
+        Ok(())
+    }
+
+    /// A subscript's compile-time index over binders the bindings close (a
+    /// `comptime for` index in its iteration's copy) is its value from here.
+    /// A call's are answered by `answer_param_constants`.
+    fn visit_param_arg(
+        &mut self,
+        arg: &mut MirParamArg,
+        site: ParamArgSite,
+    ) -> Result<(), MonoError> {
+        if site == ParamArgSite::Subscript
+            && let Some(value) = arg
+                .expr
+                .as_ref()
+                .and_then(|expr| eval_ct(expr, self.bindings).ok())
+                .and_then(|value| ParamContext::detached().constant(value).ok())
+        {
+            arg.expr = Some(value);
+        }
+        Ok(())
+    }
+
+    /// A contract's own binders are bound by its callee, not substituted.
+    fn visit_param_decls(
+        &mut self,
+        _: &mut [ParamDecl],
+        _: ParamDeclSite,
+    ) -> Result<(), MonoError> {
+        Ok(())
+    }
+
+    /// Parameter constants are answered by `answer_param_constants`.
+    fn visit_constant(&mut self, _: &mut mojito_mir::mir::Const) -> Result<(), MonoError> {
+        Ok(())
+    }
+
+    /// A constructed type parameter is rewritten by [`Self::visit_instruction`]
+    /// first; a `comptime for` binder is bound by the unroller.
+    fn visit_param_ref(&mut self, _: &mut ParamRef) -> Result<(), MonoError> {
+        Ok(())
+    }
+
+    /// A `comptime if` condition is decided by the specializer.
+    fn visit_constraint(&mut self, _: &mut GenericConstraint) -> Result<(), MonoError> {
+        Ok(())
+    }
+
+    /// A `comptime for` sequence is stepped by the unroller.
+    fn visit_sequence(&mut self, _: &mut ComptimeSequence) -> Result<(), MonoError> {
+        Ok(())
+    }
+
+    fn visit_instruction(&mut self, instruction: &mut MirInstr) -> Result<(), MonoError> {
+        construct_type_parameter(instruction, self.bindings)?;
+        walk_instruction_mut(self, instruction)?;
+        // A type name is spelled from the instance's type; a type the
+        // bindings leave symbolic stays for the verifier's concrete mode.
+        if let MirInstr::TypeName { dest, ty } = instruction
+            && !mojito_types::types::is_symbolic(ty)
+        {
+            *instruction = MirInstr::Const {
+                dest: *dest,
+                k: mojito_mir::mir::Const::Str(mojito_symbol::symbol::unqualified_instance_name(
+                    ty,
+                )),
+            };
+        }
+        Ok(())
+    }
+}
+
+/// Rewrite a construction of a type parameter the bindings bind.
+///
+/// `T(copy=x)` copies its source through the bound type's copy initializer:
+/// a built-in value copies by the value read, a struct by the ordinary
+/// `Name(copy=x)` construction, which the call rewriting then instantiates.
+/// Every nullary construction the bindings decide was written as its type's
+/// default construction (`default_construct_parameters`), so one left is an
+/// error.
+fn construct_type_parameter(
+    instruction: &mut MirInstr,
+    bindings: &Bindings,
+) -> Result<(), MonoError> {
+    let MirInstr::ConstructTypeParam {
+        dest,
+        param,
+        kwargs,
+        kwarg_places,
+        element,
+    } = instruction
+    else {
+        return Ok(());
+    };
+    if kwargs.is_empty() {
+        return Err(MonoError {
+            kind: MonoErrorKind::Unsupported,
+            function: None,
+            construct: match element {
+                Some(_) => format!(
+                    "constructing an element of pack `{}` at an index the instance does not decide",
+                    param.name
+                ),
+                None => format!(
+                    "constructing type parameter `{}` without a concrete binding",
+                    param.name
+                ),
+            },
+        });
+    }
+    let source = match kwargs.as_slice() {
+        [(keyword, source)] if keyword == "copy" => *source,
+        _ => {
+            return Err(MonoError {
+                kind: MonoErrorKind::Unsupported,
+                function: None,
+                construct: format!(
+                    "constructing type parameter `{}` through an initializer other than `copy=`",
+                    param.name
+                ),
+            });
+        }
+    };
+    match bindings.types.get(&*param).map(Ty::kind) {
+        Some(ty) if mojito_types::types::builtin_copy_is_value_read(ty) => {
+            *instruction = MirInstr::CopyValue {
+                dest: *dest,
+                value: source,
+            };
+        }
+        Some(TyKind::Struct(struct_name, _)) => {
+            *instruction = MirInstr::Call {
+                dest: *dest,
+                func: mojito_mir::mir::FuncRef::named(struct_name),
+                raises: None,
+                args: Vec::new(),
+                kwargs: std::mem::take(kwargs),
+                arg_places: Vec::new(),
+                kwarg_places: std::mem::take(kwarg_places),
+                capture_accesses: Vec::new(),
+                param_arg_regs: Vec::new(),
+                receiver: None,
+                instantiated_args: Vec::new(),
+                spread: None,
+            };
+        }
+        _ => {
+            return Err(MonoError {
+                kind: MonoErrorKind::Unsupported,
+                function: None,
+                construct: format!(
+                    "copying through type parameter `{}` without a concrete binding",
+                    param.name
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Close a template's `_get_type_index[T, *Ts]()` once the instance binds
+/// the pack and `T`. A `T` the pack lacks fails the instance, as upstream's
+/// `Variant._check[T]()` does; an index the bindings leave open stays for
+/// the concreteness check to name.
+fn close_variant_index(index: &mut VariantIndex, bindings: &Bindings) -> Result<(), MonoError> {
+    let VariantIndex::Expr(expr) = &*index else {
+        return Ok(());
+    };
+    let ParamKind::PackQuery {
+        pack,
+        query: PackQuery::IndexOf(element),
+    } = expr.kind()
+    else {
+        return Ok(());
+    };
+    let Some(TyKind::RuntimePack(alternatives)) = bindings.types.get(pack).map(Ty::kind) else {
+        return Ok(());
+    };
+    let alternatives = sub_types(alternatives, bindings)?;
+    let selected = match element.kind() {
+        ParamKind::TypeShape(ty) => substitute_ty(ty, bindings)?,
+        ParamKind::Constant(CtValue::Type(ty)) => ty.clone(),
+        _ => return Ok(()),
+    };
+    if is_symbolic(&selected) || alternatives.iter().any(is_symbolic) {
+        return Ok(());
+    }
+    *index = VariantIndex::Known(
+        alternatives
+            .iter()
+            .position(|alternative| super::equiv::ty_equal_modulo_origins(alternative, &selected))
+            .ok_or_else(|| MonoError {
+                kind: MonoErrorKind::Instantiation,
+                function: None,
+                construct: format!(
+                    "constraint failed: Type does not exist in Variant. ('{selected}' is not \
+                     one of {})",
+                    TyKind::Variant(alternatives.clone())
+                ),
+            })?,
+    );
+    Ok(())
 }
 
 /// The associated type `name` of the instance `base` resolves to, read off

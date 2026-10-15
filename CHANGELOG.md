@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR has a type and parameter visitor below the elaborator (R915):
+  `mir::visit` walks every type and compile-time parameter site of a body,
+  regions and terminators included, and the elaborator substitutes an
+  instance's bindings through it, with unchanged output. A
+  multi-dimensional subscript's keyword places are now substituted as
+  well. The verifier's own type walk remains narrower (R944).
 - A trait method may carry inline-level decorators (R914): `@always_inline`,
   `@no_inline`, and `@inline(level)` on a requirement or a default parse
   and are validated as a function's are, and a default's member function

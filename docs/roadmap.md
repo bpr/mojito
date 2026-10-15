@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R944**.
+Next free ID: **R945**.
 
 ## Ordered Work
 
@@ -55,20 +55,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md),
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
-
-- [ ] **R915 MIR has no type visitor below the elaborator**
-
-  `inline-parametric` cannot substitute a callee's binders, because the only
-  walk over every type an instruction holds is `mono::substitute`'s, in
-  `mojito-native`, which `mojito-analysis` cannot depend on.
-  - Move the type-walking half of `substitute_instruction` into
-    `mojito-mir` as a `MirInstr` visitor over `&mut Ty`, places,
-    `GenericConstraint`, and `ComptimeSequence` included.
-  - The elaborator substitutes through it, so the move changes no output.
-  - Done when `mono::substitute` and the visitor share one walk and the
-    differential is clean.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R916 A generic `nodebug` callee is called, not inlined**
 
@@ -194,6 +180,22 @@ which names the upstream pass each one follows. Each is measured by the
     inlined when the error trace has no `("k": 5)` instantiation note.
   - Find the pin's legality rule before matching it.
   - Done when Mojito's veto list matches those probes.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R944 The MIR verifier misses types the elaborator substitutes**
+
+  The verifier's scope and concrete modes read an instruction's types
+  through `instruction_places` and `instruction_named_types`, which skip
+  sites `mir::visit` reaches.
+  - Missed today: `MethodCall.reference_result`, a subscript call's
+    `parameter_ty` and `reference_result`, `TryNext.call`'s types, and the
+    `comptime` terminators' parameters.
+  - Give `mir::visit` a read-only twin (`TypeVisitor`, `walk_instruction`)
+    and run both verifier modes over it, then delete
+    `instruction_named_types`.
+  - The concrete mode may report findings it does not report today; triage
+    them in this entry.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

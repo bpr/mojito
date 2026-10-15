@@ -3831,6 +3831,9 @@ nearest enclosing loop carrying it), `ComptimeYield`, `ComptimeBreak`/
 `instruction_regions`/`instruction_regions_mut` walk every op's regions in
 a fixed order, and `prune_unreachable_blocks`, `block_successors`, the
 analyses, and the elaborator's slot renumbering walk through them.
+`mir::visit` walks every type and compile-time parameter site of a body,
+regions and terminators included, as MLIR's `AttrTypeReplacer` does, and
+the elaborator substitutes an instance's bindings through it.
 
 MIR lowering builds `and`/`or`, conditional expressions, comparison
 chains, and comprehensions as `If`/`Loop`, each region one block (a

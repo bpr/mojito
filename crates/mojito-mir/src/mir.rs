@@ -49,6 +49,7 @@ mod ir;
 pub use ir::*;
 pub mod text;
 pub mod verify;
+pub mod visit;
 
 mod calls;
 mod facts;
