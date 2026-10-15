@@ -1825,3 +1825,24 @@ binary, before (the parent commit) and after:
 for 394 → 364 generator instances in total, and none changes its output or
 diagnostics. A method with a receiver keeps its struct's parameters, where
 the pin removes them (R976–R978).
+
+## Unread callable parameters are removed (2026-10-15, R910)
+
+`remove-unused-params` now considers a callable value parameter, and the
+elaborator binds no runtime closure or environment for one a callee
+removed (`docs/architecture.md` §Pre-Elaboration Pipeline). The stage
+fixture, `assets/ok/unread_callable_parameter_instances.mojo`, was
+rejected before (forwarding a capturing closure to a callee that ignores
+it); its subset without that forward and `forward_and_call`, debug binary,
+before (the parent commit) and after:
+
+| | before | after | change |
+|---|---:|---:|---:|
+| `concrete_functions` | 23 | 18 | −5 |
+| `generator_instances` | 14 | 9 | −5 |
+| `generator_instance_instructions` | 50 | 33 | −17 |
+
+`ignore`, `ignore_capturing`, `ignore_generic`, `forward_ignored`, and
+`defaulted` each fall to one instance, as on the pin; `call` and
+`forward_called` keep one per binding. No other fixture under `assets/`
+changes its instance count, output, or diagnostics.

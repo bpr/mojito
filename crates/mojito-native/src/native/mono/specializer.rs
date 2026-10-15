@@ -199,7 +199,7 @@ impl<'a> Specializer<'a> {
     }
 
     /// The instance arguments of `target`'s parameters `decls` under
-    /// `bindings`: [`ordered_arguments`] past the `owner_covered` decls that
+    /// `bindings`: [`bound_argument`] of each past the `owner_covered` decls that
     /// restate the owner's parameters, without those the body removed.
     pub(super) fn own_arguments(
         &self,
@@ -209,13 +209,12 @@ impl<'a> Specializer<'a> {
         owner_covered: usize,
     ) -> Result<Vec<InstanceArg>, MonoError> {
         let removed = self.removed_params(target);
-        Ok(decls
+        decls
             .iter()
-            .zip(ordered_arguments(decls, bindings, target)?)
             .skip(owner_covered)
-            .filter(|(decl, _)| !removed.contains(decl.id()))
-            .map(|(_, argument)| argument)
-            .collect())
+            .filter(|decl| !removed.contains(decl.id()))
+            .map(|decl| bound_argument(decl, bindings, target))
+            .collect()
     }
 
     /// Demand the instance of `template` under `bindings`. A member whose
@@ -262,11 +261,10 @@ impl<'a> Specializer<'a> {
                     .map_or(&[][..], |owner| owner.param_decls.as_slice());
                 arguments = decls
                     .iter()
-                    .zip(ordered_arguments(decls, &bindings, template)?)
-                    .filter(|(decl, _)| !removed.contains(decl.id()))
-                    .map(|(_, argument)| argument)
-                    .chain(arguments)
-                    .collect();
+                    .filter(|decl| !removed.contains(decl.id()))
+                    .map(|decl| bound_argument(decl, &bindings, template))
+                    .chain(arguments.into_iter().map(Ok))
+                    .collect::<Result<_, _>>()?;
                 None
             }
             Some((_, instance)) if let TyKind::Struct(name, _) = instance.kind() => {
@@ -512,7 +510,7 @@ impl<'a> Specializer<'a> {
     }
 
     /// Bind the callable parameters this call binds to a closure that
-    /// captures, answering the trailing arguments the call passes for them
+    /// captures, but those the callee removed, answering the trailing arguments the call passes for them
     /// and the loads those arguments need first. An environment survives no
     /// name: a generic closure's instance folds the lifted body and takes
     /// the captured places as reference parameters, and any other closure
@@ -531,12 +529,16 @@ impl<'a> Specializer<'a> {
         let Some(declaration) = self.declarations.get(target) else {
             return Ok(trailing);
         };
+        let removed = self.removed_params(target);
         for (decl, reg, _) in
             mojito_mir::mir::matched_parameter_arguments(&declaration.param_decls, param_args)
         {
             let ParamDecl::Value { ty, .. } = decl else {
                 continue;
             };
+            if removed.contains(decl.id()) {
+                continue;
+            }
             let generic = match peel_refs(ty).kind() {
                 TyKind::GenericFunc(_) => true,
                 TyKind::Func(_) => false,
@@ -580,6 +582,7 @@ impl<'a> Specializer<'a> {
         let mut bindings = self.base_bindings();
         bind_explicit_value_arguments(
             contract,
+            &[],
             param_args,
             &self.constant_values,
             &mut bindings,

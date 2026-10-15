@@ -48,8 +48,9 @@ use std::fmt;
 /// A default of another parameter is not a read, since a default is the
 /// call site's. A function inside a `comptime for`, `__toplevel__`, and a
 /// function without a declaration have no candidates, nor has a nested
-/// function's own parameter or a callable value parameter, whose binding
-/// can add runtime parameters to the instance.
+/// function's own parameter. A callable value parameter is a candidate like
+/// any other: a call through it reads it, and the elaborator binds no
+/// runtime closure or environment for one it removed.
 pub fn unread_parameters(
     name: &str,
     function: &MirFunction,
@@ -150,7 +151,7 @@ pub fn has_no_destructor(ty: &Ty) -> bool {
     )
 }
 
-/// `function` with every call dropping the arguments of the callee's
+/// `function`, the body of `name`, with every call dropping the arguments of the callee's
 /// removed parameters, `removed(callee)`; `None` when no call drops one.
 ///
 /// It is the body upstream's `RemoveUnusedParams` reads once it has
@@ -163,6 +164,7 @@ pub fn has_no_destructor(ty: &Ty) -> bool {
 /// removed parameter that a kept parameter's default reads keeps its
 /// argument, which the call's omission of the kept one may need.
 pub fn without_removed_forwards<'a>(
+    name: &str,
     function: &MirFunction,
     declarations: &MirDeclarations,
     removed: &dyn Fn(&str) -> Option<&'a [ParamId]>,
@@ -176,14 +178,17 @@ pub fn without_removed_forwards<'a>(
     if discounted.is_empty() {
         return None;
     }
-    erase_forward_chains(&mut view);
+    let callables = declarations
+        .function(name)
+        .map(|declaration| callable_parameter_slots(function, &declaration.param_decls))
+        .unwrap_or_default();
+    erase_forward_chains(&mut view, &callables);
     Some((view, discounted.into_iter().collect()))
 }
 
 /// The parameters `unread_parameters` may remove from `name`: its own
 /// compile-time parameters and, for a method, its struct's, or a nested
-/// function's enclosing declarations' parameters, each once, but a callable
-/// value parameter.
+/// function's enclosing declarations' parameters, each once.
 fn candidate_parameters<'d>(
     name: &'d str,
     declaration: &'d MirFunctionDeclaration,
@@ -218,7 +223,6 @@ fn candidate_parameters<'d>(
             .as_deref()
             .and_then(|enclosing| declarations.function(enclosing));
     }
-    candidates.retain(|decl| !is_callable_value(decl));
     candidates
 }
 
@@ -241,13 +245,32 @@ fn method_struct<'a>(
         .map(|structure| (owner, structure.param_decls.as_slice()))
 }
 
-fn is_callable_value(decl: &ParamDecl) -> bool {
-    matches!(
-        decl,
-        ParamDecl::Value { ty, callable_default, .. }
-            if callable_default.is_some()
-                || matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
-    )
+/// The slots of `function` that a callable value parameter among `decls`
+/// binds. Its value is a compile-time one, so copying or dropping the slot
+/// runs no code.
+fn callable_parameter_slots<'d>(
+    function: &MirFunction,
+    decls: impl IntoIterator<Item = &'d ParamDecl>,
+) -> HashSet<VarId> {
+    let names: HashSet<&str> = decls
+        .into_iter()
+        .filter(|decl| {
+            matches!(
+                decl,
+                ParamDecl::Value { ty, callable_default, .. }
+                    if callable_default.is_some()
+                        || matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
+            )
+        })
+        .map(ParamDecl::name)
+        .collect();
+    function
+        .var_names
+        .iter()
+        .enumerate()
+        .filter(|(_, name)| names.contains(name.as_str()))
+        .map(|(slot, _)| slot as VarId)
+        .collect()
 }
 
 /// Whether `blocks` or their regions call a callee `removed` names
@@ -418,10 +441,10 @@ fn drop_arguments(
 /// Erase from `function` every instruction that only computes a value
 /// nothing reads and that may go without a trace: one
 /// [`MirInstr::would_be_trivially_dead`] allows, a copy of a slot whose
-/// type has no destructor, or a built-in operator over such operands that
-/// cannot trap (integer arithmetic wraps). Repeats until nothing changes,
-/// and drops the erased registers' types.
-fn erase_forward_chains(function: &mut MirFunction) {
+/// type has no destructor or of a `callables` slot, or a built-in operator
+/// over such operands that cannot trap (integer arithmetic wraps). Repeats
+/// until nothing changes, and drops the erased registers' types.
+fn erase_forward_chains(function: &mut MirFunction, callables: &HashSet<VarId>) {
     let mut erased = HashSet::new();
     loop {
         let mut reads = vec![0_u32; function.n_regs as usize];
@@ -437,7 +460,9 @@ fn erase_forward_chains(function: &mut MirFunction) {
         erase_unread(
             blocks,
             &mut |instruction| match instruction {
-                MirInstr::UseVar { var, .. } => var_tys.get(var).is_some_and(has_no_destructor),
+                MirInstr::UseVar { var, .. } => {
+                    callables.contains(var) || var_tys.get(var).is_some_and(has_no_destructor)
+                }
                 MirInstr::UnOp {
                     a, raises: None, ..
                 } => trivial(a),
@@ -508,7 +533,8 @@ fn erase_unread(
 
 /// The names of the value parameters among `candidates` whose slot the body
 /// reads: any instruction naming the slot, but a drop or a declaration of a
-/// slot whose type has no destructor to run.
+/// slot whose type has no destructor to run or that a callable parameter
+/// binds.
 fn slot_reads(function: &MirFunction, candidates: &[&ParamDecl]) -> HashSet<String> {
     let names: HashSet<&str> = candidates
         .iter()
@@ -526,6 +552,7 @@ fn slot_reads(function: &MirFunction, candidates: &[&ParamDecl]) -> HashSet<Stri
         let mut cx = SlotReads {
             function,
             slots: &slots,
+            callables: callable_parameter_slots(function, candidates.iter().copied()),
             reads: &mut reads,
         };
         cx.blocks(&function.blocks);
@@ -536,6 +563,7 @@ fn slot_reads(function: &MirFunction, candidates: &[&ParamDecl]) -> HashSet<Stri
 struct SlotReads<'a> {
     function: &'a MirFunction,
     slots: &'a HashMap<VarId, &'a str>,
+    callables: HashSet<VarId>,
     reads: &'a mut HashSet<String>,
 }
 
@@ -582,11 +610,12 @@ impl SlotReads<'_> {
     /// Dropping a slot reads its value only when a destructor runs on it.
     fn drops(&mut self, slots: &[VarId]) {
         for &slot in slots {
-            if !self
-                .function
-                .var_tys
-                .get(&slot)
-                .is_some_and(has_no_destructor)
+            if !self.callables.contains(&slot)
+                && !self
+                    .function
+                    .var_tys
+                    .get(&slot)
+                    .is_some_and(has_no_destructor)
             {
                 self.read(slot);
             }

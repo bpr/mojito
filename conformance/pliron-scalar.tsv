@@ -977,6 +977,7 @@ assets/ok/typelist_comptime_vocabulary.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/typelist_reverse_concat.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/typelist_where_clauses.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/uint_and_scalar_value_parameters.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/unread_callable_parameter_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/unsafe_pointer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/unspelled_loan_carrying_type_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/untracked_pointer_ref_params.mojo	-	ineligible	no-scalar-entry-shape

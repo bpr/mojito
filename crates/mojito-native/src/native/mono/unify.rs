@@ -46,29 +46,36 @@ pub(super) fn ordered_arguments(
 ) -> Result<Vec<InstanceArg>, MonoError> {
     decls
         .iter()
-        .map(|decl| {
-            match decl {
-                ParamDecl::Type { .. } => bindings
-                    .types
-                    .get(&decl.binder())
-                    .cloned()
-                    .map(InstanceArg::Ty),
-                ParamDecl::Value { .. } => bindings
-                    .values
-                    .get(&decl.binder())
-                    .cloned()
-                    .map(InstanceArg::Value),
-            }
-            .ok_or_else(|| MonoError {
-                kind: MonoErrorKind::Unsupported,
-                function: Some(target.to_string()),
-                construct: format!(
-                    "monomorphization cannot resolve parameter `{}`",
-                    decl.name()
-                ),
-            })
-        })
+        .map(|decl| bound_argument(decl, bindings, target))
         .collect()
+}
+
+/// The instance argument `bindings` give the parameter `decl` of `target`.
+pub(super) fn bound_argument(
+    decl: &ParamDecl,
+    bindings: &Bindings,
+    target: &str,
+) -> Result<InstanceArg, MonoError> {
+    match decl {
+        ParamDecl::Type { .. } => bindings
+            .types
+            .get(&decl.binder())
+            .cloned()
+            .map(InstanceArg::Ty),
+        ParamDecl::Value { .. } => bindings
+            .values
+            .get(&decl.binder())
+            .cloned()
+            .map(InstanceArg::Value),
+    }
+    .ok_or_else(|| MonoError {
+        kind: MonoErrorKind::Unsupported,
+        function: Some(target.to_string()),
+        construct: format!(
+            "monomorphization cannot resolve parameter `{}`",
+            decl.name()
+        ),
+    })
 }
 
 /// The instance type of the struct `template` under `bindings`, named as
@@ -117,6 +124,7 @@ pub(super) fn owner_instance_ty(
 
 pub(super) fn bind_explicit_value_arguments(
     decls: &[ParamDecl],
+    removed: &[mojito_types::param_expr::ParamId],
     arguments: &[mojito_mir::mir::MirParamArg],
     constant_values: &HashMap<u32, CtValue>,
     bindings: &mut Bindings,
@@ -154,6 +162,11 @@ pub(super) fn bind_explicit_value_arguments(
                     (None, None) if bindings.values.contains_key(&declaration.binder()) => {
                         continue;
                     }
+                    // No instance of the callee reads a parameter it
+                    // removed, so a runtime argument for it (a capturing
+                    // callable the caller took as a runtime parameter)
+                    // binds nothing.
+                    (None, None) if removed.contains(declaration.id()) => continue,
                     (None, None) => {
                         return Err(MonoError {
                             kind: MonoErrorKind::Unsupported,

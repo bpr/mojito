@@ -5265,7 +5265,8 @@ point where a slot declared in a loop is uninitialized again.
   and the other parameters' types and constraints, found by a serde walk
   as `SymbolTable` finds symbols (MLIR's walk of every attribute and type);
   a value parameter's slot (matched by name, as the elaborator fills it)
-  addressed by anything but a drop or declaration of a scalar; a name of
+  addressed by anything but a drop or declaration of a scalar or of a
+  callable parameter, whose value is a compile-time one; a name of
   a body lifted from the function (`$comptime$f$…`, `$default$f$…`), which
   reads every parameter; and a name of a body nested in it (`f$…`), which
   reads the parameters that body's own run kept (R908). A nested body is
@@ -5285,9 +5286,12 @@ point where a slot declared in a loop is uninitialized again.
   call-graph edge, so a nested body runs before the function naming it;
   one whose run is not at hand reads every parameter. Another parameter's
   default is not a read: the call site evaluates it. A function in a
-  `comptime for` (R974), a nested function's own parameters (R973),
-  `__toplevel__`, and a callable value parameter, whose binding can add
-  runtime parameters to an instance, have no candidates.
+  `comptime for` (R974), a nested function's own parameters (R973), and
+  `__toplevel__` have no candidates. A callable value parameter is one
+  like any other (R910): the elaborator binds no runtime closure or
+  environment for one the callee removed
+  (`Specializer::bind_capturing_callables`), and a call site with no
+  compile-time value for it binds nothing.
   Each run records the unread set afresh, and a parameter only grows
   removable as the cleanup passes erase reads, so the last round's run,
   after every cleanup pass, decides it. The elaborator leaves a removed parameter's
@@ -5306,7 +5310,8 @@ point where a slot declared in a loop is uninitialized again.
   a finished callee with removed parameters dropping their arguments (the argument's register and
   expression, the `instantiated_args` entry when those align with the
   callee's declarations, and a static call's receiver arguments) and then the instructions that only computed one
-  (an unread copy of a slot whose type has no destructor, a built-in
+  (an unread copy of a slot whose type has no destructor or that a
+  callable parameter binds, a built-in
   operator that cannot trap, anything trivially dead). So `mid[n]` that
   only calls `leaf[n]()`, where `leaf` ignores `n`, removes `n` too. A
   removed parameter a kept parameter's default reads keeps its argument.

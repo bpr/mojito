@@ -215,6 +215,7 @@ impl Specializer<'_> {
         )?;
         bind_explicit_value_arguments(
             &declaration.param_decls,
+            self.removed_params(target),
             param_args,
             &self.constant_values,
             &mut bindings,

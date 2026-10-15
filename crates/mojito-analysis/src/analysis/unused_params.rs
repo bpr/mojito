@@ -81,7 +81,7 @@ pub fn remove_unused_params(
         })
         .collect();
     let nested_removals = |body: &str| nested.get(body).copied();
-    let view = without_removed_forwards(function, declarations, &|callee| {
+    let view = without_removed_forwards(name, function, declarations, &|callee| {
         removals.get(callee).copied()
     });
     let (removed, mut discounted) = match &view {

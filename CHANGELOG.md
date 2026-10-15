@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A callable compile-time parameter its body never calls no longer splits
+  instances (R910): `remove-unused-params` now considers callable value
+  parameters, the elaborator binds no runtime closure or environment for
+  one the callee removed, and copying or dropping its slot to forward it is
+  no read, so `ignore[double]` and `ignore[triple]`, a capturing or generic
+  closure's binding included, share one instance, as does a function that
+  only forwards the parameter to one that removed it, as on the pin
+  (assets/ok/unread_callable_parameter_instances.mojo). Forwarding a
+  capturing callable parameter to a callee that calls it is still rejected
+  (R980), as is a callable default naming a function declared later (R981).
 - A static method that never reads its struct's compile-time parameter
   no longer splits instances (R909): `remove-unused-params` treats a
   method as a generator over its struct's parameters, as upstream's

@@ -977,6 +977,7 @@ assets/ok/typelist_comptime_vocabulary.mojo	main	exe-differential	sanitized
 assets/ok/typelist_reverse_concat.mojo	main	exe-differential	sanitized
 assets/ok/typelist_where_clauses.mojo	main	exe-differential	sanitized
 assets/ok/uint_and_scalar_value_parameters.mojo	main	exe-differential	sanitized
+assets/ok/unread_callable_parameter_instances.mojo	main	exe-differential	sanitized
 assets/ok/unsafe_pointer.mojo	main	exe-differential	sanitized
 assets/ok/unspelled_loan_carrying_type_argument.mojo	main	exe-differential	sanitized
 assets/ok/untracked_pointer_ref_params.mojo	main	exe-differential	sanitized

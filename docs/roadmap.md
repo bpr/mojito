@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R980**.
+Next free ID: **R982**.
 
 ## Ordered Work
 
@@ -562,20 +562,6 @@ which names the upstream pass each one follows. Each is measured by the
     structural end state.
   - Depends on R977.
   - Model: Fable, Not Planned.
-
-- [ ] **R910 An unread callable compile-time parameter still splits
-  instances**
-
-  A generic function that never calls its callable value parameter has
-  one instance per callable bound, where the pin removes the parameter.
-  - `mir::unread_parameters` leaves callable value parameters out,
-    because a binding to a capturing closure promotes the parameter to a
-    runtime one (`promote_to_runtime_parameter`,
-    `append_environment_parameters` in `mono/promote.rs`), which would
-    differ between merged instances.
-  - Removing one needs promotion to skip a parameter its body never reads.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R911 A lifted compile-time function's unread parameters are never
   removed**
@@ -5948,6 +5934,36 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Ledger name: `method-capturing-callable-parameter`.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R980 A capturing callable parameter forwarded to a callee that
+  calls it is rejected**
+
+  Problem: `outer[f]` calling `inner[f](x)`, where `f` binds a non-generic
+  capturing closure and `inner` calls `f`, is rejected at elaboration
+  ("value parameter `f` is not compile-time constant"), while the pin runs
+  it.
+  - `outer`'s instance takes the closure as a runtime parameter
+    (`Bindings::runtime_callables`), so the forwarded argument is no
+    compile-time value `inner`'s instance can be keyed on.
+  - A forward to a callee that removed the parameter works since R910.
+  - Moving non-generic closures onto the environment path, which already
+    forwards a generic closure's environment through another binding,
+    should close it.
+  - Found while landing R910 (2026-10-15).
+  - Depends on R533.
+  - Model: Opus, Not Planned.
+
+- [ ] **R981 A callable parameter's default naming a function declared
+  later is rejected**
+
+  Problem: `def g[f: def(Int) thin -> Int = double](x: Int)` declared
+  above `def double` is rejected ("'double' has type undefined and is not
+  callable") at the call `g(1)`, while the pin runs it.
+  - Declaring `double` first makes it work, so the default is resolved
+    against the functions declared so far rather than the module's.
+  - Found while landing R910 (2026-10-15).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R173 Two corpus fixtures run their destructors later than the pin
   does**

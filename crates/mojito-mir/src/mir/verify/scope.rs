@@ -43,7 +43,7 @@ pub(super) fn verify_scope(
             .map(|(_, ids)| ids.as_slice())
     };
     let view = (!function.removed_params.is_empty())
-        .then(|| crate::mir::without_removed_forwards(function, declarations, &snapshot))
+        .then(|| crate::mir::without_removed_forwards(name, function, declarations, &snapshot))
         .flatten();
     let function = view.as_ref().map_or(function, |(view, _)| view);
     let mut scope = Scope::of_function(name, declarations);
