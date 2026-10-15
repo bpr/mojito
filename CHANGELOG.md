@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `benchmarks/instantiation.tsv` is regenerated with the inliner acting
+  on the bundled library (R939): `_is_valid_utf8`, `String`'s destructor,
+  `String.unsafe_ptr` and `capacity_bytes`, `rotate_bits_left`, and
+  `List`'s `__len__` and `capacity` are inlined where a call or drop
+  reaches them directly, so the corpus's concrete functions are 46,388
+  where they are 46,968 with `inline-parametric` off. Overloaded
+  constructors, `Span` and `Tuple` members, and members reached through a
+  trait-bound call still keep their calls (R951, R952, R986, R987, R988),
+  and an expanded destructor is still instantiated (R985).
 - A function lifted from a compile-time expression no longer splits
   instances on its owner's parameters it never reads (R911):
   `remove-unused-params` treats an evaluated default (`$default$f$x`) or

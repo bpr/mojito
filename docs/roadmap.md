@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R985**.
+Next free ID: **R989**.
 
 ## Ordered Work
 
@@ -301,6 +301,21 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R986 A `nodebug` member of a struct with a type pack is called,
+  not inlined**
+
+  `t.__len__()` and `t[0]` on a `Tuple` keep their calls to
+  `Tuple.__len__` and `Tuple.__getitem_param__`, both `nodebug`, where the
+  pin inlines them (148 fixtures keep a `__getitem_param__` instance).
+  - R917 binds an owner's binders from the receiver's type arguments, and
+    `Tuple[*Ts]`'s one variadic binder takes the whole argument list.
+  - `__getitem_param__` also returns a reference (R953).
+  - Done when `t.__len__()` over a `(1, "a", 2.5)` local inlines and the
+    differential is clean.
+  - Found while landing R939 (2026-10-15).
+  - Depends on R946.
+  - Model: Opus, Not Planned.
+
 - [ ] **R947 A `nodebug` callee with a `where` clause or a constrained
   binder is called, not inlined**
 
@@ -364,6 +379,22 @@ which names the upstream pass each one follows. Each is measured by the
     expand yet; the whole-value test must then cover places.
   - Done when `S[k]` holding a `D[k]` field drops through `D`'s inlined
     destructor and the differential is clean.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R985 The elaborator instantiates every lifecycle member of a
+  struct an instance names, called or not**
+
+  `String.__deinit__` stays a concrete function in 493 fixtures although
+  `inline-parametric` expanded every drop that called it, where the pin
+  instantiates only what a call reaches.
+  - `materialize_closure` adds each named struct's lifecycle instances
+    (`lifecycle_references`) beside the instances the body references.
+  - Have a kept `drop.var` (and the VM's field drops) reference the
+    destructor it runs, so the blanket closure can go.
+  - Done when `assets/ok/mut_owned_params.mojo`'s concrete program has no
+    `String.__deinit__` and the instantiation report is regenerated.
+  - Found while landing R939 (2026-10-15).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -995,6 +1026,23 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Found while landing R826 (2026-10-14).
   - Depends on R831 (one list over several raise points needs the flag).
   - Model: Fable, Planned.
+
+- [ ] **R987 Native code drops every function's inline level**
+
+  A `nodebug`, `builtin`, or `always` callee the elaborator leaves as a
+  call, such as `List.__len__` reached through `len`, stays an ordinary
+  LLVM call, and a `never` callee is not marked `noinline`.
+  - The concrete program still holds 868 `List.__len__` and 523
+    `Span.__len__` instances, reached through trait-bound calls that only
+    the elaborator resolves.
+  - Confirm the attributes the pin's LLVM IR carries for each level, then
+    emit them from the declaration's `inline` in Pliron's function
+    lowering.
+  - Done when a `--backend pliron` `.ll` of a `len(xs)` probe marks
+    `List.__len__` as the pin does and the parity lane is unchanged.
+  - Found while landing R939 (2026-10-15).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R936 A program cannot declare a native root with `@export`**
 
@@ -6727,6 +6775,21 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R988 `len` is a checker builtin, where upstream's is a library
+  function**
+
+  The pin declares `@inline(.always) def len[T: Sized](value: T) -> Int`
+  and its `SizedRaising` overload in `builtin/len.mojo`, and Mojito
+  checks `len(x)` as a builtin `call` the elaborator dispatches.
+  - Declare both in the bundled std and resolve `len(x)` as an ordinary
+    overloaded call, keeping the builtin only where a pack length needs
+    it (R804).
+  - Done when `len(xs)` over a `List` lowers to a call of the library
+    `len` and every fixture's output is unchanged.
+  - Found while landing R939 (2026-10-15).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 - [ ] **R857 A built-in scalar conversion is a named builtin `call`, not a
   cast op**
 
@@ -8281,22 +8344,6 @@ I/O residues left behind the landed files, streams, paths, and tempfile stage.
 recorded limit, listed in impact order: soundness of the executable oracle
 first, then everyday spellings that reject today, then parity details. A
 residue found inside a task moves to the task that owns its fix.
-
-- [ ] **R939 The bundled library's inline markings do not reach the
-  inliner**
-
-  The bundled std carries upstream's markings, but `inline-parametric`
-  changes nothing in the corpus report, because no marked callee is one
-  it can inline yet.
-  - Most markings are `@inline(.nodebug)` or `@inline(.always)`, which
-    record `automatic` until R913 lands.
-  - The four `@always_inline("builtin")` callees are methods of `Span` and
-    `Tuple`, parametric structs whose methods R917 does not yet inline.
-  - Done when `scripts/instantiation-report` shows the inliner's effect on
-    the bundled collections and `benchmarks/instantiation.tsv` is
-    regenerated with it.
-  - Depends on R913, R917.
-  - Model: Opus, Not Planned.
 
 - [ ] **R197 Compile-time Dict/Set key identity ignores a user struct's
   non-fieldwise `__eq__`**
