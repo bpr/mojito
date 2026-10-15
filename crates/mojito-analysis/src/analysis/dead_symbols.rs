@@ -11,9 +11,11 @@
 use super::pre_elaboration::ProgramPass;
 use mojito_common::timing;
 use mojito_mir::mir::{
-    MirFunction, MirFunctionDeclaration, MirProgram, MirStructDeclaration, SymbolTable, entry_roots,
+    MirFunction, MirFunctionDeclaration, MirProgram, MirStructDeclaration, SymbolTable,
+    destroyed_structs, entry_roots,
 };
 use mojito_symbol::symbol::{OV_SEP, split_method_symbol};
+use mojito_types::types::TyKind;
 use std::collections::{HashMap, HashSet};
 
 /// The pass, under upstream's flag spelling.
@@ -26,11 +28,16 @@ pub const ELIMINATE_DEAD_SYMBOLS: ProgramPass = ProgramPass {
 /// nor `exports` reach, with their declarations, keeping the rest in order.
 ///
 /// A live function makes live every symbol its body or declaration names,
-/// every member of its overload family, and every function nested in it. A
-/// live struct makes live every symbol its declaration names and all its
-/// methods: the elaborator reaches a struct's lifecycle, display, hash, and
-/// trait-requirement methods from its type alone, as upstream nests a
-/// struct's members under its symbol.
+/// every member of its overload family, every function nested in it, and
+/// the destructor of every struct its drops may tear down
+/// ([`destroyed_structs`]), as upstream's destructor insertion leaves a
+/// call to it at each death. A live struct makes live every symbol its
+/// declaration names and its other methods: the elaborator reaches a
+/// struct's constructors, display, hash, and trait-requirement methods from
+/// its type alone, as upstream nests a struct's members under its symbol. A
+/// body that drops a value of a type only an instantiation resolves, or a
+/// program that imports bodies the walk cannot see, keeps every live
+/// struct's destructor.
 pub fn eliminate_dead_symbols(program: &mut MirProgram, exports: &[String]) {
     let (live, live_structs) = {
         let (functions, structs) = Symbols::of(program).live(exports);
@@ -73,8 +80,10 @@ struct Symbols<'p> {
     structs: HashMap<&'p str, &'p MirStructDeclaration>,
     /// Every own function and struct name: what a use may name.
     table: SymbolTable<'p>,
-    /// Each own struct's methods.
+    /// Each own struct's methods but its destructor.
     methods: HashMap<&'p str, Vec<&'p str>>,
+    /// Each own struct's destructor.
+    destructors: HashMap<&'p str, &'p str>,
     /// Each overload family's members, by the family's base name.
     families: HashMap<&'p str, Vec<&'p str>>,
     /// The functions nested in each function.
@@ -102,14 +111,19 @@ impl<'p> Symbols<'p> {
             .collect();
         let table = SymbolTable::new(functions.keys().chain(structs.keys()).copied());
         let mut methods: HashMap<_, Vec<_>> = HashMap::new();
+        let mut destructors = HashMap::new();
         let mut families: HashMap<_, Vec<_>> = HashMap::new();
         let mut nested: HashMap<_, Vec<_>> = HashMap::new();
         for (name, _) in &program.functions {
             let name = name.as_str();
-            if let Some((owner, _)) = split_method_symbol(name)
+            if let Some((owner, method)) = split_method_symbol(name)
                 && structs.contains_key(owner)
             {
-                methods.entry(owner).or_default().push(name);
+                if method == "__deinit__" {
+                    destructors.insert(owner, name);
+                } else {
+                    methods.entry(owner).or_default().push(name);
+                }
             }
             families.entry(family(name)).or_default().push(name);
             if let Some(enclosing) = declarations
@@ -126,6 +140,7 @@ impl<'p> Symbols<'p> {
             structs,
             table,
             methods,
+            destructors,
             families,
             nested,
         }
@@ -142,11 +157,31 @@ impl<'p> Symbols<'p> {
             .collect();
         let mut live = HashSet::new();
         let mut live_structs = HashSet::new();
+        // Set once a live body drops a value of a symbolic type. A body the
+        // program imports is not walked, and may drop any value.
+        let mut every_destructor = self.program.declarations.imported.is_some();
         while let Some(name) = pending.pop() {
             if let Some(function) = self.functions.get(name)
                 && live.insert(name)
             {
                 pending.extend(self.table.function_uses(function));
+                let destroyed = destroyed_structs(function, &|name| {
+                    self.structs
+                        .get(name)
+                        .map(|declaration| declaration.fields.as_slice())
+                });
+                if destroyed.symbolic && !every_destructor {
+                    every_destructor = true;
+                    pending.extend(
+                        live_structs
+                            .iter()
+                            .filter_map(|name| self.destructors.get(name).copied()),
+                    );
+                }
+                pending.extend(destroyed.structs.iter().filter_map(|ty| match ty.kind() {
+                    TyKind::Struct(name, _) => self.destructors.get(name.as_str()).copied(),
+                    _ => None,
+                }));
                 if let Some(declaration) = self.declarations.get(name) {
                     pending.extend(self.table.uses(*declaration));
                 }
@@ -158,6 +193,9 @@ impl<'p> Symbols<'p> {
             {
                 pending.extend(self.table.uses(*declaration));
                 pending.extend(self.methods.get(name).into_iter().flatten());
+                if every_destructor {
+                    pending.extend(self.destructors.get(name).copied());
+                }
             }
         }
         (live, live_structs)

@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct's destructor is instantiated only where a body drops a value of
+  the struct (R985): the elaborator demands `__deinit__` from each drop,
+  cleanup list, storage destroy, and owned capture, and the fields they
+  reach, as upstream's destructor insertion calls it at each death, rather
+  than with every struct a body names, and `eliminate-dead-symbols` keeps it
+  on the same terms. A destructor every drop of which `inline-parametric`
+  expanded, `String`'s in `assets/ok/mut_owned_params.mojo`, leaves the
+  concrete program. The corpus's concrete functions drop from 41,035 to
+  40,300 and its concrete instructions from 618,517 to 608,225
+  (`benchmarks/instantiation.tsv`). No program's output changes.
 - Identical instances now merge (R990): `eliminate-duplicate-functions`
   runs straight out of the elaborator, before `eliminate-dead-symbols`, as
   upstream's `EliminateDuplicateFunctions` does, keeping one of each set of

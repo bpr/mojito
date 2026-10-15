@@ -356,16 +356,12 @@ impl<'a> Specializer<'a> {
             .insert(key.clone(), self.instances.len());
         self.instance_names
             .insert(name.clone(), self.instances.len());
+        // A destructor is a reference of each body that drops its struct
+        // (`enqueue_destructors`), not a member of every value's closure.
         if let Some((owner, method)) = mojito_symbol::symbol::split_method_symbol(&name)
-            && [
-                "__init__",
-                "__copyinit__",
-                "__moveinit__",
-                "__deinit__",
-                "__del__",
-            ]
-            .iter()
-            .any(|lifecycle| method.starts_with(lifecycle))
+            && ["__init__", "__copyinit__", "__moveinit__", "__del__"]
+                .iter()
+                .any(|lifecycle| method.starts_with(lifecycle))
         {
             self.lifecycle_instances
                 .entry(owner.to_string())
@@ -400,8 +396,9 @@ impl<'a> Specializer<'a> {
     }
 
     /// Materialize the reference closure of the instance at `root` — the
-    /// instances its body demanded, the lifecycle members of every struct
-    /// its types name, theirs, and so on — and return the positions of its
+    /// instances its body demanded, the destructors its drops run among
+    /// them, the other lifecycle members of every struct its types name,
+    /// theirs, and so on — and return the positions of its
     /// completed members. A pending instance off the closure stays queued
     /// for the outer drain, so a failure there is not this demand's. A path
     /// into an instance being materialized is a cycle in the parameter
@@ -2925,9 +2922,9 @@ impl<'a> Specializer<'a> {
     ) -> Result<(), MonoError> {
         let mut types = function_types(function).cloned().collect::<Vec<_>>();
         // Storage take/destroy intrinsics name their element type directly on
-        // the instruction; seed it so the element's lifecycle methods
-        // (notably `__deinit__` for the destroy forms) always join the walk
-        // even when no register or variable carries the bare element type.
+        // the instruction; seed it so the element's struct lays out and its
+        // lifecycle members join the walk even when no register or variable
+        // carries the bare element type.
         push_instruction_types(&function.blocks, &mut types);
         while let Some(ty) = types.pop() {
             if matches!(ty.kind(), TyKind::Struct(..)) && !self.discovered_types.insert(ty.clone())
@@ -2935,7 +2932,7 @@ impl<'a> Specializer<'a> {
                 continue;
             }
             collect_nested_types(&ty, &mut types);
-            let TyKind::Struct(name, arguments) = ty.kind() else {
+            let TyKind::Struct(name, _) = ty.kind() else {
                 continue;
             };
             // The checker-virtual slice descriptors have no source template;
@@ -2985,29 +2982,9 @@ impl<'a> Specializer<'a> {
                 self.discovered_types.remove(&ty);
                 continue;
             }
-            // An instance applied element by element binds its lone pack to
-            // every argument, of which the empty tuple has none.
-            let elementwise = *name != template_name
-                && matches!(
-                    template.param_decls.as_slice(),
-                    [ParamDecl::Type { variadic: true, .. }]
-                );
-            if arguments.len() < template.param_decls.len() && !elementwise {
+            let Some(bindings) = self.struct_bindings(owner, &ty)? else {
                 continue;
-            }
-            let mut bindings = self.base_bindings();
-            bind_ty_args(&template.param_decls, arguments, &mut bindings).map_err(|e| {
-                self.error(
-                    Some(owner),
-                    format!("monomorphizing struct `{template_name}`: {e}"),
-                )
-            })?;
-            if *name != template_name {
-                bindings.self_instance = Some((
-                    template_name.clone(),
-                    TyKind::Struct(name.clone(), arguments.clone()).into(),
-                ));
-            }
+            };
             // A field type may apply a function to the struct's parameters
             // (`SIMD[dt, h(Self.n)]`): the application is demanded as a
             // body's is, and the fields are substituted again.
@@ -3082,50 +3059,136 @@ impl<'a> Specializer<'a> {
             // bridges it and never reaches the body, but the VM runs it. A
             // `__call__` joins them: a value of the struct passed where a
             // function type is expected is called through its dispatch
-            // symbol, which names no instance.
-            for method in [
-                "__init__",
-                "__copyinit__",
-                "__moveinit__",
-                "__deinit__",
-                "__call__",
-            ] {
-                let base = format!("{template_name}.{method}");
-                for candidate in self.functions.family(&base) {
-                    let Some(function_decl) = self.declarations.get(candidate.as_str()) else {
-                        continue;
-                    };
-                    // An unspecialized variadic overload cannot materialize
-                    // without a call-site arity; those sites enqueue it.
-                    if arity_keyed_variadic(function_decl) {
-                        continue;
-                    }
-                    let covered = if bindings.self_instance.is_some() {
-                        owner_covered_prefix(&template.param_decls, &function_decl.param_decls)
-                    } else {
-                        0
-                    };
-                    let Ok(method_arguments) = self.own_arguments(
-                        &function_decl.param_decls,
-                        &bindings,
-                        &candidate,
-                        covered,
-                    ) else {
-                        continue;
-                    };
-                    // A member whose `where` clause the instance disproves
-                    // is not part of it. A constructor whose clause stays
-                    // undecided waits for the call site that reaches it;
-                    // lowering composes the copy/move/deinit names itself,
-                    // so those join the instance unless disproven.
-                    match self.availability(function_decl, &bindings) {
-                        Availability::Proven => {}
-                        Availability::Undecided if method != "__init__" => {}
-                        Availability::Disproven(_) | Availability::Undecided => continue,
-                    }
-                    self.enqueue(&candidate, bindings.clone(), method_arguments)?;
+            // symbol, which names no instance. The destructor is the drops'
+            // to demand.
+            for method in ["__init__", "__copyinit__", "__moveinit__", "__call__"] {
+                self.enqueue_struct_members(&template_name, &bindings, method)?;
+            }
+        }
+        self.enqueue_destructors(owner, function)
+    }
+
+    /// Enqueue the destructor of every struct `function` tears down without
+    /// naming it ([`destroyed_structs`]), as upstream's destructor insertion
+    /// leaves a call to it at each death: the destructor is a reference of
+    /// the body, as a call is. A body that drops a value of a symbolic type
+    /// demands the destructor of every struct it names.
+    fn enqueue_destructors(
+        &mut self,
+        owner: &str,
+        function: &MirFunction,
+    ) -> Result<(), MonoError> {
+        let destroyed = destroyed_structs(function, &|name| {
+            self.output_struct_positions
+                .get(name)
+                .map(|&position| self.output_structs[position].fields.as_slice())
+        });
+        let mut structs = destroyed.structs;
+        if destroyed.symbolic {
+            let mut types = function_types(function).cloned().collect::<Vec<_>>();
+            push_instruction_types(&function.blocks, &mut types);
+            while let Some(ty) = types.pop() {
+                collect_nested_types(&ty, &mut types);
+                if matches!(ty.kind(), TyKind::Struct(..)) {
+                    structs.push(ty);
                 }
             }
+        }
+        let mut seen = HashSet::new();
+        for ty in structs {
+            if !seen.insert(ty.clone()) {
+                continue;
+            }
+            let TyKind::Struct(name, _) = ty.kind() else {
+                continue;
+            };
+            let template_name = name.split("$mono").next().unwrap_or(name).to_string();
+            if let Some(bindings) = self.struct_bindings(owner, &ty)? {
+                self.enqueue_struct_members(&template_name, &bindings, "__deinit__")?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The bindings of the struct instance `ty`, `None` when it names no
+    /// struct template or applies too few of its parameters.
+    fn struct_bindings(&self, owner: &str, ty: &Ty) -> Result<Option<Bindings>, MonoError> {
+        let TyKind::Struct(name, arguments) = ty.kind() else {
+            return Ok(None);
+        };
+        let template_name = name.split("$mono").next().unwrap_or(name);
+        let Some(template) = self.structs.get(template_name) else {
+            return Ok(None);
+        };
+        // An instance applied element by element binds its lone pack to
+        // every argument, of which the empty tuple has none.
+        let elementwise = name != template_name
+            && matches!(
+                template.param_decls.as_slice(),
+                [ParamDecl::Type { variadic: true, .. }]
+            );
+        if arguments.len() < template.param_decls.len() && !elementwise {
+            return Ok(None);
+        }
+        let mut bindings = self.base_bindings();
+        bind_ty_args(&template.param_decls, arguments, &mut bindings).map_err(|e| {
+            self.error(
+                Some(owner),
+                format!("monomorphizing struct `{template_name}`: {e}"),
+            )
+        })?;
+        if name != template_name {
+            bindings.self_instance = Some((
+                template_name.to_string(),
+                TyKind::Struct(name.clone(), arguments.clone()).into(),
+            ));
+        }
+        Ok(Some(bindings))
+    }
+
+    /// Enqueue the members `{template_name}.{method}` the struct instance
+    /// `bindings` binds has: each overload its arguments determine and its
+    /// `where` clause does not disprove.
+    fn enqueue_struct_members(
+        &mut self,
+        template_name: &str,
+        bindings: &Bindings,
+        method: &str,
+    ) -> Result<(), MonoError> {
+        let Some(template) = self.structs.get(template_name) else {
+            return Ok(());
+        };
+        let base = format!("{template_name}.{method}");
+        for candidate in self.functions.family(&base) {
+            let Some(function_decl) = self.declarations.get(candidate.as_str()) else {
+                continue;
+            };
+            // An unspecialized variadic overload cannot materialize
+            // without a call-site arity; those sites enqueue it.
+            if arity_keyed_variadic(function_decl) {
+                continue;
+            }
+            let covered = if bindings.self_instance.is_some() {
+                owner_covered_prefix(&template.param_decls, &function_decl.param_decls)
+            } else {
+                0
+            };
+            let Ok(method_arguments) =
+                self.own_arguments(&function_decl.param_decls, bindings, &candidate, covered)
+            else {
+                continue;
+            };
+            // A member whose `where` clause the instance disproves
+            // is not part of it. A constructor whose clause stays
+            // undecided waits for the call site that reaches it;
+            // lowering composes the copy/move/deinit names itself,
+            // so those join the instance unless disproven.
+            match self.availability(function_decl, bindings) {
+                Availability::Proven => {}
+                Availability::Undecided if method != "__init__" => {}
+                Availability::Disproven(_) | Availability::Undecided => continue,
+            }
+            self.enqueue(&candidate, bindings.clone(), method_arguments)?;
         }
         Ok(())
     }

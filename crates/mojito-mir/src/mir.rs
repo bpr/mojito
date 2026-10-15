@@ -52,6 +52,8 @@ pub mod verify;
 pub mod visit;
 
 mod calls;
+mod destroys;
+pub use destroys::{Destroyed, StructFields, destroyed_structs};
 mod facts;
 pub mod link;
 mod lower_control_flow;

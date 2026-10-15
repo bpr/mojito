@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R993**.
+Next free ID: **R995**.
 
 ## Ordered Work
 
@@ -382,19 +382,35 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R985 The elaborator instantiates every lifecycle member of a
-  struct an instance names, called or not**
+- [ ] **R993 Every constructor of a struct a body names stays in the
+  concrete program, called or not**
 
-  `String.__deinit__` stays a concrete function in 493 fixtures although
-  `inline-parametric` expanded every drop that called it, where the pin
-  instantiates only what a call reaches.
-  - `materialize_closure` adds each named struct's lifecycle instances
-    (`lifecycle_references`) beside the instances the body references.
-  - Have a kept `drop.var` (and the VM's field drops) reference the
-    destructor it runs, so the blanket closure can go.
-  - Done when `assets/ok/mut_owned_params.mojo`'s concrete program has no
-    `String.__deinit__` and the instantiation report is regenerated.
-  - Found while landing R939 (2026-10-15).
+  `assets/ok/mut_owned_params.mojo` keeps all six `String.__init__`
+  overloads although `main` calls only the `StringLiteral` one, where the
+  pin instantiates only what a call reaches.
+  - `discover_structs` enqueues every `__init__` and `__call__` overload of
+    each struct a body names.
+  - `eliminate-dead-symbols` keeps every method of a live struct and every
+    member of a live function's overload family.
+  - Done when that fixture's concrete program keeps only the
+    `StringLiteral` constructor of `String`'s and the HEAD differential is
+    clean.
+  - Found while landing R985 (2026-10-15).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R994 Every copy and move member of a struct a body names stays in
+  the concrete program, copied or not**
+
+  `assets/ok/mut_owned_params.mojo` keeps `String.__copyinit__` although
+  nothing copies a `String`, where upstream's copies call the member.
+  - The VM and the native backend run `__copyinit__` and `__moveinit__` by
+    name from a value's type, so no instruction references them.
+  - Have each copy and move site demand its member, as R985 made each drop
+    demand its destructor (`mir::destroyed_structs`).
+  - Done when that fixture's concrete program has no `String.__copyinit__`
+    and the HEAD differential is clean.
+  - Found while landing R985 (2026-10-15).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
