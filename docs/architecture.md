@@ -5408,9 +5408,10 @@ point where a slot declared in a loop is uninitialized again.
   `List[Box[_REMOVED_ARG]]` lay out their addresses alone. Nothing
   constructs, calls, copies, or moves through a declared member an erased
   instance or one over an erased type (`Holder[Box[_REMOVED_ARG]]`), since
-  each would read the erased arguments, so none of `__init__`, `__call__`,
+  each would read the erased arguments, so none of `__call__`,
   `__copyinit__`, and `__moveinit__` is enqueued for it; its destructor is
-  the drops' to demand. The verifier takes it as the type of any instance of the same
+  the drops' to demand, and, as for every struct, a constructor the calls'
+  (R993). The verifier takes it as the type of any instance of the same
   template whose other arguments agree (`verify/types.rs`'s
   `erased_struct_agrees`), and the VM destroys a value in a slot of an
   erased type through that type's members (`dispatch::erased_instance_value`),

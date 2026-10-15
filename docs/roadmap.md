@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1007**.
+Next free ID: **R1010**.
 
 ## Ordered Work
 
@@ -382,20 +382,60 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R993 Every constructor of a struct a body names stays in the
+- [ ] **R1007 The elaborator leaves a call naming a struct for the
+  backends to resolve to a constructor at run time**
+
+  `make[String]()`'s `T()` reaches the concrete program as a call naming
+  `String`, which the VM's `constructor_name` and native lowering's
+  `constructor_init` each resolve to an `__init__` overload by arity, where
+  upstream's call names the constructor's symbol.
+  - The elaborator already resolves and enqueues that constructor
+    (`mono/specializer.rs`'s struct-named `Call` arm); it respells the call
+    only when the instance is arity- or own-keyed.
+  - Respell every such call to the constructor instance it enqueued, as a
+    direct constructor call already runs in both backends; a fieldwise
+    struct with no `__init__` and `T(copy=x)` keep their forms.
+  - Done when no concrete call naming a struct with a compiled `__init__`
+    remains in `assets/ok/string_default_construction.mojo` and the HEAD
+    differential is clean.
+  - Found while landing R993 (2026-10-15).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1008 `eliminate-dead-symbols` keeps every constructor of a live
+  struct, called or not**
+
+  A constructor every call of which `inline-parametric` expanded stays in
+  the concrete program, where upstream's `EliminateDeadSymbols` removes a
+  symbol nothing references.
+  - The pass keeps every method of a live struct and every member of a live
+    function's overload family, which the pre-elaboration run needs, since
+    the elaborator resolves a generic body's calls by family and by type.
+  - In the concrete program every call names its callee once R1007 lands,
+    but for a slice descriptor's bound read, whose `Optional` constructors
+    the VM runs unnamed: report those as implicit uses, as
+    `mir::implicit_callees` reports `_pow_int`.
+  - Done when the concrete run drops constructors and family members
+    nothing names, and the HEAD differential is clean.
+  - Found while landing R993 (2026-10-15).
+  - Depends on R1007.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1009 Every `__call__` of a struct a body names stays in the
   concrete program, called or not**
 
-  `assets/ok/mut_owned_params.mojo` keeps all six `String.__init__`
-  overloads although `main` calls only the `StringLiteral` one, where the
-  pin instantiates only what a call reaches.
-  - `discover_structs` enqueues every `__init__` and `__call__` overload of
-    each struct a body names.
-  - `eliminate-dead-symbols` keeps every method of a live struct and every
-    member of a live function's overload family.
-  - Done when that fixture's concrete program keeps only the
-    `StringLiteral` constructor of `String`'s and the HEAD differential is
-    clean.
-  - Found while landing R985 (2026-10-15).
+  `discover_structs` enqueues each `__call__` overload of every struct
+  instance a body names, where upstream instantiates only what a call
+  reaches.
+  - A struct value passed where a function type is expected is called
+    through a dispatch symbol that names no instance, so no reference
+    demands the member.
+  - Have that conversion site demand the struct's `__call__`, as R993 made
+    each call demand its constructor, and drop `__call__` from
+    `discover_structs`' list.
+  - Done when a fixture naming a struct with an uncalled `__call__` keeps
+    none in its concrete program and the HEAD differential is clean.
+  - Found while landing R993 (2026-10-15).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

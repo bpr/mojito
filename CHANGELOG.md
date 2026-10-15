@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct's constructor is instantiated only where a call reaches it
+  (R993), as upstream instantiates only what a call reaches, rather than
+  every `__init__` overload of each struct a body names: a call naming it,
+  a call naming the struct (`T()` at `T = String`, an instance-named
+  `AHasher$mono$…()`), which the elaborator resolves by arity, or a slice
+  descriptor's bound read, which builds its `Optional`. So
+  `assets/ok/mut_owned_params.mojo` keeps only `String`'s `StringLiteral`
+  constructor, and an uncalled overload that fails at the instance no
+  longer fails the program
+  (`conformance/probes/constructor_overload_uncalled_instance.mojo` prints
+  `8`, as on the pin). `print`'s `sep` and `end` keywords now demand their
+  display instances themselves. Corpus concrete functions −27.6 %,
+  concrete instructions −35.7 % (`benchmarks/instantiation.tsv`).
 - A struct's method no longer stays apart from an identical instance
   merely for being a method (R992): `eliminate-duplicate-functions` pins
   only the methods the backends reach from the struct's type, its special

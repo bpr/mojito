@@ -2302,9 +2302,16 @@ impl<'a> Specializer<'a> {
                             // `print` of a nominal struct displays through
                             // `write_to` over the builtin-string writer (the
                             // VM's `format_value` dispatch); enqueue the
-                            // instances the lowered expansion calls.
+                            // instances the lowered expansion calls, its
+                            // `sep` and `end` keywords' too.
                             if matches!(func.0.as_str(), "print" | "String") {
-                                for arg in args.clone() {
+                                let shown = kwargs
+                                    .iter()
+                                    .filter(|(keyword, _)| {
+                                        matches!(keyword.as_str(), "sep" | "end")
+                                    })
+                                    .map(|(_, arg)| *arg);
+                                for arg in args.clone().into_iter().chain(shown) {
                                     self.enqueue_display_instance(owner, function, arg)?;
                                 }
                             }
@@ -2313,9 +2320,11 @@ impl<'a> Specializer<'a> {
                                     self.enqueue_repr_instance(owner, function, arg)?;
                                 }
                             }
-                            if self.structs.contains_key(func.0.as_str())
-                                && !mojito_symbol::symbol::is_stdlib_string_struct(&func.0)
-                            {
+                            // A call naming an instance (`Box$mono$TInt`,
+                            // a type parameter's substitution) constructs
+                            // through its template's members.
+                            let template = nominal_template(&func.0).to_string();
+                            if func.0 != "String" && self.structs.contains_key(template.as_str()) {
                                 // `Type(copy=value)` runs `__copyinit__` (the
                                 // VM's `construct_via_copy`), which struct
                                 // discovery enqueues per instance — never an
@@ -2326,7 +2335,7 @@ impl<'a> Specializer<'a> {
                                     if let Some(TyKind::Struct(concrete, _)) =
                                         function.reg_types.get(&dest.0).map(Ty::kind)
                                         && concrete != &func.0
-                                        && nominal_template(concrete) == func.0.as_str()
+                                        && nominal_template(concrete) == template
                                     {
                                         func.0.clone_from(concrete);
                                     }
@@ -2338,7 +2347,7 @@ impl<'a> Specializer<'a> {
                                     param_arg_regs.clear();
                                     continue;
                                 }
-                                let init_base = format!("{}.__init__", func.0);
+                                let init_base = format!("{template}.__init__");
                                 let init = mojito_symbol::symbol::resolve_callable_symbol(
                                     &self.functions,
                                     &init_base,
@@ -2373,7 +2382,7 @@ impl<'a> Specializer<'a> {
                                     let own_keyed = instantiated_args.len()
                                         > self
                                             .structs
-                                            .get(func.0.as_str())
+                                            .get(template.as_str())
                                             .map_or(0, |owner| owner.param_decls.len());
                                     let instance = self.enqueue(&target, bindings, arguments)?;
                                     if arity_keyed || own_keyed {
@@ -2389,7 +2398,7 @@ impl<'a> Specializer<'a> {
                                 if let Some(TyKind::Struct(concrete, _)) =
                                     function.reg_types.get(&dest.0).map(Ty::kind)
                                     && concrete != &func.0
-                                    && nominal_template(concrete) == func.0.as_str()
+                                    && nominal_template(concrete) == template
                                 {
                                     func.0.clone_from(concrete);
                                 }
@@ -2831,6 +2840,17 @@ impl<'a> Specializer<'a> {
                         let Some(receiver) = function.reg_types.get(&base.0) else {
                             continue;
                         };
+                        // A slice descriptor's bound read builds its
+                        // `Optional` through that struct's constructors.
+                        if matches!(peel_refs(receiver).kind(), TyKind::Struct(name, _)
+                            if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice"))
+                            && matches!(field.as_str(), "start" | "end" | "step")
+                        {
+                            if let Some(bound) = function.reg_types.get(&dest.0).cloned() {
+                                self.enqueue_slice_bound_constructors(owner, &bound)?;
+                            }
+                            continue;
+                        }
                         let Some(constant) = self.value_param_constant(
                             receiver,
                             field,
@@ -3156,12 +3176,14 @@ impl<'a> Specializer<'a> {
                 self.instance_conformances(&template.conformances, &bindings);
             declaration.declared = self.instance_conformances(&template.declared, &bindings);
             self.declare_output_struct(declaration);
-            // The nominal String's `__copyinit__` stays too: native lowering
-            // bridges it and never reaches the body, but the VM runs it. A
-            // `__call__` joins them: a value of the struct passed where a
-            // function type is expected is called through its dispatch
-            // symbol, which names no instance. The destructor is the drops'
-            // to demand.
+            // The backends copy and move a value through the members its
+            // type names (the nominal String's `__copyinit__` too: native
+            // lowering bridges it and never reaches the body, but the VM
+            // runs it). A `__call__` joins them: a value of the struct
+            // passed where a function type is expected is called through
+            // its dispatch symbol, which names no instance. A constructor
+            // is the calls' to demand, as upstream instantiates only what a
+            // call reaches, and the destructor the drops'.
             // Nothing constructs, calls, copies, or moves through a member
             // an erased instance (`Box[_REMOVED_ARG]`) or one over an erased
             // type (`Holder[Box[_REMOVED_ARG]]`): a construction spells the
@@ -3171,7 +3193,7 @@ impl<'a> Specializer<'a> {
             if !bindings.removed.is_empty() || mojito_types::types::erases_an_argument(&ty) {
                 continue;
             }
-            for method in ["__init__", "__copyinit__", "__moveinit__", "__call__"] {
+            for method in ["__copyinit__", "__moveinit__", "__call__"] {
                 self.enqueue_struct_members(&template_name, &bindings, method)?;
             }
         }
@@ -3303,6 +3325,45 @@ impl<'a> Specializer<'a> {
         bindings: &Bindings,
         method: &str,
     ) -> Result<(), MonoError> {
+        self.enqueue_struct_overloads(template_name, bindings, method, &|_, _| true)
+    }
+
+    /// Enqueue the constructors a slice descriptor's bound read builds its
+    /// `Optional` result `bound` through, the VM's `slice_bound_optional`:
+    /// the nullary one and the positional one-argument one.
+    fn enqueue_slice_bound_constructors(
+        &mut self,
+        owner: &str,
+        bound: &Ty,
+    ) -> Result<(), MonoError> {
+        let TyKind::Struct(name, _) = bound.kind() else {
+            return Ok(());
+        };
+        let Some(bindings) = self.struct_bindings(owner, bound)? else {
+            return Ok(());
+        };
+        self.enqueue_struct_overloads(
+            nominal_template(name),
+            &bindings,
+            "__init__",
+            &|candidate, declaration| {
+                declaration.param_names.len() <= 1
+                    && !candidate.contains("$kw$")
+                    && !mojito_symbol::symbol::is_none_overload(candidate)
+            },
+        )
+    }
+
+    /// Enqueue the overloads `{template_name}.{method}` of the struct
+    /// instance `bindings` binds that `select` accepts, as
+    /// [`Self::enqueue_struct_members`] does.
+    fn enqueue_struct_overloads(
+        &mut self,
+        template_name: &str,
+        bindings: &Bindings,
+        method: &str,
+        select: &dyn Fn(&str, &MirFunctionDeclaration) -> bool,
+    ) -> Result<(), MonoError> {
         let Some(template) = self.structs.get(template_name) else {
             return Ok(());
         };
@@ -3311,6 +3372,9 @@ impl<'a> Specializer<'a> {
             let Some(function_decl) = self.declarations.get(candidate.as_str()) else {
                 continue;
             };
+            if !select(&candidate, function_decl) {
+                continue;
+            }
             // An unspecialized variadic overload cannot materialize
             // without a call-site arity; those sites enqueue it.
             if arity_keyed_variadic(function_decl) {
