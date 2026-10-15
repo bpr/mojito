@@ -206,7 +206,7 @@ pub(super) fn substitute_value_parameter_reads(
                     Const::Function(callable.clone())
                 } else {
                     let value = locals[name];
-                    value_parameter_constant(value, var_tys.get(var)).ok_or_else(|| MonoError {
+                    Const::of_parameter_value(value, var_tys.get(var)).ok_or_else(|| MonoError {
                         kind: MonoErrorKind::Unsupported,
                         function: None,
                         construct: format!("unsupported runtime value parameter `{value}`"),
@@ -221,9 +221,13 @@ pub(super) fn substitute_value_parameter_reads(
                     .get(place.root as usize)
                     .and_then(|name| locals.get(name))
                 && let Some(constant) = if place.is_whole_root() {
-                    value_parameter_constant(value, var_tys.get(&place.root))
+                    Const::of_parameter_value(value, var_tys.get(&place.root))
                 } else {
-                    projected_parameter_constant(value, &place.storage().proj, place.ty.as_ref())
+                    Const::of_projected_parameter_value(
+                        value,
+                        &place.storage().proj,
+                        place.ty.as_ref(),
+                    )
                 }
             {
                 // A whole aggregate parameter read as a place (`h(p)`), or a
@@ -708,37 +712,6 @@ pub(super) fn sub_types(types: &[Ty], bindings: &Bindings) -> Result<Vec<Ty>, Mo
     types.iter().map(|ty| substitute_ty(ty, bindings)).collect()
 }
 
-/// The constant a read of the parameter value `value` at `slot_ty` is: a
-/// scalar, a function named by a callable-typed slot, a string read at the
-/// nominal `String` or a vector, struct, or tuple as the typed constant a
-/// backend materializes at that type (upstream's `kgen.param.constant`),
-/// and any other string as its literal.
-pub(super) fn value_parameter_constant(value: &CtValue, slot_ty: Option<&Ty>) -> Option<Const> {
-    match value {
-        CtValue::Int(value) => Some(Const::Int(*value)),
-        CtValue::UInt(value) => Some(Const::Value(CtValue::UInt(*value))),
-        CtValue::Float(bits) => Some(Const::Float(f64::from_bits(*bits))),
-        CtValue::Bool(value) => Some(Const::Bool(*value)),
-        CtValue::Dtype(value) => Some(Const::Dtype(*value)),
-        CtValue::Str(value)
-            if matches!(
-                slot_ty.map(Ty::kind),
-                Some(TyKind::Func(_) | TyKind::GenericFunc(_))
-            ) =>
-        {
-            Some(Const::Function(value.clone()))
-        }
-        CtValue::Str(_) if slot_ty.is_some_and(mojito_types::types::is_nominal_string) => {
-            Some(Const::Value(value.clone()))
-        }
-        CtValue::Str(value) => Some(Const::Str(value.clone())),
-        value @ (CtValue::Simd { .. } | CtValue::Struct { .. } | CtValue::Tuple(_)) => {
-            Some(Const::Value(value.clone()))
-        }
-        _ => None,
-    }
-}
-
 /// The reflected field-name list a parameter constant `k` read at `ty` is
 /// constructed from rather than read as a constant: a tuple of names read
 /// at an `Array` ([`array_display_construction`]), as
@@ -754,29 +727,6 @@ pub(super) fn constructed_parameter_constant(k: &Const, ty: &Ty) -> Option<CtVal
         }
         _ => None,
     }
-}
-
-/// The constant a chain of field projections selects out of a struct-typed
-/// parameter value, read at `ty`, `None` unless every step names a field
-/// of a closed struct value.
-fn projected_parameter_constant(
-    value: &CtValue,
-    projections: &[mojito_mir::mir::Proj],
-    ty: Option<&Ty>,
-) -> Option<Const> {
-    let value =
-        projections
-            .iter()
-            .try_fold(value, |value, projection| match (projection, value) {
-                (mojito_mir::mir::Proj::Field(field), CtValue::Struct { fields, .. }) => fields
-                    .iter()
-                    .find(|(name, _)| name == field)
-                    .map(|(_, value)| value),
-                _ => None,
-            })?;
-    (!projections.is_empty())
-        .then(|| value_parameter_constant(value, ty))
-        .flatten()
 }
 
 /// Seed, at the entry block, every folded value parameter slot a closure
@@ -807,7 +757,7 @@ fn seed_captured_parameter_slots(
                 locals
                     .get(name.as_str())
                     .filter(|value| !value.is_constructed_parameter_value())
-                    .and_then(|value| match value_parameter_constant(value, Some(&ty))? {
+                    .and_then(|value| match Const::of_parameter_value(value, Some(&ty))? {
                         Const::Value(CtValue::Str(text)) => Some(Const::Str(text)),
                         constant => Some(constant),
                     })
@@ -835,7 +785,7 @@ fn seed_captured_parameter_slots(
 /// type `ty`, into `dest`: a reflected field-name list at an `Array` is the
 /// list-literal initializer over its names (the call a display `[a, b]`
 /// lowers to), and any other value its typed constant
-/// ([`value_parameter_constant`]).
+/// ([`Const::of_parameter_value`]).
 pub(super) fn array_display_construction(
     dest: Reg,
     value: &CtValue,
@@ -870,7 +820,7 @@ pub(super) fn array_display_construction(
             Ok(instrs)
         }
         _ => {
-            let k = value_parameter_constant(value, Some(ty)).ok_or_else(unsupported)?;
+            let k = Const::of_parameter_value(value, Some(ty)).ok_or_else(unsupported)?;
             Ok(vec![MirInstr::Const { dest, k }])
         }
     }

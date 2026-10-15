@@ -1742,3 +1742,38 @@ unroller retires that slot (`mir::retire_slots`) its guard, which reads no
 span origin, lets `renumber_slots` hit a retired slot. `lower-lit` drops
 the erased markers' types and spans, as `canonicalize` does (R933 files
 the guard's gap).
+
+## Generic `nodebug` callees inline before elaboration (2026-10-14, R916)
+
+`inline-parametric` now inlines a `nodebug` or `builtin` callee that has
+its own compile-time parameters, binding them to the call's arguments
+(`docs/architecture.md` §Pre-Elaboration Pipeline), so such a callee is no
+longer instantiated per binding. That is the instance count R784's section
+above still lacked. Debug binary, `scripts/instantiation-report` rows, the
+binary before this change against the binary after it:
+
+| fixture | `concrete_functions` | `generator_instances` | `generator_instance_instructions` |
+|---|---:|---:|---:|
+| `assets/ok/always_inline_nodebug_generic_calls.mojo` | 52 → 38 | 33 → 19 | 198 → 147 |
+| `assets/ok/always_inline_nodebug_calls.mojo` | 76 → 75 | 36 → 35 | 365 → 362 |
+| `benchmarks/compile/keyed.mojo` | 71 → 68 | 52 → 49 | 403 → 386 |
+| `assets/ok/trait_default_wrapper_conventions.mojo` | 125 → 124 | 96 → 95 | 1,131 → 1,129 |
+
+No other fixture moves. `keyed.mojo`'s three `rotate_bits_left` instances
+are gone, the bundled library's only generic free `nodebug` function the
+corpus reaches; the library's other `nodebug` functions are methods of
+parametric structs (R917). The corpus total (output identical):
+
+| corpus total | before | after | change |
+|---|---:|---:|---:|
+| `concrete_functions` | 46,214 | 46,195 | −19 |
+| `concrete_instructions` | 649,778 | 649,728 | −50 |
+| `generators` | 19,241 | 19,231 | −10 |
+| `generator_instances` | 30,596 | 30,577 | −19 |
+| `generator_instance_instructions` | 305,841 | 305,768 | −73 |
+
+`benchmarks/instantiation.tsv` had not been regenerated since R913 let the
+bundled library's `nodebug` callees reach the pass, which moved about 490
+fixtures by one inlined `_is_valid_utf8` each. It is regenerated with this
+change, and the "before" column above is the previous binary's report, so
+that shift is not counted here.

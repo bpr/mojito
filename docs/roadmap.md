@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R945**.
+Next free ID: **R951**.
 
 ## Ordered Work
 
@@ -55,22 +55,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md),
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
-
-- [ ] **R916 A generic `nodebug` callee is called, not inlined**
-
-  `inline-parametric` inlines only a callee that names none of its own
-  compile-time parameters, where the pin inlines a generic
-  `@always_inline("nodebug")` callee into its caller before elaboration.
-  - Bind the callee's binders to the call's `instantiated_args` and
-    `param_arg_regs` (`types::replace_parameters` over R915's visitor).
-  - Seed each value-parameter slot from its argument register or a
-    constant, and rename the slots binder names address (`k`, `Self`).
-  - This is the entry that removes instances: an inlined generic callee
-    is no longer instantiated per caller instance.
-  - Done when `scaled[k]` in `tests/mir_passes/inline-parametric/generic_kept.mir`
-    inlines and the corpus instance counts are recorded.
-  - Depends on R915.
-  - Model: Fable, Not Planned.
 
 - [ ] **R917 A `nodebug` method of a parametric struct, or a constructor,
   is called, not inlined**
@@ -136,6 +120,67 @@ which names the upstream pass each one follows. Each is measured by the
     places, which the splice must map to the caller's.
   - Done when a nested `nodebug` def inlines and the differential is clean.
   - Depends on R916.
+  - Model: Opus, Not Planned.
+
+- [ ] **R945 A `nodebug` callee with a callable compile-time parameter
+  is called, not inlined**
+
+  `inline-parametric` keeps a call whose callee declares a callable binder
+  (`apply[f: def(Int) thin -> Int]`), where the pin inlines it.
+  - The call passes the function as a runtime `param_arg` register, and
+    the body calls it through a `call.indirect` on the binder's slot.
+  - Bind the slot's reads to the call's function constant, as the
+    elaborator's `bindings.callables` does by spelling.
+  - Pinned by `tests/mir_passes/inline-parametric/generic_kept.mir`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R946 A `nodebug` callee with a variadic compile-time parameter
+  is called, not inlined**
+
+  `inline-parametric` keeps a call whose callee declares a variadic binder
+  or type pack (`*Ts`), where the pin inlines it.
+  - A spread over the pack (`Variant[*Ts]`, a pack's length) needs the
+    bound list, which `ParamBindings` holds only as one expression.
+  - Done when a `nodebug` callee over `*Ts` inlines in a pass test and
+    the program's output is unchanged.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R947 A `nodebug` callee with a `where` clause or a constrained
+  binder is called, not inlined**
+
+  `inline-parametric` keeps a call whose callee has a `where` clause or a
+  binder constraint, where the pin inlines it.
+  - Probe the pin first: whether the clause is judged at the call or in
+    each instance decides whether inlining may drop it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R948 A `nodebug` callee constructing its type parameter is
+  called at a concrete binding**
+
+  `inline-parametric` keeps a call to a callee holding `T()` or
+  `T(copy=x)` when the call binds `T` to a concrete type, where the pin
+  inlines it.
+  - Lowering such a construction at a concrete type is the elaborator's
+    policy (`construct_type_parameter`, `default_construct_parameters`).
+  - The fix moves that policy below `mojito-native`, or has lowering emit
+    the construction the binding denotes.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R949 A `nodebug` callee testing its binder's conformance is
+  called at a concrete binding**
+
+  `inline-parametric` keeps a call to a callee whose `comptime if` tests
+  `conforms_to(T, Trait)` when the call binds `T` to a concrete type,
+  where the pin inlines it.
+  - `GenericConstraint::Conforms` names a binder, not a type, so it has
+    no operand to hold the binding (`types::replace_constraint_parameters`).
+  - The fix gives the proposition a type operand, as upstream's
+    `kgen.param` conformance attribute takes a type.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R922 A drop of a type whose destructor is `nodebug` is not
@@ -7858,6 +7903,20 @@ follow-ups the landed producer stages filed come last.
     `implicit_callees`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R950 A compile-time value parameter is read through a slot named
+  by its spelling**
+
+  A generic body reads a value binder `k` as a `var.use` of a slot named
+  `k`, where upstream reads `kgen.param.constant` of the binder's
+  declaration reference.
+  - The elaborator folds the reads by spelling
+    (`substitute_value_parameter_reads`), and `inline-parametric` does the
+    same for an inlined callee (`read_binder`).
+  - Lowering should emit `Const::Param` of the binder's declaration
+    reference, and both name-keyed rewrites then go away.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 ### Grow The CPU Standard Library *(demand-first)*
 

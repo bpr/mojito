@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A generic `nodebug` callee is inlined before elaboration (R916):
+  `inline-parametric` binds a callee's own compile-time parameters, and a
+  non-parametric struct method's, to the call's arguments through
+  `mir::visit`, so such a callee is no longer instantiated per binding
+  (assets/ok/always_inline_nodebug_generic_calls.mojo). An argument over
+  the caller's parameters stays symbolic for the elaborator. A callable or
+  variadic binder, a `where` clause, a `T()` at a concrete binding, and a
+  `conforms_to` test of one keep the call (R945–R949). Program output is
+  unchanged; the corpus loses 19 instances.
 - MIR has a type and parameter visitor below the elaborator (R915):
   `mir::visit` walks every type and compile-time parameter site of a body,
   regions and terminators included, and the elaborator substitutes an

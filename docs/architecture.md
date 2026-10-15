@@ -5074,9 +5074,23 @@ point where a slot declared in a loop is uninitialized again.
   `in_place` binding of the call's result drops the flag. Every inlined
   register takes the call's location with no origin slot, which is what
   `nodebug` asks for and keeps the native debug attach's per-function call
-  correlation in the caller's file. The callee must name none of its own
-  compile-time parameters (no `param_decls`, no enclosing body or region
-  binders, and a receiver struct without parameters), be called
+  correlation in the caller's file. A callee with its own compile-time
+  parameters is bound to the call's `instantiated_args`, one per binder in
+  declaration order, before its body is spliced: the call's arguments
+  replace its binders through every site `mir::visit` reaches
+  (`types::replace_parameters` and its siblings, with
+  `types::replace_constraint_parameters` for a `comptime if` condition),
+  as upstream's `InlineParametric` substitutes through MLIR's
+  `AttrTypeReplacer`. An argument over the caller's own binders stays
+  symbolic, for the elaborator to fold in each instance of the caller. A
+  value binder's slot reads become its argument as a constant
+  (`Const::of_parameter_value`, or `Const::Param` while symbolic), and the
+  slot's drops are deleted. The binding keeps the call for a callable or
+  variadic binder, a `where` clause or binder constraint, a `T()` or
+  `T(copy=x)` at a concrete `T`, a conformance test of a concrete binding,
+  or a value binder's slot used other than as a read. The callee must have
+  no enclosing body or region binders and a receiver struct without
+  parameters, be called
   positionally into every `read` or owned parameter with no capture
   accesses, not raise, return a value rather than a reference, and hold
   plain control flow with no `try`, region op, or closure; any other call

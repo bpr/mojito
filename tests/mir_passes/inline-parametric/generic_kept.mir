@@ -8,42 +8,43 @@ artifact {
   structs: [
   ],
   decls: [
-    decl { lowered_name: generic_kept, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
-    decl { lowered_name: scaled, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "scaled", slot: 0, name: k, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [], inline: nodebug }
+    decl { lowered_name: apply, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "apply", slot: 0, name: f, type: func { environment: thin, param_decls: [], params: [Int], names: [arg0], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] }, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [], inline: nodebug },
+    decl { lowered_name: double, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: generic_kept, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] }
   ],
   functions: [
       fn {
-        name: scaled,
+        name: apply,
         registers: 3,
         vars: 2,
-        var_names: [x, k],
+        var_names: [x, f],
         params: 1,
         param_types: [Int],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }],
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: func { environment: thin, param_decls: [], params: [Int], names: [arg0], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 1484, end: 1485, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 1488, end: 1489, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 1484, end: 1489, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: func { environment: thin, param_decls: [], params: [Int], names: [arg0], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 389, end: 393, origin: present($v1) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 391, end: 392, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 389, end: 393, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
-              var.use { dest: %r0, var: $v0, mode: copy },
-              var.use { dest: %r1, var: $v1, mode: copy },
-              drop.var { var: $v1 },
-              binary { op: mul, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent }
+              var.use { dest: %r0, var: $v1, mode: copy },
+              var.use { dest: %r1, var: $v0, mode: copy },
+              call.indirect { dest: %r2, callee: %r0, resolved: present("__trait_dispatch.__call__$ov$Int"), raises: absent, args: [%r1], kwargs: [], callee_place: present(place { root: $v1, root_type: present(func { environment: thin, param_decls: [], params: [Int], names: [arg0], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] }), projections: [], type: present(func { environment: thin, param_decls: [], params: [Int], names: [arg0], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] }), through: absent }), arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent },
+              drop.var { var: $v1 }
             ],
             terminator: return { value: present(%r2) }
           }
         ]
       },
       fn {
-        name: generic_kept,
-        registers: 2,
+        name: double,
+        registers: 4,
         vars: 1,
         var_names: [x],
         params: 1,
@@ -56,15 +57,45 @@ artifact {
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 1546, end: 1547, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 1536, end: 1548, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 434, end: 435, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 438, end: 439, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 438, end: 439, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 434, end: 439, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
+              const { dest: %r1, value: int_literal(2) },
+              literal.materialize { dest: %r2, value: %r1, target: Int },
               var.use { dest: %r0, var: $v0, mode: copy },
-              call { dest: %r1, func: scaled, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [value_arg(ct_int(3))], spread: absent }
+              binary { op: mul, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent }
             ],
-            terminator: return { value: present(%r1) }
+            terminator: return { value: present(%r3) }
+          }
+        ]
+      },
+      fn {
+        name: generic_kept,
+        registers: 3,
+        vars: 1,
+        var_names: [x],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: func { environment: thin, param_decls: [], params: [Int], names: [x], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 1018, end: 1024, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 1026, end: 1027, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 1012, end: 1028, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: function(double) },
+              var.use { dest: %r1, var: $v0, mode: copy },
+              call { dest: %r2, func: apply, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: present(%r0), expr: absent }], receiver: absent, instantiated_args: [value_arg(ct_deferred(binder { owner: "apply", slot: 0, name: f }))], spread: absent }
+            ],
+            terminator: return { value: present(%r2) }
           }
         ]
       }

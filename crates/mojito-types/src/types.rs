@@ -286,6 +286,24 @@ impl VariantIndex {
         matches!(self, Self::Expr(_))
     }
 
+    /// The index with its expression rebuilt through `f`, known once `f`
+    /// closes it.
+    pub fn try_map_expr<E>(
+        &self,
+        f: impl FnOnce(&ParamExpr) -> Result<ParamExpr, E>,
+    ) -> Result<Self, E> {
+        Ok(match self {
+            Self::Known(_) => self.clone(),
+            Self::Expr(expr) => {
+                let expr = f(expr)?;
+                match expr.as_i64().and_then(|index| usize::try_from(index).ok()) {
+                    Some(index) => Self::Known(index),
+                    None => Self::Expr(expr),
+                }
+            }
+        })
+    }
+
     /// Whether two operations may select the same alternative: two
     /// distinct known positions never do, and a symbolic one may fold to
     /// any position (two binders may bind one type, and a pack may repeat
@@ -355,6 +373,31 @@ impl LaneMask {
                 std::iter::once(start).chain(count).collect()
             }
         }
+    }
+
+    /// The mask with each expression rebuilt through `f`, a slice's lane
+    /// count known once `f` closes it.
+    pub fn try_map_exprs<E>(
+        &self,
+        f: &mut impl FnMut(&ParamExpr) -> Result<ParamExpr, E>,
+    ) -> Result<Self, E> {
+        Ok(match self {
+            Self::Known(_) | Self::Join => self.clone(),
+            Self::Shuffle(lanes) => {
+                Self::Shuffle(lanes.iter().map(&mut *f).collect::<Result<_, _>>()?)
+            }
+            Self::Slice { start, count } => Self::Slice {
+                start: f(start)?,
+                count: match count {
+                    SimdWidth::Known(_) => count.clone(),
+                    SimdWidth::Expr(expr) => {
+                        let expr = f(expr)?;
+                        expr.as_i64()
+                            .map_or(SimdWidth::Expr(expr), SimdWidth::Known)
+                    }
+                },
+            },
+        })
     }
 
     /// The mask with each expression `close` answers replaced by its
@@ -1695,20 +1738,41 @@ impl GenericConstraint {
         binder: &dyn Fn(&ParamRef) -> ParamRef,
         operand: &dyn Fn(&ConstraintOperand) -> ConstraintOperand,
     ) -> Self {
-        let recurse = |inner: &Self| Box::new(inner.map(binder, operand));
-        let leaf = |leaf: &ConstraintOperand| match leaf {
-            ConstraintOperand::Param(param) => ConstraintOperand::Param(binder(param)),
-            ConstraintOperand::PackLength(param) => ConstraintOperand::PackLength(binder(param)),
-            other => operand(other),
-        };
-        match self {
-            Self::WithMessage(inner, message) => Self::WithMessage(recurse(inner), message.clone()),
+        let mapped: Result<Self, std::convert::Infallible> =
+            self.try_map(&|param| Ok(binder(param)), &|leaf| {
+                Ok(match leaf {
+                    ConstraintOperand::Param(param) => ConstraintOperand::Param(binder(param)),
+                    ConstraintOperand::PackLength(param) => {
+                        ConstraintOperand::PackLength(binder(param))
+                    }
+                    other => operand(other),
+                })
+            });
+        match mapped {
+            Ok(mapped) => mapped,
+            Err(never) => match never {},
+        }
+    }
+
+    /// This constraint with the binder of every binder-keyed proposition
+    /// (`Conforms`, a pack's) replaced by `binder` and every operand, a
+    /// parameter one included, by `leaf`; the first failure is returned.
+    pub fn try_map<E>(
+        &self,
+        binder: &dyn Fn(&ParamRef) -> Result<ParamRef, E>,
+        leaf: &dyn Fn(&ConstraintOperand) -> Result<ConstraintOperand, E>,
+    ) -> Result<Self, E> {
+        let recurse = |inner: &Self| inner.try_map(binder, leaf).map(Box::new);
+        Ok(match self {
+            Self::WithMessage(inner, message) => {
+                Self::WithMessage(recurse(inner)?, message.clone())
+            }
             Self::Conforms { param, trait_name } => Self::Conforms {
-                param: binder(param),
+                param: binder(param)?,
                 trait_name: trait_name.clone(),
             },
             Self::ConformsPack { param, trait_name } => Self::ConformsPack {
-                param: binder(param),
+                param: binder(param)?,
                 trait_name: trait_name.clone(),
             },
             Self::PackPredicate {
@@ -1716,26 +1780,26 @@ impl GenericConstraint {
                 predicate,
                 all,
             } => Self::PackPredicate {
-                param: binder(param),
+                param: binder(param)?,
                 predicate: predicate.clone(),
                 all: *all,
             },
             Self::PackContains { param, element } => Self::PackContains {
-                param: binder(param),
-                element: leaf(element),
+                param: binder(param)?,
+                element: leaf(element)?,
             },
-            Self::Trivial(kind, inner) => Self::Trivial(*kind, leaf(inner)),
-            Self::Eq(a, b) => Self::Eq(leaf(a), leaf(b)),
-            Self::Ne(a, b) => Self::Ne(leaf(a), leaf(b)),
-            Self::Lt(a, b) => Self::Lt(leaf(a), leaf(b)),
-            Self::Le(a, b) => Self::Le(leaf(a), leaf(b)),
-            Self::Gt(a, b) => Self::Gt(leaf(a), leaf(b)),
-            Self::Ge(a, b) => Self::Ge(leaf(a), leaf(b)),
-            Self::And(a, b) => Self::And(recurse(a), recurse(b)),
-            Self::Or(a, b) => Self::Or(recurse(a), recurse(b)),
-            Self::Not(inner) => Self::Not(recurse(inner)),
+            Self::Trivial(kind, inner) => Self::Trivial(*kind, leaf(inner)?),
+            Self::Eq(a, b) => Self::Eq(leaf(a)?, leaf(b)?),
+            Self::Ne(a, b) => Self::Ne(leaf(a)?, leaf(b)?),
+            Self::Lt(a, b) => Self::Lt(leaf(a)?, leaf(b)?),
+            Self::Le(a, b) => Self::Le(leaf(a)?, leaf(b)?),
+            Self::Gt(a, b) => Self::Gt(leaf(a)?, leaf(b)?),
+            Self::Ge(a, b) => Self::Ge(leaf(a)?, leaf(b)?),
+            Self::And(a, b) => Self::And(recurse(a)?, recurse(b)?),
+            Self::Or(a, b) => Self::Or(recurse(a)?, recurse(b)?),
+            Self::Not(inner) => Self::Not(recurse(inner)?),
             Self::Bool(value) => Self::Bool(*value),
-        }
+        })
     }
 
     /// This constraint with each reference no declaration binds yet
@@ -3668,6 +3732,62 @@ pub fn replace_argument_parameters(
         .map(|mut arguments| arguments.remove(0))
 }
 
+/// [`replace_parameters`] over one generic constraint.
+///
+/// A bound value binder's operand becomes its expression, a closed one its
+/// constant; a bound type binder's becomes its type. A binder-keyed proposition
+/// (`Conforms`, a pack's) whose binder is bound to anything but another
+/// binder has no operand to hold the binding, and is an error.
+pub fn replace_constraint_parameters(
+    context: &ParamContext,
+    cond: &GenericConstraint,
+    bindings: &ParamBindings,
+) -> Result<GenericConstraint, ParamError> {
+    let binder = |param: &ParamRef| -> Result<ParamRef, ParamError> {
+        let renamed = match (bindings.types().get(&param.id), bindings.lookup(param)) {
+            (None, None) => return Ok(param.clone()),
+            (Some(ty), _) => match ty.kind() {
+                TyKind::Param { binder, .. } => Some(binder.clone()),
+                _ => None,
+            },
+            (None, Some(expr)) => expr.as_decl_ref().cloned(),
+        };
+        renamed.ok_or_else(|| {
+            ParamError::Unsupported(format!(
+                "a proposition over `{}` at a binding that is no parameter",
+                param.name
+            ))
+        })
+    };
+    let operand = |expr: ParamExpr| match (expr.as_constant(), expr.as_decl_ref()) {
+        (Some(value), _) => ConstraintOperand::Value(value.clone()),
+        (None, Some(param)) => ConstraintOperand::Param(param.clone()),
+        (None, None) => ConstraintOperand::Expr(expr),
+    };
+    cond.try_map(&binder, &|leaf| {
+        Ok(match leaf {
+            ConstraintOperand::Param(param) => {
+                match (bindings.types().get(&param.id), bindings.lookup(param)) {
+                    (Some(ty), _) => match ty.kind() {
+                        TyKind::Param { binder, .. } => ConstraintOperand::Param(binder.clone()),
+                        _ => ConstraintOperand::Type(ty.clone()),
+                    },
+                    (None, Some(expr)) => operand(expr.clone()),
+                    (None, None) => leaf.clone(),
+                }
+            }
+            ConstraintOperand::PackLength(param) => ConstraintOperand::PackLength(binder(param)?),
+            ConstraintOperand::Value(value) => {
+                ConstraintOperand::Value(replace_value_parameters(context, value, bindings)?)
+            }
+            ConstraintOperand::Type(ty) => {
+                ConstraintOperand::Type(replace_parameters(context, ty, bindings, 0)?)
+            }
+            ConstraintOperand::Expr(expr) => operand(context.replace(expr, bindings)?),
+        })
+    })
+}
+
 /// The declared parameters referenced free anywhere in `ty`, by name.
 ///
 /// It reaches every expression operand, embedded type, default, and aggregate
@@ -4873,5 +4993,61 @@ mod encoding_tests {
             path: Vec::new(),
         });
         assert!(postcard::to_stdvec(&place).is_err());
+    }
+}
+
+#[cfg(test)]
+mod parameter_replacement_tests {
+    use super::*;
+    use crate::param_expr::ParamId;
+
+    #[test]
+    fn constraint_replacement_binds_values_and_renames_type_binders() {
+        let context = ParamContext::detached();
+        let reference = |owner: &str, name: &str| ParamRef {
+            id: ParamId::new(owner, 0),
+            name: Arc::from(name),
+        };
+        let (n, t, u) = (
+            reference("f", "n"),
+            reference("g", "T"),
+            reference("h", "U"),
+        );
+        let mut bindings = ParamBindings::new();
+        bindings.bind(
+            n.id.clone(),
+            context.constant(CtValue::Int(3)).expect("a constant"),
+        );
+        let binder = |binder: ParamRef| -> Ty {
+            TyKind::Param {
+                binder,
+                bounds: Vec::new(),
+                callable_bound: None,
+            }
+            .into()
+        };
+        bindings.bind_type(t.id.clone(), binder(u.clone()));
+        let compared = GenericConstraint::Eq(
+            ConstraintOperand::Param(n),
+            ConstraintOperand::Value(CtValue::Int(0)),
+        );
+        assert_eq!(
+            replace_constraint_parameters(&context, &compared, &bindings).expect("replaced"),
+            GenericConstraint::Eq(
+                ConstraintOperand::Value(CtValue::Int(3)),
+                ConstraintOperand::Value(CtValue::Int(0)),
+            )
+        );
+        let conforms = |param| GenericConstraint::Conforms {
+            param,
+            trait_name: "Stringable".to_string(),
+        };
+        assert_eq!(
+            replace_constraint_parameters(&context, &conforms(t.clone()), &bindings)
+                .expect("renamed"),
+            conforms(u)
+        );
+        bindings.bind_type(t.id.clone(), Ty::int());
+        assert!(replace_constraint_parameters(&context, &conforms(t), &bindings).is_err());
     }
 }

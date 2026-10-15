@@ -1,0 +1,119 @@
+mojito-mir 1.61
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("cases.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: "$comptime$pick$0", param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "pick", slot: 0, name: flag, type: Bool, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Bool, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: generic_comptime_branch, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: pick, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "pick", slot: 0, name: flag, type: Bool, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [], inline: nodebug }
+  ],
+  functions: [
+      fn {
+        name: "$comptime$pick$0",
+        registers: 1,
+        vars: 1,
+        var_names: [flag],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Bool }],
+        return_type: present(Bool),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Bool }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 255, end: 259, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              drop.var { var: $v0 }
+            ],
+            terminator: return { value: present(%r0) }
+          }
+        ]
+      },
+      fn {
+        name: pick,
+        registers: 8,
+        vars: 1,
+        var_names: [x],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: IntLiteral }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 276, end: 277, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 280, end: 281, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 280, end: 281, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 276, end: 281, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 293, end: 294, origin: present($v0) }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 297, end: 298, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 297, end: 298, origin: absent }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 293, end: 298, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+            ],
+            terminator: comptime_branch { condition: eq { left: operand_expr(param_apply { function: "$comptime$pick$0", type: meta_value(Bool), args: [param_decl_ref { owner: "pick", slot: 0, name: flag, type: meta_value(Bool) }] }), right: operand_value(ct_bool(true)) }, then: bb2, else: bb3 }
+          },
+          bb1 {
+            instructions: [
+              const { dest: %r5, value: int_literal(1) },
+              literal.materialize { dest: %r6, value: %r5, target: Int },
+              var.use { dest: %r4, var: $v0, mode: copy },
+              binary { op: sub, dest: %r7, a: %r4, b: %r6, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r7) }
+          },
+          bb2 {
+            instructions: [
+              const { dest: %r1, value: int_literal(1) },
+              literal.materialize { dest: %r2, value: %r1, target: Int },
+              var.use { dest: %r0, var: $v0, mode: copy },
+              binary { op: add, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r3) }
+          },
+          bb3 {
+            instructions: [
+            ],
+            terminator: jump { target: bb1 }
+          }
+        ]
+      },
+      fn {
+        name: generic_comptime_branch,
+        registers: 2,
+        vars: 1,
+        var_names: [x],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 899, end: 900, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 888, end: 901, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              call { dest: %r1, func: pick, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [value_arg(ct_bool(true))], spread: absent }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      }
+  ]
+}

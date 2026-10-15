@@ -1,0 +1,70 @@
+  functions: [
+      fn {
+        name: "Meter.scaled",
+        registers: 3,
+        vars: 2,
+        var_names: [self, k],
+        params: 1,
+        param_types: [struct_type { name: Meter, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Meter, arguments: [] } }, var_type { var: $v1, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 626, end: 636, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 639, end: 640, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 626, end: 640, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Meter, arguments: [] }), projections: [projection { op: field(value), type: Int }], type: present(Int), through: absent } },
+              var.use { dest: %r1, var: $v1, mode: copy },
+              drop.var { var: $v1 },
+              binary { op: mul, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      },
+      fn {
+        name: generic_method,
+        registers: 5,
+        vars: 3,
+        var_names: [m, "self$inline1", "k$inline1"],
+        params: 1,
+        param_types: [struct_type { name: Meter, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Meter, arguments: [] } }, var_type { var: $v1, type: struct_type { name: Meter, arguments: [] } }, var_type { var: $v2, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: Meter, arguments: [] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 952, end: 953, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 952, end: 965, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 952, end: 965, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 952, end: 965, origin: absent }) }, reg_loc { reg: %r4, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Meter, arguments: [] }), projections: [], type: present(struct_type { name: Meter, arguments: [] }), through: absent } }
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb1 {
+            instructions: [
+              place.load { dest: %r2, place: place { root: $v0, root_type: present(struct_type { name: Meter, arguments: [] }), projections: [projection { op: field(value), type: Int }], type: present(Int), through: absent } },
+              const { dest: %r3, value: int(3) },
+              binary { op: mul, dest: %r1, a: %r2, b: %r3, resolved: absent, raises: absent }
+            ],
+            terminator: jump { target: bb2 }
+          },
+          bb2 {
+            instructions: [
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      }
+  ]

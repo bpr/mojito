@@ -1204,6 +1204,60 @@ impl Const {
             _ => self.is_folded_scalar(),
         }
     }
+
+    /// The constant a read of the parameter value `value` at `slot_ty` is: a
+    /// scalar, a function named by a callable-typed slot, a string read at the
+    /// nominal `String` or a vector, struct, or tuple as the typed constant a
+    /// backend materializes at that type (upstream's `kgen.param.constant`),
+    /// and any other string as its literal.
+    pub fn of_parameter_value(value: &CtValue, slot_ty: Option<&Ty>) -> Option<Self> {
+        match value {
+            CtValue::Int(value) => Some(Self::Int(*value)),
+            CtValue::UInt(value) => Some(Self::Value(CtValue::UInt(*value))),
+            CtValue::Float(bits) => Some(Self::Float(f64::from_bits(*bits))),
+            CtValue::Bool(value) => Some(Self::Bool(*value)),
+            CtValue::Dtype(value) => Some(Self::Dtype(*value)),
+            CtValue::Str(value)
+                if matches!(
+                    slot_ty.map(Ty::kind),
+                    Some(TyKind::Func(_) | TyKind::GenericFunc(_))
+                ) =>
+            {
+                Some(Self::Function(value.clone()))
+            }
+            CtValue::Str(_) if slot_ty.is_some_and(mojito_types::types::is_nominal_string) => {
+                Some(Self::Value(value.clone()))
+            }
+            CtValue::Str(value) => Some(Self::Str(value.clone())),
+            value @ (CtValue::Simd { .. } | CtValue::Struct { .. } | CtValue::Tuple(_)) => {
+                Some(Self::Value(value.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    /// The constant a chain of field projections selects out of a
+    /// struct-typed parameter value, read at `ty`, `None` unless every step
+    /// names a field of a closed struct value.
+    pub fn of_projected_parameter_value(
+        value: &CtValue,
+        projections: &[Proj],
+        ty: Option<&Ty>,
+    ) -> Option<Self> {
+        let value =
+            projections
+                .iter()
+                .try_fold(value, |value, projection| match (projection, value) {
+                    (Proj::Field(field), CtValue::Struct { fields, .. }) => fields
+                        .iter()
+                        .find(|(name, _)| name == field)
+                        .map(|(_, value)| value),
+                    _ => None,
+                })?;
+        (!projections.is_empty())
+            .then(|| Self::of_parameter_value(value, ty))
+            .flatten()
+    }
 }
 
 /// The callee of a `MirInstr::Call` — a function/struct-constructor/builtin name.

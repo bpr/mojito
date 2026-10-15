@@ -1555,7 +1555,7 @@ impl<'a> Specializer<'a> {
                 {
                     Ok(Some(Const::Value(list)))
                 }
-                Ok(value) => Ok(value_parameter_constant(&value, ty)),
+                Ok(value) => Ok(Const::of_parameter_value(&value, ty)),
                 Err(error) if error.kind == MonoErrorKind::Instantiation => Err(error),
                 Err(_) => Ok(None),
             },
@@ -2741,7 +2741,7 @@ impl<'a> Specializer<'a> {
                                         return None;
                                     };
                                     Some(fields.iter().find(|(name, _)| name == field).and_then(
-                                        |(_, value)| value_parameter_constant(value, read),
+                                        |(_, value)| Const::of_parameter_value(value, read),
                                     ))
                                 },
                             )

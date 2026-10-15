@@ -1,0 +1,66 @@
+  functions: [
+      fn {
+        name: ident,
+        registers: 1,
+        vars: 1,
+        var_names: [x],
+        params: 1,
+        param_types: [param { owner: "ident", slot: 0, name: T, bounds: [ImplicitlyCopyable, Movable], callable_bound: absent }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: param { owner: "ident", slot: 0, name: T, bounds: [ImplicitlyCopyable, Movable], callable_bound: absent } }],
+        return_type: present(param { owner: "ident", slot: 0, name: T, bounds: [ImplicitlyCopyable, Movable], callable_bound: absent }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: param { owner: "ident", slot: 0, name: T, bounds: [ImplicitlyCopyable, Movable], callable_bound: absent } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 172, end: 173, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy }
+            ],
+            terminator: return { value: present(%r0) }
+          }
+        ]
+      },
+      fn {
+        name: generic_type,
+        registers: 3,
+        vars: 2,
+        var_names: [x, "x$inline1"],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 753, end: 754, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 747, end: 755, origin: absent }) }, reg_loc { reg: %r2, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              var.store { var: $v1, src: %r0, binding_type: present(Int), in_place: false }
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb1 {
+            instructions: [
+              var.use { dest: %r1, var: $v1, mode: copy }
+            ],
+            terminator: jump { target: bb2 }
+          },
+          bb2 {
+            instructions: [
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      }
+  ]
