@@ -123,7 +123,8 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
   - `If { results, cond, then, elifs, orelse }` — `hlcf.if`. Each `elifs`
     entry is a condition region ending in `ElifCond(reg)` and an arm.
   - `Loop { label, body }` — `hlcf.loop`. Loop-carried values stay in slots
-    until register promotion (R787) brings operands and results.
+    until register promotion of merged slots (R927) brings operands and
+    results.
   - `ComptimeIf { results, conds, arms, orelse }` — `hlcf.comptime.if`:
     one arm per condition, then the else region.
   - `ComptimeFor { binder, source, body, orelse }` —

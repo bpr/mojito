@@ -1,0 +1,33 @@
+  functions: [
+      fn {
+        name: reassigned_in_block,
+        registers: 7,
+        vars: 1,
+        var_names: [a],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r6, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 123, end: 124, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 125, end: 130, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 134, end: 135, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 134, end: 135, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 125, end: 130, origin: absent }) }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 147, end: 148, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              value.copy { dest: %r1, value: %r0 },
+              const { dest: %r2, value: int_literal(1) },
+              literal.materialize { dest: %r3, value: %r2, target: Int },
+              binary { op: add, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent },
+              value.copy { dest: %r6, value: %r4 }
+            ],
+            terminator: return { value: present(%r6) }
+          }
+        ]
+      }
+  ]

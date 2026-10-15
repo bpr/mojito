@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R927**.
+Next free ID: **R929**.
 
 ## Ordered Work
 
@@ -304,15 +304,43 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R787 Generic bodies keep slot traffic that registers would carry**
+- [ ] **R927 A slot whose reads merge two stores keeps its slot, where
+  upstream's `Mem2Reg` carries it through region results**
 
-  A generic body's variable slots are copied into every instance as slots,
-  where upstream's `Mem2Reg` and `SROA` promote them to registers and split
-  aggregates once, on the generator.
-  - MIR slots carry ownership state, so this needs a plan of what may be
-    promoted after drop elaboration.
-  - Start it only after the cheaper passes show how much remains.
-  - Depends on R781, R785.
+  `mem-2-reg` promotes only a slot each of whose reads sees one reaching
+  store, so a variable assigned in an `if` arm or a loop and read after it
+  stays in memory.
+  - Upstream's `processRegion` makes such an allocation variant across an
+    `hlcf` op and threads it through region arguments, terminator
+    operands, and new op results (`Mem2Reg.cpp`, `insertVariants`).
+  - MIR is a CFG at the pre-elaboration seam and its blocks take no
+    arguments, so the pass solves reaching stores over blocks instead
+    (`analysis/mem2reg.rs`).
+  - The fix rewrites the pass as `processRegion`'s scoped walk over
+    structured bodies with region values.
+  - The pass's `comptime for` guard (a read and its store on one side of a
+    loop body's boundary) goes once the elaborator clones regions.
+  - About two thirds of the promotable-type slot mentions in the
+    pre-elaboration bodies of `collections_many` are merged ones.
+  - Depends on R879 (structured bodies at the seam), R886 (region values),
+    R880 (regions cloned).
+  - Model: Fable, Planned.
+
+- [ ] **R928 Aggregate slots are not split, where upstream's `SROA` gives
+  each element its own allocation**
+
+  A trivially register-passable struct or tuple slot that is read and
+  written through field places stays whole, so `mem-2-reg` never promotes
+  it.
+  - Upstream's `SROA` runs before each `Mem2Reg`, at both seams, and turns
+    a whole-value store into per-element extracts and stores
+    (`SROA.cpp`).
+  - MIR builds a struct by a constructor call and has no value-level
+    construction op for a whole-value read of split elements, so the pass
+    needs one, which bumps the MIR text format.
+  - Done when a pass test shows a field-accessed `TrivialRegisterPassable`
+    struct slot split and promoted, and the corpus effect is recorded.
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R845 Concrete functions are not CSE'd**

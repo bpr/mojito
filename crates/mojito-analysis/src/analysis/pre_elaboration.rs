@@ -14,6 +14,7 @@ use super::canonicalize::CANONICALIZE;
 use super::dead_symbols::ELIMINATE_DEAD_SYMBOLS;
 use super::elaborate_drops_function;
 use super::inline_parametric::INLINE_PARAMETRIC;
+use super::mem2reg::{LOWER_ARG_CONVENTIONS, MEM_2_REG};
 use super::sccp::SCCP;
 use super::unused_params::REMOVE_UNUSED_PARAMS;
 use mojito_common::timing;
@@ -124,20 +125,24 @@ impl Pass {
 /// generator pipeline: `SROA`, `Mem2Reg`, and `Canonicalizer` in the first;
 /// the same with `SCCP` before the `Canonicalizer` in the second; an
 /// `InlineParametric`, then `SROA`, `Mem2Reg`, and `Canonicalizer` in the
-/// third; and `CSEPass` in the fourth. Mojito has neither scalar-replacement
-/// pass nor a CSE pass, so its fourth round has no generator pipeline.
+/// third; and `CSEPass` in the fourth. Mojito has `Mem2Reg` (as `mem-2-reg`)
+/// but neither `SROA` nor a CSE pass, so its fourth round has no generator
+/// pipeline.
 pub const PIPELINE: &[Pass] = &[
     Pass::Body(REMOVE_UNUSED_PARAMS),
     Pass::Program(ELIMINATE_DEAD_SYMBOLS),
+    Pass::Body(MEM_2_REG),
     Pass::Body(CANONICALIZE),
     Pass::CallGraph(INLINE_PARAMETRIC),
     Pass::Body(REMOVE_UNUSED_PARAMS),
     Pass::Program(ELIMINATE_DEAD_SYMBOLS),
+    Pass::Body(MEM_2_REG),
     Pass::Body(SCCP),
     Pass::Body(CANONICALIZE),
     Pass::Body(REMOVE_UNUSED_PARAMS),
     Pass::Program(ELIMINATE_DEAD_SYMBOLS),
     Pass::CallGraph(INLINE_PARAMETRIC),
+    Pass::Body(MEM_2_REG),
     Pass::Body(CANONICALIZE),
     Pass::Body(REMOVE_UNUSED_PARAMS),
     Pass::Program(ELIMINATE_DEAD_SYMBOLS),
@@ -168,7 +173,8 @@ pub const LOWER_CONTROL_FLOW: BodyPass = BodyPass {
 };
 
 /// The pass registered under `name`: a [`PIPELINE`] pass, or one run only
-/// on request (drop elaboration, control-flow lowering).
+/// on request (drop elaboration, control-flow lowering, and the
+/// post-elaboration argument lowering).
 pub fn pass_named(name: &str) -> Option<&'static Pass> {
     PIPELINE
         .iter()
@@ -362,7 +368,11 @@ struct ProgramCallees<'a> {
 }
 
 /// Passes outside [`PIPELINE`] that [`pass_named`] still answers.
-const REGISTERED: &[Pass] = &[Pass::Body(ELABORATE_DROPS), Pass::Body(LOWER_CONTROL_FLOW)];
+const REGISTERED: &[Pass] = &[
+    Pass::Body(ELABORATE_DROPS),
+    Pass::Body(LOWER_CONTROL_FLOW),
+    Pass::Body(LOWER_ARG_CONVENTIONS),
+];
 
 /// Run the body pass `pass` over the body `name`, verifying it after the
 /// pass in debug builds when the pass changed it.
@@ -530,6 +540,8 @@ mod tests {
         assert!(pass_named("remove-unused-params").is_some());
         assert!(pass_named("inline-parametric").is_some());
         assert!(pass_named("lower-control-flow").is_some());
+        assert!(pass_named("mem-2-reg").is_some());
+        assert!(pass_named("lower-arg-conventions").is_some());
         assert!(pass_named("no-such-pass").is_none());
     }
 }

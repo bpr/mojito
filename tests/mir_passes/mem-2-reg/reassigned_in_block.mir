@@ -1,0 +1,51 @@
+mojito-mir 1.61
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("cases.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: reassigned_in_block, param_names: [a], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: reassigned_in_block,
+        registers: 7,
+        vars: 2,
+        var_names: [a, x],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: None }, reg_type { reg: %r6, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 123, end: 124, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 125, end: 130, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 134, end: 135, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 134, end: 135, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 125, end: 130, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 125, end: 130, origin: present($v1) }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 147, end: 148, origin: present($v1) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              var.store { var: $v1, src: %r0, binding_type: present(Int), in_place: false },
+              var.use { dest: %r1, var: $v1, mode: copy },
+              drop.var { var: $v1 },
+              const { dest: %r2, value: int_literal(1) },
+              literal.materialize { dest: %r3, value: %r2, target: Int },
+              binary { op: add, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent },
+              interiors.invalidate { base: interior_origin { root: $v1, path: [] }, except: absent, include_base_generation: false, marker: %r5 },
+              var.store { var: $v1, src: %r4, binding_type: absent, in_place: false },
+              var.use { dest: %r6, var: $v1, mode: copy },
+              drop.var { var: $v1 }
+            ],
+            terminator: return { value: present(%r6) }
+          }
+        ]
+      }
+  ]
+}

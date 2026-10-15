@@ -8,8 +8,8 @@ use super::*;
 use mojito_checked::checked::ComptimeSequence;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
-    MirBlockId, SpanTable, instruction_regs_mut, renumber_block_slots, terminator_regs_mut,
-    terminator_targets, terminator_targets_mut,
+    MirBlockId, SpanTable, comptime_for_body, instruction_regs_mut, renumber_block_slots,
+    terminator_regs_mut, terminator_targets, terminator_targets_mut,
 };
 
 impl Specializer<'_> {
@@ -154,7 +154,7 @@ impl Specializer<'_> {
             return Ok(());
         };
         let iterators = self.trip_elements(frame.template, &binder, &source, bindings)?;
-        let members = loop_body(blocks, header, body, exit, frame.function_level);
+        let members = comptime_for_body(blocks, header, body, exit, frame.function_level);
         let test = self.stop_test(frame.template, blocks, body, &members, &source)?;
         let mut indexed: BTreeSet<VarId> =
             addressed_slots(members.iter().map(|&member| &blocks[member]))
@@ -584,9 +584,10 @@ fn outermost_loop(blocks: &[MirBlock], from: usize, function_level: bool) -> Opt
         .enumerate()
         .skip(from)
         .filter_map(|(id, block)| match &block.term {
-            MirTerm::ComptimeFor { body, exit, .. } => {
-                Some((id, loop_body(blocks, id, *body, *exit, function_level)))
-            }
+            MirTerm::ComptimeFor { body, exit, .. } => Some((
+                id,
+                comptime_for_body(blocks, id, *body, *exit, function_level),
+            )),
             _ => None,
         })
         .collect();
@@ -598,72 +599,6 @@ fn outermost_loop(blocks: &[MirBlock], from: usize, function_level: bool) -> Opt
                 .any(|(other, members)| other != header && members.contains(header))
         })
         .map(|(header, _)| *header)
-}
-
-/// The blocks of a loop's body: those its entry dominates, in index order.
-/// Reachability would not do: drop elaboration splits a `break` arm's edge
-/// so it leaves for the block after the loop directly, past the exit. At
-/// function level a `try` region's escapes are edges of this list too.
-fn loop_body(
-    blocks: &[MirBlock],
-    header: MirBlockId,
-    body: MirBlockId,
-    exit: MirBlockId,
-    function_level: bool,
-) -> Vec<MirBlockId> {
-    let successors = |block: MirBlockId| {
-        if function_level {
-            mojito_mir::mir::block_successors(&blocks[block])
-        } else {
-            terminator_targets(&blocks[block].term)
-        }
-    };
-    let mut predecessors: Vec<Vec<MirBlockId>> = vec![Vec::new(); blocks.len()];
-    for block in 0..blocks.len() {
-        for successor in successors(block) {
-            if successor < blocks.len() {
-                predecessors[successor].push(block);
-            }
-        }
-    }
-    // Dominators by iteration: the entry dominates itself alone; every other
-    // block is dominated by itself and by what dominates all of its
-    // predecessors. An unreached block keeps the full set and is no member.
-    let everything: HashSet<MirBlockId> = (0..blocks.len()).collect();
-    let mut dominators: Vec<HashSet<MirBlockId>> = vec![everything; blocks.len()];
-    dominators[0] = HashSet::from([0]);
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for block in 1..blocks.len() {
-            let mut next: Option<HashSet<MirBlockId>> = None;
-            for &predecessor in &predecessors[block] {
-                next = Some(match next {
-                    None => dominators[predecessor].clone(),
-                    Some(set) => set
-                        .intersection(&dominators[predecessor])
-                        .copied()
-                        .collect(),
-                });
-            }
-            let mut next = next.unwrap_or_default();
-            next.insert(block);
-            if next != dominators[block] {
-                dominators[block] = next;
-                changed = true;
-            }
-        }
-    }
-    let mut members: Vec<MirBlockId> = (0..blocks.len())
-        .filter(|&block| {
-            block != header
-                && block != exit
-                && !predecessors[block].is_empty()
-                && dominators[block].contains(&body)
-        })
-        .collect();
-    members.sort_unstable();
-    members
 }
 
 /// The blocks of `members` one copy keeps, in index order: those reached

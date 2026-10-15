@@ -1663,3 +1663,28 @@ No `generator_instances` count moves. The shared corpus total of
 `benchmarks/instantiation.tsv` is regenerated with this change. The
 bundled library's own wrappers are variadic `write` forwards, which the
 inliner keeps until keyword and variadic calls inline (R920).
+
+## Mem2Reg promotes trivially register-passable slots (2026-10-14, R787)
+
+`mem-2-reg`, upstream's `Mem2Reg`, runs before each of the first three
+pre-elaboration rounds' `canonicalize`, and after elaboration behind
+`lower-arg-conventions`, which stores each eligible `read` or owned
+argument into a local it can promote (`docs/architecture.md`
+§Pre-Elaboration Pipeline and §Post-Elaboration Pipeline). A slot each of
+whose reads sees one reaching store becomes registers; a slot whose reads
+merge two stores keeps its slot until region values arrive (R927). Debug
+binary, before and after (output identical):
+
+| fixture | `concrete_instructions` | `generator_instance_instructions` | promoted slots (pre / post) |
+|---|---:|---:|---:|
+| `collections_many` | 15,730 → 14,157 | 14,482 → 13,162 | 13 / 671 |
+| `nested_generics` | 3,628 → 3,367 | 2,760 → 2,604 | 0 / 121 |
+
+The pre-elaboration counters cover the program's own bodies; package
+bodies are finished on the elaborator's thread, whose counters the report
+does not hold. Over the corpus (`scripts/instantiation-report`, regenerated
+with this change), concrete instructions fall 808,361 → 735,053 (−9.1 %),
+generator-instance instructions 372,899 → 348,661 (−6.5 %), and concrete
+blocks 135,912 → 135,782. Two fixtures lose a concrete function
+(`pliron_int_pow`, `pliron_uint_pow`): once `b` and `e` are registers,
+`canonicalize` folds `b ** e`, and the power function is no longer reached.

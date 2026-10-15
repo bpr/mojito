@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Adds upstream's `Mem2Reg` as the `mem-2-reg` pass (R787), before each of
+  the first three pre-elaboration rounds' `canonicalize` and after
+  elaboration, where `lower-arg-conventions`, the callee half of upstream's
+  `LowerArgConventions`, first stores each `read` or owned register-passable
+  argument into a local. A slot of a concrete trivially register-passable
+  type that is only stored, read whole, or marked, each of whose reads sees
+  one reaching store, becomes registers. A slot whose reads merge two
+  stores keeps its slot (R927), and `SROA` is not yet added (R928). The
+  slot-renumbering helpers move from `native::mono` to `mojito-mir`.
+  Corpus concrete instructions fall 9.1 %. Program output is unchanged; the
+  MIR text and package formats are unchanged.
 - A trait default's synthesized forwarding wrapper is now `nodebug`, as
   upstream's `synthesizeDefaultTraitMethodWrapper` marks it (R785), so
   `inline-parametric` replaces a statically resolved call to an inherited

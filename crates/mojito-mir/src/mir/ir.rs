@@ -675,6 +675,162 @@ pub fn renumber_block_slots(blocks: &mut [MirBlock], renumber: &dyn Fn(VarId) ->
     }
 }
 
+/// Renumber every slot `function` names ([`renumber_block_slots`]) and each
+/// span origin.
+pub fn renumber_slots(function: &mut MirFunction, renumber: &dyn Fn(VarId) -> VarId) {
+    renumber_block_slots(&mut function.blocks, renumber);
+    for (_, origin) in function.spans.0.values_mut() {
+        if let Some(var) = origin {
+            *var = renumber(*var);
+        }
+    }
+}
+
+/// Remove the `retired` slots from `function`, none of them a parameter nor
+/// still addressed: every slot above one moves down past it, and its name
+/// and type leave the tables.
+///
+/// # Panics
+///
+/// In debug builds, when a retired slot is a parameter or still addressed.
+pub fn retire_slots(function: &mut MirFunction, retired: &BTreeSet<VarId>) {
+    debug_assert!(
+        retired
+            .iter()
+            .all(|&slot| slot as usize >= function.n_params),
+        "a parameter slot is never retired"
+    );
+    let addressed = std::cell::Cell::new(false);
+    let renumber = |var: VarId| {
+        addressed.set(addressed.get() || retired.contains(&var));
+        var - retired.range(..var).count() as VarId
+    };
+    renumber_slots(function, &renumber);
+    debug_assert!(!addressed.get(), "a retired slot is still addressed");
+    for &slot in retired.iter().rev() {
+        function.var_names.remove(slot as usize);
+    }
+    function.var_tys = function
+        .var_tys
+        .iter()
+        .filter(|(var, _)| !retired.contains(var))
+        .map(|(var, ty)| (renumber(*var), ty.clone()))
+        .collect();
+    function.n_vars -= retired.len();
+}
+
+/// The slots `blocks` address, the regions they hold included.
+pub fn addressed_slots<'a>(blocks: impl IntoIterator<Item = &'a MirBlock>) -> BTreeSet<VarId> {
+    let mut addressed = BTreeSet::new();
+    for block in blocks {
+        collect_block_slots(block, &mut addressed);
+    }
+    addressed
+}
+
+/// The blocks of a `comptime for` body, in index order.
+///
+/// They are those its entry `body` dominates, but the `header` and the
+/// `exit`. Reachability would not do: drop elaboration splits a `break` arm's edge so it leaves for the
+/// block after the loop directly, past the exit. At function level a `try`
+/// region's escapes are edges of this list too.
+pub fn comptime_for_body(
+    blocks: &[MirBlock],
+    header: MirBlockId,
+    body: MirBlockId,
+    exit: MirBlockId,
+    function_level: bool,
+) -> Vec<MirBlockId> {
+    let successors = |block: MirBlockId| {
+        if function_level {
+            block_successors(&blocks[block])
+        } else {
+            terminator_targets(&blocks[block].term)
+        }
+    };
+    let mut predecessors: Vec<Vec<MirBlockId>> = vec![Vec::new(); blocks.len()];
+    for block in 0..blocks.len() {
+        for successor in successors(block) {
+            if successor < blocks.len() {
+                predecessors[successor].push(block);
+            }
+        }
+    }
+    // Dominators by iteration: the entry dominates itself alone; every other
+    // block is dominated by itself and by what dominates all of its
+    // predecessors. An unreached block keeps the full set and is no member.
+    let everything: HashSet<MirBlockId> = (0..blocks.len()).collect();
+    let mut dominators: Vec<HashSet<MirBlockId>> = vec![everything; blocks.len()];
+    dominators[0] = HashSet::from([0]);
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for block in 1..blocks.len() {
+            let mut next: Option<HashSet<MirBlockId>> = None;
+            for &predecessor in &predecessors[block] {
+                next = Some(match next {
+                    None => dominators[predecessor].clone(),
+                    Some(set) => set
+                        .intersection(&dominators[predecessor])
+                        .copied()
+                        .collect(),
+                });
+            }
+            let mut next = next.unwrap_or_default();
+            next.insert(block);
+            if next != dominators[block] {
+                dominators[block] = next;
+                changed = true;
+            }
+        }
+    }
+    (0..blocks.len())
+        .filter(|&block| {
+            block != header
+                && block != exit
+                && !predecessors[block].is_empty()
+                && dominators[block].contains(&body)
+        })
+        .collect()
+}
+
+/// Every slot one block names: its instructions', its regions' and their
+/// handler bindings and cleanups, and its terminator's.
+fn collect_block_slots(block: &MirBlock, addressed: &mut BTreeSet<VarId>) {
+    for instruction in &block.instrs {
+        addressed.extend(instruction_slots(instruction));
+        if let MirInstr::Try {
+            handler, cleanup, ..
+        } = instruction
+        {
+            addressed.extend(handler.iter().filter_map(|(slot, _)| *slot));
+            addressed.extend(cleanup.iter().copied());
+        }
+        for inner in instruction_regions(instruction).into_iter().flatten() {
+            collect_block_slots(inner, addressed);
+        }
+    }
+    match &block.term {
+        MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } => {
+            addressed.extend(cleanup.iter().copied());
+        }
+        MirTerm::ComptimeFor { .. }
+        | MirTerm::Jump(_)
+        | MirTerm::Branch { .. }
+        | MirTerm::ComptimeBranch { .. }
+        | MirTerm::Return(_)
+        | MirTerm::TryYield
+        | MirTerm::Yield(_)
+        | MirTerm::ElifCond(_)
+        | MirTerm::Break { .. }
+        | MirTerm::Continue { .. }
+        | MirTerm::ComptimeYield(_)
+        | MirTerm::ComptimeBreak
+        | MirTerm::ComptimeContinue
+        | MirTerm::Unreachable => {}
+    }
+}
+
 /// The capture accesses an instruction records: static ownership facts
 /// whose roots name the same slots the body addresses.
 fn capture_accesses(instruction: &MirInstr) -> &[MirCaptureAccess] {
@@ -802,10 +958,18 @@ fn prune_block_list(blocks: &mut Vec<MirBlock>) -> Vec<Option<usize>> {
 /// targets, and the escape targets of every region it holds.
 pub fn block_successors(block: &MirBlock) -> Vec<MirBlockId> {
     let mut successors = terminator_targets(&block.term);
-    for region in block.instrs.iter().flat_map(instruction_regions) {
-        collect_escape_targets(region, &mut successors);
-    }
+    successors.extend(block.instrs.iter().flat_map(region_escape_targets));
     successors
+}
+
+/// The function-level blocks the regions of `instruction` escape to, at any
+/// depth below it.
+pub fn region_escape_targets(instruction: &MirInstr) -> Vec<MirBlockId> {
+    let mut targets = Vec::new();
+    for region in instruction_regions(instruction) {
+        collect_escape_targets(region, &mut targets);
+    }
+    targets
 }
 
 fn collect_escape_targets(blocks: &[MirBlock], targets: &mut Vec<MirBlockId>) {

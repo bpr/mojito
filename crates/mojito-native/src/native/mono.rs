@@ -6,9 +6,9 @@
 
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use equiv::*;
+use mojito_mir::mir::{addressed_slots, renumber_slots, retire_slots};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use promote::*;
-use slots::{addressed_slots, renumber_slots, retire_slots};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use spread::*;
 use std::cell::RefCell;
@@ -631,7 +631,6 @@ mod infer;
 mod instances;
 mod promote;
 mod rebind;
-mod slots;
 mod specializer;
 mod spread;
 mod substitute;

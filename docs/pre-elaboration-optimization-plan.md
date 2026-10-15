@@ -2,7 +2,8 @@
 
 **Status:** plan recorded 2026-10-13. Stages 1 (R777), 2 (R778), 3
 (R779), 4 (R780), 5 (R781), and 6 (R782, its intraprocedural core) have
-landed, and so has the post-elaboration pipeline (R840). The scheduled
+landed, as has stage 11's `Mem2Reg` in its no-variant case (R787), and so
+has the post-elaboration pipeline (R840). The scheduled
 tasks are [`docs/roadmap.md`](roadmap.md) tracks `measure` (counting and
 testing) and `pmir` (the passes); this document is their design record and
 is updated as stages land.
@@ -276,9 +277,17 @@ folds the operators over it (R840);
     the inliner has nothing to act on until the library carries upstream's
     markings.
 11. **Memory traffic** (`Mem2Reg`, `SROA`). Promote a generic body's
-    variable slots to registers, and split aggregates. MIR's slots carry
-    ownership state, so this needs its own plan once the cheaper passes have
-    shown how much remains.
+    variable slots to registers, and split aggregates.
+    - `Mem2Reg` landed as `mem-2-reg` (R787) for its no-variant case, at
+      both seams: in the first three rounds over generators' concrete-sized
+      locals, and after elaboration behind `lower-arg-conventions`, which
+      stores each register-passable argument into a local first, as
+      upstream's `LowerArgConventions` does. Once drops are elaborated, a
+      slot of a type with no destructor and an identity copy carries no
+      ownership effect, so no ownership state is rewritten.
+    - A slot whose reads merge two stores waits on structured bodies and
+      region values (R927).
+    - `SROA` waits on a value-level aggregate construction (R928).
 
 `ApplyInliner` has no counterpart: Mojito has no `apply` operator.
 

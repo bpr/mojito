@@ -4900,16 +4900,17 @@ after its callees, reading their finished bodies through `Callees`, as
 MLIR's inliner walks the call graph. `docs/pre-elaboration-optimization-plan.md`
 stages the passes that fill it. The list follows upstream's rounds as the
 pinned compiler's `--mlir-timing` report shows them, less the passes
-Mojito lacks (`SROA`, `Mem2Reg`, `CSEPass`). Each of four rounds runs
+Mojito lacks (`SROA`, `CSEPass`). Each of four rounds runs
 `RemoveUnusedParams` and `EliminateDeadSymbols`, the second after an
-`InlineParametric`; the first then runs a `Canonicalizer` on each
-generator, the second `SCCP` and a `Canonicalizer`, the third an
-`InlineParametric` and a `Canonicalizer`, and the fourth only `CSEPass`. So
-`PIPELINE` is `remove-unused-params`, `eliminate-dead-symbols`,
-`canonicalize`; `inline-parametric`, `remove-unused-params`,
-`eliminate-dead-symbols`, `sccp`, `canonicalize`; `remove-unused-params`,
-`eliminate-dead-symbols`, `inline-parametric`, `canonicalize`; and
-`remove-unused-params`, `eliminate-dead-symbols` (R869). `pass_names`
+`InlineParametric`; the first then runs `Mem2Reg` and a `Canonicalizer` on
+each generator, the second `Mem2Reg`, `SCCP`, and a `Canonicalizer`, the
+third an `InlineParametric`, `Mem2Reg`, and a `Canonicalizer`, and the
+fourth only `CSEPass`. So `PIPELINE` is `remove-unused-params`,
+`eliminate-dead-symbols`, `mem-2-reg`, `canonicalize`; `inline-parametric`,
+`remove-unused-params`, `eliminate-dead-symbols`, `mem-2-reg`, `sccp`,
+`canonicalize`; `remove-unused-params`, `eliminate-dead-symbols`,
+`inline-parametric`, `mem-2-reg`, `canonicalize`; and
+`remove-unused-params`, `eliminate-dead-symbols` (R869, R787). `pass_names`
 yields a pass that runs more than once once, and all of a pass's runs count
 into one `--timings` span.
 
@@ -5050,6 +5051,36 @@ into one `--timings` span.
   program's followed calls, and at the package seam `PackageBodies::on_cycle`
   decides one from lowered bodies, memoized by row, so a finishing hook
   never re-enters the body it finishes.
+- **`mem-2-reg` runs before each round's `canonicalize`**
+  (`analysis::MEM_2_REG`, `analysis/mem2reg.rs`, R787), upstream's
+  `Mem2Reg`, which promotes an allocation whose every user is a load, a
+  store, or a lifetime marker. A slot is promoted when its type is
+  trivially register-passable at a concrete size
+  (`MirDeclarations::copy_is_identity`, never symbolic: upstream promotes
+  only allocations of concrete size), it is no parameter, and every
+  mention of it lies in one block list (the function's own or one `try`
+  part) and is a `var.store` of a register defined once, earlier in its
+  block, and read by the store alone; a `var.use` (copy, move, or forward)
+  or a whole-root `place.load` at the slot's type; or a `var.declare`,
+  `drop.var`, `var.consume`, or `interiors.invalidate` whose marker nothing
+  reads, all of which do nothing to such a type once drops are elaborated.
+  A destructor or copy constructor takes the slot's address, so its type is
+  never one, as upstream's never is; a borrow, capture, loan, projection,
+  iterator, or cleanup list keeps the slot. A forward dataflow over the
+  list's blocks (a `try`'s escapes taking the state at the `try`) finds
+  each read's reaching store; when every read sees exactly one, that store
+  lies on every path to the read and its register's definition before it,
+  so the read becomes a `value.copy` of the stored register, the other
+  mentions go, and the slot leaves the function (`mir::retire_slots`). The
+  `canonicalize` after it forwards the copies. A slot whose reads merge two
+  stores keeps its slot (R927): upstream carries such an allocation through
+  `hlcf` region arguments and results, and MIR is a CFG at this seam, whose
+  blocks take none. The elaborator copies a `comptime for` body once per
+  iteration with every register renumbered (`mono/unroll.rs`
+  `renumber_block`), so a read and its store must lie on the same side of
+  every loop body's boundary (`mir::comptime_for_body`); the guard goes when
+  the elaborator clones regions (R880). Its `--timings` counters are
+  `promoted_slots` and `erased_slot_instructions`.
 - **`sccp` runs between the two `canonicalize` runs** (`analysis::SCCP`,
   `analysis/sccp.rs`, R781), upstream's `SCCP` (MLIR's sparse conditional
   constant propagation). Each register takes a lattice value, unknown, one
@@ -5202,8 +5233,20 @@ Upstream nests a per-function `'kgen.func'` pipeline after
 `SROA`, `Mem2Reg`, `SCCP`, `Canonicalizer`, and `CSEPass` on each concrete
 function. Mojito's is `analysis::POST_ELABORATION_PIPELINE`
 (`crates/mojito-analysis/src/analysis/post_elaboration.rs`, R840):
-`sccp`, then `canonicalize`, the pre-elaboration pipeline's own body passes,
-without the three upstream passes Mojito does not have. It folds what only
+`lower-arg-conventions`, `mem-2-reg`, `sccp`, then `canonicalize`, the
+pre-elaboration pipeline's own body passes but the first, without the two
+upstream passes Mojito does not have (`SROA`, `CSEPass`). Upstream's first
+optimization pipeline after elaboration runs `LowerArgConventions` and then
+`Mem2Reg` on every function: a register-passable `read` or owned argument
+is stored into a callee-side temporary, which `Mem2Reg` promotes, while a
+`mut` one is not. `lower-arg-conventions` (`analysis::LOWER_ARG_CONVENTIONS`,
+`analysis/mem2reg.rs`, R787) is that callee half: each `read` or owned
+parameter of a trivially register-passable type that `mem-2-reg` would
+promote, were it stored at the entry, gets a fresh local every mention of
+it names, stored from one `var.use` of the parameter at the entry, so the
+call ABI's slot is read once and `mem-2-reg` promotes the local. A body
+whose entry block is a jump's target is left alone. `mem-2-reg` then
+promotes the instance's locals too, whose types the instance closed. It folds what only
 an instance knows: the elaborator answers a parameter read
 (`Const::Param`) with an ordinary scalar `const`, so the operators over it
 fold and a `branch` it decides becomes a `jump`, and a copy whose type

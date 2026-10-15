@@ -106,6 +106,55 @@ pub fn canonicalize(
         > 0
 }
 
+/// How many times `blocks` and their regions define each of `n_regs`
+/// registers.
+pub(super) fn definition_counts(blocks: &mut [MirBlock], n_regs: u32) -> Vec<u32> {
+    let mut definitions = vec![0_u32; n_regs as usize];
+    visit_blocks(blocks, &mut |block| {
+        for instruction in &block.instrs {
+            let mut results = Vec::new();
+            instruction_result_regs(instruction, &mut results);
+            for reg in &results {
+                if let Some(count) = definitions.get_mut(reg.0 as usize) {
+                    *count += 1;
+                }
+            }
+        }
+    });
+    definitions
+}
+
+/// Add every register read in `blocks`, their regions included, to
+/// `reads`. Each register an instruction names counts as a read but its
+/// own results, so an operand no enumeration classifies is kept alive.
+pub(super) fn count_reads(blocks: &mut [MirBlock], reads: &mut [u32]) {
+    let count = |reads: &mut [u32], reg: &Reg| {
+        if let Some(count) = reads.get_mut(reg.0 as usize) {
+            *count += 1;
+        }
+    };
+    for block in blocks {
+        for instruction in &mut block.instrs {
+            let mut results = Vec::new();
+            instruction_result_regs(instruction, &mut results);
+            for reg in instruction_regs_mut(instruction) {
+                match results.iter().position(|result| result == reg) {
+                    Some(at) => {
+                        results.swap_remove(at);
+                    }
+                    None => count(reads, reg),
+                }
+            }
+            for region in instruction_regions_mut(instruction) {
+                count_reads(region, reads);
+            }
+        }
+        for reg in terminator_regs_mut(&mut block.term) {
+            count(reads, reg);
+        }
+    }
+}
+
 /// How many edges [`simplify_control_flow`] threaded, branches it folded to
 /// a jump, and blocks it merged into their predecessor.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -353,24 +402,6 @@ fn fold_constant_branches(function: &mut MirFunction) -> usize {
     folded
 }
 
-/// How many times `blocks` and their regions define each of `n_regs`
-/// registers.
-fn definition_counts(blocks: &mut [MirBlock], n_regs: u32) -> Vec<u32> {
-    let mut definitions = vec![0_u32; n_regs as usize];
-    visit_blocks(blocks, &mut |block| {
-        for instruction in &block.instrs {
-            let mut results = Vec::new();
-            instruction_result_regs(instruction, &mut results);
-            for reg in &results {
-                if let Some(count) = definitions.get_mut(reg.0 as usize) {
-                    *count += 1;
-                }
-            }
-        }
-    });
-    definitions
-}
-
 /// Call `visit` on every block of `blocks`, then on the blocks of the `try`
 /// regions each holds.
 fn visit_blocks(blocks: &mut [MirBlock], visit: &mut impl FnMut(&mut MirBlock)) {
@@ -470,37 +501,6 @@ fn erase_dead_until_none(function: &mut MirFunction, erased: &mut HashSet<u32>) 
         erase_dead(&mut function.blocks, &reads, erased);
         if erased.len() == before {
             break;
-        }
-    }
-}
-
-/// Add every register read in `blocks`, their regions included, to
-/// `reads`. Each register an instruction names counts as a read but its
-/// own results, so an operand no enumeration classifies is kept alive.
-fn count_reads(blocks: &mut [MirBlock], reads: &mut [u32]) {
-    let count = |reads: &mut [u32], reg: &Reg| {
-        if let Some(count) = reads.get_mut(reg.0 as usize) {
-            *count += 1;
-        }
-    };
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            let mut results = Vec::new();
-            instruction_result_regs(instruction, &mut results);
-            for reg in instruction_regs_mut(instruction) {
-                match results.iter().position(|result| result == reg) {
-                    Some(at) => {
-                        results.swap_remove(at);
-                    }
-                    None => count(reads, reg),
-                }
-            }
-            for region in instruction_regions_mut(instruction) {
-                count_reads(region, reads);
-            }
-        }
-        for reg in terminator_regs_mut(&mut block.term) {
-            count(reads, reg);
         }
     }
 }

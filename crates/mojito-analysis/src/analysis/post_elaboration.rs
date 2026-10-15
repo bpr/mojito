@@ -4,21 +4,29 @@
 //! `ElaborateGenerators`. Folding here sees what only an instance knows: a
 //! compile-time parameter read is a constant once the elaborator answers it.
 //!
-//! The passes are the pre-elaboration pipeline's own. Unlike that seam, no
+//! The passes are the pre-elaboration pipeline's own, but
+//! `lower-arg-conventions`, which only this seam runs. Unlike that seam, no
 //! body is verified after each pass: each pass reports whether it changed
 //! a body, and the caller re-admits the program as concrete once, verifying
 //! only the changed bodies (`mojito_mir::mir::ConcreteMir::rewrite_bodies`).
 
 use super::canonicalize::CANONICALIZE;
+use super::mem2reg::{LOWER_ARG_CONVENTIONS, MEM_2_REG};
 use super::pre_elaboration::BodyPass;
 use super::sccp::SCCP;
 use mojito_common::timing;
 use mojito_mir::mir::{MirDeclarations, MirFunction};
 
-/// The post-elaboration pipeline, in order: upstream's `'kgen.func'`
-/// pipeline without the passes Mojito does not have (`SROA`, `Mem2Reg`,
-/// `CSEPass`). It is per function, so it holds no program pass.
-pub const POST_ELABORATION_PIPELINE: &[BodyPass] = &[SCCP, CANONICALIZE];
+/// The post-elaboration pipeline, in order. It is per function, so it holds
+/// no program pass.
+///
+/// It is upstream's `LowerArgConventions` (its callee half, which stores
+/// each register-passable argument into a temporary) and `Mem2Reg`, which
+/// its first optimization pipeline runs on every function, then its
+/// `'kgen.func'` pipeline without the passes Mojito does not have (`SROA`,
+/// `CSEPass`).
+pub const POST_ELABORATION_PIPELINE: &[BodyPass] =
+    &[LOWER_ARG_CONVENTIONS, MEM_2_REG, SCCP, CANONICALIZE];
 
 /// Run [`POST_ELABORATION_PIPELINE`] over every concrete function in
 /// `functions` but `__toplevel__`.
