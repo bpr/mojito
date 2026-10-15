@@ -345,15 +345,17 @@ pub const fn no_overflow_flags() -> IntegerOverflowFlagsAttr {
 /// bookkeeping. Instructions outside the supported subset reject before any
 /// owned temporary could reach them, so their operands may be approximate.
 /// Record final operand appearances over `blocks` (whose position-space ids
-/// are `ids`), recursing into `try` regions. Each region's blocks take the
-/// next contiguous ids at the moment its `try` is reached, regions in
-/// body → handler → orelse → finalbody order — mirroring `lower_region`'s
-/// assignment exactly so positions agree.
+/// are `ids`), in [`lowering_order`], recursing into `try` regions.
+/// `function_level` says `blocks` is the function's own list. Each region's
+/// blocks take the next contiguous ids at the moment its `try` is reached,
+/// regions in body → handler → orelse → finalbody order — mirroring
+/// `lower_region`'s assignment exactly so positions agree.
 pub fn record_last_uses(
     last_uses: &mut HashMap<u32, (usize, usize)>,
     blocks: &[MirBlock],
     ids: &[usize],
     next_id: &mut usize,
+    function_level: bool,
 ) {
     pub(super) fn record_region(
         last_uses: &mut HashMap<u32, (usize, usize)>,
@@ -362,9 +364,10 @@ pub fn record_last_uses(
     ) {
         let ids: Vec<usize> = (*next_id..*next_id + blocks.len()).collect();
         *next_id += blocks.len();
-        record_last_uses(last_uses, blocks, &ids, next_id);
+        record_last_uses(last_uses, blocks, &ids, next_id, false);
     }
-    for (i, block) in blocks.iter().enumerate() {
+    for i in lowering_order(blocks, function_level) {
+        let block = &blocks[i];
         for (index, instr) in block.instrs.iter().enumerate() {
             for reg in operand_regs(instr) {
                 last_uses.insert(reg.0, (ids[i], index));
@@ -393,6 +396,20 @@ pub fn record_last_uses(
             last_uses.insert(reg.0, (ids[i], usize::MAX));
         }
     }
+}
+
+/// The order a block list's blocks are lowered in: those its entry reaches,
+/// each after every block that dominates it
+/// ([`mojito_mir::mir::reverse_postorder`]), then the rest in list order.
+/// `function_level` says `blocks` is a function's own list.
+pub fn lowering_order(blocks: &[MirBlock], function_level: bool) -> Vec<MirBlockId> {
+    let mut order = mojito_mir::mir::reverse_postorder(blocks, function_level);
+    let mut reached = vec![false; blocks.len()];
+    for &block in &order {
+        reached[block] = true;
+    }
+    order.extend((0..blocks.len()).filter(|&block| !reached[block]));
+    order
 }
 
 /// One already-lowered subscript actual: an index register (with its checked

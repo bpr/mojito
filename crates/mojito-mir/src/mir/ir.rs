@@ -962,6 +962,42 @@ pub fn block_successors(block: &MirBlock) -> Vec<MirBlockId> {
     successors
 }
 
+/// The blocks of `blocks` its entry reaches, in reverse postorder.
+///
+/// Each block comes before every block it dominates. `function_level` says
+/// `blocks` is a function's list, whose regions' escapes are edges too
+/// ([`block_successors`]); a region's list follows its terminators alone.
+pub fn reverse_postorder(blocks: &[MirBlock], function_level: bool) -> Vec<MirBlockId> {
+    let mut order = Vec::new();
+    if blocks.is_empty() {
+        return order;
+    }
+    let successors = |block: MirBlockId| {
+        if function_level {
+            block_successors(&blocks[block])
+        } else {
+            terminator_targets(&blocks[block].term)
+        }
+    };
+    let mut seen = vec![false; blocks.len()];
+    seen[0] = true;
+    let mut stack = vec![(0, successors(0), 0)];
+    while let Some((block, targets, next)) = stack.last_mut() {
+        if let Some(&target) = targets.get(*next) {
+            *next += 1;
+            if target < blocks.len() && !seen[target] {
+                seen[target] = true;
+                stack.push((target, successors(target), 0));
+            }
+        } else {
+            order.push(*block);
+            stack.pop();
+        }
+    }
+    order.reverse();
+    order
+}
+
 /// The function-level blocks the regions of `instruction` escape to, at any
 /// depth below it.
 pub fn region_escape_targets(instruction: &MirInstr) -> Vec<MirBlockId> {

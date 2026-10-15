@@ -596,7 +596,8 @@ impl FnLowering<'_> {
         let saved_current = self.current;
         let saved_position = self.position;
         let mut result = Ok(());
-        'blocks: for (i, block) in blocks.iter().enumerate() {
+        'blocks: for i in lowering_order(blocks, false) {
+            let block = &blocks[i];
             self.current = Some(self.blocks[i]);
             for (index, instr) in block.instrs.iter().enumerate() {
                 self.position = (ids_start + i, index);

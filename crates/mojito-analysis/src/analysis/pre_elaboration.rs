@@ -11,6 +11,7 @@
 //! passes run. Never per instance.
 
 use super::canonicalize::CANONICALIZE;
+use super::cse::CSE;
 use super::dead_symbols::ELIMINATE_DEAD_SYMBOLS;
 use super::elaborate_drops_function;
 use super::inline_parametric::INLINE_PARAMETRIC;
@@ -372,6 +373,7 @@ const REGISTERED: &[Pass] = &[
     Pass::Body(ELABORATE_DROPS),
     Pass::Body(LOWER_CONTROL_FLOW),
     Pass::Body(LOWER_ARG_CONVENTIONS),
+    Pass::Body(CSE),
 ];
 
 /// Run the body pass `pass` over the body `name`, verifying it after the
@@ -542,6 +544,7 @@ mod tests {
         assert!(pass_named("lower-control-flow").is_some());
         assert!(pass_named("mem-2-reg").is_some());
         assert!(pass_named("lower-arg-conventions").is_some());
+        assert!(pass_named("cse").is_some());
         assert!(pass_named("no-such-pass").is_none());
     }
 }

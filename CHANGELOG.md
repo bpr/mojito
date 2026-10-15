@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Adds MLIR's `CSE` as the `cse` pass (R845), last in the post-elaboration
+  pipeline, as upstream's `'kgen.func'` pipeline ends with `CSEPass`. It
+  walks each block list's dominator tree and erases an instruction free of
+  effects that a dominating one matches, when its result is held whole in
+  one register. Reads of memory (R929) and values held in storage (R930)
+  are not merged yet. The Pliron backend now lowers each block list in
+  reverse postorder, so a reused definition is lowered before its reads.
+  Corpus concrete instructions fall 3.3 %. Program output is unchanged; the
+  MIR text and package formats are unchanged.
 - Adds upstream's `Mem2Reg` as the `mem-2-reg` pass (R787), before each of
   the first three pre-elaboration rounds' `canonicalize` and after
   elaboration, where `lower-arg-conventions`, the callee half of upstream's

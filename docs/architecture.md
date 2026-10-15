@@ -5233,9 +5233,9 @@ Upstream nests a per-function `'kgen.func'` pipeline after
 `SROA`, `Mem2Reg`, `SCCP`, `Canonicalizer`, and `CSEPass` on each concrete
 function. Mojito's is `analysis::POST_ELABORATION_PIPELINE`
 (`crates/mojito-analysis/src/analysis/post_elaboration.rs`, R840):
-`lower-arg-conventions`, `mem-2-reg`, `sccp`, then `canonicalize`, the
-pre-elaboration pipeline's own body passes but the first, without the two
-upstream passes Mojito does not have (`SROA`, `CSEPass`). Upstream's first
+`lower-arg-conventions`, `mem-2-reg`, `sccp`, `canonicalize`, then `cse`,
+the pre-elaboration pipeline's own body passes but the first, then MLIR's
+CSE, without the upstream pass Mojito does not have (`SROA`). Upstream's first
 optimization pipeline after elaboration runs `LowerArgConventions` and then
 `Mem2Reg` on every function: a register-passable `read` or owned argument
 is stored into a callee-side temporary, which `Mem2Reg` promotes, while a
@@ -5263,6 +5263,24 @@ MIR's types with its bindings substituted, never re-derived from one
 another, as upstream's elaborator substitutes a generator body's types; the
 concrete verifier rejects a reference slot read as its handle.
 
+- **CSE.** `cse` (`analysis::CSE`, `analysis/cse.rs`, R845) is MLIR's
+  `CSE`: it walks each block list's dominator tree (Cooper, Harvey, and
+  Kennedy's iteration over `mir::reverse_postorder`) with a scoped table,
+  and an instruction free of effects that a dominating one matches
+  (mnemonic, attributes, operands, result type) is erased, its result's
+  reads renamed. Free of effects is narrower than
+  `MirInstr::would_be_trivially_dead`: a constant, a literal
+  materialization, a size or type-name query, a parameter list's address,
+  a field or variant-tag read of a value register, or a SIMD construction,
+  cast, or shuffle; a read of storage or through a reference is a read
+  effect MLIR merges only with no write between, which `cse` does not do
+  yet (R929). Only a result held whole in one register is merged, since a
+  reader may consume a value held in storage, and each merged result and
+  operand has one definition the walk has passed on the dominating path,
+  since MIR does not verify that a definition dominates its reads. The
+  Pliron backend lowers each block list in `lowering_order` (reverse
+  postorder, then the unreached blocks), so a definition `cse` reuses in
+  a later-numbered block is lowered before its reads.
 - **The seam.** `analysis::post_elaborate_program` runs each pass over
   every concrete function but `__toplevel__`, on the driver thread after
   `native::mono` returns (timing counters are thread-local, and the

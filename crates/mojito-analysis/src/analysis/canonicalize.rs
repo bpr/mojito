@@ -530,7 +530,7 @@ fn erase_dead(blocks: &mut [MirBlock], reads: &[u32], erased: &mut HashSet<u32>)
 
 /// Remove the instructions defining `roots`' keys from `blocks` and their
 /// regions, and rewrite every read of a key to its root.
-fn forward(blocks: &mut [MirBlock], roots: &HashMap<u32, Reg>) {
+pub(super) fn forward(blocks: &mut [MirBlock], roots: &HashMap<u32, Reg>) {
     let rewrite = |reg: &mut Reg| {
         if let Some(root) = roots.get(&reg.0) {
             *reg = *root;

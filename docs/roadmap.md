@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R929**.
+Next free ID: **R931**.
 
 ## Ordered Work
 
@@ -343,21 +343,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R845 Concrete functions are not CSE'd**
-
-  Upstream's per-function `'kgen.func'` pipeline ends with `CSEPass` after
-  `ElaborateGenerators`, and Mojito's post-elaboration pipeline
-  (`analysis::POST_ELABORATION_PIPELINE`) has no CSE pass.
-  - It is a missing optimization, not a difference in semantics.
-  - A pure instruction is one `MirInstr::would_be_trivially_dead` declares
-    free of effects; two with the same operands in a dominating position
-    are one, as MLIR's `CSE` merges them.
-  - Done when a pass test shows a repeated pure instruction merged, the
-    pass runs last in the post-elaboration pipeline, and the corpus effect
-    is recorded.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R926 Generators are not CSE'd before elaboration**
 
   Upstream's last pre-elaboration round runs `CSEPass` on each generator,
@@ -367,6 +352,37 @@ which names the upstream pass each one follows. Each is measured by the
   - R845's pass, registered as a `BodyPass`, is the one to list.
   - Done when `PIPELINE` ends with it and the on/off differential is clean.
   - Depends on R845.
+  - Model: Opus, Not Planned.
+
+- [ ] **R929 CSE does not merge reads of memory**
+
+  MLIR's `CSE` merges two identical ops with only read effects when no op
+  between them writes memory, and Mojito's `cse` merges only instructions
+  free of effects.
+  - It is a missing optimization, not a difference in semantics.
+  - The unmerged reads are `place.load`, `ref.read`, `var.use` borrows,
+    `ref.make`, and a field read through a reference.
+  - MLIR checks the ops between the two in one block; a read in a
+    dominated block needs no write on any path between, which MLIR
+    approximates conservatively.
+  - Done when a pass test merges two loads with no write between and keeps
+    two with a store between.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R930 CSE leaves values held in storage unmerged**
+
+  `cse` merges only a result held whole in one register, so two identical
+  multi-lane SIMD constructions or trivial-struct field reads stay apart,
+  where MLIR's `CSE` merges any op free of effects.
+  - It is a missing optimization, not a difference in semantics.
+  - The guard exists because a reader may consume a register-passable
+    value held in storage (an owned argument, an `UninitStorage`
+    initialization), as `canonicalize`'s copy forwarding also assumes.
+  - Done when a merged storage value's readers are proven non-consuming,
+    or a consuming reader copies, and a pass test merges two identical
+    `SIMD[DType.float32, 4]` constructions.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R837 Lifetime-only markers survive into every instance**

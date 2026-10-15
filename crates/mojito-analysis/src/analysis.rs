@@ -16,6 +16,7 @@
 
 pub use canonicalize::{CANONICALIZE, canonicalize};
 use copy_elision::elide_dying_copies;
+pub use cse::{CSE, cse};
 pub use dead_symbols::{ELIMINATE_DEAD_SYMBOLS, eliminate_dead_symbols};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use drops::*;
@@ -227,6 +228,7 @@ pub fn elaborate_drops_function(
 
 mod canonicalize;
 mod copy_elision;
+mod cse;
 mod dead_symbols;
 mod drops;
 mod field_drops;

@@ -189,9 +189,14 @@ impl FnLowering<'_> {
             self.func.blocks.as_slice(),
             &function_ids,
             &mut next_id,
+            true,
         );
 
-        for (id, block) in self.func.blocks.iter().enumerate() {
+        // Each block is lowered after the blocks that dominate it, so a
+        // register's definition is lowered before every read; the blocks
+        // the entry does not reach follow in list order.
+        for id in lowering_order(&self.func.blocks, true) {
+            let block = &self.func.blocks[id];
             self.current = Some(self.blocks[id]);
             for (index, instr) in block.instrs.iter().enumerate() {
                 self.position = (id, index);
