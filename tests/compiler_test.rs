@@ -4163,6 +4163,7 @@ fn forwarded_parameters_leave_the_instance_key() {
         ("mid", 1),
         ("two_hop", 1),
         ("expr_fwd", 1),
+        ("div_fwd", 1),
         ("tmid", 1),
         ("method_fwd", 1),
         ("Holder.get", 1),

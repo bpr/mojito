@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R995**.
+Next free ID: **R996**.
 
 ## Ordered Work
 
@@ -461,22 +461,6 @@ which names the upstream pass each one follows. Each is measured by the
     them in this entry.
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R969 A parameter forwarded through a trapping operator keeps its
-  instances apart**
-
-  `div_fwd[n]` whose body is `return leaf[10 // n]()`, where `leaf` ignores
-  `n`, has one instance per `n`, where the pin keeps one.
-  - `mir::without_removed_forwards` (`mir/param_uses.rs`) drops the
-    argument, but erases only the operators that cannot trap, so the
-    run-time `floordiv` that recomputes the argument still reads `n`'s slot.
-  - The call's parameter expression already carries the value the
-    elaborator binds, so the register chain only feeds a removed argument.
-  - Decide whether the masked view may erase a trapping built-in operator
-    whose only reader is a dropped argument, matching the pin's attribute
-    rewrite, and pin `div_fwd` in `forwarded_parameter_instances.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R970 A forward to a removed parameter that a kept default reads
   keeps its instances apart**
@@ -8353,6 +8337,22 @@ follow-ups the landed producer stages filed come last.
     which needs the whole program at once, as R907 does.
   - Depends on R907.
   - Model: Fable, Not Planned.
+
+- [ ] **R995 A trapping forward demanded first fails elaboration where
+  the pin drops it**
+
+  `div_fwd[0]()` fails with "unsupported division by zero" when it is the
+  first `div_fwd` demanded, where the pin prints `1`.
+  - `div_fwd[n]` returns `leaf[10 // n]()` and `leaf` ignores `n`, so
+    `div_fwd` removed `n` (R969) and has one instance.
+  - The instance substitutes the first demand's `n`, and its call to
+    `leaf` still carries the parameter expression `10 // n` and the
+    run-time `floordiv` the masked view erased.
+  - Once callers' arguments are rewritten, the instance should carry
+    neither; pin `div_fwd[0]()` in
+    `assets/ok/forwarded_parameter_instances.mojo` then.
+  - Depends on R912.
+  - Model: Opus, Not Planned.
 
 - [ ] **R937 `**` on integers and scalar displays call bundled bodies
   that no instruction names**

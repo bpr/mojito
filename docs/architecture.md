@@ -5319,8 +5319,12 @@ point where a slot declared in a loop is uninitialized again.
   callee's declarations, and a static call's receiver arguments) and then the instructions that only computed one
   (an unread copy of a slot whose type has no destructor or that a
   callable parameter binds, a built-in
-  operator that cannot trap, anything trivially dead). So `mid[n]` that
-  only calls `leaf[n]()`, where `leaf` ignores `n`, removes `n` too. A
+  operator that cannot trap, anything trivially dead). A built-in operator
+  that can trap goes too when every read the body held of it was a dropped
+  argument's or another such instruction's, as the pin's parameter argument
+  is an attribute with no operation behind it (R969). So `mid[n]` that
+  only calls `leaf[n]()`, or `div_fwd[n]` that only calls `leaf[10 // n]()`,
+  where `leaf` ignores `n`, removes `n` too. A
   removed parameter a kept parameter's default reads keeps its argument.
   The callee's removals come only from `Callees::unit_body`: a body of the
   same unit (the program's own at the program seam, never a package's, as

@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A parameter forwarded through a built-in operator that could trap no
+  longer keeps its instances apart (R969): `remove-unused-params`' view of
+  a caller erases such an operator when every reader of it was a dropped
+  parameter argument, as the pin's parameter argument is an attribute with
+  no operation to trap, so `div_fwd[n]` returning `leaf[10 // n]()` has one
+  instance (`assets/ok/forwarded_parameter_instances.mojo`).
+
 - A struct's destructor is instantiated only where a body drops a value of
   the struct (R985): the elaborator demands `__deinit__` from each drop,
   cleanup list, storage destroy, and owned capture, and the fields they
