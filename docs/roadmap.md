@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R989**.
+Next free ID: **R991**.
 
 ## Ordered Work
 
@@ -622,6 +622,46 @@ which names the upstream pass each one follows. Each is measured by the
   - The elaborator should bind a capturing closure's environment for an
     uncalled parameter as it does for a called one.
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R989 Instances only compile-time evaluation reaches stay in the
+  concrete program**
+
+  The elaborator emits every instance it creates, including those it
+  creates only to run a compile-time application on the VM, where upstream
+  runs `EliminateDeadSymbols` straight out of the elaborator and again
+  after its post-elaboration function pipeline (`Pipeline.cpp`).
+  - At 6f950e12, 5,321 of `assets/ok`'s 45,005 concrete functions (11.8 %)
+    and 41,151 of its 625,426 concrete instructions (6.6 %) were
+    unreachable from `main` and `__toplevel__`.
+  - Nearly all are compile-time only: the `paramfor_*` stubs, the
+    `_ZeroStartingRange` iterator methods and `range` overloads,
+    `$comptime$` thunks, and the `List`/`Dict` instances comptime displays
+    build. They hold most of the `comptime for` iterator protocol's
+    instance growth.
+  - Run `eliminate-dead-symbols` over the concrete program after the
+    post-elaboration pipeline, keeping the compilation's exports
+    (`Compiler::with_exports`) as the pre-elaboration seam does.
+  - CTFE fragments are built apart (`Specializer::fragments`), so pruning
+    the output changes no evaluation.
+  - Done when no concrete function is unreachable from the entry roots
+    and exports, and `benchmarks/instantiation.tsv` records the drop.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R990 Instances with identical bodies are not merged**
+
+  Upstream's `EliminateDuplicateFunctions`, run straight out of the
+  elaborator before its dead-symbol pass, calls one copy of each set of
+  instances whose bodies match (`foo[1]` and `foo[2]` when a `comptime if`
+  picks the same arm), and Mojito keeps every copy.
+  - At 6f950e12 a naive comparison (a body's text with its own name erased,
+    callees not unified) found 65 duplicate functions and 291 instructions
+    in `assets/ok`, a lower bound that unifying callees to a fixpoint
+    would raise.
+  - Done when duplicates merge ahead of R989's pass and the differential
+    is clean.
+  - Depends on R989.
   - Model: Opus, Not Planned.
 
 - [ ] **R927 A slot whose reads merge two stores keeps its slot, where
