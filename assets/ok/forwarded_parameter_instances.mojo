@@ -1,5 +1,5 @@
 # A parameter only forwarded to a callee parameter the callee removes, by a
-# call or a method call, is removed too, as upstream's `RemoveUnusedParams`
+# call, a method call, or a subscript call, is removed too, as upstream's `RemoveUnusedParams`
 # walks its call graph callees first, even through an operator that could
 # trap, whose operation the pin never emits for a parameter argument, and
 # to a parameter only a default the call supplies reads; a forward to a
@@ -51,6 +51,29 @@ struct Holder(Copyable):
 def method_fwd[n: Int]() -> Int:
     return Holder(4).get[n]()
 
+@fieldwise_init
+struct Grid(Copyable):
+    var v: Int
+
+    def __getitem_param__[i: Int](self) -> Int:
+        return self.v
+
+@fieldwise_init
+struct Row(Copyable):
+    var v: Int
+
+    def __getitem_param__[i: Int](self) -> Int:
+        return self.v + i
+
+def subscript_fwd[n: Int]() -> Int:
+    return Grid(5)[n]
+
+def subscript_expr_fwd[n: Int]() -> Int:
+    return Grid(7)[n + 1]
+
+def subscript_reader[n: Int]() -> Int:
+    return Row(1)[n]
+
 def rec[n: Int](k: Int) -> Int:
     if k == 0:
         return leaf[n]()
@@ -66,4 +89,7 @@ def main():
     print(mixed[1]() + mixed[2]())
     print(to_reader[1]() + to_reader[2]())
     print(method_fwd[1]() + method_fwd[2]())
+    print(subscript_fwd[1]() + subscript_fwd[2]())
+    print(subscript_expr_fwd[1]() + subscript_expr_fwd[2]())
+    print(subscript_reader[1]() + subscript_reader[2]())
     print(rec[1](2) + rec[2](2))

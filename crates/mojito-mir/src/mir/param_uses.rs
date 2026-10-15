@@ -22,8 +22,9 @@
 
 use crate::mir::verify::{instruction_operand_regs, instruction_result_regs};
 use crate::mir::{
-    MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg, MirTerm,
-    TyArg, count_register_reads, instruction_regions, instruction_regions_mut, instruction_slots,
+    MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg,
+    MirSubscriptArg, MirTerm, Reg, TyArg, count_register_reads, instruction_regions,
+    instruction_regions_mut, instruction_slots, instruction_subscript_call,
     matched_parameter_arguments, supplied_parameter_arguments,
 };
 use mojito_ast::ast::InfixOp;
@@ -281,7 +282,7 @@ fn callable_parameter_slots<'d>(
 }
 
 /// Whether `blocks` or their regions call a callee `removed` names
-/// parameters of.
+/// parameters of, by a call, a resolved method call, or a subscript call.
 fn calls_with_removed<'a>(
     blocks: &[MirBlock],
     removed: &dyn Fn(&str) -> Option<&'a [ParamId]>,
@@ -293,7 +294,7 @@ fn calls_with_removed<'a>(
             let target = match instruction {
                 MirInstr::Call { func, .. } => Some(func.0.as_str()),
                 MirInstr::MethodCall { resolved, .. } => resolved.as_deref(),
-                _ => None,
+                _ => instruction_subscript_call(instruction).map(|call| call.target.as_str()),
             };
             target.and_then(removed).is_some_and(|ids| !ids.is_empty())
                 || instruction_regions(instruction)
@@ -315,6 +316,10 @@ fn drop_removed_arguments<'a>(
         for region in instruction_regions_mut(instruction) {
             drop_removed_arguments(region, declarations, removed, discounted);
         }
+        if let Some(target) = drop_subscript_arguments(instruction, removed) {
+            discounted.insert(target);
+            continue;
+        }
         let (target, decls, param_arg_regs, instantiated_args) = match instruction {
             MirInstr::Call {
                 func,
@@ -335,7 +340,7 @@ fn drop_removed_arguments<'a>(
                     &func.0,
                     callee.param_decls.as_slice(),
                     param_arg_regs,
-                    instantiated_args,
+                    Some(instantiated_args),
                 )
             }
             MirInstr::MethodCall {
@@ -348,7 +353,7 @@ fn drop_removed_arguments<'a>(
                 &*target,
                 param_decls.as_slice(),
                 param_arg_regs,
-                instantiated_args,
+                Some(instantiated_args),
             ),
             _ => continue,
         };
@@ -395,16 +400,95 @@ fn drop_receiver_arguments(
     true
 }
 
+/// Drop from a subscript call in `instruction` the arguments of its
+/// accessor's removed parameters; returns the accessor when it dropped one.
+///
+/// An accessor that takes no runtime index (`__getitem_param__[i: Int]`)
+/// gets its index only as the parameter argument, which the pin spells as
+/// an attribute with no operand; so an index operand that held a dropped
+/// argument names the receiver in the view, which the instruction reads
+/// anyway, and the argument's register loses its last reader.
+fn drop_subscript_arguments<'a>(
+    instruction: &mut MirInstr,
+    removed: &dyn Fn(&str) -> Option<&'a [ParamId]>,
+) -> Option<String> {
+    let (receiver, indexes, call) = match instruction {
+        MirInstr::Index {
+            base,
+            index,
+            call: Some(call),
+            ..
+        } => (*base, vec![index], &mut **call),
+        MirInstr::Slice {
+            object,
+            call: Some(call),
+            ..
+        } => (*object, Vec::new(), &mut **call),
+        MirInstr::MultiIndex {
+            object,
+            args,
+            call: Some(call),
+            ..
+        } => (*object, index_operands(args), &mut **call),
+        MirInstr::MultiSet {
+            receiver,
+            args,
+            call,
+            ..
+        } => (*receiver, index_operands(args), &mut **call),
+        _ => return None,
+    };
+    let ids = removed(&call.target)?;
+    let carriers: Vec<Reg> = call
+        .param_arg_regs
+        .iter()
+        .filter_map(|argument| argument.value)
+        .collect();
+    if !drop_arguments(
+        &call.target,
+        &call.param_decls,
+        ids,
+        &mut call.param_arg_regs,
+        None,
+    ) {
+        return None;
+    }
+    if call.arguments.is_empty() {
+        let kept: Vec<Reg> = call
+            .param_arg_regs
+            .iter()
+            .filter_map(|argument| argument.value)
+            .collect();
+        for index in indexes {
+            if carriers.contains(index) && !kept.contains(index) {
+                *index = receiver;
+            }
+        }
+    }
+    Some(call.target.clone())
+}
+
+/// The index operands among a subscript's bracket arguments, mutably.
+fn index_operands(args: &mut [MirSubscriptArg]) -> Vec<&mut Reg> {
+    args.iter_mut()
+        .filter_map(|argument| match argument {
+            MirSubscriptArg::Index(register) => Some(register),
+            MirSubscriptArg::Slice { .. } => None,
+        })
+        .collect()
+}
+
 /// Drop from one call of `target`, whose compile-time parameters are
-/// `decls`, the arguments of its removed parameters `ids`; returns whether
-/// it dropped one. A removed parameter's argument stays when the call
-/// omits a kept parameter whose default reads it.
+/// `decls`, the arguments of its removed parameters `ids`, and their
+/// entries in its `instantiated_args` when it has them; returns whether it
+/// dropped one. A removed parameter's argument stays when the call omits a
+/// kept parameter whose default reads it.
 fn drop_arguments(
     target: &str,
     decls: &[ParamDecl],
     ids: &[ParamId],
     param_arg_regs: &mut [MirParamArg],
-    instantiated_args: &mut Vec<TyArg>,
+    instantiated_args: Option<&mut Vec<TyArg>>,
 ) -> bool {
     let supplied: Vec<&ParamId> = supplied_parameter_arguments(decls, param_arg_regs)
         .into_iter()
@@ -444,7 +528,9 @@ fn drop_arguments(
         let argument = &mut param_arg_regs[index];
         changed |= argument.value.take().is_some() | argument.expr.take().is_some();
     }
-    if instantiated_args.len() == decls.len() {
+    if let Some(instantiated_args) = instantiated_args
+        && instantiated_args.len() == decls.len()
+    {
         for &index in dropped.iter().rev() {
             instantiated_args.remove(index);
             changed = true;

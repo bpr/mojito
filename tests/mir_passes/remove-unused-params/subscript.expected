@@ -1,0 +1,63 @@
+  functions: [
+      fn {
+        name: "Grid.__getitem_param__",
+        registers: 2,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: Grid, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Grid, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 118, end: 124, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 118, end: 124, origin: present($v0) }) }],
+        removed_params: [param_id { owner: "Grid.__getitem_param__", slot: 0 }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Grid, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
+              value.copy { dest: %r1, value: %r0 }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: get_fwd,
+        registers: 5,
+        vars: 1,
+        var_names: [n],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: Grid, arguments: [] } }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 172, end: 173, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 172, end: 173, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 167, end: 174, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 175, end: 176, origin: present($v0) }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 167, end: 177, origin: absent }) }],
+        removed_params: [param_id { owner: "get_fwd", slot: 0 }],
+        callee_removed_params: [callee_params { callee: "Grid.__getitem_param__", params: [param_id { owner: "Grid.__getitem_param__", slot: 0 }] }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(5) },
+              literal.materialize { dest: %r1, value: %r0, target: Int },
+              call { dest: %r2, func: Grid, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              var.use { dest: %r3, var: $v0, mode: copy },
+              drop.var { var: $v0 },
+              index.get { dest: %r4, base: %r2, index: %r3, base_place: absent, index_place: absent, call: present(subscript_call { target: "Grid.__getitem_param__", raises: absent, result_type: Int, receiver_requires_place: false, receiver_convention: absent, arguments: [], capture_accesses: [], reference_result: absent, param_arg_regs: [param_arg { name: absent, value: present(%r3), expr: present(param_decl_ref { owner: "get_fwd", slot: 0, name: n, type: meta_value(Int) }) }], param_decls: [value_param { owner: "Grid.__getitem_param__", slot: 0, name: i, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }] }), intrinsic: absent }
+            ],
+            terminator: return { value: present(%r4) }
+          }
+        ]
+      }
+  ]

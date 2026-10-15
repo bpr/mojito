@@ -224,6 +224,18 @@ pub fn instruction_param_args_mut(instruction: &mut MirInstr) -> Vec<&mut MirPar
     }
 }
 
+/// The checker-selected `__getitem__`/`__setitem__` call a subscript
+/// instruction carries, if any.
+pub fn instruction_subscript_call(instruction: &MirInstr) -> Option<&MirSubscriptCall> {
+    match instruction {
+        MirInstr::Index { call, .. }
+        | MirInstr::Slice { call, .. }
+        | MirInstr::MultiIndex { call, .. } => call.as_deref(),
+        MirInstr::MultiSet { call, .. } => Some(call),
+        _ => None,
+    }
+}
+
 /// Add every register read in `blocks`, their regions included, to
 /// `reads`. Each register an instruction names counts as a read but its
 /// own results, so an operand no enumeration classifies is kept alive.

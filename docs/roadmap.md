@@ -462,23 +462,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R971 A parameter forwarded through a subscript call keeps its
-  instances apart**
-
-  A forward to a removed parameter of a resolved `__getitem__` or
-  `__setitem__` still counts as a read, where calls and resolved method
-  calls no longer do.
-  - `mir::without_removed_forwards` masks `call` and resolved
-    `call.method` only; a `MirSubscriptCall` carries `target`,
-    `param_arg_regs`, and `param_decls` as well.
-  - `remove-unused-params`'s `call_targets` must also collect the
-    subscript target, and the elaborator's subscript instance key must
-    leave the removed argument out, which needs checking first.
-  - An unresolved method call and a `call.indirect` have no callee before
-    elaboration, so the pin keeps those forwards too.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R973 A nested generic `def`'s own unread parameters split its
   instances**
 

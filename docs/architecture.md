@@ -5313,10 +5313,13 @@ point where a slot declared in a loop is uninitialized again.
   The pass is a `CallGraphPass` (R907), as upstream's walks its call graph
   callees first and rewrites each call of a generator it pruned before
   reaching the caller: a caller reads its body as that rewrite leaves it
-  (`mir::without_removed_forwards`), each call or resolved method call to
+  (`mir::without_removed_forwards`), each call, resolved method call, or
+  subscript call (R971) to
   a finished callee with removed parameters dropping their arguments (the argument's register and
   expression, the `instantiated_args` entry when those align with the
-  callee's declarations, and a static call's receiver arguments) and then the instructions that only computed one
+  callee's declarations, a static call's receiver arguments, and the index
+  operand of an accessor taking no runtime index, `__getitem_param__[i]`,
+  whose index the pin spells only as the parameter attribute) and then the instructions that only computed one
   (an unread copy of a slot whose type has no destructor or that a
   callable parameter binds, a built-in
   operator that cannot trap, anything trivially dead). A built-in operator

@@ -449,8 +449,8 @@ fn verify_after(
     }
 }
 
-/// The callees `function` calls directly, by a call or a resolved method
-/// call, through a closure or a function value it makes, or as the destructor a drop of one of
+/// The callees `function` calls directly, by a call, a resolved method
+/// call, or a subscript call, through a closure or a function value it makes, or as the destructor a drop of one of
 /// its slots runs, that `followed` accepts, each once, in its regions too.
 fn followed_callees(function: &MirFunction, followed: impl Fn(&str) -> bool) -> Vec<String> {
     fn walk(blocks: &[mojito_mir::mir::MirBlock], function: &MirFunction, out: &mut Vec<String>) {
@@ -470,7 +470,10 @@ fn followed_callees(function: &MirFunction, followed: impl Fn(&str) -> bool) -> 
                     MirInstr::DropVar { var } => {
                         out.extend(function.var_tys.get(var).and_then(destructor_of));
                     }
-                    _ => {}
+                    _ => out.extend(
+                        mojito_mir::mir::instruction_subscript_call(instruction)
+                            .map(|call| call.target.clone()),
+                    ),
                 }
                 for region in instruction_regions(instruction) {
                     walk(region, function, out);

@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A parameter forwarded through a subscript call no longer keeps its
+  instances apart (R971): `remove-unused-params` drops a removed accessor
+  parameter's argument from `__getitem__` and `__setitem__` calls as it
+  does from calls and method calls, so `subscript_fwd[n]` returning
+  `Grid(5)[n]`, where `Grid.__getitem_param__[i]` ignores `i`, has one
+  instance (`assets/ok/forwarded_parameter_instances.mojo`).
 - A forward to a removed parameter that a kept parameter's default reads no
   longer keeps its instances apart when the call supplies that parameter
   (R970): `remove-unused-params` keeps such an argument only where the call

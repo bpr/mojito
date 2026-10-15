@@ -41,7 +41,8 @@
 use super::pre_elaboration::{CallGraphPass, Callees};
 use mojito_mir::mir::{
     Const, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
-    instruction_regions, method_owner_params, unread_parameters, without_removed_forwards,
+    instruction_regions, instruction_subscript_call, method_owner_params, unread_parameters,
+    without_removed_forwards,
 };
 use mojito_types::param_expr::ParamId;
 use std::collections::{BTreeMap, BTreeSet};
@@ -139,8 +140,8 @@ fn has_own_parameters(
         || !method_owner_params(&declaration.lowered_name, declarations).is_empty()
 }
 
-/// The callee of each call and resolved method call in `blocks` and their
-/// regions.
+/// The callee of each call, resolved method call, and subscript call in
+/// `blocks` and their regions.
 fn call_targets<'a>(blocks: &'a [MirBlock], targets: &mut BTreeSet<&'a str>) {
     for instruction in blocks.iter().flat_map(|block| &block.instrs) {
         match instruction {
@@ -153,7 +154,11 @@ fn call_targets<'a>(blocks: &'a [MirBlock], targets: &mut BTreeSet<&'a str>) {
             } => {
                 targets.insert(target);
             }
-            _ => {}
+            _ => {
+                if let Some(call) = instruction_subscript_call(instruction) {
+                    targets.insert(&call.target);
+                }
+            }
         }
         for region in instruction_regions(instruction) {
             call_targets(region, targets);

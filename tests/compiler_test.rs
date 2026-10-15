@@ -4168,8 +4168,13 @@ fn forwarded_parameters_leave_the_instance_key() {
         ("tmid", 1),
         ("method_fwd", 1),
         ("Holder.get", 1),
+        ("subscript_fwd", 1),
+        ("subscript_expr_fwd", 1),
+        ("Grid.__getitem_param__", 1),
         ("mixed", 2),
         ("to_reader", 2),
+        ("subscript_reader", 2),
+        ("Row.__getitem_param__", 2),
         ("rec", 2),
     ] {
         assert_eq!(instances(template), count, "instances of `{template}`");
