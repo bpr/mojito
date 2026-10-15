@@ -5441,6 +5441,24 @@ concrete verifier rejects a reference slot read as its handle.
   pruning changes no evaluation. The elaboration counts keep only the
   instances that remain.
 
+- **Duplicate functions.** Before that first dead-symbol run, upstream's
+  `EliminateDuplicateFunctions` keeps one of each set of identical
+  functions, and so does `analysis::eliminate_duplicate_functions`
+  (`analysis/duplicate_functions.rs`, R990), the first of
+  `analysis::ELABORATED_SYMBOL_PASSES`. Functions are identical when they
+  share a `mir::text::package::function_identity`: the body's encoding,
+  with each reference to the function itself spelled alike, its
+  registers' source locations, and its declaration's encoding. The first
+  of each set stays and every other's references are pointed at it with
+  `mir::replace_symbol_uses`, MLIR's `replaceAllSymbolUses` over the
+  references an instruction holds itself; that can make callers
+  identical, so the pass repeats until no set merges. A function stays
+  under its own name when anything else reaches it: an entry root, an
+  export, a struct's method (reached from its type, R992), or a use
+  `mir::SymbolTable` finds that the rewrite does not reach, such as an
+  implicit callee or a symbol a type names, found by counting one against
+  the other.
+
 - **CSE.** `cse` (`analysis::CSE`, `analysis/cse.rs`, R845) is MLIR's
   `CSE`: it walks each block list's dominator tree (Cooper, Harvey, and
   Kennedy's iteration over `mir::reverse_postorder`) with a scoped table,

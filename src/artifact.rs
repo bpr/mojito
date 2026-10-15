@@ -35,7 +35,7 @@ pub fn run_artifact(
         &entry_roots(&parsed.program),
         crate::native::target::NativeTarget::host().as_ref(),
     )
-    .and_then(|concrete| concrete.pruned(&[], crate::analysis::eliminate_dead_symbols))
+    .and_then(|concrete| concrete.pruned(&[], crate::analysis::eliminate_elaborated_symbols))
     .and_then(|concrete| concrete.rewritten(crate::analysis::post_elaborate_program))
     .and_then(|concrete| concrete.pruned(&[], crate::analysis::eliminate_dead_symbols))
     .map_err(ArtifactRunError::Elaborate)?;

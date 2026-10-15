@@ -12,11 +12,13 @@
 
 use super::canonicalize::CANONICALIZE;
 use super::cse::CSE;
+use super::dead_symbols::ELIMINATE_DEAD_SYMBOLS;
+use super::duplicate_functions::ELIMINATE_DUPLICATE_FUNCTIONS;
 use super::mem2reg::{LOWER_ARG_CONVENTIONS, MEM_2_REG};
-use super::pre_elaboration::BodyPass;
+use super::pre_elaboration::{BodyPass, ProgramPass};
 use super::sccp::SCCP;
 use mojito_common::timing;
-use mojito_mir::mir::{MirDeclarations, MirFunction};
+use mojito_mir::mir::{MirDeclarations, MirFunction, MirProgram};
 
 /// The post-elaboration pipeline, in order. It is per function, so it holds
 /// no program pass.
@@ -28,6 +30,22 @@ use mojito_mir::mir::{MirDeclarations, MirFunction};
 /// ending with `CSEPass`.
 pub const POST_ELABORATION_PIPELINE: &[BodyPass] =
     &[LOWER_ARG_CONVENTIONS, MEM_2_REG, SCCP, CANONICALIZE, CSE];
+
+/// The symbol passes upstream runs over the elaborator's output before its
+/// function pipeline, in order: `EliminateDuplicateFunctions`, then
+/// `EliminateDeadSymbols`.
+pub const ELABORATED_SYMBOL_PASSES: &[ProgramPass] =
+    &[ELIMINATE_DUPLICATE_FUNCTIONS, ELIMINATE_DEAD_SYMBOLS];
+
+/// Run [`ELABORATED_SYMBOL_PASSES`] over the concrete program `program`,
+/// which exports `exports` beside its entry roots, each pass under its own
+/// timing span.
+pub fn eliminate_elaborated_symbols(program: &mut MirProgram, exports: &[String]) {
+    for pass in ELABORATED_SYMBOL_PASSES {
+        let _pass = timing::span(pass.name);
+        (pass.run)(program, exports);
+    }
+}
 
 /// Run [`POST_ELABORATION_PIPELINE`] over every concrete function in
 /// `functions` but `__toplevel__`.

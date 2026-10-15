@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R991**.
+Next free ID: **R993**.
 
 ## Ordered Work
 
@@ -624,19 +624,37 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R990 Instances with identical bodies are not merged**
+- [ ] **R991 An instance keeps the dead constant a call's compile-time
+  argument was read into, which keeps identical instances apart**
 
-  Upstream's `EliminateDuplicateFunctions`, run straight out of the
-  elaborator before its dead-symbol pass, calls one copy of each set of
-  instances whose bodies match (`foo[1]` and `foo[2]` when a `comptime if`
-  picks the same arm), and Mojito keeps every copy.
-  - At 6f950e12 a naive comparison (a body's text with its own name erased,
-    callees not unified) found 65 duplicate functions and 291 instructions
-    in `assets/ok`, a lower bound that unifying callees to a fixpoint
-    would raise.
-  - Done when duplicates merge ahead of R989's pass and the differential
-    is clean.
-  - Depends on R989.
+  `bar[1]` and `bar[2]` of `def bar[n: Int]() -> Int: return foo[n]() +
+  10` stay two functions after `eliminate-duplicate-functions` merges
+  `foo[1]` and `foo[2]`, where upstream keeps one.
+  - The generator reads `n` into a register for the call's parameter
+    argument; the elaborator answers the read as `const 1` (or `const 2`)
+    and drops the argument, but leaves the dead constant.
+  - Upstream's call carries the parameter as an attribute, so its
+    instances hold no such register.
+  - The post-elaboration pipeline removes the constant, but the pass runs
+    before it, as upstream's does; in the corpus one more function would
+    merge after the pipeline.
+  - The elaborator should erase the read with the argument it drops.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R992 Struct methods are never merged as duplicates**
+
+  `eliminate-duplicate-functions` keeps every method of the program's
+  structs under its own name, so two identical instances of one method
+  stay apart.
+  - The elaborator and the backends reach a struct's lifecycle and trait
+    methods by a name derived from its type, which no symbol reference
+    records, so the pass cannot tell which methods are safe to redirect.
+  - Letting it merge methods removes 24 more functions in `assets/ok` with
+    no change in output.
+  - The fix records each method reached from its type, as upstream nests a
+    struct's members under its symbol, and pins only those.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R927 A slot whose reads merge two stores keeps its slot, where

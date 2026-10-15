@@ -14,7 +14,9 @@
 //! whose encoding needs a compilation's context (a check-local binding
 //! owner, a source location) names no symbol and is skipped.
 
-use crate::mir::{MirBlock, MirFunction, MirInstr, instruction_regions};
+use crate::mir::{
+    Const, MirBlock, MirFunction, MirInstr, instruction_regions, instruction_regions_mut,
+};
 use mojito_symbol::symbol::{
     INT_DIGITS_SYMBOL, POW_INT_SYMBOL, UINT_DIGITS_SYMBOL, WRITE_FORMATTED, calls_pow_int,
 };
@@ -177,6 +179,63 @@ pub fn implicit_callees<S: BuildHasher>(
             &[INT_DIGITS_SYMBOL, UINT_DIGITS_SYMBOL]
         }
         _ => &[],
+    }
+}
+
+/// Rewrite, through `replace`, every symbol reference an instruction of
+/// `blocks`, in its regions too, holds itself.
+///
+/// Those are a call's callee, a selected method, operator, subscript, or
+/// iterator target, a closure's function, a function constant, and a
+/// loop's preparation calls: MLIR's `SymbolTable::replaceAllSymbolUses`
+/// over the references an operation holds directly. One inside a
+/// type, a compile-time value, or a declaration is not visited, so a
+/// client that must reach every use of a symbol counts the references this
+/// reaches against [`SymbolTable::function_uses`].
+pub fn replace_symbol_uses(blocks: &mut [MirBlock], replace: &mut dyn FnMut(&mut String)) {
+    for block in blocks {
+        for instruction in &mut block.instrs {
+            match instruction {
+                MirInstr::Call { func, .. } => replace(&mut func.0),
+                MirInstr::MakeClosure { function, .. }
+                | MirInstr::Const {
+                    k: Const::Function(function),
+                    ..
+                }
+                | MirInstr::ParamListAddress {
+                    values: Const::Function(function),
+                    ..
+                } => replace(function),
+                MirInstr::BinOp {
+                    resolved: Some(target),
+                    ..
+                }
+                | MirInstr::CallIndirect {
+                    resolved: Some(target),
+                    ..
+                }
+                | MirInstr::MethodCall {
+                    resolved: Some(target),
+                    ..
+                } => replace(target),
+                MirInstr::Index {
+                    call: Some(call), ..
+                }
+                | MirInstr::Slice {
+                    call: Some(call), ..
+                }
+                | MirInstr::MultiIndex {
+                    call: Some(call), ..
+                }
+                | MirInstr::MultiSet { call, .. } => replace(&mut call.target),
+                MirInstr::TryNext { call, .. } => replace(&mut call.target),
+                MirInstr::GetIter { prepare, .. } => prepare.iter_mut().for_each(&mut *replace),
+                _ => {}
+            }
+            for region in instruction_regions_mut(instruction) {
+                replace_symbol_uses(region, replace);
+            }
+        }
     }
 }
 

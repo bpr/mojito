@@ -20,6 +20,7 @@ pub use cse::{CSE, cse};
 pub use dead_symbols::{ELIMINATE_DEAD_SYMBOLS, eliminate_dead_symbols};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use drops::*;
+pub use duplicate_functions::{ELIMINATE_DUPLICATE_FUNCTIONS, eliminate_duplicate_functions};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use field_drops::*;
 pub use inline_parametric::{INLINE_PARAMETRIC, inline_parametric, is_inlined_before_elaboration};
@@ -40,7 +41,10 @@ use mojito_mir::mir::{
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use moves::*;
 pub use opt::{OptError, opt};
-pub use post_elaboration::{POST_ELABORATION_PIPELINE, post_elaborate_program};
+pub use post_elaboration::{
+    ELABORATED_SYMBOL_PASSES, POST_ELABORATION_PIPELINE, eliminate_elaborated_symbols,
+    post_elaborate_program,
+};
 pub use pre_elaboration::{
     BodyPass, CallGraphPass, Callees, ELABORATE_DROPS, LOWER_CONTROL_FLOW, PIPELINE, Pass,
     ProgramPass, finish_package_body, finish_package_body_without_pipeline, pass_named, pass_names,
@@ -241,6 +245,7 @@ mod copy_elision;
 mod cse;
 mod dead_symbols;
 mod drops;
+mod duplicate_functions;
 mod field_drops;
 mod fold;
 mod inline_parametric;

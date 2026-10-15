@@ -47,7 +47,7 @@
 //! linker and the checker that read them sit above MIR. No part of a
 //! package is MIR.
 
-use crate::mir::{MirDeclarations, MirFunction, MirProgram};
+use crate::mir::{MirDeclarations, MirFunction, MirFunctionDeclaration, MirProgram};
 pub use mojito_checked::package::{
     DeclarationRecords, LibraryRoot, PackageBytes, PackageDeclarations,
 };
@@ -447,6 +447,18 @@ impl fmt::Display for PackageError {
 
 impl std::error::Error for PackageError {}
 
+/// A function's body as [`same_body`] compares it, and its declaration.
+///
+/// Two functions that share one may stand for each other, once each
+/// spells its own name alike. It is hashable, so a pass can group
+/// functions by it.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FunctionIdentity {
+    body: Vec<u8>,
+    locations: Vec<(u32, String)>,
+    declaration: Option<Vec<u8>>,
+}
+
 /// Write a package of `program`, its verified, ownership-checked MIR, as
 /// the checked `units` it was lowered from, naming every file relative to
 /// the library `root`.
@@ -605,6 +617,25 @@ pub fn same_body(left: &MirFunction, right: &MirFunction) -> bool {
     body_key(left) == body_key(right)
 }
 
+/// The identity of `function`, declared by `declaration` when it has one,
+/// or `None` when either does not encode outside its compilation.
+pub fn function_identity(
+    function: &MirFunction,
+    declaration: Option<&MirFunctionDeclaration>,
+) -> Option<FunctionIdentity> {
+    let encode = || {
+        let body = bytecode(function)?;
+        let declaration = declaration.map(bytecode).transpose()?;
+        Ok::<_, PackageError>((body, declaration))
+    };
+    let (body, declaration) = mojito_types::origin::encoding_packaged_owners(encode).ok()?;
+    Some(FunctionIdentity {
+        body,
+        locations: body_locations(function),
+        declaration,
+    })
+}
+
 /// Read a package: its header now, and its directory of
 /// modules, declarations, and bodies, which decode on demand, every file
 /// it names under the library `root`.
@@ -731,6 +762,11 @@ fn from_bytecode<T: serde::de::DeserializeOwned>(
 fn body_key(function: &MirFunction) -> (Vec<u8>, Vec<(u32, String)>) {
     let encoded =
         mojito_types::origin::encoding_packaged_owners(|| bytecode(function)).unwrap_or_default();
+    (encoded, body_locations(function))
+}
+
+/// Each register's source location in `function`, sorted by register.
+fn body_locations(function: &MirFunction) -> Vec<(u32, String)> {
     let mut locations: Vec<(u32, String)> = function
         .spans
         .0
@@ -744,5 +780,5 @@ fn body_key(function: &MirFunction) -> (Vec<u8>, Vec<(u32, String)>) {
         })
         .collect();
     locations.sort();
-    (encoded, locations)
+    locations
 }

@@ -4236,3 +4236,25 @@ fn compile_time_only_instances_leave_the_concrete_program() {
     let pruned = names(Compiler::default().with_pre_elaboration(true));
     assert!(!pruned.iter().any(compile_time_only), "{pruned:?}");
 }
+
+#[test]
+fn identical_instances_merge_into_one() {
+    let names = |compiler: Compiler| {
+        let program = compiler
+            .compile_source(
+                "def pick[n: Int]() -> Int:\n    comptime if n > 0:\n        return 1\n    else:\n        return 2\n\n\ndef main():\n    print(pick[1](), pick[2](), pick[-1]())\n",
+                std::path::Path::new("/tmp/mojito_duplicate_functions.mojo"),
+            )
+            .expect("compile the picks");
+        let concrete = program.concrete_mir().expect("elaborate");
+        concrete
+            .program
+            .functions
+            .iter()
+            .map(|(name, _)| name.clone())
+            .filter(|name| name.starts_with("pick"))
+            .count()
+    };
+    assert_eq!(names(Compiler::default().with_pre_elaboration(false)), 3);
+    assert_eq!(names(Compiler::default().with_pre_elaboration(true)), 2);
+}

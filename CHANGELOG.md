@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Identical instances now merge (R990): `eliminate-duplicate-functions`
+  runs straight out of the elaborator, before `eliminate-dead-symbols`, as
+  upstream's `EliminateDuplicateFunctions` does, keeping one of each set of
+  functions whose bodies, declarations, and source locations match and
+  pointing every reference to the others at it, so `foo[1]` and `foo[2]`
+  are one function when a `comptime if` picks the same arm. The corpus's
+  concrete functions drop from 41,061 to 41,035
+  (`benchmarks/instantiation.tsv`). No program's output changes.
 - The concrete program no longer keeps the instances only compile-time
   evaluation reaches (R989): `eliminate-dead-symbols` runs straight out of
   the elaborator and again after the post-elaboration pipeline, as

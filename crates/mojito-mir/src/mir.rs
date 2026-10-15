@@ -65,7 +65,7 @@ pub use param_uses::{
     without_removed_forwards,
 };
 mod symbols;
-pub use symbols::{SymbolTable, implicit_callees};
+pub use symbols::{SymbolTable, implicit_callees, replace_symbol_uses};
 
 /// Lower a whole HIR control-flow graph (one function body) into a
 /// `MirFunction`.
@@ -185,10 +185,11 @@ impl ConcreteMir {
     }
 
     /// Run `prune` over the admitted program and re-admit it: a symbol
-    /// pass that only removes functions and declarations no remaining
-    /// symbol names, so every remaining body is as admitted. A debug build
-    /// re-verifies the whole program, which catches a removal a remaining
-    /// symbol still names.
+    /// pass that only removes functions and declarations, after pointing
+    /// every reference to a removed function at an identical one that
+    /// stays, so every remaining body is as admitted up to the functions
+    /// it names. A debug build re-verifies the whole program, which catches
+    /// a removal a remaining symbol still names.
     pub fn pruned(mut self, prune: impl FnOnce(&mut MirProgram)) -> Result<Self, Vec<String>> {
         prune(&mut self.0);
         if cfg!(debug_assertions) {

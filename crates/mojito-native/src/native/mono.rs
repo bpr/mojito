@@ -85,12 +85,13 @@ impl SpecializedProgram {
         })
     }
 
-    /// Run `eliminate`, a symbol pass that removes the functions and
-    /// declarations its roots do not reach, over the concrete program,
-    /// rooted at `exports` and every requested entry's instance, and
-    /// recount it: the seam upstream's `EliminateDeadSymbols` runs at
-    /// straight out of the elaborator and again after its post-elaboration
-    /// pipeline ([`ConcreteMir::pruned`]).
+    /// Run `eliminate`, a symbol pass that removes functions and
+    /// declarations, those its roots do not reach or those identical to a
+    /// function that stays, over the concrete program, rooted at `exports`
+    /// and every requested entry's instance, and recount it: the seam
+    /// upstream's `EliminateDuplicateFunctions` and `EliminateDeadSymbols`
+    /// run at straight out of the elaborator, and `EliminateDeadSymbols`
+    /// again after its post-elaboration pipeline ([`ConcreteMir::pruned`]).
     pub fn pruned(
         self,
         exports: &[String],

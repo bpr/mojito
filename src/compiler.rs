@@ -154,16 +154,20 @@ impl CompiledProgram {
                 );
                 let concrete = if self.pre_elaboration {
                     let _passes = timing::span("post_elaboration");
-                    let eliminate = |concrete: SpecializedProgram| {
-                        let _pass = timing::span("eliminate-dead-symbols");
-                        concrete.pruned(&self.exports, crate::analysis::eliminate_dead_symbols)
-                    };
                     concrete
-                        .and_then(eliminate)
+                        .and_then(|concrete| {
+                            concrete.pruned(
+                                &self.exports,
+                                crate::analysis::eliminate_elaborated_symbols,
+                            )
+                        })
                         .and_then(|concrete| {
                             concrete.rewritten(crate::analysis::post_elaborate_program)
                         })
-                        .and_then(eliminate)
+                        .and_then(|concrete: SpecializedProgram| {
+                            let _pass = timing::span("eliminate-dead-symbols");
+                            concrete.pruned(&self.exports, crate::analysis::eliminate_dead_symbols)
+                        })
                 } else {
                     concrete
                 };
