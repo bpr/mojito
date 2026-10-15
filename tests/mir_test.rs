@@ -2262,6 +2262,35 @@ fn default_wrapper_declaration_is_nodebug() {
     assert_eq!(inline("Tr.m"), mojito::declaration::InlineLevel::Automatic);
 }
 
+#[test]
+fn inline_decorator_level_reaches_declaration() {
+    let program = parse(
+        "@inline(.always)\ndef a() -> Int:\n    return 1\n\
+         @inline(.nodebug)\ndef b() -> Int:\n    return 2\n\
+         @inline(InlineLevel.never)\ndef c() -> Int:\n    return 3\n\
+         @inline(.automatic)\ndef d() -> Int:\n    return 4\n\
+         struct S:\n    @inline(.never)\n    @staticmethod\n    def m() -> Int:\n        return 5\n",
+    )
+    .expect("parse");
+    let checked = mojito::check_program(&program).expect("check");
+    let mir = mojito::mir::lower_checked_program(&checked);
+
+    let inline = |name: &str| {
+        mir.declarations
+            .functions
+            .iter()
+            .find(|declaration| declaration.lowered_name == name)
+            .unwrap_or_else(|| panic!("declaration {name}"))
+            .inline
+    };
+    use mojito::declaration::InlineLevel;
+    assert_eq!(inline("a"), InlineLevel::Always);
+    assert_eq!(inline("b"), InlineLevel::NoDebug);
+    assert_eq!(inline("c"), InlineLevel::Never);
+    assert_eq!(inline("d"), InlineLevel::Automatic);
+    assert_eq!(inline("S.m"), InlineLevel::Never);
+}
+
 /// `ty` is the type parameter spelled `name` with exactly `bounds`. Its
 /// identity is its declaration's, which a test cannot spell independently.
 fn assert_type_parameter(ty: &Ty, name: &str, bounds: &[&str]) {

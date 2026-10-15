@@ -2402,7 +2402,7 @@ impl Checker {
             ));
         }
         reject_default_lambdas(params)?;
-        InlineLevel::of(decorators).map_err(TypeError::InvalidDecorator)?;
+        InlineLevel::of(decorators)?;
         if RESERVED_FUNCTION_NAMES.contains(&name.as_str()) {
             return Err(TypeError::ReservedName(name.clone()));
         }

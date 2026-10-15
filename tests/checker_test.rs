@@ -3943,6 +3943,39 @@ fn accepts_decorators_and_plain_dunders() {
 }
 
 #[test]
+fn inline_decorator_operands_match_the_pin() {
+    let invalid = |source: &str| match err(source) {
+        TypeError::InvalidDecorator(message) => message,
+        other => panic!("expected an invalid decorator, found {other:?}"),
+    };
+    let def = |decorator: &str| format!("{decorator}\ndef f(x: Int) -> Int:\n    return x\n");
+    ok(&def("@inline(.always)"));
+    ok(&def("@inline(InlineLevel.never)"));
+    ok(&def("@inline(.nodebug)\n@always_inline(\"nodebug\")"));
+    assert_eq!(
+        invalid(&def("@inline")),
+        "'@inline' decorator takes exactly 1 argument, found 0"
+    );
+    assert_eq!(
+        invalid(&def("@inline(.always, level=.never)")),
+        "'@inline' decorator takes exactly 1 argument, found 2"
+    );
+    assert_eq!(
+        invalid(&def("@inline(level=.always)")),
+        "'@inline' argument must be positional"
+    );
+    assert_eq!(
+        invalid(&def("@inline(.builtin)")),
+        "'InlineLevel' value has no attribute 'builtin'"
+    );
+    assert_eq!(
+        invalid(&def("@inline(.always)\n@inline(.never)")),
+        "function has conflicting inline level from a previous '@inline' decorator"
+    );
+    assert!(matches!(err(&def("@inline(1)")), TypeError::Unsupported(_)));
+}
+
+#[test]
 fn flags_out_self_and_accepts_static_methods() {
     // `out self` on a non-__init__ method is still unsupported (only `__init__`
     // may initialize the receiver).

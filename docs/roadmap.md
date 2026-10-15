@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R940**.
+Next free ID: **R942**.
 
 ## Ordered Work
 
@@ -55,24 +55,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md),
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
-
-- [ ] **R913 `@inline(level)` never reaches MIR**
-
-  Mojito accepts `@inline(.always)`, `.nodebug`, `.never`, and
-  `.automatic` and ignores them, where the pinned std spells most of its
-  inline markings this way, so a marked function's declaration records
-  `automatic`.
-  - Read a leading-dot member of `InlineLevel` into the declaration's
-    `InlineLevel`, as `@always_inline` already is.
-  - A level given by a compile-time parameter (`@inline(policy)`) is
-    decided per instance, so the declaration needs a parameter-expression
-    form of the level.
-  - The pin rejects a misspelled level (`@inline(.bogus)`) and a bare
-    `@inline`, which Mojito accepts.
-  - Done when each spelling reaches MIR text and the package, and the
-    rejections match the pin's.
-  - Depends on R783.
-  - Model: Opus, Not Planned.
 
 - [ ] **R914 A decorated trait method is a parse error**
 
@@ -3243,6 +3225,35 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     after a subscript", a different shape from R381's operator.
   - Found while landing R477 (2026-10-07).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R940 An `@inline` level that is not a spelled member is rejected**
+
+  Problem: `comptime L = InlineLevel.never` then `@inline(L)` is rejected
+  as unsupported, where the pin reads the operand as any compile-time
+  `InlineLevel` value and runs the program.
+  - Mojito reads only `.member` and `InlineLevel.member`
+    (`InlineLevel::of`), since its prelude has no `InlineLevel` struct.
+  - Add upstream's prelude `InlineLevel` to the bundled std and check the
+    operand as a compile-time `InlineLevel` value, folding a closed one
+    to the declaration's level.
+  - `@inline(1)` should then fail with the pin's "cannot implicitly
+    convert 'IntLiteral[1]' value to 'InlineLevel'".
+  - Found while landing R913 (2026-10-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R941 An `@inline` level given by a parameter is rejected**
+
+  Problem: `@inline(Self.policy)` on a method of
+  `struct S[policy: InlineLevel]` is rejected, where the pin decides the
+  level per instance and runs the program.
+  - The declaration's `InlineLevel` holds only a closed level; it needs a
+    parameter-expression form that MIR text and the package carry.
+  - The elaborator then decides each instance's level, and
+    `inline-parametric` treats an undecided level as `automatic`.
+  - Found while landing R913 (2026-10-14).
+  - Depends on R940.
   - Model: Opus, Not Planned.
 
 - [ ] **R893 A conditional expression over a sized-integer value parameter

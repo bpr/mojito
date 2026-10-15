@@ -1232,7 +1232,7 @@ impl Checker {
         m: &Method,
         effect_key: String,
     ) -> Result<(), TypeError> {
-        InlineLevel::of(&m.decorators).map_err(TypeError::InvalidDecorator)?;
+        InlineLevel::of(&m.decorators)?;
         let is_implicit = m
             .decorators
             .iter()

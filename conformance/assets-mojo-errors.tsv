@@ -346,6 +346,8 @@ assets/type_error/indexer_int_return.mojo	compile-reject	agree	error: 'Offset' d
 assets/type_error/indexer_missing_conversion.mojo	compile-reject	agree	error: 'BadIndex' does not implement all requirements for 'Indexer'
 assets/type_error/initializer_arguments_share_mutable_origin.mojo	compile-reject	agree	error: aliasing values passed mutably to 'args' argument and passed mutably to 'args' argument in 'Tuple[Span[Int, origin_of(xs)], Span[Int, origin_of(xs)]]' initializer call
 assets/type_error/inline_level_conflict_rejected.mojo	compile-reject	agree	error: function has conflicting inline level from a previous '@no_inline' decorator
+assets/type_error/inline_level_missing_operand_rejected.mojo	compile-reject	agree	error: '@inline' decorator takes exactly 1 argument, found 0
+assets/type_error/inline_level_unknown_member_rejected.mojo	compile-reject	agree	error: 'InlineLevel' value has no attribute 'builtin'
 assets/type_error/inplace_bad_arg.mojo	compile-reject	agree	error: invalid call to '__iadd__': value passed to 'amount' cannot be converted from 'StringLiteral["not an int"]' to 'Int'
 assets/type_error/inplace_bitwise_missing.mojo	compile-reject	agree	error: 'OnlyOr' does not implement the '__ior__' method
 assets/type_error/inplace_immutable.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination

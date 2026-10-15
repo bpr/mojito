@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `@inline(level)` now sets a function's inline level (R913): `.always`,
+  `.nodebug`, `.never`, and `.automatic`, or the same members spelled
+  `InlineLevel.member`, reach its MIR declaration and the package as
+  `@always_inline` and `@no_inline` do, so the bundled library's
+  `@inline(.nodebug)` callees reach `inline-parametric`. A missing, extra,
+  or keyword operand and an unknown member are rejected with the pin's
+  messages; an operand that is any other compile-time expression is
+  rejected as unsupported (R940, R941). Program output is unchanged.
 - The bundled library carries the pinned std's inline markings (R786):
   each function it shares with upstream takes upstream's
   `@inline(.always)`, `@inline(.nodebug)`, `@inline(.never)`, or

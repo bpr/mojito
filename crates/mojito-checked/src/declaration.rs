@@ -5,7 +5,8 @@
 //! declaration.
 
 use crate::checked::{CheckedConst, ExplicitDestroyInfo, StructConformance};
-use mojito_ast::ast::{ArgConvention, Decorator, ExprKind};
+use mojito_ast::ast::{ArgConvention, CONTEXTUAL_SENTINEL, Decorator, ExprKind};
+use mojito_common::error::TypeError;
 use mojito_symbol::symbol::{
     OverloadFamily, OverloadSets, SignatureKey, TRAIT_DISPATCH, method_symbol, overload_family,
     split_method_symbol,
@@ -325,8 +326,9 @@ impl FunctionDeclaration {
 ///
 /// `@always_inline` is [`Self::Always`], `@always_inline("nodebug")`
 /// [`Self::NoDebug`], `@always_inline("builtin")` [`Self::Builtin`], and
-/// `@no_inline` [`Self::Never`]; a callable with none is
-/// [`Self::Automatic`].
+/// `@no_inline` [`Self::Never`]; `@inline(level)` names one of the
+/// prelude `InlineLevel`'s members, spelled `.member` or
+/// `InlineLevel.member`. A callable with none is [`Self::Automatic`].
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
 )]
@@ -343,27 +345,36 @@ impl InlineLevel {
     /// The level `decorators` name, or the pin's diagnostic for an operand
     /// it rejects or for two decorators that name different levels.
     /// Decorators apply innermost first, so the later of two conflicting
-    /// ones is reported against the earlier.
-    pub fn of(decorators: &[Decorator]) -> Result<Self, String> {
+    /// ones is reported against the earlier. An `@inline` operand other
+    /// than a spelled member is a compile-time expression this level
+    /// cannot hold, and is unsupported.
+    pub fn of(decorators: &[Decorator]) -> Result<Self, TypeError> {
         let mut declared: Option<(Self, &str)> = None;
         for decorator in decorators.iter().rev() {
             let [name] = decorator.path.as_slice() else {
                 continue;
             };
             let level = match name.as_str() {
-                "always_inline" => Self::always_inline(decorator)?,
+                "always_inline" => {
+                    Self::always_inline(decorator).map_err(TypeError::InvalidDecorator)?
+                }
+                "inline" => Self::inline(decorator)?,
                 "no_inline" if decorator.args.is_empty() && decorator.kwargs.is_empty() => {
                     Self::Never
                 }
-                "no_inline" => return Err("'@no_inline' cannot have arguments".to_string()),
+                "no_inline" => {
+                    return Err(TypeError::InvalidDecorator(
+                        "'@no_inline' cannot have arguments".to_string(),
+                    ));
+                }
                 _ => continue,
             };
             match declared {
                 Some((previous, spelled)) if previous != level => {
-                    return Err(format!(
+                    return Err(TypeError::InvalidDecorator(format!(
                         "function has conflicting inline level from a previous '@{spelled}' \
                          decorator"
-                    ));
+                    )));
                 }
                 Some(_) => {}
                 None => declared = Some((level, name)),
@@ -394,6 +405,44 @@ impl InlineLevel {
         ]
         .into_iter()
         .find(|level| level.spelling() == spelling)
+    }
+
+    /// The level `@inline(level)` names: one positional operand, a member
+    /// of `InlineLevel` spelled `.member` or `InlineLevel.member`.
+    fn inline(decorator: &Decorator) -> Result<Self, TypeError> {
+        let operands = decorator.args.len() + decorator.kwargs.len();
+        if operands != 1 {
+            return Err(TypeError::InvalidDecorator(format!(
+                "'@inline' decorator takes exactly 1 argument, found {operands}"
+            )));
+        }
+        let [operand] = decorator.args.as_slice() else {
+            return Err(TypeError::InvalidDecorator(
+                "'@inline' argument must be positional".to_string(),
+            ));
+        };
+        let ExprKind::Member { object, field } = &operand.kind else {
+            return Err(Self::unsupported_inline_operand());
+        };
+        if !matches!(&object.kind, ExprKind::Identifier(name)
+            if name == CONTEXTUAL_SENTINEL || name == "InlineLevel")
+        {
+            return Err(Self::unsupported_inline_operand());
+        }
+        [Self::Automatic, Self::Always, Self::NoDebug, Self::Never]
+            .into_iter()
+            .find(|level| level.spelling() == field)
+            .ok_or_else(|| {
+                TypeError::InvalidDecorator(format!(
+                    "'InlineLevel' value has no attribute '{field}'"
+                ))
+            })
+    }
+
+    fn unsupported_inline_operand() -> TypeError {
+        TypeError::Unsupported(
+            "an '@inline' level other than a spelled 'InlineLevel' member".to_string(),
+        )
     }
 
     fn always_inline(decorator: &Decorator) -> Result<Self, String> {
