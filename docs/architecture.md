@@ -5543,7 +5543,12 @@ concrete verifier rejects a reference slot read as its handle.
   export, a struct's method (reached from its type, R992), or a use
   `mir::SymbolTable` finds that the rewrite does not reach, such as an
   implicit callee or a symbol a type names, found by counting one against
-  the other.
+  the other. Upstream's call carries a compile-time argument as an
+  attribute, so an instance holds no register for it; the elaborator
+  matches that by erasing, with each parameter argument slot it drops,
+  the constant the slot's register was read into once nothing else reads
+  it (`erase_dropped_argument_reads` in `native/mono/specializer.rs`,
+  R991), so callers apart only by that read merge with their callees.
 
 - **CSE.** `cse` (`analysis::CSE`, `analysis/cse.rs`, R845) is MLIR's
   `CSE`: it walks each block list's dominator tree (Cooper, Harvey, and

@@ -842,8 +842,10 @@ impl<'a> Specializer<'a> {
         // destination (comprehension loops interleave), and the advance
         // rewrites need the iterator slot types this pass records.
         self.rewrite_iterator_inits(&key.template, &mut function, &mut blocks)?;
+        let arguments = parameter_argument_regs(&mut blocks);
         self.rewrite_blocks(&key.template, &mut function, &mut blocks)?;
         function.blocks = blocks;
+        erase_dropped_argument_reads(&mut function, &arguments);
         retire_forwarded_packs(&mut function);
         erase_specialized_generic_callable_storage(&mut function);
 
@@ -3518,6 +3520,65 @@ fn drop_parameter_slots(instruction: &mut MirInstr) {
     };
     if slots.iter().all(|slot| slot.value.is_none()) {
         slots.clear();
+    }
+}
+
+/// Every register a compile-time argument slot in `blocks` holds, their
+/// regions included.
+fn parameter_argument_regs(blocks: &mut [MirBlock]) -> HashSet<u32> {
+    let mut regs = HashSet::new();
+    for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+        regs.extend(
+            mojito_mir::mir::instruction_param_args_mut(instruction)
+                .into_iter()
+                .filter_map(|argument| argument.value.map(|reg| reg.0)),
+        );
+        for region in mojito_mir::mir::instruction_regions_mut(instruction) {
+            regs.extend(parameter_argument_regs(region));
+        }
+    }
+    regs
+}
+
+/// Erase the constant each of `arguments` was read into once no
+/// instruction reads it: the call it fed takes its compile-time argument
+/// as an attribute, as upstream's call carries a parameter, so the instance
+/// holds no register for it.
+fn erase_dropped_argument_reads(function: &mut MirFunction, arguments: &HashSet<u32>) {
+    if arguments.is_empty() {
+        return;
+    }
+    let mut reads = vec![0; function.n_regs as usize];
+    mojito_mir::mir::count_register_reads(&mut function.blocks, &mut reads);
+    let dead: HashSet<u32> = arguments
+        .iter()
+        .copied()
+        .filter(|reg| reads.get(*reg as usize) == Some(&0))
+        .collect();
+    let mut erased = HashSet::new();
+    erase_constants(&mut function.blocks, &dead, &mut erased);
+    for reg in erased {
+        function.reg_types.remove(&reg);
+        function.spans.0.remove(&reg);
+    }
+}
+
+/// Remove each `Const` in `blocks`, their regions included, that defines
+/// one of `dead`, recording its register in `erased`.
+fn erase_constants(blocks: &mut [MirBlock], dead: &HashSet<u32>, erased: &mut HashSet<u32>) {
+    for block in blocks {
+        block.instrs.retain(|instruction| match instruction {
+            MirInstr::Const { dest, .. } if dead.contains(&dest.0) => {
+                erased.insert(dest.0);
+                false
+            }
+            _ => true,
+        });
+        for instruction in &mut block.instrs {
+            for region in mojito_mir::mir::instruction_regions_mut(instruction) {
+                erase_constants(region, dead, erased);
+            }
+        }
     }
 }
 

@@ -4265,3 +4265,23 @@ fn identical_instances_merge_into_one() {
     assert_eq!(names(Compiler::default().with_pre_elaboration(false)), 3);
     assert_eq!(names(Compiler::default().with_pre_elaboration(true)), 2);
 }
+
+#[test]
+fn callers_of_merged_instances_merge_into_one() {
+    let program = Compiler::default()
+        .compile_source(
+            "def foo[n: Int]() -> Int:\n    comptime if n > 0:\n        return 7\n    else:\n        return 7\n\n\ndef bar[n: Int]() -> Int:\n    return foo[n]() + 10\n\n\ndef main():\n    print(bar[1](), bar[2]())\n",
+            std::path::Path::new("/tmp/mojito_merged_callers.mojo"),
+        )
+        .expect("compile the callers");
+    let concrete = program.concrete_mir().expect("elaborate");
+    let count = |prefix: &str| {
+        concrete
+            .program
+            .functions
+            .iter()
+            .filter(|(name, _)| name.starts_with(prefix))
+            .count()
+    };
+    assert_eq!((count("foo"), count("bar")), (1, 1));
+}

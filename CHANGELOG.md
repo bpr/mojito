@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A caller no longer stays apart from an identical instance by the
+  constant its call's compile-time argument was read into (R991): the
+  elaborator erases that constant with the argument slot it drops, as
+  upstream's call carries the parameter as an attribute. So `bar[1]` and
+  `bar[2]` of `bar[n]` returning `foo[n]() + 10` merge once
+  `eliminate-duplicate-functions` merges `foo[1]` and `foo[2]` (corpus
+  concrete functions −1, `benchmarks/instantiation.tsv`).
 - A parameter that only a body lifted from its function would read, were
   its other binders removed, no longer splits instances (R982):
   `remove-unused-params` reads a `$comptime$f$k` or `$default$f$x` the

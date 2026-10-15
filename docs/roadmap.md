@@ -678,24 +678,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R991 An instance keeps the dead constant a call's compile-time
-  argument was read into, which keeps identical instances apart**
-
-  `bar[1]` and `bar[2]` of `def bar[n: Int]() -> Int: return foo[n]() +
-  10` stay two functions after `eliminate-duplicate-functions` merges
-  `foo[1]` and `foo[2]`, where upstream keeps one.
-  - The generator reads `n` into a register for the call's parameter
-    argument; the elaborator answers the read as `const 1` (or `const 2`)
-    and drops the argument, but leaves the dead constant.
-  - Upstream's call carries the parameter as an attribute, so its
-    instances hold no such register.
-  - The post-elaboration pipeline removes the constant, but the pass runs
-    before it, as upstream's does; in the corpus one more function would
-    merge after the pipeline.
-  - The elaborator should erase the read with the argument it drops.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R992 Struct methods are never merged as duplicates**
 
   `eliminate-duplicate-functions` keeps every method of the program's
