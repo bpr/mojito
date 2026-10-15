@@ -594,6 +594,7 @@ pub fn lower_unit(
                     keyword_only: m.keyword_only,
                     statements: &m.body,
                     defaults: m.params.iter().map(|param| param.default).collect(),
+                    inline: m.inline,
                 },
                 functions,
                 declarations,
@@ -615,6 +616,7 @@ pub fn lower_unit(
                     keyword_only: None,
                     statements: checked.tables().wrapper_roots(index),
                     defaults: Vec::new(),
+                    inline: mojito_checked::declaration::InlineLevel::Automatic,
                 },
                 functions,
                 declarations,
@@ -982,6 +984,7 @@ fn lower_function(
         positional_only,
         keyword_only,
         body: statements,
+        inline,
         ..
     } = &**def;
     let overloads = checked.overloads();
@@ -1121,6 +1124,7 @@ fn lower_function(
         availability: Vec::new(),
         enclosing: None,
         region_binders: Vec::new(),
+        inline: *inline,
     });
     lower_fn_nested(
         FunctionLowering {
@@ -1336,6 +1340,7 @@ fn lower_struct_member<P: DeclaredParam>(
         availability: effect.availability.clone(),
         enclosing: None,
         region_binders: Vec::new(),
+        inline: m.inline,
     });
     // A method's receiver `self` is the implicit first parameter,
     // followed by the declared params.
@@ -1447,6 +1452,7 @@ struct StructMember<'a, P> {
     statements: &'a [CheckedStmtId],
     /// Each parameter's checked default node.
     defaults: Vec<Option<CheckedNodeId>>,
+    inline: mojito_checked::declaration::InlineLevel,
 }
 
 /// A declaration parameter whose default [`lower_default`] lowers: `default`
@@ -1615,6 +1621,7 @@ fn lower_expression_thunk(
         availability: Vec::new(),
         enclosing: None,
         region_binders: Vec::new(),
+        inline: mojito_checked::declaration::InlineLevel::Automatic,
     });
 }
 

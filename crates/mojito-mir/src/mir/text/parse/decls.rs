@@ -424,6 +424,12 @@ impl Decoder {
             .field(fields, "region_binders")
             .map(|value| self.param_decls(value))
             .unwrap_or_default();
+        // Schema 1.61 records an inline level other than `automatic`.
+        let inline = self
+            .field(fields, "inline")
+            .ok()
+            .and_then(|value| self.inline_level(value))
+            .unwrap_or_default();
         for (label, length) in [
             ("param_types", param_types.len()),
             ("defaults", defaults.len()),
@@ -472,6 +478,7 @@ impl Decoder {
                 "availability",
                 "enclosing",
                 "region_binders",
+                "inline",
             ],
         );
         Some(MirFunctionDeclaration {
@@ -501,6 +508,7 @@ impl Decoder {
             availability,
             enclosing,
             region_binders,
+            inline,
         })
     }
 
@@ -677,5 +685,15 @@ impl Decoder {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    fn inline_level(&mut self, value: &Value) -> Option<mojito_checked::declaration::InlineLevel> {
+        let spelling = self.atom(value)?;
+        let level = mojito_checked::declaration::InlineLevel::from_spelling(spelling);
+        if level.is_none() {
+            let message = format!("unknown inline level `{spelling}`");
+            self.error(value.span, message);
+        }
+        level
     }
 }

@@ -2813,6 +2813,7 @@ mod tests {
             availability: Vec::new(),
             enclosing: None,
             region_binders: Vec::new(),
+            inline: Default::default(),
         });
         let answers = |name: &str| declarations.copy_is_identity(&struct_ty(name));
         assert!(answers("P"));

@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.60
+# Mojito Textual MIR Format, Version 1.61
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.60 is implemented end to end for inspection and loading: canonical
+Version 1.61 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.60
+mojito-mir 1.61
 ```
 
-The writer emits 1.60. The reader accepts 1.0 through 1.60; *Schema 1.0*
+The writer emits 1.61. The reader accepts 1.0 through 1.61; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -492,6 +492,15 @@ A nested function's `enclosing` names the declaration it is nested in; the
 verifier's binder scope for its body is its own `param_decls` and
 `region_binders`, then each enclosing declaration's, then the struct of the
 outermost method.
+
+A declaration may end with `inline: always`, `nodebug`, `builtin`, or
+`never` after `region_binders` (schema 1.61): the inline level its
+`@always_inline`, `@always_inline("nodebug")`, `@always_inline("builtin")`,
+or `@no_inline` decorator names, as upstream's function op records it. The
+writer omits the field for `automatic`, the level of an undecorated
+function, and the reader takes an absent field as `automatic`; any other
+spelling is an error. A package record carries the level beside the rest of
+the declaration (package format 65).
 
 Abstract dispatch requirements (`__trait_dispatch.*`, `__iterator_dispatch.*`) have no concrete declaration record;
 a `__trait_dispatch.*` method's parameter contract is its trait requirement's (minor version 48).

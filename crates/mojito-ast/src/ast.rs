@@ -840,9 +840,11 @@ impl KwArg {
 /// A decorator `@name`, `@dotted.name`, or `@name(args)` preceding a `def` or
 /// `struct` (or a struct method).
 ///
-/// Parsed into the AST; only `@fieldwise_init` on a struct is acted on (it
-/// sets `Stmt::Struct.fieldwise_init`) — the rest are recorded but not modeled
-/// (syntax-first phase).
+/// Parsed into the AST. `@fieldwise_init` on a struct sets
+/// `Stmt::Struct.fieldwise_init`, and a callable's inline decorators set its
+/// declaration's inline level (`mojito_checked::declaration::InlineLevel`);
+/// the checker reads a few others by name, and the rest are recorded but
+/// not modeled.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Decorator {
     /// The dotted name parts, e.g. `["always_inline"]` or `["a", "b"]`.

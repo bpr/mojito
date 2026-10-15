@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R913**.
+Next free ID: **R915**.
 
 ## Ordered Work
 
@@ -56,17 +56,36 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R783 `@always_inline` never reaches MIR**
+- [ ] **R913 `@inline(level)` never reaches MIR**
 
-  Mojito accepts `@always_inline` and `@always_inline("nodebug")` and
-  ignores both, so no later pass can see which functions upstream would
-  inline before elaboration.
-  - A function's MIR declaration should record the decorator and its
-    argument.
-  - It changes the MIR text format (`docs/mir-text-format.md`) and the
-    package format.
-  - Done when both spellings round-trip through MIR text and the package.
-  - Depends on nothing.
+  Mojito accepts `@inline(.always)`, `.nodebug`, `.never`, and
+  `.automatic` and ignores them, where the pinned std spells most of its
+  inline markings this way, so a marked function's declaration records
+  `automatic`.
+  - Read a leading-dot member of `InlineLevel` into the declaration's
+    `InlineLevel`, as `@always_inline` already is.
+  - A level given by a compile-time parameter (`@inline(policy)`) is
+    decided per instance, so the declaration needs a parameter-expression
+    form of the level.
+  - The pin rejects a misspelled level (`@inline(.bogus)`) and a bare
+    `@inline`, which Mojito accepts.
+  - Done when each spelling reaches MIR text and the package, and the
+    rejections match the pin's.
+  - Depends on R783.
+  - Model: Opus, Not Planned.
+
+- [ ] **R914 A decorated trait method is a parse error**
+
+  The pin accepts `@always_inline` on a trait method, and Mojito's parser
+  rejects any decorator in a trait body, so a trait default cannot carry
+  the inline level upstream's std gives it.
+  - `docs/grammar.md` first, then the parser keeps a trait method's
+    decorators.
+  - The lifted `Trait$default$m` function takes the default's inline
+    level, validated as a method's is.
+  - Done when a marked trait default's declaration records its level in
+    MIR text.
+  - Depends on R783.
   - Model: Opus, Not Planned.
 
 - [ ] **R784 Generic bodies call `nodebug` inline functions instead of

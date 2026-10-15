@@ -211,9 +211,13 @@ folds the operators over it (R840);
    (`docs/performance.md`): the bundled library has almost no unread
    parameter, so the stage's effect is the program's own and the
    interprocedural residues'.
-7. **`@always_inline` reaches MIR.** The pin accepts `@always_inline` and
-   `@always_inline("nodebug")`, and Mojito parses and ignores both today. The
-   function's MIR declaration records which it carries.
+7. **`@always_inline` reaches MIR.** A function's MIR declaration records
+   the inline level its decorator names, as upstream's function op does:
+   `always`, `nodebug`, `builtin` (`@always_inline("builtin")`), or `never`
+   (`@no_inline`), with `automatic` for none (`InlineLevel`, MIR text 1.61).
+   The checker rejects the operands and conflicting pairs the pin rejects.
+   `@inline(level)`, which the pinned std spells far more often, is not yet
+   read, so the bundled library's markings wait on it.
 8. **Restricted inlining** (`InlineParametric`). Inline a callee marked
    `@always_inline("nodebug")` into a generic body before elaboration, under
    upstream's restriction. The callee's drops come with it. Whether plain

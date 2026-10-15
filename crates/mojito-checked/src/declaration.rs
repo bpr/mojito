@@ -5,7 +5,7 @@
 //! declaration.
 
 use crate::checked::{CheckedConst, ExplicitDestroyInfo, StructConformance};
-use mojito_ast::ast::ArgConvention;
+use mojito_ast::ast::{ArgConvention, Decorator, ExprKind};
 use mojito_symbol::symbol::{
     OverloadFamily, OverloadSets, SignatureKey, TRAIT_DISPATCH, method_symbol, overload_family,
     split_method_symbol,
@@ -287,6 +287,8 @@ pub struct FunctionDeclaration {
     /// may name. The elaborator instantiates such a body once per unrolled
     /// copy of the region. Empty at top level and on a concrete instance.
     pub region_binders: Vec<ParamDecl>,
+    /// The level its inline decorator names.
+    pub inline: InlineLevel,
 }
 
 impl FunctionDeclaration {
@@ -315,6 +317,102 @@ impl FunctionDeclaration {
             return None;
         }
         overload_family(&self.lowered_name).map(|family| (family, self.source_arity()))
+    }
+}
+
+/// How a callable asks to be inlined, as upstream's function op records the
+/// level its inline decorator names.
+///
+/// `@always_inline` is [`Self::Always`], `@always_inline("nodebug")`
+/// [`Self::NoDebug`], `@always_inline("builtin")` [`Self::Builtin`], and
+/// `@no_inline` [`Self::Never`]; a callable with none is
+/// [`Self::Automatic`].
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub enum InlineLevel {
+    #[default]
+    Automatic,
+    Always,
+    NoDebug,
+    Builtin,
+    Never,
+}
+
+impl InlineLevel {
+    /// The level `decorators` name, or the pin's diagnostic for an operand
+    /// it rejects or for two decorators that name different levels.
+    /// Decorators apply innermost first, so the later of two conflicting
+    /// ones is reported against the earlier.
+    pub fn of(decorators: &[Decorator]) -> Result<Self, String> {
+        let mut declared: Option<(Self, &str)> = None;
+        for decorator in decorators.iter().rev() {
+            let [name] = decorator.path.as_slice() else {
+                continue;
+            };
+            let level = match name.as_str() {
+                "always_inline" => Self::always_inline(decorator)?,
+                "no_inline" if decorator.args.is_empty() && decorator.kwargs.is_empty() => {
+                    Self::Never
+                }
+                "no_inline" => return Err("'@no_inline' cannot have arguments".to_string()),
+                _ => continue,
+            };
+            match declared {
+                Some((previous, spelled)) if previous != level => {
+                    return Err(format!(
+                        "function has conflicting inline level from a previous '@{spelled}' \
+                         decorator"
+                    ));
+                }
+                Some(_) => {}
+                None => declared = Some((level, name)),
+            }
+        }
+        Ok(declared.map_or(Self::Automatic, |(level, _)| level))
+    }
+
+    /// The spelling MIR text gives it.
+    pub const fn spelling(self) -> &'static str {
+        match self {
+            Self::Automatic => "automatic",
+            Self::Always => "always",
+            Self::NoDebug => "nodebug",
+            Self::Builtin => "builtin",
+            Self::Never => "never",
+        }
+    }
+
+    /// The level MIR text spells `spelling`.
+    pub fn from_spelling(spelling: &str) -> Option<Self> {
+        [
+            Self::Automatic,
+            Self::Always,
+            Self::NoDebug,
+            Self::Builtin,
+            Self::Never,
+        ]
+        .into_iter()
+        .find(|level| level.spelling() == spelling)
+    }
+
+    fn always_inline(decorator: &Decorator) -> Result<Self, String> {
+        const OPERAND: &str = "'@always_inline' operand must be \"nodebug\" or \"builtin\"";
+        if !decorator.kwargs.is_empty() {
+            return Err(OPERAND.to_string());
+        }
+        match decorator.args.as_slice() {
+            [] => Ok(Self::Always),
+            [operand] => match &operand.kind {
+                ExprKind::Str(level) if level == "nodebug" => Ok(Self::NoDebug),
+                ExprKind::Str(level) if level == "builtin" => Ok(Self::Builtin),
+                _ => Err(OPERAND.to_string()),
+            },
+            operands => Err(format!(
+                "'@always_inline' decorator takes 0 or 1 arguments, found {}",
+                operands.len()
+            )),
+        }
     }
 }
 

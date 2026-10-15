@@ -4,6 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_checked::declaration::InlineLevel;
 use mojito_common::timing;
 use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy, TransferSet};
@@ -2401,6 +2402,7 @@ impl Checker {
             ));
         }
         reject_default_lambdas(params)?;
+        InlineLevel::of(decorators).map_err(TypeError::InvalidDecorator)?;
         if RESERVED_FUNCTION_NAMES.contains(&name.as_str()) {
             return Err(TypeError::ReservedName(name.clone()));
         }

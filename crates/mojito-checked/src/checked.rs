@@ -2356,6 +2356,9 @@ pub struct CheckedDef {
     /// upstream's closure op holds its captured values; default captures
     /// are found from its body's checked bindings.
     pub captures: Vec<CheckedCapture>,
+    /// The level its inline decorator names, as upstream's function op
+    /// records it.
+    pub inline: crate::declaration::InlineLevel,
 }
 
 /// A declaration's checked signature, as the check recorded it at the
@@ -2461,6 +2464,8 @@ pub struct CheckedMethod {
     pub where_clauses: Vec<CheckedNodeId>,
     pub body: Vec<CheckedStmtId>,
     pub provenance: MethodProvenance,
+    /// The level its inline decorator names.
+    pub inline: crate::declaration::InlineLevel,
 }
 
 impl CheckedMethod {
@@ -4623,6 +4628,7 @@ impl<'a> ArenaBuilder<'a> {
                 raises,
                 where_clauses,
                 body,
+                decorators,
                 ..
             } => CheckedStmtOp::Def(Box::new(CheckedDef {
                 name: name.clone(),
@@ -4639,6 +4645,7 @@ impl<'a> ArenaBuilder<'a> {
                     .captures
                     .clone()
                     .unwrap_or_default(),
+                inline: crate::declaration::InlineLevel::of(decorators).unwrap_or_default(),
             })),
             StmtKind::Struct {
                 name,
@@ -4691,6 +4698,8 @@ impl<'a> ArenaBuilder<'a> {
                             where_clauses: values(self, &method.where_clauses),
                             body: self.function_body(&method.body),
                             provenance: method.provenance,
+                            inline: crate::declaration::InlineLevel::of(&method.decorators)
+                                .unwrap_or_default(),
                         }
                     })
                     .collect();

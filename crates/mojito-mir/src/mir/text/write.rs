@@ -6,6 +6,7 @@ use mojito_checked::checked::{
     CheckedCallArgument, CheckedCallArgumentSource, CheckedConst, CheckedIteratorCall,
     CheckedResultAdapter, ComptimeSequence,
 };
+use mojito_checked::declaration::InlineLevel;
 use mojito_types::ct::{CtMarker, CtValue};
 use mojito_types::origin::{
     CallableEnvironment, CaptureAccess, CaptureOriginSet, Mutability, Origin, OriginSeg,
@@ -412,7 +413,13 @@ fn write_declarations(output: &mut String, declarations: &[MirFunctionDeclaratio
                     "region_binders",
                     list(declaration.region_binders.iter().map(param_decl)),
                 ),
-            ],
+            ]
+            .into_iter()
+            .chain(
+                (declaration.inline != InlineLevel::Automatic)
+                    .then(|| ("inline", declaration.inline.spelling().to_string())),
+            )
+            .collect::<Vec<_>>(),
         );
         write!(output, "    {value}").unwrap();
         writeln!(

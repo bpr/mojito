@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A function's MIR declaration now records the inline level its decorator
+  names, as upstream's function op does (R783): `@always_inline` is
+  `always`, `@always_inline("nodebug")` `nodebug`, `@always_inline("builtin")`
+  `builtin`, and `@no_inline` `never`. The checker rejects an operand the
+  pin rejects and two decorators naming different levels, with the pin's
+  messages. No pass acts on the level yet, so program output is unchanged.
+  MIR text is 1.61, which writes `inline` on a declaration other than
+  `automatic`, and the package format is 65.
 - The pre-elaboration pipeline now ends with `remove-unused-params`,
   upstream's `RemoveUnusedParams` (R782): a generic function's own
   compile-time parameters that neither its body nor its signature reads

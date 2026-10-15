@@ -171,7 +171,7 @@ pub fn disassemble_functions(program: &MirProgram) -> Result<String, Disassemble
 
 pub const MAGIC: &str = "mojito-mir";
 pub const VERSION_MAJOR: u16 = 1;
-pub const VERSION_MINOR: u16 = 60;
+pub const VERSION_MINOR: u16 = 61;
 
 pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "loans.establish",

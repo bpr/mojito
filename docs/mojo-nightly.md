@@ -112,9 +112,10 @@ diagnostic change plus the message plumbing, not a semantic one.
 `@inline(.always)`, `.nodebug`, `.never`, and `.automatic` select a function's
 inline level, and the value may be any comptime expression, so one definition
 can inline per instantiation. Two decorators that disagree (`@always_inline`
-with `@no_inline`) are now an error rather than one silently winning. Mojito's
-inline decorators are accepted and ignored below the MIR waist, so this is a
-front-end acceptance question first and a native-backend one only later.
+with `@no_inline`) are now an error rather than one silently winning, and
+Mojito rejects that pair too. Mojito records `@always_inline` and `@no_inline`
+in MIR, acted on by no pass yet, but reads no `@inline(value)` (R913), so this
+is a front-end acceptance question first and a native-backend one only later.
 
 ### 3. Experimental `__match` / `case` pattern matching
 

@@ -186,6 +186,7 @@ fn metadata_program() -> MirProgram {
             availability: Vec::new(),
             enclosing: None,
             region_binders: Vec::new(),
+            inline: Default::default(),
         }],
         traits: Vec::new(),
         imported: None,

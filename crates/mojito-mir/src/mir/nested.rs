@@ -580,6 +580,7 @@ fn lower_nested_node(
         availability: Vec::new(),
         enclosing: Some(enclosing.name.to_string()),
         region_binders: node.region_binders(),
+        inline: def.inline,
     });
     let immutable_captures: HashSet<String> = captures
         .iter()

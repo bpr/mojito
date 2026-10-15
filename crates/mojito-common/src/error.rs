@@ -161,6 +161,10 @@ pub enum TypeError {
     /// These words remain lexer-level identifiers so later syntax can adopt
     /// them contextually.
     ReservedName(String),
+    /// A decorator whose operands, or whose combination with another
+    /// decorator on the same declaration, the pin rejects. Carries the
+    /// pin's message.
+    InvalidDecorator(String),
     /// A bare assignment (`x = e` or `a, b = e`) targets a name that is not in
     /// scope. Mojito requires `var` to declare a new variable.
     AssignToUndeclared(String),
@@ -631,6 +635,7 @@ impl fmt::Display for TypeError {
             Self::ReservedName(name) => {
                 write!(f, "'{name}' is a reserved word and cannot name a function")
             }
+            Self::InvalidDecorator(message) => f.write_str(message),
             Self::ImmutableBinding(name) => {
                 write!(f, "expression must be mutable in assignment ('{name}')")
             }

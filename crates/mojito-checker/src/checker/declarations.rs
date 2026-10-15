@@ -3,6 +3,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::DeclaredParam;
+use mojito_checked::declaration::InlineLevel;
 use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy};
 
@@ -1231,6 +1232,7 @@ impl Checker {
         m: &Method,
         effect_key: String,
     ) -> Result<(), TypeError> {
+        InlineLevel::of(&m.decorators).map_err(TypeError::InvalidDecorator)?;
         let is_implicit = m
             .decorators
             .iter()
