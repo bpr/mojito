@@ -24,7 +24,7 @@ use crate::mir::verify::{instruction_operand_regs, instruction_result_regs};
 use crate::mir::{
     MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg, MirTerm,
     TyArg, count_register_reads, instruction_regions, instruction_regions_mut, instruction_slots,
-    matched_parameter_arguments,
+    matched_parameter_arguments, supplied_parameter_arguments,
 };
 use mojito_ast::ast::InfixOp;
 use mojito_hir::hir::VarId;
@@ -162,8 +162,8 @@ pub fn has_no_destructor(ty: &Ty) -> bool {
 /// declarations), and then the instructions that only computed a dropped
 /// argument: an unread copy of a slot whose type has no destructor, a
 /// built-in operator that cannot trap or that only fed dropped arguments,
-/// and anything trivially dead. A removed parameter that a kept parameter's default reads keeps its
-/// argument, which the call's omission of the kept one may need.
+/// and anything trivially dead. A removed parameter that the default of a kept parameter the call
+/// omits reads keeps its argument, which that default takes its value from.
 pub fn without_removed_forwards<'a>(
     name: &str,
     function: &MirFunction,
@@ -397,7 +397,8 @@ fn drop_receiver_arguments(
 
 /// Drop from one call of `target`, whose compile-time parameters are
 /// `decls`, the arguments of its removed parameters `ids`; returns whether
-/// it dropped one.
+/// it dropped one. A removed parameter's argument stays when the call
+/// omits a kept parameter whose default reads it.
 fn drop_arguments(
     target: &str,
     decls: &[ParamDecl],
@@ -405,8 +406,15 @@ fn drop_arguments(
     param_arg_regs: &mut [MirParamArg],
     instantiated_args: &mut Vec<TyArg>,
 ) -> bool {
+    let supplied: Vec<&ParamId> = supplied_parameter_arguments(decls, param_arg_regs)
+        .into_iter()
+        .map(|(decl, _)| decl.id())
+        .collect();
     let mut defaulted = Walker::new(vec![target], &|_| None);
-    for decl in decls.iter().filter(|decl| !ids.contains(decl.id())) {
+    for decl in decls
+        .iter()
+        .filter(|decl| !ids.contains(decl.id()) && !supplied.contains(&decl.id()))
+    {
         match decl {
             ParamDecl::Type { default, .. } => defaulted.visit(default),
             ParamDecl::Value { default, .. } => defaulted.visit(default),

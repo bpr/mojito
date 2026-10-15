@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A forward to a removed parameter that a kept parameter's default reads no
+  longer keeps its instances apart when the call supplies that parameter
+  (R970): `remove-unused-params` keeps such an argument only where the call
+  omits the kept parameter, so `dmid[x]` returning `dleaf[x, 2]()`, where
+  `dleaf[a: Int, b: Int = a]` reads only `b`, has one instance
+  (`assets/ok/forwarded_parameter_instances.mojo`).
 - A parameter forwarded through a built-in operator that could trap no
   longer keeps its instances apart (R969): `remove-unused-params`' view of
   a caller erases such an operator when every reader of it was a dropped

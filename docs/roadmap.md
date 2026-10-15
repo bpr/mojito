@@ -462,23 +462,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R970 A forward to a removed parameter that a kept default reads
-  keeps its instances apart**
-
-  `dmid[x]` whose body is `return dleaf[x, 2]()`, where
-  `dleaf[a: Int, b: Int = a]` reads only `b`, has one instance per `x`,
-  where the pin keeps one.
-  - `mir::without_removed_forwards` keeps the argument of every removed
-    parameter some kept parameter's default reads, since a call omitting
-    the kept one takes its default from it.
-  - The test is per callee, not per call: this call passes `b`
-    explicitly, so `a`'s argument is unused.
-  - Keep the argument only when the call omits a kept parameter whose
-    default reads it, using `matched_parameter_arguments` to see which
-    parameters the call supplies.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R971 A parameter forwarded through a subscript call keeps its
   instances apart**
 

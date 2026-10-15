@@ -107,6 +107,8 @@
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 192, end: 194, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 192, end: 194, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 198, end: 199, origin: present($v0) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 192, end: 199, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 187, end: 202, origin: absent }) }],
+        removed_params: [param_id { owner: "div_fwd", slot: 0 }],
+        callee_removed_params: [callee_params { callee: "leaf", params: [param_id { owner: "leaf", slot: 0 }] }],
         blocks: [
           bb0 {
             instructions: [
@@ -252,6 +254,8 @@
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 456, end: 457, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 450, end: 463, origin: absent }) }],
+        removed_params: [param_id { owner: "dmid", slot: 0 }],
+        callee_removed_params: [callee_params { callee: "dleaf", params: [param_id { owner: "dleaf", slot: 0 }] }],
         blocks: [
           bb0 {
             instructions: [

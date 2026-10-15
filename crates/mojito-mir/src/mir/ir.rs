@@ -255,7 +255,8 @@ pub fn count_register_reads(blocks: &mut [MirBlock], reads: &mut [u32]) {
     }
 }
 
-/// Each supplied compile-time argument paired with the declaration it fills.
+/// Each supplied compile-time argument with a run-time register paired
+/// with the declaration it fills, and that register.
 ///
 /// Positional arguments skip the inferred-only declarations
 /// (`hash[T: Hashable, //, HasherType]` binds `HasherType` first), as the
@@ -264,6 +265,23 @@ pub fn matched_parameter_arguments<'a>(
     decls: &'a [ParamDecl],
     arguments: &'a [MirParamArg],
 ) -> Vec<(&'a ParamDecl, Reg, &'a MirParamArg)> {
+    supplied_parameter_arguments(decls, arguments)
+        .into_iter()
+        .filter_map(|(declaration, argument)| {
+            argument
+                .value
+                .map(|value_reg| (declaration, value_reg, argument))
+        })
+        .collect()
+}
+
+/// Each supplied compile-time argument paired with the declaration it
+/// fills, a closed value or type argument with no register included, by
+/// [`matched_parameter_arguments`]' binding.
+pub fn supplied_parameter_arguments<'a>(
+    decls: &'a [ParamDecl],
+    arguments: &'a [MirParamArg],
+) -> Vec<(&'a ParamDecl, &'a MirParamArg)> {
     let explicit: Vec<&ParamDecl> = decls
         .iter()
         .filter(|declaration| {
@@ -280,14 +298,8 @@ pub fn matched_parameter_arguments<'a>(
         })
         .collect();
     let mut positional = 0;
-    let mut matched = Vec::new();
+    let mut supplied = Vec::new();
     for argument in arguments {
-        let Some(value_reg) = argument.value else {
-            if argument.name.is_none() {
-                positional += 1;
-            }
-            continue;
-        };
         let declaration = if let Some(name) = &argument.name {
             decls.iter().find(|declaration| declaration.name() == name)
         } else {
@@ -306,10 +318,10 @@ pub fn matched_parameter_arguments<'a>(
             declaration
         };
         if let Some(declaration) = declaration {
-            matched.push((declaration, value_reg, argument));
+            supplied.push((declaration, argument));
         }
     }
-    matched
+    supplied
 }
 
 /// Every register an instruction defines or reads, mutably.
