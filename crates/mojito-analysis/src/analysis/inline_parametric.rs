@@ -98,7 +98,7 @@ use std::collections::HashMap;
 
 pub const INLINE_PARAMETRIC: CallGraphPass = CallGraphPass {
     name: "inline-parametric",
-    follows: is_inlined_before_elaboration,
+    follows: |declaration, _| is_inlined_before_elaboration(declaration),
     run: inline_parametric,
 };
 

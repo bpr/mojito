@@ -62,7 +62,7 @@ pub struct CallGraphPass {
     pub name: &'static str,
     /// Whether the pass reads the body of a callee so declared: the calls
     /// to one are the edges of the call graph it walks.
-    pub follows: fn(&MirFunctionDeclaration) -> bool,
+    pub follows: fn(&MirFunctionDeclaration, &MirDeclarations) -> bool,
     /// Rewrite the body, and say whether it changed, as [`BodyPass::run`].
     pub run: fn(&str, &mut MirFunction, &MirDeclarations, &Callees<'_>) -> bool,
 }
@@ -73,7 +73,7 @@ pub struct Callees<'a> {
     program: Option<ProgramCallees<'a>>,
     package: Option<&'a PackageBodies>,
     declarations: &'a MirDeclarations,
-    follows: fn(&MirFunctionDeclaration) -> bool,
+    follows: fn(&MirFunctionDeclaration, &MirDeclarations) -> bool,
 }
 
 impl Callees<'_> {
@@ -96,15 +96,20 @@ impl Callees<'_> {
                 .then(|| &program.functions[row].1);
         }
         let package = self.package?;
-        if !package.contains(name) || !self.declarations.function(name).is_some_and(self.follows) {
+        if !package.contains(name)
+            || !self
+                .declarations
+                .function(name)
+                .is_some_and(|declaration| (self.follows)(declaration, self.declarations))
+        {
             return None;
         }
         let declarations = self.declarations;
         if package.on_cycle(name, &|function| {
             followed_callees(function, |callee| {
-                declarations
-                    .function(callee)
-                    .is_some_and(followed_by_a_call_graph_pass)
+                declarations.function(callee).is_some_and(|declaration| {
+                    followed_by_a_call_graph_pass(declaration, declarations)
+                })
             })
         }) {
             return None;
@@ -361,7 +366,7 @@ pub(super) fn run_call_graph_pass(
     let followed: HashSet<usize> = declarations
         .functions
         .iter()
-        .filter(|declaration| (pass.follows)(declaration))
+        .filter(|declaration| (pass.follows)(declaration, declarations))
         .filter_map(|declaration| rows.get(&declaration.lowered_name).copied())
         .collect();
     let (order, cyclic) = bottom_up_order(functions, &rows, &followed);
@@ -479,9 +484,12 @@ fn followed_callees(function: &MirFunction, followed: impl Fn(&str) -> bool) -> 
 }
 
 /// Whether some [`PIPELINE`] call-graph pass follows a callee so declared.
-fn followed_by_a_call_graph_pass(declaration: &MirFunctionDeclaration) -> bool {
+fn followed_by_a_call_graph_pass(
+    declaration: &MirFunctionDeclaration,
+    declarations: &MirDeclarations,
+) -> bool {
     PIPELINE.iter().any(|pass| match pass {
-        Pass::CallGraph(pass) => (pass.follows)(declaration),
+        Pass::CallGraph(pass) => (pass.follows)(declaration, declarations),
         _ => false,
     })
 }

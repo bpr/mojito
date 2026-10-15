@@ -3,8 +3,8 @@
 //! instances differing only in a parameter the generator never reads are
 //! one.
 //!
-//! The pass records on the body the function's own compile-time parameters
-//! that nothing in its body or signature reads
+//! The pass records on the body the function's own compile-time parameters,
+//! and a method's struct's, that nothing in its body or signature reads
 //! ([`mojito_mir::mir::unread_parameters`]), and the elaborator leaves
 //! their arguments out of an instance's identity. Upstream also rewrites the
 //! generator's signature and every call of it without those arguments, and
@@ -21,6 +21,11 @@
 //! function reads through a nested body it names only the binders that
 //! body kept. Those removals join the snapshot the verifier reads.
 //!
+//! A method is a generator over its struct's parameters as well: the
+//! elaborator keys and names one that removed any of them off the struct
+//! template rather than the owner instance, and a static call's spelled
+//! receiver `S[n]` forwards `n` to the struct parameter it fills.
+//!
 //! The pass reads a callee's removals only from a finished body of the same
 //! unit, as upstream skips an external generator, and only off a cycle
 //! ([`Callees::unit_body`]): a forward around a recursive call stays a
@@ -31,7 +36,7 @@
 use super::pre_elaboration::{CallGraphPass, Callees};
 use mojito_mir::mir::{
     Const, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
-    instruction_regions, unread_parameters, without_removed_forwards,
+    instruction_regions, method_owner_params, unread_parameters, without_removed_forwards,
 };
 use mojito_types::param_expr::ParamId;
 use std::collections::{BTreeMap, BTreeSet};
@@ -112,14 +117,18 @@ pub fn remove_unused_params(
 }
 
 /// Whether the function so declared has a compile-time parameter of its
-/// own, which a call of it may pass on, or is nested in another, whose
-/// parameters it may read.
-fn has_own_parameters(declaration: &MirFunctionDeclaration) -> bool {
+/// own or, as a method, its struct's, which a call of it may pass on, or is
+/// nested in another, whose parameters it may read.
+fn has_own_parameters(
+    declaration: &MirFunctionDeclaration,
+    declarations: &MirDeclarations,
+) -> bool {
     declaration.enclosing.is_some()
         || declaration
             .param_decls
             .iter()
             .any(|decl| *decl.id().owner == *declaration.lowered_name)
+        || !method_owner_params(&declaration.lowered_name, declarations).is_empty()
 }
 
 /// The callee of each call and resolved method call in `blocks` and their

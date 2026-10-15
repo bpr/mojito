@@ -2795,8 +2795,10 @@ pub struct MirFunction {
     /// control-flow registers are filled by instruction typing before verification.
     #[serde(serialize_with = "super::sorted_map")]
     pub reg_types: HashMap<u32, Ty>,
-    /// The function's own compile-time parameters nothing in its body or
-    /// signature reads, sorted by slot: upstream's `RemoveUnusedParams`
+    /// The compile-time parameters nothing in its body or signature reads,
+    /// of its own, its struct's for a method, or its enclosing
+    /// declarations' for a nested function, sorted by owner and slot:
+    /// upstream's `RemoveUnusedParams`
     /// result, which the elaborator leaves out of an instance's identity.
     /// Not encoded: a package holds its bodies before the pipeline that
     /// computes it. Empty on a concrete instance.

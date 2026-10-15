@@ -243,7 +243,32 @@ impl<'a> Specializer<'a> {
                 ),
             ));
         }
+        let mut arguments = arguments;
         let owner = match bindings.self_instance.as_ref() {
+            // A method that removed one of its struct's parameters is a
+            // generator over the ones it kept, as upstream's method
+            // generator lists them before its own: it names no owner
+            // instance, and its kept owner arguments lead its own.
+            Some((owner_template, _))
+                if self
+                    .removed_params(template)
+                    .iter()
+                    .any(|id| *id.owner == **owner_template) =>
+            {
+                let removed = self.removed_params(template);
+                let decls = self
+                    .structs
+                    .get(owner_template.as_str())
+                    .map_or(&[][..], |owner| owner.param_decls.as_slice());
+                arguments = decls
+                    .iter()
+                    .zip(ordered_arguments(decls, &bindings, template)?)
+                    .filter(|(decl, _)| !removed.contains(decl.id()))
+                    .map(|(_, argument)| argument)
+                    .chain(arguments)
+                    .collect();
+                None
+            }
             Some((_, instance)) if let TyKind::Struct(name, _) = instance.kind() => {
                 Some(name.clone())
             }
@@ -2932,11 +2957,12 @@ impl<'a> Specializer<'a> {
             // type of its own struct applies (`SIMD[dt, Self.width()]`): the
             // struct is declared by the body that uses it, once the method
             // has run. A struct whose field types are closed lays out now,
-            // for the method to construct it.
+            // for the method to construct it. A method that removed its
+            // struct's parameters is named off the template.
             if template.fields.iter().any(|(_, ty)| is_symbolic(ty))
                 && self.demand_stack.iter().any(|demanded| {
                     mojito_symbol::symbol::split_method_symbol(demanded)
-                        .is_some_and(|(instance, _)| instance == name)
+                        .is_some_and(|(instance, _)| instance == name || instance == template_name)
                 })
             {
                 self.discovered_types.remove(&ty);

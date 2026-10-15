@@ -66,7 +66,7 @@ impl<'a> Flatten<'a> {
         if let Some(type_name) = self.type_receiver_name(object) {
             let target = callable_target(&node.adjustments)
                 .unwrap_or_else(|| format!("{type_name}.{method}"));
-            let receiver = self.static_receiver(object);
+            let receiver = Self::static_receiver(object);
             return self.static_method_call(call, &target, receiver, None, args, kwargs);
         }
         if let Some(dest) = self.lower_elided_receiver_call(call, object, args, kwargs) {
@@ -96,14 +96,12 @@ impl<'a> Flatten<'a> {
     /// The instance a static call's spelled receiver names (`Pair[Int]`),
     /// which the checker recorded as the receiver expression's type. Inside
     /// a static method of a value-parameterized struct, the receiver may
-    /// spell that struct's binders (`W[Self.k]`), which the VM reads off the
-    /// method's receiver-less `self` slot, so the slot is interned.
-    pub(super) fn static_receiver(&mut self, object: Node<'a>) -> Option<Ty> {
-        let receiver = object.ty().filter(
-            |ty| matches!(ty.kind(), TyKind::Struct(_, arguments) if !arguments.is_empty()),
-        )?;
-        self.intern_static_self();
-        Some(receiver)
+    /// spell that struct's binders (`W[Self.k]`), which the elaborator
+    /// substitutes as it does any binder of the body.
+    pub(super) fn static_receiver(object: Node<'a>) -> Option<Ty> {
+        object
+            .ty()
+            .filter(|ty| matches!(ty.kind(), TyKind::Struct(_, arguments) if !arguments.is_empty()))
     }
 
     /// The type name node `node` reads: a name the check bound to nothing

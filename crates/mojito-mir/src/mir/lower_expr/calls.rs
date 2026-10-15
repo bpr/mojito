@@ -32,7 +32,7 @@ impl<'a> Flatten<'a> {
             return None;
         }
         let _ = self.lower_call_receiver(object);
-        let receiver = self.static_receiver(object);
+        let receiver = Self::static_receiver(object);
         let (param_arg_regs, instantiated_args) = if contract.param_decls.is_empty() {
             (Vec::new(), Vec::new())
         } else {

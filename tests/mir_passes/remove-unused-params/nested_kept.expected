@@ -73,6 +73,8 @@
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: func { environment: thin, param_decls: [], params: [], names: [], return_type: Int, required: [], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [], ref_params: [], ref_return: absent, transfers: [] } }, reg_type { reg: %r1, type: func { environment: thin, param_decls: [], params: [], names: [], return_type: Int, required: [], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [], ref_params: [], ref_return: absent, transfers: [] } }, reg_type { reg: %r2, type: Int }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 117, end: 153, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 165, end: 172, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 165, end: 172, origin: absent }) }],
+        removed_params: [param_id { owner: "outer", slot: 0 }],
+        callee_removed_params: [callee_params { callee: "outer$inner", params: [param_id { owner: "outer", slot: 0 }] }],
         blocks: [
           bb0 {
             instructions: [
@@ -103,6 +105,7 @@
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 152, end: 153, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 152, end: 153, origin: absent }) }],
+        removed_params: [param_id { owner: "outer", slot: 0 }],
         blocks: [
           bb0 {
             instructions: [

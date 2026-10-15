@@ -1863,20 +1863,30 @@ impl Checker {
                 // A `UInt`-, `Bool`-, vector-, struct-, or `DType`-typed value
                 // parameter (`AHasher[key: U256]`, `Tagged[e: Extent]`)
                 // reads as its declared type; the other scalar kinds read as
-                // `Int`.
-                Some(ParamDecl::Value { ty, .. })
-                    if matches!(
+                // `Int`. A read at its declared type is upstream's
+                // `kgen.param.constant` of the binder, never a read of a
+                // `Self` value.
+                Some(decl @ ParamDecl::Value { ty, .. }) => {
+                    let read = if matches!(
                         *ty.kind(),
                         TyKind::UInt
                             | TyKind::Bool
                             | TyKind::Simd { .. }
                             | TyKind::Struct(..)
                             | TyKind::Dtype
-                    ) =>
-                {
-                    Ok((*ty).clone())
+                    ) {
+                        (*ty).clone()
+                    } else {
+                        Ty::int()
+                    };
+                    if read == *ty {
+                        self.record_member_value(
+                            span,
+                            super::annotations::value_parameter_expr(decl, ty),
+                        );
+                    }
+                    Ok(read)
                 }
-                Some(ParamDecl::Value { .. }) => Ok(Ty::int()),
                 _ => self
                     .read_type_member(span, object, field)
                     .unwrap_or_else(|| Err(TypeError::UnknownSelfParam(field.to_string()))),

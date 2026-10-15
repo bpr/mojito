@@ -1804,3 +1804,24 @@ bundled library's `nodebug` callees reach the pass, which moved about 490
 fixtures by one inlined `_is_valid_utf8` each. It is regenerated with this
 change, and the "before" column above is the previous binary's report, so
 that shift is not counted here.
+
+## Static methods drop unread struct parameters (2026-10-15, R909)
+
+`remove-unused-params` now treats a method as a generator over its struct's
+parameters too, and a static call's spelled receiver `S[n]` as a forward
+of `n` (`docs/architecture.md` §Pre-Elaboration Pipeline). Its stage
+fixture, `assets/ok/static_method_unread_owner_instances.mojo`, debug
+binary, before (the parent commit) and after:
+
+| | before | after | change |
+|---|---:|---:|---:|
+| `concrete_functions` | 16 | 12 | −4 |
+| `generator_instances` | 11 | 7 | −4 |
+| `generator_instance_instructions` | 15 | 9 | −6 |
+
+`S.st`, `S.chained`, and `caller` each fall from two instances to one, and
+`P.first` from three to two, as on the pin. Over every fixture under
+`assets/`, twelve move, all through static methods of parametric structs,
+for 394 → 364 generator instances in total, and none changes its output or
+diagnostics. A method with a receiver keeps its struct's parameters, where
+the pin removes them (R976–R978).

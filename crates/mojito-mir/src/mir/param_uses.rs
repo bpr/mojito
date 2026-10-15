@@ -1,6 +1,7 @@
-//! Parameter uses: which of a generic function's own compile-time
-//! parameters its body and signature read, the analysis upstream's
-//! `RemoveUnusedParams` runs before it drops a parameter from a generator.
+//! Parameter uses: which of a generic function's compile-time parameters,
+//! its own and, for a method, its struct's, its body and signature read,
+//! the analysis upstream's `RemoveUnusedParams` runs before it drops a
+//! parameter from a generator.
 //!
 //! MIR names a binder by its identity wherever it refers to one: a type
 //! parameter, a dependent type, a parameter expression, a call's parameter
@@ -8,7 +9,9 @@
 //! attribute and type an operation holds: it visits the value's serialized
 //! form, and a `(owner, slot)` pair spelling one of the function's binders
 //! is a read of it. A pair that only happens to spell one counts too, which
-//! keeps a parameter and never drops one. Two further reads are not
+//! keeps a parameter and never drops one. A method's struct spelled with
+//! no arguments is its `Self` (a receiver, `out self`, a `Self` result),
+//! which reads every parameter of the struct. Two further reads are not
 //! identities: a value parameter's runtime reads go through the slot its
 //! name binds, and a body nested in the function (named `f$…`) reads the
 //! binders of its enclosing scope its own analysis kept, as upstream's
@@ -34,10 +37,11 @@ use std::fmt;
 
 /// The parameters upstream's `RemoveUnusedParams` removes from `name`.
 ///
-/// For a top-level function they are its own compile-time parameters, and
-/// for a nested one the parameters of the declarations it is nested in,
-/// that nothing in its body `function` or its declaration's signature
-/// reads, sorted by owner and slot. A nested body `function` names reads
+/// For a top-level function they are its own compile-time parameters and,
+/// for a method, its struct's, as upstream's method generator lists them
+/// before its own; for a nested one the parameters of the declarations it
+/// is nested in; each that nothing in its body `function` or its
+/// declaration's signature reads, sorted by owner and slot. A nested body `function` names reads
 /// the candidates its own removals `nested` keep; one `nested` does not
 /// answer reads them all.
 ///
@@ -62,13 +66,31 @@ pub fn unread_parameters(
     if candidates.is_empty() {
         return Vec::new();
     }
+    let structure = method_struct(name, declarations);
     let mut owners: Vec<&str> = Vec::new();
     for decl in &candidates {
         if !owners.contains(&&*decl.id().owner) {
             owners.push(&decl.id().owner);
         }
     }
+    let mut bodies: Vec<&str> = owners
+        .iter()
+        .copied()
+        .filter(|owner| structure.is_none_or(|(spelled, _)| spelled != *owner))
+        .collect();
+    if !bodies.contains(&name) {
+        bodies.push(name);
+    }
     let mut walker = Walker::new(owners, nested);
+    walker.bodies = bodies;
+    if let Some((spelled, decls)) = structure
+        && let Some(owner) = walker.owners.iter().position(|owner| *owner == spelled)
+    {
+        walker.self_spelling = Some((
+            spelled,
+            decls.iter().map(|decl| (owner, decl.id().slot)).collect(),
+        ));
+    }
     walker.signature(declaration);
     walker.body(function);
     if walker.reads_all {
@@ -100,6 +122,16 @@ pub fn unread_parameters(
 /// The removals of a body nested in the function being analysed, by its
 /// name: `None` when its analysis is not at hand.
 pub type NestedRemovals<'a> = dyn Fn(&str) -> Option<&'a [ParamId]> + 'a;
+
+/// The compile-time parameters of the struct whose method `name`, or the
+/// method `name` is nested in, is: upstream's method generator lists them
+/// before its own. Empty for a function that is no method.
+pub fn method_owner_params<'a>(
+    name: &'a str,
+    declarations: &'a MirDeclarations,
+) -> &'a [ParamDecl] {
+    method_struct(name, declarations).map_or(&[], |(_, decls)| decls)
+}
 
 /// A compiler-known scalar, whose drop runs no code.
 pub fn has_no_destructor(ty: &Ty) -> bool {
@@ -149,10 +181,11 @@ pub fn without_removed_forwards<'a>(
 }
 
 /// The parameters `unread_parameters` may remove from `name`: its own
-/// compile-time parameters, or a nested function's enclosing declarations'
-/// parameters, each once, but a callable value parameter.
+/// compile-time parameters and, for a method, its struct's, or a nested
+/// function's enclosing declarations' parameters, each once, but a callable
+/// value parameter.
 fn candidate_parameters<'d>(
-    name: &str,
+    name: &'d str,
     declaration: &'d MirFunctionDeclaration,
     declarations: &'d MirDeclarations,
 ) -> Vec<&'d ParamDecl> {
@@ -164,6 +197,11 @@ fn candidate_parameters<'d>(
                 .iter()
                 .filter(|decl| &*decl.id().owner == name),
         );
+        for decl in method_owner_params(name, declarations) {
+            if !candidates.iter().any(|seen| seen.id() == decl.id()) {
+                candidates.push(decl);
+            }
+        }
     }
     let mut link = declaration
         .enclosing
@@ -182,6 +220,25 @@ fn candidate_parameters<'d>(
     }
     candidates.retain(|decl| !is_callable_value(decl));
     candidates
+}
+
+/// The struct whose method `name`, or the outermost declaration `name` is
+/// nested in, is, by its spelling, with its compile-time parameters.
+fn method_struct<'a>(
+    name: &'a str,
+    declarations: &'a MirDeclarations,
+) -> Option<(&'a str, &'a [ParamDecl])> {
+    let mut root = name;
+    while let Some(enclosing) = declarations
+        .function(root)
+        .and_then(|declaration| declaration.enclosing.as_deref())
+    {
+        root = enclosing;
+    }
+    let (owner, _) = mojito_symbol::symbol::split_method_symbol(root)?;
+    declarations
+        .structure(owner)
+        .map(|structure| (owner, structure.param_decls.as_slice()))
 }
 
 fn is_callable_value(decl: &ParamDecl) -> bool {
@@ -233,11 +290,17 @@ fn drop_removed_arguments<'a>(
                 func,
                 param_arg_regs,
                 instantiated_args,
+                receiver,
                 ..
             } => {
                 let Some(callee) = declarations.function(&func.0) else {
                     continue;
                 };
+                if let Some(ids) = removed(&func.0)
+                    && drop_receiver_arguments(receiver, declarations, ids)
+                {
+                    discounted.insert(func.0.clone());
+                }
                 (
                     &func.0,
                     callee.param_decls.as_slice(),
@@ -265,6 +328,41 @@ fn drop_removed_arguments<'a>(
             discounted.insert(target.clone());
         }
     }
+}
+
+/// Drop from a static call's spelled receiver `S[…]` the arguments of the
+/// struct's parameters among the callee's removed `ids`, and the receiver
+/// itself when it keeps none; returns whether it dropped one. A receiver
+/// that does not spell every parameter of its struct is left whole.
+fn drop_receiver_arguments(
+    receiver: &mut Option<Ty>,
+    declarations: &MirDeclarations,
+    ids: &[ParamId],
+) -> bool {
+    let Some(TyKind::Struct(name, arguments)) = receiver.as_ref().map(Ty::kind) else {
+        return false;
+    };
+    let Some(decls) = declarations
+        .structure(name)
+        .map(|structure| structure.param_decls.as_slice())
+        .filter(|decls| arguments.len() >= decls.len())
+    else {
+        return false;
+    };
+    let kept: Vec<bool> = decls.iter().map(|decl| !ids.contains(decl.id())).collect();
+    if kept.iter().all(|kept| *kept) {
+        return false;
+    }
+    *receiver = kept.contains(&true).then(|| {
+        let arguments = arguments
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| kept.get(*index).is_none_or(|kept| *kept))
+            .map(|(_, argument)| argument.clone())
+            .collect();
+        TyKind::Struct(name.clone(), arguments).into()
+    });
+    true
 }
 
 /// Drop from one call of `target`, whose compile-time parameters are
@@ -506,6 +604,19 @@ impl SlotReads<'_> {
 /// identities of the binders of `owners`.
 struct Walker<'o, 'a, 'n> {
     owners: Vec<&'o str>,
+    /// The functions whose nested (`f$…`) and lifted (`$comptime$f$…`)
+    /// bodies a walked value may name.
+    bodies: Vec<&'o str>,
+    /// The struct whose method the function is, and its binders as `slots`
+    /// entries: the struct spelled with no arguments is the method's `Self`,
+    /// which reads them all.
+    self_spelling: Option<(&'o str, Vec<(usize, usize)>)>,
+    /// Each tuple variant the walk is inside: for a struct type, how many of
+    /// its fields were walked and whether its name is `self_spelling`'s.
+    variants: Vec<Option<(usize, bool)>>,
+    /// Whether the next sequence is the arguments of a struct type spelling
+    /// `self_spelling`'s name.
+    self_arguments: bool,
     /// The removals of the nested bodies a walked value names.
     nested: &'n NestedRemovals<'a>,
     /// The binders a walked value names, as the index of their owner in
@@ -541,7 +652,11 @@ enum Leaf {
 impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
     fn new(owners: Vec<&'o str>, nested: &'n NestedRemovals<'a>) -> Self {
         Self {
+            bodies: owners.clone(),
             owners,
+            self_spelling: None,
+            variants: Vec::new(),
+            self_arguments: false,
             nested,
             slots: BTreeSet::new(),
             nested_removals: Vec::new(),
@@ -610,6 +725,8 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
     fn ty(&mut self, ty: &Ty) {
         if !self.types.contains_key(ty) {
             let mut walker = Walker::new(self.owners.clone(), self.nested);
+            walker.bodies.clone_from(&self.bodies);
+            walker.self_spelling.clone_from(&self.self_spelling);
             walker.visit(ty);
             self.types.insert(
                 ty.clone(),
@@ -628,15 +745,23 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
     /// unbound parameter hole) may name anything.
     fn visit<T: Serialize + ?Sized>(&mut self, value: &T) {
         let depth = self.tuples.len();
+        let variants = self.variants.len();
         if let Err(Unwalkable(opaque)) = value.serialize(&mut *self) {
             self.reads_all |= opaque;
         }
         self.tuples.truncate(depth);
+        self.variants.truncate(variants);
     }
 
     fn string(&mut self, value: &str) {
+        if let Some(Some((0, named))) = self.variants.last_mut() {
+            *named = self
+                .self_spelling
+                .as_ref()
+                .is_some_and(|(spelled, _)| *spelled == value);
+        }
         let owned = |name: &str| {
-            self.owners.iter().any(|owner| {
+            self.bodies.iter().any(|owner| {
                 name.strip_prefix(owner)
                     .is_some_and(|rest| rest.starts_with('$'))
             })
@@ -847,7 +972,13 @@ impl ser::Serializer for &mut Walker<'_, '_, '_> {
         Ok(())
     }
 
-    fn serialize_seq(self, _: Option<usize>) -> Result<Self, Unwalkable> {
+    fn serialize_seq(self, length: Option<usize>) -> Result<Self, Unwalkable> {
+        if std::mem::take(&mut self.self_arguments)
+            && length == Some(0)
+            && let Some((_, slots)) = &self.self_spelling
+        {
+            self.slots.extend(slots.iter().copied());
+        }
         Ok(self.compound())
     }
 
@@ -864,9 +995,11 @@ impl ser::Serializer for &mut Walker<'_, '_, '_> {
         self,
         _: &'static str,
         _: u32,
-        _: &'static str,
+        variant: &'static str,
         _: usize,
     ) -> Result<Self, Unwalkable> {
+        self.variants
+            .push((variant == "Struct" && self.self_spelling.is_some()).then_some((0, false)));
         Ok(self.compound())
     }
 
@@ -940,11 +1073,17 @@ impl ser::SerializeTupleVariant for &mut Walker<'_, '_, '_> {
     type Error = Unwalkable;
 
     fn serialize_field<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Unwalkable> {
+        self.self_arguments = matches!(self.variants.last(), Some(Some((1, true))));
         self.visit(value);
+        self.self_arguments = false;
+        if let Some(Some((field, _))) = self.variants.last_mut() {
+            *field += 1;
+        }
         Ok(())
     }
 
     fn end(self) -> Result<(), Unwalkable> {
+        self.variants.pop();
         self.leaf = Leaf::Other;
         Ok(())
     }

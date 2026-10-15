@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R976**.
+Next free ID: **R980**.
 
 ## Ordered Work
 
@@ -512,18 +512,55 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R909.
   - Model: Fable, Not Planned.
 
-- [ ] **R909 A static method's instances differ by owner parameters it
-  never reads**
+- [ ] **R976 An instance cannot take a struct argument whose type spells
+  a parameter the instance removed**
 
-  `S[1].st()` and `S[2].st()` call two instances of a static method that
-  ignores `n`, where the pin calls one.
-  - The owner's identity is `InstanceKey::owner` and the method symbol's
-    prefix (`S$mono$V1.st`), not a method argument, so
-    `remove-unused-params` never sees it.
-  - A method whose receiver type spells the owner (`self: Box[n]`) keeps
-    it on the pin too.
-  - Removing it changes how a method instance is named.
+  `fb[n](b: Box[n])` must keep `n` in Mojito because its one instance
+  would need one concrete type for `b`, while `Box$mono$V1` and
+  `Box$mono$V2` are distinct nominal structs.
+  - On the pin, `fb` is one `_REMOVED_ARG` generator for every `n`: a
+    struct passed by address does not make its parameters part of the
+    instance.
+  - Concrete MIR has no struct type with an erased argument, so the
+    elaborator cannot substitute a removed binder inside one.
+  - The fix gives an instance a struct type whose removed arguments are
+    erased, laid out from the arguments its fields read, below the waist.
   - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R977 A parameter that only spells a by-address argument's or a
+  result's struct type still splits instances**
+
+  `fb[n](b: Box[n])`, `fa[n](a: Arr[n])`, `fav[n](var a: Arr[n])`, and
+  `mk[n]() -> Box[n]` each keep `n` in `remove-unused-params`, where the
+  pin removes it from all four.
+  - `pass_[n](var a: Arr[n]) -> Arr[n]`, whose by-value result's layout
+    depends on `n`, keeps it on the pin.
+  - At `--no-optimization` the pin keeps `n` in `fa` and `fav`, whose
+    `Arr[n]` holds a `SIMD[int64, n]` field, but still drops it in `fb`
+    and `mk`.
+  - `mir::unread_parameters` counts every struct type spelling a binder as
+    a read; it should skip a spelling whose layout the body never needs.
+  - Depends on R976.
+  - Model: Fable, Not Planned.
+
+- [ ] **R978 An instance method's instances differ by struct parameters
+  it never reads**
+
+  `Box[1](1).get()` and `Box[2](2).get()` reach two instances of a `get`
+  that ignores `n`, where the pin keeps one, as it does for
+  `Box.__init__`, a static `Box.make() -> Self`, `Box.take(var self)`,
+  and `Arr.first`.
+  - A static method's unread struct parameter is removed (R909); a
+    method's receiver, `out self`, or `Self` result spells the struct with
+    no arguments, which `mir::unread_parameters` reads as every struct
+    parameter.
+  - That spelling should count as a read only where R977's layout rule
+    says the parameter is needed.
+  - Upstream's method generator lists its struct's parameters before its
+    own; Mojito's method declarations do not restate them, which is the
+    structural end state.
+  - Depends on R977.
   - Model: Fable, Not Planned.
 
 - [ ] **R910 An unread callable compile-time parameter still splits
@@ -3344,6 +3381,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The default should stay a parameter expression over the caller's
     binders, as an explicit `default_only[x, x]()` does.
   - Add the probe as an `assets/ok` fixture once it runs.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R979 `Self.x` of a struct parameter typed `Float64` reads as
+  `Int`**
+
+  `struct F[x: Float64]` whose static `get() -> Float64` returns `Self.x`
+  is rejected with "type mismatch for return: expected Float64, found
+  Int", where the pin prints `1.5`.
+  - `infer_member` (`crates/mojito-checker/src/checker/indexing.rs`) reads
+    a value parameter at its declared type only for `UInt`, `Bool`, SIMD,
+    struct, and `DType` types, and every other one as `Int`.
+  - A read at the declared type is a parameter constant; the rest still
+    lower to a projection of a `self` slot, which a static method interns
+    for it (`intern_static_self`) and which reads every struct parameter.
+  - Reading every type as declared removes both.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

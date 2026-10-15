@@ -851,7 +851,7 @@ impl<'a> Flatten<'a> {
             let target =
                 callable_target(&node.adjustments).unwrap_or_else(|| format!("{name}.{field}"));
             self.emit_call_invalidations(call, args, kwargs);
-            let receiver = self.static_receiver(object);
+            let receiver = Self::static_receiver(object);
             self.emit(MirInstr::Call {
                 dest,
                 func: FuncRef::named(&target),

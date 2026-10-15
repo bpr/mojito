@@ -544,8 +544,8 @@ Register types are explicit and are not re-inferred from mnemonics.
 
 A generic body may carry `removed_params: [param_id { owner: "f", slot: 0 },
 ...]` between `locations` and `blocks` (schema 1.60): the function's own
-compile-time parameters, or a nested function's enclosing declarations'
-parameters, sorted by owner and slot, that the pre-elaboration pass
+compile-time parameters and, for a method, its struct's, or a nested
+function's enclosing declarations' parameters, sorted by owner and slot, that the pre-elaboration pass
 `remove-unused-params` (upstream's `RemoveUnusedParams`) found its body and
 signature never read, which the elaborator leaves out of an instance's
 identity. The writer omits the field when it is empty, as it is on every

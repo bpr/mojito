@@ -211,11 +211,13 @@ folds the operators over it (R840);
    forwarded to a removed callee parameter is removed too (R907); a
    forward around a cycle stays a read, as on the pin. A nested body
    removes the enclosing parameters it never reads, and its enclosing
-   function reads through it only the rest (R908). The pin goes further
-   than this core: it removes a nested generic `def`'s own unread
-   parameters, a `comptime for` nested body's, an owner parameter a
-   method ignores, and a few forwards Mojito still counts; each is a
-   `pmir` entry.
+   function reads through it only the rest (R908). A static method
+   removes the struct parameters it never reads, and a static call's
+   receiver forwards them (R909). The pin goes further than this core: it
+   removes a nested generic `def`'s own unread parameters, a `comptime
+   for` nested body's, a struct parameter a method with a receiver
+   ignores or that only spells a by-address argument's type, and a few
+   forwards Mojito still counts; each is a `pmir` entry.
    Corpus generator instances fall by 16 of 30 543
    (`docs/performance.md`): the bundled library has almost no unread
    parameter, so the stage's effect is the program's own and the

@@ -251,10 +251,8 @@ impl Scope {
         let mut scope = Self {
             kinds: HashMap::new(),
         };
-        let mut root = name;
         let mut link = Some(name);
         while let Some(current) = link {
-            root = current;
             let declaration = declarations.function(current);
             if let Some(declaration) = declaration {
                 scope.declare(&declaration.param_decls);
@@ -262,12 +260,7 @@ impl Scope {
             }
             link = declaration.and_then(|declaration| declaration.enclosing.as_deref());
         }
-        let owner = root.split_once('.').and_then(|(owner, _)| {
-            declarations
-                .structure(owner)
-                .map(|declaration| &declaration.param_decls[..])
-        });
-        scope.declare(owner.unwrap_or(&[]));
+        scope.declare(crate::mir::method_owner_params(name, declarations));
         scope
     }
 

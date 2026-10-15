@@ -61,7 +61,8 @@ mod lower_stmt;
 mod node;
 mod param_uses;
 pub use param_uses::{
-    NestedRemovals, has_no_destructor, unread_parameters, without_removed_forwards,
+    NestedRemovals, has_no_destructor, method_owner_params, unread_parameters,
+    without_removed_forwards,
 };
 mod symbols;
 pub use symbols::{SymbolTable, implicit_callees};
@@ -3191,22 +3192,6 @@ impl<'a> Flatten<'a> {
         }
     }
 
-    /// `Self.n` in a bracket slot, where `n` is the enclosing struct's own
-    /// value parameter (`Counter[Self.length](i)`): read the receiver's
-    /// reified parameter exactly as the expression `Self.n` does (the field
-    /// projection `self.n`, which every backend's field navigation resolves
-    /// through the struct's value parameters). A static method reads it off
-    /// a receiver-less `self` slot typed as the struct at its own binders,
-    /// as the expression `Self.n` there does. `None` when the frame has no
-    /// receiver or `n` is not one of its value parameters.
-    fn receiver_value_parameter_read(&mut self, name: &str, site: &SourceSpan) -> Option<Reg> {
-        let place = self.receiver_value_parameter_place(name)?;
-        let ty = place.ty.clone()?;
-        let dest = self.fresh_typed(site.clone(), Some(place.root), ty);
-        self.emit(MirInstr::LoadPlace { dest, place });
-        Some(dest)
-    }
-
     /// The place `Self.n` names: the projection `self.n` of the receiver,
     /// or of a static method's receiver-less `self` slot. `None` when `n` is
     /// not one of the enclosing struct's value parameters.
@@ -3564,8 +3549,9 @@ impl<'a> Flatten<'a> {
     }
 
     /// A read of the enclosing value binder `expr` names, when it is exactly
-    /// such a reference: the receiver's reified parameter for the enclosing
-    /// struct's own (`Self.k`), otherwise the function's local of its name.
+    /// such a reference: the parameter constant of the enclosing struct's
+    /// own (`Self.k`), upstream's `kgen.param.constant`, otherwise the
+    /// function's local of its name.
     fn enclosing_value_binder_read(&mut self, expr: &ParamExpr, site: &SourceSpan) -> Option<Reg> {
         let mojito_types::param_expr::ParamKind::DeclRef(reference) = expr.kind() else {
             return None;
@@ -3584,7 +3570,7 @@ impl<'a> Flatten<'a> {
                 .iter()
                 .any(|(name, _)| name.as_str() == reference.name.as_ref());
         if struct_binder {
-            return self.receiver_value_parameter_read(&reference.name, site);
+            return Some(self.param_value_register_at(site.clone(), Some(ty), expr.clone()));
         }
         let var = self.var(&reference.name);
         let dest = self.fresh_typed(site.clone(), Some(var), ty);

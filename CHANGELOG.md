@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A static method that never reads its struct's compile-time parameter
+  no longer splits instances (R909): `remove-unused-params` treats a
+  method as a generator over its struct's parameters, as upstream's
+  `RemoveUnusedParams` does, and the elaborator keys and names such a
+  method off the struct template (`S.st$mono`), so `S[1].st()` and
+  `S[2].st()` share one instance, and a caller that only forwards `n`
+  through `S[n].st()` removes it too
+  (assets/ok/static_method_unread_owner_instances.mojo). `Self.n` of a
+  struct's value parameter is now a parameter constant rather than a read
+  of a `self` slot. A method with a receiver, and a function whose only
+  read of a parameter is a by-address argument's struct type, still keep
+  it where the pin removes it (R976–R978); `Self.x` of a `Float64`
+  parameter reads as `Int` (R979).
 - A nested `def` that never reads its enclosing function's compile-time
   parameter no longer splits instances (R908): `remove-unused-params`
   records on a nested body the enclosing parameters it never reads, the

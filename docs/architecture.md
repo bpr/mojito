@@ -5272,8 +5272,16 @@ point where a slot declared in a loop is uninitialized again.
   a generator over its enclosing scope, as upstream lifts a closure to
   one: its candidates are its enclosing declarations' parameters, which it
   records as `removed_params` when it never reads them, and the elaborator
-  keys its instances on the rest (`Specializer::nested_bindings`). The
-  pass follows nested bodies, and a closure or function value counts as a
+  keys its instances on the rest (`Specializer::nested_bindings`). A
+  method is a generator over its struct's parameters as well, as
+  upstream's method generator lists them before its own
+  (`mir::method_owner_params`, R909): they join its candidates, the
+  struct spelled with no arguments (a receiver, `out self`, or `Self`
+  result) reads them all, and a method that removed one is keyed and named
+  off the struct template with its kept struct arguments leading its own
+  (`S.st$mono`, `Specializer::enqueue`), so it names no owner instance. A
+  static call's spelled receiver `S[n]` is a forward of `n` to the struct
+  parameter the callee removed. The pass follows nested bodies, and a closure or function value counts as a
   call-graph edge, so a nested body runs before the function naming it;
   one whose run is not at hand reads every parameter. Another parameter's
   default is not a read: the call site evaluates it. A function in a
@@ -5296,8 +5304,8 @@ point where a slot declared in a loop is uninitialized again.
   reaching the caller: a caller reads its body as that rewrite leaves it
   (`mir::without_removed_forwards`), each call or resolved method call to
   a finished callee with removed parameters dropping their arguments (the argument's register and
-  expression, and the `instantiated_args` entry when those align with the
-  callee's declarations) and then the instructions that only computed one
+  expression, the `instantiated_args` entry when those align with the
+  callee's declarations, and a static call's receiver arguments) and then the instructions that only computed one
   (an unread copy of a slot whose type has no destructor, a built-in
   operator that cannot trap, anything trivially dead). So `mid[n]` that
   only calls `leaf[n]()`, where `leaf` ignores `n`, removes `n` too. A
