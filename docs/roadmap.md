@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R953**.
+Next free ID: **R956**.
 
 ## Ordered Work
 
@@ -87,19 +87,50 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R918 A `nodebug` call through a reference parameter is not
+- [ ] **R953 A `nodebug` callee returning a reference is called, not
   inlined**
 
-  `inline-parametric` keeps a call whose callee takes a `mut`, `ref`, or
-  `deinit` parameter, a `mut self`, or returns a reference, where the pin
-  inlines each.
-  - Bind the parameter's slot as a reference to the argument's place, as
-    the VM binds a `mut` argument.
-  - A `read` argument of a type with a destructor that is not loaded from
-    a place, or a `read` parameter the callee names other than as a
-    place's root, is kept for the same reason.
-  - Done when `bump(mut x)` in `assets/ok/always_inline_nodebug_calls.mojo`
+  `inline-parametric` keeps a call whose callee returns a reference
+  (`-> ref [x] Int`), or a method call carrying a reference result, where
+  the pin inlines it.
+  - The callee returns a `ref.make` register, and the caller's call or
+    `reference_result` adapter turns it into the place the caller uses.
+  - Bind the call's register to the returned reference, composed with the
+    caller's places as a reference parameter's are.
+  - Done when `pick(y) += 1` over a `nodebug` `pick(ref x) -> ref [x] Int`
     inlines and the differential is clean.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R954 A `nodebug` callee with a `deinit` parameter is called, not
+  inlined**
+
+  `inline-parametric` keeps a call whose callee takes a `deinit`
+  parameter, a named destructor's `deinit self` included, where the pin
+  inlines it.
+  - The VM vacates the caller's slot before such a call, and the callee's
+    `ConsumeVar` destroys the residual fields.
+  - Bind the parameter as a fresh slot the argument moves into, keeping the
+    callee's consumption of it.
+  - Done when a `nodebug` named destructor called as `x^.finish()` inlines
+    and the differential is clean.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R955 A `nodebug` call whose borrowed argument has no place to bind
+  is called, not inlined**
+
+  `inline-parametric` keeps a call when a `read` argument of a type with a
+  destructor was not loaded from a place, or when the callee names a
+  place-bound parameter other than as a place's root (`var.use` of its
+  slot), where the pin inlines both.
+  - Upstream substitutes the argument's address, so a temporary gets one
+    and a whole-slot use reads through it.
+  - Rewrite a whole-slot use of a place-bound parameter into a load of the
+    caller's place, and spill a placeless temporary to a fresh slot the
+    caller already drops.
+  - Done when each shape inlines in a pass test and the differential is
+    clean.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

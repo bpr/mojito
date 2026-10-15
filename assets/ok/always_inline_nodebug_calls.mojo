@@ -92,6 +92,16 @@ struct Meter:
     def title(self) -> String:
         return self.label + ":" + String(self.value)
 
+    @always_inline("nodebug")
+    def advance(mut self):
+        self.value += 1
+        bump(self.value)
+
+
+def bump_twice(mut x: Int):
+    bump(x)
+    bump(x)
+
 
 def generic_sum[n: Int](x: Int) -> Int:
     return add_one(x) + square(n)
@@ -121,3 +131,7 @@ def main() raises:
     var y = 3
     bump(y)
     print(y, scaled[3](y), generic_sum[2](1), generic_sum[3](1))
+    bump_twice(y)
+    meter.advance()
+    bump(meter.value)
+    print(y, meter.reading(), meter.title())

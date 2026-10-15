@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `nodebug` call through a `mut` or `ref` parameter, or a `mut self`
+  receiver, is inlined before elaboration (R918): `inline-parametric`
+  binds the parameter to the caller's place the call passes, as the VM
+  binds it to a reference
+  (assets/ok/always_inline_nodebug_calls.mojo). A callee returning a
+  reference, a `deinit` parameter, and a borrowed argument with no place
+  to bind keep the call (R953–R955). Program output is unchanged.
 - A `nodebug` method of a parametric struct, and a `nodebug` constructor,
   are inlined before elaboration (R917): `inline-parametric` binds the
   struct's parameters to the receiver's or the constructed type's

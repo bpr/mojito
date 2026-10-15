@@ -12,7 +12,8 @@
 //! A callee this pass inlines is a function, a method, or a struct's one
 //! `__init__`, which a call naming the struct calls, whose own compile-time
 //! parameters the call binds in full; it takes its arguments positionally
-//! into `read` or owned parameters, does not raise, and returns a value.
+//! into `read`, owned, `mut`, or `ref` parameters, does not raise, and
+//! returns a value.
 //! The call's compile-time arguments replace the callee's binders through
 //! every type and parameter site of the body, as upstream substitutes them
 //! through MLIR's `AttrTypeReplacer`; an argument over the caller's own
@@ -27,9 +28,12 @@
 //! keeps the call.
 //!
 //! An owned parameter, or a `read` one of a type no destructor tears down,
-//! is a fresh slot the argument initializes; any other `read` parameter is
-//! the caller's place the argument was loaded from, as upstream's inliner
-//! substitutes the borrowed address for the callee's argument. An
+//! is a fresh slot the argument initializes; a `mut` or `ref` parameter,
+//! a `mut self` included, is the caller's place the call passes, and any
+//! other `read` parameter the caller's place the argument was loaded from,
+//! as upstream's inliner substitutes the argument's address for the
+//! callee's. A place-bound parameter the callee names other than as a
+//! place's root keeps the call. An
 //! initializer's `out self` is a fresh slot the body initializes, and the
 //! call's result moves out of it. A call of any other shape stays a call.
 
@@ -238,7 +242,7 @@ impl<'c> Inliner<'_, 'c> {
         block: &MirBlock,
         index: usize,
     ) -> Option<(Reg, Cow<'c, MirFunction>, Vec<Binding>)> {
-        let (dest, target, arguments, arg_places, compile_time, receiver) =
+        let (dest, target, arguments, arg_places, compile_time, receiver, receiver_place) =
             match &block.instrs[index] {
                 MirInstr::Call {
                     dest,
@@ -260,7 +264,15 @@ impl<'c> Inliner<'_, 'c> {
                         Cow::Borrowed(func.0.as_str())
                     };
                     let receiver = constructed.then_some(Receiver::Constructed);
-                    (*dest, target, args, arg_places, instantiated_args, receiver)
+                    (
+                        *dest,
+                        target,
+                        args,
+                        arg_places,
+                        instantiated_args,
+                        receiver,
+                        None,
+                    )
                 }
                 MirInstr::MethodCall {
                     dest,
@@ -271,6 +283,7 @@ impl<'c> Inliner<'_, 'c> {
                     result_adapter: None,
                     args,
                     kwargs,
+                    recv_place,
                     arg_places,
                     capture_accesses,
                     instantiated_args,
@@ -283,6 +296,7 @@ impl<'c> Inliner<'_, 'c> {
                     arg_places,
                     instantiated_args,
                     Some(Receiver::Argument(*recv)),
+                    recv_place.as_deref(),
                 ),
                 _ => return None,
             };
@@ -314,7 +328,8 @@ impl<'c> Inliner<'_, 'c> {
         match receiver {
             Some(Receiver::Constructed) => bindings.push(Binding::Out),
             Some(Receiver::Argument(recv)) => {
-                bindings.push(argument_binding(&callee, block, index, 0, recv, None)?);
+                let place = receiver_place.filter(|_| is_reference_parameter(&callee, 0));
+                bindings.push(argument_binding(&callee, block, index, 0, recv, place)?);
             }
             None => {}
         }
@@ -361,7 +376,8 @@ impl<'c> Inliner<'_, 'c> {
     /// The callee's blocks with its slots and registers moved past the
     /// caller's and each place-bound parameter replaced by the caller's
     /// place, or `None` when a place-bound parameter is named other than as
-    /// a place's root.
+    /// a place's root, or a place reached through a reference other than
+    /// the parameter's composes with a caller's place reached through one.
     fn inlined_blocks(
         &self,
         callee: &MirFunction,
@@ -388,11 +404,16 @@ impl<'c> Inliner<'_, 'c> {
         };
         for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
             for place in instruction_places_mut(instruction) {
-                if let Some(outer) = bound(place.root) {
-                    if place.through.is_some() && outer.through.is_some() {
+                let through_other = place.through.filter(|&var| var != place.root);
+                match bound(place.root) {
+                    Some(outer) if through_other.is_some() && outer.through.is_some() => {
                         return None;
                     }
-                    *place = composed_place(outer, place);
+                    Some(outer) => *place = composed_place(outer, place),
+                    None if through_other.is_some_and(|var| bound(var).is_some()) => {
+                        return None;
+                    }
+                    None => {}
                 }
             }
             if instruction_slots(instruction)
@@ -553,8 +574,10 @@ fn parameter_constant(value: &ParamExpr, ty: Option<&Ty>) -> Const {
 }
 
 /// How the callee's parameter `param` binds the call's `argument`, which
-/// the call passes with `place` retained: `None` when it is a reference
-/// or `deinit` parameter, or a `read` one the pass cannot bind.
+/// the call passes with `place` retained: a `mut` or `ref` parameter binds
+/// that place, as the VM binds the parameter's slot to a reference to it;
+/// `None` when the call retains no place for one, for a `deinit`
+/// parameter, or for a `read` one the pass cannot bind.
 fn argument_binding(
     callee: &MirFunction,
     block: &MirBlock,
@@ -563,10 +586,10 @@ fn argument_binding(
     argument: Reg,
     place: Option<&MirPlace>,
 ) -> Option<Binding> {
-    if callee.ref_params.get(param).copied().unwrap_or(true)
-        || callee.deinit_params.get(param).copied().unwrap_or(true)
-        || place.is_some()
-    {
+    if is_reference_parameter(callee, param) {
+        return place.cloned().map(Binding::Place);
+    }
+    if callee.deinit_params.get(param).copied().unwrap_or(true) || place.is_some() {
         return None;
     }
     if callee.owned_params.get(param).copied().unwrap_or(false)
@@ -575,6 +598,12 @@ fn argument_binding(
         return Some(Binding::Value(argument));
     }
     loaded_place(block, index, argument).map(Binding::Place)
+}
+
+/// Whether the callee's parameter `param` is a `mut` or `ref` one, whose
+/// slot the VM binds to a reference to the caller's place.
+fn is_reference_parameter(callee: &MirFunction, param: usize) -> bool {
+    callee.ref_params.get(param).copied().unwrap_or(false)
 }
 
 /// Whether the callee has a shape the splice handles: a struct
@@ -644,18 +673,20 @@ fn loaded_place(block: &MirBlock, index: usize, argument: Reg) -> Option<MirPlac
 }
 
 /// The callee's place `inner`, rooted at a parameter bound to the caller's
-/// place `outer`, as a place of the caller.
+/// place `outer`, as a place of the caller: a reference parameter's own
+/// reference becomes whatever reaches `outer`.
 fn composed_place(outer: &MirPlace, inner: &MirPlace) -> MirPlace {
     if inner.proj.is_empty() {
         return outer.clone();
     }
+    let through = inner.through.filter(|&var| var != inner.root);
     let mut place = outer.clone();
     place.proj.extend(inner.proj.iter().cloned());
     place
         .projection_tys
         .extend(inner.projection_tys.iter().cloned());
     place.ty.clone_from(&inner.ty);
-    place.through = outer.through.or(inner.through);
+    place.through = outer.through.or(through);
     place
 }
 
