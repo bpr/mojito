@@ -36,8 +36,10 @@ struct ErrNo(Copyable, Equatable, Movable, Writable):
         var ptr = external_call["strerror", Pointer[Byte, MutUntrackedOrigin]](self.value)
         writer.write(String(unsafe_from_utf8_ptr=ptr))
 
+    @inline(.always)
     def __eq__(self, other: Self) -> Bool:
         return Bool(self.value == other.value)
 
+    @inline(.always)
     def __ne__(self, other: Self) -> Bool:
         return Bool(self.value != other.value)

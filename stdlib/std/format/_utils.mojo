@@ -24,6 +24,7 @@ struct TypeNames[*Ts: Movable](ImplicitlyCopyable, Movable, Writable):
     def __init__(out self):
         self._unused = 0
 
+    @inline(.always)
     def write_to(self, mut writer: Some[Writer]):
         var full = String(_unqualified_type_name[Tuple[*Self.Ts]]())
         # "Tuple[" is six bytes; the closing bracket is the last one.
@@ -38,10 +39,12 @@ struct TypeNames[*Ts: Movable](ImplicitlyCopyable, Movable, Writable):
 struct FormatStruct[T: Writer, o: Origin[mut=True]](Movable):
     var _writer: Pointer[Self.T, Self.o]
 
+    @inline(.always)
     def __init__(out self, ref[Self.o] writer: Self.T, var name: String):
         writer.write(name)
         self._writer = Pointer(to=writer)
 
+    @inline(.always)
     def params[*Ts: Writable](self, *args: *Ts) -> ref[self] Self:
         self._writer[].write("[")
         comptime for i in range(Ts.length):
@@ -51,6 +54,7 @@ struct FormatStruct[T: Writer, o: Origin[mut=True]](Movable):
         self._writer[].write("]")
         return self
 
+    @inline(.always)
     def fields[*Ts: Writable](self, *args: *Ts):
         self._writer[].write("(")
         comptime for i in range(Ts.length):
@@ -65,9 +69,11 @@ struct Named[T: Writable, o: Origin[mut=False]](Copyable, Movable, Writable):
     var _name: String
     var _value: Pointer[Self.T, Self.o]
 
+    @inline(.always)
     def __init__(out self, var name: String, ref[Self.o] value: Self.T):
         self._name = name^
         self._value = Pointer(to=value)
 
+    @inline(.always)
     def write_to(self, mut writer: Some[Writer]):
         writer.write(self._name, "=", self._value[])

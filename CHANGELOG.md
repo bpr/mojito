@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The bundled library carries the pinned std's inline markings (R786):
+  each function it shares with upstream takes upstream's
+  `@inline(.always)`, `@inline(.nodebug)`, `@inline(.never)`, or
+  `@always_inline("builtin")`, spelled as at the pin. No program's output
+  or instantiation counters change, since none of the marked callees is
+  one `inline-parametric` inlines yet (R939).
 - `eliminate-dead-symbols` removes every program function and struct no
   root reaches, with its declaration (R834), as upstream's
   `EliminateDeadSymbols` removes every unreachable non-`export` symbol. Its

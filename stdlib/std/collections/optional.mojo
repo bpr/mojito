@@ -146,9 +146,11 @@ struct Optional[T: AnyType](
             self.data.unsafe_deinit_pointee()
         self.data.unsafe_free()
 
+    @inline(.always)
     def __bool__(self) -> Bool:
         return self._size == 1
 
+    @inline(.always)
     def __getitem__(
         ref self
     ) raises EmptyOptionalError[Self.T] -> ref[
@@ -159,6 +161,7 @@ struct Optional[T: AnyType](
         return self.data[0]
 
     # `~opt` is the negated truth value (upstream's `__invert__`).
+    @inline(.always)
     def __invert__(self) -> Bool:
         return self._size == 0
 
@@ -218,6 +221,7 @@ struct Optional[T: AnyType](
         self.data.unsafe_free()
         return default^
 
+    @inline(.always)
     def value(ref self) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:
         if self._size == 0:
             _mojito_abort("Optional.value on an empty Optional")
@@ -225,6 +229,7 @@ struct Optional[T: AnyType](
 
     # Unchecked read: an empty Optional is a deterministic abort on the VM
     # rather than upstream's undefined behavior.
+    @inline(.always)
     def unsafe_value(ref self) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:
         return self.data[0]
 
@@ -239,6 +244,7 @@ struct Optional[T: AnyType](
         return self.data.unsafe_take_pointee()
 
     # Iterator-bounds protocol: exactly `_size` elements.
+    @inline(.always)
     def bounds(self) -> Tuple[Int, Optional[Int]]:
         return (self._size, Optional[Int](self._size))
 
@@ -296,13 +302,16 @@ struct OptionalReg[T: TrivialRegisterPassable](
 ):
     var _value: Optional[Self.T]
 
+    @inline(.always)
     def __init__(out self):
         self._value = Optional[Self.T]()
 
+    @inline(.always)
     @implicit
     def __init__(out self, value: Self.T):
         self._value = Optional[Self.T](value)
 
+    @inline(.always)
     @implicit
     def __init__(out self, value: NoneType):
         self._value = Optional[Self.T]()
@@ -313,12 +322,15 @@ struct OptionalReg[T: TrivialRegisterPassable](
     def __isnot__(self, other: NoneType) -> Bool:
         return Bool(self._value)
 
+    @inline(.always)
     def __bool__(self) -> Bool:
         return Bool(self._value)
 
+    @inline(.always)
     def value(self) -> Self.T:
         return self._value.value()
 
+    @inline(.always)
     def unsafe_value(self) -> Self.T:
         return self._value.unsafe_value()
 

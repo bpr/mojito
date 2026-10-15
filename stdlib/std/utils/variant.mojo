@@ -36,11 +36,13 @@ struct Variant[*Ts: AnyType](
         self._storage = __VariantStorage[*Self.Ts](init_with=init_with)
 
     @__unsafe_nested_origins_read_only
+    @inline(.always)
     def __getitem_param__[T: AnyType](ref self) -> ref[origin_of(self)] T:
         comptime if Self.Ts.contains[T]():
             pass
         return self._storage[T]
 
+    @inline(.always)
     def __eq__(self, other: Self) -> Bool where Self.Ts.all_conforms_to[Equatable]():
         comptime for i in range(Self.Ts.length):
             comptime T = Self.Ts[i]
@@ -50,6 +52,7 @@ struct Variant[*Ts: AnyType](
                 return self._storage.unsafe_get[T]() == other._storage.unsafe_get[T]()
         return False
 
+    @inline(.always)
     def __ne__(self, other: Self) -> Bool where Self.Ts.all_conforms_to[Equatable]():
         return not (self == other)
 
@@ -61,6 +64,7 @@ struct Variant[*Ts: AnyType](
                 hasher.update(self._storage.unsafe_get[T]())
                 return
 
+    @inline(.never)
     def write_to(self, mut writer: Some[Writer]) where Self.Ts.all_conforms_to[Writable]():
         comptime for i in range(Self.Ts.length):
             comptime T = Self.Ts[i]
@@ -68,6 +72,7 @@ struct Variant[*Ts: AnyType](
                 writer.write(self._storage.unsafe_get[T]())
                 return
 
+    @inline(.never)
     def write_repr_to(self, mut writer: Some[Writer]) where Self.Ts.all_conforms_to[Writable]():
         writer.write("Variant[")
         comptime for i in range(Self.Ts.length):
@@ -82,21 +87,25 @@ struct Variant[*Ts: AnyType](
                 writer.write(repr(self._storage.unsafe_get[T]()))
         writer.write(")")
 
+    @inline(.always)
     def unwrap[T: Movable](deinit self) -> T:
         comptime if Self.Ts.contains[T]():
             pass
         return self._storage.unwrap[T]()
 
+    @inline(.always)
     def unsafe_unwrap[T: Movable](deinit self) -> T:
         comptime if Self.Ts.contains[T]():
             pass
         return self._storage.unsafe_unwrap[T]()
 
+    @inline(.always)
     def replace[Tin: Movable & Deinitable, Tout: Movable](mut self, var value: Tin) -> Tout:
         comptime if Self.Ts.contains[Tin]():
             pass
         return self._storage.replace[Tin, Tout](value^)
 
+    @inline(.always)
     def unsafe_replace[Tin: Movable, Tout: Movable](mut self, var value: Tin) -> Tout:
         comptime if Self.Ts.contains[Tin]():
             pass

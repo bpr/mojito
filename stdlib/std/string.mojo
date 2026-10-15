@@ -37,6 +37,7 @@ struct _BoundsMessage(Movable, Writer):
         self.text.write_string(string)
 
 
+@inline(.always)
 def check_slice_bounds(start: Int, end: Int, length: Int):
     if start < 0 or start > length:
         var message = _BoundsMessage()
@@ -592,6 +593,7 @@ def atof(str: String) raises -> Float64:
 # before `std.os`.
 # UTF-8 well-formedness (the Unicode table of valid byte sequences), for the
 # validating `String(from_utf8=...)` constructor.
+@inline(.nodebug)
 def _is_valid_utf8(bytes: Span[UInt8, _]) -> Bool:
     var i = 0
     var n = len(bytes)
@@ -680,6 +682,7 @@ struct String(
             self.data, literal.ptr(), UInt(self.size)
         )
 
+    @inline(.nodebug)
     def __init__(out self):
         self.size = 0
         self.cap = 1
@@ -687,6 +690,7 @@ struct String(
 
     # 2026-08 stabilization: pre-sized construction. Capacity is a real byte
     # buffer here (the VM's literal/copy bridges manage their own storage).
+    @inline(.nodebug)
     def __init__(out self, *, capacity_bytes: Int):
         self.size = 0
         self.cap = capacity_bytes if capacity_bytes > 0 else 1
@@ -694,6 +698,7 @@ struct String(
 
     # Length without initialization: the caller writes every byte in
     # `[0, length)` through `unsafe_ptr_mut()` before the text is read.
+    @inline(.nodebug)
     def __init__(out self, *, unsafe_uninit_length: Int):
         self.size = unsafe_uninit_length
         self.cap = unsafe_uninit_length if unsafe_uninit_length > 0 else 1
@@ -724,6 +729,7 @@ struct String(
             self.data[i] = from_utf8[i]
             i += 1
 
+    @inline(.nodebug)
     def __init__(out self, *, copy: Self):
         self.size = copy.size
         self.cap = copy.cap
@@ -741,6 +747,7 @@ struct String(
         self.cap = move.cap
         self.data = move.data^
 
+    @inline(.nodebug)
     def __deinit__(deinit self):
         self.data.unsafe_free()
 
@@ -767,6 +774,7 @@ struct String(
     def byte_length(self) -> Int:
         return self.size
 
+    @inline(.nodebug)
     def __eq__(self, other: Self) -> Bool:
         if self.size != other.size:
             return False
@@ -777,11 +785,13 @@ struct String(
             i += 1
         return True
 
+    @inline(.nodebug)
     def __ne__(self, other: Self) -> Bool:
         return not (self == other)
 
     # Upstream compares an owned String against a view bytewise; the operator
     # selects this overload by the right operand's type.
+    @inline(.nodebug)
     def __eq__(self, other: StringSpan) -> Bool:
         if self.size != other._size:
             return False
@@ -792,9 +802,11 @@ struct String(
             i += 1
         return True
 
+    @inline(.nodebug)
     def __ne__(self, other: StringSpan) -> Bool:
         return not (self == other)
 
+    @inline(.nodebug)
     def __lt__(self, other: Self) -> Bool:
         var shared = self.size
         if other.size < shared:
@@ -848,6 +860,7 @@ struct String(
         self.size = self.size + other._size
         self.cap = self.size
 
+    @inline(.nodebug)
     def __bool__(self) -> Bool:
         return self.size > 0
 
@@ -915,15 +928,19 @@ struct String(
 
     # Eager owned pieces rather than current Mojo's borrowed StringSpan
     # views (the recorded eager-result divergence); upstream's four overloads.
+    @inline(.always)
     def split(self, sep: StringSpan) -> List[String]:
         return StringSpan(self).split(sep)
 
+    @inline(.always)
     def split(self, sep: StringSpan, maxsplit: Int) -> List[String]:
         return StringSpan(self).split(sep, maxsplit)
 
+    @inline(.always)
     def split(self, sep: NoneType = None) -> List[String]:
         return StringSpan(self).split()
 
+    @inline(.always)
     def split(self, sep: NoneType = None, *, maxsplit: Int) -> List[String]:
         return StringSpan(self).split(maxsplit=maxsplit)
 
@@ -966,6 +983,7 @@ struct String(
     def as_bytes(ref self) -> Span[Byte, origin_of(self)]:
         return Span[Byte, origin_of(self)](unsafe_ptr=self.unsafe_ptr(), length=self.size)
 
+    @inline(.nodebug)
     def unsafe_ptr(ref self) -> Pointer[Byte, origin_of(self)._get_owned_interior["bytes"]]:
         return self.data.unsafe_origin_cast[origin_of(self)._get_owned_interior["bytes"]]()
 
@@ -977,6 +995,7 @@ struct String(
         self.reserve_bytes(capacity)
         return self.data.unsafe_origin_cast[origin_of(self)._get_owned_interior["bytes"]]()
 
+    @inline(.nodebug)
     def capacity_bytes(self) -> Int:
         return self.cap
 
@@ -984,12 +1003,14 @@ struct String(
     # byte is not part of the string and every mutation may overwrite it, so
     # the view is taken fresh at each call site) and views the buffer as
     # `c_char` bytes.
+    @inline(.always)
     def as_c_string_slice(mut self) -> CStringSlice[origin_of(self)]:
         self.reserve_bytes(self.size + 1)
         self.data[self.size] = 0
         return CStringSlice(self)
 
     # `os.PathLike`: a String is its own filesystem path.
+    @inline(.nodebug)
     def __fspath__(self) -> String:
         return self
 
@@ -1115,6 +1136,7 @@ struct String(
         hasher.update(StringSpan(self))
 
     @__unsafe_nested_origins_read_only
+    @inline(.always)
     def __getitem__(self, *, byte: Int) raises -> Byte:
         if byte < 0:
             raise Error("String byte index out of range")
@@ -1129,10 +1151,12 @@ struct String(
         var view = StringSpan(self)
         return view[codepoint=codepoint]
 
+    @inline(.always)
     def count_codepoints(self) -> Int:
         return StringSpan(self).count_codepoints()
 
     @__unsafe_nested_origins_read_only
+    @inline(.always)
     def __getitem__(self, *, grapheme: Int) raises -> Self:
         var view = StringSpan(self)
         return view[grapheme=grapheme]
@@ -1174,6 +1198,7 @@ struct String(
     # codepoint boundaries; the result is a borrowed `StringSpan` view of
     # this String's buffer.
     @__unsafe_nested_origins_read_only
+    @inline(.always)
     def __getitem__(ref self, *, byte: ContiguousSlice) -> StringSpan[origin_of(self)._get_owned_interior["bytes"]]:
         var start = byte.start.or_else(0)
         var end = byte.end.or_else(self.size)
@@ -1188,6 +1213,7 @@ struct String(
         return view^
 
     @__unsafe_nested_origins_read_only
+    @inline(.always)
     def __getitem__(ref self, *, codepoint: ContiguousSlice) -> StringSpan[origin_of(self)._get_owned_interior["bytes"]]:
         var view = StringSpan(self)
         var total = view.count_codepoints()
@@ -1268,11 +1294,13 @@ struct Codepoint(
 
     # Upstream's unchecked scalar constructor: the caller guarantees a valid
     # Unicode scalar value.
+    @inline(.always)
     def __init__(out self, *, unsafe_unchecked_codepoint: UInt32):
         self._scalar = Int(unsafe_unchecked_codepoint)
         self._text = Codepoint._encode_utf8(self._scalar)
 
     # A single byte is always a valid scalar (U+0000 through U+00FF).
+    @inline(.always)
     def __init__(out self, codepoint: UInt8):
         self._scalar = Int(codepoint)
         self._text = Codepoint._encode_utf8(self._scalar)
@@ -1325,9 +1353,11 @@ struct Codepoint(
             result.data[3] = Byte(128 + scalar % 64)
         return result^
 
+    @inline(.always)
     def __int__(self) -> Int:
         return self._scalar
 
+    @inline(.always)
     def is_ascii(self) -> Bool:
         return self._scalar < 128
 
@@ -1341,6 +1371,7 @@ struct Codepoint(
     def is_ascii_lower(self) -> Bool:
         return self._scalar >= 97 and self._scalar <= 122
 
+    @inline(.always)
     def is_ascii_printable(self) -> Bool:
         return self._scalar >= 32 and self._scalar <= 126
 
@@ -1350,9 +1381,11 @@ struct Codepoint(
         return c == 32 or (c >= 9 and c <= 13) or (c >= 28 and c <= 30)
 
     # Python's universal separators: POSIX space plus U+0085, U+2028, U+2029.
+    @inline(.always)
     def is_python_space(self) -> Bool:
         return self.is_posix_space() or self._scalar == 0x85 or self._scalar == 0x2028 or self._scalar == 0x2029
 
+    @inline(.always)
     def utf8_byte_length(self) -> Int:
         if self._scalar < 0x80:
             return 1
@@ -1423,6 +1456,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     # Upstream's `StaticString` initializer (the origin is erased here): a
     # view over the literal's UTF-8 bytes, which live for the whole program.
     # `@implicit` lets a literal convert wherever a view is expected.
+    @inline(.always)
     @implicit
     def __init__(out self, literal: StringLiteral):
         self._data = literal.ptr().unsafe_mut_cast[True]().unsafe_origin_cast[
@@ -1434,6 +1468,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return _GraphemeIter(self, 0)
 
+    @inline(.always)
     def byte_length(self) -> Int:
         return self._size
 
@@ -1468,6 +1503,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         return True
 
     # Upstream declares `__ne__` for views only (no `String` overload).
+    @inline(.always)
     def __ne__(self, rhs: StringSpan) -> Bool:
         return not (self == rhs)
 
@@ -1562,17 +1598,21 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     # empty separator yields an empty piece, every codepoint, and an empty
     # piece (upstream ignores `maxsplit` there); `maxsplit` bounds the number
     # of splits.
+    @inline(.always)
     def split(self, sep: StringSpan) -> List[String]:
         return self._split_on(sep, -1)
 
+    @inline(.always)
     def split(self, sep: StringSpan, maxsplit: Int) -> List[String]:
         return self._split_on(sep, maxsplit)
 
     # Whitespace split: runs of Python-space codepoints (POSIX space plus
     # U+0085, U+2028, U+2029) separate pieces and never yield empty ones.
+    @inline(.always)
     def split(self, sep: NoneType = None) -> List[String]:
         return self._split_whitespace(-1)
 
+    @inline(.always)
     def split(self, sep: NoneType = None, *, maxsplit: Int) -> List[String]:
         return self._split_whitespace(maxsplit)
 
@@ -1680,23 +1720,29 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     # The strip family and affix removal return sub-views of this buffer.
     # The default set is POSIX space (`" \t\n\v\f\r\x1c\x1d\x1e"`); the
     # `chars` form strips by codepoint membership in `chars`.
+    @inline(.always)
     def strip(self) -> Self:
         var start = self._lstrip_bound(0, self._size)
         return self._sub_view(start, self._rstrip_bound(start, self._size))
 
+    @inline(.always)
     def strip(self, chars: StringSpan) -> Self:
         var start = self._lstrip_chars_bound(chars, 0, self._size)
         return self._sub_view(start, self._rstrip_chars_bound(chars, start, self._size))
 
+    @inline(.always)
     def lstrip(self) -> Self:
         return self._sub_view(self._lstrip_bound(0, self._size), self._size)
 
+    @inline(.always)
     def lstrip(self, chars: StringSpan) -> Self:
         return self._sub_view(self._lstrip_chars_bound(chars, 0, self._size), self._size)
 
+    @inline(.always)
     def rstrip(self) -> Self:
         return self._sub_view(0, self._rstrip_bound(0, self._size))
 
+    @inline(.always)
     def rstrip(self, chars: StringSpan) -> Self:
         return self._sub_view(0, self._rstrip_chars_bound(chars, 0, self._size))
 
@@ -1713,9 +1759,11 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     def __hash__[H: Hasher](self, mut hasher: H):
         hasher._update_with_bytes(self.as_bytes())
 
+    @inline(.always)
     def as_bytes(self) -> Span[Byte, Self.origin]:
         return Span[Byte](unsafe_ptr=self._data, length=self._size)
 
+    @inline(.always)
     def codepoints(self) -> _CodepointIter[Self.origin]:
         return _CodepointIter(self, 0)
 
@@ -1737,6 +1785,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
             i += 1
         return result^
 
+    @inline(.always)
     def __getitem__(self, *, byte: Int) raises -> Byte:
         if byte < 0:
             raise Error("StringSpan byte index out of range")
@@ -1758,6 +1807,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
             index += width
         raise Error("StringSpan codepoint index out of range")
 
+    @inline(.always)
     def __getitem__(self, *, grapheme: Int) raises -> String:
         if grapheme < 0:
             raise Error("StringSpan grapheme index out of range")
@@ -1807,6 +1857,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
             seen += 1
         return (self._sub_view(0, at), self._sub_view(at, self._size))
 
+    @inline(.always)
     def __getitem__(self, *, byte: ContiguousSlice) -> Self:
         var start = byte.start.or_else(0)
         var end = byte.end.or_else(self._size)
@@ -1817,6 +1868,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
             _mojito_abort("StringSpan byte slice endpoint is not a codepoint boundary")
         return self._sub_view(start, end)
 
+    @inline(.always)
     def __getitem__(self, *, codepoint: ContiguousSlice) -> Self:
         var total = self.count_codepoints()
         var start = codepoint.start.or_else(0)
@@ -1824,6 +1876,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         check_slice_bounds(start, end, total)
         return self._sub_view(self._codepoint_offset(start), self._codepoint_offset(end))
 
+    @inline(.always)
     def __getitem__(self, *, grapheme: ContiguousSlice) -> Self:
         var total = self.count_graphemes()
         var start = grapheme.start.or_else(0)
@@ -1837,6 +1890,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     def write_repr_to(self, mut writer: Some[Writer]):
         self.to_string().write_repr_to(writer)
 
+    @inline(.always)
     def format[*Ts: Writable](self, *args: *Ts) raises -> String:
         return _FormatUtils.format(self, *args)
 
@@ -2511,15 +2565,19 @@ struct _FormatCurlyEntry(ImplicitlyCopyable):
         self.field_value = field_value
         self.conversion_flag = conversion_flag
 
+    @inline(.always)
     def is_escaped_brace(self) -> Bool:
         return self.field_kind == _ESCAPED_BRACE
 
+    @inline(.always)
     def is_kwargs_field(self) -> Bool:
         return self.field_kind == _KWARGS_FIELD
 
+    @inline(.always)
     def is_automatic_indexing(self) -> Bool:
         return self.field_kind == _AUTOMATIC_INDEXING
 
+    @inline(.always)
     def is_manual_indexing(self) -> Bool:
         return self.field_kind == _MANUAL_INDEXING
 

@@ -13,6 +13,7 @@ from std.range import range
 struct TString[*Ts: Movable & Writable](Deinitable, Movable, Writable):
     var storage: Tuple[*Self.Ts]
 
+    @inline(.always)
     def __init__(out self, var *args: *Self.Ts):
         self.storage = Tuple(*args^)
 
@@ -26,6 +27,7 @@ struct TString[*Ts: Movable & Writable](Deinitable, Movable, Writable):
                 writer.write(element)
 
 
+@inline(.always)
 def __make_tstring[*Ts: Movable & Writable](
     var *args: *Ts, out tstring: TString[*Ts]
 ):

@@ -61,6 +61,7 @@ def listdir[PathLike: stdPathLike](path: PathLike) raises -> List[String]:
 
 # Mojito's abort: an uncatchable trap carrying the message (the compiler
 # crossing `_mojito_abort`).
+@inline(.always)
 def abort(message: String):
     _mojito_abort(message)
 

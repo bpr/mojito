@@ -6,14 +6,18 @@
 # type's implementation runs after type erasure (`Int`/`Float64` have intrinsic
 # `__floor__`/`__ceil__`/`__trunc__`/`__ceildiv__`).
 
+@inline(.always)
 def floor[T: Floorable](value: T) -> T:
     return value.__floor__()
 
+@inline(.always)
 def ceil[T: Ceilable](value: T) -> T:
     return value.__ceil__()
 
+@inline(.always)
 def trunc[T: Truncable](value: T) -> T:
     return value.__trunc__()
 
+@inline(.always)
 def ceildiv[T: CeilDivable](numerator: T, denominator: T) -> T:
     return numerator.__ceildiv__(denominator)

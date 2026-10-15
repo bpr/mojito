@@ -67,12 +67,14 @@ struct Span[mut: Bool, //, T: AnyType, origin: Origin[mut=mut]](
     # pointer's provenance, and an untracked or unsafe-any pointer binds the
     # slot untracked: the caller vouches that `length` elements stay live
     # behind it for the origin's lifetime.
+    @always_inline("builtin")
     def __init__(out self, *, unsafe_ptr: Pointer[Self.T, Self.origin], length: Int):
         self._data = unsafe_ptr.unsafe_origin_cast[
             origin._get_owned_interior["element"]
         ]()
         self._size = length
 
+    @inline(.always)
     @implicit
     def __init__(out self, ref [Self.origin] list: List[Self.T]):
         self._data = list.data.unsafe_origin_cast[
@@ -80,20 +82,24 @@ struct Span[mut: Bool, //, T: AnyType, origin: Origin[mut=mut]](
         ]()
         self._size = len(list)
 
+    @always_inline("builtin")
     def __len__(self) -> Int:
         return self._size
 
     # The span's data pointer, carrying the span's own origin (a libc
     # buffer argument).
+    @always_inline("builtin")
     def unsafe_ptr(self) -> Pointer[Self.T, Self.origin._get_owned_interior["element"]]:
         return self._data
 
     # Borrowed iteration yields element references like List's (write-through
     # on a mutable source); the iterator borrows the span itself, whose loans
     # keep the underlying List alive.
+    @inline(.always)
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return _SpanIter(self, 0)
 
+    @inline(.always)
     def __getitem__(ref self, index: Int) -> ref[
         Self.origin._get_owned_interior["element"]
     ] Self.T:
@@ -105,6 +111,7 @@ struct Span[mut: Bool, //, T: AnyType, origin: Origin[mut=mut]](
     # or reversed bounds abort instead of normalizing, and the result is a
     # sub-view of the same storage, not a copy. Spans have no strided
     # slicing.
+    @inline(.always)
     def __getitem__(self, slice: ContiguousSlice) -> Self:
         var start = slice.start.or_else(0)
         var end = slice.end.or_else(self._size)
@@ -132,12 +139,15 @@ struct _SpanIter[
     var src: Span[Self.T, Self.iterable_origin]
     var index: Int
 
+    @inline(.always)
     def __len__(self) -> Int:
         return len(self.src) - self.index
 
+    @inline(.always)
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self.copy()
 
+    @inline(.always)
     def __next__(mut self) raises StopIteration -> ref[
         Self.iterable_origin._get_owned_interior["element"]
     ] Self.T where conforms_to(Self.T, Copyable):

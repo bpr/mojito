@@ -36,6 +36,7 @@ struct _ListIter[
 
     # The iterator iterates itself (upstream's `IteratorType = Self`): a
     # stored iterator drives a loop directly.
+    @inline(.always)
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self.copy()
 
@@ -159,6 +160,7 @@ struct List[T: AnyType](
     # destroyed. The VM keeps a never-written slot distinct from a taken one
     # (reads trap, a take yields a tombstone, a destroy is a no-op); native
     # storage is raw bytes, as upstream.
+    @inline(.always)
     def __init__(out self, *, unsafe_uninit_length: Int):
         self.cap = unsafe_uninit_length
         self.size = unsafe_uninit_length
@@ -175,6 +177,7 @@ struct List[T: AnyType](
             self.data.unsafe_offset(i).unsafe_write(copy=fill)
             i += 1
 
+    @inline(.always)
     def __init__(
         out self, var *values: Self.T, __list_literal__: NoneType
     ) where conforms_to(Self.T, Movable):
@@ -227,6 +230,7 @@ struct List[T: AnyType](
         self.data[self.size] = value^
         self.size += 1
 
+    @inline(.always)
     def insert(
         mut self, index: Int, var value: Self.T
     ) where conforms_to(Self.T, Movable):
@@ -239,12 +243,14 @@ struct List[T: AnyType](
         self.data[index] = value^
         self.size += 1
 
+    @inline(.nodebug)
     def __len__(self) -> Int:
         return self.size
 
     def __bool__(self) -> Bool:
         return self.size > 0
 
+    @inline(.nodebug)
     def capacity(self) -> Int:
         return self.cap
 
@@ -309,6 +315,7 @@ struct List[T: AnyType](
     # catches the raw read, but the native backend has no arena: unchecked,
     # `xs[10]` on a three-element list read out of bounds and returned a value.
     @__unsafe_nested_origins_read_only
+    @inline(.always)
     def __getitem__(
         ref self, index: Int
     ) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:
@@ -347,6 +354,7 @@ struct List[T: AnyType](
     # `Slice`-typed descriptor value, which widens to `StridedSlice` like
     # upstream's implicit conversion) keeps `indices()` normalization through
     # the overload above; omitted bounds default to the full extent.
+    @inline(.always)
     def __getitem__(self, slice: ContiguousSlice) -> Self where conforms_to(
         Self.T, Copyable
     ) and conforms_to(Self.T, Movable):
@@ -373,11 +381,13 @@ struct List[T: AnyType](
     # Unchecked element access: out-of-range indices are undefined behavior
     # (the VM still diagnoses them deterministically).
     @__unsafe_nested_origins_read_only
+    @inline(.always)
     def unsafe_get(
         ref self, idx: Int
     ) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:
         return self.data[idx]
 
+    @inline(.always)
     def unsafe_set(mut self, idx: Int, var value: Self.T) where conforms_to(
         Self.T, Deinitable
     ) and conforms_to(Self.T, Movable):
@@ -419,6 +429,7 @@ struct List[T: AnyType](
     def pop(mut self) -> Self.T where conforms_to(Self.T, Movable):
         return self.pop(self.size - 1)^
 
+    @inline(.always)
     def pop(mut self, index: Int) -> Self.T where conforms_to(Self.T, Movable):
         var result = self.data.unsafe_offset(index).unsafe_take_pointee()
         var i = index
@@ -516,6 +527,7 @@ struct List[T: AnyType](
             raise Error("ValueError: Given element is not in list")
         return result.value()
 
+    @inline(.always)
     def __eq__(self, other: Self, /) -> Bool where conforms_to(
         Self.T, Equatable
     ):
@@ -594,6 +606,7 @@ struct List[T: AnyType](
         return result^
 
     # Move the elements into a fresh allocation of `new_cap` slots.
+    @inline(.never)
     def _realloc(mut self, new_cap: Int) where conforms_to(Self.T, Movable):
         var new_data = unsafe_alloc[Self.T](new_cap)
         var i = 0
@@ -604,6 +617,7 @@ struct List[T: AnyType](
         self.data = new_data
         self.cap = new_cap
 
+    @inline(.never)
     def write_to(self, mut writer: Some[Writer]) where conforms_to(
         Self.T, Writable
     ):
@@ -617,6 +631,7 @@ struct List[T: AnyType](
         writer.write("]")
 
     # Upstream's text: `List[SIMD[DType.int, 1]]([Int(1), Int(2)])`.
+    @inline(.never)
     def write_repr_to(self, mut writer: Some[Writer]) where conforms_to(
         Self.T, Writable
     ):

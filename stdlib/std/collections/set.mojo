@@ -314,6 +314,7 @@ struct Set[
         self.items.cap = 0
         return result^
 
+    @inline(.never)
     def write_to(self, mut writer: Some[Writer]) where conforms_to(
         Self.T, Copyable
     ) and conforms_to(Self.T, Writable):
@@ -331,6 +332,7 @@ struct Set[
 
     # Upstream's text shape: `Set[SIMD[DType.int, 1],
     # Hasher=AHasher[[0, 0, 0, 0] : SIMD[DType.uint64, 4]]]({Int(3)})`.
+    @inline(.never)
     def write_repr_to(self, mut writer: Some[Writer]) where conforms_to(
         Self.T, Copyable
     ) and conforms_to(Self.T, Writable):

@@ -154,6 +154,7 @@ struct FileHandle(Defaultable, Movable, Writer):
             total_written += chunk_written
 
     # The `Writer` requirement: non-raising, so a failed write aborts.
+    @inline(.always)
     def write_bytes(mut self, bytes: Span[Byte, _]):
         if self.handle < 0:
             abort("invalid file handle in write_bytes()")

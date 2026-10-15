@@ -16,5 +16,6 @@ struct _CTimeSpec(Copyable, Defaultable, Movable, Writable):
     def as_nanoseconds(self) -> Int:
         return self.tv_sec * _NSEC_PER_SEC + self.tv_subsec
 
+    @inline(.never)
     def write_to(self, mut writer: Some[Writer]):
         writer.write(self.as_nanoseconds(), "ns")

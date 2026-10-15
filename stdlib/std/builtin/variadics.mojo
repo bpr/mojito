@@ -33,6 +33,7 @@ struct _ParameterListIter[type: Copyable, //, *values: type](
 
     var index: Int
 
+    @inline(.always)
     def __next__(
         mut self,
     ) raises StopIteration -> ref[ImmStaticOrigin] Self.type:
@@ -46,6 +47,7 @@ struct _ParameterListIter[type: Copyable, //, *values: type](
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self
 
+    @inline(.always)
     def bounds(self) -> Tuple[Int, Optional[Int]]:
         var len = Self.values.size - self.index
         return (len, {len})
@@ -76,6 +78,7 @@ struct ParameterList[type: AnyType, //, *values: type](
     # Accessors
     # ===-------------------------------------------------------------------===#
 
+    @inline(.always)
     def __len__(self) -> Int:
         """Gets the size of the list.
 
@@ -94,6 +97,7 @@ struct ParameterList[type: AnyType, //, *values: type](
         var first_elt = __param_list_address[*Self.values]()
         return Span(unsafe_ptr=first_elt, length=Self.size)
 
+    @inline(.always)
     def __getitem__(self, idx: Int) -> ref[ImmStaticOrigin] Self.type:
         """Gets a single element on the variadic list.
 
@@ -109,6 +113,7 @@ struct ParameterList[type: AnyType, //, *values: type](
     # Constructors
     # ===-------------------------------------------------------------------===#
 
+    @inline(.always)
     def __init__(out self):
         """Constructs a ParameterList."""
         pass
@@ -131,6 +136,7 @@ struct ParameterList[type: AnyType, //, *values: type](
                 self[i].write_to(writer)
         writer.write_string(")")
 
+    @inline(.never)
     def write_to(
         self, mut writer: Some[Writer]
     ) where conforms_to(Self.type, Writable):
@@ -144,6 +150,7 @@ struct ParameterList[type: AnyType, //, *values: type](
         """
         self._write_elements(writer)
 
+    @inline(.never)
     def write_repr_to(
         self, mut writer: Some[Writer]
     ) where conforms_to(Self.type, Writable):
@@ -166,6 +173,7 @@ struct ParameterList[type: AnyType, //, *values: type](
 
     # We can only support iteration when the elements are Copyable, because
     # iterators currently need to return the elements by value.
+    @inline(.always)
     def __iter__(
         ref self,
     ) -> _ParameterListIter[*Self.values] where conforms_to(Self.type, Copyable):

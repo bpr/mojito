@@ -27,9 +27,11 @@ struct Tuple[*Ts: Movable](
     comptime element_types = Self.Ts
     var storage: __RuntimeTuple[*Self.Ts]
 
+    @inline(.nodebug)
     def __init__(out self, var *args: *Self.Ts):
         self.storage = __RuntimeTuple(*args^)
 
+    @inline(.nodebug)
     def __init__(out self) where conforms_to(Self.Ts.values, Defaultable):
         __mlir_op.`lit.ownership.mark_initialized`(
             __get_mvalue_as_litref(self.storage)
@@ -38,18 +40,22 @@ struct Tuple[*Ts: Movable](
             Pointer(to=self[i]).unsafe_write({})
 
     # Current Mojo's compile-time-index hook.
+    @inline(.nodebug)
     def __getitem_param__[index: Int](
         ref self
     ) -> ref[origin_of(self)] Self.Ts[index]:
         return self.storage[index]
 
+    @inline(.nodebug)
     def __len__(self) -> Int:
         return len(self.storage)
 
+    @always_inline("builtin")
     @staticmethod
     def __len__() -> Int:
         return Self.Ts.length
 
+    @inline(.always)
     def __eq__(self, other: Self) -> Bool where conforms_to(
         Self.Ts.values,Equatable
     ):
@@ -66,6 +72,7 @@ struct Tuple[*Ts: Movable](
                 return True
         return False
 
+    @inline(.always)
     def __lt__(self, other: Self) -> Bool where conforms_to(
         Self.Ts.values,Comparable
     ) and conforms_to(Self.Ts.values, Equatable):
@@ -76,6 +83,7 @@ struct Tuple[*Ts: Movable](
                 return False
         return False
 
+    @inline(.always)
     def __le__(self, other: Self) -> Bool where conforms_to(
         Self.Ts.values,Comparable
     ) and conforms_to(Self.Ts.values, Equatable):
@@ -86,6 +94,7 @@ struct Tuple[*Ts: Movable](
                 return False
         return True
 
+    @inline(.always)
     def __gt__(self, other: Self) -> Bool where conforms_to(
         Self.Ts.values,Comparable
     ) and conforms_to(Self.Ts.values, Equatable):
@@ -96,6 +105,7 @@ struct Tuple[*Ts: Movable](
                 return False
         return False
 
+    @inline(.always)
     def __ge__(self, other: Self) -> Bool where conforms_to(
         Self.Ts.values,Comparable
     ) and conforms_to(Self.Ts.values, Equatable):
@@ -112,6 +122,7 @@ struct Tuple[*Ts: Movable](
         comptime for i in range(len(Self.Ts)):
             hasher.update(self.storage[i])
 
+    @inline(.nodebug)
     def __contains__[T: Equatable](self, value: T) -> Bool:
         comptime for i in range(len(Self.Ts)):
             comptime if T == Self.Ts[i]:
@@ -119,6 +130,7 @@ struct Tuple[*Ts: Movable](
                     return True
         return False
 
+    @inline(.never)
     def write_to(self, mut writer: Some[Writer]) where conforms_to(
         Self.Ts.values,Writable
     ):
@@ -132,6 +144,7 @@ struct Tuple[*Ts: Movable](
         writer.write(")")
 
     # Upstream's `Tuple[<element types>](<element reprs>)`.
+    @inline(.never)
     def write_repr_to(self, mut writer: Some[Writer]) where conforms_to(
         Self.Ts.values,Writable
     ):
@@ -145,6 +158,7 @@ struct Tuple[*Ts: Movable](
     # Upstream's signatures. Each element is moved out through a pointer, as
     # upstream moves it; the storage, whose destruction would reach the moved
     # elements again, is then marked destroyed.
+    @inline(.nodebug)
     def reverse(deinit self, out result: Tuple[*Self.Ts.reverse()]):
         __mlir_op.`lit.ownership.mark_initialized`(__get_mvalue_as_litref(result))
         comptime for i in range(Self.Ts.length):
@@ -155,6 +169,7 @@ struct Tuple[*Ts: Movable](
             __get_mvalue_as_litref(self.storage)
         )
 
+    @inline(.nodebug)
     def concat[*OtherTs: Movable](
         deinit self,
         deinit other: Tuple[*OtherTs],
@@ -177,6 +192,7 @@ struct Tuple[*Ts: Movable](
             __get_mvalue_as_litref(other.storage)
         )
 
+    @inline(.nodebug)
     def consume_elements[
         elt_handler: def[index: Int](
             var element: Self.Ts[index]

@@ -73,6 +73,7 @@ struct Path(
             self.path += String(DIR_SEPARATOR)
             self.path += String(suffix)
 
+    @inline(.always)
     def __bool__(self) -> Bool:
         return self.path.byte_length() > 0
 
@@ -80,11 +81,13 @@ struct Path(
         writer.write(self.path)
 
     # `Path('...')`, the path string's repr inside.
+    @inline(.never)
     def write_repr_to(self, mut writer: Some[Writer]):
         writer.write("Path(")
         self.path.write_repr_to(writer)
         writer.write(")")
 
+    @inline(.always)
     def __fspath__(self) -> String:
         return self.path
 
@@ -94,12 +97,14 @@ struct Path(
     def __eq__(self, other: StringSpan) -> Bool:
         return StringSpan(self.path) == other
 
+    @inline(.always)
     def __lt__(self, other: Self) -> Bool:
         return self.path < other.path
 
     def __hash__[H: Hasher](self, mut hasher: H):
         hasher.update(StringSpan(self.path))
 
+    @inline(.always)
     def exists(self) -> Bool:
         return _exists(self)
 

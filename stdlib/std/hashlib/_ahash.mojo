@@ -3,6 +3,7 @@ comptime U128 = SIMD[DType.uint64, 2]
 comptime MULTIPLE = 6364136223846793005
 comptime ROT = 23
 
+@inline(.always)
 def _folded_multiply(lhs: UInt64, rhs: UInt64) -> UInt64:
     var mask = UInt64(0xFFFFFFFF)
     var lhs_low = lhs & mask
@@ -53,9 +54,11 @@ struct AHasher[key: U256](Defaultable, Hasher):
         self.pad = pi_key[1]
         self.extra_keys = U128(pi_key[2], pi_key[3])
 
+    @inline(.always)
     def _update(mut self, value: UInt64):
         self.buffer = _folded_multiply(value ^ self.buffer, UInt64(MULTIPLE))
 
+    @inline(.always)
     def _large_update(mut self, first: UInt64, second: UInt64):
         var combined = _folded_multiply(
             first ^ self.extra_keys[0], second ^ self.extra_keys[1]
@@ -104,6 +107,7 @@ struct AHasher[key: U256](Defaultable, Hasher):
     def update(mut self, value: Some[Hashable]):
         value.__hash__(self)
 
+    @inline(.always)
     def finish(var self) -> UInt64:
         var rotation = self.buffer & UInt64(63)
         var folded = _folded_multiply(self.buffer, self.pad)

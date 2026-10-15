@@ -31,6 +31,7 @@ struct _ArrayIter[
 
     # The iterator iterates itself (upstream's `IteratorType = Self`): a
     # stored iterator drives a loop directly.
+    @inline(.always)
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self.copy()
 
@@ -113,6 +114,7 @@ struct Array[T: AnyType, length: Int](
             self.data[i] = value^
             i += 1
 
+    @inline(.always)
     def __init__(out self) where conforms_to(Self.T, Defaultable):
         self._size = Self.length
         self.data = unsafe_alloc[Self.T](Self.length)
@@ -121,6 +123,7 @@ struct Array[T: AnyType, length: Int](
             self.data.unsafe_offset(i).unsafe_write(Self.T())
             i += 1
 
+    @inline(.always)
     def __init__(out self, *, fill: Self.T) where conforms_to(Self.T, Copyable):
         self._size = Self.length
         self.data = unsafe_alloc[Self.T](Self.length)
@@ -160,11 +163,13 @@ struct Array[T: AnyType, length: Int](
         self.data.unsafe_free()
         self._size = 0
 
+    @inline(.always)
     def __len__(self) -> Int:
         return Self.length
 
     # Upstream's raw element pointer (as `List.unsafe_ptr`): the interior
     # of the array's own origin.
+    @inline(.always)
     def unsafe_ptr(ref self) -> Pointer[
         Self.T, origin_of(self)._get_owned_interior["element"]
     ]:
@@ -172,11 +177,13 @@ struct Array[T: AnyType, length: Int](
             origin_of(self)._get_owned_interior["element"]
         ]()
 
+    @inline(.always)
     def __getitem__(
         ref self, index: Int
     ) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:
         return self.data[index]
 
+    @inline(.always)
     def unsafe_get(
         ref self, idx: Int
     ) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:
@@ -207,6 +214,7 @@ struct Array[T: AnyType, length: Int](
 
     # Lexicographic ordering (upstream 2026-08): elements compare pairwise
     # and the first differing pair decides the result.
+    @inline(.always)
     def __lt__(self, other: Self) -> Bool where conforms_to(Self.T, Comparable):
         var i = 0
         while i < Self.length:
@@ -217,15 +225,19 @@ struct Array[T: AnyType, length: Int](
             i += 1
         return False
 
+    @inline(.always)
     def __le__(self, other: Self) -> Bool where conforms_to(Self.T, Comparable):
         return not (other < self)
 
+    @inline(.always)
     def __gt__(self, other: Self) -> Bool where conforms_to(Self.T, Comparable):
         return other < self
 
+    @inline(.always)
     def __ge__(self, other: Self) -> Bool where conforms_to(Self.T, Comparable):
         return not (self < other)
 
+    @inline(.always)
     def __contains__(self, value: Self.T) -> Bool where conforms_to(
         Self.T, Equatable
     ):

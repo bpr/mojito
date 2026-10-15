@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R939**.
+Next free ID: **R940**.
 
 ## Ordered Work
 
@@ -7844,16 +7844,20 @@ recorded limit, listed in impact order: soundness of the executable oracle
 first, then everyday spellings that reject today, then parity details. A
 residue found inside a task moves to the task that owns its fix.
 
-- [ ] **R786 The bundled library marks none of the functions upstream
-  marks `@always_inline`**
+- [ ] **R939 The bundled library's inline markings do not reach the
+  inliner**
 
-  Upstream's std puts `@always_inline` on most of its small methods, and the
-  bundled std has none, so the pre-elaboration inliner has nothing to act on.
-  - Copy upstream's markings, at the pin's hash, onto the functions the
-    bundled library shares with it.
-  - Done when the corpus report shows the inliner's effect on the bundled
-    collections.
-  - Depends on R783, R784.
+  The bundled std carries upstream's markings, but `inline-parametric`
+  changes nothing in the corpus report, because no marked callee is one
+  it can inline yet.
+  - Most markings are `@inline(.nodebug)` or `@inline(.always)`, which
+    record `automatic` until R913 lands.
+  - The four `@always_inline("builtin")` callees are methods of `Span` and
+    `Tuple`, parametric structs whose methods R917 does not yet inline.
+  - Done when `scripts/instantiation-report` shows the inliner's effect on
+    the bundled collections and `benchmarks/instantiation.tsv` is
+    regenerated with it.
+  - Depends on R913, R917.
   - Model: Opus, Not Planned.
 
 - [ ] **R197 Compile-time Dict/Set key identity ignores a user struct's

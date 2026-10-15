@@ -32,6 +32,7 @@ struct _ZeroStartingRange[dtype: DType = DType.int](
     var curr: Scalar[Self.dtype]
     var end: Scalar[Self.dtype]
 
+    @inline(.always)
     def __init__(out self, end: Scalar[Self.dtype]):
         var clamped = end
         # Scalar comparisons produce width-1 masks; branch through Int.
@@ -40,12 +41,15 @@ struct _ZeroStartingRange[dtype: DType = DType.int](
         self.curr = clamped
         self.end = clamped
 
+    @inline(.always)
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self
 
+    @inline(.always)
     def __reversed__(self) -> _StridedRange[Self.dtype]:
         return _StridedRange[Self.dtype](self.end - 1, Scalar[Self.dtype](-1), Scalar[Self.dtype](-1))
 
+    @inline(.always)
     def __next__(mut self) raises StopIteration -> Scalar[Self.dtype]:
         var remaining = self.curr
         if Int(remaining) == 0:
@@ -53,9 +57,11 @@ struct _ZeroStartingRange[dtype: DType = DType.int](
         self.curr = remaining - 1
         return self.end - remaining
 
+    @inline(.always)
     def __len__(self) -> Int:
         return Int(self.curr)
 
+    @inline(.always)
     def __getitem__(self, idx: Int) -> Scalar[Self.dtype]:
         return Scalar[Self.dtype](idx)
 
@@ -69,6 +75,7 @@ struct _SequentialRange[dtype: DType = DType.int](
     var start: Scalar[Self.dtype]
     var end: Scalar[Self.dtype]
 
+    @inline(.always)
     def __init__(out self, start: Scalar[Self.dtype], end: Scalar[Self.dtype]):
         self.start = start
         var stop = end
@@ -76,12 +83,15 @@ struct _SequentialRange[dtype: DType = DType.int](
             stop = start
         self.end = stop
 
+    @inline(.always)
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self
 
+    @inline(.always)
     def __reversed__(self) -> _StridedRange[Self.dtype]:
         return _StridedRange[Self.dtype](self.end - 1, self.start - 1, Scalar[Self.dtype](-1))
 
+    @inline(.always)
     def __next__(mut self) raises StopIteration -> Scalar[Self.dtype]:
         var current = self.start
         if Int(current) == Int(self.end):
@@ -89,9 +99,11 @@ struct _SequentialRange[dtype: DType = DType.int](
         self.start = current + 1
         return current
 
+    @inline(.always)
     def __len__(self) -> Int:
         return Int(self.end) - Int(self.start)
 
+    @inline(.always)
     def __getitem__(self, idx: Int) -> Scalar[Self.dtype]:
         return self.start + Scalar[Self.dtype](idx)
 
@@ -106,6 +118,7 @@ struct _StridedRange[dtype: DType = DType.int](
     var end: Scalar[Self.dtype]
     var step: Scalar[Self.dtype]
 
+    @inline(.always)
     def __init__(
         out self, start: Scalar[Self.dtype], end: Scalar[Self.dtype], step: Scalar[Self.dtype]
     ):
@@ -123,13 +136,16 @@ struct _StridedRange[dtype: DType = DType.int](
         self.end = last
         self.step = stride
 
+    @inline(.always)
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self
 
+    @inline(.always)
     def __reversed__(self) -> _StridedRange[Self.dtype]:
         var last = self.start + Scalar[Self.dtype](len(self) - 1) * self.step
         return _StridedRange[Self.dtype](last, self.start - self.step, -self.step)
 
+    @inline(.always)
     def __next__(mut self) raises StopIteration -> Scalar[Self.dtype]:
         if Int(self.step) > 0:
             if Int(self.start) >= Int(self.end):
@@ -141,9 +157,11 @@ struct _StridedRange[dtype: DType = DType.int](
         self.start += self.step
         return result
 
+    @inline(.always)
     def __len__(self) -> Int:
         return _range_length(Int(self.start), Int(self.end), Int(self.step))
 
+    @inline(.always)
     def __getitem__(self, idx: Int) -> Scalar[Self.dtype]:
         return self.start + Scalar[Self.dtype](idx) * self.step
 
@@ -186,11 +204,14 @@ struct _FloatStridedRange[dtype: DType = DType.float64](
         self.idx += 1
         return result
 
+@inline(.always)
 def range(end: Int) -> _ZeroStartingRange[DType.int]:
     return _ZeroStartingRange[DType.int](end)
 
+@inline(.always)
 def range(start: Int, end: Int) -> _SequentialRange[DType.int]:
     return _SequentialRange[DType.int](start, end)
 
+@inline(.always)
 def range(start: Int, end: Int, step: Int) -> _StridedRange[DType.int]:
     return _StridedRange[DType.int](start, end, step)

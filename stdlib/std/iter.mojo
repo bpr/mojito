@@ -51,6 +51,7 @@ trait IterableOwned:
 # `next(iterator)`: the builtin spelling of `__next__`. Exhaustion surfaces
 # as an ordinary `Error("StopIteration")` so the call propagates through a
 # plain `raises` context, as upstream's does.
+@inline(.always)
 def next[T: Iterator](mut iterator: T) raises -> T.Element:
     try:
         return iterator.__next__()

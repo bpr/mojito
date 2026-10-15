@@ -74,6 +74,7 @@ struct _DictEntryIter[
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self.copy()
 
+    @inline(.always)
     def __next__(mut self) raises StopIteration -> ref[
         ImmOrigin(Self.iterable_origin._get_owned_interior["element"])
     ] DictEntry[Self.K, Self.V, Self.H] where conforms_to(
@@ -104,12 +105,14 @@ struct _DictKeyIter[
     var iter: Self.dict_entry_iter
 
     # The view iterates itself; a stored view restarts from its own cursor.
+    @inline(.always)
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self.copy()
 
     # Key yields are read-only regardless of the mapping's mutability:
     # writing through a key reference would corrupt the hash invariant
     # (the wrapped entry iterator's yields are already immutable).
+    @inline(.always)
     def __next__(mut self) raises StopIteration -> ref[
         self.iter.__next__().key
     ] Self.K where conforms_to(Self.K, Copyable) and conforms_to(Self.V, Copyable):
@@ -161,9 +164,11 @@ struct _TakeDictEntryIter[
 
     var src: ref[origin] Dict[Self.K, Self.V, Self.H]
 
+    @inline(.always)
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self.copy()
 
+    @inline(.always)
     def __next__(mut self) raises StopIteration -> DictEntry[Self.K, Self.V, Self.H]:
         if len(self.src.entries) == 0:
             raise StopIteration()
@@ -207,6 +212,7 @@ struct Dict[
     var index: List[List[Int]]
     var nbuckets: Int
 
+    @inline(.always)
     def __init__(out self):
         self.entries = List[DictEntry[Self.K, Self.V, Self.H]]()
         self.index = List[List[Int]]()
@@ -218,6 +224,7 @@ struct Dict[
 
     # Capacity is a bucket-count hint: the index starts wide enough that the
     # first `capacity` insertions never rehash.
+    @inline(.always)
     def __init__(out self, *, capacity: Int):
         self.entries = List[DictEntry[Self.K, Self.V, Self.H]]()
         self.index = List[List[Int]]()
@@ -229,6 +236,7 @@ struct Dict[
             self.index.append(List[Int]())
             i += 1
 
+    @inline(.always)
     def __init__(
         out self,
         var keys: List[Self.K],
@@ -287,6 +295,7 @@ struct Dict[
     def find_index(self, key: Self.K) -> Int:
         return self._find_index(hash[Self.H](key), key)
 
+    @inline(.always)
     def __contains__(self, key: Self.K) -> Bool:
         return self.find_index(key) >= 0
 
@@ -299,6 +308,7 @@ struct Dict[
             return self.entries[i].value
         raise Error("missing key")
 
+    @inline(.always)
     def __setitem__(mut self, var key: Self.K, var value: Self.V) where conforms_to(
         Self.K, Deinitable
     ) and conforms_to(Self.V, Deinitable):
@@ -377,6 +387,7 @@ struct Dict[
 
     # Return a reference to the value for `key`, inserting `default` first
     # when the key is absent.
+    @inline(.always)
     def setdefault(
         mut self, var key: Self.K, var default: Self.V
     ) -> ref[
@@ -433,12 +444,14 @@ struct Dict[
             var entry = self.entries.pop(0)
             entry^.reap_with(elt_handler)
 
+    @inline(.always)
     def get(self, key: Self.K) -> Optional[Self.V] where conforms_to(Self.V, Copyable):
         var i = self.find_index(key)
         if i >= 0:
             return Optional[Self.V](self.entries[i].value.copy())
         return Optional[Self.V]()
 
+    @inline(.always)
     def get(self, key: Self.K, default: Self.V) -> Self.V where conforms_to(
         Self.V, Copyable
     ):
@@ -536,6 +549,7 @@ struct Dict[
         result.update(other)
         return result^
 
+    @inline(.never)
     def write_to(self, mut writer: Some[Writer]) where conforms_to(
         Self.K, Copyable
     ) and conforms_to(Self.K, Writable) and conforms_to(Self.V, Writable):
@@ -550,6 +564,7 @@ struct Dict[
         writer.write("}")
 
     # Upstream's text: `Dict[String, SIMD[DType.int, 1]]({'a': Int(1)})`.
+    @inline(.never)
     def write_repr_to(self, mut writer: Some[Writer]) where conforms_to(
         Self.K, Copyable
     ) and conforms_to(Self.K, Writable) and conforms_to(Self.V, Writable):

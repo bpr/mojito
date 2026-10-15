@@ -78,6 +78,7 @@ struct _c_stat(Copyable, Defaultable, Movable, Writable):
         )
 
 
+@inline(.always)
 def _stat(var path: String) raises -> _c_stat:
     var stat = _c_stat()
     var err = external_call["__xstat", Int32](
@@ -88,6 +89,7 @@ def _stat(var path: String) raises -> _c_stat:
     return stat^
 
 
+@inline(.always)
 def _lstat(var path: String) raises -> _c_stat:
     var stat = _c_stat()
     var err = external_call["__lxstat", Int32](

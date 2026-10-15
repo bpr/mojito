@@ -19,6 +19,7 @@ struct FileDescriptor(Copyable, ImplicitlyCopyable, Movable, TrivialRegisterPass
     def __init__(out self, f: FileHandle):
         self.value = f._get_raw_fd()
 
+    @inline(.always)
     def write_bytes(mut self, bytes: Span[Byte, _]):
         var written = external_call["write", c_ssize_t](
             self.value, bytes.unsafe_ptr(), len(bytes)
@@ -29,6 +30,7 @@ struct FileDescriptor(Copyable, ImplicitlyCopyable, Movable, TrivialRegisterPass
     def write_string(mut self, string: StringSpan):
         self.write_bytes(string.as_bytes())
 
+    @inline(.always)
     def read_bytes[origin: Origin[mut=True]](mut self, buffer: Span[Byte, origin]) raises -> Int:
         var read = external_call["read", c_ssize_t](
             self.value, buffer.unsafe_ptr(), len(buffer)

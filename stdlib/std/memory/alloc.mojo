@@ -17,14 +17,17 @@ struct Layout[T: AnyType](ImplicitlyCopyable, Movable):
     var _count: Int
     var _alignment: Int
 
+    @inline(.always)
     def __init__(out self, *, count: Int):
         self._count = count
         self._alignment = 0
 
+    @inline(.always)
     def __init__(out self, *, count: Int, alignment: Int):
         self._count = count
         self._alignment = alignment
 
+    @inline(.always)
     def count(self) -> Int:
         return self._count
 
@@ -87,6 +90,7 @@ def dealloc[T: AnyType](var allocation: Allocation[T], /):
     ptr.unsafe_free()
 
 
+@inline(.always)
 def unsafe_alloc[T: AnyType](count: Int, *, alignment: Int = 0) -> Pointer[T, MutUntrackedOrigin]:
     return _RawAlloc[T](count, alignment).ptr
 

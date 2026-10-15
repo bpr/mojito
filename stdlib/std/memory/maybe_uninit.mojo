@@ -28,31 +28,39 @@ struct MaybeUninit[T: AnyType](
 ):
     var _storage: __UninitStorage[Self.T]
 
+    @inline(.always)
     def __init__(out self):
         self._storage = __UninitStorage[Self.T]()
 
+    @inline(.always)
     def __init__(out self, var value: Self.T, /) where conforms_to(Self.T, Movable):
         self._storage = __UninitStorage[Self.T](value^)
 
+    @inline(.always)
     def unsafe_write(mut self, var value: Self.T, /) where conforms_to(Self.T, Movable):
         self._storage.unsafe_write(value^)
 
     # Safe counterpart of unsafe_write for trivially-deinitable payloads
     # (2026-08): a trivial deinitializer is a no-op, so overwriting a live
     # value cannot leak a resource.
+    @inline(.always)
     def write(
         mut self, var value: Self.T, /
     ) where IsTriviallyDeinitable[T] and conforms_to(Self.T, Movable):
         self._storage.unsafe_write(value^)
 
+    @inline(.always)
     def unsafe_assume_init(deinit self) -> Self.T where conforms_to(Self.T, Movable):
         return self._storage^.take()
 
+    @inline(.always)
     def unsafe_assume_init(ref self) -> ref[origin_of(self)] Self.T:
         return self._storage[0]
 
+    @inline(.always)
     def unsafe_deinit(deinit self) where conforms_to(Self.T, Deinitable):
         self._storage^.destroy()
 
+    @inline(.always)
     def unsafe_forget(deinit self):
         pass

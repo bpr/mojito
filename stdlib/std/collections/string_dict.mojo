@@ -52,10 +52,12 @@ struct StringDict[V: Movable](
                 return entry_index
         return -1
 
+    @inline(.always)
     def __contains__(self, key: String) -> Bool:
         return self.find_index(key) >= 0
 
     # A copying read of the value.
+    @inline(.always)
     def __getitem__(self, key: String) raises -> Self.V where conforms_to(
         Self.V, Copyable
     ):
@@ -64,6 +66,7 @@ struct StringDict[V: Movable](
             return self.entries[i].value.copy()
         raise Error("missing key")
 
+    @inline(.always)
     def __setitem__(mut self, key: String, var value: Self.V) where conforms_to(
         Self.V, Deinitable
     ):
@@ -106,6 +109,7 @@ struct StringDict[V: Movable](
     # previous entry (key and value) out and returns it; a fresh key returns
     # an empty Optional. Nothing is destroyed in place, so no `Deinitable`
     # bound is required.
+    @inline(.always)
     def insert(mut self, key: String, var value: Self.V) -> Optional[
         DictEntry[String, Self.V]
     ]:
@@ -156,6 +160,7 @@ struct StringDict[V: Movable](
             return self.entries[i].value.copy()
         return default.copy()
 
+    @inline(.always)
     def __len__(self) -> Int:
         return self.count
 

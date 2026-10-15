@@ -11,11 +11,13 @@ from ..env import getenv
 comptime sep = "/"
 
 
+@inline(.always)
 def _get_stat_st_mode(var path: String) raises -> Int:
     var record = _stat(path^)
     return Int(record.st_mode)
 
 
+@inline(.always)
 def _get_lstat_st_mode(var path: String) raises -> Int:
     var record = _lstat(path^)
     return Int(record.st_mode)
