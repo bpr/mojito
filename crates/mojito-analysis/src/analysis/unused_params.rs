@@ -7,8 +7,9 @@
 //! ([`mojito_mir::mir::unread_parameters`]), and the elaborator leaves
 //! their arguments out of an instance's identity. Upstream also rewrites the
 //! generator's signature and its callers' arguments; Mojito keeps both, and
-//! the instance binds the argument its body never reads. It runs last, so a
-//! read the cleanup passes removed keeps no parameter.
+//! the instance binds the argument its body never reads. Each run records
+//! the body's unread parameters afresh, and the pipeline's last round runs
+//! it after every cleanup pass, so a read they removed keeps no parameter.
 
 use super::pre_elaboration::BodyPass;
 use mojito_mir::mir::{MirDeclarations, MirFunction, unread_parameters};

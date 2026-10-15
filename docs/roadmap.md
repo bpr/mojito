@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R926**.
+Next free ID: **R927**.
 
 ## Ordered Work
 
@@ -229,19 +229,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R869 The pre-elaboration pipeline does not repeat upstream's
-  rounds around `InlineParametric`**
-
-  The pin runs three generator rounds, the second and third after an
-  `InlineParametric`, and the third with `Canonicalizer` but no `SCCP`;
-  Mojito's `PIPELINE` models only the first two.
-  - Since R842, `canonicalize` folds constant operators alone, so a
-    third round can clean up inlined bodies without `sccp`.
-  - Done when `PIPELINE` lists the pin's rounds in order and the
-    on/off differential is clean.
-  - Depends on R784.
-  - Model: Opus, Not Planned.
-
 - [ ] **R785 Every instance of a trait default carries its forwarding
   wrapper**
 
@@ -354,6 +341,17 @@ which names the upstream pass each one follows. Each is measured by the
     pass runs last in the post-elaboration pipeline, and the corpus effect
     is recorded.
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R926 Generators are not CSE'd before elaboration**
+
+  Upstream's last pre-elaboration round runs `CSEPass` on each generator,
+  after `RemoveUnusedParams` and `EliminateDeadSymbols`, and Mojito's
+  fourth `PIPELINE` round has no generator pass.
+  - It is a missing optimization, not a difference in semantics.
+  - R845's pass, registered as a `BodyPass`, is the one to list.
+  - Done when `PIPELINE` ends with it and the on/off differential is clean.
+  - Depends on R845.
   - Model: Opus, Not Planned.
 
 - [ ] **R837 Lifetime-only markers survive into every instance**

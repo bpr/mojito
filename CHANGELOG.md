@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The pre-elaboration pipeline now runs the pin's four rounds in order
+  (R869): `remove-unused-params` and `eliminate-dead-symbols` in each, the
+  first ending with `canonicalize`, the second opening with
+  `inline-parametric` and ending with `sccp` and `canonicalize`, and the
+  third running `inline-parametric` and `canonicalize` again. The fourth
+  round's generator CSE waits on a CSE pass (R926). Program output is
+  unchanged.
 - The pre-elaboration pipeline's second round now opens with
   `inline-parametric`, upstream's `InlineParametric` (R784): a call to an
   `@always_inline("nodebug")` or `@always_inline("builtin")` function that

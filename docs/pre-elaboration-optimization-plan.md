@@ -199,9 +199,10 @@ folds the operators over it (R840);
    signature's serialized form, as MLIR walks every attribute and type,
    plus a value parameter's slot reads; a parameter read only by another
    parameter's default is unread, as on the pin, and a drop of a scalar
-   slot is no read. It runs last in `PIPELINE` rather than first: a
-   parameter only grows removable as the cleanup passes erase reads, so
-   one run at the end removes what upstream's runs remove. Upstream also
+   slot is no read. It runs in each of `PIPELINE`'s rounds, as upstream's
+   does, and each run records the unread set afresh: a parameter only
+   grows removable as the cleanup passes erase reads, so the last round's
+   run decides (R869). Upstream also
    rewrites the generator's signature and its callers' arguments; Mojito
    keeps both and binds the argument the body never reads. The pin goes
    further than this core: it removes a parameter only forwarded to a
@@ -220,7 +221,8 @@ folds the operators over it (R840);
    read, so the bundled library's markings wait on it.
 8. **Restricted inlining** (`InlineParametric`, landed for closed
    callees). `inline-parametric` opens the second round, after the first
-   `canonicalize`, and runs at both seams: over the program's own bodies
+   `canonicalize`, runs again in the third, before its `canonicalize`, as
+   upstream's does (R869), and runs at both seams: over the program's own bodies
    callees first (the call graph's strongly connected components
    bottom-up), and over each package body as it is finished. It replaces a
    call to an `@always_inline("nodebug")` or `@always_inline("builtin")`

@@ -4894,18 +4894,23 @@ drop-elaborated parametric body, and a `CallGraphPass` rewrites each body
 after its callees, reading their finished bodies through `Callees`, as
 MLIR's inliner walks the call graph. `docs/pre-elaboration-optimization-plan.md`
 stages the passes that fill it. The list follows upstream's rounds as the
-pinned compiler's `--mlir-timing` report shows them: the first round runs
-`EliminateDeadSymbols` and then a `Canonicalizer` on each generator, the
-second opens with `InlineParametric` and runs `SCCP` and a `Canonicalizer`
-again, so `PIPELINE` is `eliminate-dead-symbols`, `canonicalize`,
-`inline-parametric`, `sccp`, `canonicalize`, then `remove-unused-params`,
-which upstream runs at the head of each round and Mojito runs once, last.
-`pass_names` yields a pass that runs twice once, and both runs of
-`canonicalize` count into one `--timings` span.
+pinned compiler's `--mlir-timing` report shows them, less the passes
+Mojito lacks (`SROA`, `Mem2Reg`, `CSEPass`). Each of four rounds runs
+`RemoveUnusedParams` and `EliminateDeadSymbols`, the second after an
+`InlineParametric`; the first then runs a `Canonicalizer` on each
+generator, the second `SCCP` and a `Canonicalizer`, the third an
+`InlineParametric` and a `Canonicalizer`, and the fourth only `CSEPass`. So
+`PIPELINE` is `remove-unused-params`, `eliminate-dead-symbols`,
+`canonicalize`; `inline-parametric`, `remove-unused-params`,
+`eliminate-dead-symbols`, `sccp`, `canonicalize`; `remove-unused-params`,
+`eliminate-dead-symbols`, `inline-parametric`, `canonicalize`; and
+`remove-unused-params`, `eliminate-dead-symbols` (R869). `pass_names`
+yields a pass that runs more than once once, and all of a pass's runs count
+into one `--timings` span.
 
-- **`eliminate-dead-symbols` runs first** (`analysis::ELIMINATE_DEAD_SYMBOLS`,
+- **`eliminate-dead-symbols` runs in each round** (`analysis::ELIMINATE_DEAD_SYMBOLS`,
   `analysis/dead_symbols.rs`, R778), upstream's `EliminateDeadSymbols`, which
-  runs ahead of every pre-elaboration pass but `RemoveUnusedParams`. It
+  follows `RemoveUnusedParams` in each round. It
   removes the bodies of the program's own parametric functions that no root
   reaches, leaving their declarations. Upstream's roots are the `export`
   symbols; Mojito has none, and a native caller may name any concrete
@@ -5006,7 +5011,7 @@ which upstream runs at the head of each round and Mojito runs once, last.
   Its `--timings` counters are `folded_constants`, `folded_branches`, `threaded_branches`,
   `folded_successors`, `merged_blocks`, `erased_blocks`,
   `forwarded_copies`, and `erased_instructions`.
-- **`inline-parametric` opens the second round**
+- **`inline-parametric` opens the second round and runs again in the third**
   (`analysis::INLINE_PARAMETRIC`, `analysis/inline_parametric.rs`, R784),
   upstream's `InlineParametric`. It follows the callees whose declaration's
   `InlineLevel` is `NoDebug` or `Builtin` (`is_inlined_before_elaboration`),
@@ -5101,7 +5106,7 @@ which upstream runs at the head of each round and Mojito runs once, last.
   lattice meet. The pass never rewrites a terminator, which the
   `canonicalize` after it does.
   Its `--timings` counter is `folded_constants`.
-- **`remove-unused-params` runs last** (`analysis::REMOVE_UNUSED_PARAMS`,
+- **`remove-unused-params` runs in each round** (`analysis::REMOVE_UNUSED_PARAMS`,
   `analysis/unused_params.rs`, R782), upstream's `RemoveUnusedParams`. It
   records on each body, as `MirFunction::removed_params`, the function's own
   compile-time parameters (`ParamId::owner` is its lowered name) that
@@ -5117,8 +5122,9 @@ which upstream runs at the head of each round and Mojito runs once, last.
   parameter's default is not a read: the call site evaluates it. A
   nested function, `__toplevel__`, and a callable value parameter, whose
   binding can add runtime parameters to an instance, have no candidates.
-  Running last loses nothing: a parameter only grows removable as the
-  cleanup passes erase reads. The elaborator leaves a removed parameter's
+  Each run records the unread set afresh, and a parameter only grows
+  removable as the cleanup passes erase reads, so the last round's run,
+  after every cleanup pass, decides it. The elaborator leaves a removed parameter's
   argument out of the instance key wherever it walks the template's own
   `param_decls` (`Specializer::own_arguments`), so instances that differ
   only in it are one, and names an instance whose template removed any

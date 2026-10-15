@@ -119,21 +119,28 @@ impl Pass {
 /// The pre-elaboration pipeline, in order: upstream's pass rounds
 /// (`docs/pre-elaboration-optimization-plan.md`) as Mojito adopts them.
 ///
-/// Upstream's first round runs `RemoveUnusedParams`, `EliminateDeadSymbols`,
-/// then `SROA`, `Mem2Reg`, and `Canonicalizer` on each generator; its second
-/// opens with `InlineParametric`, then runs `SROA`, `Mem2Reg`, `SCCP`, and
-/// `Canonicalizer` again. Mojito has neither of the two scalar-replacement
-/// passes, and, as upstream does, runs `canonicalize` once in each round. It
-/// runs `remove-unused-params` once, last: a parameter only grows removable
-/// as the cleanup passes erase its reads, so the last run removes what
-/// upstream's runs remove together.
+/// Upstream runs four rounds, each opening with `RemoveUnusedParams` and
+/// `EliminateDeadSymbols` (the second after an `InlineParametric`), then a
+/// generator pipeline: `SROA`, `Mem2Reg`, and `Canonicalizer` in the first;
+/// the same with `SCCP` before the `Canonicalizer` in the second; an
+/// `InlineParametric`, then `SROA`, `Mem2Reg`, and `Canonicalizer` in the
+/// third; and `CSEPass` in the fourth. Mojito has neither scalar-replacement
+/// pass nor a CSE pass, so its fourth round has no generator pipeline.
 pub const PIPELINE: &[Pass] = &[
+    Pass::Body(REMOVE_UNUSED_PARAMS),
     Pass::Program(ELIMINATE_DEAD_SYMBOLS),
     Pass::Body(CANONICALIZE),
     Pass::CallGraph(INLINE_PARAMETRIC),
+    Pass::Body(REMOVE_UNUSED_PARAMS),
+    Pass::Program(ELIMINATE_DEAD_SYMBOLS),
     Pass::Body(SCCP),
     Pass::Body(CANONICALIZE),
     Pass::Body(REMOVE_UNUSED_PARAMS),
+    Pass::Program(ELIMINATE_DEAD_SYMBOLS),
+    Pass::CallGraph(INLINE_PARAMETRIC),
+    Pass::Body(CANONICALIZE),
+    Pass::Body(REMOVE_UNUSED_PARAMS),
+    Pass::Program(ELIMINATE_DEAD_SYMBOLS),
 ];
 
 /// Drop elaboration as a named pass, so a pass test can run it over MIR
