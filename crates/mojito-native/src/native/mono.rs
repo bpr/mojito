@@ -84,6 +84,45 @@ impl SpecializedProgram {
             counts,
         })
     }
+
+    /// Run `eliminate`, a symbol pass that removes the functions and
+    /// declarations its roots do not reach, over the concrete program,
+    /// rooted at `exports` and every requested entry's instance, and
+    /// recount it: the seam upstream's `EliminateDeadSymbols` runs at
+    /// straight out of the elaborator and again after its post-elaboration
+    /// pipeline ([`ConcreteMir::pruned`]).
+    pub fn pruned(
+        self,
+        exports: &[String],
+        eliminate: impl FnOnce(&mut MirProgram, &[String]),
+    ) -> Result<Self, MonoError> {
+        let roots: Vec<String> = exports
+            .iter()
+            .chain(self.entries.values())
+            .cloned()
+            .collect();
+        let Self {
+            program,
+            entries,
+            mut counts,
+        } = self;
+        let program = program
+            .pruned(|program| eliminate(program, &roots))
+            .map_err(|findings| MonoError {
+                kind: MonoErrorKind::Unsupported,
+                function: None,
+                construct: format!(
+                    "concrete MIR that does not verify after symbol elimination: {}",
+                    findings.join("; ")
+                ),
+            })?;
+        counts.recount(&program);
+        Ok(Self {
+            program,
+            entries,
+            counts,
+        })
+    }
 }
 
 /// What the elaboration multiplied: each generator it reached and the
@@ -135,13 +174,21 @@ impl ElaborationCounts {
 
     /// Recount the concrete instructions and blocks, every generator's
     /// instances' and the whole program's, over `program`, a rewrite of the
-    /// elaboration's output. Template sizes stay as the elaborator read them.
+    /// elaboration's output. An instance the rewrite removed leaves its
+    /// generator's row, and a generator left with none leaves the counts.
+    /// Template sizes stay as the elaborator read them.
     pub fn recount(&mut self, program: &MirProgram) {
         let output: HashMap<&str, &MirFunction> = program
             .functions
             .iter()
             .map(|(name, function)| (name.as_str(), function))
             .collect();
+        for row in &mut self.generators {
+            row.instance_names
+                .retain(|name| output.contains_key(name.as_str()));
+            row.instances = row.instance_names.len();
+        }
+        self.generators.retain(|row| row.instances > 0);
         for row in &mut self.generators {
             let instances = || {
                 row.instance_names

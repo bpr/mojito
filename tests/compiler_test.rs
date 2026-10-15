@@ -4209,3 +4209,30 @@ fn post_elaboration_folds_parameter_arithmetic() {
         (true, true)
     );
 }
+
+#[test]
+fn compile_time_only_instances_leave_the_concrete_program() {
+    let names = |compiler: Compiler| {
+        let program = compiler
+            .compile_source(
+                "def main():\n    comptime for i in range(3):\n        print(i)\n",
+                std::path::Path::new("/tmp/mojito_dead_symbols.mojo"),
+            )
+            .expect("compile the loop");
+        let concrete = program.concrete_mir().expect("elaborate");
+        concrete
+            .program
+            .functions
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>()
+    };
+    let compile_time_only = |name: &String| name.contains("paramfor_");
+    assert!(
+        names(Compiler::default().with_pre_elaboration(false))
+            .iter()
+            .any(compile_time_only)
+    );
+    let pruned = names(Compiler::default().with_pre_elaboration(true));
+    assert!(!pruned.iter().any(compile_time_only), "{pruned:?}");
+}

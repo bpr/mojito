@@ -154,9 +154,16 @@ impl CompiledProgram {
                 );
                 let concrete = if self.pre_elaboration {
                     let _passes = timing::span("post_elaboration");
-                    concrete.and_then(|concrete| {
-                        concrete.rewritten(crate::analysis::post_elaborate_program)
-                    })
+                    let eliminate = |concrete: SpecializedProgram| {
+                        let _pass = timing::span("eliminate-dead-symbols");
+                        concrete.pruned(&self.exports, crate::analysis::eliminate_dead_symbols)
+                    };
+                    concrete
+                        .and_then(eliminate)
+                        .and_then(|concrete| {
+                            concrete.rewritten(crate::analysis::post_elaborate_program)
+                        })
+                        .and_then(eliminate)
                 } else {
                     concrete
                 };

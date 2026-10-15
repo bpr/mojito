@@ -184,6 +184,19 @@ impl ConcreteMir {
         }
     }
 
+    /// Run `prune` over the admitted program and re-admit it: a symbol
+    /// pass that only removes functions and declarations no remaining
+    /// symbol names, so every remaining body is as admitted. A debug build
+    /// re-verifies the whole program, which catches a removal a remaining
+    /// symbol still names.
+    pub fn pruned(mut self, prune: impl FnOnce(&mut MirProgram)) -> Result<Self, Vec<String>> {
+        prune(&mut self.0);
+        if cfg!(debug_assertions) {
+            return Self::verified(self.0);
+        }
+        Ok(self)
+    }
+
     pub fn into_program(self) -> MirProgram {
         self.0
     }

@@ -5428,6 +5428,19 @@ MIR's types with its bindings substituted, never re-derived from one
 another, as upstream's elaborator substitutes a generator body's types; the
 concrete verifier rejects a reference slot read as its handle.
 
+- **Dead symbols.** Upstream runs `EliminateDeadSymbols` straight out of
+  the elaborator and again after the function pipeline (`Pipeline.cpp`).
+  So does Mojito: `SpecializedProgram::pruned` runs
+  `analysis::eliminate_dead_symbols` over the concrete program on each
+  side of the pipeline, rooted at the entry roots, the requested entries'
+  instances, and the compilation's exports (`Compiler::with_exports`). The
+  instances the elaborator made only to run a compile-time application on
+  the VM, such as the `paramfor_*` stubs, `range` iterator methods, and
+  `$comptime$` thunks, leave the concrete program. Compile-time
+  evaluation runs fragments built apart (`Specializer::fragments`), so the
+  pruning changes no evaluation. The elaboration counts keep only the
+  instances that remain.
+
 - **CSE.** `cse` (`analysis::CSE`, `analysis/cse.rs`, R845) is MLIR's
   `CSE`: it walks each block list's dominator tree (Cooper, Harvey, and
   Kennedy's iteration over `mir::reverse_postorder`) with a scoped table,

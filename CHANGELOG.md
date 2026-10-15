@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The concrete program no longer keeps the instances only compile-time
+  evaluation reaches (R989): `eliminate-dead-symbols` runs straight out of
+  the elaborator and again after the post-elaboration pipeline, as
+  upstream's `EliminateDeadSymbols` does, so the corpus's concrete
+  functions drop from 46,388 to 41,061 and its concrete instructions from
+  659,919 to 618,646 (`benchmarks/instantiation.tsv`). No program's output
+  changes.
 - `benchmarks/instantiation.tsv` is regenerated with the inliner acting
   on the bundled library (R939): `_is_valid_utf8`, `String`'s destructor,
   `String.unsafe_ptr` and `capacity_bytes`, `rotate_bits_left`, and
