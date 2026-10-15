@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A trait default's synthesized forwarding wrapper is now `nodebug`, as
+  upstream's `synthesizeDefaultTraitMethodWrapper` marks it (R785), so
+  `inline-parametric` replaces a statically resolved call to an inherited
+  default with the call of its trait's member, and a wrapper reached only
+  by such calls leaves the concrete program. A call by trait dispatch keeps
+  the wrapper, as on the pin. Program output is unchanged; the MIR text and
+  package formats are unchanged.
 - The pre-elaboration pipeline now runs the pin's four rounds in order
   (R869): `remove-unused-params` and `eliminate-dead-symbols` in each, the
   first ending with `canonicalize`, the second opening with

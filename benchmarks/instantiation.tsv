@@ -2,6 +2,7 @@ fixture	status	concrete_functions	concrete_instructions	generators	generator_ins
 assets/ok/abstract_dispatch_effect_free_conformers.mojo	elaborated	9	99	1	1	2	2	17	1	1
 assets/ok/add.mojo	elaborated	6	93	0	0	0	0	14	0	0
 assets/ok/allocation_tracked_unsafe_ptr.mojo	elaborated	16	193	11	11	57	57	27	14	14
+assets/ok/always_inline_nodebug_calls.mojo	elaborated	77	1969	25	36	312	457	300	60	83
 assets/ok/arithmetic.mojo	elaborated	5	99	0	0	0	0	13	0	0
 assets/ok/array_comparable.mojo	elaborated	17	310	12	12	198	196	50	37	37
 assets/ok/array_display_temporary_subscript.mojo	elaborated	84	1736	25	61	357	970	279	61	166
@@ -903,14 +904,14 @@ assets/ok/temporary_receiver_deinit.mojo	elaborated	47	790	17	20	172	179	145	34	
 assets/ok/temporary_receiver_view.mojo	elaborated	112	2868	39	50	434	597	676	84	106
 assets/ok/ternary.mojo	elaborated	6	116	0	0	0	0	20	0	0
 assets/ok/thin_nested_def_reads_value_parameter.mojo	elaborated	23	186	11	15	63	76	35	13	19
-assets/ok/trait_bound_argument_drop_order.mojo	elaborated	19	192	5	5	52	52	27	5	5
+assets/ok/trait_bound_argument_drop_order.mojo	elaborated	18	190	5	5	52	52	26	5	5
 assets/ok/trait_bound_comparison_drop_order.mojo	elaborated	45	878	16	20	198	265	159	33	37
-assets/ok/trait_default_calls_later_function.mojo	elaborated	38	753	15	15	181	179	142	32	32
+assets/ok/trait_default_calls_later_function.mojo	elaborated	37	751	15	15	181	179	141	32	32
 assets/ok/trait_default_comptime_if.mojo	elaborated	53	844	21	31	201	234	157	44	48
-assets/ok/trait_default_method.mojo	elaborated	7	96	1	1	2	2	15	1	1
-assets/ok/trait_default_overloads.mojo	elaborated	16	145	3	5	8	15	24	3	5
+assets/ok/trait_default_method.mojo	elaborated	6	94	1	1	2	2	14	1	1
+assets/ok/trait_default_overloads.mojo	elaborated	16	149	3	5	8	15	24	3	5
 assets/ok/trait_default_parameter_defaults.mojo	elaborated	72	945	36	51	301	366	185	61	83
-assets/ok/trait_default_refinement.mojo	elaborated	20	168	5	8	15	25	28	5	8
+assets/ok/trait_default_refinement.mojo	elaborated	17	162	5	8	15	25	25	5	8
 assets/ok/trait_default_wrapper_conventions.mojo	elaborated	126	2192	58	96	863	1422	347	131	220
 assets/ok/trait_inheritance.mojo	elaborated	8	98	1	1	4	4	16	1	1
 assets/ok/trait_method_binder_spelling.mojo	elaborated	19	332	11	11	170	138	27	17	11
@@ -1030,4 +1031,4 @@ benchmarks/compile/stdlib_heavy.mojo	elaborated	184	3269	65	160	1073	2511	499	16
 benchmarks/compile/trait_defaults.mojo	elaborated	185	1863	29	130	292	1088	308	53	166
 benchmarks/compile/tstring.mojo	elaborated	53	846	30	34	260	329	155	61	55
 benchmarks/compile/tuple.mojo	elaborated	60	878	29	40	246	328	162	54	61
-total	1031	46589	806400	19192	30527	234244	372442	135618	42688	63098
+total	1032	46660	808361	19217	30563	234556	372899	135912	42748	63181

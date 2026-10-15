@@ -3101,6 +3101,14 @@ pub struct CheckedDefaultWrapper {
     pub body: Vec<Stmt>,
 }
 
+impl CheckedDefaultWrapper {
+    /// A wrapper's inline level: `nodebug`, whatever its struct, as
+    /// upstream's `synthesizeDefaultTraitMethodWrapper` sets it, so a
+    /// statically resolved call holds the forwarding call instead of the
+    /// wrapper.
+    pub const INLINE: crate::declaration::InlineLevel = crate::declaration::InlineLevel::NoDebug;
+}
+
 /// A trait default as the check checked it: its trait's member.
 ///
 /// As upstream emits a default inside its trait, it is one function over the

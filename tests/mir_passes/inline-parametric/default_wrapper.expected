@@ -1,0 +1,94 @@
+  functions: [
+      fn {
+        name: "Tr.m",
+        registers: 2,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [param { owner: "Tr.m", slot: 0, name: _Self, bounds: [Tr], callable_bound: absent }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: param { owner: "Tr.m", slot: 0, name: _Self, bounds: [Tr], callable_bound: absent } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 49, end: 50, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 49, end: 50, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(7) },
+              literal.materialize { dest: %r1, value: %r0, target: Int }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: "S.m",
+        registers: 2,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: S, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: S, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: S, arguments: [] } }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 52, end: 80, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 52, end: 80, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [], type: present(struct_type { name: S, arguments: [] }), through: absent } },
+              call { dest: %r1, func: "Tr.m", raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [type_arg(struct_type { name: S, arguments: [] })], spread: absent }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: default_wrapper,
+        registers: 4,
+        vars: 2,
+        var_names: [s, "self$inline1"],
+        params: 1,
+        param_types: [struct_type { name: S, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: S, arguments: [] } }, var_type { var: $v1, type: struct_type { name: S, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: S, arguments: [] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: S, arguments: [] } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 127, end: 128, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 127, end: 132, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 127, end: 132, origin: absent }) }, reg_loc { reg: %r3, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [], type: present(struct_type { name: S, arguments: [] }), through: absent } }
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb1 {
+            instructions: [
+              place.load { dest: %r2, place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [], type: present(struct_type { name: S, arguments: [] }), through: absent } },
+              call { dest: %r1, func: "Tr.m", raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [type_arg(struct_type { name: S, arguments: [] })], spread: absent }
+            ],
+            terminator: jump { target: bb2 }
+          },
+          bb2 {
+            instructions: [
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      }
+  ]

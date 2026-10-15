@@ -286,7 +286,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `check_default_wrappers` checks its one statement after every trait
   member, which calls the trait's member with `Self` bound first and every argument forwarded, and
   `checked_default_wrappers` hands it over as
-  `checked::CheckedDefaultWrapper` (`CheckedProgram::default_wrappers`).
+  `checked::CheckedDefaultWrapper` (`CheckedProgram::default_wrappers`),
+  whose `CheckedDefaultWrapper::INLINE` (`nodebug`) MIR's `lower_unit`
+  gives every wrapper's declaration.
   A wrapper declares no default of its own: MIR's `adopt_member_defaults`
   gives its declaration its member's, an evaluated one applied to the
   wrapper's instantiation of the member (`CheckedConst::Evaluate`'s

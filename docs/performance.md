@@ -1638,3 +1638,28 @@ apart from the stage fixture, so the pass rewrites no other body; the
 corpus `scripts/instantiation-report` row waits for the nightly report. The
 pass's effect on the corpus arrives with the bundled library's markings
 (R786, R913).
+
+## Trait default wrappers inline before elaboration (2026-10-14, R785)
+
+A trait default's forwarding wrapper is `nodebug`, as upstream's
+`synthesizeDefaultTraitMethodWrapper` marks it, so `inline-parametric`
+replaces a statically resolved call with the wrapper's one forwarding call
+(`docs/architecture.md` §Stage 3: Semantic Checking). The fixtures that move, debug
+binary, before and after (output identical in every row):
+
+| fixture | `concrete_functions` | `concrete_instructions` |
+|---|---:|---:|
+| `trait_default_method` | 7 → 6 | 96 → 94 |
+| `trait_default_refinement` | 20 → 17 | 168 → 162 |
+| `trait_default_calls_later_function` | 38 → 37 | 753 → 751 |
+| `trait_bound_argument_drop_order` | 19 → 18 | 192 → 190 |
+| `trait_default_overloads` | 16 → 16 | 145 → 149 |
+
+A wrapper reached only by inlined calls leaves the concrete program. In
+`trait_default_overloads`, `through[X: T]` still reaches both wrappers by
+dispatch, so they stay, and each inlined copy in `main` adds a block split.
+No `generator_instances` count moves. The shared corpus total of
+`scripts/instantiation-report` falls by 8 concrete instructions, and
+`benchmarks/instantiation.tsv` is regenerated with this change. The
+bundled library's own wrappers are variadic `write` forwards, which the
+inliner keeps until keyword and variadic calls inline (R920).

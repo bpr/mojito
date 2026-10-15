@@ -229,19 +229,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R785 Every instance of a trait default carries its forwarding
-  wrapper**
-
-  A trait default is a lifted `Trait$default$m` function that each
-  conformer reaches through a forwarding wrapper, so every instance holds
-  two functions where one would do.
-  - The wrapper's body is one forwarding call, so inlining it is the
-    restricted inliner's simplest case.
-  - Done when no instance holds a default's wrapper and the differential is
-    clean.
-  - Depends on R784.
-  - Model: Opus, Planned.
-
 - [ ] **R907 A parameter only forwarded to a removed parameter keeps its
   instances apart**
 

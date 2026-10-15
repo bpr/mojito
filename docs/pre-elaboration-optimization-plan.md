@@ -257,10 +257,20 @@ folds the operators over it (R840);
    `assets/ok/always_inline_nodebug_calls.mojo`, so the stage's corpus
    effect waits on the bundled library's markings (stage 10), as
    `EliminateDeadSymbols`' waits on the passes after it.
-9. **Trait default wrappers.** A trait default is a lifted
-   `Trait$default$m` function reached through a forwarding wrapper per
-   conformer (R544's arrangement), so every instance carries both. Inlining
-   the wrapper's one call removes the extra function per instance.
+9. **Trait default wrappers** (landed, R785). A trait default is its
+   trait's member `Trait.method`, one function over `_Self`, reached
+   through a forwarding wrapper per conformer. Upstream's
+   `synthesizeDefaultTraitMethodWrapper` marks every wrapper
+   `@always_inline("nodebug")`, and Mojito's wrapper declaration carries the
+   same level (`CheckedDefaultWrapper::INLINE`), so `inline-parametric`
+   replaces a statically resolved call with the wrapper's forwarding call
+   and the wrapper instance drops out of the concrete program.
+   - A call reached by trait dispatch keeps the wrapper instance, on the
+     pin too: the callee is unknown before elaboration, and upstream's
+     post-elaboration pipeline has no inliner.
+   - The pin also inlines a parametric conformer's wrapper (`B[k].m`) and
+     the `mut self`, raising, generic, and keyword-call shapes, which
+     Mojito keeps until R917, R918, R919, R916, and R920 land.
 10. **The bundled library marks what upstream marks.** Upstream's std puts
     `@always_inline` on most small methods. Mojito's bundled std has none, so
     the inliner has nothing to act on until the library carries upstream's

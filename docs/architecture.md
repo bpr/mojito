@@ -2072,7 +2072,12 @@ member, checks its body, one statement calling the trait's member with
 (`populateDefaultedTraitFunction`). The wrapper is never syntax of
 its struct: its sites follow the spelled methods' indexes, and
 `CheckedProgram::default_wrappers` carries it to MIR, which lowers it
-through the same `lower_struct_member` as a spelled method. Its parameters'
+through the same `lower_struct_member` as a spelled method. Its
+declaration is `nodebug` (`CheckedDefaultWrapper::INLINE`), whatever its
+struct, as `synthesizeDefaultTraitMethodWrapper` sets it, so
+`inline-parametric` replaces a statically resolved call with the wrapper's
+forwarding call, and only a dispatched call reaches a wrapper instance, as
+on the pin. Its parameters'
 defaults are its member's, held once by the member's lowered declaration,
 as upstream's wrapper takes them from `getTraitFunctionSignature`: MIR's
 `adopt_member_defaults` copies them onto the wrapper's declaration once the

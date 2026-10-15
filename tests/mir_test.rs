@@ -2231,6 +2231,36 @@ fn checked_declaration_types_are_keyed_by_source_site_not_type_syntax() {
     assert_type_parameter(&param_type("keep_hashable"), "T", &["Hashable"]);
 }
 
+#[test]
+fn default_wrapper_declaration_is_nodebug() {
+    let program = parse(
+        "trait Tr:\n    def m(self) -> Int:\n        return 7\n\
+         struct Inherits(Tr):\n    var v: Int\n\
+         struct Spells(Tr):\n    var v: Int\n    def m(self) -> Int:\n        return self.v\n",
+    )
+    .expect("parse");
+    let checked = mojito::check_program(&program).expect("check");
+    let mir = mojito::mir::lower_checked_program(&checked);
+
+    let inline = |name: &str| {
+        mir.declarations
+            .functions
+            .iter()
+            .find(|declaration| declaration.lowered_name == name)
+            .unwrap_or_else(|| panic!("declaration {name}"))
+            .inline
+    };
+    assert_eq!(
+        inline("Inherits.m"),
+        mojito::declaration::InlineLevel::NoDebug
+    );
+    assert_eq!(
+        inline("Spells.m"),
+        mojito::declaration::InlineLevel::Automatic
+    );
+    assert_eq!(inline("Tr.m"), mojito::declaration::InlineLevel::Automatic);
+}
+
 /// `ty` is the type parameter spelled `name` with exactly `bounds`. Its
 /// identity is its declaration's, which a test cannot spell independently.
 fn assert_type_parameter(ty: &Ty, name: &str, bounds: &[&str]) {

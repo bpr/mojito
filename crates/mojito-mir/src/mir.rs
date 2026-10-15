@@ -616,7 +616,7 @@ pub fn lower_unit(
                     keyword_only: None,
                     statements: checked.tables().wrapper_roots(index),
                     defaults: Vec::new(),
-                    inline: mojito_checked::declaration::InlineLevel::Automatic,
+                    inline: mojito_checked::checked::CheckedDefaultWrapper::INLINE,
                 },
                 functions,
                 declarations,
