@@ -750,12 +750,12 @@ impl VmBackend {
                 dest,
                 pointer,
                 index,
-                ..
+                element,
             } => {
                 let index = value_as_index(&regs[index.0 as usize])?;
                 match regs[pointer.0 as usize] {
                     Value::Pointer { allocation, offset } => {
-                        self.heap_destroy(prog, allocation, offset, index)?;
+                        self.heap_destroy(prog, allocation, offset, index, Some(element))?;
                     }
                     // A place pointer's element is trivially destructible
                     // (checker-proved): destroying it has no effect.
@@ -778,10 +778,14 @@ impl VmBackend {
                 let storage = std::mem::replace(&mut regs[storage.0 as usize], Value::Moved);
                 regs[dest.0 as usize] = Self::uninit_storage_payload(storage, "take")?;
             }
-            MirInstr::UninitStorageDestroy { dest, storage, .. } => {
+            MirInstr::UninitStorageDestroy {
+                dest,
+                storage,
+                element,
+            } => {
                 let storage = std::mem::replace(&mut regs[storage.0 as usize], Value::Moved);
                 let payload = Self::uninit_storage_payload(storage, "destroy")?;
-                self.drop_value(prog, payload)?;
+                self.drop_value_as(prog, payload, Some(element))?;
                 regs[dest.0 as usize] = Value::None;
             }
             MirInstr::GetField { dest, base, field } => {
@@ -1841,11 +1845,19 @@ impl VmBackend {
                     {
                         self.drop_owned_pack(prog, items)?;
                     }
-                    v => self.drop_value(prog, v)?,
+                    v => self.drop_value_as(
+                        prog,
+                        v,
+                        prog.mir.functions[function].1.var_tys.get(var),
+                    )?,
                 }
             }
             MirInstr::ConsumeVar { var } => {
                 let value = std::mem::replace(&mut vars[*var as usize], Value::Moved);
+                let value = match prog.mir.functions[function].1.var_tys.get(var) {
+                    Some(ty) => dispatch::erased_instance_value(prog, value, ty),
+                    None => value,
+                };
                 if let Value::Struct { name, .. } = &value {
                     self.record_lifecycle(format!("consume {name}"));
                 }
@@ -1863,6 +1875,10 @@ impl VmBackend {
             }
             MirInstr::ConsumePlace { place, .. } => {
                 let value = std::mem::replace(nav_mut(vars, regs, place)?, Value::Moved);
+                let value = match &place.ty {
+                    Some(ty) => dispatch::erased_instance_value(prog, value, ty),
+                    None => value,
+                };
                 if let Value::Struct { fields, .. } = value {
                     self.drop_struct_fields(prog, fields)?;
                 }
@@ -1897,7 +1913,7 @@ impl VmBackend {
                 } else {
                     std::mem::replace(nav_mut(vars, regs, place)?, Value::Moved)
                 };
-                self.drop_value(prog, value)?;
+                self.drop_value_as(prog, value, place.ty.as_ref())?;
             }
             MirInstr::Unsupported(what) => {
                 return Err(RuntimeError::Unsupported(format!(
@@ -1990,7 +2006,7 @@ impl VmBackend {
             // The body raised: run the raise-edge cleanup (destroy what the raise
             // still holds), then dispatch to the handler or re-propagate.
             Err(RuntimeError::Raised(error)) => {
-                self.run_cleanup(prog, cleanup, vars)?;
+                self.run_cleanup(prog, scope.function, cleanup, vars)?;
                 match handler {
                     Some((err_slot, hblocks)) => {
                         if let Value::Error(message) = &error {
@@ -2045,11 +2061,11 @@ impl VmBackend {
                     });
                 }
                 Ok(non_normal) => {
-                    self.run_cleanup(prog, &pending_cleanup, vars)?;
+                    self.run_cleanup(prog, scope.function, &pending_cleanup, vars)?;
                     return Ok(non_normal);
                 }
                 Err(error) => {
-                    self.run_cleanup(prog, &pending_cleanup, vars)?;
+                    self.run_cleanup(prog, scope.function, &pending_cleanup, vars)?;
                     return Err(error);
                 }
             }
@@ -2063,12 +2079,13 @@ impl VmBackend {
     pub(super) fn run_cleanup(
         &mut self,
         prog: &Prog,
+        function: usize,
         cleanup: &[VarId],
         vars: &mut [Value],
     ) -> Result<(), RuntimeError> {
         for &v in cleanup {
             let old = std::mem::replace(&mut vars[v as usize], Value::None);
-            self.drop_value(prog, old)?;
+            self.drop_value_as(prog, old, prog.mir.functions[function].1.var_tys.get(&v))?;
         }
         Ok(())
     }
@@ -2157,7 +2174,7 @@ impl VmBackend {
                 // region's escape-edge cleanup (values that die leaving the region),
                 // then carry the resolved target out as a `Flow::Jump`.
                 MirTerm::EscapeJump { target, cleanup } => {
-                    self.run_cleanup(prog, cleanup, vars)?;
+                    self.run_cleanup(prog, scope.function, cleanup, vars)?;
                     return Ok(Flow::Jump(*target));
                 }
             }

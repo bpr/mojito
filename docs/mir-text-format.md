@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.62
+# Mojito Textual MIR Format, Version 1.63
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.62 is implemented end to end for inspection and loading: canonical
+Version 1.63 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.62
+mojito-mir 1.63
 ```
 
-The writer emits 1.62. The reader accepts 1.0 through 1.62; *Schema 1.0*
+The writer emits 1.63. The reader accepts 1.0 through 1.63; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -627,6 +627,13 @@ and writes fresh storage. Nested pointers and strings are recursive values.
 compile-time memory, upstream's `#lit.store_to_mem`: the value it reads.
 A backend thaws it as a fresh compile-time memory slot holding that value;
 it has no run-time form.
+
+`ct_removed_arg` (schema 1.63) is a struct argument that mentions a
+parameter its instance's generator removed, upstream's `_REMOVED_ARG`. It
+stands in a value or a type slot of a concrete struct type
+(`Box$mono$V_REMOVED_ARG`), whose declared fields read no erased argument;
+the verifier treats that type as agreeing with every instance of the same
+template that matches its other arguments. It has no run-time form.
 
 ### Parameter expressions
 

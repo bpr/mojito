@@ -1270,6 +1270,7 @@ impl Decoder {
                 self.unknown(fields, &["spelling", "elements"]);
                 Some(CtValue::Set { spelling, elements })
             }
+            ValueKind::Atom(tag) if tag == "ct_removed_arg" => Some(CtValue::RemovedArg),
             _ => {
                 self.error(value.span, "expected compile-time value");
                 None

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R996**.
+Next free ID: **R997**.
 
 ## Ordered Work
 
@@ -509,21 +509,22 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R909.
   - Model: Fable, Not Planned.
 
-- [ ] **R976 An instance cannot take a struct argument whose type spells
-  a parameter the instance removed**
+- [ ] **R996 The parametric verifier rejects a removed parameter that a
+  struct argument still spells**
 
-  `fb[n](b: Box[n])` must keep `n` in Mojito because its one instance
-  would need one concrete type for `b`, while `Box$mono$V1` and
-  `Box$mono$V2` are distinct nominal structs.
-  - On the pin, `fb` is one `_REMOVED_ARG` generator for every `n`: a
-    struct passed by address does not make its parameters part of the
-    instance.
-  - Concrete MIR has no struct type with an erased argument, so the
-    elaborator cannot substitute a removed binder inside one.
-  - The fix gives an instance a struct type whose removed arguments are
-    erased, laid out from the arguments its fields read, below the waist.
+  `fb[n](b: Box[n])` with `n` removed fails `verify/scope.rs`: "parameter
+  type names parameter `n` of `fb` that no enclosing declaration binds".
+  - The verifier takes every removed binder out of the body's scope, so
+    each slot, register, and place typed `Box[n]` is a finding.
+  - The elaborator erases such an argument (`_REMOVED_ARG`, R976), so a
+    spelling inside a struct argument is the generator's own, as upstream's
+    `Box[$0]` is: keep the binder in scope there and nowhere else.
+  - R977 cannot land without it; a scratch override of the removal hit it.
+  - Done when a `verify/scope.rs` unit test accepts a removed `n` spelled
+    in `Box[n]` and still rejects a removed `n` read as a value.
+  - Found while landing R976 (2026-10-15).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R977 A parameter that only spells a by-address argument's or a
   result's struct type still splits instances**

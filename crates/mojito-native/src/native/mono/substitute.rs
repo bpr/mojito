@@ -400,11 +400,22 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
         construct: what,
     };
     Ok(match ty.kind() {
-        TyKind::Param { binder, .. } => {
-            bindings.types.get(binder).cloned().ok_or_else(|| {
-                unsupported(format!("unresolved type parameter `{}`", binder.name))
-            })?
-        }
+        TyKind::Param { binder, .. } => match bindings.types.get(binder) {
+            Some(ty) => ty.clone(),
+            None if bindings.removed.contains(binder) => {
+                return Err(MonoError {
+                    kind: MonoErrorKind::Instantiation,
+                    function: None,
+                    construct: removed_parameter_read(binder),
+                });
+            }
+            None => {
+                return Err(unsupported(format!(
+                    "unresolved type parameter `{}`",
+                    binder.name
+                )));
+            }
+        },
         TyKind::Struct(name, original) => {
             if original.is_empty() {
                 // The bare in-body `self` spelling of a generic owner resolves
@@ -428,6 +439,25 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
                 }
                 return Ok(TyKind::Struct(name.clone(), Vec::new()).into());
             }
+            // An argument that names a parameter the instance removed is
+            // erased whole, as upstream's generator spells `_REMOVED_ARG`;
+            // a struct type argument erases its own arguments instead.
+            let erased: Vec<TyArg>;
+            let original = if original.iter().any(|arg| erases_whole(arg, bindings)) {
+                erased = original
+                    .iter()
+                    .map(|arg| {
+                        if erases_whole(arg, bindings) {
+                            TyArg::Val(CtValue::RemovedArg)
+                        } else {
+                            arg.clone()
+                        }
+                    })
+                    .collect();
+                &erased
+            } else {
+                original
+            };
             // A spread of a bound pack is a whole argument list: element by
             // element for `Tuple` and `TString`, one bound list for any other
             // struct, as `expand_pack_spread` spells it.
@@ -710,6 +740,52 @@ pub(super) fn substitute_arg(arg: &TyArg, bindings: &Bindings) -> Result<TyArg, 
 }
 pub(super) fn sub_types(types: &[Ty], bindings: &Bindings) -> Result<Vec<Ty>, MonoError> {
     types.iter().map(|ty| substitute_ty(ty, bindings)).collect()
+}
+
+/// The explicit failure of a read of a parameter an erased struct instance
+/// does not bind: its layout or a member's body needs an argument the
+/// instance's generator removed.
+pub(super) fn removed_parameter_read(binder: &ParamRef) -> String {
+    format!(
+        "parameter `{}` is read, but an instance that removed it erased its \
+         struct argument (`_REMOVED_ARG`)",
+        binder.name
+    )
+}
+
+/// Whether the struct argument `arg` names a parameter the instance
+/// removed ([`Bindings::removed`]) other than inside a struct type it
+/// holds, whose own arguments erase where they name one.
+fn erases_whole(arg: &TyArg, bindings: &Bindings) -> bool {
+    fn names_outside_structs(ty: &Ty, removed: &[ParamRef]) -> bool {
+        match ty.kind() {
+            TyKind::Struct(..) => false,
+            TyKind::Pointer { element, .. } => names_outside_structs(element, removed),
+            TyKind::Ref(reference) => names_outside_structs(&reference.referent, removed),
+            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
+                elements
+                    .iter()
+                    .any(|element| names_outside_structs(element, removed))
+            }
+            _ => removed
+                .iter()
+                .any(|binder| mojito_types::types::names_binder(ty, binder)),
+        }
+    }
+    if bindings.removed.is_empty() {
+        return false;
+    }
+    match arg {
+        TyArg::Ty(ty) => names_outside_structs(ty, &bindings.removed),
+        TyArg::Val(_) => {
+            let holder = TyKind::Struct(String::new(), vec![arg.clone()]).into();
+            bindings
+                .removed
+                .iter()
+                .any(|binder| mojito_types::types::names_binder(&holder, binder))
+        }
+        TyArg::Origin(_) => false,
+    }
 }
 
 /// The reflected field-name list a parameter constant `k` read at `ty` is

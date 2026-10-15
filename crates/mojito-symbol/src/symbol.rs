@@ -2731,7 +2731,8 @@ pub fn specialization_value_is_closed(value: &CtValue) -> bool {
         | CtValue::Bool(_)
         | CtValue::Str(_)
         | CtValue::Dtype(_)
-        | CtValue::Simd { .. } => true,
+        | CtValue::Simd { .. }
+        | CtValue::RemovedArg => true,
     }
 }
 
@@ -2833,6 +2834,7 @@ fn encode_specialization_value(value: &CtValue, out: &mut String) {
             let rendered = ty.to_string();
             out.push_str(&format!("r{}:{rendered}", rendered.len()));
         }
+        CtValue::RemovedArg => out.push('R'),
         // `mangle_parts` validated the whole key before encoding began.
         CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_) => {}
     }

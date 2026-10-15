@@ -10,8 +10,8 @@
 //! type-valued compile-time members.
 //!
 //! Scalar values and recursively materializable tuples/lists/dicts/sets have a
-//! runtime literal form; `Type`, `Reflected`, `Expr`, `Deferred`, and `Marker`
-//! are compile-time-only.
+//! runtime literal form; `Type`, `Reflected`, `Expr`, `Deferred`, `Marker`,
+//! and `RemovedArg` are compile-time-only.
 
 use crate::origin::{Mutability, OriginParamId};
 use crate::param_expr::{ParamExpr, ParamRef};
@@ -418,6 +418,13 @@ pub enum CtValue {
     /// An elaborator-private classification of a name. It stands for no
     /// parameter and no value.
     Marker(CtMarker),
+    /// A struct argument that mentions a parameter the instance's generator
+    /// removed — upstream's `_REMOVED_ARG`. It stands in a value or a type
+    /// slot alike and is closed: an instance's erased struct type
+    /// (`Box[_REMOVED_ARG]`) is laid out from fields that read no erased
+    /// argument, so it agrees with every instance of its template that
+    /// matches the kept arguments. It never reaches a runtime value.
+    RemovedArg,
 }
 
 /// What the elaborator knows about a name that has no compile-time value.
@@ -737,7 +744,8 @@ impl CtValue {
             | Self::Reflected(_)
             | Self::Expr(_)
             | Self::Deferred(_)
-            | Self::Marker(_) => return None,
+            | Self::Marker(_)
+            | Self::RemovedArg => return None,
         })
     }
 
@@ -1060,7 +1068,8 @@ impl CtValue {
             | Self::Reflected(_)
             | Self::Expr(_)
             | Self::Deferred(_)
-            | Self::Marker(_) => return None,
+            | Self::Marker(_)
+            | Self::RemovedArg => return None,
         };
         Some(Expr {
             kind,
@@ -1278,6 +1287,7 @@ impl fmt::Display for CtValue {
             Self::Expr(expr) => write!(f, "{expr}"),
             Self::Deferred(binder) => write!(f, "{binder}"),
             Self::Marker(marker) => write!(f, "{marker}"),
+            Self::RemovedArg => f.write_str("_REMOVED_ARG"),
             Self::Dict { entries, .. } => {
                 write!(f, "{{")?;
                 for (index, (key, value)) in entries.iter().enumerate() {

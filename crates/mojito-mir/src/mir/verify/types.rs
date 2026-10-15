@@ -133,6 +133,9 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
             return true;
         }
     }
+    if erased_struct_agrees(found, expected) {
+        return true;
+    }
     // A contextual selection narrows an overload set to one member.
     if let TyKind::Overload(members) = found.kind() {
         return members
@@ -147,6 +150,37 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     }
     mojito_types::types::value_coerces(found, expected)
         || mojito_types::types::value_coerces(expected, found)
+}
+
+/// Whether two instances of one struct template agree once either side's
+/// erased arguments are set aside, at any depth: an instance whose
+/// generator removed a parameter takes the struct with each argument naming
+/// it erased ([`CtValue::RemovedArg`], upstream's `_REMOVED_ARG`), which the
+/// elaborator declares only where no field reads an erased argument, so it
+/// lays out as every instance agreeing on the kept ones.
+fn erased_struct_agrees(found: &Ty, expected: &Ty) -> bool {
+    let (TyKind::Struct(found_name, found_args), TyKind::Struct(expected_name, expected_args)) =
+        (found.kind(), expected.kind())
+    else {
+        return false;
+    };
+    let erased = |arg: &TyArg| matches!(arg, TyArg::Val(CtValue::RemovedArg));
+    found_name != expected_name
+        && mojito_types::types::struct_template(found_name)
+            == mojito_types::types::struct_template(expected_name)
+        && found_args.len() == expected_args.len()
+        && (mojito_types::types::erases_an_argument(found)
+            || mojito_types::types::erases_an_argument(expected))
+        && found_args
+            .iter()
+            .zip(expected_args)
+            .all(|(found, expected)| match (found, expected) {
+                _ if erased(found) || erased(expected) => true,
+                (TyArg::Ty(found), TyArg::Ty(expected)) => types_compatible(found, expected),
+                (TyArg::Val(found), TyArg::Val(expected)) => found == expected,
+                (TyArg::Origin(_), TyArg::Origin(_)) => true,
+                _ => false,
+            })
 }
 
 /// Whether `actual` fits the vector `pattern` when one of the pattern's
@@ -681,5 +715,29 @@ mod tests {
             ))
             .is_err_and(|finding| finding.contains("cannot cross into MIR"))
         );
+    }
+
+    /// An erased argument agrees with any argument at its position of an
+    /// instance of the same template, in either direction; the kept
+    /// arguments still compare.
+    #[test]
+    fn an_erased_struct_argument_agrees_with_every_instance() {
+        let pair = |name: &str, a: CtValue, b: CtValue| -> Ty {
+            TyKind::Struct(name.into(), vec![TyArg::Val(a), TyArg::Val(b)]).into()
+        };
+        let erased = pair(
+            "Pair$mono$V$REMOVED$ARG$V2",
+            CtValue::RemovedArg,
+            CtValue::Int(2),
+        );
+        let first = pair("Pair$mono$V1$V2", CtValue::Int(1), CtValue::Int(2));
+        let other = pair("Pair$mono$V1$V3", CtValue::Int(1), CtValue::Int(3));
+        assert!(types_compatible(&first, &erased));
+        assert!(types_compatible(&erased, &first));
+        assert!(!types_compatible(&other, &erased));
+        assert!(!types_compatible(
+            &erased,
+            &pair("Other$mono$V1$V2", CtValue::Int(1), CtValue::Int(2))
+        ));
     }
 }

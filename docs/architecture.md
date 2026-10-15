@@ -5340,6 +5340,31 @@ point where a slot declared in a loop is uninitialized again.
   on, a callee's or a nested body's, as `MirFunction::callee_removed_params`, the verifier reads the body
   through the same view built from that snapshot, and `inline-parametric`
   merges an inlined callee's snapshot into its caller's.
+  An instance takes a struct type whose argument names a removed
+  parameter with that argument erased, as upstream's generator spells it
+  `_REMOVED_ARG` (R976): `Bindings::removed` holds the template's removed
+  binders, which stay bound for the forwards that still evaluate them, and
+  `substitute_ty`'s struct arm replaces each argument naming one by
+  `CtValue::RemovedArg`, erasing whole a value argument or a type argument
+  that names it outside a struct type, while a struct type argument erases
+  its own (`List[Box[n]]` is `List[Box[_REMOVED_ARG]]`). So one instance
+  `fb$mono` takes `Box$mono$V$REMOVED$ARG` for every `Box[n]`. The erased
+  instance binds no erased parameter (`unify::bind_ty_args` records it in
+  `Bindings::removed` instead, and `apply_defaults` skips it) and is
+  declared with its substituted fields (`Specializer::discover_structs`),
+  so it lays out as every instance agreeing on the kept arguments, upstream's
+  structural layout type; a field or a member body that reads an erased
+  parameter fails the instance explicitly (`Specializer::erased_layout`,
+  `substitute::removed_parameter_read`). Nothing constructs an erased
+  instance, so its `__init__` and `__call__` are not enqueued; its copy,
+  move, and destructor members are, for the backends that call them by
+  type. The verifier takes it as the type of any instance of the same
+  template whose other arguments agree (`verify/types.rs`'s
+  `erased_struct_agrees`), and the VM destroys a value in a slot of an
+  erased type through that type's members (`dispatch::erased_instance_value`),
+  as upstream's destructor call is static, rather than by the value's own
+  instance name. Nothing removes such a parameter yet: every struct
+  spelling is a read until R977.
 - **Two seams, once per body.** `CompiledProgram::elaborated_mir` runs
   `pre_elaborate_program` over the program's own bodies after
   `elaborate_drops_program` (the `pre_elaboration` `--timings` span), and an

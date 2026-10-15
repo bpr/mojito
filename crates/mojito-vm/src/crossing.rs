@@ -91,7 +91,8 @@ pub fn ct_to_vm(value: &CtValue) -> Result<Value, RuntimeError> {
         | CtValue::Reflected(_)
         | CtValue::Expr(_)
         | CtValue::Deferred(_)
-        | CtValue::Marker(_) => Err(RuntimeError::Unsupported(
+        | CtValue::Marker(_)
+        | CtValue::RemovedArg => Err(RuntimeError::Unsupported(
             "type-valued or symbolic values cannot cross into VM CTFE".to_string(),
         )),
         // A collection crosses into VM CTFE only as its materialized display

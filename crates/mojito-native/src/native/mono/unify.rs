@@ -205,6 +205,10 @@ pub(super) fn apply_defaults(
     bindings: &mut Bindings,
 ) -> Result<(), MonoError> {
     for decl in decls {
+        // An erased parameter takes no default: it has no value at all.
+        if bindings.removed.contains(&decl.binder()) {
+            continue;
+        }
         match decl {
             ParamDecl::Type {
                 default: Some(default),
@@ -270,6 +274,9 @@ pub(super) fn bind_ty_args(
     }
     for (decl, arg) in decls.iter().zip(args) {
         match (decl, arg) {
+            // An erased argument binds nothing: its parameter is one the
+            // instance's identity does not hold.
+            (_, TyArg::Val(CtValue::RemovedArg)) => bindings.removed.push(decl.binder()),
             // A pack bound whole: its element tuple, or the runtime pack a
             // forwarding application spells.
             (ParamDecl::Type { variadic: true, .. }, TyArg::Val(CtValue::Tuple(elements))) => {

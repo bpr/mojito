@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An instance whose generator removed a parameter that a struct argument
+  names can now take that struct (R976): the elaborator erases each such
+  argument, as upstream's generator spells `_REMOVED_ARG`, so one `fb$mono`
+  would take `Box$mono$V$REMOVED$ARG`, declared with the fields every
+  `Box[n]` lays out, for every `n`. The verifier accepts any instance
+  agreeing on the kept arguments for it, the VM destroys a value held in
+  such a slot through its type's members, and an instance whose layout or
+  member reads the erased parameter fails explicitly. MIR text is schema
+  1.63 (`ct_removed_arg`) and the package format `mojito-package 66`.
+  Nothing removes such a parameter until R977, so no program's output or
+  instance count changes.
 - A parameter forwarded through a subscript call no longer keeps its
   instances apart (R971): `remove-unused-params` drops a removed accessor
   parameter's argument from `__getitem__` and `__setitem__` calls as it

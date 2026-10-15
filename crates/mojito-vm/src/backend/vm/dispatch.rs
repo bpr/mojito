@@ -85,6 +85,22 @@ impl VmBackend {
         Ok(())
     }
 
+    /// Destroy `value` held in a slot of the static type `ty`: as
+    /// [`Self::drop_value`], through `ty`'s members where it is an erased
+    /// struct instance ([`erased_instance_value`]).
+    pub(super) fn drop_value_as(
+        &mut self,
+        prog: &Prog,
+        value: Value,
+        ty: Option<&Ty>,
+    ) -> Result<(), RuntimeError> {
+        let value = match ty {
+            Some(ty) => erased_instance_value(prog, value, ty),
+            None => value,
+        };
+        self.drop_value(prog, value)
+    }
+
     /// Recursively destroy a value (ASAP drop): run a struct's `__deinit__` if
     /// it defines one (its body consumes the receiver's fields at their last
     /// use), else drop the fields in declaration order — Mojo's order.
@@ -756,6 +772,47 @@ impl VmBackend {
                 .map(|&lane| if lane { "True" } else { "False" }.to_string())
                 .collect()),
         }
+    }
+}
+
+/// `value` as the erased struct instance `ty` its slot declares
+/// (`Box$mono$V$REMOVED$ARG`, `List$mono$TBox$mono$V$REMOVED$ARG`), when it
+/// is one: upstream calls a value's
+/// destructor by its static type, and the erased instance lays out as every
+/// instance of its template that agrees on the kept arguments, so the value
+/// keeps its fields and takes the erased instance's name, and so its members.
+/// Its fields of erased types follow. Any other value is returned as it is.
+pub(super) fn erased_instance_value(prog: &Prog, value: Value, ty: &Ty) -> Value {
+    let TyKind::Struct(erased, _) = ty.kind() else {
+        return value;
+    };
+    match value {
+        Value::Struct { name, fields }
+            if name != *erased
+                && mojito_types::types::erases_an_argument(ty)
+                && mojito_types::types::struct_template(&name)
+                    == mojito_types::types::struct_template(erased) =>
+        {
+            let declared = prog.structs.get(erased.as_str());
+            let fields = fields
+                .into_iter()
+                .map(|(field, value)| {
+                    let declared = declared.and_then(|declared| {
+                        declared.fields.iter().find(|(name, _)| *name == field)
+                    });
+                    let value = match declared {
+                        Some((_, ty)) => erased_instance_value(prog, value, ty),
+                        None => value,
+                    };
+                    (field, value)
+                })
+                .collect();
+            Value::Struct {
+                name: erased.clone(),
+                fields,
+            }
+        }
+        value => value,
     }
 }
 

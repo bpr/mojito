@@ -134,7 +134,10 @@ a recorded VM/native divergence.
 
 Owned by `native::layout::LayoutCx`, keyed off checker `Ty` plus the
 program's `MirDeclarations` struct index (MIR-level struct identity is the
-specialized name). Rules:
+specialized name; an erased instance, `Box$mono$V$REMOVED$ARG`, is declared
+with the same fields as every instance agreeing on its kept arguments, so it
+lays out identically and its values cross the call boundary unchanged).
+Rules:
 
 - Fields lay out in **declaration order** with C-style padding: each field at
   the next offset aligned for it; aggregate alignment is the maximum field

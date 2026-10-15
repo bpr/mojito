@@ -198,6 +198,38 @@ impl<'a> Specializer<'a> {
             .map_or(&[], |function| function.removed_params.as_slice())
     }
 
+    /// [`Self::removed_params`] of `template` as binders, each with the
+    /// spelling its declaration gives it: its own, an enclosing body's, or
+    /// its struct's.
+    fn removed_binders(&self, template: &str) -> Vec<ParamRef> {
+        let removed = self.removed_params(template);
+        if removed.is_empty() {
+            return Vec::new();
+        }
+        let scope = self.binder_scope(template);
+        removed
+            .iter()
+            .map(|id| {
+                scope
+                    .iter()
+                    .chain(
+                        self.structs
+                            .get(&id.owner)
+                            .into_iter()
+                            .flat_map(|owner| &owner.param_decls),
+                    )
+                    .find(|decl| decl.id() == id)
+                    .map_or_else(
+                        || ParamRef {
+                            id: id.clone(),
+                            name: id.owner.clone(),
+                        },
+                        ParamDecl::binder,
+                    )
+            })
+            .collect()
+    }
+
     /// The instance arguments of `target`'s parameters `decls` under
     /// `bindings`: [`bound_argument`] of each past the `owner_covered` decls that
     /// restate the owner's parameters, without those the body removed.
@@ -659,9 +691,12 @@ impl<'a> Specializer<'a> {
             });
         }
         let scope = &self.binder_scope(&key.template);
+        let mut removed = bindings.removed.clone();
+        removed.extend(self.removed_binders(&key.template));
         let bindings = &Bindings {
             layout: self.layout_oracle(),
             applications: Some(Rc::clone(&self.applications)),
+            removed,
             ..bindings.clone()
         };
         // A type or a parameter argument may carry the application of a
@@ -2997,7 +3032,7 @@ impl<'a> Specializer<'a> {
                     .map(|(field, ty)| Ok((field.clone(), substitute_ty(ty, &bindings)?)))
                     .collect::<Result<Vec<_>, MonoError>>();
                 if !self.answer_pending(owner, &bindings)? {
-                    break fields?;
+                    break self.erased_layout(owner, template, &bindings, fields)?;
                 }
             };
             declaration.name.clone_from(name);
@@ -3061,11 +3096,55 @@ impl<'a> Specializer<'a> {
             // function type is expected is called through its dispatch
             // symbol, which names no instance. The destructor is the drops'
             // to demand.
+            // Nothing constructs or calls an erased instance (`Box[_REMOVED_ARG]`):
+            // a construction spells the struct's arguments, which reads them.
+            let erased = !bindings.removed.is_empty();
             for method in ["__init__", "__copyinit__", "__moveinit__", "__call__"] {
+                if erased && matches!(method, "__init__" | "__call__") {
+                    continue;
+                }
                 self.enqueue_struct_members(&template_name, &bindings, method)?;
             }
         }
         self.enqueue_destructors(owner, function)
+    }
+
+    /// The substituted `fields` of a struct instance under `bindings`. An
+    /// erased instance (`Box[_REMOVED_ARG]`) lays out only where no field
+    /// reads an erased argument; one that does fails explicitly, since the
+    /// instance taking it removed a parameter its layout needs.
+    fn erased_layout(
+        &self,
+        owner: &str,
+        template: &MirStructDeclaration,
+        bindings: &Bindings,
+        fields: Result<Vec<(String, Ty)>, MonoError>,
+    ) -> Result<Vec<(String, Ty)>, MonoError> {
+        if bindings.removed.is_empty() {
+            return fields;
+        }
+        if fields
+            .as_ref()
+            .is_ok_and(|fields| !fields.iter().any(|(_, ty)| is_symbolic(ty)))
+        {
+            return fields;
+        }
+        let read = bindings.removed.iter().find(|binder| {
+            template
+                .fields
+                .iter()
+                .any(|(_, ty)| mojito_types::types::names_binder(ty, binder))
+        });
+        match read {
+            Some(binder) => Err(self.error(
+                Some(owner),
+                format!(
+                    "`{}` lays out parameter `{}`, which `{owner}` removed",
+                    template.name, binder.name
+                ),
+            )),
+            None => fields,
+        }
     }
 
     /// Enqueue the destructor of every struct `function` tears down without

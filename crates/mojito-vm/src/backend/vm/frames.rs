@@ -161,7 +161,7 @@ impl VmBackend {
                         continue;
                     }
                     Flow::Return { value, cleanup } => {
-                        self.run_cleanup(prog, &cleanup, &mut frame.variables)?;
+                        self.run_cleanup(prog, frame.function, &cleanup, &mut frame.variables)?;
                         // Re-root returned reference handles exactly as the
                         // terminator return path below does: a `return` leaving
                         // a `try` region otherwise carries refs rooted at this
@@ -233,7 +233,7 @@ impl VmBackend {
                     let returned = value
                         .as_ref()
                         .map_or(Value::None, |reg| frame.registers[reg.0 as usize].clone());
-                    self.run_cleanup(prog, cleanup, &mut frame.variables)?;
+                    self.run_cleanup(prog, frame.function, cleanup, &mut frame.variables)?;
                     returned
                 }
                 MirTerm::TryYield | MirTerm::EscapeJump { .. } => Value::None,

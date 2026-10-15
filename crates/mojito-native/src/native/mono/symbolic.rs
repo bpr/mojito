@@ -397,12 +397,27 @@ fn eval_ct_at(expr: &ParamExpr, bindings: &Bindings, reached: bool) -> Result<Ct
             return oracle.size_of(&ty).map(CtValue::Int);
         }
     }
-    replaced.require_constant().map_err(|error| MonoError {
-        kind: MonoErrorKind::Unsupported,
-        function: None,
-        construct: replaced.free_parameters().first().map_or_else(
-            || error.to_string(),
-            |parameter| format!("unresolved value parameter `{}`", parameter.name),
-        ),
+    replaced.require_constant().map_err(|error| {
+        let free = replaced.free_parameters();
+        // A read of an erased argument fails the instance, as no later
+        // substitution binds it.
+        if let Some(removed) = free
+            .iter()
+            .find(|parameter| bindings.removed.contains(parameter))
+        {
+            return MonoError {
+                kind: MonoErrorKind::Instantiation,
+                function: None,
+                construct: removed_parameter_read(removed),
+            };
+        }
+        MonoError {
+            kind: MonoErrorKind::Unsupported,
+            function: None,
+            construct: free.first().map_or_else(
+                || error.to_string(),
+                |parameter| format!("unresolved value parameter `{}`", parameter.name),
+            ),
+        }
     })
 }

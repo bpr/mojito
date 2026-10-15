@@ -1824,7 +1824,7 @@ binary, before (the parent commit) and after:
 `assets/`, twelve move, all through static methods of parametric structs,
 for 394 → 364 generator instances in total, and none changes its output or
 diagnostics. A method with a receiver keeps its struct's parameters, where
-the pin removes them (R976–R978).
+the pin removes them (R977, R978).
 
 ## Unread callable parameters are removed (2026-10-15, R910)
 

@@ -1532,6 +1532,15 @@ pub fn contains_string_literal(ty: &Ty) -> bool {
     mentions_open(ty, &|ty| matches!(ty.kind(), TyKind::StringLiteral))
 }
 
+/// Whether a struct type in `ty`, itself or nested, has an argument its
+/// instance's generator erased ([`CtValue::RemovedArg`]).
+pub fn erases_an_argument(ty: &Ty) -> bool {
+    mentions(ty, &|ty| {
+        matches!(ty.kind(), TyKind::Struct(_, arguments)
+            if arguments.iter().any(|argument| matches!(argument, TyArg::Val(CtValue::RemovedArg))))
+    })
+}
+
 /// Whether `predicate` holds for `ty` or any type nested in it (struct
 /// arguments, elements, callable signatures).
 pub fn mentions(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool) -> bool {
@@ -3681,7 +3690,8 @@ pub fn rewrite_value(value: &CtValue, rewrite: &mut dyn TyRewrite) -> Result<CtV
         | CtValue::Dtype(_)
         | CtValue::Simd { .. }
         | CtValue::Deferred(_)
-        | CtValue::Marker(_) => value.clone(),
+        | CtValue::Marker(_)
+        | CtValue::RemovedArg => value.clone(),
     })
 }
 
@@ -4150,7 +4160,8 @@ pub fn ct_value_is_symbolic(value: &CtValue) -> bool {
         | CtValue::Bool(_)
         | CtValue::Dtype(_)
         | CtValue::Simd { .. }
-        | CtValue::Str(_) => false,
+        | CtValue::Str(_)
+        | CtValue::RemovedArg => false,
     }
 }
 

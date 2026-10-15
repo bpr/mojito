@@ -426,6 +426,14 @@ struct Bindings {
     /// parameter argument of the instance carries (`SIMD[dt, L[0]]` over a
     /// local display binding). `None` where no application is answered.
     applications: Option<Rc<Applications>>,
+    /// The parameters the instance's identity does not hold: those its
+    /// generator removed, which stay bound for the forwarded arguments that
+    /// still evaluate them, and those an erased struct instance's
+    /// `_REMOVED_ARG` arguments leave unbound. A struct argument that
+    /// mentions one is erased ([`CtValue::RemovedArg`]), as upstream's
+    /// generator spells it, so one instance takes every struct agreeing on
+    /// the kept arguments.
+    removed: Vec<ParamRef>,
 }
 
 impl Bindings {

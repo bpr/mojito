@@ -1934,3 +1934,170 @@ fn an_instance_binds_origin_erased_types() {
     assert_eq!(keep, instances(&second_run, "keep"));
     assert_eq!(first, instances(&second_run, "first"));
 }
+
+/// Elaborate `source` from `main` with the parameters `removed` names
+/// (function, parameter) removed by hand, as `remove-unused-params` would
+/// once a struct spelling stops counting as a read.
+fn specialized_with_removed(
+    source: &str,
+    removed: &[(&str, &str)],
+) -> Result<SpecializedProgram, MonoError> {
+    let compiler = mojito::Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, std::path::Path::new("mono_test.mojo"))
+        .expect("compile struct-parameter program");
+    let mut program = compiled.drop_elaborated_mir().clone();
+    for (function, parameter) in removed {
+        let id = program
+            .declarations
+            .function(function)
+            .and_then(|declaration| {
+                declaration
+                    .param_decls
+                    .iter()
+                    .find(|decl| decl.name() == *parameter)
+            })
+            .map_or_else(
+                || panic!("`{function}` declares `{parameter}`"),
+                |decl| decl.id().clone(),
+            );
+        program
+            .functions
+            .iter_mut()
+            .find(|(name, _)| name == function)
+            .unwrap_or_else(|| panic!("`{function}` has a body"))
+            .1
+            .removed_params
+            .push(id);
+    }
+    specialize(&program, &["main".to_string()], host_target().as_ref())
+}
+
+/// The instances of `template` the concrete `main` calls, in call order.
+fn main_callees(program: &SpecializedProgram, template: &str) -> Vec<String> {
+    instructions(&function(program, "main").blocks)
+        .into_iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::Call { func, .. } if func.0.starts_with(&format!("{template}$mono")) => {
+                Some(func.0.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+const BOX_SOURCE: &str = "struct Box[n: Int](Copyable, Movable):\n\
+     \x20   var v: Int\n\
+     \x20   def __init__(out self, v: Int):\n\
+     \x20       self.v = v\n\
+     def fb[n: Int](b: Box[n]) -> Int:\n\
+     \x20   return b.v + 1\n\
+     def main():\n\
+     \x20   var b1 = Box[1](10)\n\
+     \x20   var b2 = Box[2](20)\n\
+     \x20   print(fb(b1))\n\
+     \x20   print(fb(b2))\n";
+
+#[test]
+fn an_instance_erases_the_struct_argument_of_a_removed_parameter() {
+    let specialized = specialized_with_removed(BOX_SOURCE, &[("fb", "n")])
+        .expect("an instance takes an erased struct");
+    assert_eq!(
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
+    );
+    let callees = main_callees(&specialized, "fb");
+    assert_eq!(callees, ["fb$mono", "fb$mono"], "one `fb` for both boxes");
+    let erased: Ty = TyKind::Struct(
+        "Box$mono$V$REMOVED$ARG".into(),
+        vec![TyArg::Val(CtValue::RemovedArg)],
+    )
+    .into();
+    assert_eq!(function(&specialized, "fb$mono").param_types, [erased]);
+    let declared = specialized
+        .program
+        .declarations
+        .structs
+        .iter()
+        .find(|declaration| declaration.name == "Box$mono$V$REMOVED$ARG")
+        .expect("the erased instance is declared");
+    assert_eq!(declared.fields, [("v".to_string(), Ty::int())]);
+    // Without the removal each box keeps its own instance.
+    let kept = specialized_with_removed(BOX_SOURCE, &[]).expect("specialize");
+    assert_eq!(main_callees(&kept, "fb").len(), 2);
+    assert_ne!(main_callees(&kept, "fb")[0], main_callees(&kept, "fb")[1]);
+}
+
+#[test]
+fn an_erased_argument_leaves_instances_apart_on_the_kept_ones() {
+    let source = "struct Pair[a: Int, b: Int](Copyable, Movable):\n\
+         \x20   var v: Int\n\
+         \x20   def __init__(out self, v: Int):\n\
+         \x20       self.v = v\n\
+         def fp[a: Int, b: Int](p: Pair[a, b]) -> Int:\n\
+         \x20   return a + p.v\n\
+         def main():\n\
+         \x20   print(fp(Pair[1, 2](10)))\n\
+         \x20   print(fp(Pair[1, 5](20)))\n\
+         \x20   print(fp(Pair[3, 2](30)))\n";
+    let specialized =
+        specialized_with_removed(source, &[("fp", "b")]).expect("an instance per kept `a`");
+    let callees = main_callees(&specialized, "fp");
+    assert_eq!(callees.len(), 3);
+    assert_eq!(callees[0], callees[1], "`b` is erased: {callees:?}");
+    assert_ne!(callees[0], callees[2], "`a` is kept: {callees:?}");
+}
+
+#[test]
+fn an_erased_struct_whose_layout_reads_the_removed_parameter_is_an_error() {
+    let source = "struct Arr[n: Int](Copyable, Movable):\n\
+         \x20   var v: SIMD[DType.int64, Self.n]\n\
+         \x20   def __init__(out self, v: Int):\n\
+         \x20       self.v = SIMD[DType.int64, Self.n](v)\n\
+         def fa[n: Int](a: Arr[n]) -> Int:\n\
+         \x20   return 1\n\
+         def main():\n\
+         \x20   print(fa(Arr[2](10)))\n";
+    let Err(error) = specialized_with_removed(source, &[("fa", "n")]) else {
+        panic!("`Arr`'s layout needs `n`");
+    };
+    assert!(
+        error.construct.contains("lays out parameter `n`"),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn a_struct_type_argument_erases_its_own_arguments() {
+    let source = "struct Box[n: Int](Copyable, Movable):\n\
+         \x20   var v: Int\n\
+         \x20   def __init__(out self, v: Int):\n\
+         \x20       self.v = v\n\
+         def fl[n: Int](l: List[Box[n]]) -> Int:\n\
+         \x20   return len(l)\n\
+         def main():\n\
+         \x20   var l1 = List[Box[1]]()\n\
+         \x20   l1.append(Box[1](1))\n\
+         \x20   var l2 = List[Box[2]]()\n\
+         \x20   print(fl(l1))\n\
+         \x20   print(fl(l2))\n";
+    let specialized =
+        specialized_with_removed(source, &[("fl", "n")]).expect("one `fl` for both lists");
+    assert_eq!(main_callees(&specialized, "fl"), ["fl$mono", "fl$mono"]);
+    let [param] = function(&specialized, "fl$mono").param_types.as_slice() else {
+        panic!("`fl` takes one parameter");
+    };
+    let TyKind::Struct(name, arguments) = peel_refs(param).kind() else {
+        panic!("`fl` takes a list: {param}");
+    };
+    assert!(
+        mojito_types::types::struct_template(name) == "List"
+            && matches!(
+                arguments.first(),
+                Some(TyArg::Ty(element))
+                    if matches!(element.kind(), TyKind::Struct(element, _)
+                        if element == "Box$mono$V$REMOVED$ARG")
+            ),
+        "the list keeps its element type and erases the box's argument: {param}"
+    );
+}

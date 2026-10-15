@@ -2505,6 +2505,26 @@ fn deferred_slots_round_trip_and_read_from_older_artifacts() {
     );
 }
 
+/// Schema 1.63 carries an erased struct argument (`_REMOVED_ARG`) in a
+/// concrete struct type.
+#[test]
+fn erased_struct_arguments_round_trip() {
+    let erased: Ty = TyKind::Struct(
+        "Box$mono$V$REMOVED$ARG".into(),
+        vec![TyArg::Val(CtValue::RemovedArg)],
+    )
+    .into();
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(vec![erased.clone()], Vec::new()),
+    )]);
+    assert_reprints(&program);
+    let text = write::program(&program);
+    assert!(text.contains("ct_removed_arg"), "{text}");
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    assert_eq!(parsed.program.functions[0].1.reg_types[&0], erased);
+}
+
 /// Schema 1.6 carries the identity of the pack a pack query names; an older
 /// artifact spells only its name, which reads as an unbound reference.
 #[test]
