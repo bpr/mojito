@@ -171,6 +171,64 @@ pub fn resolve_method_symbol(
     resolve_callable_symbol(table, &format!("{receiver_type}.{method}"), argc)
 }
 
+/// The entries of one member of a struct's member table, as callable
+/// resolution looks them up.
+///
+/// Each is keyed by the method spelling it instantiates (`__eq__$ov$Self`)
+/// and named `{struct}.{key}`, so the exact, arity, and `Self`-shaped rules
+/// of [`resolve_callable_symbol`] select among a member's overloads as they
+/// would among the struct's own methods.
+pub struct MemberCandidates<'a> {
+    owner: String,
+    /// Each entry's `{struct}.{key}` name, symbol, and runtime arity.
+    entries: Vec<(String, &'a str, usize)>,
+}
+
+impl<'a> MemberCandidates<'a> {
+    /// The candidates of struct `owner`'s table entries, each a key, its
+    /// instance's symbol, and that instance's runtime arity.
+    pub fn new(owner: &str, entries: impl IntoIterator<Item = (&'a str, &'a str, usize)>) -> Self {
+        Self {
+            owner: owner.to_string(),
+            entries: entries
+                .into_iter()
+                .map(|(key, symbol, n_params)| (format!("{owner}.{key}"), symbol, n_params))
+                .collect(),
+        }
+    }
+
+    /// The symbol of the instance a dispatch of `method` with `argc`
+    /// arguments besides the receiver runs: the one entry under the key
+    /// [`resolve_callable_symbol`] selects. `None` when no key is selected,
+    /// or when several instances share it.
+    pub fn resolve(&self, method: &str, argc: usize) -> Option<&'a str> {
+        let selected = resolve_callable_symbol(self, &format!("{}.{method}", self.owner), argc);
+        let mut instances = self
+            .entries
+            .iter()
+            .filter(|(name, _, _)| *name == selected)
+            .map(|(_, symbol, _)| *symbol);
+        let symbol = instances.next()?;
+        instances.next().is_none().then_some(symbol)
+    }
+}
+
+impl CallableLookup for MemberCandidates<'_> {
+    fn contains(&self, name: &str) -> bool {
+        self.entries.iter().any(|(known, _, _)| known == name)
+    }
+
+    fn overloads(&self, base: &str) -> impl Iterator<Item = CallableCandidate<'_>> {
+        self.entries
+            .iter()
+            .filter(move |(name, _, _)| is_overload_of(name, base))
+            .map(|(name, _, n_params)| CallableCandidate {
+                name,
+                n_params: *n_params,
+            })
+    }
+}
+
 /// A type or value argument as a specialization clone spells it.
 ///
 /// Literal types materialize (a string literal bound to a method's `T:

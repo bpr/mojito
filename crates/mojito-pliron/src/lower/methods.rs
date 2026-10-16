@@ -154,11 +154,9 @@ impl FnLowering<'_> {
             && let Some(TyKind::Struct(writer, _)) = (self.func.reg_types.get(&recv.0).cloned())
                 .as_ref()
                 .map(Ty::kind)
-            && self
-                .signatures
-                .contains_key(&format!("{writer}.write_string"))
+            && let Some(write_string) = self.struct_member(writer, "write_string", 1)
         {
-            return self.lower_writer_write(ctx, dest, writer, args, recv_place);
+            return self.lower_writer_write(ctx, dest, write_string, args, recv_place);
         }
         // `Sized` spelled on a specialized pack's storage: the clone has no
         // nominal Tuple to resolve the method onto, so the static element
@@ -481,16 +479,8 @@ impl FnLowering<'_> {
             .as_ref()
             .map(Ty::kind)
         {
-            let prefix = format!("{name}.write_repr_to");
-            let mut candidates: Vec<_> = self
-                .signatures
-                .iter()
-                .filter(|(candidate, _)| candidate.starts_with(&prefix))
-                .collect();
-            if candidates.len() > 1 {
-                candidates.retain(|(candidate, _)| candidate.as_str() != prefix);
-            }
-            if let [(_, signature)] = candidates.as_slice() {
+            if let Some(symbol) = self.display_member(name, "write_repr_to", dest)? {
+                let signature = &self.signatures[symbol];
                 let writer = self.entry_alloca(ctx, 16, 8);
                 self.mem_zero(ctx, writer, 16);
                 let receiver = self.reg_ptr(ctx, arg)?;
@@ -727,18 +717,17 @@ impl FnLowering<'_> {
         &mut self,
         ctx: &mut Context,
         dest: Reg,
-        writer: &str,
+        write_string: &str,
         args: &[Reg],
         recv_place: Option<&MirPlace>,
     ) -> Result<(), PlironError> {
-        let write_string = format!("{writer}.write_string");
-        let signature = &self.signatures[&write_string];
+        let signature = &self.signatures[write_string];
         if signature.outcome.is_some() {
             return Err(self.unsupported_reg(format!("raising `{write_string}`"), dest));
         }
         let payload_ty = self
             .declarations
-            .get(&write_string)
+            .get(write_string)
             .and_then(|decl| decl.param_types.first());
         if !matches!(payload_ty.map(Ty::kind), Some(TyKind::Struct(payload, _))
             if mojito_symbol::symbol::is_stdlib_string_span_struct(payload))

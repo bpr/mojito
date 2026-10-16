@@ -5,7 +5,7 @@
 use super::*;
 use mojito_types::types::TyKind;
 
-impl FnLowering<'_> {
+impl<'a> FnLowering<'a> {
     pub(super) fn append_string_pair(
         &mut self,
         ctx: &mut Context,
@@ -188,7 +188,7 @@ impl FnLowering<'_> {
         if matches!(receiver.kind(), TyKind::StringLiteral) {
             // Materialize the literal as an owned nominal String, hash it
             // through the struct's own `__hash__`, and release the copy.
-            let target = self.unique_hash_instance(dest, hasher_name, "String.__hash__", true)?;
+            let target = self.string_hash_instance(dest, hasher_name)?;
             let storage = self.entry_alloca(ctx, 24, 8);
             if let Some(bytes) = self.str_consts.get(&recv.0).cloned() {
                 let len = bytes.len() as u64;
@@ -276,71 +276,67 @@ impl FnLowering<'_> {
         hasher_name: &str,
         receiver: &Ty,
     ) -> Result<String, PlironError> {
-        let template = format!("{hasher_name}._update_with_simd");
         let shape = mojito_types::types::simd_shape(&mojito_types::types::hash_leaf_ty(receiver));
-        self.signatures
-            .iter()
-            .find(|(fname, signature)| {
-                fname
-                    .strip_prefix(&template)
-                    .is_some_and(|rest| rest.starts_with('$'))
-                    && shape.is_some()
-                    && signature.params.get(1).and_then(lane_shape) == shape
-            })
-            .map(|(fname, _)| fname.clone())
-            .ok_or_else(|| {
-                self.unsupported_reg(
-                    format!("hashing a `{receiver}` leaf without a compiled `{template}` instance"),
-                    dest,
-                )
-            })
+        let mut instances = self
+            .struct_member_symbols(hasher_name, "_update_with_simd")
+            .map(|(_, symbol)| symbol)
+            .filter(|symbol| {
+                shape.is_some()
+                    && self
+                        .signatures
+                        .get(*symbol)
+                        .and_then(|signature| signature.params.get(1))
+                        .and_then(lane_shape)
+                        == shape
+            });
+        match (instances.next(), instances.next()) {
+            (Some(symbol), None) => Ok(symbol.to_string()),
+            (None, _) => Err(self.unsupported_reg(
+                format!(
+                    "hashing a `{receiver}` leaf without a compiled `{hasher_name}._update_with_simd` instance"
+                ),
+                dest,
+            )),
+            _ => Err(self.unsupported_reg(
+                format!("hashing a `{receiver}` leaf with ambiguous `{hasher_name}._update_with_simd` instances"),
+                dest,
+            )),
+        }
     }
 
-    /// The unique compiled instance named `prefix` or one of its `$`-suffixed
-    /// monomorphic instances (a `String.` prefix matches the module-qualified
-    /// nominal String owner); with `by_hasher` the instance's second
-    /// parameter must be the hasher.
-    pub(super) fn unique_hash_instance(
-        &self,
-        dest: Reg,
-        hasher_name: &str,
-        prefix: &str,
-        by_hasher: bool,
-    ) -> Result<String, PlironError> {
-        let matches_prefix = |fname: &str| {
-            if let Some(method) = prefix.strip_prefix("String.") {
-                fname.rsplit_once(method).is_some_and(|(owner, rest)| {
-                    owner.ends_with('.')
-                        && owner[..owner.len() - 1]
-                            .rsplit('$')
-                            .next()
-                            .is_some_and(mojito_symbol::symbol::is_stdlib_string_struct)
-                        && (rest.is_empty() || rest.starts_with('$'))
-                })
-            } else {
-                fname
-                    .strip_prefix(prefix)
-                    .is_some_and(|rest| rest.is_empty() || rest.starts_with('$'))
-            }
-        };
-        let mut candidates = self.signatures.iter().filter(|(fname, signature)| {
-            matches_prefix(fname)
-                && (!by_hasher
-                    || matches!(signature.params.get(1), Some(LowerTy::Aggregate { ty, .. })
-                    if matches!(ty.kind(), TyKind::Struct(name, _) if *name == hasher_name)))
-        });
-        let Some((name, _)) = candidates.next() else {
+    /// The nominal `String`'s `__hash__` instance bound to `hasher_name`:
+    /// the one in its member table whose hasher parameter is that struct.
+    fn string_hash_instance(&self, dest: Reg, hasher_name: &str) -> Result<String, PlironError> {
+        let mut candidates = self
+            .struct_decls
+            .keys()
+            .filter(|name| {
+                name.rsplit('$')
+                    .next()
+                    .is_some_and(mojito_symbol::symbol::is_stdlib_string_struct)
+            })
+            .flat_map(|name| self.struct_member_symbols(name, "__hash__"))
+            .map(|(_, symbol)| symbol)
+            .filter(|symbol| {
+                matches!(
+                    self.signatures.get(*symbol).and_then(|signature| signature.params.get(1)),
+                    Some(LowerTy::Aggregate { ty, .. })
+                        if matches!(ty.kind(), TyKind::Struct(name, _) if *name == hasher_name)
+                )
+            });
+        let Some(symbol) = candidates.next() else {
             return Err(self.unsupported_reg(
-                format!("hashing without a compiled `{prefix}` instance"),
+                "hashing without a compiled `String.__hash__` instance".into(),
                 dest,
             ));
         };
         if candidates.next().is_some() {
-            return Err(
-                self.unsupported_reg(format!("hashing with ambiguous `{prefix}` instances"), dest)
-            );
+            return Err(self.unsupported_reg(
+                "hashing with ambiguous `String.__hash__` instances".into(),
+                dest,
+            ));
         }
-        Ok(name.clone())
+        Ok(symbol.to_string())
     }
 
     /// A float leaf with `-0.0` folded to `0.0` (the two compare equal, so
@@ -1020,45 +1016,12 @@ impl FnLowering<'_> {
         writer: Value,
         dest: Reg,
     ) -> Result<(), PlironError> {
-        let prefix = format!("{name}.write_to");
-        // The instance's per-instantiation clone (`write_to$y3:Int`) wins
-        // over the template's erased `write_to` instantiated for the same
-        // receiver.
-        let mut candidates: Vec<_> = self.signatures.get_key_value(&prefix).into_iter().collect();
-        if candidates.is_empty() {
-            candidates = self
-                .signatures
-                .iter()
-                .filter(|(fname, _)| fname.starts_with(&prefix))
-                .collect();
-        }
-        // A `write_to` whose parameter is not the protocol's writer is an
-        // ordinary overload, not the display implementation. Monomorphization
-        // binds the protocol's writer to the builtin string writer.
-        candidates.retain(|(fname, _)| {
-            self.declarations
-                .get(fname.as_str())
-                .is_none_or(|declaration| {
-                    declaration.param_types.first().is_some_and(|parameter| {
-                        *parameter == TyKind::StringLiteral
-                            || mojito_types::types::is_writer_parameter(parameter)
-                    })
-                })
-        });
-        if candidates.len() > 1 {
-            candidates.retain(|(fname, _)| fname.as_str() != prefix);
-        }
-        if candidates.is_empty() {
+        let Some(symbol) = self.display_member(name, "write_to", dest)? else {
             return self.append_reflective_struct(ctx, receiver, name, writer, dest);
-        }
-        let [(_, signature)] = candidates.as_slice() else {
-            return Err(self.unsupported_reg(
-                format!("display of `{name}` with ambiguous `write_to` instances"),
-                dest,
-            ));
         };
+        let signature = &self.signatures[symbol];
         if signature.outcome.is_some() {
-            return Err(self.unsupported_reg(format!("raising `{prefix}`"), dest));
+            return Err(self.unsupported_reg(format!("raising `{symbol}`"), dest));
         }
         let callee: Identifier = signature
             .mangled
@@ -1074,6 +1037,40 @@ impl FnLowering<'_> {
         );
         self.append(ctx, call.get_operation(), Some(dest));
         Ok(())
+    }
+
+    /// The display member `method` (`write_to`, `write_repr_to`) of the
+    /// struct `name`: its member table's one compiled instance whose writer
+    /// monomorphization bound to the builtin string writer. A `write_to`
+    /// whose parameter is not the protocol's writer is an ordinary
+    /// overload, not the display implementation. `None` when it has none.
+    pub(super) fn display_member(
+        &self,
+        name: &str,
+        method: &str,
+        dest: Reg,
+    ) -> Result<Option<&'a str>, PlironError> {
+        let candidates: Vec<&str> = self
+            .struct_member_symbols(name, method)
+            .map(|(_, symbol)| symbol)
+            .filter(|symbol| {
+                self.signatures.contains_key(*symbol)
+                    && self.declarations.get(*symbol).is_none_or(|declaration| {
+                        declaration.param_types.first().is_some_and(|parameter| {
+                            *parameter == TyKind::StringLiteral
+                                || mojito_types::types::is_writer_parameter(parameter)
+                        })
+                    })
+            })
+            .collect();
+        match candidates.as_slice() {
+            [] => Ok(None),
+            [symbol] => Ok(Some(symbol)),
+            _ => Err(self.unsupported_reg(
+                format!("display of `{name}` with ambiguous `{method}` instances"),
+                dest,
+            )),
+        }
     }
 
     /// Append constant `bytes` to a builtin-string writer.

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1018**.
+Next free ID: **R1020**.
 
 ## Ordered Work
 
@@ -591,24 +591,6 @@ which names the upstream pass each one follows. Each is measured by the
     by `expand_pack_spreads` before the call binds.
   - Found while landing R997 (2026-10-15).
   - Depends on R1011.
-  - Model: Fable, Not Planned.
-
-- [ ] **R1003 A display, hash, or equality member that reads no struct
-  parameter keeps one instance per struct instance**
-
-  `WBox[1]` and `WBox[2]` reach two `WBox.write_to`, whose body prints only
-  `self.v`, where the pin keeps one; the same holds for `write_repr_to`,
-  `__hash__`, `__eq__`, `__int__`, a keyword collector's `__setitem__`,
-  and `__call__`.
-  - The elaborator keeps them keyed by their struct instance
-    (`mir::composed_member`) because `print`, hashing, `!=`, scalar
-    construction, `**kwargs`, and callable dispatch compose
-    `{struct}.{member}` (`pliron` `lib.rs`, `print.rs`, `methods.rs`; the
-    VM's `dispatch.rs`, `invoke.rs`, `vm.rs`).
-  - Look these up through the member table R1001 adds, then delete
-    `composed_member` once R1000 lands too.
-  - Found while landing R978 (2026-10-15).
-  - Depends on R1001.
   - Model: Fable, Not Planned.
 
 - [ ] **R1016 A drop names no destructor; the backends look it up from
@@ -5752,6 +5734,38 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `conformance/assets-mojo-errors.tsv` row.
   - Unverified on the pin: the pin env was missing when R735 landed.
   - Found while landing R735 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1018 A struct value is accepted where a runtime function type is
+  expected**
+
+  Problem: `apply(Counter(10), 1)` for `def apply(f: def(Int) -> Int, x:
+  Int)` runs on Mojito, where the pin rejects it ("value passed to 'f'
+  cannot be converted from 'Counter' to 'def(Int) -> Int'"), for a
+  parametric and a non-parametric struct alike.
+  - The VM runs it through a `__trait_dispatch.__call__` contract
+    (`Prog::selected_struct_member`), and Pliron segfaults on it.
+  - R1009's `discover_structs` `__call__` demand exists only for this path.
+  - Fix: reject the conversion in the checker, with an
+    `assets/type_error` fixture and its
+    `conformance/assets-mojo-errors.tsv` row.
+  - Found while planning R1003 (2026-10-15).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1019 A user `Writer` receives other `write_string` calls than on
+  the pin**
+
+  Problem: `w.write(-23)` calls a user writer's `write_string` once with
+  `-23` on Mojito, but three times (`-`, an empty string, `23`) on the pin,
+  and `w.write(1.5)` makes one call on Mojito and four on the pin.
+  - A writer that counts or frames its calls prints different output.
+  - The bundled scalar `write_to`s write whole values, where upstream's
+    write sign and digit pieces separately.
+  - Fix: respell the bundled `Int`, `Bool`, and float `write_to`s after
+    upstream's, then promote a probe to an `assets/ok` fixture.
+  - Found while planning R1003 (2026-10-15).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

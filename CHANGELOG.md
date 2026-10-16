@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A display, repr, hash, equality, `__int__`, writer `write_string`, or
+  `__call__` member that reads no struct parameter is one instance for
+  every instance of its struct (R1003), as on the pin: `WBox[1]` and
+  `WBox[2]` share `WBox.write_to$mono`. A concrete struct's member table
+  now names every instance of such a member, keyed by its method
+  spelling, and every backend site that composed `{struct}.{member}` from
+  a value's type reads the table instead: the VM's display, `__int__`
+  lane, writer, hash-leaf, keyword-collector, `!=`, and callable-value
+  dispatch, and Pliron's display, repr, writer, hash-leaf, `__int__`,
+  collector, and reachability walk. `eliminate-dead-symbols` keeps the
+  dispatched members a live struct's table names. Only constructors still
+  keep one instance per struct instance (R1000)
+  (`assets/ok/struct_member_unread_struct_parameter_instances.mojo`).
 - A destructor, copy, or move constructor that reads no struct parameter
   is one instance for every instance of its struct (R1001), as on the
   pin: `DBox[1]` and `DBox[2]` share `DBox.__deinit__$mono`. Each struct

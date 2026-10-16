@@ -10,11 +10,41 @@ impl<'a> FnLowering<'a> {
     /// `__copyinit__`, `__moveinit__`) the struct `name` owns, from its
     /// declaration's member table, when the program declares it.
     pub(super) fn lifecycle_symbol(&self, name: &str, member: &str) -> Option<&'a str> {
+        self.struct_member_symbols(name, member)
+            .next()
+            .map(|(_, symbol)| symbol)
+    }
+
+    /// The entries of the member `method` (`write_to`, `__eq__`) in the
+    /// struct `name`'s member table, each overload and instance with its
+    /// key, that the program declares.
+    pub(super) fn struct_member_symbols(
+        &self,
+        name: &str,
+        method: &str,
+    ) -> impl Iterator<Item = (&'a str, &'a str)> {
         self.struct_decls
             .get(name)
-            .copied()?
-            .member(member)
-            .filter(|symbol| self.declarations.contains_key(*symbol))
+            .copied()
+            .into_iter()
+            .flat_map(move |declaration| declaration.members_of(method))
+            .map(|entry| (entry.member.as_str(), entry.symbol.as_str()))
+            .filter(|(_, symbol)| self.declarations.contains_key(*symbol))
+    }
+
+    /// The symbol of the member `method` the struct `name` runs for a
+    /// dispatch with `argc` arguments besides the receiver, from its member
+    /// table: the one compiled instance under the key callable resolution
+    /// selects among the member's overloads.
+    pub(super) fn struct_member(&self, name: &str, method: &str, argc: usize) -> Option<&'a str> {
+        let candidates = mojito_symbol::symbol::MemberCandidates::new(
+            name,
+            self.struct_member_symbols(name, method)
+                .filter_map(|(key, symbol)| {
+                    Some((key, symbol, self.signatures.get(symbol)?.params.len()))
+                }),
+        );
+        candidates.resolve(method, argc)
     }
 
     /// `DropVar` — the VM's `drop_value`: nothing for scalars; for aggregates

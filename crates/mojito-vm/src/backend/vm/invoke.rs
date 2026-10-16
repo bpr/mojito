@@ -233,10 +233,11 @@ impl VmBackend {
         entries: Vec<(String, Value)>,
     ) -> Result<Value, RuntimeError> {
         let mut dict = self.construct_via_init(prog, collector, None, Vec::new(), Vec::new())?;
-        let fname = prog.overload_name(&format!("{collector}.__setitem__"), 2);
-        let fidx = prog.index_of(&fname).ok_or_else(|| {
-            RuntimeError::Unsupported(format!("vm: kwargs {collector} has no __setitem__"))
-        })?;
+        let fidx = prog
+            .struct_member(collector, "__setitem__", 2)
+            .ok_or_else(|| {
+                RuntimeError::Unsupported(format!("vm: kwargs {collector} has no __setitem__"))
+            })?;
         for (key, value) in entries {
             let key = self.nominal_string_value(prog, &key)?;
             let (_, frame) = self.call_frame(prog, fidx, vec![dict, key, value])?;
@@ -417,10 +418,9 @@ impl VmBackend {
                             crate::runtime::type_name(&recv)
                         ))
                     })?;
-                    let fname = prog.hash_leaf_update(name, &leaf);
-                    let fidx = prog.index_of(&fname).ok_or_else(|| {
+                    let fidx = prog.hash_leaf_update(name, &leaf).ok_or_else(|| {
                         RuntimeError::Unsupported(format!(
-                            "vm: Hasher implementation has no '{fname}'"
+                            "vm: Hasher `{name}` has no `_update_with_simd` for {leaf}"
                         ))
                     })?;
                     let arguments = vec![hasher, crate::runtime::hash_leaf_value(recv.clone())];
@@ -546,15 +546,12 @@ impl VmBackend {
             },
             Value::Struct { name, .. }
                 if method == mojito_symbol::symbol::WRITE_FORMATTED
-                    && prog.index_of(&format!("{name}.write_string")).is_some() =>
+                    && let Some(index) = prog.struct_member(name, "write_string", 1) =>
             {
                 let place = recv_place.as_ref().ok_or_else(|| {
                     RuntimeError::Unsupported("vm: Writer.write needs a mutable place".into())
                 })?;
                 let mut writer = recv.clone();
-                let index = prog
-                    .index_of(&format!("{name}.write_string"))
-                    .expect("guard established Writer.write_string");
                 // The formatted arguments' `write_to` frames may read
                 // references into this caller (see the builtin-string arm).
                 let stack_base = self.push_caller_mirror(frame_id, regs, vars);

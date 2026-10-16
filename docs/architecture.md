@@ -5317,11 +5317,17 @@ point where a slot declared in a loop is uninitialized again.
   copies, and moves run, which the elaborator records as it demands it
   (`Specializer::record_struct_member`), so `DBox[1]` and `DBox[2]` share
   one `DBox.__deinit__$mono`, as upstream's struct nests its member
-  generators. A member the backends find by composing `{struct}.{member}`
-  from a value's type rather than from the instance a call names
-  (`mir::composed_member`: the constructors, display, hashing, equality,
-  `__int__`, a keyword collector's `__setitem__`, `__call__`) keeps its
-  owner instance and its name, removals and all. A static call's spelled receiver `S[n]` is a
+  generators. The table names each member a backend reaches from a
+  value's type rather than from the instance a call names, too
+  (`mir::DISPATCHED_MEMBERS`: display, a writer's `write_string`, hashing,
+  equality, `__int__`, a keyword collector's `__setitem__`, `__call__`),
+  keyed by the template's method spelling, overload qualifier included,
+  and the backends select among a member's entries with
+  `symbol::MemberCandidates`, the overload rules of
+  `resolve_callable_symbol`, so `WBox[1]` and `WBox[2]` share one
+  `WBox.write_to$mono`. Only a constructor, which the backends find by
+  composing `{struct}.__init__` (`mir::composed_member`), keeps its owner
+  instance and its name, removals and all (R1000). A static call's spelled receiver `S[n]` is a
   forward of `n` to the struct parameter the callee removed; in a body
   that removed `n` it is the erased `S[_REMOVED_ARG]`, which binds nothing
   and names the erased instance (`Specializer::bind_static_receiver`). A body lifted from a compile-time

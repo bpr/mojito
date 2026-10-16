@@ -496,7 +496,7 @@ impl FnLowering<'_> {
         };
         let (Some(init), Some(setitem)) = (
             self.constructor_init(struct_name, 0),
-            self.unique_method_instance(struct_name, "__setitem__", 3),
+            self.struct_member(struct_name, "__setitem__", 2),
         ) else {
             return Err(self.unsupported_reg(
                 format!("keyword pack `{struct_name}` lacks a compiled `__init__`/`__setitem__`"),
@@ -505,7 +505,7 @@ impl FnLowering<'_> {
         };
         let storage = self.entry_alloca(ctx, layout.size.max(1), layout.align.max(1));
         self.emit_void_call(ctx, &init, vec![storage], dest)?;
-        let Some(value_param) = self.signatures[&setitem].params.get(2).cloned() else {
+        let Some(value_param) = self.signatures[setitem].params.get(2).cloned() else {
             return Err(self.unsupported_reg(format!("`{setitem}` takes no value"), dest));
         };
         for (keyword, reg) in keywords {
@@ -529,29 +529,10 @@ impl FnLowering<'_> {
                     );
                 }
             };
-            self.emit_void_call(ctx, &setitem, vec![storage, key, value], dest)?;
+            self.emit_void_call(ctx, setitem, vec![storage, key, value], dest)?;
             self.emit_free(ctx, data);
         }
         Ok(storage)
-    }
-
-    /// The unique compiled overload of `struct_name.method` with `arity`
-    /// physical parameters (receiver included).
-    pub(super) fn unique_method_instance(
-        &self,
-        struct_name: &str,
-        method: &str,
-        arity: usize,
-    ) -> Option<String> {
-        let name = format!("{struct_name}.{method}");
-        if self.signatures.contains_key(&name) {
-            return Some(name);
-        }
-        let mut matches = self.signatures.iter().filter(|(fname, signature)| {
-            mojito_symbol::symbol::is_overload_of(fname, &name) && signature.params.len() == arity
-        });
-        let first = matches.next()?.0.clone();
-        matches.next().is_none().then_some(first)
     }
 
     /// Call compiled `name`, which neither raises nor returns a value, with

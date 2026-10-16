@@ -520,15 +520,15 @@ impl VmBackend {
                     ),
                     Value::Struct { name, .. } => {
                         nominal_receiver = Some(callable.clone());
-                        (
-                            prog.runtime_method_name(
+                        let index = prog
+                            .selected_struct_member(
                                 name,
                                 "__call__",
                                 resolved.as_deref(),
                                 args.len(),
-                            ),
-                            Vec::new(),
-                        )
+                            )
+                            .ok_or_else(|| RuntimeError::NotCallable(format!("{name}.__call__")))?;
+                        (prog.mir.functions[index].0.clone(), Vec::new())
                     }
                     value => {
                         return Err(RuntimeError::NotCallable(crate::runtime::type_name(value)));
@@ -1431,9 +1431,13 @@ impl VmBackend {
                 // struct; normalize it through `__int__` before lane build.
                 for val in &mut vals {
                     if let Value::Struct { name, .. } = val {
-                        let name = name.clone();
+                        let index = prog.struct_member(name, "__int__", 0).ok_or_else(|| {
+                            RuntimeError::Unsupported(format!(
+                                "vm: struct '{name}' has no method '__int__'"
+                            ))
+                        })?;
                         let receiver = std::mem::replace(val, Value::None);
-                        *val = self.call_dunder(prog, &name, "__int__", vec![receiver])?;
+                        *val = self.call_function(prog, index, vec![receiver])?;
                     }
                 }
                 let (dtype, width) = concrete_simd_slots(&(dtype.clone(), width.clone()))?;

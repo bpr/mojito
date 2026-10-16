@@ -2201,7 +2201,7 @@ fn a_destructor_that_reads_no_struct_parameter_is_one_instance() {
          \x20   var a = DBox[1](1)\n\
          \x20   var b = DBox[2](2)\n\
          \x20   print(a.v, b.v)\n";
-    assert_one_lifecycle_instance(source, "DBox", "__deinit__");
+    assert_one_member_instance(source, "DBox", "__deinit__", "DBox.__deinit__$mono");
 }
 
 #[test]
@@ -2217,30 +2217,70 @@ fn a_copy_constructor_that_reads_no_struct_parameter_is_one_instance() {
          \x20   return c.v\n\
          def main():\n\
          \x20   print(dup(CBox[1](1)), dup(CBox[2](2)))\n";
-    assert_one_lifecycle_instance(source, "CBox", "__copyinit__");
+    assert_one_member_instance(source, "CBox", "__copyinit__", "CBox.__copyinit__$mono");
 }
 
-/// `source`'s `owner[1]` and `owner[2]` share one owner-less instance of
+/// A `WBox[n]` whose display and equality members read no struct
+/// parameter.
+const WBOX_SOURCE: &str = "@fieldwise_init\n\
+     struct WBox[n: Int](Writable, Equatable, ImplicitlyCopyable):\n\
+     \x20   var v: Int\n\
+     \x20   @no_inline\n\
+     \x20   def write_to(self, mut writer: Some[Writer]):\n\
+     \x20       writer.write(\"W(\", self.v, \")\")\n\
+     \x20   @no_inline\n\
+     \x20   def __eq__(self, other: Self) -> Bool:\n\
+     \x20       return self.v == other.v\n\
+     def main():\n\
+     \x20   var a = WBox[1](1)\n\
+     \x20   var b = WBox[2](2)\n\
+     \x20   print(a, b)\n\
+     \x20   print(a == WBox[1](1), b != WBox[2](2))\n";
+
+#[test]
+fn a_display_member_that_reads_no_struct_parameter_is_one_instance() {
+    assert_one_member_instance(WBOX_SOURCE, "WBox", "write_to", "WBox.write_to$mono");
+}
+
+#[test]
+fn an_equality_member_that_reads_no_struct_parameter_is_one_instance() {
+    assert_one_member_instance(WBOX_SOURCE, "WBox", "__eq__", "WBox.__eq__$mono");
+}
+
+/// `source`'s `owner[1]` and `owner[2]` share one owner-less `instance` of
 /// their `member`, which both member tables name.
-fn assert_one_lifecycle_instance(source: &str, owner: &str, member: &str) {
+fn assert_one_member_instance(source: &str, owner: &str, member: &str, instance: &str) {
     let specialized = specialized_with_removed(source, &[]).expect("specialize");
     assert_eq!(
         mojito_mir::mir::verify::verify_concrete(&specialized.program),
         Vec::<String>::new()
     );
-    let instance = format!("{owner}.{member}$mono");
-    assert_eq!(
-        instances_of(&specialized, &format!("{owner}.{member}")),
-        [instance.as_str()]
-    );
+    let instances: Vec<&str> = specialized
+        .program
+        .functions
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .filter(|name| {
+            mojito_symbol::symbol::split_method_symbol(name).is_some_and(|(of, method)| {
+                (of == owner || of.starts_with(&format!("{owner}$mono$")))
+                    && method.split('$').next() == Some(member)
+            })
+        })
+        .collect();
+    assert_eq!(instances, [instance]);
     for argument in ["V1", "V2"] {
         let name = format!("{owner}$mono${argument}");
+        let declaration = specialized
+            .program
+            .declarations
+            .structure(&name)
+            .unwrap_or_else(|| panic!("`{name}` is declared"));
         assert_eq!(
-            specialized
-                .program
-                .declarations
-                .lifecycle_member(&name, member),
-            Some(instance.as_str()),
+            declaration
+                .members_of(member)
+                .map(|entry| entry.symbol.as_str())
+                .collect::<Vec<_>>(),
+            [instance],
             "`{name}`'s member table"
         );
     }

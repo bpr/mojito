@@ -119,8 +119,8 @@ fn pinned(program: &mut MirProgram, exports: &[String]) -> HashSet<String> {
             *uses.entry(name).or_default() += 1;
         }
     }
-    // A struct's member table names its lifecycle members, which the
-    // backends run from a value's type.
+    // A struct's member table names its lifecycle and dispatched members,
+    // which the backends run from a value's type.
     let members: HashSet<&str> = declarations
         .structs
         .iter()

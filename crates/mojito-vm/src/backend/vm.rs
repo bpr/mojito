@@ -391,16 +391,22 @@ impl VmBackend {
         args: Vec<Value>,
         resolved: Option<&str>,
     ) -> Result<Value, RuntimeError> {
-        let source_fname = format!("{sname}.{method}");
-        let fname = resolved.map_or_else(
-            || prog.overload_name(&source_fname, args.len().saturating_sub(1)),
-            str::to_string,
-        );
-        let Some(idx) = prog.index_of(&fname) else {
+        let argc = args.len().saturating_sub(1);
+        // A member the backends reach from a value's type is the instance
+        // the struct's member table names.
+        let idx = match resolved {
+            Some(resolved) => prog.index_of(resolved),
+            None if mojito_mir::mir::table_member(method).is_some() => {
+                prog.struct_member(sname, method, argc)
+            }
+            None => prog.index_of(&prog.overload_name(&format!("{sname}.{method}"), argc)),
+        };
+        let Some(idx) = idx else {
             // `Equatable`'s default `!=`: a struct that declares `__eq__`
             // and no `__ne__` negates its `__eq__`.
             if method == "__ne__"
-                && let Value::Bool(equal) = self.call_dunder(prog, sname, "__eq__", args)?
+                && let Some(eq) = prog.struct_member(sname, "__eq__", argc)
+                && let Value::Bool(equal) = self.call_function(prog, eq, args)?
             {
                 return Ok(Value::Bool(!equal));
             }
@@ -649,23 +655,6 @@ struct Prog {
     sigs: HashMap<String, FnSig>,
 }
 
-/// The display witness of a specialized instance struct: the one `method`
-/// body a specialized program keeps for the instance under a suffixed name
-/// (`Wrap$mono$TInt.write_to$mono$…`, the writer-generic method's own
-/// instance). `None` when the struct declares the plain method, or when no
-/// one body of that name exists.
-fn specialized_witness_symbol(prog: &Prog, sname: &str, method: &str) -> Option<String> {
-    if prog.index_of(&format!("{sname}.{method}")).is_some() {
-        return None;
-    }
-    let mut witnesses = prog.mir.functions.iter().filter_map(|(name, _)| {
-        let member = name.strip_prefix(sname)?.strip_prefix('.')?;
-        (member != method && member.split('$').next() == Some(method)).then_some(name)
-    });
-    let witness = witnesses.next()?;
-    witnesses.next().is_none().then(|| witness.clone())
-}
-
 /// A static type with its reference layers removed: a place or parameter
 /// handle describes the same instance as the value behind it.
 fn peel_references(ty: &mojito_types::types::Ty) -> &mojito_types::types::Ty {
@@ -696,31 +685,25 @@ impl Prog {
     }
 
     /// The `hasher`'s `_update_with_simd` a scalar `__hash__` leaf of type
-    /// `leaf` calls: the instance the elaborator minted at the leaf's vector
-    /// type, else the symbol as named.
-    fn hash_leaf_update(&self, hasher: &str, leaf: &mojito_types::types::Ty) -> String {
-        let template = format!("{hasher}._update_with_simd");
+    /// `leaf` calls: the instance in the hasher's member table at the leaf's
+    /// vector type.
+    fn hash_leaf_update(&self, hasher: &str, leaf: &mojito_types::types::Ty) -> Option<usize> {
         let shape = mojito_types::types::simd_shape(&mojito_types::types::hash_leaf_ty(leaf));
-        self.mir
-            .functions
-            .iter()
-            .find(|(fname, function)| {
-                fname
-                    .strip_prefix(&template)
-                    .is_some_and(|rest| rest.starts_with('$'))
-                    && function
-                        .param_types
-                        .get(1)
-                        .and_then(|value| mojito_types::types::simd_shape(peel_references(value)))
-                        == shape
+        self.struct_member_instances(hasher, "_update_with_simd")
+            .find(|&(index, _)| {
+                self.mir.functions[index]
+                    .1
+                    .param_types
+                    .get(1)
+                    .and_then(|value| mojito_types::types::simd_shape(peel_references(value)))
+                    == shape
             })
-            .map_or(template, |(fname, _)| fname.clone())
+            .map(|(index, _)| index)
     }
 
-    /// The instance of `receiver_type.method` a specialized program minted
-    /// for `hasher`'s struct (`String.__hash__$mono$T…AHasher…`), when the
-    /// program declares no template of that name: the instance whose hasher
-    /// parameter is that struct. `None` keeps by-name dispatch.
+    /// The instance of `receiver_type.method` in its member table whose
+    /// hasher parameter is `hasher`'s struct (`String.__hash__$mono$T…AHasher…`),
+    /// when exactly one is. `None` keeps by-name dispatch.
     fn hasher_method_instance(
         &self,
         receiver_type: &str,
@@ -730,22 +713,87 @@ impl Prog {
         let Value::Struct { name: hasher, .. } = hasher else {
             return None;
         };
-        let symbol = format!("{receiver_type}.{method}");
-        if self.index_of(&symbol).is_some() {
-            return None;
-        }
-        let prefix = format!("{symbol}$mono$");
-        let mut instances = self.mir.functions.iter().filter(|(fname, function)| {
-            fname.starts_with(&prefix)
-                && matches!(
-                    (function.param_types.get(1).map(peel_references)).map(Ty::kind),
+        let mut instances = self
+            .struct_member_instances(receiver_type, method)
+            .filter(|&(index, _)| {
+                matches!(
+                    (self.mir.functions[index].1.param_types.get(1).map(peel_references)).map(Ty::kind),
                     Some(mojito_types::types::TyKind::Struct(name, _)) if name == hasher
                 )
-        });
+            });
         match (instances.next(), instances.next()) {
-            (Some((fname, _)), None) => Some(fname.clone()),
+            (Some((_, symbol)), None) => Some(symbol.to_string()),
             _ => None,
         }
+    }
+
+    /// The function index of the member `method` the struct `name` runs for
+    /// a dispatch with `argc` arguments besides the receiver, from its
+    /// declaration's member table: the one instance under the key callable
+    /// resolution selects among the member's overloads.
+    fn struct_member(&self, name: &str, method: &str, argc: usize) -> Option<usize> {
+        let candidates = mojito_symbol::symbol::MemberCandidates::new(
+            name,
+            self.structs
+                .get(name)?
+                .members
+                .iter()
+                .filter(|(key, _)| key.split('$').next() == Some(method))
+                .filter_map(|(key, symbol)| {
+                    let index = self.index_of(symbol)?;
+                    Some((
+                        key.as_str(),
+                        symbol.as_str(),
+                        self.mir.functions[index].1.n_params,
+                    ))
+                }),
+        );
+        self.index_of(candidates.resolve(method, argc)?)
+    }
+
+    /// The function index of the dispatched member `method` a value of the
+    /// struct `name` runs for a call whose checker selection is `resolved`:
+    /// the instance it names, else the table instance under the method
+    /// spelling it selects (a `__trait_dispatch` contract's), else
+    /// [`Self::struct_member`]'s.
+    fn selected_struct_member(
+        &self,
+        name: &str,
+        method: &str,
+        resolved: Option<&str>,
+        argc: usize,
+    ) -> Option<usize> {
+        let selected = resolved.and_then(|resolved| {
+            self.index_of(resolved).or_else(|| {
+                let (_, key) = mojito_symbol::symbol::split_method_symbol(resolved)?;
+                let mut instances = self
+                    .structs
+                    .get(name)?
+                    .members
+                    .iter()
+                    .filter(|(known, _)| known == key);
+                match (instances.next(), instances.next()) {
+                    (Some((_, symbol)), None) => self.index_of(symbol),
+                    _ => None,
+                }
+            })
+        });
+        selected.or_else(|| self.struct_member(name, method, argc))
+    }
+
+    /// Each instance of the member `method` in the struct `name`'s member
+    /// table, its overloads included, with its function index.
+    fn struct_member_instances<'p>(
+        &'p self,
+        name: &str,
+        method: &'p str,
+    ) -> impl Iterator<Item = (usize, &'p str)> + 'p {
+        self.structs
+            .get(name)
+            .into_iter()
+            .flat_map(|declaration| &declaration.members)
+            .filter(move |(key, _)| key.split('$').next() == Some(method))
+            .filter_map(|(_, symbol)| Some((self.index_of(symbol)?, symbol.as_str())))
     }
 
     /// Whether any struct owns the lifecycle member `member` (e.g.

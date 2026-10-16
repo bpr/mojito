@@ -92,10 +92,20 @@ pub(super) fn verify_concrete_program(program: &MirProgram, errors: &mut Vec<Str
         for (field, ty) in &declaration.fields {
             require_concrete(&head, &format!("field `{field}`"), ty, errors);
         }
-        for entry in &declaration.members {
-            if !crate::mir::LIFECYCLE_MEMBERS.contains(&entry.member.as_str()) {
+        for (position, entry) in declaration.members.iter().enumerate() {
+            let lifecycle = crate::mir::LIFECYCLE_MEMBERS.contains(&entry.member.as_str());
+            if crate::mir::table_member(&entry.member).is_none() {
                 errors.push(format!(
-                    "{head} names `{}` as its member `{}`, which is no lifecycle member",
+                    "{head} names `{}` as its member `{}`, which is no lifecycle or dispatched member",
+                    entry.symbol, entry.member
+                ));
+            } else if lifecycle
+                && declaration.members[..position]
+                    .iter()
+                    .any(|known| known.member == entry.member)
+            {
+                errors.push(format!(
+                    "{head} names `{}` as a second `{}`",
                     entry.symbol, entry.member
                 ));
             } else if !defined.contains(entry.symbol.as_str()) {

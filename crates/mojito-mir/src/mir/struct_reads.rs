@@ -56,36 +56,51 @@ pub fn struct_layout_reads(name: &str, declarations: &MirDeclarations) -> Layout
 /// declaration's member table (`StructDeclaration::members`) records.
 pub const LIFECYCLE_MEMBERS: [&str; 3] = ["__deinit__", "__copyinit__", "__moveinit__"];
 
+/// The members a backend reaches from a value's type, not from a call
+/// naming them.
+///
+/// A concrete struct declaration's member table records them beside its
+/// lifecycle members: display (`write_to`, `write_repr_to`, a
+/// writer's `write_string`), hashing (`__hash__`, a hasher's
+/// `_update_with_simd`), equality (`__eq__`, and `__ne__` through it), the
+/// `__int__` a scalar construction converts through, a keyword collector's
+/// `__setitem__`, and the `__call__` a callable value dispatches.
+pub const DISPATCHED_MEMBERS: [&str; 10] = [
+    "write_to",
+    "write_repr_to",
+    "write_string",
+    "__hash__",
+    "_update_with_simd",
+    "__eq__",
+    "__ne__",
+    "__int__",
+    "__setitem__",
+    "__call__",
+];
+
+/// The member a struct's member table records the method `method` under
+/// (its spelling before any `$` qualifier), when it is a lifecycle or
+/// dispatched member.
+pub fn table_member(method: &str) -> Option<&'static str> {
+    let base = method.split('$').next().unwrap_or(method);
+    LIFECYCLE_MEMBERS
+        .into_iter()
+        .chain(DISPATCHED_MEMBERS)
+        .find(|member| *member == base)
+}
+
 /// Whether the backends find the struct method `method` by composing its
 /// symbol from a value's type, not from the instance a call names.
 ///
-/// Those are the constructors a construction runs (`__init__`), display
-/// (`write_to`, `write_repr_to`, `write_string`), hashing (`__hash__`,
-/// `_update_with_simd`), equality (`__eq__`, and `__ne__` through it), the
-/// `__int__` a scalar construction converts through, a keyword collector's
-/// `__setitem__`, and the `__call__` a callable value dispatches. A
-/// destructor, copy, or move constructor is not one: the struct
-/// declaration's member table names it. Such a member keeps one instance
-/// per struct instance, named after it, whatever parameters it removed.
+/// That is only the constructor a construction runs (`__init__`), which
+/// keeps one instance per struct instance, named after it, whatever
+/// parameters it removed. Every other member a backend reaches from a
+/// value's type ([`LIFECYCLE_MEMBERS`], [`DISPATCHED_MEMBERS`]) is found
+/// through the struct declaration's member table instead.
 pub fn composed_member(method: &str) -> bool {
     mojito_symbol::symbol::split_method_symbol(method)
         .map(|(_, member)| member.split('$').next().unwrap_or(member))
-        .is_some_and(|member| {
-            matches!(
-                member,
-                "__init__"
-                    | "write_to"
-                    | "write_repr_to"
-                    | "write_string"
-                    | "__hash__"
-                    | "_update_with_simd"
-                    | "__eq__"
-                    | "__ne__"
-                    | "__int__"
-                    | "__setitem__"
-                    | "__call__"
-            )
-        })
+        .is_some_and(|member| member == "__init__")
 }
 
 /// [`struct_layout_reads`] and the member reads of one walk's struct types,

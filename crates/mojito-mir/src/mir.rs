@@ -70,7 +70,8 @@ pub use param_uses::{
 };
 mod struct_reads;
 pub use struct_reads::{
-    LIFECYCLE_MEMBERS, LayoutReads, StructReads, composed_member, struct_layout_reads,
+    DISPATCHED_MEMBERS, LIFECYCLE_MEMBERS, LayoutReads, StructReads, composed_member,
+    struct_layout_reads, table_member,
 };
 mod symbols;
 pub use symbols::{SymbolTable, implicit_callees, replace_symbol_uses};

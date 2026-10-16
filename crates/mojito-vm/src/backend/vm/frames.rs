@@ -334,10 +334,10 @@ impl VmBackend {
                 ),
                 Value::Struct { name, .. } => {
                     nominal_receiver = Some(callable.clone());
-                    (
-                        prog.runtime_method_name(name, "__call__", resolved.as_deref(), args.len()),
-                        Vec::new(),
-                    )
+                    let index = prog
+                        .selected_struct_member(name, "__call__", resolved.as_deref(), args.len())
+                        .ok_or_else(|| RuntimeError::NotCallable(format!("{name}.__call__")))?;
+                    (prog.mir.functions[index].0.clone(), Vec::new())
                 }
                 value => {
                     return Err(RuntimeError::NotCallable(crate::runtime::type_name(value)));

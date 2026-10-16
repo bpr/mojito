@@ -87,7 +87,8 @@ struct Symbols<'p> {
     structs: HashMap<&'p str, &'p MirStructDeclaration>,
     /// Every own function and struct name: what a use may name.
     table: SymbolTable<'p>,
-    /// Each own struct's methods but its lifecycle members.
+    /// Each own struct's methods but its lifecycle members, and the
+    /// dispatched members its table names.
     methods: HashMap<&'p str, Vec<&'p str>>,
     /// Each own struct's destructor, copy, and move constructors, by the
     /// struct and the member's name, as its member table names them.
@@ -132,6 +133,21 @@ impl<'p> Symbols<'p> {
         }
         let members: HashSet<&str> = lifecycle.values().copied().collect();
         let mut methods: HashMap<_, Vec<_>> = HashMap::new();
+        // A dispatched member a struct's table names is its method whatever
+        // its spelling: an instance that removed the struct's parameters
+        // names no struct instance.
+        for declaration in &program.declarations.structs {
+            for entry in &declaration.members {
+                if !LIFECYCLE_MEMBERS.contains(&entry.member.as_str())
+                    && let Some((&symbol, _)) = functions.get_key_value(entry.symbol.as_str())
+                {
+                    methods
+                        .entry(declaration.name.as_str())
+                        .or_default()
+                        .push(symbol);
+                }
+            }
+        }
         let mut families: HashMap<_, Vec<_>> = HashMap::new();
         let mut nested: HashMap<_, Vec<_>> = HashMap::new();
         for (name, _) in &program.functions {

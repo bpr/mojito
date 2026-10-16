@@ -379,7 +379,7 @@ impl<'a> Specializer<'a> {
     ) -> Result<String, MonoError> {
         bindings.erase_origins();
         bindings.reduced = self.reduces(template, &bindings);
-        let lifecycle = lifecycle_owner(template, &bindings);
+        let member = table_owner(template, &bindings);
         if let Some(declaration) = self.declarations.get(template)
             && let Availability::Disproven(message) = self.availability(declaration, &bindings)
         {
@@ -401,9 +401,9 @@ impl<'a> Specializer<'a> {
             // generator over the ones it kept, as upstream's method
             // generator lists them before its own: it names no owner
             // instance, and its kept owner arguments lead its own: a
-            // destructor, copy, or move constructor too, which each struct
-            // instance's member table names. A member the backends find by
-            // its struct instance's name keeps that name.
+            // lifecycle or dispatched member too, which each struct
+            // instance's member table names. A constructor, which the
+            // backends find by its struct instance's name, keeps that name.
             Some((owner_template, _))
                 if !mojito_mir::mir::composed_member(template)
                     && self
@@ -448,7 +448,7 @@ impl<'a> Specializer<'a> {
         };
         if let Some(&index) = self.instance_index.get(&key) {
             let name = self.instances[index].1.clone();
-            self.record_struct_member(lifecycle, &name);
+            self.record_struct_member(member.as_ref(), &name);
             self.note_reference(&name);
             return Ok(name);
         }
@@ -461,8 +461,8 @@ impl<'a> Specializer<'a> {
             ));
         }
         // A generic struct's method takes its concrete owner's spelling
-        // (`List$mono$TInt.grow`), so lowering's name-composed lifecycle and
-        // overload lookups against the instance struct name keep working.
+        // (`List$mono$TInt.grow`), so lowering's name-composed constructor
+        // and overload lookups against the instance struct name keep working.
         // A template whose removed parameters left no argument is still an
         // instance (`f$mono`), never the template itself.
         let spelled = !key.arguments.is_empty()
@@ -513,7 +513,7 @@ impl<'a> Specializer<'a> {
                     .zip(self.functions.get(template))
                     .is_some_and(|(known, template)| functions_equivalent(known, template))
         }) {
-            self.record_struct_member(lifecycle, &name);
+            self.record_struct_member(member.as_ref(), &name);
             self.note_reference(&name);
             return Ok(name);
         }
@@ -547,25 +547,28 @@ impl<'a> Specializer<'a> {
         self.states.push(InstanceState::Pending);
         self.references.push(Vec::new());
         self.queue.push_back((key, bindings));
-        self.record_struct_member(lifecycle, &name);
+        self.record_struct_member(member.as_ref(), &name);
         self.note_reference(&name);
         Ok(name)
     }
 
-    /// Record `instance` as the member `lifecycle` names of its struct's
-    /// output declaration, or of the one it gets when declared, as
-    /// upstream's struct nests the member instances it owns.
-    fn record_struct_member(&mut self, lifecycle: Option<(String, &'static str)>, instance: &str) {
-        let Some((name, member)) = lifecycle else {
+    /// Record `instance` under the key `member` names in its struct's
+    /// output declaration's member table, or in the one it gets when
+    /// declared, as upstream's struct nests the member instances it owns.
+    fn record_struct_member(&mut self, member: Option<&(String, String)>, instance: &str) {
+        let Some((name, key)) = member else {
             return;
         };
-        if let Some(&position) = self.output_struct_positions.get(&name) {
-            self.output_structs[position].record_member(member, instance);
+        if let Some(&position) = self.output_struct_positions.get(name) {
+            self.output_structs[position].record_member(key, instance);
             return;
         }
-        let pending = self.pending_struct_members.entry(name).or_default();
-        if !pending.iter().any(|(known, _)| *known == member) {
-            pending.push((member, instance.to_string()));
+        let pending = self.pending_struct_members.entry(name.clone()).or_default();
+        if !pending
+            .iter()
+            .any(|(known, symbol)| known == key && symbol == instance)
+        {
+            pending.push((key.clone(), instance.to_string()));
         }
     }
 
@@ -1532,7 +1535,7 @@ impl<'a> Specializer<'a> {
             .into_iter()
             .flatten()
         {
-            declaration.record_member(member, &instance);
+            declaration.record_member(&member, &instance);
         }
         let shadowed = self
             .structs
@@ -4005,19 +4008,24 @@ fn elaboration_counts(
     counts
 }
 
-/// The concrete struct whose lifecycle member (`__deinit__`,
-/// `__copyinit__`, `__moveinit__`) an instance of `template` under
-/// `bindings` is, with the member: its owner instance, else its
-/// non-generic owner. `None` for any other function.
-fn lifecycle_owner(template: &str, bindings: &Bindings) -> Option<(String, &'static str)> {
+/// The concrete struct whose member table records an instance of
+/// `template` under `bindings`, with the key it records it under: its owner
+/// instance, else its non-generic owner, when `template` is a lifecycle or
+/// dispatched member (`mir::table_member`). A lifecycle member's key is
+/// its bare name (`__deinit__`); a dispatched member's is the template's
+/// method spelling, overload qualifier included (`__eq__$ov$Self`). `None`
+/// for any other function.
+fn table_owner(template: &str, bindings: &Bindings) -> Option<(String, String)> {
     let (owner, method) = mojito_symbol::symbol::split_method_symbol(template)?;
-    let method = method.split('$').next().unwrap_or(method);
-    let member = mojito_mir::mir::LIFECYCLE_MEMBERS
-        .into_iter()
-        .find(|member| *member == method)?;
+    let member = mojito_mir::mir::table_member(method)?;
+    let key = if mojito_mir::mir::LIFECYCLE_MEMBERS.contains(&member) {
+        member
+    } else {
+        method
+    };
     let name = match bindings.self_instance.as_ref().map(|(_, ty)| ty.kind()) {
         Some(TyKind::Struct(name, _)) => name.clone(),
         _ => owner.to_string(),
     };
-    Some((name, member))
+    Some((name, key.to_string()))
 }

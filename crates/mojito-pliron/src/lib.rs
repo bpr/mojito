@@ -926,14 +926,21 @@ fn reachable_set<'p>(
                     "StringDict",
                     &[mojito_symbol::symbol::InstanceArg::Ty(element.clone())],
                 );
-                for method in ["__init__", "__setitem__"] {
-                    let member = format!("{collector}.{method}");
-                    for (callee, _) in functions.iter().filter(|(callee, _)| {
-                        **callee == member || mojito_symbol::symbol::is_overload_of(callee, &member)
-                    }) {
-                        if reachable.insert(*callee) {
-                            queue.push_back(*callee);
-                        }
+                let init = format!("{collector}.__init__");
+                let setitem = structs
+                    .get(collector.as_str())
+                    .into_iter()
+                    .flat_map(|declaration| declaration.members_of("__setitem__"))
+                    .filter_map(|entry| functions.get_key_value(entry.symbol.as_str()));
+                for (callee, _) in functions
+                    .iter()
+                    .filter(|(callee, _)| {
+                        **callee == init || mojito_symbol::symbol::is_overload_of(callee, &init)
+                    })
+                    .chain(setitem)
+                {
+                    if reachable.insert(*callee) {
+                        queue.push_back(*callee);
                     }
                 }
             }
@@ -1004,6 +1011,19 @@ fn visit_call_edges<'p>(
                     targets.push(*callee);
                 }
             };
+            // A member the lowered expansion reaches from a value's type is
+            // each instance the struct's member table names.
+            let push_members = |targets: &mut Vec<&'p str>, name: &str, method: &str| {
+                for entry in structs
+                    .get(name)
+                    .into_iter()
+                    .flat_map(|declaration| declaration.members_of(method))
+                {
+                    if let Some((callee, _)) = functions.get_key_value(entry.symbol.as_str()) {
+                        targets.push(*callee);
+                    }
+                }
+            };
             // `**` on integers and every scalar display call bundled bodies
             // without naming them in an instruction. `format_scalar`
             // rejects a display whose digit bodies were not declared, so a
@@ -1028,12 +1048,7 @@ fn visit_call_edges<'p>(
                             function.reg_types.get(&arg.0).map(Ty::kind)
                             && !mojito_symbol::symbol::is_stdlib_string_struct(name)
                         {
-                            let prefix = format!("{name}.write_to");
-                            for fname in functions.keys() {
-                                if fname.starts_with(prefix.as_str()) {
-                                    targets.push(*fname);
-                                }
-                            }
+                            push_members(&mut targets, name, "write_to");
                         }
                     }
                 }
@@ -1044,12 +1059,7 @@ fn visit_call_edges<'p>(
                         if let Some(TyKind::Struct(name, _)) =
                             function.reg_types.get(&arg.0).map(Ty::kind)
                         {
-                            let prefix = format!("{name}.write_repr_to");
-                            for fname in functions.keys() {
-                                if fname.starts_with(prefix.as_str()) {
-                                    targets.push(*fname);
-                                }
-                            }
+                            push_members(&mut targets, name, "write_repr_to");
                         }
                     }
                 }
@@ -1097,7 +1107,7 @@ fn visit_call_edges<'p>(
                     if let Some(TyKind::Struct(name, _)) =
                         function.reg_types.get(&recv.0).map(Ty::kind)
                     {
-                        push_named(&mut targets, &format!("{name}.write_string"));
+                        push_members(&mut targets, name, "write_string");
                     }
                     if matches!(
                         function.reg_types.get(&recv.0).map(Ty::kind),
@@ -1107,12 +1117,7 @@ fn visit_call_edges<'p>(
                             if let Some(TyKind::Struct(name, _)) =
                                 function.reg_types.get(&arg.0).map(Ty::kind)
                             {
-                                let prefix = format!("{name}.write_to");
-                                for fname in functions.keys() {
-                                    if fname.starts_with(prefix.as_str()) {
-                                        targets.push(*fname);
-                                    }
-                                }
+                                push_members(&mut targets, name, "write_to");
                             }
                         }
                     }
@@ -1135,12 +1140,7 @@ fn visit_call_edges<'p>(
                             _ => ty,
                         });
                     if let Some(TyKind::Struct(hasher, _)) = hasher.map(Ty::kind) {
-                        let prefix = format!("{hasher}._update_with_simd");
-                        for fname in functions.keys() {
-                            if fname.starts_with(prefix.as_str()) {
-                                targets.push(*fname);
-                            }
-                        }
+                        push_members(&mut targets, hasher, "_update_with_simd");
                         let receiver = function.reg_types.get(&recv.0).map(|ty| match ty.kind() {
                             TyKind::Ref(reference) => &reference.referent,
                             _ => ty,
@@ -1163,26 +1163,12 @@ fn visit_call_edges<'p>(
                             }
                         }
                         if string_leaf {
-                            // The nominal String's symbols are module-qualified.
-                            for fname in functions.keys() {
-                                if fname.rsplit_once(".__hash__").is_some_and(|(owner, rest)| {
-                                    owner
-                                        .rsplit('$')
-                                        .next()
-                                        .is_some_and(mojito_symbol::symbol::is_stdlib_string_struct)
-                                        && (rest.is_empty() || rest.starts_with('$'))
-                                }) {
-                                    targets.push(*fname);
-                                }
+                            for string in string_structs(structs) {
+                                push_members(&mut targets, string, "__hash__");
                             }
                         }
                         for alternative in nominal_alternatives {
-                            let prefix = format!("{alternative}.__hash__");
-                            for fname in functions.keys() {
-                                if fname.starts_with(prefix.as_str()) {
-                                    targets.push(*fname);
-                                }
-                            }
+                            push_members(&mut targets, alternative, "__hash__");
                         }
                     }
                 }
@@ -1203,22 +1189,11 @@ fn visit_call_edges<'p>(
                                 continue;
                             };
                             if mojito_symbol::symbol::is_stdlib_string_struct(name) {
-                                for fname in functions.keys() {
-                                    if fname.rsplit_once(".__eq__").is_some_and(|(owner, rest)| {
-                                        owner.rsplit('$').next().is_some_and(
-                                            mojito_symbol::symbol::is_stdlib_string_struct,
-                                        ) && (rest.is_empty() || rest.starts_with('$'))
-                                    }) {
-                                        targets.push(*fname);
-                                    }
+                                for string in string_structs(structs) {
+                                    push_members(&mut targets, string, "__eq__");
                                 }
                             } else {
-                                let prefix = format!("{name}.__eq__");
-                                for fname in functions.keys() {
-                                    if fname.starts_with(prefix.as_str()) {
-                                        targets.push(*fname);
-                                    }
-                                }
+                                push_members(&mut targets, name, "__eq__");
                             }
                         }
                     }
@@ -1265,7 +1240,7 @@ fn visit_call_edges<'p>(
                         if let Some(TyKind::Struct(name, _)) =
                             function.reg_types.get(&elem.0).map(Ty::kind)
                         {
-                            push_named(&mut targets, &format!("{name}.__int__"));
+                            push_members(&mut targets, name, "__int__");
                         }
                     }
                 }
@@ -1415,6 +1390,18 @@ fn line_column(text: &str, byte: usize) -> Option<(usize, usize)> {
         .rfind('\n')
         .map_or(byte + 1, |newline| byte - newline);
     Some((line, column))
+}
+
+/// The declared structs that are the nominal `String`, whose names are
+/// module-qualified.
+fn string_structs<'s>(
+    structs: &'s HashMap<&str, &MirStructDeclaration>,
+) -> impl Iterator<Item = &'s str> {
+    structs.keys().copied().filter(|name| {
+        name.rsplit('$')
+            .next()
+            .is_some_and(mojito_symbol::symbol::is_stdlib_string_struct)
+    })
 }
 
 #[cfg(test)]

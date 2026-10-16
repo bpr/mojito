@@ -523,19 +523,10 @@ impl VmBackend {
                 }
                 builtin_input(prompt)
             }
-            "Int" | "Float64" | "Bool" => {
-                let value = arg1(name, args)?;
-                if let Value::Struct { name: sname, .. } = &value {
-                    let dunder = match name {
-                        "Float64" => "__float__",
-                        "Bool" => "__bool__",
-                        _ => "__int__",
-                    };
-                    let sname = sname.clone();
-                    return self.call_dunder(prog, &sname, dunder, vec![value]);
-                }
-                builtin_convert(name, value)
-            }
+            // The elaborator rewrites a conversion of a struct value into
+            // a call of its member, so a struct reaching here fails in
+            // `builtin_convert`.
+            "Int" | "Float64" | "Bool" => builtin_convert(name, arg1(name, args)?),
             // `Scalar[DType.x](arg)` lowers through the recorded SIMD
             // construction (`MakeSimd`), never a direct builtin call — a bare
             // `Scalar` name here has lost its dtype and cannot be executed.
@@ -670,25 +661,32 @@ impl VmBackend {
             return Ok(value.to_string());
         };
         let method = if repr { "write_repr_to" } else { "write_to" };
-        let source = format!("{name}.{method}");
-        let symbol = super::specialized_witness_symbol(prog, &name, method)
-            .unwrap_or_else(|| prog.overload_name(&source, 1));
-        // Monomorphization binds the protocol's writer to the builtin
-        // string writer.
-        let writes_protocol = prog.sigs.get(&symbol).is_none_or(|sig| {
-            sig.param_types.first().is_some_and(|parameter| {
-                *parameter == mojito_types::types::TyKind::StringLiteral
-                    || mojito_types::types::is_writer_parameter(parameter)
-            })
-        });
-        if writes_protocol && let Some(index) = prog.index_of(&symbol) {
+        // The display member is the struct's member-table instance whose
+        // writer monomorphization bound to the builtin string writer.
+        let mut witnesses = prog
+            .struct_member_instances(&name, method)
+            .filter(|(_, symbol)| {
+                prog.sigs.get(*symbol).is_none_or(|sig| {
+                    sig.param_types.first().is_some_and(|parameter| {
+                        *parameter == mojito_types::types::TyKind::StringLiteral
+                            || mojito_types::types::is_writer_parameter(parameter)
+                    })
+                })
+            });
+        let witness = witnesses.next();
+        if witnesses.next().is_some() {
+            return Err(RuntimeError::Unsupported(format!(
+                "vm: display of `{name}` with ambiguous `{method}` instances"
+            )));
+        }
+        if let Some((index, symbol)) = witness {
             let receiver = Value::Struct { name, fields };
             let (_, variables) =
                 self.call_frame(prog, index, vec![receiver, Value::Str(String::new())])?;
             return match variables.get(1) {
                 Some(Value::Str(text)) => Ok(text.clone()),
                 other => Err(RuntimeError::TypeError(format!(
-                    "{source} did not leave a Writer value, got {}",
+                    "{symbol} did not leave a Writer value, got {}",
                     other.map_or_else(|| "missing".to_string(), crate::runtime::type_name)
                 ))),
             };

@@ -65,12 +65,15 @@ pub struct StructDeclaration {
     /// binders: the elaborator answers `T.K` from them once `T` is bound to
     /// an instance, so elaborated MIR carries none.
     pub associated_values: Vec<(String, ParamExpr)>,
-    /// The symbols of the lifecycle members the struct owns (its
-    /// destructor, copy, and move constructors), sorted by member, as
-    /// upstream's struct nests its member functions: in a template, the
-    /// ones it declares; in a concrete struct, the instances the elaborator
-    /// made for it. A drop, copy, or move of a value finds the member it
-    /// runs here, never by composing a name from the value's type.
+    /// The symbols of the members the struct owns that a backend finds
+    /// from a value's type, sorted by key, as upstream's struct nests its
+    /// member functions: in a template, the lifecycle members it declares
+    /// (its destructor, copy, and move constructors); in a concrete struct,
+    /// every instance of a lifecycle or dispatched member
+    /// (`mojito_mir::mir::DISPATCHED_MEMBERS`) the elaborator made for it.
+    /// A drop, copy, move, display, hash, or other type-reached dispatch of
+    /// a value finds the member it runs here, never by composing a name
+    /// from the value's type.
     pub members: Vec<StructMember>,
 }
 
@@ -97,9 +100,13 @@ pub enum AssociatedParameter {
     Origin(OriginParamId),
 }
 
-/// One entry of [`StructDeclaration::members`]: a member's name
-/// (`__deinit__`) and the symbol of the function that is it. The symbol is
-/// a definition the struct owns, not a use of one.
+/// One entry of [`StructDeclaration::members`]: a member's key and the
+/// symbol of the function that is it.
+///
+/// The key is the template's method spelling with any overload qualifier
+/// (`__deinit__`, `write_to`, `__eq__$ov$Self`); a generic member has one
+/// entry per instance under one key. The symbol is a definition the struct
+/// owns, not a use of one.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StructMember {
     pub member: String,
@@ -107,8 +114,8 @@ pub struct StructMember {
 }
 
 impl StructDeclaration {
-    /// The symbol of the struct's lifecycle member `member`, when it owns
-    /// one.
+    /// The symbol of the struct's member keyed `member`, when it owns one:
+    /// the first, for a generic member with several instances.
     pub fn member(&self, member: &str) -> Option<&str> {
         self.members
             .iter()
@@ -116,13 +123,21 @@ impl StructDeclaration {
             .map(|entry| entry.symbol.as_str())
     }
 
-    /// Record `symbol` as the struct's member `member`, keeping the table
-    /// sorted; an entry already there stays.
+    /// The entries of the member `base` (`__eq__`), each overload and
+    /// instance of it: those whose key's spelling before any `$` qualifier
+    /// is `base`.
+    pub fn members_of<'s>(&'s self, base: &str) -> impl Iterator<Item = &'s StructMember> {
+        self.members
+            .iter()
+            .filter(move |entry| entry.member.split('$').next().unwrap_or(&entry.member) == base)
+    }
+
+    /// Record `symbol` under the key `member`, keeping the table sorted by
+    /// key, then symbol; an entry already there stays.
     pub fn record_member(&mut self, member: &str, symbol: &str) {
-        if let Err(position) = self
-            .members
-            .binary_search_by(|entry| entry.member.as_str().cmp(member))
-        {
+        if let Err(position) = self.members.binary_search_by(|entry| {
+            (entry.member.as_str(), entry.symbol.as_str()).cmp(&(member, symbol))
+        }) {
             self.members.insert(
                 position,
                 StructMember {

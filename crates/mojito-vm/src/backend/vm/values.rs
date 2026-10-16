@@ -164,8 +164,7 @@ impl VmBackend {
                 "__setitem__ dispatch requires a struct container".to_string(),
             ));
         };
-        let fname = prog.overload_name(&format!("{name}.__setitem__"), 2);
-        let fidx = prog.index_of(&fname).ok_or_else(|| {
+        let fidx = prog.struct_member(name, "__setitem__", 2).ok_or_else(|| {
             RuntimeError::Unsupported(format!("vm: struct '{name}' has no method '__setitem__'"))
         })?;
         let (_, frame_vars) = self.call_frame(prog, fidx, vec![recv, idx, value])?;

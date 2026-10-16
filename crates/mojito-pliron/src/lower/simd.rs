@@ -124,8 +124,10 @@ impl FnLowering<'_> {
         let Some(TyKind::Struct(name, _)) = register_ty.as_ref().map(Ty::kind) else {
             return Ok(None);
         };
-        let method = format!("{name}.__int__");
-        let Some(signature) = self.signatures.get(&method) else {
+        let Some((method, signature)) = self
+            .struct_member(name, "__int__", 0)
+            .and_then(|method| Some((method, self.signatures.get(method)?)))
+        else {
             return Err(
                 self.unsupported_reg(format!("`{name}` without compiled `__int__`"), anchor)
             );

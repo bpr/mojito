@@ -614,10 +614,10 @@ struct Specializer<'a> {
     output_structs: Vec<MirStructDeclaration>,
     /// Each output struct's position in `output_structs`, by name.
     output_struct_positions: HashMap<String, usize>,
-    /// The lifecycle member instances demanded of a struct not yet
-    /// declared, by its name: [`Specializer::declare_output_struct`] puts
+    /// The member instances demanded of a struct not yet declared, by its
+    /// name, each with its key: [`Specializer::declare_output_struct`] puts
     /// them into its member table.
-    pending_struct_members: HashMap<String, Vec<(&'static str, String)>>,
+    pending_struct_members: HashMap<String, Vec<(String, String)>>,
     /// The field types a layout query reads: each output struct as it is
     /// declared, and each non-generic source struct a query reaches, when
     /// one first does. Every [`LayoutOracle`] shares it, so building one
