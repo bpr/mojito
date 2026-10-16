@@ -245,7 +245,8 @@ fn keeps_whole(blocks: &[MirBlock], var: VarId) -> bool {
 /// iterator a `for` loop makes in a slot of its own; a read, a borrow, a
 /// store into it, or an advance of the iterator keeps it; anything else
 /// naming it, a `try`'s raise-edge cleanup included, leaves it possibly
-/// partial or empty. An iterable a `for` loop consumes in place holds the
+/// partial or empty; a lifetime marker names it without touching it. An
+/// iterable a `for` loop consumes in place holds the
 /// loop's iterator from then on, a value of another type than the slot's,
 /// which the slot's destructor does not destroy. A store of what a
 /// `try_next` yielded fills the slot on the yielding edge alone: the
@@ -279,6 +280,7 @@ fn whole_after(
         | MirInstr::StoreRef { .. }
         | MirInstr::MakeRef { .. }
         | MirInstr::KeepAlive { .. }
+        | MirInstr::InvalidateInteriors { .. }
         | MirInstr::EstablishLoans { .. }
         | MirInstr::VariantSet { .. }
         | MirInstr::VariantSetInitWith { .. }

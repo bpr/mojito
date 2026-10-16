@@ -107,3 +107,51 @@ with `scripts/roadmap.py list --track pmir`.
 A range is fixed at launch: entries filed during the run wait for a later
 run, even when they sort inside the range. After the run, check
 `scripts/roadmap.py list --track pmir | head` for anything new at the top.
+
+## Resuming after the 2026-10-16 usage-limit stop
+
+The first run landed R1037, R1077 with R1060, R1041, R1044, R1045, and
+R1042. The account's usage limit then cut off R1043's session 95 turns
+in. The loop committed that session's unfinished work as 9867474f, which
+builds and passes Clippy but is unverified: the session was still
+debugging one Pliron/VM difference and six drops the new `drop_calls`
+pass had not lowered. It had also reserved R1087 and R1088 without
+filing them. R1078's plan session hit the same limit before doing
+anything.
+
+The loop now waits for a usage limit to reset and resumes the cut-off
+session, so this will not happen again unattended.
+
+Run these from the repository root.
+
+1. Resume R1043's session, which still holds its context:
+
+   ```sh
+   claude --resume 310c58a3-0254-49a1-8c6e-f889d2d4da1f
+   ```
+
+   Tell it: "You were cut off by a usage limit. Continue R1043 from where
+   you stopped and finish it, including deleting the roadmap entry and
+   overwriting commit_msg.txt."
+
+2. When the session is done and R1043 is gone from `docs/roadmap.md`,
+   commit its work under its own message:
+
+   ```sh
+   git add -A crates tests docs assets && git commit -F commit_msg.txt
+   ```
+
+   If you skip this, the next loop run commits the tree on its own with a
+   generic message, and that commit also takes the loop fix itself.
+
+3. Finish the rest of the sequence. `--track pmir` is used rather than a
+   `--start` range, so the new residues that now sort first (R1083, R1085)
+   run too:
+
+   ```sh
+   scripts/claude_loop.py --track pmir --until R1081 -n 0
+   ```
+
+Alternative to steps 1–2: run step 3 alone. The loop then commits the tree
+first and a fresh R1043 session starts over from the partial code in HEAD,
+without the earlier session's context.

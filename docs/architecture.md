@@ -4471,9 +4471,25 @@ type, names none; the elaborator names the instance's
 (`Specializer::name_lifecycle_calls`), and the verifier reports a drop that
 names another symbol than its struct's `__deinit__`, or none where the
 struct has one. Neither backend traces a synthesized destructor's drop or
-consume. The instruction stays a drop rather than a call: its runtime
-partial-aggregate rule, Pliron's drop and leaf flags, and an owned pack's
-reverse order need drop states upstream's lifetime checker makes definite.
+consume. A named drop whose slot holds a whole value on every path to it
+is then the call upstream leaves (`mir::lower_whole_drops`, `mir/drop_calls.rs`,
+run by `name_destructors` and again by the elaborator once
+`name_lifecycle_calls` has named an instance's): a forwarding `UseVar` of
+the slot, which ends it and hands its storage to the callee as Mojo's
+owned-argument convention does, and a `MethodCall` of the destructor on
+it as the `deinit self` receiver, the shape an explicit `x^.finish()`
+lowers to, which both backends run as any such call. The whole-slot test
+is a per-list must-analysis (`is_whole_at`: a `var.store` or a `for`
+loop's iterator fills the slot; reads, borrows, calls, stores into it,
+and lifetime markers keep it; a moving use, a partial move, a drop, a
+consume, a `try`'s raise-edge cleanup, an in-place owned `iter.init`, or
+a store of a `try_next` result on its exhausted edge leaves it possibly
+partial or empty), entered with an owned parameter whole, and a region
+entered with the state at its instruction less what the regions before
+it may have ended. Every other named drop stays a `drop.var`, whose
+runtime partial-aggregate rule, Pliron's drop and leaf flags, and an
+owned pack's reverse order carry the states upstream's lifetime checker
+makes definite (R1087, R1088).
 A cleanup list's entries name their destructor as a `DropVar` does
 (`CleanupDrop`), named by the same `name_destructors` and respelled by the
 same `name_lifecycle_calls`, so the VM's `run_cleanup` and Pliron's
@@ -5276,23 +5292,17 @@ point where a slot declared in a loop is uninitialized again.
   enclosing `try`. An initializer's `out self` is never listed, being
   partly initialized at a raise. Outside any `try` the slots leave the
   function held, as every raise leaving a function does (R20). A
-  `drop.var` naming a followed destructor (the `__deinit__` drop
-  elaboration named, or the dropped default's slot type's,
-  `MirDeclarations::destructor`) is expanded into that destructor's body, as upstream inserts the
-  destructor's call at the death point and inlines it as any call: its
-  `deinit self` binds the dropped slot itself (`Binding::Slot`, the slot
-  renumbered to the caller's), so the body's `consume.var` ends it, and
-  the struct's binders bind to the slot type's arguments as a method's
-  bind to its receiver's. The inlined registers take the location of the
-  slot's last read, where the pin reports a destructor's failed
-  constraint. Since a `drop.var` tests at run time whether its slot is
-  whole, partial, or empty, only a drop of a slot whole on every path to
-  it is expanded (`is_whole_at`, a must-dataflow over the block list in
-  which a `var.store` fills the slot, reads, borrows, calls, and stores
-  into it keep it, and anything else naming it, a moving `var.use`
-  included, empties it); a region's body starts with every slot empty
-  but the region's own (R1081). The call-graph walk follows such a drop
-  as an edge to the destructor. A callee on a cycle of followed calls is never inlined: at
+  destructor's call at a whole slot's drop (the `MethodCall`
+  `mir::lower_whole_drops` left, or the one the dropped default's slot
+  gets) is an ordinary call of the pass: its `deinit self` binds the
+  slot the receiver register forwards (`forwarded_slot`, `Binding::Slot`,
+  the slot renumbered to the caller's, the forwarding `var.use` removed
+  by the splice), so the body's `consume.var` ends it as the forward did,
+  and the struct's binders bind to the slot type's arguments as a
+  method's bind to its receiver's; a `deinit` parameter taking anything
+  but a forwarded slot keeps its call (R1081). A `drop.var` the lowering
+  kept, whose slot some path leaves partial or empty, is no call and is
+  never expanded. A callee on a cycle of followed calls is never inlined: at
   the program seam the cycles are the strongly connected components of the
   program's followed calls, and at the package seam `PackageBodies::on_cycle`
   decides one from lowered bodies, memoized by row, so a finishing hook

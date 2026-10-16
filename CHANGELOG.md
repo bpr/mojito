@@ -8,6 +8,25 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `drop.var` whose slot holds a whole value on every path to it is now
+  the call of its destructor (R1043), as upstream's destructor insertion
+  leaves a plain `__del__` call at each death: `mir::lower_whole_drops`,
+  run at the end of `name_destructors` and again by the elaborator once an
+  instance's destructor is named, rewrites the drop to a forwarding
+  `var.use` of the slot and a `call.method` of the named `__deinit__` on
+  it, the shape an explicit `deinit self` call already lowers to, so the
+  verifier, both backends, and the symbol walks treat it as any call. The
+  pre-elaboration inliner no longer expands destructors at drops; it binds
+  a `deinit` receiver to the slot its register forwards (`Binding::Slot`)
+  and inlines the call as any other, so a `nodebug` destructor inlines
+  where it did. A drop whose slot some path leaves empty or partial — after
+  a partial move, defined inside a region, a `for` loop's yield on its
+  exhausted edge, an iterable consumed in place — stays a `drop.var`
+  (R1087, R1088). The VM's lifecycle log reports a lowered drop by its
+  destructor's `consume` alone. Three `assets/ok` fixtures that failed
+  on the VM at the previous commit (`dict_take_items`,
+  `nominal_string_codepoint_iter`, `temporary_receiver_view`) run again.
+  No fixture's output changes.
 - A cleanup list — a `try`'s raise-edge cleanup, a `return.cleanup`'s, an
   `escape`'s — now lists drops that name their destructor (R1042), as a
   `drop.var` does since R1016 and as upstream's destructor insertion names

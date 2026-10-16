@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1089**.
+Next free ID: **R1090**.
 
 ## Ordered Work
 
@@ -92,23 +92,60 @@ which names the upstream pass each one follows. Each is measured by the
     `Tuple[String, Int]` dropped.
   - Name a `destructor` on each primitive, as `drop.place` does since
     R1016 and a cleanup list's entry since R1042, and respell it in
-    `Specializer::name_lifecycle_calls`; a consumed residue is R1043's.
+    `Specializer::name_lifecycle_calls`; a consumed residue still finds
+    its fields' destructors from the type.
   - Then `destroyed_structs` answers only what no instruction names.
   - Found while landing R1041 (2026-10-16).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1043 A drop is its own instruction, not a call of its destructor**
+- [ ] **R1087 A drop stays a drop where the whole-slot test cannot prove
+  its slot whole**
 
-  `drop.var` names its destructor but stays a drop, where upstream's
-  destructor insertion leaves a plain call.
-  - Pliron's drop and leaf-presence flags and the VM's runtime
-    partial-aggregate rule exist because Mojito's drop states are not
-    definite at every death; upstream's lifetime checker makes them so.
-  - Once they are, lower a named drop to `call @D.__deinit__` of the slot.
-  - Found while landing R1016 (2026-10-16).
-  - Depends on R1041, R1042.
-  - Model: Fable, Not Planned.
+  `mir::lower_whole_drops` lowers a named `drop.var` to the call of its
+  destructor only where a per-list must-analysis proves the slot whole on
+  every path, and keeps the drop, with Pliron's drop and leaf flags and the
+  VM's partial-aggregate rule, where it cannot; upstream's `CheckLifetimes`
+  walks the regions and makes every death definite.
+  - Probe: a field moved out and stored again (`take(p.a^)` then `p.a =
+    ...`; `assets/ok/partial_move_reinit_sibling_use.mojo`); a field
+    replaced by a `drop.place` and a `place.store`
+    (`assets/ok/field_store_overwrite_drop.mojo`); a slot declared before
+    a `try` and defined inside it (`assets/ok/late_initialized_local.mojo`,
+    `in_try`); a slot a `try` body stores that a later drop ends outside
+    it (`assets/ok/template_method_with_statement.mojo`).
+  - The analysis folds `whole_after` per instruction and summarizes a
+    region by whether it keeps the slot whole, so a definition inside a
+    region, or a re-initialization after a partial move, never reaches a
+    later drop.
+  - The lever is a region-aware definite-initialization state, R875's,
+    which the lowering then reads instead of its own fold.
+  - Found while landing R1043 (2026-10-16).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1088 A `for` loop's lowering stores its yield on the exhausted
+  edge and its owned iterator into the iterable's slot**
+
+  `iter.try_next`'s result is stored into the `$yield` slot before the
+  branch on `yielded`, so on the exhausted edge the slot holds nothing,
+  and an owned `for x in a^` normalizes the iterator into `a`'s own slot
+  (`iter.init { source: $a, dest: $a }`), whose declared type and named
+  destructor stay the iterable's; upstream binds the element inside the
+  body region and makes the iterator a value of its own type.
+  - Probe: `for var item in d^` over an `Optional[Res]`
+    (`assets/ok/optional_owning_api.mojo`), `for var x in a^` over an
+    `Array` (`assets/ok/array_fixed_size_core.mojo`), and every `for` over
+    a nominal iterator yielding a struct with a destructor.
+  - `mir::lower_whole_drops` keeps both drops as drops (a store of a
+    `try_next` result counts as conditional; an in-place `iter.init` ends
+    the slot's whole value), and Pliron's `conditional_values` and the
+    VM's `None` slot carry the exhausted edge.
+  - Bind the yield in the body region, as R877's structured drop
+    placement will, and give the owned iterator a slot of its own type.
+  - Found while landing R1043 (2026-10-16).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1046 A copy or move is a slot use, not a call of its
   constructor**
@@ -116,11 +153,12 @@ which names the upstream pass each one follows. Each is measured by the
   `var.use copy` names its constructor but stays a slot use, where
   upstream's copy/move insertion leaves a plain call.
   - Pliron's drop flags, the VM's moved-slot tombstone, and the `String`
-    buffer bridges hang on the use, as they do on a drop for R1043.
+    buffer bridges hang on the use, as they did on a drop before a whole
+    slot's drop became the call of its destructor.
   - Once they do not, lower a named copy or move to a call of the
     constructor into fresh storage.
   - Found while landing R1017 (2026-10-16).
-  - Depends on R1044, R1045, R1043.
+  - Depends on R1044, R1045.
   - Model: Fable, Not Planned.
 
 - [ ] **R1078 `inline-parametric` binds a callee's compile-time
@@ -210,18 +248,20 @@ which names the upstream pass each one follows. Each is measured by the
   the `drop.place` of a field inside an inlined destructor keep their
   `nodebug` destructors as calls, where the pin inlines all three.
   - Since R1041 a struct with droppable fields has a synthesized `nodebug`
-    destructor, which inlines at a `drop.var` into a `drop.place` per
-    field naming the field's destructor; `destructor()` reads `drop.var`
-    only, so a `nodebug` field destructor stays a call there.
-  - Once a drop is a call of its destructor (R1043), each is an ordinary
-    call R1078's substitution inlines.
-  - Bind a `deinit` parameter to a fresh slot the argument moves into,
-    keeping the callee's consumption of it.
-  - Seed a region body's entry state from the enclosing state at the region
-    instruction (`is_whole_at`), not all-empty.
+    destructor, whose call at a whole slot's drop inlines into a
+    `drop.place` per field naming the field's destructor; the inliner
+    binds a `deinit` parameter only to a slot the argument forwards
+    (`forwarded_slot`), so a `nodebug` field destructor stays a call at a
+    `drop.place`, and an explicit `x^.finish()`, whose receiver is a
+    loaded place consumed after the call, keeps its call too.
+  - Bind a `deinit` parameter to a fresh slot a non-forwarded argument
+    moves into, keeping the callee's consumption of it, and bind one to
+    the place an explicit destroy call loads and consumes.
+  - Lower a named `drop.place` of a whole field to the call of its
+    destructor, as `mir::lower_whole_drops` lowers a `drop.var`.
   - Done when each probe inlines, `S[k]` holding a `D[k]` field drops
     through `D`'s inlined destructor, and the differential is clean.
-  - Depends on R1041, R1043, R1078.
+  - Depends on R1041, R1078.
   - Model: Opus, Planned.
 
 - [ ] **R1029 The backends still resolve a call naming a struct to an
@@ -6876,6 +6916,20 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Matching the pin needs a compile-time diagnostic when a shift's
     constant amount is outside the lane width.
   - Found while landing R846 (2026-10-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1089 A `raises` destructor is accepted where the pin rejects it**
+
+  `def __deinit__(deinit self) raises:` checks and runs in Mojito, where
+  the pin reports "destructor must not declare 'raises'".
+  - Probe: a struct whose `__deinit__` declares `raises`, dropped in
+    `main`.
+  - The checker's method rules say nothing about a destructor's effect;
+    `mir::lower_whole_drops` writes the destructor's call with no raise
+    contract, and Pliron rejects a raising destructor at the drop.
+  - Reject the declaration at the check, with the pin's message.
+  - Found while landing R1043 (2026-10-16).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

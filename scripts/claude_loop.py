@@ -9,7 +9,11 @@ new `claude -p` process, so no context carries over from one task to the next.
 The loop never stops on a bad task. A session that fails, or that leaves its
 entry on the roadmap, is reported and committed as it stands, and the next task
 starts; the exit status is 1 if any task went that way, and an entry that waits
-on one of those is skipped for the rest of the run. The one thing that does
+on one of those is skipped for the rest of the run. A session a usage limit
+cuts off is not a bad task: the loop waits for the limit to reset and resumes
+that session with its context, and if the reset is more than six hours away it
+stops, leaving the session's work uncommitted and printing how to resume it.
+The other thing that does
 stop a run is three sessions in a row failing inside a minute, which means the
 environment is refusing to work (expired credentials, an exhausted rate limit)
 rather than the tasks being hard. Uncommitted tracked
@@ -81,6 +85,13 @@ COMMIT_MSG = ROOT / "commit_msg.txt"
 TICK = 5
 QUICK_FAIL = 60
 QUICK_FAIL_LIMIT = 3
+LIMIT_MAX_WAIT = 6 * 3600
+LIMIT_SLACK = 90
+RESUME_PROMPT = (
+    "Your session was cut off by a usage limit, which has now reset. Continue "
+    "the task from where you stopped, under the same instructions, and finish "
+    "it.\n"
+)
 
 MODELS = {
     "Opus": "claude-opus-5-5[1m]",
@@ -245,11 +256,21 @@ def plan_written(task: Task, since: float) -> bool:
         return False
 
 
-def run_claude(args, task: Task, model: str, label: str, prompt: str) -> bool:
+@dataclass
+class Outcome:
+    ok: bool
+    session_id: str | None
+    limit_reset: float | None
+    """When a usage limit cut the session off, the epoch second it resets."""
+
+
+def run_claude(args, task: Task, model: str, label: str, prompt: str,
+               resume: str | None = None) -> Outcome:
     """Run one session, showing only the task and a ticking elapsed-seconds count.
 
     The session's stream goes to the log alone; the task's line is rewritten in
     place every `TICK` seconds and left showing the total when the session ends.
+    `resume` continues an earlier session, its context intact, with `prompt`.
     """
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -265,9 +286,11 @@ def run_claude(args, task: Task, model: str, label: str, prompt: str) -> bool:
         "--output-format",
         "stream-json",
         "--verbose",
+        *(["--resume", resume] if resume else []),
         *args.claude_arg,
     ]
     result: dict = {}
+    rejected_until: list[float] = []
 
     def drain(stdout) -> None:
         with log_path.open("w") as log:
@@ -280,6 +303,9 @@ def run_claude(args, task: Task, model: str, label: str, prompt: str) -> bool:
                     continue
                 if event.get("type") == "result":
                     result.update(event)
+                info = event.get("rate_limit_info") or {}
+                if info.get("status") == "rejected" and info.get("resetsAt"):
+                    rejected_until.append(float(info["resetsAt"]))
 
     began = time.monotonic()
     with log_path.with_suffix(".stderr").open("w") as err, subprocess.Popen(
@@ -296,9 +322,37 @@ def run_claude(args, task: Task, model: str, label: str, prompt: str) -> bool:
                 pass
         reader.join()
     ok = code == 0 and not result.get("is_error", False)
-    show_progress(task, label, time.monotonic() - began, "" if ok else "  FAILED")
+    limited = not ok and (result.get("api_error") == "usage_limit_reached"
+                          or result.get("api_error_status") == 429)
+    reset = (max(rejected_until) if rejected_until else time.time() + 3600) if limited else None
+    suffix = "" if ok else "  USAGE LIMIT" if limited else "  FAILED"
+    show_progress(task, label, time.monotonic() - began, suffix)
     print(flush=True)
-    return ok
+    return Outcome(ok, result.get("session_id"), reset)
+
+
+def resume_through_limits(args, task: Task, model: str, label: str,
+                          outcome: Outcome, attempts: int = 3) -> Outcome:
+    """Wait out a usage limit that cut `outcome`'s session off, then resume it.
+
+    The session keeps its context, so the task carries on rather than starting
+    over on a tree holding half its work. A limit that resets more than
+    `LIMIT_MAX_WAIT` away, or one still in force after `attempts` resumptions,
+    is returned as it stands for the caller to stop on.
+    """
+    for _ in range(attempts):
+        if outcome.limit_reset is None or not outcome.session_id:
+            return outcome
+        wait = outcome.limit_reset + LIMIT_SLACK - time.time()
+        if wait > LIMIT_MAX_WAIT:
+            return outcome
+        until = dt.datetime.fromtimestamp(time.time() + max(wait, 0)).strftime("%H:%M")
+        print(f"claude_loop: usage limit; resuming {task.id}'s session at {until}",
+              file=sys.stderr, flush=True)
+        time.sleep(max(wait, 0))
+        outcome = run_claude(args, task, model, f"{label} (resumed)", RESUME_PROMPT,
+                             resume=outcome.session_id)
+    return outcome
 
 
 def show_progress(task: Task, label: str, seconds: float, suffix: str = "") -> None:
@@ -473,6 +527,7 @@ def main() -> int:
 
     ran = 0
     quick = 0
+    stopped_by_limit: tuple[Task, Outcome] | None = None
     while tasks := pending(args, done, troubled, fixed):
         current = tasks[0]
         modes = modes_for(args, current)
@@ -492,7 +547,12 @@ def main() -> int:
             msg_before = read_commit_msg()
             label = f"{current.id} {model_name(args, current)}, {mode}"
             began = time.time()
-            ok = run_claude(args, current, model, label, prompt)
+            outcome = resume_through_limits(
+                args, current, model, label, run_claude(args, current, model, label, prompt))
+            if outcome.limit_reset is not None:
+                stopped_by_limit = (current, outcome)
+                break
+            ok = outcome.ok
             quick = quick + 1 if not ok and time.time() - began < QUICK_FAIL else 0
             if mode == "plan":
                 landed = plan_written(current, began)
@@ -512,6 +572,8 @@ def main() -> int:
                 troubled.add(current.id)
                 break
 
+        if stopped_by_limit:
+            break
         done.add(current.id)
         ran += 1
         if quick >= QUICK_FAIL_LIMIT:
@@ -525,6 +587,15 @@ def main() -> int:
         if until and not args.dry_run and not any(t.id == until for t in roadmap.parse().open()):
             break
 
+    if stopped_by_limit:
+        task, outcome = stopped_by_limit
+        reset = dt.datetime.fromtimestamp(outcome.limit_reset).strftime("%Y-%m-%d %H:%M")
+        print(f"claude_loop: a usage limit stopped {task.id}'s session until {reset}; "
+              "its work is left uncommitted in the tree. Continue that session with "
+              f"`claude --resume {outcome.session_id}`, or rerun the loop, which "
+              "commits the tree on its own first and starts the task afresh.",
+              file=sys.stderr)
+        return 1
     if troubled:
         print(f"claude_loop: {ran} tasks ran, {len(troubled)} left work behind:",
               file=sys.stderr)
