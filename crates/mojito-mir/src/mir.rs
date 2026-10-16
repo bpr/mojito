@@ -4257,7 +4257,9 @@ fn close_register_types(
                             _ => reg_types.get(&a.0).or_else(|| reg_types.get(&b.0)).cloned(),
                         },
                     )),
-                    MirInstr::GetField { dest, base, field } => Some((
+                    MirInstr::GetField {
+                        dest, base, field, ..
+                    } => Some((
                         dest,
                         reg_types
                             .get(&base.0)

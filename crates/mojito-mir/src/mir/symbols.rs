@@ -188,8 +188,9 @@ pub fn implicit_callees<S: BuildHasher>(
 /// `blocks`, in its regions too, holds itself.
 ///
 /// Those are a call's callee, a selected method, operator, subscript, or
-/// iterator target, a closure's function, a function constant, and a
-/// loop's preparation calls: MLIR's `SymbolTable::replaceAllSymbolUses`
+/// iterator target, a closure's function, a function constant, a loop's
+/// preparation calls, a lifecycle site's member, and a slice bound read's
+/// constructors: MLIR's `SymbolTable::replaceAllSymbolUses`
 /// over the references an operation holds directly. One inside a
 /// type, a compile-time value, or a declaration is not visited, so a
 /// client that must reach every use of a symbol counts the references this
@@ -231,7 +232,13 @@ pub fn replace_symbol_uses(blocks: &mut [MirBlock], replace: &mut dyn FnMut(&mut
                 }
                 | MirInstr::MultiSet { call, .. } => replace(&mut call.target),
                 MirInstr::TryNext { call, .. } => replace(&mut call.target),
-                MirInstr::GetIter { prepare, .. } => prepare.iter_mut().for_each(&mut *replace),
+                MirInstr::GetIter {
+                    prepare: symbols, ..
+                }
+                | MirInstr::GetField {
+                    constructors: symbols,
+                    ..
+                } => symbols.iter_mut().for_each(&mut *replace),
                 MirInstr::DropVar {
                     destructor: Some(target),
                     ..

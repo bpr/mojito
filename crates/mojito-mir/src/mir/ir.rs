@@ -2020,6 +2020,12 @@ pub enum MirInstr {
         dest: Reg,
         base: Reg,
         field: String,
+        /// The constructors a slice descriptor's bound read (`s.start`)
+        /// builds its `Optional` result through, the nullary one and the
+        /// positional one-argument one, which the elaborator names in
+        /// concrete MIR. Empty for any other read.
+        #[serde(serialize_with = "mojito_types::symbol_ref::serialize_seq")]
+        constructors: Vec<String>,
     },
     /// Subscript *read* `base[index]` inside an rvalue. Nominal collection
     /// subscripts carry their complete checker-selected invocation in `call`.

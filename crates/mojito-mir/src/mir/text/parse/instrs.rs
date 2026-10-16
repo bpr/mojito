@@ -582,6 +582,11 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 base: self.req(value, fields, "base", Self::reg)?,
                 field: self.req(value, fields, "field", Self::symbol)?,
+                constructors: self
+                    .field(fields, "constructors")
+                    .ok()
+                    .map(|value| self.strings(value))
+                    .unwrap_or_default(),
             }),
             "index.get" => Some(MirInstr::Index {
                 dest: self.req(value, fields, "dest", Self::reg)?,

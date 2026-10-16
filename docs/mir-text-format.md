@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.68
+# Mojito Textual MIR Format, Version 1.69
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.68 is implemented end to end for inspection and loading: canonical
+Version 1.69 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.68
+mojito-mir 1.69
 ```
 
-The writer emits 1.68. The reader accepts 1.0 through 1.68; *Schema 1.0*
+The writer emits 1.69. The reader accepts 1.0 through 1.69; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -935,7 +935,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `UninitStorage` / `UninitStorageTake` / `UninitStorageDestroy` | `uninit.make` / `uninit.take` / `uninit.destroy` |
 | `MarkInitialized` | `ownership.mark_initialized` (schema 1.28: `{ place }`, upstream's `lit.ownership.mark_initialized`) |
 | `MarkDestroyed` | `ownership.mark_destroyed` (schema 1.30: `{ place }`, upstream's `lit.ownership.mark_destroyed`: the place holds no value from here and no destructor runs on it) |
-| `GetField` | `field.get` |
+| `GetField` | `field.get` — a slice descriptor's bound read (`s.start`) carries `constructors: ["<symbol>", …]` after its `field` naming the `Optional` constructors it builds its result through, the nullary one and the positional one-argument one, as an upstream call names the constructor it runs (schema 1.69); the elaborator names them in concrete MIR, the writer omits the field when the read names none, and the reader takes an absent field as none |
 | `Index` / `Slice` / `MultiIndex` / `MultiSet` | `index.get` / `slice.get` / `index.multi` / `index.multi_set` |
 | `Store` / `StoreRef` | `place.store` / `place.store_ref` |
 | `MakeTuple` | `tuple.make` |

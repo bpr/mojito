@@ -84,9 +84,8 @@ pub const DISPATCHED_MEMBERS: [&str; 10] = [
 
 /// The constructors a backend runs from a type with no call naming them.
 ///
-/// Those are a keyword collector's empty one and a slice bound's `Optional`
-/// ones. A constructor a call reaches is the instance the call names, never
-/// a table entry.
+/// That is a keyword collector's empty one. A constructor a call or a slice
+/// bound's read reaches is the instance it names, never a table entry.
 pub const CONSTRUCTED_MEMBERS: [&str; 1] = ["__init__"];
 
 /// The member a struct's member table records the method `method` under

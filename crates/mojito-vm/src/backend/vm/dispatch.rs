@@ -299,68 +299,40 @@ impl VmBackend {
         Ok(())
     }
 
-    /// Materialize one intrinsic Slice bound through the ordinary bundled
-    /// `Optional[Int]` constructor. The projection's declared result names the
-    /// declaration: the template (`Optional[Int]`) or, in a specialized
-    /// program, its instance (`Optional$mono$TInt`). Without one, the linker
-    /// may keep Optional module-qualified, so accept its unique nominal suffix
-    /// but never guess between declarations.
+    /// Materialize one intrinsic Slice bound through the bundled
+    /// `Optional[Int]` constructor its read names in `constructors`: the
+    /// positional one-argument one when the bound is set, the nullary one
+    /// otherwise. The projection's declared result `target` names the
+    /// constructed struct.
     pub(super) fn slice_bound_optional(
         &mut self,
         prog: &Prog,
         bound: Option<i64>,
         target: Option<&Ty>,
+        constructors: &[String],
     ) -> Result<Value, RuntimeError> {
-        let declared = target.and_then(|ty| match ty.kind() {
-            TyKind::Struct(name, _) if prog.structs.contains_key(name) => Some(name.clone()),
-            _ => None,
-        });
-        let name = if let Some(name) = declared {
-            name
-        } else if prog.structs.contains_key("Optional") {
-            "Optional".to_string()
-        } else {
-            let mut candidates = prog
-                .structs
-                .keys()
-                .filter(|name| name.ends_with("$Optional"));
-            let name = candidates.next().cloned().ok_or_else(|| {
-                RuntimeError::Unsupported(
-                    "vm: Slice bound access requires the nominal Optional declaration".to_string(),
-                )
-            })?;
-            if candidates.next().is_some() {
-                return Err(RuntimeError::Unsupported(
-                    "vm: Slice bound access found ambiguous nominal Optional declarations"
-                        .to_string(),
-                ));
-            }
-            name
-        };
+        let name = prog.declared_struct(target).ok_or_else(|| {
+            RuntimeError::Unsupported(
+                "vm: Slice bound access requires its declared Optional result".to_string(),
+            )
+        })?;
         let arguments = bound
             .map(|value| vec![Value::Int(value)])
             .unwrap_or_default();
-        // Optional's overloaded constructors include keyword-only forms
-        // (`init_with=`, `copy:`) and the `NoneType` conversion constructor at
-        // the same arity as the positional value constructor, so arity-based
-        // overload selection is ambiguous here. Select the unique positional
-        // (non-`$kw$`) overload explicitly; a bound is an `Int`, never `None`,
-        // so the `NoneType` overload is excluded too.
         let expected_params = arguments.len() + 1;
-        let mut constructors =
-            prog.struct_member_instances(&name, "__init__")
-                .filter(|&(index, fname)| {
-                    prog.mir.functions[index].1.n_params == expected_params
-                        && !fname.contains("$kw$")
-                        && !mojito_symbol::symbol::is_none_overload(fname)
-                });
-        let target = constructors.next().map(|(_, fname)| fname.to_string());
-        if let Some(target) = target
-            && constructors.next().is_none()
-        {
-            return self.construct_via_init(prog, &name, Some(&target), arguments, Vec::new());
-        }
-        self.call_named(prog, &name, arguments, Vec::new(), &CallTypes::default())
+        let constructor = constructors
+            .iter()
+            .find(|constructor| {
+                prog.index_of(constructor)
+                    .is_some_and(|index| prog.mir.functions[index].1.n_params == expected_params)
+            })
+            .ok_or_else(|| {
+                RuntimeError::Unsupported(format!(
+                    "vm: Slice bound access names no {}-argument `{name}` constructor",
+                    arguments.len()
+                ))
+            })?;
+        self.construct_via_init(prog, name, Some(constructor), arguments, Vec::new())
     }
 
     /// Normalize an `Indexer` to the VM's signed index representation. Int-like

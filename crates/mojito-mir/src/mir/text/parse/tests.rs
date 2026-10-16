@@ -971,6 +971,7 @@ fn instruction_families_reprint_byte_identically() {
             dest: Reg(19),
             base: Reg(0),
             field: "size".into(),
+            constructors: vec!["Optional.__init__".into()],
         },
         MirInstr::Index {
             dest: Reg(20),

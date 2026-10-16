@@ -1070,14 +1070,25 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("element", ty_value(element)),
             ],
         ),
-        MirInstr::GetField { dest, base, field } => record(
-            tag,
-            &[
+        MirInstr::GetField {
+            dest,
+            base,
+            field,
+            constructors,
+        } => {
+            let mut fields = vec![
                 ("dest", reg_value(*dest)),
                 ("base", reg_value(*base)),
                 ("field", symbol(field)),
-            ],
-        ),
+            ];
+            if !constructors.is_empty() {
+                fields.push((
+                    "constructors",
+                    list(constructors.iter().map(|name| symbol(name))),
+                ));
+            }
+            record(tag, &fields)
+        }
         MirInstr::Index {
             dest,
             base,

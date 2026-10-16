@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1070**.
+Next free ID: **R1071**.
 
 ## Ordered Work
 
@@ -392,22 +392,24 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1030 A constructor a struct's member table records stays as long
-  as its struct does**
+- [ ] **R1070 A keyword collector's constructor stays as long as its
+  struct does**
 
-  The `Optional` constructors a slice descriptor's bound read runs, and a
-  keyword collector's `__init__`, stay in the concrete program while their
-  struct is live, even once every body that ran them is gone, where
-  upstream's call names the constructor and dies with its caller.
-  - The VM builds those values with no call naming the constructor, so the
-    elaborator records them in the struct's member table, which
+  `StringDict[T].__init__`, which builds a `**kwargs` collector, stays in
+  the concrete program while its struct is live, even once every callee
+  declaring that collector is gone, where upstream's call builds the
+  collector and names its constructor.
+  - The VM's call binding and the native call lowering build the
+    collector with no call naming the constructor, so the elaborator
+    records it in the struct's member table, which
     `eliminate-dead-symbols` keeps whole.
-  - Fix by having the slice-bound read and the collector construction
-    name their constructor, as `mir::implicit_callees` reports `_pow_int`
-    for `**`, and dropping the table record.
-  - Done when a program whose only slice-bound read is in a dead function
-    keeps no `Optional` constructor and the HEAD differential is clean.
-  - Found while landing R1008 (2026-10-15).
+  - Fix by having MIR lowering emit the collector's construction and one
+    `__setitem__` per keyword in the caller, passing it as the forwarded
+    `**kwargs^` path already passes one, then drop the table record and
+    `mir::CONSTRUCTED_MEMBERS`.
+  - Done when a program whose only `**kwargs` callee is dead keeps no
+    `StringDict` constructor and the HEAD differential is clean.
+  - Found while landing R1030 (2026-10-16), whose slice-bound half landed.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

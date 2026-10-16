@@ -813,7 +813,12 @@ impl VmBackend {
                 self.drop_value_as(prog, payload, Some(element))?;
                 regs[dest.0 as usize] = Value::None;
             }
-            MirInstr::GetField { dest, base, field } => {
+            MirInstr::GetField {
+                dest,
+                base,
+                field,
+                constructors,
+            } => {
                 let base = regs[base.0 as usize].clone();
                 // A ref-typed base register holds a handle; field access
                 // addresses its referent (another read twin of the ref-field
@@ -838,7 +843,7 @@ impl VmBackend {
                             }
                         };
                         let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
-                        self.slice_bound_optional(prog, bound, target)?
+                        self.slice_bound_optional(prog, bound, target, constructors)?
                     }
                     _ => get_field(&base, field)?,
                 };

@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A slice descriptor's bound read names the `Optional` constructors it
+  runs (R1030), as an upstream call names the constructor it runs:
+  `field.get` carries them in concrete MIR (MIR text 1.69), and the VM
+  calls the one the bound needs, so they are no longer recorded in
+  `Optional`'s member table and leave the program with the last body
+  that reads a bound. A keyword collector's constructor is still a table
+  entry (R1070). No program's output changes.
 - `Tuple`'s `nodebug` `__len__` and `__getitem_param__` are inlined
   (R986), as at the pin: the tuple's element types bind its one type
   pack, element by element or over the caller's own parameters, and

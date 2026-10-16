@@ -611,8 +611,8 @@ impl<'a> Specializer<'a> {
     /// spelling, overload qualifier included (`__eq__$ov$Self`), as
     /// upstream's struct nests these members and its conformances' witness
     /// tables name them. `None` for any other function, and for a
-    /// constructor, which only the sites that run one with no call naming
-    /// it record ([`constructed_member`]).
+    /// constructor, which only the keyword collector's construction, which
+    /// no call names, records ([`constructed_member`]).
     fn table_key(&mut self, template: &str) -> Option<String> {
         if let Some(key) = self.table_keys.get(template) {
             return key.clone();
@@ -3294,18 +3294,25 @@ impl<'a> Specializer<'a> {
                     // the bound constant carried by the receiver instance's
                     // type arguments — the VM's `get_field` value-parameter
                     // fallback over reified `value_params`.
-                    MirInstr::GetField { dest, base, field } => {
+                    MirInstr::GetField {
+                        dest,
+                        base,
+                        field,
+                        constructors,
+                    } => {
                         let Some(receiver) = function.reg_types.get(&base.0) else {
                             continue;
                         };
                         // A slice descriptor's bound read builds its
-                        // `Optional` through that struct's constructors.
+                        // `Optional` through that struct's constructors,
+                        // which it names.
                         if matches!(peel_refs(receiver).kind(), TyKind::Struct(name, _)
                             if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice"))
                             && matches!(field.as_str(), "start" | "end" | "step")
                         {
                             if let Some(bound) = function.reg_types.get(&dest.0).cloned() {
-                                self.enqueue_slice_bound_constructors(owner, &bound)?;
+                                *constructors =
+                                    self.enqueue_slice_bound_constructors(owner, &bound)?;
                             }
                             continue;
                         }
@@ -3897,18 +3904,18 @@ impl<'a> Specializer<'a> {
 
     /// Enqueue the constructors a slice descriptor's bound read builds its
     /// `Optional` result `bound` through, the VM's `slice_bound_optional`:
-    /// the nullary one and the positional one-argument one, which no call
-    /// names, so `bound`'s member table records them.
+    /// the nullary one and the positional one-argument one, which the read
+    /// names. Returns their instances.
     fn enqueue_slice_bound_constructors(
         &mut self,
         owner: &str,
         bound: &Ty,
-    ) -> Result<(), MonoError> {
+    ) -> Result<Vec<String>, MonoError> {
         let TyKind::Struct(name, _) = bound.kind() else {
-            return Ok(());
+            return Ok(Vec::new());
         };
         let Some(bindings) = self.struct_bindings(owner, bound)? else {
-            return Ok(());
+            return Ok(Vec::new());
         };
         let constructors = self.enqueue_struct_overloads(
             nominal_template(name),
@@ -3920,10 +3927,10 @@ impl<'a> Specializer<'a> {
                     && !mojito_symbol::symbol::is_none_overload(candidate)
             },
         )?;
-        for (template, instance) in constructors {
-            self.record_struct_member(constructed_member(name, &template).as_ref(), &instance);
-        }
-        Ok(())
+        Ok(constructors
+            .into_iter()
+            .map(|(_, instance)| instance)
+            .collect())
     }
 
     /// Enqueue the overloads `{template_name}.{method}` of the struct

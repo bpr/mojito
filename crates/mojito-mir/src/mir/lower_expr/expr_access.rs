@@ -184,6 +184,7 @@ impl<'a> Flatten<'a> {
                     dest: d,
                     base,
                     field: field.to_owned(),
+                    constructors: Vec::new(),
                 });
                 d
             };

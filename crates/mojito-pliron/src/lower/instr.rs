@@ -346,9 +346,9 @@ impl FnLowering<'_> {
                 }
                 Ok(())
             }
-            MirInstr::GetField { dest, base, field } => {
-                self.lower_get_field(ctx, *dest, *base, field)
-            }
+            MirInstr::GetField {
+                dest, base, field, ..
+            } => self.lower_get_field(ctx, *dest, *base, field),
             MirInstr::MakeTuple {
                 dest,
                 elems,
