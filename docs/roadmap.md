@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1030**.
+Next free ID: **R1031**.
 
 ## Ordered Work
 
@@ -400,23 +400,23 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1008 `eliminate-dead-symbols` keeps every constructor of a live
-  struct, called or not**
+- [ ] **R1030 A constructor a struct's member table records stays as long
+  as its struct does**
 
-  A constructor every call of which `inline-parametric` expanded stays in
-  the concrete program, where upstream's `EliminateDeadSymbols` removes a
-  symbol nothing references.
-  - The pass keeps every method of a live struct and every member of a live
-    function's overload family, which the pre-elaboration run needs, since
-    the elaborator resolves a generic body's calls by family and by type.
-  - In the concrete program every call names its callee once R1007 lands,
-    but for a slice descriptor's bound read, whose `Optional` constructors
-    the VM runs unnamed: report those as implicit uses, as
-    `mir::implicit_callees` reports `_pow_int`.
-  - Done when the concrete run drops constructors and family members
-    nothing names, and the HEAD differential is clean.
-  - Found while landing R993 (2026-10-15).
-  - Depends on R1007.
+  The `Optional` constructors a slice descriptor's bound read runs, and a
+  keyword collector's `__init__`, stay in the concrete program while their
+  struct is live, even once every body that ran them is gone, where
+  upstream's call names the constructor and dies with its caller.
+  - The VM builds those values with no call naming the constructor, so the
+    elaborator records them in the struct's member table, which
+    `eliminate-dead-symbols` keeps whole.
+  - Fix by having the slice-bound read and the collector construction
+    name their constructor, as `mir::implicit_callees` reports `_pow_int`
+    for `**`, and dropping the table record.
+  - Done when a program whose only slice-bound read is in a dead function
+    keeps no `Optional` constructor and the HEAD differential is clean.
+  - Found while landing R1008 (2026-10-15).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1009 Every `__call__` of a struct a body names stays in the

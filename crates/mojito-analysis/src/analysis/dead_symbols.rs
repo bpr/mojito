@@ -1,6 +1,7 @@
 //! `eliminate-dead-symbols`: upstream's `EliminateDeadSymbols`, the
 //! symbol DCE its pre-elaboration pipeline runs after destructor insertion,
-//! over a program's own MIR.
+//! over a program's own MIR, and again over the elaborator's concrete
+//! output.
 //!
 //! Upstream roots the walk at the `export` symbols and removes every other
 //! symbol no live symbol refers to. Here the roots are the program's entry
@@ -24,6 +25,12 @@ pub const ELIMINATE_DEAD_SYMBOLS: ProgramPass = ProgramPass {
     run: eliminate_dead_symbols,
 };
 
+/// The pass over a concrete program, under the same spelling.
+pub const ELIMINATE_DEAD_CONCRETE_SYMBOLS: ProgramPass = ProgramPass {
+    name: "eliminate-dead-symbols",
+    run: eliminate_dead_concrete_symbols,
+};
+
 /// Remove `program`'s functions and structs that neither its entry roots
 /// nor `exports` reach, with their declarations, keeping the rest in order.
 ///
@@ -41,8 +48,33 @@ pub const ELIMINATE_DEAD_SYMBOLS: ProgramPass = ProgramPass {
 /// imports bodies the walk cannot see, keeps every live struct's
 /// destructor, copy, and move constructors.
 pub fn eliminate_dead_symbols(program: &mut MirProgram, exports: &[String]) {
+    eliminate(program, exports, Resolution::Generic);
+}
+
+/// [`eliminate_dead_symbols`] over the elaborator's concrete output.
+///
+/// Every call there names its callee, so a constructor or an overload
+/// nothing names goes, as upstream removes any symbol nothing references.
+/// A live struct keeps its other methods and the constructors its member
+/// table names, which the backends run with no call naming them.
+pub fn eliminate_dead_concrete_symbols(program: &mut MirProgram, exports: &[String]) {
+    eliminate(program, exports, Resolution::Concrete);
+}
+
+/// How a program's calls reach their callees.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Resolution {
+    /// The elaborator resolves a generic body's calls by overload family
+    /// and by type, so a live function keeps its family and a live struct
+    /// its constructors.
+    Generic,
+    /// Every call names its callee.
+    Concrete,
+}
+
+fn eliminate(program: &mut MirProgram, exports: &[String], resolution: Resolution) {
     let (live, live_structs) = {
-        let (functions, structs) = Symbols::of(program).live(exports);
+        let (functions, structs) = Symbols::of(program, resolution).live(exports);
         let owned = |names: HashSet<&str>| -> HashSet<String> {
             names.into_iter().map(str::to_string).collect()
         };
@@ -97,10 +129,11 @@ struct Symbols<'p> {
     families: HashMap<&'p str, Vec<&'p str>>,
     /// The functions nested in each function.
     nested: HashMap<&'p str, Vec<&'p str>>,
+    resolution: Resolution,
 }
 
 impl<'p> Symbols<'p> {
-    fn of(program: &'p MirProgram) -> Self {
+    fn of(program: &'p MirProgram, resolution: Resolution) -> Self {
         let functions: HashMap<_, _> = program
             .functions
             .iter()
@@ -155,9 +188,10 @@ impl<'p> Symbols<'p> {
         let mut nested: HashMap<_, Vec<_>> = HashMap::new();
         for (name, _) in &program.functions {
             let name = name.as_str();
-            if let Some((owner, _)) = split_method_symbol(name)
+            if let Some((owner, method)) = split_method_symbol(name)
                 && structs.contains_key(owner)
                 && !members.contains(name)
+                && (resolution == Resolution::Generic || !is_constructor(method))
             {
                 methods.entry(owner).or_default().push(name);
             }
@@ -179,6 +213,7 @@ impl<'p> Symbols<'p> {
             lifecycle,
             families,
             nested,
+            resolution,
         }
     }
 
@@ -230,7 +265,9 @@ impl<'p> Symbols<'p> {
                 if let Some(declaration) = self.declarations.get(name) {
                     pending.extend(self.table.uses(*declaration));
                 }
-                pending.extend(self.families.get(family(name)).into_iter().flatten());
+                if self.resolution == Resolution::Generic {
+                    pending.extend(self.families.get(family(name)).into_iter().flatten());
+                }
                 pending.extend(self.nested.get(name).into_iter().flatten());
             }
             if let Some(declaration) = self.structs.get(name)
@@ -252,6 +289,12 @@ impl<'p> Symbols<'p> {
             .iter()
             .filter_map(move |&member| self.lifecycle.get(&(owner, member)).copied())
     }
+}
+
+/// Whether the struct method `method` is a constructor, under any
+/// overload or instance qualifier.
+fn is_constructor(method: &str) -> bool {
+    method.split('$').next() == Some("__init__")
 }
 
 /// The overload family `name` belongs to: its spelling before the overload

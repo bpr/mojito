@@ -12,7 +12,7 @@
 
 use super::canonicalize::CANONICALIZE;
 use super::cse::CSE;
-use super::dead_symbols::ELIMINATE_DEAD_SYMBOLS;
+use super::dead_symbols::ELIMINATE_DEAD_CONCRETE_SYMBOLS;
 use super::duplicate_functions::ELIMINATE_DUPLICATE_FUNCTIONS;
 use super::mem2reg::{LOWER_ARG_CONVENTIONS, MEM_2_REG};
 use super::pre_elaboration::{BodyPass, ProgramPass};
@@ -34,8 +34,10 @@ pub const POST_ELABORATION_PIPELINE: &[BodyPass] =
 /// The symbol passes upstream runs over the elaborator's output before its
 /// function pipeline, in order: `EliminateDuplicateFunctions`, then
 /// `EliminateDeadSymbols`.
-pub const ELABORATED_SYMBOL_PASSES: &[ProgramPass] =
-    &[ELIMINATE_DUPLICATE_FUNCTIONS, ELIMINATE_DEAD_SYMBOLS];
+pub const ELABORATED_SYMBOL_PASSES: &[ProgramPass] = &[
+    ELIMINATE_DUPLICATE_FUNCTIONS,
+    ELIMINATE_DEAD_CONCRETE_SYMBOLS,
+];
 
 /// Run [`ELABORATED_SYMBOL_PASSES`] over the concrete program `program`,
 /// which exports `exports` beside its entry roots, each pass under its own

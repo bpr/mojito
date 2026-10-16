@@ -207,7 +207,10 @@ pub fn compile_mir(
                 concrete.rewritten(mojito_analysis::analysis::post_elaborate_program)
             })
             .and_then(|concrete| {
-                concrete.pruned(&[], mojito_analysis::analysis::eliminate_dead_symbols)
+                concrete.pruned(
+                    &[],
+                    mojito_analysis::analysis::eliminate_dead_concrete_symbols,
+                )
             })
             .map_err(|error| PlironError {
                 function: error.function,

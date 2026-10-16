@@ -166,7 +166,10 @@ impl CompiledProgram {
                         })
                         .and_then(|concrete: SpecializedProgram| {
                             let _pass = timing::span("eliminate-dead-symbols");
-                            concrete.pruned(&self.exports, crate::analysis::eliminate_dead_symbols)
+                            concrete.pruned(
+                                &self.exports,
+                                crate::analysis::eliminate_dead_concrete_symbols,
+                            )
                         })
                 } else {
                     concrete

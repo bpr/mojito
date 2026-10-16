@@ -17,7 +17,10 @@
 pub use canonicalize::{CANONICALIZE, canonicalize};
 use copy_elision::elide_dying_copies;
 pub use cse::{CSE, cse};
-pub use dead_symbols::{ELIMINATE_DEAD_SYMBOLS, eliminate_dead_symbols};
+pub use dead_symbols::{
+    ELIMINATE_DEAD_CONCRETE_SYMBOLS, ELIMINATE_DEAD_SYMBOLS, eliminate_dead_concrete_symbols,
+    eliminate_dead_symbols,
+};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use drops::*;
 pub use duplicate_functions::{ELIMINATE_DUPLICATE_FUNCTIONS, eliminate_duplicate_functions};

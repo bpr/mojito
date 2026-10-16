@@ -37,7 +37,7 @@ pub fn run_artifact(
     )
     .and_then(|concrete| concrete.pruned(&[], crate::analysis::eliminate_elaborated_symbols))
     .and_then(|concrete| concrete.rewritten(crate::analysis::post_elaborate_program))
-    .and_then(|concrete| concrete.pruned(&[], crate::analysis::eliminate_dead_symbols))
+    .and_then(|concrete| concrete.pruned(&[], crate::analysis::eliminate_dead_concrete_symbols))
     .map_err(ArtifactRunError::Elaborate)?;
     backend
         .run_concrete(concrete.program)

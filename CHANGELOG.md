@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `eliminate-dead-symbols` over the concrete program drops a constructor or
+  an overload nothing names (R1008), as upstream removes any symbol nothing
+  references; only the pre-elaboration runs, whose generic bodies the
+  elaborator resolves by overload family and by type, still keep every
+  constructor of a live struct and every member of a live family. Corpus
+  concrete functions 27,962 → 27,853; no program's output changes.
 - Every construction a compiled `__init__` serves names its constructor
   instance in the concrete program (R1007), as upstream's call names the
   constructor's symbol: `make[String]()`'s `T()` calls

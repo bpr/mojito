@@ -5604,9 +5604,15 @@ concrete verifier rejects a reference slot read as its handle.
 - **Dead symbols.** Upstream runs `EliminateDeadSymbols` straight out of
   the elaborator and again after the function pipeline (`Pipeline.cpp`).
   So does Mojito: `SpecializedProgram::pruned` runs
-  `analysis::eliminate_dead_symbols` over the concrete program on each
-  side of the pipeline, rooted at the entry roots, the requested entries'
-  instances, and the compilation's exports (`Compiler::with_exports`). The
+  `analysis::eliminate_dead_concrete_symbols` over the concrete program on
+  each side of the pipeline, rooted at the entry roots, the requested
+  entries' instances, and the compilation's exports
+  (`Compiler::with_exports`). Every concrete call names its callee, so a
+  constructor or overload nothing names goes; a struct's member table
+  names the constructors the backends run with no call. The
+  pre-elaboration run keeps every constructor of a live struct and every
+  member of a live overload family instead, since the elaborator resolves
+  a generic body's calls by family and by type. The
   instances the elaborator made only to run a compile-time application on
   the VM, such as the `paramfor_*` stubs, `range` iterator methods, and
   `$comptime$` thunks, leave the concrete program. Compile-time
