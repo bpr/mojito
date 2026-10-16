@@ -454,7 +454,7 @@ impl FnLowering<'_> {
                 self.erased.insert(dest.0);
                 Ok(())
             }
-            "copy" if args.is_empty() => self.lower_copy_value(ctx, dest, recv),
+            "copy" if args.is_empty() => self.lower_copy_value(ctx, dest, recv, None),
             other => Err(self.unsupported_reg(format!("Pointer method `{other}`"), dest)),
         }
     }

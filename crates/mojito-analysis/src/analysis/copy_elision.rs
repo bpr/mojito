@@ -253,6 +253,7 @@ fn forwarding_use(instrs: &[MirInstr], source: DyingCopy, var_names: &[String]) 
                 dest,
                 var,
                 mode: UseMode::Forward,
+                ..
             } if *var == slot => Some((at, *dest)),
             _ => None,
         })?;
@@ -410,6 +411,7 @@ fn elide(instrs: &mut Vec<MirInstr>, at: usize, source: DyingCopy) {
         dest,
         var: source.var,
         mode: UseMode::Move,
+        constructor: None,
     };
     instrs.remove(at - 1);
 }

@@ -711,7 +711,19 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("reference", reg_value(*reference)),
             ],
         ),
-        MirInstr::CopyValue { dest, value } | MirInstr::Rebind { dest, value } => record(
+        MirInstr::CopyValue {
+            dest,
+            value,
+            constructor,
+        } => record(
+            tag,
+            &with_symbol(
+                vec![("dest", reg_value(*dest)), ("value", reg_value(*value))],
+                "constructor",
+                constructor.as_deref(),
+            ),
+        ),
+        MirInstr::Rebind { dest, value } => record(
             tag,
             &[("dest", reg_value(*dest)), ("value", reg_value(*value))],
         ),
@@ -800,13 +812,22 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("target", ty_value(target)),
             ],
         ),
-        MirInstr::UseVar { dest, var, mode } => record(
+        MirInstr::UseVar {
+            dest,
+            var,
+            mode,
+            constructor,
+        } => record(
             tag,
-            &[
-                ("dest", reg_value(*dest)),
-                ("var", var_value(*var)),
-                ("mode", super::use_mode_spelling(*mode).into()),
-            ],
+            &with_symbol(
+                vec![
+                    ("dest", reg_value(*dest)),
+                    ("var", var_value(*var)),
+                    ("mode", super::use_mode_spelling(*mode).into()),
+                ],
+                "constructor",
+                constructor.as_deref(),
+            ),
         ),
         MirInstr::MovePlace { dest, place } => record(
             tag,
@@ -1455,7 +1476,11 @@ fn instruction_value(instruction: &MirInstr) -> String {
         }
         MirInstr::DropVar { var, destructor } => record(
             tag,
-            &with_destructor(("var", var_value(*var)), destructor.as_deref()),
+            &with_symbol(
+                vec![("var", var_value(*var))],
+                "destructor",
+                destructor.as_deref(),
+            ),
         ),
         MirInstr::ConsumePlace { place, marker } => record(
             tag,
@@ -1466,7 +1491,11 @@ fn instruction_value(instruction: &MirInstr) -> String {
         ),
         MirInstr::DropPlace { place, destructor } => record(
             tag,
-            &with_destructor(("place", place_value(place)), destructor.as_deref()),
+            &with_symbol(
+                vec![("place", place_value(place))],
+                "destructor",
+                destructor.as_deref(),
+            ),
         ),
         MirInstr::MarkInitialized { place } | MirInstr::MarkDestroyed { place } => {
             record(tag, &[("place", place_value(place))])
@@ -1595,15 +1624,15 @@ fn sequence_fields(source: &ComptimeSequence) -> Vec<(&'static str, String)> {
     ]
 }
 
-/// A drop's fields: its operand, then the `destructor` it names, omitted
-/// when the drop names none.
-fn with_destructor<'a>(
-    operand: (&'a str, String),
-    destructor: Option<&str>,
+/// A lifecycle site's fields: its operands, then the `destructor` a drop or
+/// the `constructor` a copy or move names, omitted when it names none.
+fn with_symbol<'a>(
+    mut fields: Vec<(&'a str, String)>,
+    key: &'a str,
+    member: Option<&str>,
 ) -> Vec<(&'a str, String)> {
-    std::iter::once(operand)
-        .chain(destructor.map(|d| ("destructor", symbol(d))))
-        .collect()
+    fields.extend(member.map(|member| (key, symbol(member))));
+    fields
 }
 
 fn loop_label(label: LoopLabel) -> String {

@@ -610,6 +610,7 @@ impl<'a> Flatten<'a> {
             self.emit(MirInstr::CopyValue {
                 dest: copied,
                 value: read,
+                constructor: None,
             });
             return copied;
         }
@@ -1626,6 +1627,7 @@ impl<'a> Flatten<'a> {
             dest: forwarded,
             var: variable,
             mode: UseMode::Forward,
+            constructor: None,
         });
         forwarded
     }

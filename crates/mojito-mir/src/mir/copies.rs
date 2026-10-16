@@ -2,11 +2,14 @@
 //!
 //! Upstream's parser and its move/copy insertion leave a call to
 //! `__copyinit__` or `__moveinit__` at each point a value is copied or
-//! moved, so a symbol walk reaches it. Here a copy or a move is a register
-//! read (`var.use copy`, `value.copy`, a load out of storage), and the VM
-//! and the native backend find the struct's member from the value's type.
-//! This module answers which structs those are: the copied and moved
-//! types, and every field type a copy or a move of them may reach.
+//! moved, so a symbol walk reaches it. A `var.use copy`, `var.use move`, or
+//! `value.copy` names the constructor it runs, which a symbol walk
+//! follows; the rest of what a body copies or moves (a site naming none, a
+//! capture, a payload, a load out of storage) names none, and the VM and
+//! the native backend find the struct's member from the value's type. This
+//! module answers which structs those are: the types copied and moved
+//! without a name, and every field type a copy or a move of them may
+//! reach.
 
 use super::destroys::close_over_fields;
 use crate::mir::verify::{instruction_operand_regs, instruction_result_regs};
@@ -27,6 +30,8 @@ pub struct Relocated {
     /// Whether it copies or moves a value of a type only an instantiation
     /// resolves, whose members no walk of a generic body can name.
     pub symbolic: bool,
+    /// Each type a copy or move names its constructor for, beside it.
+    pub named: Vec<(Ty, String)>,
 }
 
 /// What the body `function` copies and moves without naming a constructor.
@@ -38,13 +43,15 @@ pub struct Relocated {
 /// (a load, a field, an element, an iterator's next value). A move is a
 /// `var.use move` and an owned closure capture. Through `fields`, every
 /// field of a struct those reach joins, since a struct without the member
-/// copies or moves its fields one by one.
+/// copies or moves its fields one by one. A copy or move naming its
+/// constructor runs it instead, and joins [`Relocated::named`].
 pub fn relocated_structs(function: &MirFunction, fields: &StructFields<'_>) -> Relocated {
     let mut walk = Walk {
         function,
         borrowed: HashMap::new(),
         copied: Vec::new(),
         moved: Vec::new(),
+        named: Vec::new(),
     };
     walk.borrows(&function.blocks);
     walk.blocks(&function.blocks);
@@ -54,6 +61,7 @@ pub fn relocated_structs(function: &MirFunction, fields: &StructFields<'_>) -> R
         copied: copied.structs,
         moved: moved.structs,
         symbolic: copied.symbolic || moved.symbolic,
+        named: walk.named,
     }
 }
 
@@ -64,6 +72,7 @@ struct Walk<'f> {
     borrowed: HashMap<u32, VarId>,
     copied: Vec<(Ty, bool)>,
     moved: Vec<(Ty, bool)>,
+    named: Vec<(Ty, String)>,
 }
 
 impl Walk<'_> {
@@ -74,6 +83,7 @@ impl Walk<'_> {
                     dest,
                     var,
                     mode: UseMode::BorrowShared | UseMode::BorrowMut,
+                    ..
                 } = instruction
                 {
                     self.borrowed.insert(dest.0, *var);
@@ -98,6 +108,17 @@ impl Walk<'_> {
 
     fn instruction(&mut self, instruction: &MirInstr) {
         match instruction {
+            // A site naming its constructor reaches it by symbol.
+            MirInstr::UseVar {
+                var,
+                constructor: Some(constructor),
+                ..
+            } => self.named(self.function.var_tys.get(var), constructor),
+            MirInstr::CopyValue {
+                dest,
+                constructor: Some(constructor),
+                ..
+            } => self.named(self.function.reg_types.get(&dest.0), constructor),
             MirInstr::UseVar { var, mode, .. } => match mode {
                 UseMode::Copy => self.var(*var, false),
                 UseMode::Move => self.var(*var, true),
@@ -186,6 +207,12 @@ impl Walk<'_> {
                     self.var(var, false);
                 }
             }
+        }
+    }
+
+    fn named(&mut self, ty: Option<&Ty>, constructor: &str) {
+        if let Some(ty) = ty {
+            self.named.push((ty.clone(), constructor.to_owned()));
         }
     }
 

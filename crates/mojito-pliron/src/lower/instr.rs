@@ -266,7 +266,12 @@ impl FnLowering<'_> {
                 resolved,
                 ..
             } => self.lower_binop(ctx, *op, *dest, *a, *b, resolved.as_deref()),
-            MirInstr::UseVar { dest, var, mode } => self.lower_use_var(ctx, *dest, *var, *mode),
+            MirInstr::UseVar {
+                dest,
+                var,
+                mode,
+                constructor,
+            } => self.lower_use_var(ctx, *dest, *var, *mode, constructor.as_deref()),
             MirInstr::DefVar { var, src, .. } => self.lower_def_var(ctx, *var, *src),
             MirInstr::LoadPlace { dest, place } => {
                 if self.aliased_load_regs.contains(&dest.0) {
@@ -477,7 +482,11 @@ impl FnLowering<'_> {
                 marker,
                 ..
             } => self.lower_establish_loans(ctx, *reference, loans, *marker),
-            MirInstr::CopyValue { dest, value } => self.lower_copy_value(ctx, *dest, *value),
+            MirInstr::CopyValue {
+                dest,
+                value,
+                constructor,
+            } => self.lower_copy_value(ctx, *dest, *value, constructor.as_deref()),
             // Pointer subscripts are runtime intrinsics; every other
             // subscript form routes through nominal `__getitem__` calls the
             // subset does not lower yet.

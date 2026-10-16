@@ -478,6 +478,7 @@ fn verify_rejects_an_untyped_used_slot() {
                                 dest: Reg(0),
                                 var: 0,
                                 mode: UseMode::Copy,
+                                constructor: None,
                             },
                             MirInstr::DropVar {
                                 var: 1,

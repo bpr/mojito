@@ -1244,21 +1244,32 @@ fn visit_call_edges<'p>(
                         }
                     }
                 }
-                // A `^` transfer of a struct with a user `__moveinit__` runs
-                // it (the VM's `move_value`); the edge exists only in the
-                // lowered expansion.
+                // A copy or a `^` transfer runs the constructor it names,
+                // except the nominal String's copy constructor, which is
+                // bridged natively.
+                MirInstr::UseVar {
+                    mode: mojito_mir::mir::UseMode::Move,
+                    constructor: Some(constructor),
+                    ..
+                } => push_named(&mut targets, constructor),
                 MirInstr::UseVar {
                     var,
-                    mode: mojito_mir::mir::UseMode::Move,
+                    mode: mojito_mir::mir::UseMode::Copy,
+                    constructor: Some(constructor),
                     ..
-                } => {
-                    if let Some(TyKind::Struct(name, _)) = function.var_tys.get(var).map(Ty::kind)
-                        && let Some(moveinit) = structs
-                            .get(name.as_str())
-                            .and_then(|declaration| declaration.member("__moveinit__"))
-                    {
-                        push_named(&mut targets, moveinit);
-                    }
+                } if !function.var_tys.get(var).is_some_and(is_stdlib_string_type) => {
+                    push_named(&mut targets, constructor);
+                }
+                MirInstr::CopyValue {
+                    dest,
+                    constructor: Some(constructor),
+                    ..
+                } if !function
+                    .reg_types
+                    .get(&dest.0)
+                    .is_some_and(is_stdlib_string_type) =>
+                {
+                    push_named(&mut targets, constructor);
                 }
                 _ => {}
             }
@@ -1353,6 +1364,13 @@ fn collect_struct_types<'p>(
 }
 
 /// Run the pliron verifier over the whole module.
+/// Whether `ty` is the nominal String, whose copy constructor is bridged
+/// natively rather than compiled.
+fn is_stdlib_string_type(ty: &Ty) -> bool {
+    matches!(ty.kind(), TyKind::Struct(name, _)
+        if mojito_symbol::symbol::is_stdlib_string_struct(name))
+}
+
 fn verify_module(context: &Context, module: ModuleOp) -> Result<(), PlironError> {
     pliron::op::verify_op(&module, context).map_err(|error| {
         if std::env::var_os("MOJITO_PLIRON_DUMP_ON_VERIFY_ERROR").is_some() {

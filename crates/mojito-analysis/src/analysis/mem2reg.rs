@@ -164,6 +164,7 @@ pub fn lower_arg_conventions(
             dest: value,
             var: param,
             mode: UseMode::Copy,
+            constructor: None,
         });
         entry.push(MirInstr::DefVar {
             var: local,
@@ -379,7 +380,9 @@ fn keep(census: &mut HashMap<VarId, Census>, slots: impl IntoIterator<Item = Var
 const fn slot_use(instruction: &MirInstr) -> Option<(VarId, Mention)> {
     match instruction {
         MirInstr::DefVar { var, src, .. } => Some((*var, Mention::Store(*src))),
-        MirInstr::UseVar { dest, var, mode } => match mode {
+        MirInstr::UseVar {
+            dest, var, mode, ..
+        } => match mode {
             UseMode::Copy => Some((
                 *var,
                 Mention::Read {
@@ -608,6 +611,7 @@ fn rewrite_list(
                 block.instrs.push(MirInstr::CopyValue {
                     dest: results[0],
                     value,
+                    constructor: None,
                 });
                 continue;
             }

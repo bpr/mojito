@@ -41,8 +41,9 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    /// `UseVar`: scalars load from their slot; aggregate copies run the VM's
-    /// `clone_value` semantics and aggregate moves transfer the bytes (the VM
+    /// `UseVar`: scalars load from their slot; an aggregate copy or move
+    /// runs the `constructor` it names, and one naming none copies with the
+    /// VM's `clone_value` semantics or transfers the bytes (the VM
     /// tombstones the source, and ownership analysis rejects later uses
     /// statically, so no runtime tombstone is needed). A forwarded move hands
     /// the bytes to an owned parameter without the move initializer.
@@ -52,6 +53,7 @@ impl FnLowering<'_> {
         dest: Reg,
         var: u32,
         mode: UseMode,
+        constructor: Option<&str>,
     ) -> Result<(), PlironError> {
         if matches!(mode, UseMode::BorrowShared | UseMode::BorrowMut) {
             // A borrow is the address of the variable's storage (the VM's
@@ -69,28 +71,20 @@ impl FnLowering<'_> {
             LowerTy::Aggregate { ty, layout } => {
                 let src = self.var_slots[var as usize];
                 if matches!(mode, UseMode::Copy) {
-                    self.copy_aggregate(ctx, dest, &ty, layout, src)
+                    self.copy_named_aggregate(ctx, dest, &ty, layout, src, constructor)
                 } else {
                     // The nominal String's `__moveinit__` is an identity
                     // field move — the byte copy below is exactly it.
                     let stdlib_string = matches!(&ty.kind(), TyKind::Struct(name, _)
                         if mojito_symbol::symbol::is_stdlib_string_struct(name));
-                    if mode == UseMode::Move
-                        && !stdlib_string
-                        && self.has_lifecycle_method(&ty, "__moveinit__")
-                    {
-                        // A `^` transfer with a compiled `__moveinit__` always
-                        // runs that constructor. Ownership checking has
-                        // already established the consuming source contract;
-                        // the constructor, not a backend pointer heuristic,
-                        // defines the move semantics.
-                        if let TyKind::Struct(name, _) = &ty.kind()
-                            && self
-                                .lifecycle_symbol(name, "__moveinit__")
-                                .is_some_and(|moveinit| self.signatures.contains_key(moveinit))
-                        {
-                            let name = name.clone();
-                            return self.move_via_moveinit(ctx, dest, var, &name, layout);
+                    if let Some(moveinit) = constructor.filter(|_| !stdlib_string) {
+                        // A `^` transfer naming a compiled `__moveinit__`
+                        // always runs that constructor. Ownership checking
+                        // has already established the consuming source
+                        // contract; the constructor, not a backend pointer
+                        // heuristic, defines the move semantics.
+                        if self.signatures.contains_key(moveinit) {
+                            return self.move_via_moveinit(ctx, dest, var, moveinit, layout);
                         }
                         return Err(self.unsupported_reg(
                             format!("move of `{ty}` with a user `__moveinit__`"),
@@ -174,12 +168,14 @@ impl FnLowering<'_> {
 
     /// `CopyValue` — materialize an owned copy of a register: scalars and
     /// compile-time literals alias (their SSA values are already owned);
-    /// aggregates run the VM's `clone_value` copy.
+    /// an aggregate runs the `constructor` the copy names, else the VM's
+    /// `clone_value` copy.
     pub(super) fn lower_copy_value(
         &mut self,
         ctx: &mut Context,
         dest: Reg,
         value: Reg,
+        constructor: Option<&str>,
     ) -> Result<(), PlironError> {
         if self.pointer_slot_refs.contains(&value.0) {
             self.pointer_slot_refs.insert(dest.0);
@@ -203,7 +199,7 @@ impl FnLowering<'_> {
             }
             LowerTy::Aggregate { ty, layout } => {
                 let src = self.reg_ptr(ctx, value)?;
-                self.copy_aggregate(ctx, dest, &ty, layout, src)
+                self.copy_named_aggregate(ctx, dest, &ty, layout, src, constructor)
             }
             LowerTy::ZeroSized => {
                 self.erased.insert(dest.0);

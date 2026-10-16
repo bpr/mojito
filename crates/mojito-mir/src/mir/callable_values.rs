@@ -109,7 +109,7 @@ fn visit_callables(
                     dest,
                     k: Const::Function(function),
                 } => Some((dest.0, (function.clone(), true))),
-                MirInstr::CopyValue { dest, value } => registers
+                MirInstr::CopyValue { dest, value, .. } => registers
                     .get(&value.0)
                     .cloned()
                     .map(|value| (dest.0, value)),

@@ -373,6 +373,7 @@ fn bind_temporary(
             dest: read,
             var: variable,
             mode: UseMode::Forward,
+            constructor: None,
         }
     } else {
         MirInstr::LoadPlace {

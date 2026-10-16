@@ -785,6 +785,7 @@ fn instruction_families_reprint_byte_identically() {
         MirInstr::CopyValue {
             dest: Reg(4),
             value: Reg(3),
+            constructor: Some("D.__copyinit__".into()),
         },
         MirInstr::WriteRef {
             reference: Reg(2),
@@ -1151,6 +1152,13 @@ fn instruction_families_reprint_byte_identically() {
             dest: Reg(3),
             var: 1,
             mode: UseMode::Forward,
+            constructor: None,
+        },
+        MirInstr::UseVar {
+            dest: Reg(4),
+            var: 1,
+            mode: UseMode::Move,
+            constructor: Some("D.__moveinit__".into()),
         },
         MirInstr::DropVar {
             var: 1,

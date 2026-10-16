@@ -104,17 +104,35 @@ pub(super) fn verify_instruction(
         MirInstr::Call { .. } | MirInstr::MethodCall { .. } | MirInstr::CallIndirect { .. } => {
             verify_call_instruction(&cx, instruction, errors);
         }
-        MirInstr::DropVar { var, destructor } => {
-            verify_drop_destructor(
-                &cx,
-                function.var_tys.get(var),
-                destructor.as_deref(),
-                errors,
-            );
-        }
-        MirInstr::DropPlace { place, destructor } => {
-            verify_drop_destructor(&cx, place.ty.as_ref(), destructor.as_deref(), errors);
-        }
+        MirInstr::DropVar { var, destructor } => verify_lifecycle_symbol(
+            &cx,
+            "drop",
+            function.var_tys.get(var),
+            Some("__deinit__"),
+            destructor.as_deref(),
+            errors,
+        ),
+        MirInstr::DropPlace { place, destructor } => verify_lifecycle_symbol(
+            &cx,
+            "drop",
+            place.ty.as_ref(),
+            Some("__deinit__"),
+            destructor.as_deref(),
+            errors,
+        ),
+        MirInstr::UseVar {
+            var,
+            mode,
+            constructor,
+            ..
+        } => verify_lifecycle_symbol(
+            &cx,
+            "use",
+            function.var_tys.get(var),
+            crate::mir::use_constructor_member(*mode),
+            constructor.as_deref(),
+            errors,
+        ),
         // A parameter value constant is a closed vector, a struct or tuple
         // of such values, scalars, and strings, a string read at the
         // nominal `String`, or a `UInt` read at `UInt`.
@@ -178,33 +196,45 @@ fn verify_effect_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
     }
 }
 
-/// A drop names the destructor its value's struct records, the template
-/// member in a parametric body and its instance in concrete MIR, and only
-/// a declared function: a pass that makes a drop names it, as upstream's
-/// destructor insertion names the `__del__` at each death.
-fn verify_drop_destructor(
+/// A drop names the destructor its value's struct records, and a copy or
+/// move the constructor it runs, the template member in a parametric body
+/// and its instance in concrete MIR, and only a declared function: a pass
+/// that makes a drop, a copy, or a move names it, as upstream's destructor
+/// and copy/move insertion name the member at each site. `member` is the
+/// lifecycle member the site runs, `None` for a use that runs none.
+fn verify_lifecycle_symbol(
     cx: &InstrCx<'_>,
+    site: &str,
     ty: Option<&Ty>,
-    destructor: Option<&str>,
+    member: Option<&str>,
+    named: Option<&str>,
     errors: &mut Vec<String>,
 ) {
     let prefix = cx.prefix;
-    if let Some(destructor) = destructor
-        && cx.declarations.function(destructor).is_none()
+    let Some(member) = member else {
+        if let Some(named) = named {
+            errors.push(format!(
+                "{prefix}: {site} runs no member but names `{named}`"
+            ));
+        }
+        return;
+    };
+    if let Some(named) = named
+        && cx.declarations.function(named).is_none()
     {
         errors.push(format!(
-            "{prefix}: drop names the undeclared destructor `{destructor}`"
+            "{prefix}: {site} names the undeclared {member} `{named}`"
         ));
     }
     let Some(ty) = ty else {
         return;
     };
-    if let Some(recorded) = cx.declarations.destructor(ty)
-        && destructor != Some(recorded)
+    if let Some(recorded) = cx.declarations.struct_member(ty, member)
+        && named != Some(recorded)
     {
         errors.push(format!(
-            "{prefix}: drop of `{ty}` names {}, not its destructor `{recorded}`",
-            destructor.map_or_else(|| "no destructor".to_string(), |d| format!("`{d}`"))
+            "{prefix}: {site} of `{ty}` names {}, not its {member} `{recorded}`",
+            named.map_or_else(|| format!("no {member}"), |named| format!("`{named}`"))
         ));
     }
 }
@@ -525,7 +555,11 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                 ));
             }
         }
-        MirInstr::CopyValue { dest, value } => {
+        MirInstr::CopyValue {
+            dest,
+            value,
+            constructor,
+        } => {
             if let (Some(found), Some(expected)) = (cx.reg_ty(*value), cx.reg_ty(*dest))
                 && !types_compatible(found, expected)
             {
@@ -533,6 +567,14 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                     "{prefix}: copied value has type {found}, destination has type {expected}"
                 ));
             }
+            verify_lifecycle_symbol(
+                cx,
+                "copy",
+                cx.reg_ty(*dest),
+                Some("__copyinit__"),
+                constructor.as_deref(),
+                errors,
+            );
         }
         // Two closed types a rebind names must already agree; the
         // elaborator judges one over a parameter per instance.

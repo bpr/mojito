@@ -129,6 +129,55 @@ impl VmBackend {
         }
     }
 
+    /// Copy `value` of the static type `ty` by running `constructor`, the
+    /// `__copyinit__` the copy names, the copy keeping `value`'s own
+    /// instance names; a copy naming none copies by type, as
+    /// [`Self::clone_value_as`].
+    pub(super) fn copy_named(
+        &mut self,
+        prog: &Prog,
+        value: &Value,
+        ty: Option<&Ty>,
+        constructor: Option<&str>,
+    ) -> Result<Value, RuntimeError> {
+        match (constructor, value) {
+            (Some(constructor), Value::Struct { .. }) => {
+                let source = match ty {
+                    Some(ty) => erased_instance_value(prog, value.clone(), ty),
+                    None => value.clone(),
+                };
+                let copy = self.run_constructor(prog, constructor, source)?;
+                Ok(with_names_of(value, copy))
+            }
+            _ => self.clone_value_as(prog, value, ty),
+        }
+    }
+
+    /// Relocate `value` moved out of a slot of the static type `ty` by
+    /// running `constructor`, the `__moveinit__` the move names, the moved
+    /// value keeping `value`'s own instance names; a move naming none moves
+    /// by type, as [`Self::move_value_as`].
+    pub(super) fn move_named(
+        &mut self,
+        prog: &Prog,
+        value: Value,
+        ty: Option<&Ty>,
+        constructor: Option<&str>,
+    ) -> Result<Value, RuntimeError> {
+        match (constructor, &value) {
+            (Some(constructor), Value::Struct { .. }) => {
+                let names = value.clone();
+                let source = match ty {
+                    Some(ty) => erased_instance_value(prog, value, ty),
+                    None => value,
+                };
+                let moved = self.run_constructor(prog, constructor, source)?;
+                Ok(with_names_of(&names, moved))
+            }
+            _ => self.move_value_as(prog, value, ty),
+        }
+    }
+
     /// Destroy `value` held in a slot of the static type `ty`: as
     /// [`Self::drop_value`], through `ty`'s members where it is an erased
     /// struct instance ([`erased_instance_value`]).
@@ -854,6 +903,27 @@ impl VmBackend {
                 .map(|&lane| if lane { "True" } else { "False" }.to_string())
                 .collect()),
         }
+    }
+
+    /// Run the copy or move constructor `constructor` a copy or move names
+    /// on `source`, a struct value, and return the value it initializes.
+    fn run_constructor(
+        &mut self,
+        prog: &Prog,
+        constructor: &str,
+        source: Value,
+    ) -> Result<Value, RuntimeError> {
+        let Value::Struct { name, .. } = &source else {
+            return Ok(source);
+        };
+        let index = prog.index_of(constructor).ok_or_else(|| {
+            RuntimeError::Unsupported(format!(
+                "vm: the constructor `{constructor}` a copy or move names is not defined"
+            ))
+        })?;
+        let skeleton = Self::struct_skeleton(prog, name);
+        let (_, frame_vars) = self.call_frame(prog, index, vec![skeleton, source])?;
+        Ok(frame_vars.into_iter().next().unwrap_or(Value::None))
     }
 }
 

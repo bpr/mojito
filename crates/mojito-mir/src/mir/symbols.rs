@@ -239,6 +239,14 @@ pub fn replace_symbol_uses(blocks: &mut [MirBlock], replace: &mut dyn FnMut(&mut
                 | MirInstr::DropPlace {
                     destructor: Some(target),
                     ..
+                }
+                | MirInstr::UseVar {
+                    constructor: Some(target),
+                    ..
+                }
+                | MirInstr::CopyValue {
+                    constructor: Some(target),
+                    ..
                 } => replace(target),
                 _ => {}
             }

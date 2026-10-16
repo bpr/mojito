@@ -2104,6 +2104,7 @@ const fn move_x() -> MirInstr {
         dest: Reg(2),
         var: 0,
         mode: UseMode::Move,
+        constructor: None,
     }
 }
 

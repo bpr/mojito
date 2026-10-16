@@ -504,7 +504,7 @@ impl FnLowering<'_> {
             ));
         };
         let storage = self.entry_alloca(ctx, layout.size.max(1), layout.align.max(1));
-        self.emit_void_call(ctx, &init, vec![storage], dest)?;
+        self.emit_void_call(ctx, init, vec![storage], dest)?;
         let Some(value_param) = self.signatures[setitem].params.get(2).cloned() else {
             return Err(self.unsupported_reg(format!("`{setitem}` takes no value"), dest));
         };

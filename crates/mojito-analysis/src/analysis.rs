@@ -243,6 +243,7 @@ pub fn elaborate_drops_function(
     elide_dying_copies(&mut elaborated, declarations);
     refine_deinit_fields(&mut elaborated, declarations);
     name_destructors(&mut elaborated, declarations);
+    mojito_mir::mir::name_constructors(&mut elaborated, declarations);
     elaborated
 }
 
@@ -422,6 +423,7 @@ mod interior_origin_tests {
             dest: Reg(dest),
             var: reference,
             mode: UseMode::BorrowShared,
+            constructor: None,
         }
     }
 

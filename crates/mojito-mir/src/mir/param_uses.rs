@@ -211,8 +211,9 @@ pub type Removals<'a> = dyn Fn(&str) -> Option<&'a [ParamId]> + 'a;
 ///
 /// Upstream's destructor and copy/move insertion leaves a call of each: the
 /// destructor a drop names, the one a drop naming none runs and, through a
-/// synthesized one, its fields' ([`crate::mir::destroyed_structs`]), and
-/// each copy or move site's constructor ([`StructReads::member_symbols`]).
+/// synthesized one, its fields' ([`crate::mir::destroyed_structs`]), the
+/// constructor a copy or move names, and the one a site naming none runs
+/// ([`StructReads::member_symbols`]).
 pub fn lifecycle_callees(
     function: &MirFunction,
     declarations: &MirDeclarations,
@@ -220,7 +221,7 @@ pub fn lifecycle_callees(
     fn sites<'f>(
         function: &'f MirFunction,
         blocks: &'f [MirBlock],
-        out: &mut Vec<(&'f Ty, &'static str)>,
+        out: &mut Vec<LifecycleSite<'f>>,
     ) {
         for block in blocks {
             for instruction in &block.instrs {
@@ -237,15 +238,18 @@ pub fn lifecycle_callees(
             .structure(name)
             .map(|structure| structure.fields.as_slice())
     });
-    let mut found: Vec<(&Ty, &'static str)> = destroyed
+    let mut found: Vec<LifecycleSite<'_>> = destroyed
         .structs
         .iter()
-        .map(|ty| (ty, "__deinit__"))
+        .map(|ty| (ty, "__deinit__", None))
         .collect();
     sites(function, &function.blocks, &mut found);
     found
         .into_iter()
-        .flat_map(|(ty, member)| structs.member_symbols(ty, member))
+        .flat_map(|(ty, member, named)| match named {
+            Some(named) => BTreeSet::from([named.to_owned()]),
+            None => structs.member_symbols(ty, member),
+        })
         .chain(
             destroyed
                 .named
@@ -966,36 +970,42 @@ fn receiver_parameter_reads<'d>(
     reads
 }
 
-/// The type of the storage `place` designates.
-/// The type a copy or move `instruction` relocates and the lifecycle member
-/// that runs on it: a copying or moving slot use, a register copy, or a
-/// place move.
+/// A copy or move site: its value's type, the constructor it runs, and the
+/// one it names, if it names one.
+type LifecycleSite<'f> = (&'f Ty, &'static str, Option<&'f str>);
+
+/// The type a copy or move `instruction` relocates, the lifecycle member
+/// that runs on it, and the one it names: a copying or moving slot use, a
+/// register copy, or a place move.
 fn lifecycle_site<'f>(
     function: &'f MirFunction,
     instruction: &'f MirInstr,
-) -> Option<(&'f Ty, &'static str)> {
+) -> Option<LifecycleSite<'f>> {
     match instruction {
         MirInstr::UseVar {
             var,
-            mode: UseMode::Copy,
+            mode,
+            constructor,
             ..
-        } => function.var_tys.get(var).map(|ty| (ty, "__copyinit__")),
-        MirInstr::UseVar {
-            var,
-            mode: UseMode::Move,
-            ..
-        } => function.var_tys.get(var).map(|ty| (ty, "__moveinit__")),
-        MirInstr::CopyValue { dest, .. } => function
+        } => function
+            .var_tys
+            .get(var)
+            .zip(crate::mir::use_constructor_member(*mode))
+            .map(|(ty, member)| (ty, member, constructor.as_deref())),
+        MirInstr::CopyValue {
+            dest, constructor, ..
+        } => function
             .reg_types
             .get(&dest.0)
-            .map(|ty| (ty, "__copyinit__")),
+            .map(|ty| (ty, "__copyinit__", constructor.as_deref())),
         MirInstr::MovePlace { place, .. } => {
-            place_ty(function, place).map(|ty| (ty, "__moveinit__"))
+            place_ty(function, place).map(|ty| (ty, "__moveinit__", None))
         }
         _ => None,
     }
 }
 
+/// The type of the storage `place` designates.
 fn place_ty<'f>(function: &'f MirFunction, place: &'f MirPlace) -> Option<&'f Ty> {
     place
         .ty
@@ -1380,7 +1390,7 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
             }
             MirInstr::UseVar { .. } | MirInstr::CopyValue { .. } | MirInstr::MovePlace { .. } => {
                 if let Some(reads) = lifecycle_site(function, instruction)
-                    .and_then(|(ty, member)| self.member_reads(ty, member))
+                    .and_then(|(ty, member, _)| self.member_reads(ty, member))
                 {
                     self.visit(&reads);
                 }

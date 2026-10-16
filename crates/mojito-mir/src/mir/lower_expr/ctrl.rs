@@ -166,6 +166,7 @@ impl<'a> Flatten<'a> {
             dest: d,
             var: result,
             mode: UseMode::Forward,
+            constructor: None,
         });
         d
     }
@@ -379,6 +380,7 @@ impl<'a> Flatten<'a> {
             dest: recv,
             var: collection,
             mode: UseMode::BorrowMut,
+            constructor: None,
         });
         let dest = self.fresh_typed(expression.location(), None, Ty::none());
         self.emit(MirInstr::MethodCall {
@@ -414,6 +416,7 @@ impl<'a> Flatten<'a> {
             dest: result,
             var: collection,
             mode: UseMode::Move,
+            constructor: None,
         });
         result
     }
@@ -714,6 +717,7 @@ impl<'a> Flatten<'a> {
             self.emit(MirInstr::CopyValue {
                 dest: copied,
                 value,
+                constructor: None,
             });
             copied
         } else {

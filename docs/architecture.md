@@ -4417,7 +4417,7 @@ insertion leaves a call naming the `__del__` at each death, so a symbol
 walk, the elaborator, and `eliminate-dead-symbols` follow the destructor as
 they follow a call's callee, and neither backend looks it up from the
 type. A drop of a type with no destructor of its own, or of a symbolic type,
-names none; the elaborator names the instance's (`Specializer::name_destructors`),
+names none; the elaborator names the instance's (`Specializer::name_lifecycle_calls`),
 and the verifier reports a drop that names another symbol than its
 struct's `__deinit__`, or none where the struct has one. The instruction stays
 a drop rather than a call: its runtime partial-aggregate rule, Pliron's drop
@@ -4426,6 +4426,25 @@ lifetime checker makes definite. A cleanup list's slots, a consumed residue,
 a storage destroy, a variant store, an owned capture, and a field a drop of a
 struct naming no destructor recurses into still find their destructor from
 the type (`mir::destroyed_structs`).
+
+Copies and moves name their constructor the same way, from MIR lowering on:
+`mir::name_constructors` (`mir/constructor_calls.rs`) sets each copying or
+moving `UseVar` and each `CopyValue`'s `constructor` to the `__copyinit__` or
+`__moveinit__` the value's struct records (`MirDeclarations::struct_member`),
+as upstream's copy/move insertion leaves a call naming the constructor at
+each site. Lowering runs it on every body once the member tables exist (the
+`close_register_types` loops of `lower_program` and `lower_package_unit`),
+and each later producer of a copy or move reruns it: drop elaboration after
+copy elision, `inline-parametric` after a splice substitutes a callee's
+types, and the elaborator per instance (`Specializer::name_lifecycle_calls`).
+The verifier holds a copy or move to the same rule as a drop. A borrow, a
+forward, and a copy or move of a type whose struct records no such member
+(a trivial or built-in type, or a struct with no constructor of its own)
+name none and stay a value copy; captures, variant payloads,
+reference-read results, `T(copy=x)`, and backend clone-out reads still find
+their constructor from the type (`mir::relocated_structs`). The instruction
+stays a slot use rather than a call, for the drop flags, tombstone, and
+`String` bridges the backends attach to it.
 
 Three timing rules complete the last-use model, each pinned against the
 current Mojo:
@@ -5562,9 +5581,11 @@ point where a slot declared in a loop is uninitialized again.
   `List[Box[_REMOVED_ARG]]` lay out their addresses alone. Its destructor
   is the drops' to demand: the elaborator names, at each `drop.var` and
   `drop.place`, the `__deinit__` instance `enqueue` makes for the dropped
-  type (`Specializer::name_destructors`), which the struct's concrete
+  type (`Specializer::name_lifecycle_calls`), which the struct's concrete
   member table records, and demands by type only what no drop names
-  (`destroyed_structs`); and, as for every struct, a constructor the
+  (`destroyed_structs`), and names each copy's and move's constructor
+  instance the same way, by type only what no copy or move names
+  (`relocated_structs`); and, as for every struct, a constructor the
   calls' (R993), a `__call__` the calls' (R1009), and a copy or move
   constructor the copies' and moves'
   (`Specializer::enqueue_lifecycle_members`, R994); a copy or move of an

@@ -522,6 +522,7 @@ mod tests {
             dest: Reg(0),
             var: 0,
             mode,
+            constructor: None,
         };
         concrete_function_findings("f", &function_with(instruction, ref_int()))
     }

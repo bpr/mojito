@@ -1150,7 +1150,7 @@ impl<'a> Specializer<'a> {
             self.output_function_decls.push(declaration);
         }
         self.discover_structs(&key.template, &function)?;
-        self.name_destructors(&key.template, &mut function)?;
+        self.name_lifecycle_calls(&key.template, &mut function)?;
         self.answer_layout_queries(&key.template, &mut function)?;
         ensure_concrete_function(&key.template, &name, &function)?;
         self.output_positions
@@ -3747,46 +3747,57 @@ impl<'a> Specializer<'a> {
     }
 
     /// Name, at each drop of `function`, the `__deinit__` instance of the
-    /// dropped value's type, as upstream's elaborator specializes the
-    /// destructor call its destructor insertion left at each death: the
-    /// instance [`Self::enqueue`] makes, which the struct's concrete member
-    /// table records. A drop whose type was symbolic in the template gets
-    /// its instance's destructor here too.
-    fn name_destructors(
+    /// dropped value's type, and at each copy or move the `__copyinit__` or
+    /// `__moveinit__` instance of the copied or moved value's type, as
+    /// upstream's elaborator specializes the call its destructor and
+    /// copy/move insertion left at each site: the instance [`Self::enqueue`]
+    /// makes, which the struct's concrete member table records. A site
+    /// whose type was symbolic in the template gets its instance's member
+    /// here too.
+    fn name_lifecycle_calls(
         &mut self,
         owner: &str,
         function: &mut MirFunction,
     ) -> Result<(), MonoError> {
-        let mut named: HashMap<Ty, Option<String>> = HashMap::new();
-        for_each_drop_mut(
+        let mut named: HashMap<(Ty, &'static str), Option<String>> = HashMap::new();
+        for_each_lifecycle_site_mut(
             &mut function.blocks,
             &function.var_tys,
-            &mut |ty, destructor| {
-                if !named.contains_key(ty) {
-                    let instance = self.destructor_instance(owner, ty)?;
-                    named.insert(ty.clone(), instance);
+            &function.reg_types,
+            &mut |ty, member, symbol| {
+                let key = (ty.clone(), member);
+                if !named.contains_key(&key) {
+                    let instance = self.lifecycle_instance(owner, ty, member)?;
+                    named.insert(key.clone(), instance);
                 }
-                destructor.clone_from(&named[ty]);
+                symbol.clone_from(&named[&key]);
                 Ok(())
             },
         )
     }
 
-    /// The one `__deinit__` instance of the struct instance `ty`, `None`
-    /// when it has none.
-    fn destructor_instance(&mut self, owner: &str, ty: &Ty) -> Result<Option<String>, MonoError> {
+    /// The one `member` instance of the struct instance `ty`, `None` when it
+    /// has none, or when it is a copy or move constructor keeping a
+    /// parameter `ty` erased, which no generator copying or moving it
+    /// demands ([`Self::enqueue_lifecycle_members`]).
+    fn lifecycle_instance(
+        &mut self,
+        owner: &str,
+        ty: &Ty,
+        member: &str,
+    ) -> Result<Option<String>, MonoError> {
         let TyKind::Struct(name, _) = ty.kind() else {
             return Ok(None);
         };
         let Some(bindings) = self.struct_bindings(owner, ty)? else {
             return Ok(None);
         };
-        let instances = self.enqueue_struct_overloads(
-            nominal_template(name),
-            &bindings,
-            "__deinit__",
-            &|_, _| true,
-        )?;
+        let template = nominal_template(name);
+        if member != "__deinit__" && self.keeps_an_erased_parameter(template, ty, &bindings, member)
+        {
+            return Ok(None);
+        }
+        let instances = self.enqueue_struct_overloads(template, &bindings, member, &|_, _| true)?;
         Ok(match instances.as_slice() {
             [(_, instance)] => Some(instance.clone()),
             _ => None,
@@ -4388,33 +4399,50 @@ fn constructed_member(name: &str, template: &str) -> Option<(String, String)> {
     Some((name.to_string(), method.to_string()))
 }
 
-/// What [`for_each_drop_mut`] calls on each drop: its value's type and its
-/// `destructor` operand.
-type DropNamer<'n> = dyn FnMut(&Ty, &mut Option<String>) -> Result<(), MonoError> + 'n;
+/// What [`for_each_lifecycle_site_mut`] calls on each site: its value's
+/// type, the lifecycle member it runs, and its symbol operand.
+type LifecycleNamer<'n> =
+    dyn FnMut(&Ty, &'static str, &mut Option<String>) -> Result<(), MonoError> + 'n;
 
-/// Call `name` on each `drop.var` and `drop.place` of `blocks`, regions
-/// included, with the dropped value's type and the drop's `destructor`.
-fn for_each_drop_mut(
+/// Call `name` on each `drop.var`, `drop.place`, copying or moving
+/// `var.use`, and `value.copy` of `blocks`, regions included, with the
+/// value's type, the member the site runs, and its `destructor` or
+/// `constructor`.
+fn for_each_lifecycle_site_mut(
     blocks: &mut [MirBlock],
     var_tys: &HashMap<mojito_hir::hir::VarId, Ty>,
-    name: &mut DropNamer<'_>,
+    reg_types: &HashMap<u32, Ty>,
+    name: &mut LifecycleNamer<'_>,
 ) -> Result<(), MonoError> {
     for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
-        match instruction {
+        let site = match instruction {
             MirInstr::DropVar { var, destructor } => {
-                if let Some(ty) = var_tys.get(var) {
-                    name(ty, destructor)?;
-                }
+                var_tys.get(var).map(|ty| (ty, "__deinit__", destructor))
             }
             MirInstr::DropPlace { place, destructor } => {
-                if let Some(ty) = &place.ty {
-                    name(ty, destructor)?;
-                }
+                place.ty.as_ref().map(|ty| (ty, "__deinit__", destructor))
             }
-            _ => {}
+            MirInstr::UseVar {
+                var,
+                mode,
+                constructor,
+                ..
+            } => var_tys
+                .get(var)
+                .zip(mojito_mir::mir::use_constructor_member(*mode))
+                .map(|(ty, member)| (ty, member, constructor)),
+            MirInstr::CopyValue {
+                dest, constructor, ..
+            } => reg_types
+                .get(&dest.0)
+                .map(|ty| (ty, "__copyinit__", constructor)),
+            _ => None,
+        };
+        if let Some((ty, member, symbol)) = site {
+            name(ty, member, symbol)?;
         }
         for region in mojito_mir::mir::instruction_regions_mut(instruction) {
-            for_each_drop_mut(region, var_tys, name)?;
+            for_each_lifecycle_site_mut(region, var_tys, reg_types, name)?;
         }
     }
     Ok(())

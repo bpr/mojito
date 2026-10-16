@@ -271,6 +271,31 @@ impl FnLowering<'_> {
         Ok(())
     }
 
+    /// Copy the aggregate at `src_ptr` into a fresh owned temporary `dest`
+    /// by running `constructor`, the copy constructor the copy names; a
+    /// copy naming none, and the nominal String's, whose copy is bridged
+    /// natively, copy as [`Self::copy_aggregate`].
+    pub(super) fn copy_named_aggregate(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        ty: &Ty,
+        layout: Layout,
+        src_ptr: Value,
+        constructor: Option<&str>,
+    ) -> Result<(), PlironError> {
+        let Some(copyinit) = constructor.filter(|_| {
+            !matches!(ty.kind(), TyKind::Struct(name, _)
+                if mojito_symbol::symbol::is_stdlib_string_struct(name))
+        }) else {
+            return self.copy_aggregate(ctx, dest, ty, layout, src_ptr);
+        };
+        let storage = self.value_storage(ctx, ty, layout);
+        self.emit_copy_constructor_call(ctx, copyinit, storage, src_ptr, dest)?;
+        self.reg_values.insert(dest.0, storage);
+        self.mark_owned_temp(dest, ty.clone())
+    }
+
     /// Clone the value at `src_ptr` into `dst` — the VM's `clone_value`: a
     /// struct with a compiled `__copyinit__` runs it, the nominal String and
     /// the built-in error duplicate their buffers, and any other aggregate is
@@ -400,7 +425,7 @@ impl FnLowering<'_> {
     }
 
     /// Run `name`'s compiled `__copyinit__(out self, copy: Self)` from `src`
-    /// into `dst`.
+    /// into `dst`, found in its struct's member table.
     pub(super) fn emit_copyinit_call(
         &mut self,
         ctx: &mut Context,
@@ -415,6 +440,19 @@ impl FnLowering<'_> {
                 span,
             ));
         };
+        self.emit_copy_constructor_call(ctx, copyinit, dst, src, span)
+    }
+
+    /// Run the compiled copy constructor `copyinit` a copy names from `src`
+    /// into `dst`.
+    pub(super) fn emit_copy_constructor_call(
+        &mut self,
+        ctx: &mut Context,
+        copyinit: &str,
+        dst: Value,
+        src: Value,
+        span: Reg,
+    ) -> Result<(), PlironError> {
         let Some(signature) = self.signatures.get(copyinit) else {
             return Err(self.unsupported_reg(format!("copy via uncompiled `{copyinit}`"), span));
         };

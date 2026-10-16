@@ -57,6 +57,8 @@ pub use call_defaults::{evaluate_omitted_defaults, evaluated_at_call_site};
 mod callable_values;
 pub use callable_values::{callable_targets, escaping_nested_bodies, nested_instructions};
 mod calls;
+mod constructor_calls;
+pub use constructor_calls::{name_constructors, use_constructor_member};
 mod copies;
 pub use copies::{Relocated, relocated_structs};
 mod destroys;
@@ -278,14 +280,20 @@ impl MirDeclarations {
         self.structure(name)?.member(member)
     }
 
+    /// The lifecycle member `member` of the struct `ty` names, `None` for a
+    /// struct without one or any other type.
+    pub fn struct_member(&self, ty: &Ty, member: &str) -> Option<&str> {
+        match ty.kind() {
+            TyKind::Struct(name, _) => self.lifecycle_member(name, member),
+            _ => None,
+        }
+    }
+
     /// The destructor a drop of a value of type `ty` names: the `__deinit__`
     /// its struct's member table records, `None` for a struct without one
     /// or any other type. Drop producers name it; consumers read the drop.
     pub fn destructor(&self, ty: &Ty) -> Option<&str> {
-        match ty.kind() {
-            TyKind::Struct(name, _) => self.lifecycle_member(name, "__deinit__"),
-            _ => None,
-        }
+        self.struct_member(ty, "__deinit__")
     }
 
     /// Whether the program or its package declares the trait `name`,
@@ -824,6 +832,7 @@ pub fn lower_package_unit(
     evaluate_omitted_defaults(&mut functions, declarations);
     for (name, function) in &mut functions {
         close_register_types(name, function, declarations, &mut invariant_errors);
+        name_constructors(function, declarations);
         let registers = function.n_regs;
         function.spans.0.retain(|reg, _| *reg < registers);
         for (span, _) in function.spans.0.values_mut() {
@@ -939,6 +948,7 @@ fn lower_program(
         let _close = timing::span("close_register_types");
         for (name, function) in &mut functions {
             close_register_types(name, function, &declarations, &mut invariant_errors);
+            name_constructors(function, &declarations);
         }
     }
     let mut result = MirProgram {
@@ -2774,6 +2784,7 @@ impl<'a> Flatten<'a> {
             dest: reference,
             var: variable,
             mode: UseMode::Copy,
+            constructor: None,
         });
         let dest = self.fresh(e.location(), None);
         self.emit(MirInstr::ReadRef { dest, reference });
@@ -2810,6 +2821,7 @@ impl<'a> Flatten<'a> {
                 self.emit(MirInstr::CopyValue {
                     dest: copied,
                     value: recv,
+                    constructor: None,
                 });
                 copied
             }
@@ -3746,6 +3758,7 @@ impl<'a> Flatten<'a> {
             dest,
             var,
             mode: UseMode::Copy,
+            constructor: None,
         });
         Some(dest)
     }
@@ -4204,7 +4217,7 @@ fn close_register_types(
                                 _ => ty,
                             }),
                     )),
-                    MirInstr::CopyValue { dest, value } => {
+                    MirInstr::CopyValue { dest, value, .. } => {
                         Some((dest, reg_types.get(&value.0).cloned()))
                     }
                     MirInstr::UnOp { op, dest, a, .. } => Some((

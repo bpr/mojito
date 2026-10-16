@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.67
+# Mojito Textual MIR Format, Version 1.68
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.67 is implemented end to end for inspection and loading: canonical
+Version 1.68 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.67
+mojito-mir 1.68
 ```
 
-The writer emits 1.67. The reader accepts 1.0 through 1.67; *Schema 1.0*
+The writer emits 1.68. The reader accepts 1.0 through 1.68; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -921,13 +921,13 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `EstablishLoans` | `loans.establish` |
 | `InvalidateInteriors` | `interiors.invalidate` (pre-drop and drop-elaborated only: `lower-lit` erases it before the pre-elaboration pipeline, and concrete verification refuses one) |
 | `MakeRef` / `ReadRef` / `WriteRef` | `ref.make` / `ref.read` / `ref.write` |
-| `CopyValue` / `Rebind` | `value.copy` / `value.rebind` |
+| `CopyValue` / `Rebind` | `value.copy` / `value.rebind` — a `value.copy` carries `constructor: "<symbol>"` after its operands when it names the `__copyinit__` it runs, as `var.use` does (schema 1.68) |
 | `MakeClosure` / `KeepAlive` | `closure.make` / `lifetime.keep_alive` (`lifetime.keep_alive` as `interiors.invalidate`: `lower-lit` erases it) |
 | `Const` / `MaterializeLiteral` / `SizeOf` / `TypeName` | `const` / `literal.materialize` / `layout.size_of` / `type.name` |
 | `ConstructType` | `type.construct_expr` (schema 1.33: `{ dest, type }`) |
 | `ParamListAddress` | `param_list.address` (schema 1.34: `{ dest, values }`, `values` a parameter or closed-tuple constant) |
 | `StoreToMem` | `store_to_mem { dest, src }` (schema 1.56): moves `src` into compile-time memory, which is never destroyed, and sets `dest` to an immutable reference to it — upstream's `store_to_mem`. Only a lifted compile-time evaluation's body holds one |
-| `UseVar` / `DefVar` | `var.use` / `var.store` (schema 1.49: `var.store` adds `in_place`, true when the slot is the preceding non-raising call's result storage) |
+| `UseVar` / `DefVar` | `var.use` / `var.store` (schema 1.49: `var.store` adds `in_place`, true when the slot is the preceding non-raising call's result storage; schema 1.68: a copying or moving `var.use` carries `constructor: "<symbol>"` after its `mode` when it names the `__copyinit__` or `__moveinit__` it runs, as upstream's copy/move insertion names the constructor at each site: the template member in a parametric body, its instance in concrete MIR; the writer omits the field when the use names none, the reader takes an absent field as none, and the verifier reports a use naming an undeclared function, a borrow or forward naming any, or a copy or move naming other than the constructor its struct's member table records) |
 | `MovePlace` / `LoadPlace` | `place.move` / `place.load` |
 | `UnOp` / `BinOp` | `unary` / `binary` (schema 1.53: both add `raises: option<type>`, the error type of the operator method's call, as a call's `raises`) |
 | `Call` / `CallIndirect` / `MethodCall` | `call` / `call.indirect` / `call.method` |

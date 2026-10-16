@@ -164,6 +164,7 @@ impl<'a> Flatten<'a> {
                 self.emit(MirInstr::CopyValue {
                     dest: copied,
                     value: loaded,
+                    constructor: None,
                 });
                 copied
             } else {
@@ -211,6 +212,7 @@ impl<'a> Flatten<'a> {
                 self.emit(MirInstr::CopyValue {
                     dest: copied,
                     value: d,
+                    constructor: None,
                 });
                 copied
             } else {
@@ -490,6 +492,7 @@ impl<'a> Flatten<'a> {
         self.emit(MirInstr::CopyValue {
             dest: copied,
             value: loaded,
+            constructor: None,
         });
         copied
     }
@@ -620,6 +623,7 @@ impl<'a> Flatten<'a> {
             self.emit(MirInstr::CopyValue {
                 dest: copied,
                 value: dest,
+                constructor: None,
             });
             // Keep the owning variant alive through the copy: the
             // loaded register aliases its storage until `__copyinit__`

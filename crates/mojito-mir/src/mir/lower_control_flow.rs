@@ -382,6 +382,7 @@ fn forwards(results: &[Reg], slots: &[VarId]) -> Vec<MirInstr> {
             dest: *dest,
             var: *var,
             mode: UseMode::Forward,
+            constructor: None,
         })
         .collect()
 }
@@ -475,6 +476,7 @@ mod tests {
                 dest: Reg(1),
                 var: 0,
                 mode: UseMode::Forward,
+                constructor: None,
             }]
         ));
         assert!(matches!(join.term, MirTerm::Return(None)));

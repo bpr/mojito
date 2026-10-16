@@ -163,6 +163,7 @@ pub(super) fn copy_builtin_receivers(blocks: &mut [MirBlock], reg_types: &HashMa
                     *instruction = MirInstr::CopyValue {
                         dest: *dest,
                         value: *recv,
+                        constructor: None,
                     };
                 }
                 MirInstr::DefVar { src, in_place, .. } if copied.contains(&src.0) => {
@@ -1156,6 +1157,7 @@ fn construct_type_parameter(
             *instruction = MirInstr::CopyValue {
                 dest: *dest,
                 value: source,
+                constructor: None,
             };
         }
         Some(TyKind::Struct(struct_name, _)) => {

@@ -17,6 +17,7 @@ fn identity_program() -> MirProgram {
                 dest: Reg(0),
                 var: 0,
                 mode: UseMode::Copy,
+                constructor: None,
             }],
             term: MirTerm::Return(Some(Reg(0))),
         }],
@@ -81,6 +82,7 @@ fn control_flow_program() -> MirProgram {
                     dest: Reg(0),
                     var: 0,
                     mode: UseMode::Copy,
+                    constructor: None,
                 }],
                 term: MirTerm::Branch {
                     cond: Reg(0),

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1044**.
+Next free ID: **R1049**.
 
 ## Ordered Work
 
@@ -684,6 +684,37 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
+- [ ] **R1044 A struct with copyable or movable fields and no
+  constructor of its own has none; the backends copy its fields by type**
+
+  A copy or move of such a struct names no constructor, so the VM's
+  `clone_value` and Pliron's `fork_value_into` recurse into its fields and
+  find each field's `__copyinit__` in the member table, where upstream
+  synthesizes a fieldwise `__copyinit__` and `__moveinit__` and calls it at
+  the site.
+  - The pin inlines the synthesized copy, so `T` holding a `C` field has
+    no `T` copy function in its LLVM output.
+  - Synthesize both in MIR lowering, record them in the member table, and
+    mark them `nodebug`, as R1041 does for `__deinit__`.
+  - Then drop `relocated_structs`' field closure for unnamed sites.
+  - Found while landing R1017 (2026-10-16).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1045 An owned capture, a variant payload, or a reference-read
+  method result copies without naming a constructor**
+
+  The VM's `clone_value` and Pliron's `fork_value_into` find
+  `__copyinit__` in the member table for `closure.make` captures,
+  `variant.make`/`variant.set`/`variant.replace` payloads, and
+  `result_adapter` reads, where upstream's copy insertion names it.
+  - Name a `constructor` on each, as R1017 did for `var.use` and
+    `value.copy`, and respell it in `Specializer::name_lifecycle_calls`.
+  - `T(copy=x)` is R1020/R1029's, and Pliron's clone-out reads are R1010's.
+  - Found while landing R1017 (2026-10-16).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 - [ ] **R1042 A cleanup list names only slots; the backends look up each
   slot's destructor**
 
@@ -711,17 +742,17 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1041, R1042.
   - Model: Fable, Not Planned.
 
-- [ ] **R1017 A copy or move names no constructor; the backends look it up
-  from the value's type**
+- [ ] **R1046 A copy or move is a slot use, not a call of its
+  constructor**
 
-  `var.use copy`, `value.copy`, and `var.use move` name no symbol, so the
-  VM and Pliron find `__copyinit__` and `__moveinit__` in the struct
-  declaration's member table, where upstream's copy/move insertion leaves
-  a call naming the constructor instance at each site.
-  - Insert the call as R1016 does for drops; a trivial copy or move stays
-    a value copy.
-  - Found while landing R1001 (2026-10-15).
-  - Depends on R1016.
+  `var.use copy` names its constructor but stays a slot use, where
+  upstream's copy/move insertion leaves a plain call.
+  - Pliron's drop flags, the VM's moved-slot tombstone, and the `String`
+    buffer bridges hang on the use, as they do on a drop for R1043.
+  - Once they do not, lower a named copy or move to a call of the
+    constructor into fresh storage.
+  - Found while landing R1017 (2026-10-16).
+  - Depends on R1044, R1045, R1043.
   - Model: Fable, Not Planned.
 
 - [ ] **R1020 A construction calls its struct, not the constructor the
@@ -1405,6 +1436,32 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - A field transfer an owned parameter takes (`take(self.a^)`) already
     matches the pin, which runs no move initializer there.
   - Found while landing R730 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1047 A move of a struct with no move initializer of its own
+  skips its fields' move initializers**
+
+  Problem: `var u = t^`, over a `T` holding a `C` whose move initializer
+  adds 100, prints `move / 101`, where the pin prints `move / move / 201`.
+  - The pin's synthesized move of `T` runs `C`'s; both backends relocate
+    `T`'s bytes.
+  - R1044's synthesized move constructor fixes it.
+  - Found while landing R1017 (2026-10-16).
+  - Depends on R1044.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1048 Returning a named `out` result runs its move initializer,
+  which the pin does not**
+
+  Problem: `def mk2(out c: C): c = C(7)` prints `move` at `var b = mk2()`,
+  where the pin prints nothing.
+  - `materialize_named_result_return` (`mir/nested.rs`) returns the slot
+    with `var.use move`; upstream initializes the caller's storage in
+    place, so it should be a `forward`.
+  - Check `inline-parametric`'s `Returned::Out` result move the same way.
+  - `return c^` from a local moves once at both.
+  - Found while landing R1017 (2026-10-16).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

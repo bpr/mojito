@@ -1193,6 +1193,7 @@ mod tests {
             dest: Reg(0),
             var: 0,
             mode: crate::mir::UseMode::Copy,
+            constructor: None,
         }]);
         assert_eq!(
             findings(&read, &declarations),
@@ -1223,6 +1224,7 @@ mod tests {
                         dest: Reg(0),
                         var: 0,
                         mode: crate::mir::UseMode::Copy,
+                        constructor: None,
                     },
                     MirInstr::Call {
                         dest: Reg(1),

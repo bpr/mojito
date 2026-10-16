@@ -613,7 +613,9 @@ impl VmBackend {
     /// run it (so a pointer-owning type deep-copies its storage instead of aliasing);
     /// for a struct without one, recurse into fields (a nested field may define it).
     /// Internal tuple/compile-time storage recurses element-wise. Only reached
-    /// when `has_copyinit` is set.
+    /// when `has_copyinit` is set, for a copy naming no constructor
+    /// ([`Self::copy_named`] runs a named one) and for the fields, captures,
+    /// and payloads a copy reaches.
     pub(super) fn clone_value(&mut self, prog: &Prog, v: &Value) -> Result<Value, RuntimeError> {
         match v {
             Value::Struct { name, fields } => {

@@ -81,9 +81,9 @@ use mojito_mir::mir::{
     Const, FuncRef, MirBlock, MirCaptureMode, MirClosureCapture, MirDeclarations, MirFunction,
     MirFunctionDeclaration, MirInstr, MirParamArg, MirPlace, MirTerm, Proj, Reg, UseMode,
     count_register_reads, erase_removed_operands, has_no_destructor, instruction_regions,
-    instruction_regions_mut, instruction_regs_mut, instruction_slots, region_escape_targets,
-    removed_argument_operands, renumber_block_slots, terminator_regs_mut, terminator_targets,
-    terminator_targets_mut, without_removed_arguments,
+    instruction_regions_mut, instruction_regs_mut, instruction_slots, name_constructors,
+    region_escape_targets, removed_argument_operands, renumber_block_slots, terminator_regs_mut,
+    terminator_targets, terminator_targets_mut, without_removed_arguments,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{
@@ -141,6 +141,9 @@ pub fn inline_parametric(
     function.blocks = blocks;
     if dropped_operands {
         erase_removed_operands(function, declarations, &reads);
+    }
+    if changed {
+        name_constructors(function, declarations);
     }
     changed
 }
@@ -1075,6 +1078,7 @@ impl<'c> Inliner<'_, 'c> {
                 dest,
                 var: var_base,
                 mode: UseMode::Move,
+                constructor: None,
             }),
             Returned::Slot => {
                 function.var_names.push(format!("$inline{var_base}$result"));
@@ -1086,6 +1090,7 @@ impl<'c> Inliner<'_, 'c> {
                     dest,
                     var: result_slot,
                     mode: UseMode::Move,
+                    constructor: None,
                 });
             }
         }

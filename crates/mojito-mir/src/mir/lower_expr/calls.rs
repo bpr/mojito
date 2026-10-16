@@ -540,6 +540,7 @@ impl<'a> Flatten<'a> {
                 // neither loading it for a call nor a repeated call consumes or
                 // duplicates that environment.
                 mode: UseMode::BorrowShared,
+                constructor: None,
             });
         }
         dest

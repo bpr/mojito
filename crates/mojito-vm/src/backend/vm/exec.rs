@@ -98,13 +98,18 @@ impl VmBackend {
                     mojito_mir::mir::text::instruction_mnemonic(i)
                 )));
             }
-            MirInstr::CopyValue { dest, value } => {
+            MirInstr::CopyValue {
+                dest,
+                value,
+                constructor,
+            } => {
                 let source = regs[value.0 as usize].clone();
                 regs[dest.0 as usize] = if self.has_copyinit {
-                    self.clone_value_as(
+                    self.copy_named(
                         prog,
                         &source,
                         prog.mir.functions[function].1.reg_types.get(&dest.0),
+                        constructor.as_deref(),
                     )?
                 } else {
                     source
@@ -224,7 +229,12 @@ impl VmBackend {
                 regs[dest.0 as usize] =
                     crate::runtime::materialize_literal(regs[value.0 as usize].clone(), target)?;
             }
-            MirInstr::UseVar { dest, var, mode } => {
+            MirInstr::UseVar {
+                dest,
+                var,
+                mode,
+                constructor,
+            } => {
                 let slot = *var as usize;
                 // A `^` move **transfers** the value out of the source slot, leaving
                 // a `Moved` tombstone, and runs the move initializer unless it
@@ -241,10 +251,11 @@ impl VmBackend {
                 let value = if mode.moves() {
                     let moved = std::mem::replace(&mut vars[slot], Value::Moved);
                     if self.has_moveinit && *mode == mojito_mir::mir::UseMode::Move {
-                        self.move_value_as(
+                        self.move_named(
                             prog,
                             moved,
                             prog.mir.functions[function].1.var_tys.get(var),
+                            constructor.as_deref(),
                         )?
                     } else {
                         moved
@@ -269,12 +280,12 @@ impl VmBackend {
                         | mojito_mir::mir::UseMode::BorrowMut => vars[slot].clone(),
                         // A copy runs `__copyinit__` (deep copy) for a lifecycle type;
                         // otherwise a plain deep `Clone`.
-                        mojito_mir::mir::UseMode::Copy if self.has_copyinit => self
-                            .clone_value_as(
-                                prog,
-                                &vars[slot],
-                                prog.mir.functions[function].1.var_tys.get(var),
-                            )?,
+                        mojito_mir::mir::UseMode::Copy if self.has_copyinit => self.copy_named(
+                            prog,
+                            &vars[slot],
+                            prog.mir.functions[function].1.var_tys.get(var),
+                            constructor.as_deref(),
+                        )?,
                         mojito_mir::mir::UseMode::Copy => vars[slot].clone(),
                     }
                 };

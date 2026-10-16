@@ -370,7 +370,7 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             place_regs_mut(place, &mut out);
         }
         MirInstr::ReadRef { dest, reference } => out.extend([dest, reference]),
-        MirInstr::CopyValue { dest, value } | MirInstr::Rebind { dest, value } => {
+        MirInstr::CopyValue { dest, value, .. } | MirInstr::Rebind { dest, value } => {
             out.extend([dest, value]);
         }
         MirInstr::WriteRef { reference, value } => out.extend([reference, value]),
@@ -1641,9 +1641,13 @@ pub enum MirInstr {
     /// explicit `ref` binding retains the handle and therefore never emits it.
     /// Keeping the operation explicit prevents the VM from guessing whether a
     /// handle read is a borrow, a forwarding read, or a lifecycle copy.
+    /// `constructor` names the `__copyinit__` the copy runs, as on
+    /// [`MirInstr::UseVar`].
     CopyValue {
         dest: Reg,
         value: Reg,
+        #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
+        constructor: Option<String>,
     },
     WriteRef {
         reference: Reg,
@@ -1742,10 +1746,17 @@ pub enum MirInstr {
         target: Ty,
     },
     /// `x`, `x^`, `borrow x`, … — a use of a variable, tagged with how (`mode`).
+    /// `constructor` names the `__copyinit__` a copy runs or the
+    /// `__moveinit__` a move runs, as upstream's copy/move insertion names it
+    /// at each site: the template member in a parametric body, its instance
+    /// in concrete MIR. `None` for a borrow, a forward, or a value whose
+    /// struct records no such member, which is copied or moved by its type.
     UseVar {
         dest: Reg,
         var: VarId,
         mode: UseMode,
+        #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
+        constructor: Option<String>,
     },
     /// A **partial move** `p.a^`, or a constant-index move from compiler-private
     /// Tuple storage — transfer one independently owned sub-place out of a
@@ -2522,7 +2533,7 @@ impl MirInstr {
         reg_types: &HashMap<u32, Ty>,
         declarations: &MirDeclarations,
     ) -> Option<Reg> {
-        let Self::CopyValue { dest, value } = self else {
+        let Self::CopyValue { dest, value, .. } = self else {
             return None;
         };
         let source = reg_types.get(&value.0)?;
@@ -3157,11 +3168,13 @@ mod tests {
             dest: Reg(1),
             var: 0,
             mode: UseMode::Copy,
+            constructor: None,
         };
         let borrow = MirInstr::UseVar {
             dest: Reg(2),
             var: 0,
             mode: UseMode::BorrowShared,
+            constructor: None,
         };
         assert!(constant.would_be_trivially_dead());
         assert!(borrow.would_be_trivially_dead());
@@ -3193,6 +3206,7 @@ mod tests {
             MirInstr::CopyValue {
                 dest: Reg(1),
                 value: Reg(0),
+                constructor: None,
             }
             .forwarded_operand(&reg_types, &MirDeclarations::default())
         };
@@ -3655,6 +3669,7 @@ mod tests {
             MirInstr::CopyValue {
                 dest: Reg(1),
                 value: Reg(0),
+                constructor: None,
             }
             .folded_constant(|_| Some(uint.clone()), &reg_types, &none),
             Some(Const::Value(CtValue::UInt(1)))

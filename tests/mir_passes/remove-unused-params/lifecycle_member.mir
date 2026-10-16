@@ -39,7 +39,7 @@ artifact {
         blocks: [
           bb0 {
             instructions: [
-              var.use { dest: %r0, var: $v0, mode: copy },
+              var.use { dest: %r0, var: $v0, mode: copy, constructor: "IBox.__copyinit__" },
               var.store { var: $v1, src: %r0, binding_type: present(struct_type { name: IBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fi", slot: 0, name: n, type: meta_value(Int) }))] }), in_place: false },
               place.load { dest: %r1, place: place { root: $v1, root_type: present(struct_type { name: IBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fi", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
               drop.var { var: $v1 },
@@ -69,7 +69,7 @@ artifact {
         blocks: [
           bb0 {
             instructions: [
-              var.use { dest: %r0, var: $v0, mode: move },
+              var.use { dest: %r0, var: $v0, mode: move, constructor: "MBox.__moveinit__" },
               var.store { var: $v1, src: %r0, binding_type: present(struct_type { name: MBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fm", slot: 0, name: n, type: meta_value(Int) }))] }), in_place: false },
               place.load { dest: %r1, place: place { root: $v1, root_type: present(struct_type { name: MBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fm", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
               drop.var { var: $v1 },

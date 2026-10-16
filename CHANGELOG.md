@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A copying or moving `var.use` and a `value.copy` name the constructor
+  they run (R1017), as upstream's copy/move insertion leaves a call naming
+  the `__copyinit__` or `__moveinit__` at each site: MIR lowering, copy
+  elision, and `inline-parametric` name the template member, the elaborator
+  respells it to the instance, the symbol walk, `eliminate-dead-symbols`,
+  and `remove-unused-params` follow it, and the VM and Pliron call it
+  rather than finding it in the struct's member table. The verifier
+  reports a copy or move naming another symbol than its struct's
+  constructor. MIR text 1.68 adds the `constructor` field. Captures,
+  variant payloads, and a constructor-less struct's fields still find
+  theirs by type; no program's output or instance count changes.
 - A `drop.var` or `drop.place` names the destructor it runs (R1016), as
   upstream's destructor insertion leaves a call naming the `__del__` at
   each death: drop elaboration names the template `__deinit__`, the

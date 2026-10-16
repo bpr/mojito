@@ -697,6 +697,7 @@ fn materialize_named_result_return(function: &mut MirFunction, result: &str) {
                 dest: register,
                 var: slot as VarId,
                 mode: UseMode::Move,
+                constructor: None,
             });
             match &mut block.term {
                 MirTerm::ReturnWithCleanup { value, .. } => *value = Some(register),

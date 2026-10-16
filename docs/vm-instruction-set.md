@@ -249,22 +249,24 @@ target, or an incompatible integer/float target combination.
 ### `var.copy` — Copy Variable
 
 ```text
-var.copy %dest, $source
+var.copy %dest, $source [constructor @symbol]
 ```
 
 Copies the value in `$source` into `%dest` without emptying the variable slot.
-For lifecycle-aware structs this may invoke the checked
-`__init__(out self, *, copy: Self)` path; aggregate copies recursively copy their
-contents. Reading a moved slot is a runtime error and should already have been
+A copy of a struct with a `__copyinit__` names it, as upstream's copy
+insertion leaves a call to the copy constructor at each copy, and the VM
+calls that function, `__init__(out self, *, copy: Self)`; a copy naming none
+recursively copies the value's contents, each field by its own type. Reading a moved slot is a runtime error and should already have been
 rejected by ownership analysis.
 
 ### `value.copy` — Copy Register Value
 
 ```text
-value.copy %dest, %source
+value.copy %dest, %source [constructor @symbol]
 ```
 
-Runs the checked value-semantics copy operation for an SSA register. In
+Runs the checked value-semantics copy operation for an SSA register, through
+the copy constructor it names as `var.copy` does. In
 particular, an ordinary value use of a reference-returning expression emits
 `ref.read` followed by `value.copy`, so a pointer-backed nominal collection runs
 its copy lifecycle instead of becoming an accidental alias. An explicit
@@ -292,13 +294,14 @@ is `Dest`.
 ### `var.move` — Move Variable
 
 ```text
-var.move %dest, $source
+var.move %dest, $source [constructor @symbol]
 ```
 
 Transfers the value from `$source` into `%dest`. The source slot becomes a moved
-tombstone. If the value's type defines
-`__init__(out self, *, deinit move: Self)`, the VM performs that custom move
-initialization. A later read or second move from the source is an error.
+tombstone. A move of a struct with a `__moveinit__` names it, as upstream's
+move insertion does, and the VM calls that function,
+`__init__(out self, *, deinit move: Self)`; a move naming none relocates the
+value as it is. A later read or second move from the source is an error.
 
 ### `var.forward` — Forward Variable
 

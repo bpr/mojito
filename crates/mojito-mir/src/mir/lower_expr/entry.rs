@@ -313,6 +313,7 @@ impl<'a> Flatten<'a> {
                         dest: read,
                         var: variable,
                         mode: UseMode::Copy,
+                        constructor: None,
                     });
                     return read;
                 }
@@ -435,7 +436,11 @@ impl<'a> Flatten<'a> {
             let read = self.fresh_typed(e.location(), Some(place.root), value_ty.clone());
             self.emit(MirInstr::LoadPlace { dest: read, place });
             let dest = self.fresh_typed(e.location(), None, value_ty);
-            self.emit(MirInstr::CopyValue { dest, value: read });
+            self.emit(MirInstr::CopyValue {
+                dest,
+                value: read,
+                constructor: None,
+            });
             return Some(dest);
         }
         if let Some(reference) = e.reference_result() {
@@ -455,7 +460,11 @@ impl<'a> Flatten<'a> {
             // into independently owned storage, so lifecycle types must run
             // their copy initializer rather than alias backing storage.
             let dest = self.fresh_typed(e.location(), None, value_ty);
-            self.emit(MirInstr::CopyValue { dest, value: read });
+            self.emit(MirInstr::CopyValue {
+                dest,
+                value: read,
+                constructor: None,
+            });
             return Some(dest);
         }
         None

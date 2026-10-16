@@ -95,6 +95,7 @@ impl<'a> Flatten<'a> {
                             dest: cond,
                             var: *slot,
                             mode: UseMode::Copy,
+                            constructor: None,
                         });
                         cond
                     }
@@ -266,6 +267,7 @@ impl<'a> Flatten<'a> {
                     dest: value,
                     var: raw,
                     mode: UseMode::Move,
+                    constructor: None,
                 });
                 self.var_types.insert(dest, plan.binding_ty.clone());
                 self.emit(MirInstr::DefVar {
@@ -294,6 +296,7 @@ impl<'a> Flatten<'a> {
                 self.emit(MirInstr::CopyValue {
                     dest: owned,
                     value: read,
+                    constructor: None,
                 });
                 self.var_types.insert(dest, plan.binding_ty.clone());
                 self.emit(MirInstr::DefVar {
@@ -475,6 +478,7 @@ impl<'a> Flatten<'a> {
             dest: index,
             var: cursor.index,
             mode: UseMode::Copy,
+            constructor: None,
         });
         self.f.reg_types.insert(dest.0, Ty::bool());
         self.emit(MirInstr::BinOp {
@@ -500,6 +504,7 @@ impl<'a> Flatten<'a> {
             dest: index,
             var: cursor.index,
             mode: UseMode::Copy,
+            constructor: None,
         });
         let element = cursor.element;
         let mut place = cursor.pack;
@@ -821,6 +826,7 @@ impl<'a> Flatten<'a> {
             dest: recv,
             var: tmp,
             mode: UseMode::BorrowMut,
+            constructor: None,
         });
         self.emit_checked_call_boundary(contract, &span);
         let dest = self.fresh_typed(span.clone(), None, contract.result_ty.clone());
@@ -852,6 +858,7 @@ impl<'a> Flatten<'a> {
             dest: updated,
             var: tmp,
             mode: UseMode::Move,
+            constructor: None,
         });
         updated
     }
@@ -2385,6 +2392,7 @@ impl<'a> Flatten<'a> {
                         self.emit(MirInstr::CopyValue {
                             dest: copied,
                             value: src,
+                            constructor: None,
                         });
                         copied
                     } else {
@@ -2728,6 +2736,7 @@ impl<'a> Flatten<'a> {
                         self.emit(MirInstr::CopyValue {
                             dest: copied,
                             value,
+                            constructor: None,
                         });
                         copied
                     } else {

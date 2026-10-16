@@ -285,6 +285,7 @@ impl Decoder {
             "value.copy" => Some(MirInstr::CopyValue {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 value: self.req(value, fields, "value", Self::reg)?,
+                constructor: self.lifecycle_symbol(fields, "constructor"),
             }),
             "value.rebind" => Some(MirInstr::Rebind {
                 dest: self.req(value, fields, "dest", Self::reg)?,
@@ -380,6 +381,7 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 var: self.req(value, fields, "var", Self::var)?,
                 mode: self.req(value, fields, "mode", Self::use_mode)?,
+                constructor: self.lifecycle_symbol(fields, "constructor"),
             }),
             "place.move" => Some(MirInstr::MovePlace {
                 dest: self.req(value, fields, "dest", Self::reg)?,
@@ -836,7 +838,7 @@ impl Decoder {
             }),
             "drop.var" => Some(MirInstr::DropVar {
                 var: self.req(value, fields, "var", Self::var)?,
-                destructor: self.destructor(fields),
+                destructor: self.lifecycle_symbol(fields, "destructor"),
             }),
             "consume.var" => Some(MirInstr::ConsumeVar {
                 var: self.req(value, fields, "var", Self::var)?,
@@ -847,7 +849,7 @@ impl Decoder {
             }),
             "drop.place" => Some(MirInstr::DropPlace {
                 place: self.req(value, fields, "place", Self::place)?,
-                destructor: self.destructor(fields),
+                destructor: self.lifecycle_symbol(fields, "destructor"),
             }),
             "ownership.mark_initialized" => Some(MirInstr::MarkInitialized {
                 place: self.req(value, fields, "place", Self::place)?,
@@ -963,15 +965,16 @@ impl Decoder {
         }
     }
 
-    /// The `elif` arms of an `if`: each a condition region and the arm it
-    /// selects.
-    /// A drop's `destructor` (schema 1.67), absent when it names none.
-    fn destructor(&mut self, fields: &[Field]) -> Option<String> {
-        self.field(fields, "destructor")
+    /// The lifecycle member a drop (`destructor`, schema 1.67) or a copy or
+    /// move (`constructor`, schema 1.68) names, absent when it names none.
+    fn lifecycle_symbol(&mut self, fields: &[Field], key: &str) -> Option<String> {
+        self.field(fields, key)
             .ok()
             .and_then(|value| self.symbol(value))
     }
 
+    /// The `elif` arms of an `if`: each a condition region and the arm it
+    /// selects.
     fn elifs(&mut self, value: &Value) -> Vec<MirElif> {
         let Ok(values) = self.list(value) else {
             return Vec::new();

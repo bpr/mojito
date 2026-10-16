@@ -354,7 +354,7 @@ impl FnLowering<'_> {
         self.load_from(ctx, address, &field_ty, dest)
     }
 
-    /// Move a variable through its compiled `__moveinit__` — the VM's
+    /// Move a variable through the compiled `__moveinit__` it names — the VM's
     /// `move_value` over a `^` transfer: fresh `out self` storage, the source
     /// storage as the consumed `move` argument, and a vacated source slot.
     pub(super) fn move_via_moveinit(
@@ -362,17 +362,11 @@ impl FnLowering<'_> {
         ctx: &mut Context,
         dest: Reg,
         var: u32,
-        name: &str,
+        moveinit: &str,
         layout: Layout,
     ) -> Result<(), PlironError> {
-        let Some((moveinit, signature)) = self
-            .lifecycle_symbol(name, "__moveinit__")
-            .and_then(|moveinit| Some((moveinit, self.signatures.get(moveinit)?)))
-        else {
-            return Err(self.unsupported_reg(
-                format!("move of `{name}` via an uncompiled `__moveinit__`"),
-                dest,
-            ));
+        let Some(signature) = self.signatures.get(moveinit) else {
+            return Err(self.unsupported_reg(format!("move via the uncompiled `{moveinit}`"), dest));
         };
         if signature.outcome.is_some() {
             return Err(self.unsupported_reg(format!("raising `{moveinit}`"), dest));

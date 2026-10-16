@@ -134,7 +134,7 @@
           bb0 {
             instructions: [
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [] }), projections: [projection { op: field(id), type: Int }], type: present(Int), through: absent } },
-              drop.var { var: $v0 },
+              drop.var { var: $v0, destructor: "Box.__deinit__" },
               value.copy { dest: %r1, value: %r0 }
             ],
             terminator: return { value: present(%r1) }

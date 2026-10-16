@@ -68,6 +68,7 @@ impl<'a> Flatten<'a> {
                 dest: d,
                 var,
                 mode: UseMode::Copy,
+                constructor: None,
             });
             return d;
         }
@@ -94,6 +95,7 @@ impl<'a> Flatten<'a> {
                 dest: d,
                 var,
                 mode: UseMode::Copy,
+                constructor: None,
             });
             return d;
         }
@@ -129,6 +131,7 @@ impl<'a> Flatten<'a> {
             self.emit(MirInstr::CopyValue {
                 dest: copied,
                 value: d,
+                constructor: None,
             });
             return copied;
         }
@@ -175,6 +178,7 @@ impl<'a> Flatten<'a> {
                 } else {
                     UseMode::Move
                 },
+                constructor: None,
             });
             d
         } else if let Some(place) = self.pure_field_place(inner) {

@@ -699,6 +699,7 @@ impl<'a> Flatten<'a> {
                 self.emit(MirInstr::CopyValue {
                     dest: copied,
                     value: src,
+                    constructor: None,
                 });
                 src = copied;
             }
