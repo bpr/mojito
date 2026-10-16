@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1051**.
+Next free ID: **R1053**.
 
 ## Ordered Work
 
@@ -785,20 +785,51 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1052 An inlined call through a bound still names the trait
+  dispatch after its receiver is concrete**
+
+  When `inline-parametric` substitutes `NBox[n]` for a callee's `T:
+  MySized`, the inlined `value.__len__()` keeps `resolved:
+  "__trait_dispatch.__len__$ov$SelfRead"`, where upstream's substitution
+  folds the witness to `NBox.__len__`.
+  - `Walker::member_call` (`mir::param_uses`) reads only the member's kept
+    struct arguments when the callee's owner is the receiver's struct, so
+    the unfolded call reads `NBox[n]` whole and the caller keeps `n`.
+  - Fold it the Mojo way: the checker records each declared conformance's
+    witness table (requirement dispatch symbol to member symbol) on the
+    `StructDeclaration`, and the inliner's substitution respells
+    `resolved` through it; never compose `"{struct}.{method}"` (R1027).
+  - The same holds for an operator's `resolved`, a subscript call, and an
+    iterator step through a bound.
+  - The new declaration field bumps the MIR text version.
+  - Probe: `fal[n](b: NBox[n])` returning `mylen(b)`, with
+    `@always_inline("nodebug") def mylen[T: MySized](value: T)` returning
+    `value.__len__()` and `NBox.__len__` `@no_inline`; done when `fal`
+    shows `removed_params` and one instance on both backends.
+  - Found while planning R1021 (2026-10-16).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 - [ ] **R1021 `len(b)` reads its argument's struct whole, whatever
   `__len__` removed**
 
   `flen[n](b: NBox[n])` returning `len(b)` keeps `n`, where the pin, whose
-  `len` inlines to `b.__len__()`, removes it because `__len__` is
-  `_REMOVED_ARG`.
-  - `len(b)` is an undeclared builtin `call`, which `mir::unread_parameters`
-    reads whole; a resolved `__len__` method call already reads only the
-    struct arguments the member kept (R998).
-  - Once R988 makes `len` the library function, check that `flen` is one
+  `@inline(.always)` library `len` inlines to `b.__len__()`, removes it
+  because `__len__` is `_REMOVED_ARG`.
+  - Not landable yet: `len(b)` is an undeclared builtin `call`, which
+    `mir::unread_parameters` reads whole, and the pin's reduction needs
+    the library `len` (R988), plain `@always_inline` inlining (R923;
+    a `@no_inline` `len` lookalike keeps `n` on the pin), and the folded
+    witness after inlining (R1052).
+  - Do not special-case `len` in `param_uses` or lower it as
+    `b.__len__()` in the checker: both would freeze the builtin R988
+    removes.
+  - Once those land, expect no code change: check that `flen` is one
     instance on both backends and add it to
-    `assets/ok/member_call_unread_struct_parameter_instances.mojo`.
+    `assets/ok/member_call_unread_struct_parameter_instances.mojo`,
+    pin-checked.
   - Found while landing R998 (2026-10-15).
-  - Depends on R988.
+  - Depends on R1051, R988, R923, R1052.
   - Model: Fable, Not Planned.
 
 - [ ] **R1022 A method's omitted evaluated default is evaluated by the
@@ -7139,6 +7170,26 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     defaults and deletes `compiler_trait_declaration`; upstream's
     reflective `__eq__` default stays out, waiting on R278 and R269.
   - Found while landing R702 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1051 `Sized` and `SizedRaising` are compiler-known, where
+  upstream's library declares them**
+
+  Upstream declares `trait Sized` and `trait SizedRaising`, each with a
+  `__len__` requirement, in `std/builtin/len.mojo`; Mojito knows both by
+  name and declares no requirement, so `def f[T: Sized](x: T)` returning
+  `x.__len__()` fails with "type 'T' has no method '__len__'".
+  - That rejects valid Mojo, and R988's library `len[T: Sized]` cannot be
+    written until it is fixed.
+  - Declare both in the bundled std, export them as builtins, and retire
+    `"Sized"`/`"SizedRaising"` from `conformance::COMPILER_TRAITS` and
+    `checker::builtins::has_len_bound`, following R705's model.
+  - Every std struct with `__len__` lists `Sized`, as the pin's do; check
+    whether the compiler-modelled `SIMD` and `StringLiteral` still conform.
+  - Done when the probe above runs and every `assets/ok` fixture using
+    `Sized` runs unchanged.
+  - Found while planning R1021 (2026-10-16).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
