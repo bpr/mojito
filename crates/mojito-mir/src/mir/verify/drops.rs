@@ -22,7 +22,10 @@
 //! one only an erased raise point held.
 
 use super::{MirBlock, MirFunction, MirInstr, MirTerm};
-use crate::mir::{MirBlockId, MirCaptureMode, VarId, instruction_slots, terminator_targets};
+use crate::mir::{
+    CleanupDrop, MirBlockId, MirCaptureMode, VarId, cleanup_slots, instruction_slots,
+    terminator_targets,
+};
 use std::collections::HashMap;
 
 /// Remove from each `try`'s raise-edge cleanup in `function` the slots
@@ -95,7 +98,7 @@ struct Flow<'a> {
     raises: Option<Ended>,
     exits: Option<Ended>,
     escapes: Vec<(MirBlockId, Ended)>,
-    returns: Vec<(usize, &'a [VarId], Ended)>,
+    returns: Vec<(usize, &'a [CleanupDrop], Ended)>,
 }
 
 impl Flow<'_> {
@@ -266,10 +269,9 @@ impl<'a> Walk<'a> {
         let body_raises = body_flow.raises.take().map(|mut state| {
             if report {
                 self.ended_cleanups.extend(
-                    cleanup
-                        .iter()
-                        .filter(|&&var| state.get(var as usize) == Some(&true))
-                        .map(|&var| (std::ptr::from_ref(instruction), var)),
+                    cleanup_slots(cleanup)
+                        .filter(|&var| state.get(var as usize) == Some(&true))
+                        .map(|var| (std::ptr::from_ref(instruction), var)),
                 );
             }
             self.end_listed(index, "try.cleanup", &mut state, cleanup, report);
@@ -358,10 +360,10 @@ impl<'a> Walk<'a> {
         index: usize,
         list: &str,
         state: &mut Ended,
-        cleanup: &[VarId],
+        cleanup: &[CleanupDrop],
         report: bool,
     ) {
-        for &var in cleanup {
+        for var in cleanup_slots(cleanup) {
             if report && state.get(var as usize) == Some(&true) {
                 self.report(index, list, var);
             }
@@ -471,7 +473,7 @@ fn cut_listed(blocks: &mut [MirBlock], ended: &[(*const MirInstr, VarId)]) {
     for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
         let address = std::ptr::from_ref::<MirInstr>(instruction);
         if let MirInstr::Try { cleanup, .. } = instruction {
-            cleanup.retain(|&var| !ended.contains(&(address, var)));
+            cleanup.retain(|drop| !ended.contains(&(address, drop.var)));
         }
         for region in crate::mir::instruction_regions_mut(instruction) {
             cut_listed(region, ended);

@@ -5,8 +5,8 @@
 use mojito::hir::Cfg;
 use mojito::mir::{
     LoopLabel, MirBlock, MirDeclarations, MirFunction, MirInstr, MirPlace, MirProgram,
-    MirSubscriptArg, MirTerm, Proj, Reg, SpanTable, UseMode, has_structured_control_flow,
-    lower_cfg, lower_cfg_structured, lower_program,
+    MirSubscriptArg, MirTerm, Proj, Reg, SpanTable, UseMode, cleanup_drops,
+    has_structured_control_flow, lower_cfg, lower_cfg_structured, lower_program,
 };
 use mojito::types::TyKind;
 use mojito::{Compiler, SemanticAdjustment, Ty, parse};
@@ -350,7 +350,7 @@ fn owned_operand_transfers_at_the_call_after_a_raising_operand() {
         })
         .expect("try");
     assert!(
-        cleanup.contains(&x) && cleanup.contains(&forwarded),
+        cleanup_drops(cleanup, x) && cleanup_drops(cleanup, forwarded),
         "{main:#?}"
     );
     let instrs = body

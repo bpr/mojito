@@ -36,9 +36,9 @@ use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
     MirBlock, MirBlockId, MirDeclarations, MirFunction, MirInstr, MirTerm, Reg, UseMode,
-    block_successors, comptime_for_body, count_register_reads, has_structured_control_flow,
-    instruction_regions, instruction_regions_mut, instruction_slots, region_escape_targets,
-    renumber_block_slots, retire_slots, terminator_targets,
+    block_successors, cleanup_slots, comptime_for_body, count_register_reads,
+    has_structured_control_flow, instruction_regions, instruction_regions_mut, instruction_slots,
+    region_escape_targets, renumber_block_slots, retire_slots, terminator_targets,
 };
 use mojito_types::types::{Ty, is_symbolic};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -355,7 +355,7 @@ fn take_census(list: usize, blocks: &[MirBlock], census: &mut HashMap<VarId, Cen
             } = instruction
             {
                 keep(census, handler.iter().filter_map(|(slot, _)| *slot));
-                keep(census, cleanup.iter().copied());
+                keep(census, cleanup_slots(cleanup));
             }
             let mut results = Vec::new();
             instruction_result_regs(instruction, &mut results);
@@ -364,7 +364,7 @@ fn take_census(list: usize, blocks: &[MirBlock], census: &mut HashMap<VarId, Cen
         if let MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } =
             &block.term
         {
-            keep(census, cleanup.iter().copied());
+            keep(census, cleanup_slots(cleanup));
         }
     }
 }

@@ -2103,9 +2103,9 @@ impl VmBackend {
                     // it overrides still leave scope. Preserve the overriding
                     // return's inner-to-outer order and append only distinct
                     // pending roots.
-                    for variable in pending_cleanup {
-                        if !overriding_cleanup.contains(&variable) {
-                            overriding_cleanup.push(variable);
+                    for drop in pending_cleanup {
+                        if !cleanup_drops(&overriding_cleanup, drop.var) {
+                            overriding_cleanup.push(drop);
                         }
                     }
                     return Ok(Flow::Return {
@@ -2127,18 +2127,25 @@ impl VmBackend {
     }
 
     /// Run one cleanup list — a `try`'s raise edge, a return's, or an escape's:
-    /// a `DropVar` on each listed slot. Drop elaboration lists only slots the
-    /// edge still holds; a vacated slot is a no-op to drop.
+    /// a `DropVar` on each listed slot through the destructor the entry
+    /// names, as upstream's unwind blocks call each `__del__`. Drop
+    /// elaboration lists only slots the edge still holds; a vacated slot is a
+    /// no-op to drop.
     pub(super) fn run_cleanup(
         &mut self,
         prog: &Prog,
         function: usize,
-        cleanup: &[VarId],
+        cleanup: &[CleanupDrop],
         vars: &mut [Value],
     ) -> Result<(), RuntimeError> {
-        for &v in cleanup {
-            let old = std::mem::replace(&mut vars[v as usize], Value::None);
-            self.drop_value_as(prog, old, prog.mir.functions[function].1.var_tys.get(&v))?;
+        for drop in cleanup {
+            let old = std::mem::replace(&mut vars[drop.var as usize], Value::None);
+            self.drop_named(
+                prog,
+                old,
+                prog.mir.functions[function].1.var_tys.get(&drop.var),
+                drop.destructor.as_deref(),
+            )?;
         }
         Ok(())
     }

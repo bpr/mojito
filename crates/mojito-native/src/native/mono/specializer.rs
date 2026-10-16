@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_mir::mir::{CleanupDrop, MirTerm};
 use mojito_types::types::TyKind;
 use std::collections::BTreeMap;
 
@@ -4279,92 +4280,110 @@ fn constructed_member(name: &str, template: &str) -> Option<(String, String)> {
 type LifecycleNamer<'n> =
     dyn FnMut(&Ty, &'static str, &mut Option<String>) -> Result<(), MonoError> + 'n;
 
-/// Call `name` on each `drop.var`, `drop.place`, copying or moving
-/// `var.use`, and `value.copy` of `blocks`, regions included, with the
-/// value's type, the member the site runs, and its `destructor` or
-/// `constructor`.
+/// Call `name` on each `drop.var`, `drop.place`, cleanup-list drop,
+/// copying or moving `var.use`, and `value.copy` of `blocks`, regions
+/// included, with the value's type, the member the site runs, and its
+/// `destructor` or `constructor`.
 fn for_each_lifecycle_site_mut(
     blocks: &mut [MirBlock],
     var_tys: &HashMap<mojito_hir::hir::VarId, Ty>,
     reg_types: &HashMap<u32, Ty>,
     name: &mut LifecycleNamer<'_>,
 ) -> Result<(), MonoError> {
-    for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
-        let site = match instruction {
-            MirInstr::DropVar { var, destructor } => {
-                var_tys.get(var).map(|ty| (ty, "__deinit__", destructor))
-            }
-            MirInstr::DropPlace { place, destructor } => {
-                place.ty.as_ref().map(|ty| (ty, "__deinit__", destructor))
-            }
-            MirInstr::UseVar {
-                var,
-                mode,
-                constructor,
-                ..
-            } => var_tys
-                .get(var)
-                .zip(mojito_mir::mir::use_constructor_member(*mode))
-                .map(|(ty, member)| (ty, member, constructor)),
-            MirInstr::CopyValue {
-                dest, constructor, ..
-            } => reg_types
-                .get(&dest.0)
-                .map(|ty| (ty, "__copyinit__", constructor)),
-            MirInstr::MakeClosure { captures, .. } => {
-                for capture in captures {
-                    if let Some((ty, member)) = capture
-                        .place
-                        .storage_ty(var_tys)
-                        .zip(capture.constructor_member())
-                    {
-                        name(ty, member, &mut capture.constructor)?;
-                    }
-                }
-                None
-            }
-            MirInstr::MakeVariant {
-                alternatives,
-                index,
-                constructor,
-                ..
-            } => mojito_mir::mir::variant_payload_ty(alternatives, index)
-                .map(|ty| (ty, "__copyinit__", constructor)),
-            MirInstr::VariantSet {
-                place,
-                index,
-                constructor,
-                ..
-            }
-            | MirInstr::VariantReplace {
-                place,
-                input_index: index,
-                constructor,
-                ..
-            } => mojito_mir::mir::variant_place_payload_ty(place, index, var_tys)
-                .map(|ty| (ty, "__copyinit__", constructor)),
-            MirInstr::MethodCall {
-                dest,
-                result_adapter: Some(adapter),
-                ..
-            } => reg_types
-                .get(&dest.0)
-                .map(|ty| (ty, "__copyinit__", &mut adapter.constructor)),
-            MirInstr::TryNext {
-                dest,
-                call,
-                adapter_constructor,
-                ..
-            } if call.result_adapter.is_some() => reg_types
-                .get(&dest.0)
-                .map(|ty| (ty, "__copyinit__", adapter_constructor)),
-            _ => None,
-        };
-        if let Some((ty, member, symbol)) = site {
-            name(ty, member, symbol)?;
+    let name_cleanup = |cleanup: &mut [CleanupDrop], name: &mut LifecycleNamer<'_>| {
+        cleanup.iter_mut().try_for_each(|drop| {
+            var_tys
+                .get(&drop.var)
+                .map_or(Ok(()), |ty| name(ty, "__deinit__", &mut drop.destructor))
+        })
+    };
+    for block in blocks.iter_mut() {
+        if let MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } =
+            &mut block.term
+        {
+            name_cleanup(cleanup, name)?;
         }
-        for region in mojito_mir::mir::instruction_regions_mut(instruction) {
-            for_each_lifecycle_site_mut(region, var_tys, reg_types, name)?;
+        for instruction in &mut block.instrs {
+            let site = match instruction {
+                MirInstr::DropVar { var, destructor } => {
+                    var_tys.get(var).map(|ty| (ty, "__deinit__", destructor))
+                }
+                MirInstr::DropPlace { place, destructor } => {
+                    place.ty.as_ref().map(|ty| (ty, "__deinit__", destructor))
+                }
+                MirInstr::UseVar {
+                    var,
+                    mode,
+                    constructor,
+                    ..
+                } => var_tys
+                    .get(var)
+                    .zip(mojito_mir::mir::use_constructor_member(*mode))
+                    .map(|(ty, member)| (ty, member, constructor)),
+                MirInstr::CopyValue {
+                    dest, constructor, ..
+                } => reg_types
+                    .get(&dest.0)
+                    .map(|ty| (ty, "__copyinit__", constructor)),
+                MirInstr::MakeClosure { captures, .. } => {
+                    for capture in captures {
+                        if let Some((ty, member)) = capture
+                            .place
+                            .storage_ty(var_tys)
+                            .zip(capture.constructor_member())
+                        {
+                            name(ty, member, &mut capture.constructor)?;
+                        }
+                    }
+                    None
+                }
+                MirInstr::Try { cleanup, .. } => {
+                    name_cleanup(cleanup, name)?;
+                    None
+                }
+                MirInstr::MakeVariant {
+                    alternatives,
+                    index,
+                    constructor,
+                    ..
+                } => mojito_mir::mir::variant_payload_ty(alternatives, index)
+                    .map(|ty| (ty, "__copyinit__", constructor)),
+                MirInstr::VariantSet {
+                    place,
+                    index,
+                    constructor,
+                    ..
+                }
+                | MirInstr::VariantReplace {
+                    place,
+                    input_index: index,
+                    constructor,
+                    ..
+                } => mojito_mir::mir::variant_place_payload_ty(place, index, var_tys)
+                    .map(|ty| (ty, "__copyinit__", constructor)),
+                MirInstr::MethodCall {
+                    dest,
+                    result_adapter: Some(adapter),
+                    ..
+                } => reg_types
+                    .get(&dest.0)
+                    .map(|ty| (ty, "__copyinit__", &mut adapter.constructor)),
+                MirInstr::TryNext {
+                    dest,
+                    call,
+                    adapter_constructor,
+                    ..
+                } if call.result_adapter.is_some() => reg_types
+                    .get(&dest.0)
+                    .map(|ty| (ty, "__copyinit__", adapter_constructor)),
+                _ => None,
+            };
+            if let Some((ty, member, symbol)) = site {
+                name(ty, member, symbol)?;
+            }
+            for region in mojito_mir::mir::instruction_regions_mut(instruction) {
+                for_each_lifecycle_site_mut(region, var_tys, reg_types, name)?;
+            }
         }
     }
     Ok(())

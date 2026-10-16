@@ -541,14 +541,14 @@ fn block_field_live_out(
         | MirTerm::Unreachable => FieldSet::new(),
         MirTerm::ReturnWithCleanup { cleanup, .. } => {
             let mut out = seeds.finally_live.clone();
-            if cleanup.contains(&root.var) {
+            if cleanup_drops(cleanup, root.var) {
                 out.extend(root.all.iter().copied());
             }
             out
         }
         MirTerm::EscapeJump { target, cleanup } => {
             let mut out = seeds.finally_live.clone();
-            if cleanup.contains(&root.var) {
+            if cleanup_drops(cleanup, root.var) {
                 out.extend(root.all.iter().copied());
             }
             if let Some(live) = seeds.top_live_in.get(*target) {

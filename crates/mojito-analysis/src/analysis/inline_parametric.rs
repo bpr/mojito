@@ -88,13 +88,13 @@ use mojito_mir::mir::visit::{
     MutTypeVisitor, ParamArgSite, ParamDeclSite, TySite, walk_function_mut,
 };
 use mojito_mir::mir::{
-    Const, FuncRef, MirBlock, MirBlockId, MirCaptureMode, MirClosureCapture, MirDeclarations,
-    MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg, MirPlace, MirSubscriptCall,
-    MirTerm, Proj, Reg, UseMode, block_successors, count_register_reads, erase_removed_operands,
-    has_no_destructor, instruction_regions, instruction_regions_mut, instruction_regs_mut,
-    instruction_slots, name_constructors, region_escape_targets, removed_argument_operands,
-    renumber_block_slots, terminator_regs_mut, terminator_targets, terminator_targets_mut,
-    without_removed_arguments,
+    CleanupDrop, Const, FuncRef, MirBlock, MirBlockId, MirCaptureMode, MirClosureCapture,
+    MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg, MirPlace,
+    MirSubscriptCall, MirTerm, Proj, Reg, UseMode, block_successors, cleanup_slots,
+    count_register_reads, erase_removed_operands, has_no_destructor, instruction_regions,
+    instruction_regions_mut, instruction_regs_mut, instruction_slots, name_constructors,
+    region_escape_targets, removed_argument_operands, renumber_block_slots, terminator_regs_mut,
+    terminator_targets, terminator_targets_mut, without_removed_arguments,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{
@@ -678,9 +678,13 @@ impl<'c> Inliner<'_, 'c> {
         let mut changed = self.block_list(body, false);
         let held = std::mem::replace(&mut self.raise_held, outer);
         if !held.is_empty() {
-            cleanup.extend(held);
-            cleanup.sort_unstable_by(|a, b| b.cmp(a));
-            cleanup.dedup();
+            let listed: Vec<VarId> = cleanup_slots(cleanup).collect();
+            cleanup.extend(
+                held.into_iter()
+                    .filter(|var| !listed.contains(var))
+                    .map(CleanupDrop::unnamed),
+            );
+            cleanup.sort_unstable_by_key(|drop| std::cmp::Reverse(drop.var));
         }
         for region in handler
             .iter_mut()

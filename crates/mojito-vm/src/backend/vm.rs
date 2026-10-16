@@ -20,8 +20,9 @@ use mojito_checked::checked::CheckedConst;
 use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
-    ConcreteMir, Const, MirBlock, MirCaptureMode, MirFunction, MirInstr, MirIntrinsicSubscript,
-    MirPlace, MirProgram, MirSubscriptArg, MirTerm, Proj, Reg,
+    CleanupDrop, ConcreteMir, Const, MirBlock, MirCaptureMode, MirFunction, MirInstr,
+    MirIntrinsicSubscript, MirPlace, MirProgram, MirSubscriptArg, MirTerm, Proj, Reg,
+    cleanup_drops,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::types::Ty;
@@ -1425,7 +1426,7 @@ enum Flow {
     Normal,
     Return {
         value: Value,
-        cleanup: Vec<VarId>,
+        cleanup: Vec<CleanupDrop>,
     },
     /// A `break`/`continue` that crossed a `try` boundary, already resolved to the
     /// target loop block in the enclosing **function** CFG. Propagates out of the
@@ -1438,7 +1439,7 @@ struct TryRegions<'a> {
     handler: &'a Option<(Option<VarId>, Vec<MirBlock>)>,
     orelse: &'a Option<Vec<MirBlock>>,
     finalbody: &'a Option<Vec<MirBlock>>,
-    cleanup: &'a [VarId],
+    cleanup: &'a [CleanupDrop],
 }
 
 struct ReferencePointerBoundary<'a> {

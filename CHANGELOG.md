@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A cleanup list — a `try`'s raise-edge cleanup, a `return.cleanup`'s, an
+  `escape`'s — now lists drops that name their destructor (R1042), as a
+  `drop.var` does since R1016 and as upstream's destructor insertion names
+  the `__del__` in the unwind blocks: each entry is a `CleanupDrop { var,
+  destructor }`, `name_destructors` names it, the elaborator respells it to
+  the instance, the symbol walks and the verifier hold it to a drop's rule,
+  and the VM's `run_cleanup` and Pliron's edge lowering call it instead of
+  finding it from the slot's type. MIR text 1.72 writes each entry as a
+  `drop { var, destructor }` record and still reads the bare slots of older
+  artifacts. No program's output changes.
 - An owned closure capture, a variant payload store (`variant.make`,
   `variant.set`, `variant.replace`), and the copy a method or iterator
   result adapter makes of a reference-returning `__next__`'s referent name

@@ -46,9 +46,10 @@ use crate::mir::struct_reads::{LayoutReads, StructReads};
 use crate::mir::verify::{instruction_operand_regs, instruction_places, instruction_result_regs};
 use crate::mir::{
     MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg,
-    MirPlace, MirSubscriptArg, MirTerm, Proj, Reg, TyArg, UseMode, count_register_reads,
-    destroyed_structs, instruction_regions, instruction_regions_mut, instruction_slots,
-    instruction_subscript_call, matched_parameter_arguments, supplied_parameter_arguments,
+    MirPlace, MirSubscriptArg, MirTerm, Proj, Reg, TyArg, UseMode, cleanup_slots,
+    count_register_reads, destroyed_structs, instruction_regions, instruction_regions_mut,
+    instruction_slots, instruction_subscript_call, matched_parameter_arguments,
+    supplied_parameter_arguments,
 };
 use mojito_ast::ast::InfixOp;
 use mojito_hir::hir::VarId;
@@ -1045,7 +1046,7 @@ impl SlotReads<'_> {
             if let MirTerm::ReturnWithCleanup { cleanup, .. }
             | MirTerm::EscapeJump { cleanup, .. } = &block.term
             {
-                self.drops(cleanup);
+                self.drops(cleanup_slots(cleanup));
             }
         }
     }
@@ -1054,16 +1055,14 @@ impl SlotReads<'_> {
         match instruction {
             MirInstr::DropVar { var, .. }
             | MirInstr::ConsumeVar { var }
-            | MirInstr::DeclareVar { var } => {
-                self.drops(std::slice::from_ref(var));
-            }
+            | MirInstr::DeclareVar { var } => self.drops([*var]),
             MirInstr::Try {
                 handler, cleanup, ..
             } => {
                 if let Some((Some(binding), _)) = handler {
                     self.read(*binding);
                 }
-                self.drops(cleanup);
+                self.drops(cleanup_slots(cleanup));
             }
             _ => {
                 for slot in instruction_slots(instruction) {
@@ -1074,8 +1073,8 @@ impl SlotReads<'_> {
     }
 
     /// Dropping a slot reads its value only when a destructor runs on it.
-    fn drops(&mut self, slots: &[VarId]) {
-        for &slot in slots {
+    fn drops(&mut self, slots: impl IntoIterator<Item = VarId>) {
+        for slot in slots {
             if !self.callables.contains(&slot)
                 && !self
                     .function

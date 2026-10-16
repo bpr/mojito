@@ -429,7 +429,7 @@ pub(super) fn elaborate_try_interior(
     // the raise edge ends those a raise holds, and no raise holds the rest.
     // So no escape out of the handler destroys them again.
     if let Some((_, h)) = handler {
-        strip_escape_cleanups(h, cleanup);
+        strip_escape_cleanups(h, &cleanup_slots(cleanup).collect::<Vec<_>>());
     }
 
     // Handler/`else`/`finally` run after an arbitrary body prefix, so their
@@ -582,14 +582,14 @@ pub(super) fn elaborate_try_interior(
     // The raise edge destroys the body's locals and the seeded outer values
     // a raise in the body still holds; nothing else runs it.
     let mut listed = region_cleanup_vars(body, ctx.function_defs);
-    for v in cleanup.drain(..) {
+    for v in cleanup_slots(cleanup) {
         if !listed.contains(&v) {
             listed.push(v);
         }
     }
     listed.retain(|v| body_held.contains(v) && ctx.droppable(*v));
     listed.sort_unstable_by(|a, b| b.cmp(a));
-    *cleanup = listed;
+    *cleanup = listed.into_iter().map(CleanupDrop::unnamed).collect();
 
     // What a raise leaving the `try` holds: an uncaught body raise past the
     // raise edge, a raise out of the handler or `else`, each past what the
@@ -598,7 +598,7 @@ pub(super) fn elaborate_try_interior(
         Some(_) => HashSet::new(),
         None => body_held
             .into_iter()
-            .filter(|v| !cleanup.contains(v))
+            .filter(|v| !cleanup_drops(cleanup, *v))
             .collect(),
     };
     raise_held.extend(handler_held.into_iter().flatten());
@@ -817,7 +817,7 @@ pub(super) fn elaborate_region_drops(
             } else {
                 MirTerm::ReturnWithCleanup {
                     value,
-                    cleanup: held.clone(),
+                    cleanup: held.iter().copied().map(CleanupDrop::unnamed).collect(),
                 }
             };
         }
@@ -917,7 +917,7 @@ pub(super) fn region_block_live_out(
         | MirTerm::Unreachable => HashSet::new(),
         MirTerm::EscapeJump { target, cleanup } => {
             let mut out = seeds.finally_live.clone();
-            out.extend(cleanup.iter().copied());
+            out.extend(cleanup_slots(cleanup));
             if let Some(live) = seeds.effective_live_in.get(*target) {
                 out.extend(live);
             }
@@ -1222,7 +1222,7 @@ pub(super) fn fill_escape_cleanups(
                         .filter(|v| !dead_at_target.contains(v))
                         .collect();
                     vars.sort_unstable_by(|a, b| b.cmp(a)); // reverse declaration order
-                    *cleanup = vars;
+                    *cleanup = vars.into_iter().map(CleanupDrop::unnamed).collect();
                 }
             }
         }
@@ -1258,7 +1258,7 @@ pub(super) fn strip_escape_cleanups(blocks: &mut [MirBlock], ended: &[VarId]) {
             }
         }
         if let MirTerm::EscapeJump { cleanup, .. } = &mut block.term {
-            cleanup.retain(|v| !ended.contains(v));
+            cleanup.retain(|drop| !ended.contains(&drop.var));
         }
     }
 }
@@ -1804,5 +1804,6 @@ fn seed_raise_cleanup(
                         .is_some_and(|live| live.contains(v))
                 })
         })
+        .map(CleanupDrop::unnamed)
         .collect();
 }

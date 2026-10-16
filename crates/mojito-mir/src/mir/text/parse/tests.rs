@@ -1,7 +1,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use crate::mir::MirResultAdapter;
 use crate::mir::text::write;
+use crate::mir::{CleanupDrop, MirResultAdapter};
 use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy, LaneMask, VariantIndex};
 
@@ -1221,7 +1221,7 @@ fn instruction_families_reprint_byte_identically() {
         instrs: Vec::new(),
         term: MirTerm::ReturnWithCleanup {
             value: Some(Reg(0)),
-            cleanup: vec![1, 2],
+            cleanup: vec![CleanupDrop::unnamed(1), CleanupDrop::unnamed(2)],
         },
     });
     function.blocks.push(MirBlock {
@@ -1317,7 +1317,7 @@ fn nested_try_regions_reprint_without_region_source_marks() {
     let inner_try = MirInstr::Try {
         body: vec![region_block(MirTerm::EscapeJump {
             target: 0,
-            cleanup: vec![1],
+            cleanup: vec![CleanupDrop::unnamed(1)],
         })],
         handler: None,
         orelse: None,
@@ -1335,7 +1335,7 @@ fn nested_try_regions_reprint_without_region_source_marks() {
         handler: Some((Some(3), vec![region_block(MirTerm::TryYield)])),
         orelse: Some(vec![region_block(MirTerm::TryYield)]),
         finalbody: Some(vec![region_block(MirTerm::TryYield)]),
-        cleanup: vec![4, 5],
+        cleanup: vec![CleanupDrop::unnamed(4), CleanupDrop::unnamed(5)],
     };
     let program = program_with(vec![(
         "regions".into(),

@@ -1453,7 +1453,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
                     "finalbody",
                     option(finalbody.as_ref().map(|v| blocks_value(v))),
                 ),
-                ("cleanup", list(cleanup.iter().map(|v| var_value(*v)))),
+                ("cleanup", cleanup_value(cleanup)),
             ],
         ),
         MirInstr::If {
@@ -1639,7 +1639,7 @@ fn term_value(term: &MirTerm) -> String {
             tag,
             &[
                 ("value", option(value.map(reg_value))),
-                ("cleanup", list(cleanup.iter().map(|v| var_value(*v)))),
+                ("cleanup", cleanup_value(cleanup)),
             ],
         ),
         MirTerm::TryYield
@@ -1658,7 +1658,7 @@ fn term_value(term: &MirTerm) -> String {
             tag,
             &[
                 ("target", format!("bb{target}")),
-                ("cleanup", list(cleanup.iter().map(|v| var_value(*v)))),
+                ("cleanup", cleanup_value(cleanup)),
             ],
         ),
     }
@@ -1672,6 +1672,21 @@ fn sequence_fields(source: &ComptimeSequence) -> Vec<(&'static str, String)> {
         ("next_iter", param_expr(&source.next_iter)),
         ("next_value", param_expr(&source.next_value)),
     ]
+}
+
+/// A cleanup list: one `drop` record per slot it drops, each naming its
+/// `destructor` as a `drop.var` does.
+fn cleanup_value(cleanup: &[CleanupDrop]) -> String {
+    list(cleanup.iter().map(|drop| {
+        record(
+            "drop",
+            &with_symbol(
+                vec![("var", var_value(drop.var))],
+                "destructor",
+                drop.destructor.as_deref(),
+            ),
+        )
+    }))
 }
 
 /// A lifecycle site's fields: its operands, then the `destructor` a drop or

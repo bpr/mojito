@@ -19,7 +19,7 @@ impl FnLowering<'_> {
         handler: Option<&(Option<u32>, Vec<MirBlock>)>,
         orelse: Option<&[MirBlock]>,
         finalbody: Option<&[MirBlock]>,
-        cleanup: &[u32],
+        cleanup: &[CleanupDrop],
     ) -> Result<(), PlironError> {
         let region = self.region.expect("lowering is inside a function");
         let after = BasicBlock::new(ctx, None, vec![]);
@@ -103,9 +103,7 @@ impl FnLowering<'_> {
         // position-space region ids must follow the body → handler → orelse
         // → finalbody order `record_last_uses` used.
         self.current = Some(landing);
-        for &var in cleanup {
-            self.lower_drop_var(ctx, var, self.cleanup_destructor(var))?;
-        }
+        self.lower_cleanup_drops(ctx, cleanup)?;
         match handler {
             Some((error_var, handler_blocks)) => {
                 if self.trace_lifecycle {
@@ -355,9 +353,7 @@ impl FnLowering<'_> {
             ExitAction::Return { cleanup } => {
                 let cleanup = cleanup.clone();
                 let overrides = self.exit_sites[site].overrides.clone();
-                for var in cleanup {
-                    self.lower_drop_var(ctx, var, self.cleanup_destructor(var))?;
-                }
+                self.lower_cleanup_drops(ctx, &cleanup)?;
                 // The VM merges an overridden return's cleanup roots after
                 // the overriding return's own (distinct-union; flags make
                 // re-listed roots no-ops), innermost override first.
@@ -451,9 +447,7 @@ impl FnLowering<'_> {
             {
                 let saved = self.current;
                 self.current = Some(case);
-                for var in cleanup {
-                    self.lower_drop_var(ctx, var, self.cleanup_destructor(var))?;
-                }
+                self.lower_cleanup_drops(ctx, &cleanup)?;
                 for inner in inner_overrides.into_iter().rev() {
                     self.emit_pending_resolution(ctx, inner)?;
                 }
@@ -628,12 +622,9 @@ impl FnLowering<'_> {
     pub(super) fn emit_scope_exit_cleanups(
         &mut self,
         ctx: &mut Context,
-        edge_cleanup: &[u32],
+        edge_cleanup: &[CleanupDrop],
     ) -> Result<(), PlironError> {
-        for &var in edge_cleanup {
-            self.lower_drop_var(ctx, var, self.cleanup_destructor(var))?;
-        }
-        Ok(())
+        self.lower_cleanup_drops(ctx, edge_cleanup)
     }
 
     /// The `(data, len)` byte pair of a string-carrying register: a

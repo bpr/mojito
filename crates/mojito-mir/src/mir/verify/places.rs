@@ -77,8 +77,8 @@ pub(super) fn verify_terminator(
                 ));
             }
             if let MirTerm::ReturnWithCleanup { cleanup, .. } = terminator {
-                for variable in cleanup {
-                    if *variable as usize >= function.n_vars {
+                for variable in cleanup_slots(cleanup) {
+                    if variable as usize >= function.n_vars {
                         errors.push(format!(
                             "{prefix}: return cleanup uses invalid variable {variable}"
                         ));

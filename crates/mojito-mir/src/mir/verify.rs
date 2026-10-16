@@ -32,8 +32,8 @@
 //!   it already dropped, consumed, or moved.
 
 use super::{
-    FuncRef, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
-    MirIntrinsicSubscript, MirPlace, MirProgram, MirTerm, Proj, Reg,
+    CleanupDrop, FuncRef, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
+    MirIntrinsicSubscript, MirPlace, MirProgram, MirTerm, Proj, Reg, cleanup_slots,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::origin::{Mutability, PointerOrigin};

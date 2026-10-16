@@ -47,10 +47,17 @@ impl<'a> FnLowering<'a> {
         candidates.resolve(method, argc)
     }
 
-    /// The destructor a cleanup list's or a frame exit's drop of `var` runs,
-    /// which no instruction names: [`Self::type_destructor`] of its slot.
-    pub(super) fn cleanup_destructor(&self, var: u32) -> Option<&'a str> {
-        self.type_destructor(self.func.var_tys.get(&var)?)
+    /// A cleanup list's drops, each through the destructor its entry names,
+    /// as upstream's unwind blocks call each `__del__`.
+    pub(super) fn lower_cleanup_drops(
+        &mut self,
+        ctx: &mut Context,
+        cleanup: &[CleanupDrop],
+    ) -> Result<(), PlironError> {
+        for drop in cleanup {
+            self.lower_drop_var(ctx, drop.var, drop.destructor.as_deref())?;
+        }
+        Ok(())
     }
 
     /// `DropVar` — the VM's `drop_named`: nothing for scalars; for aggregates
@@ -638,8 +645,9 @@ impl<'a> FnLowering<'a> {
     }
 
     /// The `__deinit__` the member table of `ty`'s struct records, for a
-    /// teardown no drop instruction names a destructor for.
-    fn type_destructor(&self, ty: &Ty) -> Option<&'a str> {
+    /// teardown no drop instruction names a destructor for: a frame exit's
+    /// backstop drop of a still-live slot.
+    pub(super) fn type_destructor(&self, ty: &Ty) -> Option<&'a str> {
         match ty.kind() {
             TyKind::Struct(name, _) => self.lifecycle_symbol(name, "__deinit__"),
             _ => None,

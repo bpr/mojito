@@ -96,7 +96,7 @@
           },
           bb2 {
             instructions: [
-              try { body: [bb0 { instructions: [var.use { dest: %r9, var: $v2, mode: copy }, var.use { dest: %r10, var: $v0, mode: copy }, binary { op: eq, dest: %r11, a: %r9, b: %r10, resolved: absent, raises: absent }], terminator: branch { condition: %r11, then: bb2, else: bb3 } }, bb1 { instructions: [], terminator: try.yield {} }, bb2 { instructions: [var.use { dest: %r12, var: $v2, mode: copy }, drop.var { var: $v2 }], terminator: return.cleanup { value: present(%r12), cleanup: [$v1] } }, bb3 { instructions: [], terminator: jump { target: bb1 } }], handler: absent, orelse: absent, finalbody: present([bb0 { instructions: [place.load { dest: %r13, place: place { root: $v1, root_type: present(struct_type { name: Res, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } }, call { dest: %r14, func: print, raises: absent, args: [%r13], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: try.yield {} }]), cleanup: [] },
+              try { body: [bb0 { instructions: [var.use { dest: %r9, var: $v2, mode: copy }, var.use { dest: %r10, var: $v0, mode: copy }, binary { op: eq, dest: %r11, a: %r9, b: %r10, resolved: absent, raises: absent }], terminator: branch { condition: %r11, then: bb2, else: bb3 } }, bb1 { instructions: [], terminator: try.yield {} }, bb2 { instructions: [var.use { dest: %r12, var: $v2, mode: copy }, drop.var { var: $v2 }], terminator: return.cleanup { value: present(%r12), cleanup: [drop { var: $v1, destructor: "Res.__deinit__" }] } }, bb3 { instructions: [], terminator: jump { target: bb1 } }], handler: absent, orelse: absent, finalbody: present([bb0 { instructions: [place.load { dest: %r13, place: place { root: $v1, root_type: present(struct_type { name: Res, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } }, call { dest: %r14, func: print, raises: absent, args: [%r13], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: try.yield {} }]), cleanup: [] },
               var.use { dest: %r15, var: $v2, mode: copy },
               drop.var { var: $v2 },
               const { dest: %r16, value: int_literal(1) },
@@ -112,7 +112,7 @@
               drop.var { var: $v2 },
               place.load { dest: %r20, place: place { root: $v1, root_type: present(struct_type { name: Res, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } },
               call { dest: %r21, func: print, raises: absent, args: [%r20], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
-              drop.var { var: $v1 },
+              drop.var { var: $v1, destructor: "Res.__deinit__" },
               const { dest: %r22, value: int_literal(1) },
               unary { op: neg, dest: %r23, a: %r22, raises: absent },
               literal.materialize { dest: %r24, value: %r23, target: Int }

@@ -3,7 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use crate::mir::{LoopLabel, MirElif, MirResultAdapter};
+use crate::mir::{CleanupDrop, LoopLabel, MirElif, MirResultAdapter};
 use mojito_hir::hir::VarId;
 use mojito_types::types::TyKind;
 
@@ -811,7 +811,8 @@ impl Decoder {
                     self.option_value(Some(field))
                         .map(|v| self.region_blocks(v))
                 };
-                let cleanup = self.req(value, fields, "cleanup", |d, v| Some(d.vars(v)))?;
+                let cleanup =
+                    self.req(value, fields, "cleanup", |d, v| Some(d.cleanup_drops(v)))?;
                 Some(MirInstr::Try {
                     body,
                     handler,
@@ -941,12 +942,12 @@ impl Decoder {
             )?)),
             "return.cleanup" => Some(MirTerm::ReturnWithCleanup {
                 value: self.req(value, fields, "value", |d, v| Some(d.option_reg(v)))?,
-                cleanup: self.req(value, fields, "cleanup", |d, v| Some(d.vars(v)))?,
+                cleanup: self.req(value, fields, "cleanup", |d, v| Some(d.cleanup_drops(v)))?,
             }),
             "try.yield" => Some(MirTerm::TryYield),
             "escape" => Some(MirTerm::EscapeJump {
                 target: self.req(value, fields, "target", Self::block_id)?,
-                cleanup: self.req(value, fields, "cleanup", |d, v| Some(d.vars(v)))?,
+                cleanup: self.req(value, fields, "cleanup", |d, v| Some(d.cleanup_drops(v)))?,
             }),
             "yield" => Some(MirTerm::Yield(self.req(
                 value,
@@ -980,6 +981,28 @@ impl Decoder {
                 None
             }
         }
+    }
+
+    /// A cleanup list's `drop` records (schema 1.72): each a `var` and the
+    /// `destructor` it names, absent when it names none. Before 1.72 a list
+    /// held bare slots, read as drops naming no destructor.
+    fn cleanup_drops(&mut self, value: &Value) -> Vec<CleanupDrop> {
+        let Ok(values) = self.list(value) else {
+            return Vec::new();
+        };
+        values
+            .iter()
+            .filter_map(|value| {
+                if !matches!(value.kind, ValueKind::Record(..)) {
+                    return Some(CleanupDrop::unnamed(self.var(value)?));
+                }
+                let fields = self.record(value, "drop").ok()?;
+                let var = self.req(value, fields, "var", Self::var)?;
+                let destructor = self.lifecycle_symbol(fields, "destructor");
+                self.unknown(fields, &["var", "destructor"]);
+                Some(CleanupDrop { var, destructor })
+            })
+            .collect()
     }
 
     /// The lifecycle member a drop (`destructor`, schema 1.67) or a copy or

@@ -56,9 +56,9 @@ use mojito_checked::checked::CheckedConst;
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_common::token::SourceSpan;
 use mojito_mir::mir::{
-    Const as MirConst, MirBlock, MirBlockId, MirCaptureMode, MirClosureCapture, MirDeclarations,
-    MirFunction, MirFunctionDeclaration, MirInstr, MirPlace, MirStructDeclaration, MirTerm, Proj,
-    Reg, UseMode,
+    CleanupDrop, Const as MirConst, MirBlock, MirBlockId, MirCaptureMode, MirClosureCapture,
+    MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace, MirStructDeclaration,
+    MirTerm, Proj, Reg, UseMode,
 };
 use mojito_types::types::{Ty, TyArg, canonical_simd_ty, scalar_simd_dtype};
 
@@ -420,7 +420,7 @@ struct ExitSiteInfo {
 }
 
 enum ExitAction {
-    Return { cleanup: Vec<u32> },
+    Return { cleanup: Vec<CleanupDrop> },
     Escape { target: usize },
 }
 

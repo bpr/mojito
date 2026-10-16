@@ -14,9 +14,9 @@ use std::path::Path;
 // --- Negative coverage: hand-built malformed MIR per verifier check class ---
 
 use mojito::mir::{
-    Const, FuncRef, MirBlock, MirDeclarations, MirFunction, MirInstr, MirInteriorOrigin,
-    MirIntrinsicSubscript, MirLoan, MirParamArg, MirPlace, MirProgram, MirTerm, Proj, Reg,
-    SpanTable, UseMode,
+    CleanupDrop, Const, FuncRef, MirBlock, MirDeclarations, MirFunction, MirInstr,
+    MirInteriorOrigin, MirIntrinsicSubscript, MirLoan, MirParamArg, MirPlace, MirProgram, MirTerm,
+    Proj, Reg, SpanTable, UseMode,
 };
 use mojito::param_expr::{MetaTy, ParamContext, ParamId};
 use mojito::types::DependentType;
@@ -2214,7 +2214,7 @@ fn listed_try(
         handler: handler.map(|blocks| (None, blocks)),
         orelse: None,
         finalbody,
-        cleanup: vec![0],
+        cleanup: vec![CleanupDrop::unnamed(0)],
     }
 }
 
@@ -2246,7 +2246,7 @@ fn verifier_rejects_a_cleanup_list_naming_an_ended_slot() {
         [define_x(), vec![DROP_X]].concat(),
         MirTerm::ReturnWithCleanup {
             value: None,
-            cleanup: vec![0],
+            cleanup: vec![CleanupDrop::unnamed(0)],
         },
     )];
     let findings = slot_end_findings(returned);
@@ -2258,7 +2258,7 @@ fn verifier_rejects_a_cleanup_list_naming_an_ended_slot() {
         Vec::new(),
         MirTerm::ReturnWithCleanup {
             value: None,
-            cleanup: vec![0],
+            cleanup: vec![CleanupDrop::unnamed(0)],
         },
     )];
     let finalbody = vec![block(vec![DROP_X], MirTerm::TryYield)];
@@ -2271,7 +2271,7 @@ fn verifier_rejects_a_cleanup_list_naming_an_ended_slot() {
         vec![DROP_X],
         MirTerm::EscapeJump {
             target: 1,
-            cleanup: vec![0],
+            cleanup: vec![CleanupDrop::unnamed(0)],
         },
     )];
     let escaping = vec![
@@ -2309,7 +2309,7 @@ fn verifier_accepts_a_cleanup_list_naming_a_held_slot() {
         Vec::new(),
         MirTerm::ReturnWithCleanup {
             value: None,
-            cleanup: vec![0],
+            cleanup: vec![CleanupDrop::unnamed(0)],
         },
     )];
     let finalbody = vec![block(

@@ -518,12 +518,6 @@ impl Decoder {
             .unwrap_or_default()
     }
 
-    pub(super) fn vars(&mut self, value: &Value) -> Vec<u32> {
-        self.list(value)
-            .map(|values| values.iter().filter_map(|v| self.var(v)).collect())
-            .unwrap_or_default()
-    }
-
     pub(super) fn option_reg(&mut self, value: &Value) -> Option<Reg> {
         self.option_value(Some(value)).and_then(|v| self.reg(v))
     }

@@ -11,7 +11,9 @@
 //! or a drop naming no destructor tears down whole, and every field type
 //! such a teardown may reach field by field.
 
-use crate::mir::{MirBlock, MirFunction, MirInstr, MirPlace, MirTerm, instruction_regions};
+use crate::mir::{
+    CleanupDrop, MirBlock, MirFunction, MirInstr, MirPlace, MirTerm, instruction_regions,
+};
 use mojito_hir::hir::VarId;
 use mojito_types::types::{Ty, TyKind};
 use std::collections::{HashMap, HashSet};
@@ -118,9 +120,7 @@ impl Walk<'_> {
             if let MirTerm::ReturnWithCleanup { cleanup, .. }
             | MirTerm::EscapeJump { cleanup, .. } = &block.term
             {
-                for &var in cleanup {
-                    self.var(var, true);
-                }
+                self.cleanup(cleanup);
             }
         }
     }
@@ -134,11 +134,7 @@ impl Walk<'_> {
                 None => self.var(*var, true),
             },
             MirInstr::ConsumeVar { var } => self.var(*var, false),
-            MirInstr::Try { cleanup, .. } => {
-                for &var in cleanup {
-                    self.var(var, true);
-                }
-            }
+            MirInstr::Try { cleanup, .. } => self.cleanup(cleanup),
             MirInstr::DropPlace { place, destructor } => match destructor {
                 Some(destructor) => self.named(place.ty.as_ref(), Some(destructor)),
                 None => self.place(place, true),
@@ -160,6 +156,17 @@ impl Walk<'_> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// A cleanup list's drops: each names its destructor as a `drop.var`
+    /// does, or tears its slot down whole.
+    fn cleanup(&mut self, cleanup: &[CleanupDrop]) {
+        for drop in cleanup {
+            match &drop.destructor {
+                Some(destructor) => self.named(self.var_tys.get(&drop.var), Some(destructor)),
+                None => self.var(drop.var, true),
+            }
         }
     }
 

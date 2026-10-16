@@ -91,25 +91,10 @@ which names the upstream pass each one follows. Each is measured by the
     `String`; a closure capturing a `String` by value, dropped; a
     `Tuple[String, Int]` dropped.
   - Name a `destructor` on each primitive, as `drop.place` does since
-    R1016, and respell it in `Specializer::name_lifecycle_calls`; a
-    cleanup list is R1042's and a consumed residue R1043's.
+    R1016 and a cleanup list's entry since R1042, and respell it in
+    `Specializer::name_lifecycle_calls`; a consumed residue is R1043's.
   - Then `destroyed_structs` answers only what no instruction names.
   - Found while landing R1041 (2026-10-16).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
-- [ ] **R1042 A cleanup list names only slots; the backends look up each
-  slot's destructor**
-
-  A `try`'s raise-edge cleanup and a return's or escape's cleanup list are
-  `Vec<VarId>`, so the VM's `run_cleanup` and Pliron's `cleanup_destructor`
-  find each destructor from the slot's type, where upstream emits the
-  destructor calls in the unwind blocks.
-  - Make each entry carry its destructor, as `drop.var` does since R1016,
-    and respell it in `Specializer::name_destructors`.
-  - About 300 uses in 47 files; then delete `cleanup_destructor` and the
-    VM's lookup.
-  - Found while landing R1016 (2026-10-16).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -1040,6 +1025,11 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Fix: drop the flag where the slot's state is static, and file what
     remains (the sweep's comment names compiler-private `StringDict`
     shells).
+  - The sweep is the one drop no MIR instruction names: it finds each
+    slot's destructor by type (`FnLowering::type_destructor`), where every
+    `drop.var` and cleanup-list entry names its own since R1016 and R1042.
+    A slot the sweep still has to drop is one drop elaboration left no
+    `drop.var` for; once each has one, the lookup goes with the sweep.
   - Found while landing R826 (2026-10-14).
   - Depends on R831 (one list over several raise points needs the flag).
   - Model: Fable, Planned.

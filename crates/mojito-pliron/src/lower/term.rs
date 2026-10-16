@@ -80,7 +80,7 @@ impl FnLowering<'_> {
         &mut self,
         ctx: &mut Context,
         value: Option<Reg>,
-        cleanup: &[u32],
+        cleanup: &[CleanupDrop],
     ) -> Result<(), PlironError> {
         let crosses_finally = self.try_frames.iter().any(|frame| frame.finally.is_some());
         if !crosses_finally && self.finally_overrides.is_empty() {
@@ -121,11 +121,9 @@ impl FnLowering<'_> {
         &mut self,
         ctx: &mut Context,
         target: usize,
-        cleanup: &[u32],
+        cleanup: &[CleanupDrop],
     ) -> Result<(), PlironError> {
-        for &var in cleanup {
-            self.lower_drop_var(ctx, var, self.cleanup_destructor(var))?;
-        }
+        self.lower_cleanup_drops(ctx, cleanup)?;
         let crosses_finally = self.try_frames.iter().any(|frame| frame.finally.is_some());
         if !crosses_finally && self.finally_overrides.is_empty() {
             self.emit_scope_exit_cleanups(ctx, &[])?;
@@ -167,7 +165,12 @@ impl FnLowering<'_> {
         // same flags, so this closes only still-live local slots.
         for var in (self.func.n_params..self.func.n_vars).rev() {
             if self.drop_flags.contains_key(&(var as u32)) {
-                self.lower_drop_var(ctx, var as u32, self.cleanup_destructor(var as u32))?;
+                let destructor = self
+                    .func
+                    .var_tys
+                    .get(&(var as u32))
+                    .and_then(|ty| self.type_destructor(ty));
+                self.lower_drop_var(ctx, var as u32, destructor)?;
             }
         }
         // A `deinit` receiver's elaborated `ConsumeVar` consumes its residual

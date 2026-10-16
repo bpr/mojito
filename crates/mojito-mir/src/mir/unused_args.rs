@@ -12,9 +12,9 @@
 use crate::mir::param_uses::{erase_forward_chains, register_reads};
 use crate::mir::verify::instruction_result_regs;
 use crate::mir::{
-    MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace, MirTerm,
-    Reg, SlotParameter, instruction_regions, instruction_regions_mut, instruction_slots,
-    retire_parameters, table_member,
+    CleanupDrop, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
+    MirPlace, MirTerm, Reg, SlotParameter, cleanup_slots, instruction_regions,
+    instruction_regions_mut, instruction_slots, retire_parameters, table_member,
 };
 use mojito_ast::call::{ArgSlot, CallVariadics, MatchError, match_call_slots};
 use mojito_hir::hir::VarId;
@@ -334,8 +334,8 @@ fn names_a_place(ty: &Ty) -> bool {
 /// Add to `used` each slot `blocks` and their regions use ([`used_slots`]),
 /// where `trivial` answers whether dropping a slot runs no code.
 fn collect_used(blocks: &[MirBlock], trivial: &dyn Fn(VarId) -> bool, used: &mut BTreeSet<VarId>) {
-    let cleanup = |slots: &[VarId], used: &mut BTreeSet<VarId>| {
-        used.extend(slots.iter().copied().filter(|&slot| !trivial(slot)));
+    let cleanup = |drops: &[CleanupDrop], used: &mut BTreeSet<VarId>| {
+        used.extend(cleanup_slots(drops).filter(|&slot| !trivial(slot)));
     };
     for block in blocks {
         for instruction in &block.instrs {
@@ -373,7 +373,7 @@ fn remove_drops(blocks: &mut [MirBlock], retired: &BTreeSet<VarId>) {
         );
         for instruction in &mut block.instrs {
             if let MirInstr::Try { cleanup, .. } = instruction {
-                cleanup.retain(|slot| !retired.contains(slot));
+                cleanup.retain(|drop| !retired.contains(&drop.var));
             }
             for region in instruction_regions_mut(instruction) {
                 remove_drops(region, retired);
@@ -382,7 +382,7 @@ fn remove_drops(blocks: &mut [MirBlock], retired: &BTreeSet<VarId>) {
         if let MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } =
             &mut block.term
         {
-            cleanup.retain(|slot| !retired.contains(slot));
+            cleanup.retain(|drop| !retired.contains(&drop.var));
         }
     }
 }

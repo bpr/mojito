@@ -758,8 +758,8 @@ pub fn renumber_block_slots(blocks: &mut [MirBlock], renumber: &dyn Fn(VarId) ->
                 if let Some((Some(slot), _)) = handler {
                     *slot = renumber(*slot);
                 }
-                for var in cleanup {
-                    *var = renumber(*var);
+                for drop in cleanup {
+                    drop.var = renumber(drop.var);
                 }
             }
             for region in instruction_regions_mut(instruction) {
@@ -768,8 +768,8 @@ pub fn renumber_block_slots(blocks: &mut [MirBlock], renumber: &dyn Fn(VarId) ->
         }
         match &mut block.term {
             MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } => {
-                for var in cleanup {
-                    *var = renumber(*var);
+                for drop in cleanup {
+                    drop.var = renumber(drop.var);
                 }
             }
             MirTerm::ComptimeFor { .. }
@@ -964,7 +964,7 @@ fn collect_block_slots(block: &MirBlock, addressed: &mut BTreeSet<VarId>) {
         } = instruction
         {
             addressed.extend(handler.iter().filter_map(|(slot, _)| *slot));
-            addressed.extend(cleanup.iter().copied());
+            addressed.extend(cleanup_slots(cleanup));
         }
         for inner in instruction_regions(instruction).into_iter().flatten() {
             collect_block_slots(inner, addressed);
@@ -972,7 +972,7 @@ fn collect_block_slots(block: &MirBlock, addressed: &mut BTreeSet<VarId>) {
     }
     match &block.term {
         MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } => {
-            addressed.extend(cleanup.iter().copied());
+            addressed.extend(cleanup_slots(cleanup));
         }
         MirTerm::ComptimeFor { .. }
         | MirTerm::Jump(_)
@@ -2263,14 +2263,15 @@ pub enum MirInstr {
     /// `Vec<MirBlock>` with local block ids, entry = block 0) that **shares this
     /// function's register and variable space** — so it addresses the same slots.
     /// `handler` is `Some((error_var, body))` when there is an `except` clause (the
-    /// optional slot binds the caught error). `cleanup` lists the body-local
-    /// variables to drop when the body unwinds (the exceptional-edge cleanup).
+    /// optional slot binds the caught error). `cleanup` lists the drops of
+    /// the body-local variables the body unwinding runs (the
+    /// exceptional-edge cleanup), each naming its destructor.
     Try {
         body: Vec<MirBlock>,
         handler: Option<(Option<VarId>, Vec<MirBlock>)>,
         orelse: Option<Vec<MirBlock>>,
         finalbody: Option<Vec<MirBlock>>,
-        cleanup: Vec<VarId>,
+        cleanup: Vec<CleanupDrop>,
     },
     /// `hlcf.if`: run `then` when `cond` holds; otherwise try each `elifs`
     /// arm in order, running its `cond` region (ended by
@@ -2848,7 +2849,7 @@ pub enum MirTerm {
     /// drops only after every pending `finally` has run.
     ReturnWithCleanup {
         value: Option<Reg>,
-        cleanup: Vec<VarId>,
+        cleanup: Vec<CleanupDrop>,
     },
     /// `lit.try.yield`: a `try` part completed (see
     /// [`hir::Terminator::TryYield`]), so the `try` goes on to its
@@ -2858,11 +2859,12 @@ pub enum MirTerm {
     /// **function** loop: `target` is that loop's exit/header block in the
     /// *enclosing function*'s `blocks` (not the region's). The VM propagates it out
     /// as a `Flow::Jump(target)` — running each `finally` on the way — until the
-    /// function driver jumps there. `cleanup` lists the region-body-local variables
-    /// to drop when this escape edge is taken (filled by drop elaboration).
+    /// function driver jumps there. `cleanup` lists the drops of the
+    /// region-body-local variables this escape edge runs (filled by drop
+    /// elaboration), each naming its destructor.
     EscapeJump {
         target: MirBlockId,
-        cleanup: Vec<VarId>,
+        cleanup: Vec<CleanupDrop>,
     },
     /// `hlcf.yield`: end an [`MirInstr::If`] arm, its values defining the
     /// op's results.
@@ -2891,6 +2893,42 @@ pub enum MirTerm {
     ComptimeContinue,
     /// `hlcf.unreachable`: control never reaches here.
     Unreachable,
+}
+
+/// One drop a cleanup list runs, as a [`MirInstr::DropVar`] does.
+///
+/// A `try`'s raise edge, a [`MirTerm::ReturnWithCleanup`], or a
+/// [`MirTerm::EscapeJump`] drops `var` through `destructor`, the `__deinit__`
+/// its type's member table records, as upstream's destructor insertion
+/// names the `__del__` of each value an unwind block destroys. `None` for a
+/// type naming no destructor, a symbolic one included: drop elaboration's
+/// `name_destructors` names it, and the elaborator names an instance's once
+/// the type is concrete.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CleanupDrop {
+    pub var: VarId,
+    #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
+    pub destructor: Option<String>,
+}
+
+impl CleanupDrop {
+    /// A drop of `var` naming no destructor yet.
+    pub const fn unnamed(var: VarId) -> Self {
+        Self {
+            var,
+            destructor: None,
+        }
+    }
+}
+
+/// The slots the cleanup list `cleanup` drops, in its order.
+pub fn cleanup_slots(cleanup: &[CleanupDrop]) -> impl Iterator<Item = VarId> + '_ {
+    cleanup.iter().map(|drop| drop.var)
+}
+
+/// Whether the cleanup list `cleanup` drops `var`.
+pub fn cleanup_drops(cleanup: &[CleanupDrop], var: VarId) -> bool {
+    cleanup.iter().any(|drop| drop.var == var)
 }
 
 /// One `elif` arm of a [`MirInstr::If`]: the region computing its

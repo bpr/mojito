@@ -3056,11 +3056,15 @@ pub enum MirTerm {
     Jump(MirBlockId),
     Branch { cond: Reg, then_b: MirBlockId, else_b: MirBlockId },
     Return(Option<Reg>),
-    ReturnWithCleanup { value: Option<Reg>, cleanup: Vec<VarId> },
+    ReturnWithCleanup { value: Option<Reg>, cleanup: Vec<CleanupDrop> },
     TryYield,
-    EscapeJump { target: MirBlockId, cleanup: Vec<VarId> },
+    EscapeJump { target: MirBlockId, cleanup: Vec<CleanupDrop> },
 }
 ```
+
+A cleanup list is a `Vec<CleanupDrop>`: each entry names its slot and the
+destructor the drop runs, as a `DropVar` does, so the backends call it
+without looking it up from the slot's type.
 
 `TryYield` (`lit.try.yield`) completes a `try` part and never ends a function
 body. `EscapeJump` is for a `break`/`continue` inside a try region whose
@@ -3849,7 +3853,7 @@ Try {
     handler: Option<(Option<VarId>, Vec<MirBlock>)>,
     orelse: Option<Vec<MirBlock>>,
     finalbody: Option<Vec<MirBlock>>,
-    cleanup: Vec<VarId>,
+    cleanup: Vec<CleanupDrop>,
 }
 ```
 
@@ -4470,9 +4474,13 @@ struct has one. Neither backend traces a synthesized destructor's drop or
 consume. The instruction stays a drop rather than a call: its runtime
 partial-aggregate rule, Pliron's drop and leaf flags, and an owned pack's
 reverse order need drop states upstream's lifetime checker makes definite.
-A cleanup list's slots, a consumed residue, a storage destroy, a variant
-store, and an owned capture still find their destructor from the type
-(`mir::destroyed_structs`); a named drop's fields are its destructor's to
+A cleanup list's entries name their destructor as a `DropVar` does
+(`CleanupDrop`), named by the same `name_destructors` and respelled by the
+same `name_lifecycle_calls`, so the VM's `run_cleanup` and Pliron's
+`lower_cleanup_drops` call it; a consumed residue, a storage destroy, a
+variant store, and an owned capture still find their destructor from the
+type (`mir::destroyed_structs`), as does Pliron's frame-exit sweep of
+still-flagged slots (R832); a named drop's fields are its destructor's to
 name.
 
 Copies and moves name their constructor the same way, from MIR lowering on:

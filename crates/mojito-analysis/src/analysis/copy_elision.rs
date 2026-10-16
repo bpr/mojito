@@ -36,8 +36,9 @@ use super::scan::{for_each_instr_deep, may_raise, var_def, var_uses, vars_moved}
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::instruction_operand_regs;
 use mojito_mir::mir::{
-    FORWARDED_ARGUMENT_SLOT, MirBlock, MirDeclarations, MirFunction, MirInstr, MirPlace, MirTerm,
-    READ_TEMPORARY_SLOT, Reg, UseMode, instruction_regions, instruction_regions_mut,
+    CleanupDrop, FORWARDED_ARGUMENT_SLOT, MirBlock, MirDeclarations, MirFunction, MirInstr,
+    MirPlace, MirTerm, READ_TEMPORARY_SLOT, Reg, UseMode, cleanup_drops, instruction_regions,
+    instruction_regions_mut,
 };
 use std::collections::HashMap;
 
@@ -476,7 +477,7 @@ fn strip_forwarded_slots(blocks: &mut [MirBlock], forwarded: &[VarId]) {
     for block in blocks {
         for instruction in &mut block.instrs {
             if let MirInstr::Try { cleanup, .. } = instruction {
-                cleanup.retain(|var| !forwarded.contains(var));
+                cleanup.retain(|drop| !forwarded.contains(&drop.var));
             }
             for region in instruction_regions_mut(instruction) {
                 strip_forwarded_slots(region, forwarded);
@@ -485,7 +486,7 @@ fn strip_forwarded_slots(blocks: &mut [MirBlock], forwarded: &[VarId]) {
         if let MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } =
             &mut block.term
         {
-            cleanup.retain(|var| !forwarded.contains(var));
+            cleanup.retain(|drop| !forwarded.contains(&drop.var));
         }
     }
 }
@@ -514,12 +515,15 @@ fn rename_deaths(blocks: &mut [MirBlock], sources: &HashMap<VarId, VarId>) {
     }
 }
 
-fn rename_cleanup(cleanup: &mut Vec<VarId>, sources: &HashMap<VarId, VarId>) {
-    let mut renamed = Vec::with_capacity(cleanup.len());
-    for var in cleanup.iter() {
-        let var = sources.get(var).copied().unwrap_or(*var);
-        if !renamed.contains(&var) {
-            renamed.push(var);
+/// Rename each lent slot a cleanup list drops to its source, which has
+/// the slot's type and so keeps the drop's destructor; a source already
+/// listed keeps its one entry.
+fn rename_cleanup(cleanup: &mut Vec<CleanupDrop>, sources: &HashMap<VarId, VarId>) {
+    let mut renamed: Vec<CleanupDrop> = Vec::with_capacity(cleanup.len());
+    for drop in cleanup.drain(..) {
+        let var = sources.get(&drop.var).copied().unwrap_or(drop.var);
+        if !cleanup_drops(&renamed, var) {
+            renamed.push(CleanupDrop { var, ..drop });
         }
     }
     *cleanup = renamed;

@@ -141,7 +141,7 @@ mod tests {
                 .replace("drop.var { var: $v2 },\n              binary", "binary")
                 .replace(
                     "return { value: present(%r5) }",
-                    "return.cleanup { value: present(%r5), cleanup: [$v2] }",
+                    "return.cleanup { value: present(%r5), cleanup: [drop { var: $v2 }] }",
                 );
         assert!(input.contains("return.cleanup"));
         let program = opt(
