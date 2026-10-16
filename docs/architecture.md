@@ -5126,9 +5126,18 @@ point where a slot declared in a loop is uninitialized again.
 - **`inline-parametric` opens the second round and runs again in the third**
   (`analysis::INLINE_PARAMETRIC`, `analysis/inline_parametric.rs`, R784),
   upstream's `InlineParametric`. It follows the callees whose declaration's
-  `InlineLevel` is `NoDebug` or `Builtin` (`is_inlined_before_elaboration`),
-  which the pin inlines at any size, and replaces a call to one with the
-  callee's finished body, drops already inserted. The callee's blocks are
+  `InlineLevel` is `NoDebug`, `Builtin`, or `Always`
+  (`is_inlined_before_elaboration`), and replaces a call to one with the
+  callee's finished body, drops already inserted: a `nodebug` or `builtin`
+  callee at any size, as the pin inlines it, and a plain `@always_inline`
+  callee only while its body's `inline_cost` is below `INLINE_SIZE_BOUND`
+  (32), the pin's count of the operations its first round leaves,
+  calibrated on probe bodies: a slot's reads, stores, and declarations, a
+  copy or drop running no constructor or destructor, and a repeated
+  constant are free, a `branch` costs one as the `hlcf.if` it came from, a
+  loop's back edge four beyond its test and body, `iter.init` the whole
+  bound as the pin's `range` protocol does, and `print` the 28 its call
+  site costs there; each other instruction costs one. The callee's blocks are
   appended to the block list holding the call, the function's or a `try`
   part's, with its registers and slots moved past the caller's
   (`mir::renumber_block_slots`); its slot names gain `$inline{n}`, so no

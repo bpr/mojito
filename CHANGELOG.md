@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A plain `@always_inline` callee is inlined before elaboration when its
+  finished body is small enough (R923), as at the pin: `inline-parametric`
+  now follows `always` callees and prices each body as the pin's size
+  bound does, a count of operations calibrated against the pin on probe
+  bodies, so 31 `s += x` statements inline and 32 keep the call, ten `if`s
+  inline and eleven do not, four `while` loops inline and five do not, one
+  `print` inlines and two do not, and a `for` loop never does. The bundled
+  library's `@inline(.always)` markings now act, so library-heavy programs
+  instantiate fewer functions; the inlined code takes the call's location
+  (R1074), `print` and `for` are priced by observation (R1075), and a
+  slot with several stores is not folded before pricing (R1076)
+  (assets/ok/always_inline_small_calls.mojo).
 - A function with a homogeneous collector (`*args: T`) has one instance
   for every call arity (R1040), as at the pin, where each arity had its
   own: the elaborator no longer keys the instance by the overflow count,

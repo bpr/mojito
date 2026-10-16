@@ -252,3 +252,16 @@ fn pliron_debug_inlined_nodebug_calls_degrade_nothing() {
         Vec::<String>::new()
     );
 }
+
+/// A small plain `@always_inline` callee inlined before elaboration brings
+/// its registers at the call's location too (R1074 keeps the callee's own
+/// under `inlinedAt`), so nothing degrades.
+#[test]
+fn pliron_debug_inlined_small_always_calls_degrade_nothing() {
+    let source = include_str!("../assets/ok/always_inline_small_calls.mojo");
+    let module = native_compile(source);
+    assert_eq!(
+        module.debug_degradations().expect("debug attach"),
+        Vec::<String>::new()
+    );
+}

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1074**.
+Next free ID: **R1077**.
 
 ## Ordered Work
 
@@ -430,21 +430,38 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R923 Small `@always_inline` callees are not inlined before
-  elaboration**
+- [ ] **R1075 `inline_cost` prices `print` and a `for` loop by
+  observation, not by their operations**
 
-  The pin inlines a plain `@always_inline` callee below a size bound (16
-  `s += i` statements, but not 24, nor a `for range` loop), and
-  `inline-parametric` follows only `nodebug` and `builtin`.
-  - Calibrate a cost measure against such probes instead of inventing a
-    heuristic.
-  - Unlike `nodebug`, upstream keeps such a callee's locations as
-    `inlinedAt` scopes, so the pliron debug attach needs an answer for a
-    callee span in another file first.
-  - Done when the probes' boundary matches the pin's and the heavy lane's
-    debug premise holds.
-  - Depends on R916.
-  - Model: Fable, Not Planned.
+  A `print` call costs 28 and an `iter.init` the whole bound in
+  `inline_cost`, the figures the pin's probes show, because both are
+  builtins here where the pin lowers library code: the `print` call site's
+  pack and default arguments, and `range`'s inlined iterator methods.
+  - Once each is the library call the pin makes, as `len` becomes through
+    R988, the operation count prices it without a figure of its own.
+  - Done when both prices are gone and `show`, `show_twice`, and `sum_to`
+    in `assets/ok/always_inline_small_calls.mojo` still decide as the pin
+    does.
+  - Found while landing R923 (2026-10-16).
+  - Depends on R988.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1076 A comparison of a register with itself is not folded**
+
+  `var s = x` then `if s < x:` tests one value against itself, which the
+  pin folds to `False` once `Mem2Reg` has promoted `s`, so a plain
+  `@always_inline` body of sixteen such `if`s inlines there and is priced
+  as live code here, keeping its call.
+  - Fold an integer `lt`, `gt`, or `ne` of one register with itself to
+    `False`, and `le`, `ge`, or `eq` to `True`, in
+    `MirInstr::folded_constant`; a float comparison stays, for NaN.
+  - The slot itself is promoted only once R927 lands, since its arm
+    stores to it.
+  - Done when such a body inlines, pin-checked, and a `canonicalize`
+    pass case pins the fold.
+  - Found while landing R923 (2026-10-16).
+  - Depends on R927.
+  - Model: Opus, Not Planned.
 
 - [ ] **R924 Mojito inlines `nodebug` callees the pin refuses**
 
@@ -1246,6 +1263,25 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Found while landing R986 (2026-10-16).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R1074 Natively, an inlined small `@always_inline` callee's code
+  is located at the call, not at its own lines under an `inlinedAt` scope**
+
+  `inline-parametric` gives every register a plain `@always_inline` callee
+  brings the call's location, as it gives a `nodebug` callee's, where the
+  pin keeps the callee's own locations under an `inlinedAt` scope naming
+  the call.
+  - A location has no scope chain: `SourceSpan` is one file and span, and
+    the pliron debug attach degrades a function whose call locations lie
+    in another file, which an inlined library callee's would.
+  - Give a MIR location an optional inlined-at location, emit it as a
+    `DILocation` with `inlinedAt` over the callee's subprogram, and keep
+    the call-count correlation counting the caller's own calls.
+  - Done when `clamp` in `assets/ok/always_inline_small_calls.mojo` steps
+    at its own lines natively and the heavy lane's debug premise holds.
+  - Found while landing R923 (2026-10-16).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R852 Natively, `~` on a `UInt` is unsupported**
 

@@ -1691,6 +1691,27 @@ corpus `scripts/instantiation-report` row waits for the nightly report. The
 pass's effect on the corpus arrives with the bundled library's markings
 (R786, R913).
 
+## Small `@always_inline` callees inline before elaboration (2026-10-16, R923)
+
+`inline-parametric` now follows a plain `@always_inline` callee too and
+inlines it while its finished body's `inline_cost` is below the pin's bound
+(`docs/architecture.md` §Pre-Elaboration Pipeline). The bundled library's
+`@inline(.always)` markings start to act: the stage fixture,
+`assets/ok/always_inline_small_calls.mojo`, and three library-heavy
+fixtures, debug binary, before and after (output identical in every row):
+
+| fixture | `concrete_functions` | `concrete_instructions` | `generator_instances` |
+|---|---:|---:|---:|
+| `always_inline_small_calls.mojo` | 23 → 13 | 319 → 258 | 3 → 2 |
+| `comptime_for_string_aggregates.mojo` | 34 → 31 | 944 → 982 | 5 → 4 |
+| `comptime_struct_string_field.mojo` | 14 → 13 | 273 → 273 | 3 → 2 |
+| `ctfe_dict_set_result.mojo` | 77 → 68 | 1 061 → 1 093 | 62 → 55 |
+
+Every fixture under `assets/ok`, `assets/ownership_ok`, and
+`assets/runtime_error` prints the same output and exits the same way as
+before; the corpus `scripts/instantiation-report` row waits for the
+nightly report.
+
 ## Trait default wrappers inline before elaboration (2026-10-14, R785)
 
 A trait default's forwarding wrapper is `nodebug`, as upstream's

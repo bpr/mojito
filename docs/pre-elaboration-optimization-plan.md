@@ -257,8 +257,13 @@ folds the operators over it (R840);
      variadics, value parameters, struct methods and constructors, nested
      `def`s, transitive chains, and calls inside the caller's `try`; a
      `nodebug` destructor is inlined at the value's death.
-   - Plain `@always_inline` callees inline only below a size bound (16
-     `s += i` statements inline, 24 do not, nor does a `for range` loop).
+   - Plain `@always_inline` callees inline only below a size bound, a
+     count of the operations left after the first round: 31 `s += x`
+     statements inline and 32 do not, ten `if`s and not eleven, seven
+     `if`/`else`s and not eight, four `while` loops and not five, fifteen
+     `s += f(x)` calls and not sixteen, one `print` and not two, and no
+     `for range` loop. Mojito's `inline_cost` prices its own MIR to the
+     same boundaries (R923).
    - Nothing else inlines: a plain `def`, `@no_inline`, a trait-dispatched
      call, a callee holding a `try`, and a few `String`-literal shapes stay
      calls; a recursive `@always_inline` function is an error.
@@ -270,7 +275,7 @@ folds the operators over it (R840);
    parameter, or a `read` one of a scalar type, is a fresh slot the argument
    initializes; any other `read` parameter is the caller's place the
    argument was loaded from. The remaining shapes are `pmir` entries R915
-   through R923; the pin's refusals Mojito lacks are R924 (shapes it keeps
+   through R922, and a small plain `@always_inline` callee inlines too (R923); the pin's refusals Mojito lacks are R924 (shapes it keeps
    as calls) and R925 (a recursive `@always_inline` function, an error on
    the pin). The
    corpus holds no `nodebug` or `builtin` callee outside

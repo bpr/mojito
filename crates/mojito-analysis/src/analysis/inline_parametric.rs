@@ -1,13 +1,16 @@
 //! `inline-parametric`: upstream's `InlineParametric`, which its
 //! pre-elaboration pipeline runs to open its second round, so that a call
 //! to an `@always_inline("nodebug")` or `@always_inline("builtin")`
-//! function holds the callee's body instead of naming an instance of it.
+//! function, or to a plain `@always_inline` function small enough, holds
+//! the callee's body instead of naming an instance of it.
 //!
 //! The callee's body is its finished one, drops already inserted, so its
 //! drops come with it. Every register it brings takes the call's location,
 //! which is what `nodebug` asks for: the inlined code steps as the call.
-//! The pin inlines such a callee at any size, and refuses one that lies on a
-//! cycle of such calls or holds a `try`.
+//! The pin inlines a `nodebug` or `builtin` callee at any size and a plain
+//! `@always_inline` one below a size bound ([`INLINE_SIZE_BOUND`] over
+//! [`inline_cost`]), and refuses one that lies on a cycle of such calls or
+//! holds a `try`.
 //!
 //! A callee this pass inlines is a function, a method, a subscript's
 //! accessor, which calls it on the subscripted base, a struct's one
@@ -85,12 +88,13 @@ use mojito_mir::mir::visit::{
     MutTypeVisitor, ParamArgSite, ParamDeclSite, TySite, walk_function_mut,
 };
 use mojito_mir::mir::{
-    Const, FuncRef, MirBlock, MirCaptureMode, MirClosureCapture, MirDeclarations, MirFunction,
-    MirFunctionDeclaration, MirInstr, MirParamArg, MirPlace, MirSubscriptCall, MirTerm, Proj, Reg,
-    UseMode, count_register_reads, erase_removed_operands, has_no_destructor, instruction_regions,
-    instruction_regions_mut, instruction_regs_mut, instruction_slots, name_constructors,
-    region_escape_targets, removed_argument_operands, renumber_block_slots, terminator_regs_mut,
-    terminator_targets, terminator_targets_mut, without_removed_arguments,
+    Const, FuncRef, MirBlock, MirBlockId, MirCaptureMode, MirClosureCapture, MirDeclarations,
+    MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg, MirPlace, MirSubscriptCall,
+    MirTerm, Proj, Reg, UseMode, block_successors, count_register_reads, erase_removed_operands,
+    has_no_destructor, instruction_regions, instruction_regions_mut, instruction_regs_mut,
+    instruction_slots, name_constructors, region_escape_targets, removed_argument_operands,
+    renumber_block_slots, terminator_regs_mut, terminator_targets, terminator_targets_mut,
+    without_removed_arguments,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{
@@ -111,16 +115,68 @@ pub const INLINE_PARAMETRIC: CallGraphPass = CallGraphPass {
     run: inline_parametric,
 };
 
-/// Whether upstream inlines every call of a function so declared.
+/// Whether upstream's `InlineParametric` reads the body of a function so
+/// declared: the calls to one are the edges of the call graph the pass
+/// walks.
 ///
 /// It inlines an `@always_inline("nodebug")` or `@always_inline("builtin")`
-/// callee before elaboration at any size; a plain `@always_inline` callee
-/// only below a size bound.
+/// callee before elaboration at any size, and a plain `@always_inline`
+/// callee whose finished body's [`inline_cost`] is below
+/// [`INLINE_SIZE_BOUND`].
 pub const fn is_inlined_before_elaboration(declaration: &MirFunctionDeclaration) -> bool {
     matches!(
         declaration.inline,
-        InlineLevel::NoDebug | InlineLevel::Builtin
+        InlineLevel::NoDebug | InlineLevel::Builtin | InlineLevel::Always
     )
+}
+
+/// The [`inline_cost`] from which a plain `@always_inline` callee keeps its
+/// calls: the pin inlines a body of 31 `s += x` statements and keeps one of
+/// 32.
+pub const INLINE_SIZE_BOUND: usize = 32;
+
+/// The size of `callee`'s finished body as the pin's bound measures it: a
+/// count of the operations its own lowering would hold, calibrated against
+/// the pin on probe bodies.
+///
+/// The pin counts the operations left after its first round, so what that
+/// round erases is free: a slot's reads, stores, and declarations, which
+/// its `Mem2Reg` promotes, a copy or drop that runs no constructor or
+/// destructor, and every constant but the first of its value, which its
+/// canonicalizer folds into one. Each other instruction is one operation.
+/// Control flow is priced as the structured ops the pin holds before it
+/// lowers them: a `branch` is the `hlcf.if` it came from, and a loop's
+/// back edge the four operations its loop, its condition's test, and its
+/// break and continue cost there beyond its own test and body. A `for`
+/// loop's iterator protocol costs at least the bound at the pin, where
+/// `range`'s inlined methods alone keep `for i in range(3): s += x` a
+/// call, so `iter.init` is priced at the bound; `print`, a builtin call
+/// here, costs the pin's 28, where `print(s)` inlines alone and keeps the
+/// call with four statements more.
+pub fn inline_cost(callee: &MirFunction) -> usize {
+    let mut constants = BTreeSet::new();
+    let mut cost = 0;
+    for block in &callee.blocks {
+        for instruction in &block.instrs {
+            cost += match instruction {
+                MirInstr::Const { k, .. } => usize::from(constants.insert(format!("{k:?}"))),
+                MirInstr::UseVar { constructor, .. } => usize::from(constructor.is_some()),
+                MirInstr::DropVar { destructor, .. } => usize::from(destructor.is_some()),
+                MirInstr::DefVar { .. }
+                | MirInstr::DeclareVar { .. }
+                | MirInstr::Store { .. }
+                | MirInstr::Drop { .. }
+                | MirInstr::KeepAlive { .. } => 0,
+                MirInstr::GetIter { .. } => INLINE_SIZE_BOUND,
+                MirInstr::Call { func, .. } if func.0 == "print" => PRINT_COST,
+                _ => 1,
+            };
+        }
+        if matches!(block.term, MirTerm::Branch { .. }) {
+            cost += 1;
+        }
+    }
+    cost + LOOP_COST * back_edges(&callee.blocks)
 }
 
 /// Inline into `function` every call [`Callees::body`] answers whose shape
@@ -155,6 +211,14 @@ pub fn inline_parametric(
     }
     changed
 }
+
+/// What a loop costs at the pin beyond its test and body: the pin keeps a
+/// body of five `while s < x: s += x` loops and inlines one of four.
+const LOOP_COST: usize = 4;
+
+/// What a `print` call costs at the pin: `print(s)` inlines alone and keeps
+/// the call with four `s += x` statements more.
+const PRINT_COST: usize = 28;
 
 /// The caller, its blocks taken out, and where its callees come from.
 struct Inliner<'f, 'c> {
@@ -852,6 +916,9 @@ impl<'c> Inliner<'_, 'c> {
         };
         let callee = reduced.as_ref().unwrap_or(full);
         let declaration = declaration.as_ref();
+        if declaration.inline == InlineLevel::Always && inline_cost(callee) >= INLINE_SIZE_BOUND {
+            return None;
+        }
         let kept = |indexes: &BTreeSet<usize>, length: usize| {
             (0..length)
                 .filter(|index| !indexes.contains(index))
@@ -1616,6 +1683,41 @@ fn composed_place(outer: &MirPlace, inner: &MirPlace) -> MirPlace {
     place.ty.clone_from(&inner.ty);
     place.through = outer.through.or(through);
     place
+}
+
+/// How many edges of `blocks` close a loop: the edges to a block still on
+/// the stack of a depth-first walk from the entry.
+fn back_edges(blocks: &[MirBlock]) -> usize {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Visit {
+        Unseen,
+        Open,
+        Done,
+    }
+    let mut state = vec![Visit::Unseen; blocks.len()];
+    let mut stack: Vec<(MirBlockId, Vec<MirBlockId>)> = Vec::new();
+    let mut back = 0;
+    if blocks.is_empty() {
+        return 0;
+    }
+    state[0] = Visit::Open;
+    stack.push((0, block_successors(&blocks[0])));
+    while let Some((block, successors)) = stack.last_mut() {
+        let Some(next) = successors.pop() else {
+            state[*block] = Visit::Done;
+            stack.pop();
+            continue;
+        };
+        match state[next] {
+            Visit::Open => back += 1,
+            Visit::Done => {}
+            Visit::Unseen => {
+                state[next] = Visit::Open;
+                stack.push((next, block_successors(&blocks[next])));
+            }
+        }
+    }
+    back
 }
 
 /// A fresh register of `function` of type `ty`, located at `span`.
