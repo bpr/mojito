@@ -176,13 +176,8 @@ pub(super) fn function_types(function: &MirFunction) -> impl Iterator<Item = &Ty
 /// that receive them become an `Int` placeholder: a value is the constant `0`,
 /// which a call still passes to an instance that folded the callable into its
 /// identity, so neither verification nor backend lowering sees a fictitious
-/// runtime ABI. The `direct` registers, which hold a nested body every use
-/// of which became a call of its reduced generator, and the variables they
-/// fill, are erased alike.
-pub(super) fn erase_specialized_generic_callable_storage(
-    function: &mut MirFunction,
-    direct: &HashSet<u32>,
-) {
+/// runtime ABI.
+pub(super) fn erase_specialized_generic_callable_storage(function: &mut MirFunction) {
     pub(super) fn erase(
         blocks: &mut [MirBlock],
         generic_regs: &HashSet<u32>,
@@ -234,20 +229,11 @@ pub(super) fn erase_specialized_generic_callable_storage(
         .reg_types
         .iter()
         .filter_map(|(reg, ty)| matches!(ty.kind(), TyKind::GenericFunc(_)).then_some(*reg))
-        .chain(direct.iter().copied())
         .collect::<HashSet<_>>();
     let generic_vars = function
         .var_tys
         .iter()
         .filter_map(|(var, ty)| matches!(ty.kind(), TyKind::GenericFunc(_)).then_some(*var))
-        .chain(
-            nested_instructions(&function.blocks)
-                .into_iter()
-                .filter_map(|instruction| match instruction {
-                    MirInstr::DefVar { var, src, .. } if direct.contains(&src.0) => Some(*var),
-                    _ => None,
-                }),
-        )
         .collect::<HashSet<_>>();
     erase(&mut function.blocks, &generic_regs, &generic_vars);
     for reg in generic_regs {

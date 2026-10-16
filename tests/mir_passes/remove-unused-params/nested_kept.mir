@@ -1,46 +1,41 @@
-mojito-mir 1.60
+mojito-mir 1.69
 artifact {
   features: [],
   files: [
-    file { id: file0, path: present("nested_kept.mojo"), module: absent }
   ],
   traits: [],
   structs: [
   ],
   decls: [
     decl { lowered_name: h, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "h", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
-    decl { lowered_name: "h$inner", param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: present(h), region_binders: [] },
+    decl { lowered_name: "h$inner", param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: present(h), region_binders: [], inline: never },
     decl { lowered_name: outer, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "outer", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
-    decl { lowered_name: "outer$inner", param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: present(outer), region_binders: [] }
+    decl { lowered_name: "outer$inner", param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: present(outer), region_binders: [], inline: never }
   ],
   functions: [
       fn {
         name: h,
-        registers: 3,
-        vars: 1,
-        var_names: [inner],
+        registers: 1,
+        vars: 0,
+        var_names: [],
         params: 0,
         param_types: [],
         owned_params: [],
         deinit_params: [],
         ref_params: [],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: func { environment: thin, param_decls: [], params: [], names: [], return_type: Int, required: [], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [], ref_params: [], ref_return: absent, transfers: [] } }],
+        var_types: [],
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: func { environment: thin, param_decls: [], params: [], names: [], return_type: Int, required: [], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [], ref_params: [], ref_return: absent, transfers: [] } }, reg_type { reg: %r1, type: func { environment: thin, param_decls: [], params: [], names: [], return_type: Int, required: [], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [], ref_params: [], ref_return: absent, transfers: [] } }, reg_type { reg: %r2, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 28, end: 64, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 76, end: 83, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 76, end: 83, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }],
         blocks: [
           bb0 {
             instructions: [
-              closure.make { dest: %r0, function: "h$inner", captures: [] },
-              var.store { var: $v0, src: %r0, binding_type: present(func { environment: thin, param_decls: [], params: [], names: [], return_type: Int, required: [], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [], ref_params: [], ref_return: absent, transfers: [] }), in_place: false },
-              var.use { dest: %r1, var: $v0, mode: borrow_shared },
-              call.indirect { dest: %r2, callee: %r1, resolved: absent, raises: absent, args: [], kwargs: [], callee_place: present(place { root: $v0, root_type: present(func { environment: thin, param_decls: [], params: [], names: [], return_type: Int, required: [], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [], ref_params: [], ref_return: absent, transfers: [] }), projections: [], type: present(func { environment: thin, param_decls: [], params: [], names: [], return_type: Int, required: [], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [], ref_params: [], ref_return: absent, transfers: [] }), through: absent }), arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent },
-              drop.var { var: $v0 }
+              call { dest: %r0, func: "h$inner", raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
-            terminator: return { value: present(%r2) }
+            terminator: return { value: present(%r0) }
           }
         ]
       },
@@ -60,7 +55,7 @@ artifact {
         raises: false,
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 63, end: 64, origin: present($v0) }) }],
+        locations: [reg_loc { reg: %r0, location: absent }],
         blocks: [
           bb0 {
             instructions: [
@@ -73,31 +68,27 @@ artifact {
       },
       fn {
         name: outer,
-        registers: 3,
-        vars: 1,
-        var_names: [inner],
+        registers: 1,
+        vars: 0,
+        var_names: [],
         params: 0,
         param_types: [],
         owned_params: [],
         deinit_params: [],
         ref_params: [],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: func { environment: thin, param_decls: [], params: [], names: [], return_type: Int, required: [], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [], ref_params: [], ref_return: absent, transfers: [] } }],
+        var_types: [],
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: func { environment: thin, param_decls: [], params: [], names: [], return_type: Int, required: [], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [], ref_params: [], ref_return: absent, transfers: [] } }, reg_type { reg: %r1, type: func { environment: thin, param_decls: [], params: [], names: [], return_type: Int, required: [], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [], ref_params: [], ref_return: absent, transfers: [] } }, reg_type { reg: %r2, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 117, end: 153, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 165, end: 172, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 165, end: 172, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }],
         blocks: [
           bb0 {
             instructions: [
-              closure.make { dest: %r0, function: "outer$inner", captures: [] },
-              var.store { var: $v0, src: %r0, binding_type: present(func { environment: thin, param_decls: [], params: [], names: [], return_type: Int, required: [], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [], ref_params: [], ref_return: absent, transfers: [] }), in_place: false },
-              var.use { dest: %r1, var: $v0, mode: borrow_shared },
-              call.indirect { dest: %r2, callee: %r1, resolved: absent, raises: absent, args: [], kwargs: [], callee_place: present(place { root: $v0, root_type: present(func { environment: thin, param_decls: [], params: [], names: [], return_type: Int, required: [], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [], ref_params: [], ref_return: absent, transfers: [] }), projections: [], type: present(func { environment: thin, param_decls: [], params: [], names: [], return_type: Int, required: [], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [], ref_params: [], ref_return: absent, transfers: [] }), through: absent }), arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent },
-              drop.var { var: $v0 }
+              call { dest: %r0, func: "outer$inner", raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
-            terminator: return { value: present(%r2) }
+            terminator: return { value: present(%r0) }
           }
         ]
       },
@@ -117,7 +108,7 @@ artifact {
         raises: false,
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 152, end: 153, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 152, end: 153, origin: absent }) }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }],
         blocks: [
           bb0 {
             instructions: [

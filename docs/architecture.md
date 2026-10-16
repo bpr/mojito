@@ -685,7 +685,14 @@ policy or data-model responsibilities to focused children:
   of that declaration (`Specializer::instantiate_nested_bodies`). One
   declared inside a kept `comptime for` is a generator over the loop's
   index too (`MirFunctionDeclaration::region_binders`), instantiated once
-  per unrolled copy of the loop (`instantiate_region_references`).
+  per unrolled copy of the loop (`instantiate_region_references`). A call
+  of a nested `def` by name is a direct `call` of the lifted function
+  passing the captured places as its leading reference arguments
+  (`Flatten::lower_nested_call`), as the pin calls the lifted closure
+  generator; a closure (`closure.make`) is made at a first-class use, or
+  at the declaration when a capture is copied or moved or a sibling
+  captures the closure itself (`NestedInfo::slotted`), and only a body
+  with a copied or moved capture is called through its closure value.
 - `backend/vm.rs` drives execution; `backend/vm/calls.rs` owns runtime argument
   binding and construction, while `backend/vm/places.rs` owns projected storage
   navigation and access; further `impl VmBackend` clusters live in
@@ -1733,10 +1740,11 @@ A parameter default is declaration metadata too (`CheckedConst`): a literal,
 an `@implicit` conversion of one (`Construct`), or, for any other default,
 `Evaluate`, a zero-parameter function MIR lowers from the default expression
 (`$default$<owner>$<parameter>`) and each call leaving the slot out runs.
-A direct call, a method call, a static-method call, a construction, and a
-nested `def`'s `call.indirect` from the body declaring it, and the
-`call.indirect` of a register statically holding a free function's value,
-evaluate it at the call site, as upstream does: once every declaration is lowered and linked,
+A direct call, a method call, a static-method call, a construction, a
+nested `def`'s direct call from the body declaring it or one nested under
+it, the `call.indirect` of a copy- or move-capturing nested `def`'s closure
+from that body, and the `call.indirect` of a register statically holding a
+free function's value, evaluate it at the call site, as upstream does: once every declaration is lowered and linked,
 and before ownership analysis, `mir::evaluate_omitted_defaults` gives the
 call a call of the default under the call's own `instantiated_args`, the
 receiver type's struct arguments, and the enclosing binders in scope,
@@ -5513,19 +5521,15 @@ point where a slot declared in a loop is uninitialized again.
   that kind, and `infer_call` still binds the parameters the elements
   spell but keys no arity, while an owned `var *args` or `**kwargs` is
   used by its drop, which runs code. A nested body's captures are its
-  leading arguments, candidates like any other (R1014). Every call of a
-  nested body is a `call.indirect` through its closure, which the
-  elaborator rewrites to a direct call of the reduced generator, splicing
-  the reference captures in front; `mir::escaping_nested_bodies`, over the
-  `mir::callable_targets` dataflow both the pass and the elaborator read,
-  names the nested bodies some other use reaches (a function value, a
-  copied or moved capture, a closure the dataflow does not resolve). Only
-  those keep a full instance beside the reduced one
-  (`Specializer::calls_reduced_only`, `nested_templates`), and the
-  enclosing function reads every binder through such a body, whose entry
-  joins the snapshot with no removals; the closure storage of a body with
-  no full instance erases to the `Int` placeholder generic callable
-  storage takes. A method's unused receiver
+  leading arguments, candidates like any other (R1014). A call of a
+  nested body by name is a direct call of it (R1037), which names the
+  reduced generator and drops the removed operands as any direct call
+  does; only a body a closure or function value names (a function value
+  passed on, a copied or moved capture, a sibling-captured closure) keeps
+  a full instance beside the reduced one
+  (`Specializer::instantiate_nested_bodies`), and the enclosing function
+  reads every binder through such a body, whose entry joins the snapshot
+  with no removals. A method's unused receiver
   is a candidate too (R1012): the reduced declaration has no receiver,
   and the `MethodCall` arm becomes a `Call` of the reduced instance with
   no receiver (`Specializer::removes_receiver`), as upstream's

@@ -476,9 +476,14 @@ contains the checker-resolved owner place, exact storage type, and storage mode
 for every environment slot. Lifted capture parameters carry those concrete
 types even when a capture is used only by a descendant or is explicitly unused.
 `imm`, `mut`, and `ref` slots retain frame/slot handles, `var` slots copy their
-value, and moved slots transfer it. Materialization occurs when the nested
-declaration executes, so an owned snapshot is independent of later outer
-assignment and a moved outer binding is unavailable immediately. A retained
+value, and moved slots transfer it. Materialization occurs at a first-class
+use of the nested `def` (a function value passed or stored, a type
+application), or when the declaration executes for a body that copies or
+moves a capture or that a sibling captures, so an owned snapshot is
+independent of later outer assignment and a moved outer binding is
+unavailable immediately; a call by name is a direct `call` of the lifted
+function passing the captured places as its leading arguments and makes no
+closure. A retained
 reference handle does not by itself establish a declaration-to-call loan; its
 access convention is enforced when the closure is used. The verifier checks each
 capture place and the lifted function's leading environment slots. A captured

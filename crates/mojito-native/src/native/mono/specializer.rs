@@ -68,8 +68,6 @@ impl<'a> Specializer<'a> {
             constant_values: HashMap::new(),
             callable_targets: HashMap::new(),
             closure_captures: HashMap::new(),
-            escaping_nested: BTreeSet::new(),
-            nested_templates: HashMap::new(),
             enclosing: Bindings::default(),
             folded_slots: HashSet::new(),
             unreached_failures: HashMap::new(),
@@ -230,46 +228,6 @@ impl<'a> Specializer<'a> {
                 .functions
                 .get(target)
                 .is_some_and(|function| function.removed_args.contains(&0))
-    }
-
-    /// Whether every use of `target`, a body nested in `owner`, is a call
-    /// the elaborator rewrites to name its generator with its unused
-    /// arguments removed, so it has no full instance.
-    pub(super) fn calls_reduced_only(&self, owner: &str, target: &str) -> bool {
-        !self.escaping_nested.contains(target)
-            && self
-                .declarations
-                .get(target)
-                .is_some_and(|declaration| declaration.enclosing.as_deref() == Some(owner))
-            && self
-                .functions
-                .get(target)
-                .is_some_and(|function| !function.removed_args.is_empty())
-    }
-
-    /// The template of the nested body `callable` names, its full instance
-    /// or itself, when that body removed an argument and captures only by
-    /// reference, the environment a direct call passes as leading
-    /// arguments.
-    fn reducing_nested(&self, callable: &str) -> Option<String> {
-        let template = self
-            .nested_templates
-            .get(callable)
-            .map_or(callable, String::as_str);
-        let reduces = self
-            .declarations
-            .get(template)
-            .is_some_and(|declaration| declaration.enclosing.is_some())
-            && self
-                .functions
-                .get(template)
-                .is_some_and(|function| !function.removed_args.is_empty());
-        let by_reference = self.closure_captures.get(callable).is_none_or(|captures| {
-            captures
-                .iter()
-                .all(|capture| capture.mode == MirCaptureMode::Reference)
-        });
-        (reduces && by_reference).then(|| template.to_string())
     }
 
     /// Drop from a direct call of `target`'s reduced generator the
@@ -980,11 +938,6 @@ impl<'a> Specializer<'a> {
             &|callee| Some(self.removed_params(callee, true)),
         );
         let template = forwarded.as_ref().unwrap_or(template);
-        let escaping_nested = mojito_mir::mir::escaping_nested_bodies(template, &|body| {
-            self.declarations
-                .get(body)
-                .is_some_and(|declaration| declaration.enclosing.is_some())
-        });
         let scope = &self.binder_scope(&key.template);
         let mut removed = bindings.removed.clone();
         removed.extend(
@@ -1066,8 +1019,6 @@ impl<'a> Specializer<'a> {
             })
             .collect();
         self.enclosing.clone_from(bindings);
-        self.escaping_nested = escaping_nested;
-        self.nested_templates.clear();
         self.instantiate_nested_bodies(&key.template, &mut function.blocks)?;
         self.constant_values = function_constant_values(&function);
         self.callable_targets = callable_targets(&function);
@@ -1111,13 +1062,7 @@ impl<'a> Specializer<'a> {
             shed_dropped_operand_types(&mut function, &operands);
         }
         retire_forwarded_packs(&mut function);
-        let direct_callables: HashSet<u32> = self
-            .callable_targets
-            .iter()
-            .filter(|(_, (target, _))| self.calls_reduced_only(&key.template, target))
-            .map(|(reg, _)| *reg)
-            .collect();
-        erase_specialized_generic_callable_storage(&mut function, &direct_callables);
+        erase_specialized_generic_callable_storage(&mut function);
 
         if let Some(declaration) = reduced
             .map(|(_, declaration)| declaration)
@@ -1759,8 +1704,6 @@ impl<'a> Specializer<'a> {
             constant_values: std::mem::take(&mut self.constant_values),
             callable_targets: std::mem::take(&mut self.callable_targets),
             closure_captures: std::mem::take(&mut self.closure_captures),
-            escaping_nested: std::mem::take(&mut self.escaping_nested),
-            nested_templates: std::mem::take(&mut self.nested_templates),
             enclosing: std::mem::take(&mut self.enclosing),
             folded_slots: std::mem::take(&mut self.folded_slots),
         }
@@ -1770,8 +1713,6 @@ impl<'a> Specializer<'a> {
         self.constant_values = frame.constant_values;
         self.callable_targets = frame.callable_targets;
         self.closure_captures = frame.closure_captures;
-        self.escaping_nested = frame.escaping_nested;
-        self.nested_templates = frame.nested_templates;
         self.enclosing = frame.enclosing;
         self.folded_slots = frame.folded_slots;
     }
@@ -2223,11 +2164,11 @@ impl<'a> Specializer<'a> {
     }
 
     /// Point each closure and function value naming a body nested in
-    /// `owner` at that body's instance under the instance of `owner` being
-    /// specialized: the nested body is a generator over `owner`'s binders,
-    /// not a function of its own. A body whose every use is a call of its
-    /// reduced generator ([`Self::calls_reduced_only`]) has no full
-    /// instance, and its closure keeps naming the template.
+    /// `owner` at that body's full instance under the instance of `owner`
+    /// being specialized: the nested body is a generator over `owner`'s
+    /// binders, not a function of its own. A call of it by name is a
+    /// direct call, which names its reduced generator as any direct call
+    /// does.
     fn instantiate_nested_bodies(
         &mut self,
         owner: &str,
@@ -2247,14 +2188,11 @@ impl<'a> Specializer<'a> {
                     .is_some_and(|declaration| {
                         declaration.enclosing.as_deref() == Some(owner)
                             && declaration.param_decls.is_empty()
-                    })
-                    && !self.calls_reduced_only(owner, target) =>
+                    }) =>
                 {
                     let (bindings, arguments) =
                         self.nested_bindings(target, &self.enclosing, false)?;
-                    let instance = self.enqueue(target, bindings, arguments)?;
-                    self.nested_templates
-                        .insert(instance.clone(), std::mem::replace(target, instance));
+                    *target = self.enqueue(target, bindings, arguments)?;
                 }
                 MirInstr::Try {
                     body,
@@ -2688,6 +2626,13 @@ impl<'a> Specializer<'a> {
                         instantiated_args,
                         ..
                     } => {
+                        // A body nested in an unrolled region is named as
+                        // its region copy's generator, whose bindings its
+                        // instance inherits.
+                        let region = self.region_generators.get(func.0.as_str()).cloned();
+                        if let Some((template, _)) = &region {
+                            func.0.clone_from(template);
+                        }
                         if !self.functions.contains_key(func.0.as_str()) {
                             // `print` of a nominal struct displays through
                             // `write_to` over the builtin-string writer (the
@@ -2807,7 +2752,7 @@ impl<'a> Specializer<'a> {
                         let receiver = (mojito_symbol::symbol::is_initializer_symbol(&func.0)
                             && function.reg_types.contains_key(&dest.0))
                         .then_some(*dest);
-                        let (target, mut bindings, arguments) = self.infer_call(
+                        let (target, mut bindings, mut arguments) = self.infer_call(
                             owner,
                             function,
                             &func.0,
@@ -2818,6 +2763,25 @@ impl<'a> Specializer<'a> {
                             param_arg_regs,
                             instantiated_args,
                         )?;
+                        // A nested `def` is a generator over its enclosing
+                        // declaration's binders beside its own: its direct
+                        // call binds them from this instance's, or from its
+                        // region copy's.
+                        if self
+                            .declarations
+                            .get(target.as_str())
+                            .is_some_and(|declaration| declaration.enclosing.is_some())
+                        {
+                            let (inherited, inherited_arguments) = self.nested_bindings(
+                                &target,
+                                region
+                                    .as_ref()
+                                    .map_or(&self.enclosing, |(_, bindings)| bindings),
+                                bindings.reduced,
+                            )?;
+                            inherit_bindings(&mut bindings, inherited);
+                            arguments.splice(0..0, inherited_arguments);
+                        }
                         // The instance identity carries the spelled receiver
                         // of a static call, so the resolved call keeps none.
                         if let Some(spelled) = static_receiver.take() {
@@ -3069,18 +3033,11 @@ impl<'a> Specializer<'a> {
                                         }
                                 )
                             });
-                        // A nested body that removed an argument is called
-                        // as its reduced generator, even through the closure
-                        // of its full instance.
-                        let reducing = self
-                            .callable_targets
-                            .get(&callee.0)
-                            .and_then(|(callable, _)| self.reducing_nested(callable));
                         if let Some((callable, captures_are_empty)) =
                             self.callable_targets.get(&callee.0).cloned()
-                            && (captures_are_empty || dependent_callable || reducing.is_some())
+                            && (captures_are_empty || dependent_callable)
                         {
-                            let target = reducing.unwrap_or_else(|| callable.clone());
+                            let target = callable.clone();
                             // The lifted body takes its environment as leading
                             // reference parameters: the direct call passes the
                             // captured places themselves.
@@ -3279,8 +3236,7 @@ impl<'a> Specializer<'a> {
                         let Some(body) = self.functions.get(target.as_str()) else {
                             continue;
                         };
-                        if self.calls_reduced_only(owner, target)
-                            || function_types(body).any(is_symbolic)
+                        if function_types(body).any(is_symbolic)
                             || self
                                 .declarations
                                 .get(target.as_str())

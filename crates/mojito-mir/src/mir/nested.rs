@@ -348,7 +348,9 @@ fn analyze_node(
 
 /// Build the callable registry visible in one lexical function. Direct
 /// declarations and inherited callables are keyed by checked identity, so
-/// same-spelled bindings coexist without shadow-removal heuristics.
+/// same-spelled bindings coexist without shadow-removal heuristics. A
+/// direct declaration is slotted ([`NestedInfo::slotted`]) when it copies
+/// or moves a capture or a sibling captures it.
 fn scope_registry(
     children: &[NestedNode],
     inherited: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
@@ -358,6 +360,18 @@ fn scope_registry(
         info.materialized_here = false;
     }
     for child in children {
+        let slotted = child.captures.iter().any(|capture| {
+            matches!(
+                capture.kind,
+                mojito_ast::ast::CaptureKind::Copy | mojito_ast::ast::CaptureKind::Move
+            )
+        }) || children.iter().any(|sibling| {
+            sibling.binding != child.binding
+                && sibling
+                    .captures
+                    .iter()
+                    .any(|capture| capture.binding == child.binding)
+        });
         registry.insert(
             child.binding,
             NestedInfo {
@@ -365,6 +379,7 @@ fn scope_registry(
                 source_name: child.source_name.clone(),
                 mangled: child.mangled.clone(),
                 materialized_here: true,
+                slotted,
                 captures: child.captures.clone(),
                 callable_ty: child.callable_ty.clone(),
             },
@@ -573,8 +588,11 @@ fn lower_nested_node(
                     .map(|(_, parameter)| is_ref(&parameter.convention)),
             )
             .collect(),
-        // Captured places stay exclusive at the call.
-        param_writes: std::iter::repeat_n(true, captures.len())
+        // An `imm` capture is an immutable borrow at the call; a `mut` or
+        // `ref` one may write its place.
+        param_writes: captures
+            .iter()
+            .map(|capture| capture.kind != mojito_ast::ast::CaptureKind::Imm)
             .chain(effect.param_writes.iter().copied())
             .collect(),
         availability: Vec::new(),

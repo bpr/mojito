@@ -8,7 +8,9 @@
 # `fw` one for every arity, and `fpre` loses `a` but keeps the pack it
 # reads. An owned pack's drop runs code, so `fo` keeps one instance per
 # `n`. `fused` reads its pack, and has one instance for every arity, as
-# every homogeneous collector does.
+# every homogeneous collector does. A call of a nested `def` by name is a
+# direct call of its lifted body, so `h` loses `x`, which only forwards to
+# `ign2`'s removed argument, and has one instance.
 
 
 @fieldwise_init
@@ -78,6 +80,15 @@ def fused(*args: Int) -> Int:
     return len(args)
 
 
+@no_inline
+def h[n: Int](x: Arr[n]) -> Int:
+    @no_inline
+    def ign2(y: Arr[n]) -> Int:
+        return 3
+
+    return ign2(x)
+
+
 def main() raises:
     print(outer(2), cap2(2), esc(1))
     print(
@@ -94,3 +105,4 @@ def main() raises:
         fo(2, Arr[2](SIMD[DType.int64, 2](1))),
     )
     print(fused(1, 2))
+    print(h(Arr[1](SIMD[DType.int64, 1](1))) + h(Arr[2](SIMD[DType.int64, 2](1))))

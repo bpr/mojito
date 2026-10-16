@@ -745,9 +745,11 @@ impl<'c> Inliner<'_, 'c> {
     /// each of its parameters, when the pass inlines the call.
     ///
     /// A call naming an initializer, or a struct (a call of its `__init__`),
-    /// constructs: the initializer's `out self` is the call's result. A call through a closure the caller makes is a
-    /// call of the nested `def` it lifts, whose captures bind the places the
-    /// closure captures.
+    /// constructs: the initializer's `out self` is the call's result. A
+    /// nested `def`'s direct call binds its leading capture parameters to
+    /// the captured places it passes; a call through a closure the caller
+    /// makes is a call of the nested `def` it lifts, whose captures bind
+    /// the places the closure captures.
     fn inlinable(
         &self,
         block: &MirBlock,
@@ -771,7 +773,7 @@ impl<'c> Inliner<'_, 'c> {
                     instantiated_args,
                     spread: None,
                     ..
-                } if capture_accesses.is_empty() => {
+                } if capture_accesses.is_empty() || self.is_nested_body(&func.0) => {
                     let struct_named = self.declarations.structure(&func.0).is_some();
                     let target = if struct_named {
                         Cow::Owned(format!("{}.__init__", func.0))
@@ -1033,6 +1035,15 @@ impl<'c> Inliner<'_, 'c> {
     /// The struct whose method `callee` is, instantiated at `ty`, the type
     /// of the call's receiver or result; `None` when `ty` is no application
     /// of it.
+    /// Whether `name` is a body nested in a declaration: its direct call
+    /// carries the body's own accesses to the captured places, which the
+    /// inlined body then performs itself.
+    fn is_nested_body(&self, name: &str) -> bool {
+        self.declarations
+            .function(name)
+            .is_some_and(|declaration| declaration.enclosing.is_some())
+    }
+
     fn owner(&self, callee: &MirFunction, ty: &Ty) -> Option<Owner<'c>> {
         let TyKind::Struct(template, _) = callee.param_types.first()?.kind() else {
             return None;

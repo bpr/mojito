@@ -310,14 +310,15 @@ impl Specializer<'_> {
         self.instantiate_region_references(frame.template, &mut blocks[first..], iteration)
     }
 
-    /// Point each closure and function value of a region copy that names a
-    /// body nested in `template` inside the region at that body's instance
-    /// under the copy's `iteration`: the nested body is a generator over the
-    /// region's binders, as over its enclosing declaration's, so each clone
-    /// of the region declares its own. A generic nested body names the
-    /// copy's generator instead, whose calls instantiate it with their own
-    /// arguments beside the copy's. One inside a loop nested in this copy
-    /// was pointed at its instance when that loop's copies were.
+    /// Point each direct call, closure, and function value of a region copy
+    /// that names a body nested in `template` inside the region at that
+    /// body's instance under the copy's `iteration`: the nested body is a
+    /// generator over the region's binders, as over its enclosing
+    /// declaration's, so each clone of the region declares its own. A
+    /// generic nested body names the copy's generator instead, whose calls
+    /// instantiate it with their own arguments beside the copy's. One inside
+    /// a loop nested in this copy was pointed at its instance when that
+    /// loop's copies were.
     fn instantiate_region_references(
         &mut self,
         template: &str,
@@ -331,6 +332,10 @@ impl Specializer<'_> {
                 }
                 | MirInstr::Const {
                     k: Const::Function(target),
+                    ..
+                }
+                | MirInstr::Call {
+                    func: mojito_mir::mir::FuncRef(target),
                     ..
                 } => {
                     let Some(generic) =

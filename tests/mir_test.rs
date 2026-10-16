@@ -2668,10 +2668,9 @@ fn reference_iteration_binding_reestablishes_the_source_loans() {
 
 #[test]
 fn nested_call_transfer_installs_loans_on_the_carrier() {
-    // A nested `def` storing its owned parameter into a `mut` carrier lowers
-    // its direct call through `CallIndirect`; the call site still installs
-    // the transferred loan on the carrier's root after the call, exactly
-    // like the direct free-call path.
+    // A nested `def` storing its owned parameter into a `mut` carrier is
+    // called directly, as a free function is; the call site installs the
+    // transferred loan on the carrier's root after the call.
     let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef main():\n    var sink = List[RefBox[MutUnsafeAnyOrigin]]()\n    var local: List[Int] = [9]\n    ref alias = local\n    def stash(mut s: List[RefBox[MutUnsafeAnyOrigin]], var box: RefBox[MutUnsafeAnyOrigin]):\n        s.append(box^)\n    stash(sink, RefBox(alias))\n    print(sink[0].value[0])\n";
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
@@ -2700,8 +2699,10 @@ fn nested_call_transfer_installs_loans_on_the_carrier() {
         .collect::<Vec<_>>();
     let call = instructions
         .iter()
-        .position(|instruction| matches!(instruction, MirInstr::CallIndirect { .. }))
-        .expect("nested call lowers to CallIndirect");
+        .position(|instruction| {
+            matches!(instruction, MirInstr::Call { func, .. } if func.0 == "main$stash")
+        })
+        .expect("nested call lowers to a direct call of the lifted body");
     let install = instructions
         .iter()
         .position(|instruction| {
@@ -3864,8 +3865,9 @@ fn nested_def_statement_materializes_explicit_capture_modes_once() {
 
 #[test]
 fn sibling_capture_keeps_the_materialized_closure_slot_as_its_environment() {
-    use mojito::mir::MirCaptureMode;
-
+    // `helper` copies its capture, so its statement makes and stores its
+    // closure; `caller` captures that slot, and its direct call passes the
+    // slot's place, never `x`'s.
     let src = "def main():\n    var x = 1\n    def helper() {var x} -> Int:\n        return x\n    x = 2\n    def caller() {helper} -> Int:\n        return helper()\n    print(caller())\n";
     let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
     let main = &mir
@@ -3884,20 +3886,22 @@ fn sibling_capture_keeps_the_materialized_closure_slot_as_its_environment() {
         .iter()
         .position(|name| name == "x")
         .expect("x slot") as u32;
-    let caller_capture = main
-        .blocks
+    let instructions: Vec<_> = main.blocks.iter().flat_map(|block| &block.instrs).collect();
+    assert!(instructions.iter().any(|instruction| matches!(
+        instruction,
+        MirInstr::MakeClosure { function, .. } if function == "main$helper"
+    )));
+    let caller_capture = instructions
         .iter()
-        .flat_map(|block| &block.instrs)
         .find_map(|instruction| match instruction {
-            MirInstr::MakeClosure {
-                function, captures, ..
-            } if function == "main$caller" => captures.first(),
+            MirInstr::Call {
+                func, arg_places, ..
+            } if func.0 == "main$caller" => arg_places.first().cloned().flatten(),
             _ => None,
         })
-        .expect("caller closure capture");
-    assert_eq!(caller_capture.place.root, helper_slot);
-    assert_ne!(caller_capture.place.root, x_slot);
-    assert_eq!(caller_capture.mode, MirCaptureMode::Reference);
+        .expect("caller's direct call passes its captured sibling slot");
+    assert_eq!(caller_capture.root, helper_slot);
+    assert_ne!(caller_capture.root, x_slot);
 }
 
 #[test]
@@ -3924,21 +3928,21 @@ fn forwarded_sibling_capture_parameter_keeps_its_callable_type() {
         .iter()
         .flat_map(|block| &block.instrs)
         .find_map(|instruction| match instruction {
-            MirInstr::MakeClosure {
-                function, captures, ..
-            } if function == "outer$middle$inner" => captures.first(),
+            MirInstr::Call {
+                func, arg_places, ..
+            } if func.0 == "outer$middle$inner" => arg_places.first().cloned().flatten(),
             _ => None,
         })
-        .expect("inner captures forwarded helper");
-    assert_eq!(capture.place.root, helper_slot);
+        .expect("inner's direct call passes the forwarded helper");
+    assert_eq!(capture.root, helper_slot);
     assert!(matches!(
-        capture.place.root_ty.as_ref().map(Ty::kind),
+        capture.root_ty.as_ref().map(Ty::kind),
         Some(mojito::TyKind::Func(_))
     ));
 }
 
 #[test]
-fn same_named_block_defs_materialize_distinct_closure_slots() {
+fn same_named_block_defs_call_distinct_lifted_bodies() {
     let src = "def main():\n    if True:\n        def choose() -> Int:\n            return 1\n        print(choose())\n    if True:\n        def choose() -> Int:\n            return 42\n        print(choose())\n";
     let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
     let main = &mir
@@ -3947,25 +3951,137 @@ fn same_named_block_defs_materialize_distinct_closure_slots() {
         .find(|(name, _)| name == "main")
         .expect("main lowered")
         .1;
-    let closure_values: std::collections::HashSet<_> = main
+    let callees: std::collections::HashSet<_> = main
         .blocks
         .iter()
         .flat_map(|block| &block.instrs)
         .filter_map(|instruction| match instruction {
-            MirInstr::MakeClosure { dest, .. } => Some(dest.0),
+            MirInstr::Call { func, .. } if func.0.starts_with("main$choose") => Some(&func.0),
             _ => None,
         })
         .collect();
-    let closure_slots: std::collections::HashSet<_> = main
+    assert_eq!(callees.len(), 2, "{callees:?}");
+}
+
+#[test]
+fn nested_call_by_name_is_a_direct_call_passing_its_captures() {
+    // A call of a nested `def` by name is a direct call of its lifted
+    // body, whose leading parameters are the captures, passed as the
+    // captured places; no closure is made for it. An `imm` capture is a
+    // read parameter, a `mut` one a written one.
+    let src = "def outer(k: Int) -> Int:\n    var m = k\n    def cap(x: Int) {imm k} -> Int:\n        return k + x\n    def bump(x: Int) {mut m} -> Int:\n        m += x\n        return m\n    return cap(5) + bump(1)\n";
+    let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
+    let outer = &mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "outer")
+        .expect("outer lowered")
+        .1;
+    let slot = |name: &str| {
+        outer
+            .var_names
+            .iter()
+            .position(|candidate| candidate == name)
+            .unwrap_or_else(|| panic!("slot {name}")) as u32
+    };
+    let instructions: Vec<_> = outer
         .blocks
         .iter()
         .flat_map(|block| &block.instrs)
-        .filter_map(|instruction| match instruction {
-            MirInstr::DefVar { var, src, .. } if closure_values.contains(&src.0) => Some(*var),
-            _ => None,
-        })
         .collect();
-    assert_eq!(closure_slots.len(), 2, "{:?}", main.var_names);
+    assert!(
+        !instructions.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::MakeClosure { .. } | MirInstr::CallIndirect { .. }
+        )),
+        "no closure stands between the caller and the body"
+    );
+    for (callee, captured) in [("outer$cap", slot("k")), ("outer$bump", slot("m"))] {
+        let (args, arg_places) = instructions
+            .iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::Call {
+                    func,
+                    args,
+                    arg_places,
+                    ..
+                } if func.0 == callee => Some((args, arg_places)),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("direct call of {callee}"));
+        assert_eq!(args.len(), 2);
+        assert_eq!(arg_places.len(), 2);
+        assert_eq!(
+            arg_places[0].as_ref().map(|place| place.root),
+            Some(captured)
+        );
+        assert!(arg_places[1].is_none());
+    }
+    let declaration = |name: &str| {
+        mir.declarations
+            .functions
+            .iter()
+            .find(|declaration| declaration.lowered_name == name)
+            .unwrap_or_else(|| panic!("declaration {name}"))
+    };
+    assert_eq!(declaration("outer$cap").ref_params, [true, false]);
+    assert_eq!(declaration("outer$cap").param_writes, [false, false]);
+    assert_eq!(declaration("outer$bump").param_writes, [true, false]);
+}
+
+#[test]
+fn nested_def_closure_is_made_at_its_first_class_use() {
+    // A nested `def` with reference captures only has no closure slot: a
+    // function value of it is made where it is used, and a call by name
+    // beside that use is still direct.
+    let src = "def apply(f: def(Int) thin -> Int) -> Int:\n    return f(4)\n\ndef esc(k: Int) -> Int:\n    def ign(x: Int) -> Int:\n        return 3\n    return apply(ign) + ign(9)\n";
+    let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
+    let esc = &mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "esc")
+        .expect("esc lowered")
+        .1;
+    let instructions: Vec<_> = esc.blocks.iter().flat_map(|block| &block.instrs).collect();
+    let made = instructions
+        .iter()
+        .filter(|instruction| {
+            matches!(instruction, MirInstr::MakeClosure { function, .. } if function == "esc$ign")
+        })
+        .count();
+    assert_eq!(made, 1, "one closure, the argument of `apply`");
+    assert!(!esc.var_names.iter().any(|name| name == "ign"));
+    assert!(instructions.iter().any(|instruction| matches!(
+        instruction,
+        MirInstr::Call { func, .. } if func.0 == "esc$ign"
+    )));
+}
+
+#[test]
+fn copied_capture_keeps_the_closure_slot_and_the_indirect_call() {
+    let src = "def outer(k: Int) -> Int:\n    var m = k\n    def vc(x: Int) {var m} -> Int:\n        return m + x\n    return vc(2)\n";
+    let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
+    let outer = &mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "outer")
+        .expect("outer lowered")
+        .1;
+    let instructions: Vec<_> = outer
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .collect();
+    assert!(instructions.iter().any(|instruction| matches!(
+        instruction,
+        MirInstr::MakeClosure { function, .. } if function == "outer$vc"
+    )));
+    assert!(outer.var_names.iter().any(|name| name == "vc"));
+    assert!(
+        instructions
+            .iter()
+            .any(|instruction| matches!(instruction, MirInstr::CallIndirect { .. }))
+    );
 }
 
 #[test]
@@ -4227,20 +4343,21 @@ fn nested_origin_specialization_loads_materialized_closure_with_bound_type() {
         .find(|(name, _)| name == "main")
         .expect("main lowered")
         .1;
-    let borrow = main
-        .var_names
-        .iter()
-        .position(|name| name == "borrow")
-        .expect("materialized nested callable") as u32;
+    // `borrow` captures nothing, so it has no closure slot: the type
+    // application makes the closure where it stands, typed by the
+    // checker's specialized callable type.
+    assert!(!main.var_names.iter().any(|name| name == "borrow"));
     let specialized = main
         .blocks
         .iter()
         .flat_map(|block| &block.instrs)
         .find_map(|instruction| match instruction {
-            MirInstr::UseVar { dest, var, .. } if *var == borrow => main.reg_types.get(&dest.0),
+            MirInstr::MakeClosure { dest, function, .. } if function == "main$borrow" => {
+                main.reg_types.get(&dest.0)
+            }
             _ => None,
         })
-        .expect("TypeApply loads the nested closure slot");
+        .expect("TypeApply makes the nested closure");
     assert!(
         specialized
             .as_func()

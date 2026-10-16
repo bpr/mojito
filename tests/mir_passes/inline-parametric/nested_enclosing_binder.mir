@@ -1,8 +1,7 @@
-mojito-mir 1.61
+mojito-mir 1.69
 artifact {
   features: [],
   files: [
-    file { id: file0, path: present("cases.mojo"), module: absent }
   ],
   traits: [],
   structs: [
@@ -14,32 +13,28 @@ artifact {
   functions: [
       fn {
         name: scaled_by,
-        registers: 4,
-        vars: 2,
-        var_names: [x, mul],
+        registers: 2,
+        vars: 1,
+        var_names: [x],
         params: 1,
         param_types: [Int],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: func { environment: thin, param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }],
+        var_types: [var_type { var: $v0, type: Int }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: func { environment: thin, param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }, reg_type { reg: %r1, type: func { environment: thin, param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 42, end: 116, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 129, end: 135, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 133, end: 134, origin: present($v0) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 129, end: 135, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }],
         blocks: [
           bb0 {
             instructions: [
-              closure.make { dest: %r0, function: "scaled_by$mul", captures: [] },
-              var.store { var: $v1, src: %r0, binding_type: present(func { environment: thin, param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] }), in_place: false },
-              var.use { dest: %r1, var: $v1, mode: borrow_shared },
-              var.use { dest: %r2, var: $v0, mode: copy },
-              call.indirect { dest: %r3, callee: %r1, resolved: absent, raises: absent, args: [%r2], kwargs: [], callee_place: present(place { root: $v1, root_type: present(func { environment: thin, param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] }), projections: [], type: present(func { environment: thin, param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] }), through: absent }), arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent },
-              drop.var { var: $v1 }
+              var.use { dest: %r0, var: $v0, mode: copy },
+              call { dest: %r1, func: "scaled_by$mul", raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
-            terminator: return { value: present(%r3) }
+            terminator: return { value: present(%r1) }
           }
         ]
       },
@@ -59,7 +54,7 @@ artifact {
         raises: false,
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 111, end: 112, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 115, end: 116, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 111, end: 116, origin: absent }) }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }],
         blocks: [
           bb0 {
             instructions: [

@@ -52,10 +52,10 @@ impl<'a> Flatten<'a> {
                 kwargs,
             );
         }
-        // A call to a nested `def` (a closure, called by name in scope):
-        // rewrite to its lifted function, prepending the captured enclosing
-        // locals as leading arguments (passed as places, so the `mut`
-        // capture parameters write back — reference-capture semantics).
+        // A call of a nested `def` by name: a direct call of its lifted
+        // body passing the captured places as leading arguments, or, for
+        // a body with a copied or moved capture, a call through its
+        // closure value (`lower_nested_call`).
         if let Some(info) = node
             .binding
             .and_then(|binding| self.nested.get(&binding))

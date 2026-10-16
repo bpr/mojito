@@ -42,8 +42,9 @@ by binders nothing reads.
 ## Order of work
 
 1. **R1037, nested `def` calls are direct.** No dependencies. It retires
-   `callable_targets`/`escaping_nested_bodies` dataflow and unblocks R1080
-   and R1038.
+   the `escaping_nested_bodies` dataflow (`callable_targets` stays for
+   callable binders and function-value calls) and unblocks R1080 and
+   R1038.
 2. **R1077, then R1060, defaults filled at call binding.** The checker
    records every omitted default in the checked call. Then the callee-side
    evaluation and `evaluated_at_call_site`'s guards go.

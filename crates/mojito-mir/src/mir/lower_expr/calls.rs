@@ -278,9 +278,13 @@ impl<'a> Flatten<'a> {
         Some(d)
     }
 
-    /// Lower a call to a nested `def` through the same closure-environment path as
-    /// a first-class closure value. This preserves reference handles across sibling
-    /// calls and recursion; it does not rely on call-return write-back.
+    /// Lower a call of a nested `def` by name. A body whose captures are
+    /// all reference captures this frame holds is called directly, as the
+    /// pin calls the lifted closure generator: a `call` of the lifted body
+    /// passing the captured places as its leading reference arguments. A
+    /// body with a copied or moved capture, or one whose captures this
+    /// lifted frame does not hold (a sibling it reaches only through a
+    /// captured closure value), is called through its closure value.
     pub(in crate::mir) fn lower_nested_call(
         &mut self,
         call: Node<'a>,
@@ -289,6 +293,9 @@ impl<'a> Flatten<'a> {
         args: &[Node<'a>],
         kwargs: &[(&'a str, Node<'a>)],
     ) -> Reg {
+        if self.calls_nested_directly(info) {
+            return self.lower_direct_nested_call(call, info, args, kwargs);
+        }
         let callee = self.load_nested_closure(name, info, call.location());
         let callable_ty = info
             .callable_ty
@@ -359,6 +366,97 @@ impl<'a> Flatten<'a> {
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         self.install_call_transfers(call, None, &transfer_arg_places);
+        self.emit_capture_keepalives(info);
+        d
+    }
+
+    /// Whether a call of `info` by name is a direct call of its lifted
+    /// body: every capture is a reference capture, and the frame holds
+    /// each captured place, its own local or a forwarded environment
+    /// parameter.
+    pub(in crate::mir) fn calls_nested_directly(&self, info: &NestedInfo) -> bool {
+        info.captures.iter().all(|capture| {
+            matches!(
+                capture.kind,
+                mojito_ast::ast::CaptureKind::Imm
+                    | mojito_ast::ast::CaptureKind::Mut
+                    | mojito_ast::ast::CaptureKind::Ref
+            ) && (info.materialized_here || self.owner_vars.contains_key(&capture.binding))
+        })
+    }
+
+    /// The direct call of the lifted body of `info`: its captured places,
+    /// loaded in capture order, lead the explicit arguments and are
+    /// retained as the call's places for the body's leading reference
+    /// parameters.
+    fn lower_direct_nested_call(
+        &mut self,
+        call: Node<'a>,
+        info: &NestedInfo,
+        args: &[Node<'a>],
+        kwargs: &[(&'a str, Node<'a>)],
+    ) -> Reg {
+        let param_arg_regs = self.param_arg_regs(call);
+        let saved_anchor_permission = self.allow_argument_anchors;
+        self.allow_argument_anchors = call.call_anchors_arguments();
+        let lends_reads = call.lends_read_arguments();
+        self.open_call_setup();
+        let (arg_regs, arg_places) = self.lower_call_arguments(args, lends_reads);
+        let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
+        self.close_call_setup(Some(call));
+        self.allow_argument_anchors = saved_anchor_permission;
+        let captured: Vec<(Reg, MirPlace)> = info
+            .captures
+            .iter()
+            .map(|capture| {
+                let place = self.capture_place(capture);
+                let ty = place.ty.clone().unwrap_or_else(|| capture.ty.clone());
+                let dest = self.fresh_typed(call.location(), Some(place.root), ty);
+                self.emit(MirInstr::LoadPlace {
+                    dest,
+                    place: place.clone(),
+                });
+                (dest, place)
+            })
+            .collect();
+        let d = self.fresh(call.location(), None);
+        self.emit_call_invalidations(call, args, kwargs);
+        let capture_accesses = self.call_capture_accesses(call);
+        let transfer_arg_places = arg_places.clone();
+        // A generic nested `def` called by name binds its own parameters
+        // from the call's solved arguments, as a module `def` does.
+        let instantiated_args = call
+            .instantiated_callable_contract()
+            .map_or_else(|| call.instantiated_args(), |(_, arguments)| arguments);
+        let spread = Self::spread_position(args).map(|position| position + captured.len());
+        let mut all_args: Vec<Reg> = captured.iter().map(|(reg, _)| *reg).collect();
+        all_args.extend(arg_regs);
+        let mut all_places: Vec<Option<MirPlace>> =
+            captured.into_iter().map(|(_, place)| Some(place)).collect();
+        all_places.extend(arg_places);
+        self.emit(MirInstr::Call {
+            dest: d,
+            func: FuncRef::named(&info.mangled),
+            raises: call.raises(),
+            args: all_args,
+            kwargs: kw_regs,
+            arg_places: all_places,
+            kwarg_places,
+            capture_accesses,
+            param_arg_regs,
+            receiver: None,
+            instantiated_args,
+            spread,
+        });
+        self.emit_nested_closure_argument_keepalives(args, kwargs);
+        self.install_call_transfers(call, None, &transfer_arg_places);
+        self.emit_capture_keepalives(info);
+        d
+    }
+
+    /// Keep the owners of the reference captures of `info` alive through
+    /// a call of it.
+    fn emit_capture_keepalives(&mut self, info: &NestedInfo) {
         let mut owners = Vec::new();
         let mut seen = HashSet::new();
         for capture in &info.captures {
@@ -367,7 +465,6 @@ impl<'a> Flatten<'a> {
         for var in owners {
             self.emit(MirInstr::KeepAlive { var });
         }
-        d
     }
 
     pub(in crate::mir) fn collect_capture_keepalives(
@@ -501,12 +598,13 @@ impl<'a> Flatten<'a> {
         info: &NestedInfo,
         at: SourceSpan,
     ) -> Reg {
-        if !info.materialized_here && !self.owner_vars.contains_key(&info.binding) {
-            // A lifted body has no direct access to an outer frame's closure slot.
-            // Its inherited/self callable is reconstructed from the environment
-            // parameters forwarded into this frame; direct declarations never use
-            // this path after their statement has materialized them.
-            return self.emit_nested_closure(info, at, true);
+        if !self.owner_vars.contains_key(&info.binding) {
+            // A declaration without a slot makes its closure at each
+            // first-class use. A lifted body has no direct access to an
+            // outer frame's closure slot: its inherited callable is
+            // reconstructed from the environment parameters forwarded into
+            // this frame.
+            return self.emit_nested_closure(info, at, !info.materialized_here);
         }
         let var = self.binding_var(info.binding, name);
         if let Some(ty) = &info.callable_ty {

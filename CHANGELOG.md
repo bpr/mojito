@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call of a nested `def` by name is a direct call of its lifted body
+  (R1037), passing the captured places as its leading reference
+  arguments, as the pin calls the lifted closure generator; a closure is
+  made only at a first-class use, or at the declaration for a body with a
+  copied or moved capture or one a sibling captures. Such a call reduces,
+  forwards, and fills its omitted defaults as any direct call does, so
+  `h[n](x: Arr[n])` returning `ign2(x)` keeps neither `x` nor one instance
+  per `n`, and an `imm` capture is a read parameter of the lifted body.
+  The `escaping_nested_bodies` dataflow and the elaborator's
+  indirect-to-direct rewrite of nested calls are gone
+  (assets/ok/unused_argument_nested_variadic_instances.mojo).
 - A plain `@always_inline` callee is inlined before elaboration when its
   finished body is small enough (R923), as at the pin: `inline-parametric`
   now follows `always` callees and prices each body as the pin's size

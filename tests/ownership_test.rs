@@ -924,9 +924,9 @@ fn immutable_yield_iteration_still_conflicts_with_source_mutation() {
 
 #[test]
 fn nested_call_transferred_loans_conflict_with_source_mutation() {
-    // A nested `def` lowers its direct call through `CallIndirect`; the
-    // call site still installs the callee's transferred loan on the carrier,
-    // so mutating the loan source afterward conflicts exactly like the
+    // A nested `def` is called directly, as a free function is; the call
+    // site installs the callee's transferred loan on the carrier, so
+    // mutating the loan source afterward conflicts exactly like the
     // free-call path. (The unlinked seam records through the user-struct
     // store; the seeded `List.append` chain is covered by the linked tests.)
     let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Carrier[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var carrier = Carrier(RefBox(whole))\n    var local: List[Int] = [9]\n    ref alias = local\n    def stash(mut c: Carrier, var box: RefBox):\n        c.slot = box^\n    stash(carrier, RefBox(alias))\n    local.append(1)\n    print(carrier.slot.value[0])\n";

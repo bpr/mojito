@@ -343,11 +343,14 @@ fn fill_call(
 /// static method's call and a method call bind the struct's to the
 /// arguments of its receiver's type too, as a default may read both. A
 /// receiver typed by the bare struct is the struct's own `Self`, whose
-/// binders stand for themselves. A nested `def`'s call is the `call.indirect`
-/// of a closure the caller makes of a body it declares, whose enclosing
-/// binders ([`scope_binders`]) stand for themselves there too; a call of a
-/// free function's value is the `call.indirect` of a register statically
-/// holding it, which binds the callee's binders as a direct call does.
+/// binders stand for themselves. A nested `def`'s call by name is a direct
+/// call from the body that declares it or one nested under it, where its
+/// enclosing binders ([`scope_binders`]) stand for themselves too; a call
+/// through its closure value (a body with a copied or moved capture) is
+/// the `call.indirect` of a closure the caller makes, past whose captures
+/// the call's arguments bind; a call of a free function's value is the
+/// `call.indirect` of a register statically holding it, which binds the
+/// callee's binders as a direct call does.
 struct CallSite<'i> {
     dest: Reg,
     callee: String,
@@ -467,11 +470,21 @@ impl<'i> CallSite<'i> {
                 _ => return None,
             };
         let declaration = declarations.function(&callee)?;
-        if declaration.enclosing.is_some() {
-            return None;
-        }
         let own = declaration.param_decls.iter().cloned();
         let mut bound: Vec<(ParamDecl, TyArg)> = own.zip(instantiated.iter().cloned()).collect();
+        if let Some(enclosing) = declaration.enclosing.as_deref() {
+            if !declared_within(caller.name, enclosing, declarations) {
+                return None;
+            }
+            bound.extend(
+                scope_binders(&callee, declaration, declarations)
+                    .into_iter()
+                    .map(|decl| {
+                        let argument = decl.own_argument();
+                        (decl, argument)
+                    }),
+            );
+        }
         if let Some(receiver) = receiver {
             let TyKind::Struct(name, arguments) = receiver.kind() else {
                 return None;
@@ -505,6 +518,21 @@ impl<'i> CallSite<'i> {
             bound,
         })
     }
+}
+
+/// Whether `caller` is the function `enclosing` or a body nested under it,
+/// where `enclosing`'s binders stand for themselves.
+fn declared_within(caller: &str, enclosing: &str, declarations: &MirDeclarations) -> bool {
+    let mut scope = Some(caller);
+    while let Some(name) = scope {
+        if name == enclosing {
+            return true;
+        }
+        scope = declarations
+            .function(name)
+            .and_then(|declaration| declaration.enclosing.as_deref());
+    }
+    false
 }
 
 /// The default `callee`, the function `name`, declares at `slot`, when the

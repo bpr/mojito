@@ -46,12 +46,11 @@
 //! reads, the elaborator keys its instances on the rest, and the enclosing
 //! function reads through a nested body it names only the binders that
 //! body kept. Those removals join the snapshot the verifier reads. A nested
-//! body loses its unused arguments, captures included, like any other: the
-//! elaborator rewrites each of its indirect calls to name the reduced
-//! generator, and only a body some other use reaches
-//! ([`mojito_mir::mir::escaping_nested_bodies`]) keeps its full generator
-//! too, whose every binder the enclosing function then reads; such a body
-//! joins the snapshot with no removals.
+//! body loses its unused arguments, captures included, like any other: a
+//! call of it by name is a direct call, which names the reduced generator
+//! as any direct call does, and only a body a closure or function value
+//! names keeps its full generator too, whose every binder the enclosing
+//! function then reads; such a body joins the snapshot with no removals.
 //!
 //! A lifted compile-time function (`$comptime$f$…`, `$default$f$…`) is a
 //! generator over every binder it declares, whoever owns it: the
@@ -80,10 +79,9 @@ use super::pre_elaboration::{CallGraphPass, Callees};
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
     Const, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
-    escaping_nested_bodies, instruction_regions, instruction_subscript_call, lifecycle_callees,
-    method_owner_params, named_lifted_bodies, supplied_parameter_arguments, unread_parameters_of,
-    unused_arguments, without_removed_argument_forwards, without_removed_arguments,
-    without_removed_forwards,
+    instruction_regions, instruction_subscript_call, lifecycle_callees, method_owner_params,
+    named_lifted_bodies, supplied_parameter_arguments, unread_parameters_of, unused_arguments,
+    without_removed_argument_forwards, without_removed_arguments, without_removed_forwards,
 };
 use mojito_types::param_expr::{ParamId, ParamKind};
 use std::collections::{BTreeMap, BTreeSet};
@@ -142,23 +140,21 @@ pub fn remove_unused_params(
     let lifecycle = lifecycle_callees(body, declarations);
     let mut targets: BTreeSet<&str> = lifecycle.iter().map(String::as_str).collect();
     call_targets(&body.blocks, &mut targets);
-    let mut nested_targets = BTreeSet::new();
-    nested_bodies(&body.blocks, declarations, &mut nested_targets);
+    let mut called = BTreeSet::new();
+    let mut valued = BTreeSet::new();
+    nested_bodies(&body.blocks, declarations, &mut called, &mut valued);
     let lifted_targets = named_lifted_bodies(name, body, declarations);
-    // A nested body some use other than a call reaches keeps its full
-    // generator beside the reduced one, which reads every binder.
-    let escaping = if nested_targets.is_empty() {
-        BTreeSet::new()
-    } else {
-        escaping_nested_bodies(body, &|target| nested_targets.contains(target))
-    };
+    // A nested body a closure or function value names keeps its full
+    // generator beside the reduced one its direct calls name, which reads
+    // every binder.
     let mut full = BTreeSet::new();
-    let nested: BTreeMap<&str, &[ParamId]> = nested_targets
+    let nested: BTreeMap<&str, &[ParamId]> = called
         .into_iter()
+        .chain(valued.iter().copied())
         .chain(lifted_targets.iter().map(String::as_str))
         .filter_map(|target| {
             callees.unit_body(target).map(|body| {
-                if !body.removed_args.is_empty() && escaping.contains(target) {
+                if !body.removed_args.is_empty() && valued.contains(target) {
                     full.insert(target);
                     (target, &[][..])
                 } else {
@@ -325,32 +321,34 @@ fn call_targets<'a>(blocks: &'a [MirBlock], targets: &mut BTreeSet<&'a str>) {
     }
 }
 
-/// Each nested function `blocks` and their regions name: by a call, a
-/// closure, or a function value.
+/// Each nested function `blocks` and their regions name: `called` by a
+/// direct call, `valued` by a closure or a function value.
 fn nested_bodies<'a>(
     blocks: &'a [MirBlock],
     declarations: &MirDeclarations,
-    bodies: &mut BTreeSet<&'a str>,
+    called: &mut BTreeSet<&'a str>,
+    valued: &mut BTreeSet<&'a str>,
 ) {
     for instruction in blocks.iter().flat_map(|block| &block.instrs) {
-        let named = match instruction {
-            MirInstr::Call { func, .. } => Some(func.0.as_str()),
+        let (body, by_call) = match instruction {
+            MirInstr::Call { func, .. } => (Some(func.0.as_str()), true),
             MirInstr::MakeClosure { function, .. }
             | MirInstr::Const {
                 k: Const::Function(function),
                 ..
-            } => Some(function.as_str()),
-            _ => None,
+            } => (Some(function.as_str()), false),
+            _ => (None, false),
         };
-        if let Some(body) = named
+        if let Some(body) = body
             && declarations
                 .function(body)
                 .is_some_and(|declaration| declaration.enclosing.is_some())
         {
+            let bodies: &mut BTreeSet<&'a str> = if by_call { called } else { valued };
             bodies.insert(body);
         }
         for region in instruction_regions(instruction) {
-            nested_bodies(region, declarations, bodies);
+            nested_bodies(region, declarations, called, valued);
         }
     }
 }

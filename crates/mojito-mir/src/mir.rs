@@ -55,7 +55,7 @@ pub mod visit;
 mod call_defaults;
 pub use call_defaults::{evaluate_omitted_defaults, evaluated_at_call_site};
 mod callable_values;
-pub use callable_values::{callable_targets, escaping_nested_bodies, nested_instructions};
+pub use callable_values::{callable_targets, nested_instructions};
 mod calls;
 mod constructor_calls;
 pub use constructor_calls::{name_constructors, use_constructor_member};
@@ -3786,9 +3786,9 @@ impl<'a> Flatten<'a> {
 }
 
 /// A nested `def` lifted to a top-level function: the mangled name it becomes and
-/// the enclosing locals it captures. Captures are passed as leading **`mut`**
-/// parameters (so a read *or* a write of a captured variable works — reference
-/// semantics via the existing write-back), prepended to a call by name.
+/// the enclosing locals it captures. Captures are the lifted body's leading
+/// reference parameters, which a call by name passes the captured places
+/// for, and a closure value's environment.
 #[derive(Clone)]
 struct NestedInfo {
     binding: mojito_types::origin::OwnerId,
@@ -3800,6 +3800,16 @@ struct NestedInfo {
     /// environment parameters because their declaration slot lives in an outer
     /// frame.
     materialized_here: bool,
+    /// True when the declaration statement makes the closure and stores it
+    /// in a slot of its own, which later uses load: the body copies or
+    /// moves a capture, which the statement snapshots before any following
+    /// statement can change the source, or a sibling captures the closure
+    /// itself, whose place the sibling's call and environment name.
+    /// Otherwise the statement lowers to nothing: a call by name is a
+    /// direct call of the lifted body, and a first-class use makes the
+    /// closure where it stands, as the pin takes the function value at
+    /// the use.
+    slotted: bool,
     /// Captured enclosing-local names, in a deterministic (sorted) order shared by
     /// the lifted function's parameter list and every rewritten call site.
     captures: Vec<NestedCapture>,
@@ -3808,9 +3818,9 @@ struct NestedInfo {
     callable_ty: Option<Ty>,
 }
 
-/// [`lower_cfg`] with a nested-`def` registry in scope: a call to a registered
-/// nested `def` is rewritten to its lifted function (captures prepended) and the
-/// nested `def` statement lowers to nothing. `declared` types the slots the
+/// [`lower_cfg`] with a nested-`def` registry in scope: a call of a registered
+/// nested `def` by name is a direct call of its lifted function (captures
+/// prepended), and a first-class use of it makes its closure. `declared` types the slots the
 /// frame's declaration binds before its body runs (parameters, value
 /// parameters, a named result); every other slot is typed by the op that
 /// declares it as the body lowers. Lowering ends with `lower-control-flow`,

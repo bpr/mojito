@@ -1,19 +1,15 @@
 //! Callable values a body names statically: which registers hold a known
-//! function or closure, and which nested bodies a body only ever calls.
+//! function or closure.
 //!
-//! Upstream lifts a nested `def` to a closure generator and calls it
-//! directly, passing its captures as arguments. Mojito lowers a call of one
-//! to `closure.make` and `call.indirect`, and the elaborator recovers the
-//! direct call by this dataflow; `remove-unused-params` reads the same
-//! dataflow to know which uses of a nested body take the generator with its
-//! unused arguments removed.
+//! The elaborator folds a function value held in such a register into the
+//! callable binder it is passed to, and resolves a call through one of a
+//! capture-free function value, as upstream folds a constant function
+//! value; the defaults filler reads the same dataflow to fill such a call's
+//! omitted defaults. A call of a nested `def` by name is a direct call and
+//! needs none of this.
 
-use crate::mir::verify::instruction_operand_regs;
-use crate::mir::{
-    Const, MirBlock, MirCaptureMode, MirFunction, MirInstr, MirPlace, instruction_regions,
-    instruction_slots, terminator_regs_mut,
-};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use crate::mir::{Const, MirBlock, MirFunction, MirInstr, MirPlace};
+use std::collections::{HashMap, HashSet};
 
 /// The function each register of `function` statically holds, beside
 /// whether its value captures nothing.
@@ -53,39 +49,6 @@ pub fn nested_instructions(blocks: &[MirBlock]) -> Vec<&MirInstr> {
         }
     }
     instructions
-}
-
-/// The nested bodies `function` names by a closure or a function value that
-/// some use other than a call reaches, so they escape the direct call the
-/// elaborator rewrites each call of them to.
-///
-/// A body stays direct while each register [`callable_targets`] maps to it
-/// is read only as a `call.indirect`'s callee, a copy's source, or the
-/// value stored into a variable that is not rebound; each variable holding
-/// it only by a `var.use` whose result is so mapped, a `drop.var`, or as
-/// the root of a `call.indirect`'s callee place; and each of its closures
-/// captures by reference alone, the environment a direct call passes as
-/// leading reference arguments. Any other read escapes it, as does a
-/// closure or a value the target walk does not reach, in a region it skips. `nested(name)` answers whether `name` is a nested
-/// body.
-pub fn escaping_nested_bodies(
-    function: &MirFunction,
-    nested: &dyn Fn(&str) -> bool,
-) -> BTreeSet<String> {
-    let registers = callable_targets(function);
-    let rebound = rebound_variables(function);
-    let mut variables: HashMap<u32, &str> = HashMap::new();
-    let mut escaping = BTreeSet::new();
-    holding_variables(&function.blocks, &registers, &mut variables);
-    let mut reads = Escapes {
-        registers: &registers,
-        variables: &variables,
-        rebound: &rebound,
-        escaping: &mut escaping,
-    };
-    reads.blocks(&function.blocks);
-    escaping.retain(|body| nested(body));
-    escaping
 }
 
 /// One round of [`callable_targets`]' fixed point; returns whether it
@@ -221,111 +184,4 @@ fn rebound_variables(function: &MirFunction) -> HashSet<u32> {
         }
     }
     rebound
-}
-
-/// Add to `variables` each variable of `blocks` and their regions that a
-/// `var.store` of a register `registers` maps fills, with its body.
-fn holding_variables<'a>(
-    blocks: &[MirBlock],
-    registers: &'a HashMap<u32, (String, bool)>,
-    variables: &mut HashMap<u32, &'a str>,
-) {
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
-        if let MirInstr::DefVar { var, src, .. } = instruction
-            && let Some((body, _)) = registers.get(&src.0)
-        {
-            variables.insert(*var, body);
-        }
-        for region in instruction_regions(instruction) {
-            holding_variables(region, registers, variables);
-        }
-    }
-}
-
-/// The walk [`escaping_nested_bodies`] makes over a body's reads.
-struct Escapes<'e> {
-    registers: &'e HashMap<u32, (String, bool)>,
-    variables: &'e HashMap<u32, &'e str>,
-    rebound: &'e HashSet<u32>,
-    escaping: &'e mut BTreeSet<String>,
-}
-
-impl Escapes<'_> {
-    fn blocks(&mut self, blocks: &[MirBlock]) {
-        for block in blocks {
-            for instruction in &block.instrs {
-                self.instruction(instruction);
-                for region in instruction_regions(instruction) {
-                    self.blocks(region);
-                }
-            }
-            for reg in terminator_regs_mut(&mut block.term.clone()) {
-                self.escape_register(reg.0);
-            }
-        }
-    }
-
-    fn instruction(&mut self, instruction: &MirInstr) {
-        let mut operands = Vec::new();
-        instruction_operand_regs(instruction, &mut operands);
-        let mut slots = instruction_slots(instruction);
-        match instruction {
-            MirInstr::MakeClosure {
-                dest,
-                function,
-                captures,
-            } if !self.registers.contains_key(&dest.0)
-                || captures
-                    .iter()
-                    .any(|capture| capture.mode != MirCaptureMode::Reference) =>
-            {
-                self.escaping.insert(function.clone());
-            }
-            MirInstr::Const {
-                dest,
-                k: Const::Function(function),
-            } if !self.registers.contains_key(&dest.0) => {
-                self.escaping.insert(function.clone());
-            }
-            MirInstr::CallIndirect {
-                callee,
-                callee_place,
-                ..
-            } => {
-                if let Some(position) = operands.iter().position(|reg| reg == callee) {
-                    operands.remove(position);
-                }
-                if let Some(place) = callee_place
-                    && let Some(position) = slots.iter().position(|&slot| slot == place.root)
-                {
-                    slots.remove(position);
-                }
-            }
-            MirInstr::CopyValue { .. } => operands.clear(),
-            MirInstr::DefVar { var, src, .. } if !self.rebound.contains(var) => {
-                operands.retain(|reg| reg != src);
-                slots.retain(|slot| slot != var);
-            }
-            MirInstr::DefVar { var, .. } => slots.retain(|slot| slot != var),
-            MirInstr::UseVar { dest, var, .. } if self.registers.contains_key(&dest.0) => {
-                slots.retain(|slot| slot != var);
-            }
-            MirInstr::DropVar { var, .. } => slots.retain(|slot| slot != var),
-            _ => {}
-        }
-        for reg in operands {
-            self.escape_register(reg.0);
-        }
-        for slot in slots {
-            if let Some(body) = self.variables.get(&slot) {
-                self.escaping.insert((*body).to_string());
-            }
-        }
-    }
-
-    fn escape_register(&mut self, reg: u32) {
-        if let Some((body, _)) = self.registers.get(&reg) {
-            self.escaping.insert(body.clone());
-        }
-    }
 }

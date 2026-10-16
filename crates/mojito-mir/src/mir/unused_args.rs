@@ -32,10 +32,9 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 /// table member ([`crate::mir::table_member`]), which an operator, a
 /// subscript, or a backend reaches without a call naming it, nor a body
 /// declared in a compile-time region, nor one whose signature ties an
-/// origin or a returned reference to a parameter. A nested body's direct
-/// calls are the indirect calls the elaborator rewrites to name it
-/// ([`crate::mir::escaping_nested_bodies`]), and its captures are leading
-/// arguments like any other. A `deinit` parameter and a callable one are
+/// origin or a returned reference to a parameter. A nested body's calls by
+/// name are direct calls, and its captures are leading arguments like any
+/// other. A `deinit` parameter and a callable one are
 /// never candidates; a method's receiver is one like any other argument,
 /// and the call of a generator without it passes none. A collector is one
 /// too, whose elements the rewritten call passes none of, but an owned

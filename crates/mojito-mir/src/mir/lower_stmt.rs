@@ -2088,6 +2088,22 @@ impl<'a> Flatten<'a> {
         }
     }
 
+    /// Make the closure of the slotted nested `def` `info`, declared
+    /// `name` at `at`, and store it in the declaration's slot.
+    fn lower_slotted_nested_def(&mut self, info: &NestedInfo, name: &str, at: SourceSpan) {
+        let src = self.emit_nested_closure(info, at, false);
+        let var = self.declare_binding_var(info.binding, name);
+        if let Some(ty) = &info.callable_ty {
+            self.var_types.entry(var).or_insert_with(|| ty.clone());
+        }
+        self.emit(MirInstr::DefVar {
+            var,
+            src,
+            binding_ty: info.callable_ty.clone(),
+            in_place: false,
+        });
+    }
+
     #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     fn lower_stmt_dispatch(&mut self, node: &CheckedStmt, hir: &'a hir::HirStmt) {
         let statement_binding = node.binding;
@@ -2587,31 +2603,24 @@ impl<'a> Flatten<'a> {
                 _,
             ) => {}
 
-            // A direct nested declaration creates its closure exactly here. Copy
-            // and move captures therefore snapshot/transfer before any following
-            // statement can mutate or use the source binding. Later calls and
-            // first-class uses load this internal closure slot.
+            // A direct nested declaration lowers to nothing unless it needs
+            // a closure slot (`NestedInfo::slotted`): then it creates its
+            // closure exactly here, so copy and move captures snapshot or
+            // transfer before any following statement can mutate or use the
+            // source binding, and later uses load this internal slot.
             (CheckedStmtOp::Def(def), _) => {
                 let info = statement_binding
                     .and_then(|binding| self.nested.get(&binding))
                     .filter(|info| info.materialized_here)
                     .cloned();
-                if let Some(info) = info {
-                    let src = self.emit_nested_closure(&info, node.location(), false);
-                    let var = self.declare_binding_var(info.binding, &def.name);
-                    if let Some(ty) = &info.callable_ty {
-                        self.var_types.entry(var).or_insert_with(|| ty.clone());
+                match info {
+                    Some(info) if !info.slotted => {}
+                    Some(info) => {
+                        self.lower_slotted_nested_def(&info, &def.name, node.location());
                     }
-                    self.emit(MirInstr::DefVar {
-                        var,
-                        src,
-                        binding_ty: info.callable_ty,
-                        in_place: false,
-                    });
-                } else {
-                    self.emit(MirInstr::Unsupported(
+                    None => self.emit(MirInstr::Unsupported(
                         "nested def/struct/trait declaration".into(),
-                    ));
+                    )),
                 }
             }
             // A nested `def` we couldn't lift because it nests another declaration,
