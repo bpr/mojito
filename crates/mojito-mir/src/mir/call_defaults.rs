@@ -34,7 +34,8 @@ use std::collections::HashMap;
 /// read-temporary slot the call reads, an owned one to a forwarding slot
 /// the call takes. A nested `def`'s call is the `call.indirect` of its
 /// closure, made in the body that declares it, which passes no capture, so
-/// it binds past the leading captures the lifted body declares.
+/// it binds past the leading captures the lifted body declares. A call of a
+/// free function's value, as `var g = f; g()`, is filled the same way.
 ///
 /// A default the call cannot spell is left to the callee: one of a
 /// subscript, of a nested function some other body calls, or of a function
@@ -187,11 +188,7 @@ impl<'f> Caller<'f> {
         closure_captures(&function.blocks, &mut captures);
         Self {
             name,
-            targets: if captures.is_empty() {
-                HashMap::new()
-            } else {
-                callable_targets(function)
-            },
+            targets: callable_targets(function),
             captures,
         }
     }
@@ -344,7 +341,9 @@ fn fill_call(
 /// receiver typed by the bare struct is the struct's own `Self`, whose
 /// binders stand for themselves. A nested `def`'s call is the `call.indirect`
 /// of a closure the caller makes of a body it declares, whose enclosing
-/// binders ([`scope_binders`]) stand for themselves there too.
+/// binders ([`scope_binders`]) stand for themselves there too; a call of a
+/// free function's value is the `call.indirect` of a register statically
+/// holding it, which binds the callee's binders as a direct call does.
 struct CallSite<'i> {
     dest: Reg,
     callee: String,
@@ -425,11 +424,20 @@ impl<'i> CallSite<'i> {
                     spread: None,
                     ..
                 } => {
-                    let (target, _) = caller.targets.get(&callee.0)?;
+                    let (target, thin) = caller.targets.get(&callee.0)?;
                     let declaration = declarations.function(target)?;
-                    if declaration.enclosing.as_deref() != Some(caller.name) {
-                        return None;
-                    }
+                    let captures = match declaration.enclosing.as_deref() {
+                        None if *thin
+                            && !declaration.has_receiver
+                            && mojito_symbol::symbol::split_method_symbol(target).is_none() =>
+                        {
+                            0
+                        }
+                        Some(enclosing) if enclosing == caller.name => {
+                            *caller.captures.get(target)?
+                        }
+                        _ => return None,
+                    };
                     let own = declaration.param_decls.iter().cloned();
                     let mut bound: Vec<(ParamDecl, TyArg)> =
                         own.zip(instantiated_args.iter().cloned()).collect();
@@ -443,7 +451,7 @@ impl<'i> CallSite<'i> {
                     );
                     return Some(Self {
                         dest: *dest,
-                        captures: *caller.captures.get(target)?,
+                        captures,
                         callee: target.clone(),
                         args,
                         kwargs,

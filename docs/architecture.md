@@ -1734,8 +1734,9 @@ an `@implicit` conversion of one (`Construct`), or, for any other default,
 `Evaluate`, a zero-parameter function MIR lowers from the default expression
 (`$default$<owner>$<parameter>`) and each call leaving the slot out runs.
 A direct call, a method call, a static-method call, a construction, and a
-nested `def`'s `call.indirect` from the body declaring it evaluate it at the
-call site, as upstream does: once every declaration is lowered and linked,
+nested `def`'s `call.indirect` from the body declaring it, and the
+`call.indirect` of a register statically holding a free function's value,
+evaluate it at the call site, as upstream does: once every declaration is lowered and linked,
 and before ownership analysis, `mir::evaluate_omitted_defaults` gives the
 call a call of the default under the call's own `instantiated_args`, the
 receiver type's struct arguments, and the enclosing binders in scope,
@@ -1748,7 +1749,8 @@ argument the callee never uses is left out, as upstream's
 `mir::unused_arguments`, a bundled callee's by the `removed_args` of its
 finished package body, which the program's lowering reads through
 `PackageBodies`. Any other call (a subscript, R1053; a sibling's call of a
-nested `def`, R1056; a bundled body's call into another unit, R1055) leaves
+nested `def`, R1056; a bundled body's call into another unit, R1055; a
+call through a trait bound, R1058; a rebound function value, R1059) leaves
 the slot to the callee's binding, which the VM's `bind_for_call` fills. A default reading a binder in scope (`Self.n`, an enclosing `n`,
 `T`) declares the binders in scope as its function's parameters, and
 `native::mono` instantiates it under the owner instance's arguments; a

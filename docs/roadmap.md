@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1058**.
+Next free ID: **R1061**.
 
 ## Ordered Work
 
@@ -910,20 +910,56 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1056.
   - Model: Opus, Not Planned.
 
-- [ ] **R1024 A callee's declaration still names an evaluated default per
+- [ ] **R1058 A call through a trait bound leaves its omitted evaluated
+  default to the conformer**
+
+  `x.show()` in `go[T: Shows]` runs the conformer's
+  `$default$A.show$x` in the callee's binding, where upstream fills the
+  default in at the call site.
+  - `mir::evaluate_omitted_defaults` runs before elaboration, where the
+    receiver is the bound `T`, whose type names no struct declaration, so
+    `CallSite::of` finds no callee.
+  - Bind the requirement's own default at the call, or fill the call once
+    the elaborator resolves it to the conformer's instance.
+  - A trait requirement's default beyond literals and constants is
+    rejected today; the pin prints `drop trait` after such a call.
+  - Found while landing R1024 (2026-10-16).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1059 A call of a rebound function value leaves its omitted
+  evaluated default to the callee**
+
+  `var g = use; g = use; g()` never destroys `use`'s borrowed default,
+  where the pin prints `drop dflt` after the call.
+  - `callable_targets` names a variable's function only while one
+    definition is its sole write, so the rebound `g` resolves to nothing.
+  - Upstream's function value has the function's own literal type, which
+    keeps its defaults: the call names the callee whatever the dataflow.
+  - Carry the function's symbol in the defaults-keeping `func` type and
+    resolve the call from it.
+  - Found while landing R1024 (2026-10-16).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1060 A callee's declaration still names an evaluated default per
   instance**
 
   `instantiate_constructed_defaults` respells every `CheckedConst::Evaluate`
   default to the owner instance's default instance, and the VM's
   `make_default` and the native `evaluated_default_value` run it, where
   upstream's callee names no default at all.
-  - Once every call shape fills its omitted defaults (R1022, R1023), the
-    callee-side path is dead: drop the respelling and both backends'
-    evaluation of an `Evaluate` slot.
-  - A function value called without an argument it defaults, if Mojo
-    allows one, is the remaining caller to check first.
+  - Once every call shape fills its omitted defaults, the callee-side path
+    is dead: drop the respelling and both backends' evaluation of an
+    `Evaluate` slot.
+  - The shapes still left to the callee: a subscript (R1053), a package
+    call across units (R1055), a sibling nested call (R1056), a call
+    through a trait bound (R1058), a rebound function value (R1059), and a
+    positional-only slot after an unfilled one (R1025).
+  - An omitted argument the callee never uses must then pass no value, as
+    its removed parameter takes none.
   - Found while landing R1004 (2026-10-15).
-  - Depends on R1022, R1023.
+  - Depends on R1053, R1055, R1056, R1058, R1059, R1025.
   - Model: Opus, Not Planned.
 
 - [ ] **R1025 A parameter read only by a bundled function's or a

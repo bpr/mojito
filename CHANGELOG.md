@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call of a free function's value (`var g = use; g()`) evaluates an
+  omitted evaluated default at the call site (R1024), as upstream does: a
+  borrowed default with a destructor is now destroyed when the call
+  returns, as on the pin. The callee-side evaluation stays for the call
+  shapes that still leave a default to the callee (R1060).
 - A call of a nested `def` from the body declaring it, and the program's
   call of a function or method the bundled package compiled, evaluate an
   omitted evaluated default at the call site (R1023), as upstream does:
