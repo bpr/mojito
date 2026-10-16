@@ -6,9 +6,9 @@
 # A method keeps one instance per value where it reads `Self.n` and where
 # its struct's layout reads `n` (`Arr[n]` holds a `SIMD[int64, n]`), as on
 # the pin. `DBox`'s destructor, which reads no struct parameter, is one
-# instance, as on the pin. The pin also keeps one `twice`, which calls
-# `self.get()`, one `Wrap.take`, whose drop of `self` runs `DBox`'s
-# destructor, and one constructor; Mojito still keeps those one per value.
+# instance, as are `twice`, which calls `self.get()`, and the constructor,
+# as on the pin. The pin also keeps one `Wrap.take`, whose drop of `self`
+# runs `DBox`'s destructor; Mojito still keeps it one per value.
 struct Box[n: Int](Copyable, Movable):
     var v: Int
 

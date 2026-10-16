@@ -346,6 +346,7 @@ assets/ok/math_module_rounding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/maybe_uninit_predicates.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/maybe_uninit_roundtrip.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/maybe_uninit_write.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/member_call_unread_struct_parameter_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_mut_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_named_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_result_pointer_field_write.mojo	-	ineligible	no-scalar-entry-shape

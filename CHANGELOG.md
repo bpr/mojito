@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call of a struct's member reads only the struct arguments the member
+  kept (R998), as on the pin: `fg[n](b: NBox[n])` returning `b.get()` is
+  one instance for every `n`, as are a call on `self`, a subscript, an
+  operator, a prefix `~`, a generic method, a `for` loop over the struct,
+  and a method returning `self.copy()` over an erased type argument.
+  `remove-unused-params` follows resolved operators and iteration steps
+  callee first, reads each such call through the member's removals, and
+  records the member in the caller's snapshot for the verifier; the
+  elaborator unifies an erased type argument in a call's result. A prefix
+  `-` or `~` on a struct now lowers to the call of the dunder the check
+  selected, which fixes an elaboration failure when `remove-unused-params`
+  removed a parameter only that dunder read
+  (`assets/ok/member_call_unread_struct_parameter_instances.mojo`).
 - A method that calls a method on a field reads only the root struct's
   layout (R1002), as on the pin: `SBox[1]` and `SBox[2]` share one
   `take(var self)` returning `self.s.byte_length()`. `remove-unused-params`

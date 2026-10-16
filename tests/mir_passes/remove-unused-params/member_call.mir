@@ -1,0 +1,186 @@
+mojito-mir 1.65
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("cases.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+    struct { name: NBox, fields: [field { name: v, type: Int }], mut_self_methods: [], fieldwise_init: false, param_decls: [value_param { owner: "NBox", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [and { left: constraint_bool(true), right: trivial { lifecycle: copyable, operand: operand_type(Int) } }] }, conformance { trait: IsTriviallyMovable, conditions: [and { left: constraint_bool(true), right: trivial { lifecycle: movable, operand: operand_type(Int) } }] }, conformance { trait: IsTriviallyDeinitable, conditions: [and { left: constraint_bool(true), right: trivial { lifecycle: deinitable, operand: operand_type(Int) } }] }], declared: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [] }
+  ],
+  decls: [
+    decl { lowered_name: "NBox.__add__", param_names: [o], param_types: [struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "NBox", slot: 0, name: n, type: meta_value(Int) }))] }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: true, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: "NBox.__neg__", param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: true, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: "NBox.get", param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: true, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: fg, param_names: [b], param_types: [struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fg", slot: 0, name: n, type: meta_value(Int) }))] }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "fg", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: fneg, param_names: [b], param_types: [struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fneg", slot: 0, name: n, type: meta_value(Int) }))] }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "fneg", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: fop, param_names: [b], param_types: [struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fop", slot: 0, name: n, type: meta_value(Int) }))] }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "fop", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: "NBox.get",
+        registers: 2,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: NBox, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: NBox, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 153, end: 159, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 153, end: 159, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: NBox, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
+              value.copy { dest: %r1, value: %r0 }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: "NBox.__add__",
+        registers: 3,
+        vars: 2,
+        var_names: [self, o],
+        params: 2,
+        param_types: [struct_type { name: NBox, arguments: [] }, struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "NBox", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: NBox, arguments: [] } }, var_type { var: $v1, type: struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "NBox", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 215, end: 221, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 224, end: 227, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 215, end: 227, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: NBox, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
+              place.load { dest: %r1, place: place { root: $v1, root_type: present(struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "NBox", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
+              binary { op: add, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      },
+      fn {
+        name: "NBox.__neg__",
+        registers: 3,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: NBox, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: NBox, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 274, end: 280, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 283, end: 289, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 274, end: 289, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: param(param_decl_ref { owner: "NBox", slot: 0, name: n, type: meta_value(Int) }) },
+              place.load { dest: %r1, place: place { root: $v0, root_type: present(struct_type { name: NBox, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
+              binary { op: sub, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      },
+      fn {
+        name: fg,
+        registers: 2,
+        vars: 1,
+        var_names: [b],
+        params: 1,
+        param_types: [struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fg", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fg", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fg", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 338, end: 339, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 338, end: 345, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fg", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [], type: present(struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fg", slot: 0, name: n, type: meta_value(Int) }))] }), through: absent } },
+              call.method { dest: %r1, recv: %r0, method: get, resolved: present("NBox.get"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v0, root_type: present(struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fg", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [], type: present(struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fg", slot: 0, name: n, type: meta_value(Int) }))] }), through: absent }), recv_writes: false, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: fop,
+        registers: 3,
+        vars: 1,
+        var_names: [b],
+        params: 1,
+        param_types: [struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fop", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fop", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fop", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r1, type: struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fop", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 395, end: 396, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 399, end: 400, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 395, end: 400, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fop", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [], type: present(struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fop", slot: 0, name: n, type: meta_value(Int) }))] }), through: absent } },
+              place.load { dest: %r1, place: place { root: $v0, root_type: present(struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fop", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [], type: present(struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fop", slot: 0, name: n, type: meta_value(Int) }))] }), through: absent } },
+              binary { op: add, dest: %r2, a: %r0, b: %r1, resolved: present("NBox.__add__"), raises: absent }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      },
+      fn {
+        name: fneg,
+        registers: 2,
+        vars: 1,
+        var_names: [b],
+        params: 1,
+        param_types: [struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fneg", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fneg", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fneg", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 452, end: 453, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 451, end: 453, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fneg", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [], type: present(struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fneg", slot: 0, name: n, type: meta_value(Int) }))] }), through: absent } },
+              call.method { dest: %r1, recv: %r0, method: __neg__, resolved: present("NBox.__neg__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: false, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      }
+  ]
+}

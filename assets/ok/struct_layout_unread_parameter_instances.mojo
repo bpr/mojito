@@ -4,10 +4,11 @@
 # since `Box` holds an `Int` whatever `n` is, as do a function that only
 # forwards `n` to it, one over `Holder[Box[n]]`, one over a struct whose
 # pointer field points to `T`, and one over a struct holding a `List[T]`,
-# whose storage is a pointer. A struct holding a `T` or a `SIMD[int64, n]`
-# keeps one instance per argument, as does a function returning `Arr[n]`
-# by value, one whose dropped argument's destructor prints `Self.n`, and
-# one that calls a method on its argument.
+# whose storage is a pointer, and one that calls a method on its argument
+# that reads no struct parameter. A struct holding a `T` or a
+# `SIMD[int64, n]` keeps one instance per argument, as does a function
+# returning `Arr[n]` by value, and one whose dropped argument's destructor
+# prints `Self.n`.
 from std.memory.alloc import unsafe_alloc
 
 

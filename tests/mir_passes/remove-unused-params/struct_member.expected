@@ -102,6 +102,8 @@
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fg", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r1, type: Int }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 1154, end: 1155, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 1154, end: 1161, origin: absent }) }],
+        removed_params: [param_id { owner: "fg", slot: 0 }],
+        callee_removed_params: [callee_params { callee: "NBox.get", params: [param_id { owner: "NBox", slot: 0 }] }],
         blocks: [
           bb0 {
             instructions: [

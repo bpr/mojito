@@ -710,12 +710,37 @@ impl<'a> Flatten<'a> {
             ra
         };
         let d = self.fresh(node.location(), None);
-        self.emit(MirInstr::UnOp {
-            op,
-            dest: d,
-            a: ra,
-            raises: node.raises(),
-        });
+        // `-x` and `~x` on a struct call the dunder the check selected, as
+        // upstream's `x.__neg__()` does.
+        let instruction = match node.resolved_callable() {
+            Some(resolved) if op != PrefixOp::Not => MirInstr::MethodCall {
+                dest: d,
+                recv: ra,
+                method: op.dunder().to_string(),
+                resolved: Some(resolved),
+                raises: node.raises(),
+                reference_result: None,
+                result_adapter: None,
+                args: Vec::new(),
+                kwargs: Vec::new(),
+                recv_place: None,
+                recv_writes: false,
+                arg_places: Vec::new(),
+                kwarg_places: Vec::new(),
+                capture_accesses: Vec::new(),
+                param_arg_regs: Vec::new(),
+                param_decls: Vec::new(),
+                instantiated_args: Vec::new(),
+                spread: None,
+            },
+            _ => MirInstr::UnOp {
+                op,
+                dest: d,
+                a: ra,
+                raises: node.raises(),
+            },
+        };
+        self.emit(instruction);
         d
     }
 

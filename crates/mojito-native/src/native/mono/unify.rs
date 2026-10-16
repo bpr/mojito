@@ -557,6 +557,17 @@ pub(super) fn unify_arg(
 ) -> Result<(), String> {
     match (pattern, actual) {
         (TyArg::Ty(p), TyArg::Ty(a)) => unify(p, a, bindings),
+        // An erased argument stands in for a type binder the instance does
+        // not hold, which it binds to nothing, as a receiver's does.
+        (TyArg::Ty(p), TyArg::Val(CtValue::RemovedArg))
+            if let TyKind::Param { binder, .. } = p.kind()
+                && !bindings.types.contains_key(binder) =>
+        {
+            if !bindings.removed.contains(binder) {
+                bindings.removed.push(binder.clone());
+            }
+            Ok(())
+        }
         // A direct reference binds; any other residual must already agree
         // with the actual once the environment closes it.
         (TyArg::Val(CtValue::Expr(expr)), TyArg::Val(value)) => match expr.as_decl_ref() {

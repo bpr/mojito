@@ -60,9 +60,15 @@ impl Checker {
         // raising what it raises.
         if let Some(result) = self.struct_dunder(&t, op.dunder(), &[]) {
             let ret = result?;
-            let signature = self
-                .struct_dunder_signature_for(&t, op.dunder(), &[])
-                .map(|(_, sig, _)| sig);
+            let selected = self.struct_dunder_signature_for(&t, op.dunder(), &[]);
+            if op != PrefixOp::Not
+                && let Some((info, sig, _)) = selected
+                && let TyKind::Struct(sname, _) = t.kind()
+            {
+                self.record_at(span.clone()).overload_target =
+                    Some(self.dunder_symbol(sname, op.dunder(), sig, info));
+            }
+            let signature = selected.map(|(_, sig, _)| sig);
             if let Some(error) = signature.and_then(dunder_error) {
                 self.record_call_effect(span, error.clone());
                 self.require_error(format!("raising operator '{}'", prefix_symbol(op)), error)?;

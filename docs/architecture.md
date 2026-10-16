@@ -5273,14 +5273,26 @@ point where a slot declared in a loop is uninitialized again.
   while `Arr[n]{data: SIMD[int64, n]}` and `Holder[T]{x: T}` keep theirs.
   A struct type is read whole where upstream's IR keeps it nominal: a
   declared callee's compile-time arguments and receiver, a constant, a
-  compile-time condition or sequence, an instruction that may run a
-  member of a struct it names (a method call, a subscript, an iteration,
-  a resolved operator, a call of an undeclared callee such as a
-  constructor or the builtin `len`), and the parts of a dropped, copied,
+  compile-time condition or sequence, a call of an undeclared callee that
+  may run a member of a struct it names (a constructor, R1020, or the
+  builtin `len`, R988), and the parts of a dropped, copied,
   or moved value's type its lifecycle member reads
   (`StructReads::member_reads`): every argument of a struct declaring the
   member, and through one that does not what its fields' members read,
-  as upstream synthesizes it. A value argument, a dependent type, and a
+  as upstream synthesizes it. A call of a struct's member (a resolved
+  method call, a subscript call, a resolved operator, a prefix `-`/`~`,
+  which the check resolves to its dunder and MIR lowers to that method
+  call, and an iteration step) passes the member's parameters as values on
+  the pin, so it reads the receiver's arguments at the struct parameters
+  the member kept, whole, and its own recorded parameter arguments, while
+  its operands and result read their layout (R998); this needs the
+  member's removals at hand (a unit body off a cycle, followed callee
+  first), a receiver spelling every parameter of the member's struct, and
+  the member's kept own parameters recorded on the call, and falls back to
+  reading every type the instruction names. The callee joins the caller's
+  `callee_removed_params` snapshot, empty removals included, which the
+  verifier reads the call through (`mir::UnreadParameters::member_callees`).
+  A value argument, a dependent type, and a
   projection read their binders whole as well; a
   value parameter's slot (matched by name, as the elaborator fills it)
   addressed by anything but a drop or declaration of a scalar or of a

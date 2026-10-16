@@ -1923,3 +1923,25 @@ reaches a reduced generator or changes its output, so
 argument (R1011) and receiver (R1012), a forward of an argument to a
 removed one (R1013), and nested, lifted, and variadic functions (R1014)
 keep their arguments where the pin removes them.
+
+## A member call reads only the struct arguments the member kept (2026-10-15, R998)
+
+`remove-unused-params` now reads a call of a struct's member (a method
+call, a subscript, an operator, a prefix `-` or `~`, an iteration step)
+through the member's removals, as upstream's call passes the member's
+parameters as values (`docs/architecture.md` §Pre-Elaboration Pipeline).
+The stage fixture, `assets/ok/member_call_unread_struct_parameter_instances.mojo`
+less its `fneg`, which fails elaboration at the parent commit, debug
+binary, before (the parent commit) and after:
+
+| | before | after | change |
+|---|---:|---:|---:|
+| `concrete_functions` | 36 | 27 | −9 |
+| `generator_instances` | 29 | 20 | −9 |
+| `generator_instance_instructions` | 105 | 65 | −40 |
+
+`fg`, `NBox.twice`, `fsub`, `fop`, `finv`, `fput`, `fk`, `fit`, and `ft`
+each fall to one instance, as on the pin; `fneg` keeps one per argument,
+as on the pin. A construction (R1020) and `len` (R1021) still read their
+struct whole. The corpus effect on `benchmarks/instantiation.tsv` is left
+to its next regeneration.

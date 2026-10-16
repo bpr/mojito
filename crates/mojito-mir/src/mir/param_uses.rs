@@ -18,12 +18,16 @@
 //! struct type in a signature, a slot, a register, or a place reads only
 //! the arguments its lowered layout reads ([`StructReads`]). A struct type
 //! is read whole where upstream's IR keeps it nominal: a type value (a
-//! call's parameter arguments, a compile-time constant or condition), an
-//! instruction that runs a member of the struct (a method call, a
-//! subscript, an iteration, a resolved operator; of a method call's place,
-//! only the type it designates, the root and projections addressing it
-//! reading their layout), and the lifecycle member a copy, a move, or a
-//! drop runs, which reads what that member reads.
+//! call's parameter arguments, a compile-time constant or condition), and
+//! the lifecycle member a copy, a move, or a drop runs, which reads what
+//! that member reads. A call of a member of the struct (a method call, a
+//! subscript, a resolved operator, an iteration step) passes the member's
+//! parameters as values, so it reads the receiver's arguments at the
+//! struct parameters the member kept, when the member's removals are at
+//! hand; otherwise, and for an undeclared callee that may run a member (a
+//! constructor, a builtin such as `len`), every type the instruction names
+//! is read whole (of a method call's place, only the type it designates,
+//! the root and projections addressing it reading their layout).
 //!
 //! Two further reads are not identities: a value parameter's runtime reads
 //! go through the slot its name binds, and a body nested in the function
@@ -70,15 +74,21 @@ use std::fmt;
 /// function's own parameter. A callable value parameter is a candidate like
 /// any other: a call through it reads it, and the elaborator binds no
 /// runtime closure or environment for one it removed.
-pub fn unread_parameters(
+///
+/// A call of a member whose removals `callees` answers reads only the
+/// receiver's arguments at the struct parameters that member kept.
+pub fn unread_parameters<'a>(
     name: &str,
     function: &MirFunction,
     declarations: &MirDeclarations,
-    nested: &NestedRemovals<'_>,
-) -> Vec<ParamId> {
+    nested: &Removals<'a>,
+    callees: &Removals<'a>,
+) -> UnreadParameters {
     declarations
         .function(name)
-        .map(|declaration| unread_parameters_of(name, function, declaration, declarations, nested))
+        .map(|declaration| {
+            unread_parameters_of(name, function, declaration, declarations, nested, callees)
+        })
         .unwrap_or_default()
 }
 
@@ -86,19 +96,20 @@ pub fn unread_parameters(
 ///
 /// The signature read is `declaration`'s, as the generator with its unused
 /// arguments removed declares it ([`crate::mir::without_removed_arguments`]).
-pub fn unread_parameters_of(
+pub fn unread_parameters_of<'a>(
     name: &str,
     function: &MirFunction,
     declaration: &MirFunctionDeclaration,
     declarations: &MirDeclarations,
-    nested: &NestedRemovals<'_>,
-) -> Vec<ParamId> {
+    nested: &Removals<'a>,
+    callees: &Removals<'a>,
+) -> UnreadParameters {
     if name == "__toplevel__" || !declaration.region_binders.is_empty() {
-        return Vec::new();
+        return UnreadParameters::default();
     }
     let candidates = candidate_parameters(name, declaration, declarations);
     if candidates.is_empty() {
-        return Vec::new();
+        return UnreadParameters::default();
     }
     let structure = method_struct(name, declarations);
     let mut owners: Vec<&str> = Vec::new();
@@ -121,6 +132,7 @@ pub fn unread_parameters_of(
     walker.declarations = Some(declarations);
     walker.structs = Some(&structs);
     walker.layout = true;
+    walker.callees = Some(callees);
     if let Some((spelled, decls)) = structure
         && let Some(owner) = walker.owners.iter().position(|owner| *owner == spelled)
     {
@@ -140,7 +152,7 @@ pub fn unread_parameters_of(
     walker.body(function);
     walker.nominal_reads(function, declarations);
     if walker.reads_all {
-        return Vec::new();
+        return UnreadParameters::default();
     }
     let read_by_slot = slot_reads(function, &candidates);
     let read_from_receiver = structure
@@ -166,12 +178,23 @@ pub fn unread_parameters_of(
         .map(|decl| decl.id().clone())
         .collect();
     unread.sort();
-    unread
+    UnreadParameters {
+        params: unread,
+        member_callees: walker.member_callees,
+    }
 }
 
-/// The removals of a body nested in the function being analysed, by its
-/// name: `None` when its analysis is not at hand.
-pub type NestedRemovals<'a> = dyn Fn(&str) -> Option<&'a [ParamId]> + 'a;
+/// The parameters [`unread_parameters`] found unread, and the member
+/// callees whose removals the walk relied on.
+#[derive(Debug, Default)]
+pub struct UnreadParameters {
+    pub params: Vec<ParamId>,
+    pub member_callees: BTreeSet<String>,
+}
+
+/// The removals of a body the function being analysed names, by its name:
+/// `None` when its analysis is not at hand.
+pub type Removals<'a> = dyn Fn(&str) -> Option<&'a [ParamId]> + 'a;
 
 /// The lifted bodies `function`, the body of `name`, or its signature names.
 ///
@@ -938,7 +961,11 @@ struct Walker<'o, 'a, 'n> {
     /// Each struct variant the walk is inside, and whether it is nominal.
     struct_variants: Vec<bool>,
     /// The removals of the nested bodies a walked value names.
-    nested: &'n NestedRemovals<'a>,
+    nested: &'n Removals<'a>,
+    /// The removals of the members a call the walk reads names.
+    callees: Option<&'n Removals<'a>>,
+    /// The member callees whose removals a call read.
+    member_callees: BTreeSet<String>,
     /// The binders a walked value names, as the index of their owner in
     /// `owners` and their slot.
     slots: BTreeSet<(usize, usize)>,
@@ -988,7 +1015,7 @@ enum Leaf {
 }
 
 impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
-    fn new(owners: Vec<&'o str>, nested: &'n NestedRemovals<'a>) -> Self {
+    fn new(owners: Vec<&'o str>, nested: &'n Removals<'a>) -> Self {
         Self {
             bodies: owners.clone(),
             owners,
@@ -1004,6 +1031,8 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
             nominal: 0,
             struct_variants: Vec::new(),
             nested,
+            callees: None,
+            member_callees: BTreeSet::new(),
             slots: BTreeSet::new(),
             nested_removals: Vec::new(),
             reads_all: false,
@@ -1100,7 +1129,14 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
     /// (its struct spelled with no arguments) runs the member over the
     /// struct at its own parameters.
     fn member_reads(&self, ty: &Ty, member: &'static str) -> Option<Vec<TyArg>> {
-        let ty = match (ty.kind(), &self.self_type) {
+        let ty = self.spelled_self(ty);
+        self.structs.map(|structs| structs.member_reads(ty, member))
+    }
+
+    /// `ty`, but the method's `Self` (its struct spelled with no
+    /// arguments) spelled at the struct's own parameters.
+    fn spelled_self<'t>(&'t self, ty: &'t Ty) -> &'t Ty {
+        match (ty.kind(), &self.self_type) {
             (TyKind::Struct(name, arguments), Some(self_type))
                 if arguments.is_empty()
                     && matches!(self_type.kind(), TyKind::Struct(spelled, _) if spelled == name) =>
@@ -1108,8 +1144,7 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
                 self_type
             }
             _ => ty,
-        };
-        self.structs.map(|structs| structs.member_reads(ty, member))
+        }
     }
 
     fn nominal_blocks(
@@ -1150,6 +1185,9 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
         declarations: &MirDeclarations,
         instruction: &MirInstr,
     ) {
+        if self.member_instruction(function, declarations, instruction) {
+            return;
+        }
         let member = |ty: Option<&Ty>, member| ty.and_then(|ty| self.member_reads(ty, member));
         match instruction {
             MirInstr::Call {
@@ -1255,6 +1293,187 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
             }
             _ => self.dispatching_instruction(function, instruction),
         }
+    }
+
+    /// Whether `instruction` calls a member it names as upstream's call does
+    /// ([`Self::member_call`]), which it then has read: a resolved method
+    /// call, a subscript call, a resolved operator, or an iteration step.
+    fn member_instruction(
+        &mut self,
+        function: &MirFunction,
+        declarations: &MirDeclarations,
+        instruction: &MirInstr,
+    ) -> bool {
+        let register = |reg: &Reg| function.reg_types.get(&reg.0);
+        match instruction {
+            MirInstr::MethodCall {
+                resolved: Some(callee),
+                recv,
+                recv_place,
+                raises,
+                param_arg_regs,
+                instantiated_args,
+                ..
+            } => self.member_call(
+                declarations,
+                callee,
+                recv_place
+                    .as_deref()
+                    .and_then(|place| place_ty(function, place))
+                    .or_else(|| register(recv)),
+                &(raises, param_arg_regs, instantiated_args),
+                |own| own.is_empty() || instantiated_args.len() >= own.len(),
+            ),
+            MirInstr::BinOp {
+                resolved: Some(callee),
+                a,
+                raises,
+                ..
+            } => self.member_call(
+                declarations,
+                callee,
+                register(a),
+                raises,
+                |own: &[&ParamDecl]| own.is_empty(),
+            ),
+            MirInstr::GetIter {
+                source,
+                prepare,
+                mode,
+                ..
+            } => match prepare.as_slice() {
+                [callee] => self.member_call(
+                    declarations,
+                    callee,
+                    function.var_tys.get(source),
+                    mode,
+                    |own: &[&ParamDecl]| own.is_empty(),
+                ),
+                _ => false,
+            },
+            MirInstr::TryNext {
+                iter,
+                call,
+                exhaustion,
+                ..
+            } => self.member_call(
+                declarations,
+                &call.target,
+                function.var_tys.get(iter),
+                &(&call.raises, exhaustion),
+                |own: &[&ParamDecl]| own.is_empty(),
+            ),
+            _ => {
+                let Some(call) = instruction_subscript_call(instruction) else {
+                    return false;
+                };
+                let receiver = match instruction {
+                    MirInstr::Index {
+                        base, base_place, ..
+                    } => base_place
+                        .as_deref()
+                        .and_then(|place| place_ty(function, place))
+                        .or_else(|| register(base)),
+                    MirInstr::Slice {
+                        object,
+                        object_place,
+                        ..
+                    }
+                    | MirInstr::MultiIndex {
+                        object,
+                        object_place,
+                        ..
+                    } => object_place
+                        .as_deref()
+                        .and_then(|place| place_ty(function, place))
+                        .or_else(|| register(object)),
+                    MirInstr::MultiSet {
+                        receiver,
+                        receiver_place,
+                        ..
+                    } => receiver_place
+                        .as_deref()
+                        .and_then(|place| place_ty(function, place))
+                        .or_else(|| register(receiver)),
+                    _ => None,
+                };
+                let supplied: Vec<&ParamId> =
+                    supplied_parameter_arguments(&call.param_decls, &call.param_arg_regs)
+                        .into_iter()
+                        .map(|(decl, _)| decl.id())
+                        .collect();
+                self.member_call(
+                    declarations,
+                    &call.target,
+                    receiver,
+                    &(&call.raises, &call.param_arg_regs),
+                    |own| own.iter().all(|decl| supplied.contains(&decl.id())),
+                )
+            }
+        }
+    }
+
+    /// Read a call of the member `callee` on a value of type `receiver` as
+    /// upstream's call, which passes the member's parameters as values,
+    /// reads: the receiver's arguments at the struct parameters the member
+    /// kept, and the call's own `parts`, each whole. Its operands and
+    /// result read their layout with the body. `own_recorded` judges
+    /// whether the call records the member's kept own parameters.
+    ///
+    /// Returns `false`, reading nothing, when the member's removals are not
+    /// at hand, the receiver does not spell every parameter of the member's
+    /// struct (a trait dispatch, a variadic struct), or the call does not
+    /// record the member's own parameters.
+    fn member_call<T: Serialize + ?Sized>(
+        &mut self,
+        declarations: &MirDeclarations,
+        callee: &str,
+        receiver: Option<&Ty>,
+        parts: &T,
+        own_recorded: impl FnOnce(&[&ParamDecl]) -> bool,
+    ) -> bool {
+        let Some(removed) = self.callees.and_then(|callees| callees(callee)) else {
+            return false;
+        };
+        let Some(receiver) = receiver.map(|receiver| match receiver.kind() {
+            TyKind::Ref(reference) => &reference.referent,
+            _ => receiver,
+        }) else {
+            return false;
+        };
+        let receiver = self.spelled_self(receiver).clone();
+        let TyKind::Struct(name, arguments) = receiver.kind() else {
+            return false;
+        };
+        let Some(decls) = mojito_symbol::symbol::split_method_symbol(callee)
+            .filter(|(owner, _)| owner == name)
+            .and_then(|_| declarations.structure(name))
+            .map(|structure| structure.param_decls.as_slice())
+            .filter(|decls| decls.len() == arguments.len())
+        else {
+            return false;
+        };
+        let own: Vec<&ParamDecl> = declarations
+            .function(callee)
+            .map(|declaration| {
+                declaration
+                    .param_decls
+                    .iter()
+                    .filter(|decl| *decl.id().owner == *callee && !removed.contains(decl.id()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !own_recorded(&own) {
+            return false;
+        }
+        for (decl, argument) in decls.iter().zip(arguments) {
+            if !removed.contains(decl.id()) {
+                self.visit(argument);
+            }
+        }
+        self.visit(parts);
+        self.member_callees.insert(callee.to_string());
+        true
     }
 
     /// The reads of an instruction that may run a member of a struct it

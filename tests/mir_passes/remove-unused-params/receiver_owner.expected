@@ -160,6 +160,8 @@
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: struct_type { name: Box, arguments: [] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: Box, arguments: [] } }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 362, end: 366, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 362, end: 372, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 375, end: 379, origin: present($v0) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 375, end: 385, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 362, end: 385, origin: absent }) }],
+        removed_params: [param_id { owner: "Box", slot: 0 }],
+        callee_removed_params: [callee_params { callee: "Box.get", params: [param_id { owner: "Box", slot: 0 }] }],
         blocks: [
           bb0 {
             instructions: [

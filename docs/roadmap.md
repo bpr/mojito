@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1020**.
+Next free ID: **R1022**.
 
 ## Ordered Work
 
@@ -623,20 +623,43 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1016.
   - Model: Fable, Not Planned.
 
-- [ ] **R998 A method call or a constructor reads its struct's arguments
-  whole, whatever the member removed**
+- [ ] **R1020 A construction calls its struct, not the constructor the
+  check selected**
 
-  `fg[n](b: NBox[n])` returning `b.get()` and `mk[n]() -> Box[n]`
-  returning `Box[n](5)` keep `n`, where the pin removes it because `get`
-  and `Box.__init__` are themselves `_REMOVED_ARG`.
-  - `mir::unread_parameters` reads every struct type a method call,
-    subscript, iteration, resolved operator, or undeclared callee (a
-    constructor, a builtin such as `len`) names, as member dispatch.
-  - Upstream's call passes the member's parameters as values, so a
-    removed one is no read: read the member's kept parameters instead, as
-    `without_removed_forwards` does for a declared callee.
-  - Found while landing R977 (2026-10-15).
-  - Depends on R978.
+  `mk[n]()` returning `Box[n](5).v` keeps `n`, where the pin removes it
+  because `Box.__init__` is `_REMOVED_ARG`.
+  - MIR spells `Box[n](5)` as `call { func: Box, instantiated_args: [n] }`,
+    an undeclared callee whose types `mir::unread_parameters` reads whole,
+    and the elaborator picks the overload again by arity.
+  - Upstream's construction is a call of the selected `__init__` generator
+    with the struct's parameters, so `RemoveUnusedParams` rewrites it like
+    any call.
+  - Lower a construction as a call of the checker-selected constructor
+    (`GenericInstantiation`'s overload key) with the spelled struct as its
+    `receiver`, as a static call is, so `drop_receiver_arguments` and the
+    declared-`Call` arm read it.
+  - The VM, Pliron, the elaborator's construction arm,
+    `eliminate-dead-symbols`, and the copy form `T(copy=…)` follow.
+  - Also merges `Box.make() -> Self` and an `__iter__` that constructs
+    `NIter[Self.n]`.
+  - Found while landing R998 (2026-10-15).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1021 `len(b)` reads its argument's struct whole, whatever
+  `__len__` removed**
+
+  `flen[n](b: NBox[n])` returning `len(b)` keeps `n`, where the pin, whose
+  `len` inlines to `b.__len__()`, removes it because `__len__` is
+  `_REMOVED_ARG`.
+  - `len(b)` is an undeclared builtin `call`, which `mir::unread_parameters`
+    reads whole; a resolved `__len__` method call already reads only the
+    struct arguments the member kept (R998).
+  - Once R988 makes `len` the library function, check that `flen` is one
+    instance on both backends and add it to
+    `assets/ok/member_call_unread_struct_parameter_instances.mojo`.
+  - Found while landing R998 (2026-10-15).
+  - Depends on R988.
   - Model: Fable, Not Planned.
 
 - [ ] **R999 A drop, copy, or move reads a declared lifecycle member's

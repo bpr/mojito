@@ -96,7 +96,9 @@ pub(super) fn verify_scope(
                     declaration,
                     declarations,
                     &snapshot,
+                    &snapshot,
                 )
+                .params
             })
             .unwrap_or_default();
         for id in &function.removed_params {

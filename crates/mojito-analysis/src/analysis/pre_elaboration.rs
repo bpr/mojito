@@ -450,9 +450,10 @@ fn verify_after(
 }
 
 /// The callees `function`, the body of `name`, calls directly, by a call,
-/// a resolved method call, or a subscript call, through a closure or a
-/// function value it makes, or as the destructor a drop of one of its slots
-/// runs, and the lifted bodies it or its signature names
+/// a resolved method call, a subscript call, a resolved operator, or an
+/// iteration step, through a closure or a function value it makes, or as
+/// the destructor a drop of one of its slots runs, and the lifted bodies
+/// it or its signature names
 /// ([`mojito_mir::mir::named_lifted_bodies`]), that `followed` accepts,
 /// each once, in its regions too.
 fn followed_callees(
@@ -474,7 +475,13 @@ fn followed_callees(
                     MirInstr::MethodCall {
                         resolved: Some(target),
                         ..
+                    }
+                    | MirInstr::BinOp {
+                        resolved: Some(target),
+                        ..
                     } => out.push(target.clone()),
+                    MirInstr::GetIter { prepare, .. } => out.extend(prepare.iter().cloned()),
+                    MirInstr::TryNext { call, .. } => out.push(call.target.clone()),
                     MirInstr::MakeClosure { function, .. }
                     | MirInstr::Const {
                         k: Const::Function(function),

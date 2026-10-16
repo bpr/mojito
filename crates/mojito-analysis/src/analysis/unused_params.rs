@@ -25,6 +25,12 @@
 //! each body as that rewrite leaves it
 //! ([`mojito_mir::mir::without_removed_forwards`]), and records the callees
 //! whose removals it relied on, which the verifier reads the body through.
+//! A call of a member (a method call, a subscript, a resolved operator, an
+//! iteration step) passes the member's parameters as values on the pin, so
+//! it reads only the receiver's arguments at the struct parameters that
+//! member kept; each such member joins the snapshot too, empty removals
+//! included, since the verifier reads a call of a member it has none for
+//! whole.
 //!
 //! A nested body is a generator over the binders of its enclosing scope,
 //! as upstream lifts a closure to one: the pass removes those it never
@@ -99,10 +105,10 @@ pub fn remove_unused_params(
         .filter_map(|&target| {
             callees
                 .unit_body(target)
-                .filter(|body| !body.removed_params.is_empty())
                 .map(|body| (target, body.removed_params.as_slice()))
         })
         .collect();
+    let callee_removals = |callee: &str| removals.get(callee).copied();
     let mut nested_targets = BTreeSet::new();
     nested_bodies(&body.blocks, declarations, &mut nested_targets);
     let lifted_targets = named_lifted_bodies(name, body, declarations);
@@ -116,17 +122,22 @@ pub fn remove_unused_params(
         })
         .collect();
     let nested_removals = |body: &str| nested.get(body).copied();
-    let view = without_removed_forwards(name, body, declarations, &|callee| {
-        removals.get(callee).copied()
-    });
+    let view = without_removed_forwards(name, body, declarations, &callee_removals);
     let unread = |body: &MirFunction| {
         declaration
             .map(|declaration| {
-                unread_parameters_of(name, body, declaration, declarations, &nested_removals)
+                unread_parameters_of(
+                    name,
+                    body,
+                    declaration,
+                    declarations,
+                    &nested_removals,
+                    &callee_removals,
+                )
             })
             .unwrap_or_default()
     };
-    let (removed, mut discounted) = match &view {
+    let (unread, mut discounted): (_, Vec<(String, Vec<ParamId>)>) = match &view {
         Some((view, discounted)) => (
             unread(view),
             discounted
@@ -136,9 +147,16 @@ pub fn remove_unused_params(
         ),
         None => (unread(body), Vec::new()),
     };
+    let removed = unread.params;
     let discounted = if removed.is_empty() {
         Vec::new()
     } else {
+        for callee in unread.member_callees {
+            if !discounted.iter().any(|(seen, _)| *seen == callee) {
+                let ids = removals[callee.as_str()].to_vec();
+                discounted.push((callee, ids));
+            }
+        }
         for (body, ids) in nested {
             if (!ids.is_empty() || lifted_targets.contains(body))
                 && !discounted.iter().any(|(callee, _)| callee == body)
@@ -179,8 +197,8 @@ fn has_own_parameters(
         || !method_owner_params(&declaration.lowered_name, declarations).is_empty()
 }
 
-/// The callee of each call, resolved method call, and subscript call in
-/// `blocks` and their regions.
+/// The callee of each call, resolved method call, subscript call,
+/// resolved operator, and iteration step in `blocks` and their regions.
 fn call_targets<'a>(blocks: &'a [MirBlock], targets: &mut BTreeSet<&'a str>) {
     for instruction in blocks.iter().flat_map(|block| &block.instrs) {
         match instruction {
@@ -190,8 +208,18 @@ fn call_targets<'a>(blocks: &'a [MirBlock], targets: &mut BTreeSet<&'a str>) {
             MirInstr::MethodCall {
                 resolved: Some(target),
                 ..
+            }
+            | MirInstr::BinOp {
+                resolved: Some(target),
+                ..
             } => {
                 targets.insert(target);
+            }
+            MirInstr::GetIter { prepare, .. } => {
+                targets.extend(prepare.iter().map(String::as_str));
+            }
+            MirInstr::TryNext { call, .. } => {
+                targets.insert(&call.target);
             }
             _ => {
                 if let Some(call) = instruction_subscript_call(instruction) {

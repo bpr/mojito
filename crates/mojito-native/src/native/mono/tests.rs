@@ -2205,6 +2205,127 @@ fn a_method_call_on_a_field_reads_the_root_struct_s_layout() {
     assert_eq!(instances_of(&specialized, "SBox.take"), ["SBox.take$mono"]);
 }
 
+/// A call of a member reads only the struct arguments the member kept, as
+/// upstream's call passes the member's parameters as values: a method
+/// call, a call on `self`, a subscript, an operator, and a prefix operator
+/// whose member ignores `n` are one instance for every `n`, and a prefix
+/// operator whose member reads `Self.n` one per `n`.
+#[test]
+fn a_member_call_reads_only_the_struct_arguments_the_member_kept() {
+    let source = "struct NBox[n: Int](Copyable, Movable):\n\
+         \x20   var v: Int\n\
+         \x20   def __init__(out self, v: Int):\n\
+         \x20       self.v = v\n\
+         \x20   @no_inline\n\
+         \x20   def get(self) -> Int:\n\
+         \x20       return self.v\n\
+         \x20   @no_inline\n\
+         \x20   def twice(self) -> Int:\n\
+         \x20       return self.get() + self.get()\n\
+         \x20   @no_inline\n\
+         \x20   def __getitem__(self, i: Int) -> Int:\n\
+         \x20       return self.v + i\n\
+         \x20   @no_inline\n\
+         \x20   def __add__(self, o: Self) -> Int:\n\
+         \x20       return self.v + o.v\n\
+         \x20   @no_inline\n\
+         \x20   def __neg__(self) -> Int:\n\
+         \x20       return Self.n - self.v\n\
+         \x20   @no_inline\n\
+         \x20   def __invert__(self) -> Int:\n\
+         \x20       return self.v + 1\n\
+         @no_inline\n\
+         def fg[n: Int](b: NBox[n]) -> Int:\n\
+         \x20   return b.get()\n\
+         @no_inline\n\
+         def fsub[n: Int](b: NBox[n]) -> Int:\n\
+         \x20   return b[3]\n\
+         @no_inline\n\
+         def fop[n: Int](b: NBox[n]) -> Int:\n\
+         \x20   return b + b\n\
+         @no_inline\n\
+         def fneg[n: Int](b: NBox[n]) -> Int:\n\
+         \x20   return -b\n\
+         @no_inline\n\
+         def finv[n: Int](b: NBox[n]) -> Int:\n\
+         \x20   return ~b\n\
+         def main():\n\
+         \x20   print(fg(NBox[1](3)), fg(NBox[2](4)))\n\
+         \x20   print(NBox[1](1).twice(), NBox[2](2).twice())\n\
+         \x20   print(fsub(NBox[1](1)), fsub(NBox[2](2)))\n\
+         \x20   print(fop(NBox[1](1)), fop(NBox[2](2)))\n\
+         \x20   print(fneg(NBox[1](3)), fneg(NBox[2](4)))\n\
+         \x20   print(finv(NBox[1](3)), finv(NBox[2](4)))\n";
+    let specialized = specialized_with_removed(source, &[]).expect("specialize");
+    assert_eq!(
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
+    );
+    for template in ["fg", "fsub", "fop", "finv", "NBox.twice"] {
+        assert_eq!(
+            instances_of(&specialized, template),
+            [format!("{template}$mono")]
+        );
+    }
+    assert_eq!(
+        instances_of(&specialized, "fneg"),
+        ["fneg$mono$V1", "fneg$mono$V2"]
+    );
+}
+
+/// An iteration step and a method whose result spells an erased type
+/// argument read only the struct arguments the member kept too.
+#[test]
+fn an_iteration_and_an_erased_result_read_only_the_kept_arguments() {
+    let source = "struct IntIter(Iterator, Movable):\n\
+         \x20   comptime Element = Int\n\
+         \x20   var i: Int\n\
+         \x20   def __init__(out self, i: Int):\n\
+         \x20       self.i = i\n\
+         \x20   def __next__(mut self) raises StopIteration -> Int:\n\
+         \x20       if self.i <= 0:\n\
+         \x20           raise StopIteration()\n\
+         \x20       self.i -= 1\n\
+         \x20       return self.i\n\
+         struct NBox[n: Int](Copyable, Movable):\n\
+         \x20   var v: Int\n\
+         \x20   def __init__(out self, v: Int):\n\
+         \x20       self.v = v\n\
+         \x20   @no_inline\n\
+         \x20   def __iter__(self) -> IntIter:\n\
+         \x20       return IntIter(self.v)\n\
+         struct TBox[T: AnyType](Copyable, Movable):\n\
+         \x20   var v: Int\n\
+         \x20   def __init__(out self, v: Int):\n\
+         \x20       self.v = v\n\
+         \x20   @no_inline\n\
+         \x20   def again(self) -> Self:\n\
+         \x20       return self.copy()\n\
+         @no_inline\n\
+         def fit[n: Int](b: NBox[n]) -> Int:\n\
+         \x20   var s = 0\n\
+         \x20   for x in b:\n\
+         \x20       s += x\n\
+         \x20   return s\n\
+         @no_inline\n\
+         def ft[T: AnyType](b: TBox[T]) -> Int:\n\
+         \x20   return b.again().v\n\
+         def main():\n\
+         \x20   print(fit(NBox[1](3)), fit(NBox[2](4)))\n\
+         \x20   print(ft(TBox[Int](5)), ft(TBox[String](6)))\n";
+    let specialized = specialized_with_removed(source, &[]).expect("specialize");
+    assert_eq!(
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
+    );
+    assert_eq!(instances_of(&specialized, "fit"), ["fit$mono"]);
+    assert_eq!(instances_of(&specialized, "ft"), ["ft$mono"]);
+    assert_eq!(
+        instances_of(&specialized, "TBox.again"),
+        ["TBox.again$mono"]
+    );
+}
+
 /// A destructor or copy constructor that reads no struct parameter is one
 /// instance for every instance of its struct, as on the pin, and each
 /// struct instance's member table names it.
