@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `s & t` over two `Set[Int]` values, and
+  `benchmarks/compile/collections_many.mojo`, elaborate again (R1026):
+  R995's erasure of a removed parameter's valueless argument fixed the
+  `Set.intersection` instance R999 broke, and the benchmark's
+  `benchmarks/instantiation.tsv` row matches its counters unchanged.
 - A call of a generator that removed a parameter no longer evaluates that
   parameter's argument (R995), as upstream's `RemoveUnusedParams` rewrote
   the call: the elaborator runs each instance over

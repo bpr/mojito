@@ -56,21 +56,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R1026 `Set[Int]`'s `s & t` fails elaboration since R999**
-
-  `s & t` over two `Set[Int]` values fails with "function instantiation of
-  `Set.intersection` failed: parameter `H` is read, but an instance that
-  removed it erased its struct argument (`_REMOVED_ARG`)". So does
-  `benchmarks/compile/collections_many.mojo`, whose
-  `benchmarks/instantiation.tsv` row keeps its count from before R999, so
-  `scripts/instantiation-report --check` reports it lost until this lands.
-  - c690e8d5 (R999: a drop, copy, or move reads only its lifecycle
-    member's kept parameters) introduced it; 44021712 and a443448f run it.
-  - Some drop, copy, or move in `Set.intersection` must still read the
-    hasher parameter `H` that the instance removed.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R951 A `nodebug` constructor of a struct with several
   `__init__`s is called, not inlined**
 
