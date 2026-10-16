@@ -114,7 +114,7 @@ impl VmBackend {
             // method call; arity selects only for an operator naming none.
             let sname = name.clone();
             let fname = prog.runtime_method_name(&sname, dunder, resolved, 1);
-            return self.call_resolved_dunder(prog, &sname, dunder, vec![l, r], Some(&fname));
+            return self.call_resolved_dunder(prog, &sname, dunder, vec![l, r], fname.as_deref());
         }
         if op == InfixOp::Pow
             && let Some(result) = self.integer_pow(prog, &l, &r)?

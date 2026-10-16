@@ -1026,22 +1026,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1027 The VM composes a type-reached member's name before it
-  reads the struct's member table**
-
-  The VM still finds an operator, protocol method, or trait requirement it
-  dispatches with no selected symbol by composing `{struct}.{method}`, and
-  reads the member table only when that name defines nothing.
-  - Since R1006 the table names every instance of such a member, and
-    `eliminate-duplicate-functions` redirects its entries.
-  - Upstream reaches these members only through a symbol: a call's callee
-    or a conformance's witness table.
-  - The fix reads the table first in `call_resolved_dunder` and
-    `runtime_method_name` (`crates/mojito-vm/src/backend/vm.rs`), then
-    drops the composed fallback for members the table covers.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R927 A slot whose reads merge two stores keeps its slot, where
   upstream's `Mem2Reg` carries it through region results**
 

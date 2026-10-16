@@ -396,12 +396,7 @@ impl VmBackend {
         // the struct's member table names.
         let idx = match resolved {
             Some(resolved) => prog.index_of(resolved),
-            None if mojito_mir::mir::table_member(method).is_some() => {
-                prog.struct_member(sname, method, argc)
-            }
-            None => prog
-                .index_of(&prog.overload_name(&format!("{sname}.{method}"), argc))
-                .or_else(|| prog.struct_member(sname, method, argc)),
+            None => prog.struct_member(sname, method, argc),
         };
         let Some(idx) = idx else {
             // `Equatable`'s default `!=`: a struct that declares `__eq__`
@@ -788,21 +783,28 @@ impl Prog {
         argc: usize,
     ) -> Option<usize> {
         let selected = resolved.and_then(|resolved| {
-            self.index_of(resolved).or_else(|| {
-                let (_, key) = mojito_symbol::symbol::split_method_symbol(resolved)?;
-                let mut instances = self
-                    .structs
-                    .get(name)?
-                    .members
-                    .iter()
-                    .filter(|(known, _)| known == key);
-                match (instances.next(), instances.next()) {
-                    (Some((_, symbol)), None) => self.index_of(symbol),
-                    _ => None,
-                }
-            })
+            self.index_of(resolved)
+                .or_else(|| self.keyed_struct_member(name, resolved))
         });
         selected.or_else(|| self.struct_member(name, method, argc))
+    }
+
+    /// The function index of the one instance the struct `name`'s member
+    /// table records under the method spelling of the selected symbol
+    /// `selected` (`__eq__$ov$Self` for `__trait_dispatch.__eq__$ov$Self`),
+    /// as a conformance's witness table answers a requirement.
+    fn keyed_struct_member(&self, name: &str, selected: &str) -> Option<usize> {
+        let (_, key) = mojito_symbol::symbol::split_method_symbol(selected)?;
+        let mut instances = self
+            .structs
+            .get(name)?
+            .members
+            .iter()
+            .filter(|(known, _)| known == key);
+        match (instances.next(), instances.next()) {
+            (Some((_, symbol)), None) => self.index_of(symbol),
+            _ => None,
+        }
     }
 
     /// Each instance of the member `method` in the struct `name`'s member
@@ -842,15 +844,6 @@ impl Prog {
         self.index_of(symbol)
     }
 
-    /// Arity-based overload fallback: resolve a *source* name to the lowered
-    /// function it must mean, for the calls the checker records no per-span
-    /// target for. Its callers are the VM-synthesized dispatches — operator/
-    /// `__str__`/`__hash__` dunders (`call_dunder`), `__setitem__`,
-    /// the `for`-loop `__next__` protocol, `__init__` construction reached
-    /// without a recorded target, and `runtime_method_name` when `resolved` is
-    /// absent or its abstract callable-contract suffix retargets to a plain,
-    /// non-overloaded nominal `__call__`. Checker-resolved concrete overloads
-    /// carry their exact lowered callee and never depend on this fallback.
     /// The compiled `__init__` a construction of `struct_name` with `argc`
     /// positional arguments executes: the exact name, else the unique
     /// same-arity overload, else the unique variadic overload whose
@@ -879,6 +872,9 @@ impl Prog {
         }
     }
 
+    /// Arity-based overload fallback: the lowered function a *source* name
+    /// with `argc` arguments means, for a construction reached without a
+    /// recorded target.
     fn overload_name(&self, name: &str, argc: usize) -> String {
         mojito_symbol::symbol::resolve_callable_symbol(self, name, argc)
     }
@@ -887,28 +883,36 @@ impl Prog {
     /// runtime type. Bounded generic calls carry an abstract checker symbol;
     /// retargeting its suffix preserves overload selection even when every
     /// overload has the same positional arity (for example `**kwargs` methods).
-    /// A member the receiver's type reaches that no such name defines, one
-    /// merged into an identical instance, is the one its struct's member
-    /// table names.
+    /// A selected instance of the receiver's own struct runs as named. Any
+    /// other member the receiver's type reaches is the one its struct's
+    /// member table names, as a conformance's witness table answers a
+    /// requirement: under the selected method spelling, else by callable
+    /// resolution among the member's entries. A selected instance of
+    /// another owner runs as named when the table names none. `None` when
+    /// nothing does: a dispatch never composes `{struct}.{method}`.
     fn runtime_method_name(
         &self,
         receiver_type: &str,
         method: &str,
         resolved: Option<&str>,
         argc: usize,
-    ) -> String {
-        let name = mojito_symbol::symbol::resolve_method_symbol(
-            self,
-            receiver_type,
-            method,
-            resolved,
-            argc,
-        );
-        if self.index_of(&name).is_some() {
-            return name;
+    ) -> Option<String> {
+        let defined = resolved.filter(|selected| self.index_of(selected).is_some());
+        if let Some(selected) = defined.filter(|selected| {
+            mojito_symbol::symbol::split_method_symbol(selected)
+                .is_some_and(|(owner, _)| owner == receiver_type)
+        }) {
+            return Some(selected.to_string());
         }
-        self.struct_member(receiver_type, method, argc)
-            .map_or(name, |index| self.mir.functions[index].0.clone())
+        let alternate =
+            resolved.and_then(mojito_symbol::symbol::borrowed_iterator_dispatch_alternate);
+        resolved
+            .into_iter()
+            .chain(alternate.as_deref())
+            .find_map(|selected| self.keyed_struct_member(receiver_type, selected))
+            .or_else(|| self.struct_member(receiver_type, method, argc))
+            .map(|index| self.mir.functions[index].0.clone())
+            .or_else(|| defined.map(str::to_string))
     }
 }
 

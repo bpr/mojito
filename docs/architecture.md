@@ -5405,9 +5405,13 @@ point where a slot declared in a loop is uninitialized again.
   struct's type reaches, as upstream's conformance witness tables do: a
   special method or a requirement of a trait the struct declares
   (`mir::MirDeclarations::reached_from_type`, `Specializer::table_key`,
-  R1006). Those stay live through the calls that name them, and the VM
-  reads the table where a composed `{struct}.{method}` name defines
-  nothing. A construction names the constructor the check selected from
+  R1006). Those stay live through the calls that name them. A VM dispatch with
+  no selected instance of the receiver's own struct (an operator, a
+  protocol method, a trait requirement, a type-reached dunder) runs the
+  instance the table records under the selected method spelling, else
+  the one callable resolution picks among the member's entries, and
+  never composes `{struct}.{method}` (`Prog::runtime_method_name`,
+  `VmBackend::call_resolved_dunder`, R1027). A construction names the constructor the check selected from
   lowering on, as upstream's call names the selected `__init__` generator
   (`overload_support::constructor_symbol`, R1020): `Box[n](5)` calls
   `Box.__init__` with the struct's arguments as that constructor's, since

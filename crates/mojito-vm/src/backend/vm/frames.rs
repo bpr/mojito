@@ -485,9 +485,13 @@ impl VmBackend {
                 .map(|register| caller.registers[register.0 as usize].clone())
                 .collect();
             refuse_pack_spread(*spread)?;
-            let function_name =
-                prog.runtime_method_name(name, method, resolved.as_deref(), positional.len());
-            let Some(index) = prog.index_of(&function_name) else {
+            let Some((function_name, index)) = prog
+                .runtime_method_name(name, method, resolved.as_deref(), positional.len())
+                .and_then(|function_name| {
+                    let index = prog.index_of(&function_name)?;
+                    Some((function_name, index))
+                })
+            else {
                 return Ok(None);
             };
             // An adapted abstract result must be materialized while the caller

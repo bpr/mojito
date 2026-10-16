@@ -1669,28 +1669,14 @@ impl VmBackend {
                         )));
                     };
                     let sname = name.clone();
-                    let mut target =
-                        prog.runtime_method_name(&sname, "__iter__", Some(selected.as_str()), 0);
-                    // A borrowed conformer may spell its receiver `self` (Read)
-                    // or `ref self` (Ref); the checker pinned one spelling in
-                    // the abstract dispatch symbol, so probe the sibling before
-                    // giving up.
-                    if prog.index_of(&target).is_none()
-                        && let Some(alternate) =
-                            mojito_symbol::symbol::borrowed_iterator_dispatch_alternate(selected)
-                    {
-                        target = prog.runtime_method_name(
-                            &sname,
-                            "__iter__",
-                            Some(alternate.as_str()),
-                            0,
-                        );
-                    }
-                    let fidx = prog.index_of(&target).ok_or_else(|| {
-                        RuntimeError::Unsupported(format!(
-                            "vm: checked iterator method '{target}' is missing from MIR"
-                        ))
-                    })?;
+                    let fidx = prog
+                        .runtime_method_name(&sname, "__iter__", Some(selected.as_str()), 0)
+                        .and_then(|target| prog.index_of(&target))
+                        .ok_or_else(|| {
+                            RuntimeError::Unsupported(format!(
+                                "vm: checked iterator method '{selected}' of '{sname}' is missing from MIR"
+                            ))
+                        })?;
                     // SPIKE seam A: a borrowed `__iter__(ref self)` receives a handle
                     // to the source slot so the iterator's borrow roots at the loop
                     // frame; caller-reachable so that root resolves inside `__iter__`.
@@ -1733,21 +1719,20 @@ impl VmBackend {
                             break;
                         };
                         let sname = name.clone();
-                        let next = prog.runtime_method_name(&sname, "__next__", None, 0);
-                        if prog.index_of(&next).is_some() {
+                        if prog
+                            .runtime_method_name(&sname, "__next__", None, 0)
+                            .is_some_and(|next| prog.index_of(&next).is_some())
+                        {
                             break;
                         }
-                        let target = prog.runtime_method_name(
-                            &sname,
-                            "__iter__",
-                            Some(selected.as_str()),
-                            0,
-                        );
-                        let fidx = prog.index_of(&target).ok_or_else(|| {
-                            RuntimeError::Unsupported(format!(
-                                "vm: checked iterator method '{target}' is missing from MIR"
-                            ))
-                        })?;
+                        let fidx = prog
+                            .runtime_method_name(&sname, "__iter__", Some(selected.as_str()), 0)
+                            .and_then(|target| prog.index_of(&target))
+                            .ok_or_else(|| {
+                                RuntimeError::Unsupported(format!(
+                                    "vm: checked iterator method '{selected}' of '{sname}' is missing from MIR"
+                                ))
+                            })?;
                         current = self.call_function(prog, fidx, vec![current.clone()])?;
                     }
                 }
@@ -1799,17 +1784,15 @@ impl VmBackend {
                     )));
                 };
                 let receiver_name = name.clone();
-                let target = prog.runtime_method_name(
-                    &receiver_name,
-                    "__next__",
-                    Some(call.target.as_str()),
-                    0,
-                );
-                let fidx = prog.index_of(&target).ok_or_else(|| {
-                    RuntimeError::Unsupported(format!(
-                        "vm: checked iterator method '{target}' is missing from MIR"
-                    ))
-                })?;
+                let fidx = prog
+                    .runtime_method_name(&receiver_name, "__next__", Some(call.target.as_str()), 0)
+                    .and_then(|target| prog.index_of(&target))
+                    .ok_or_else(|| {
+                        RuntimeError::Unsupported(format!(
+                            "vm: checked iterator method '{}' of '{receiver_name}' is missing from MIR",
+                            call.target
+                        ))
+                    })?;
                 let concrete_returns_reference = prog.mir.functions[fidx].1.returns_reference;
                 match self.call_frame_caller_reachable(
                     prog,

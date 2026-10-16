@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The VM runs an operator, protocol method, trait requirement, or other
+  member it reaches from a value's type through the struct's member
+  table (R1027), as upstream reaches it through a conformance's witness
+  table, and never composes `{struct}.{method}` from the receiver's
+  type. No program's output changes.
 - A positional-only parameter's evaluated default no longer reads the
   free function's parameters when every earlier omitted default is
   filled at the call site too (R1025), as on the pin:

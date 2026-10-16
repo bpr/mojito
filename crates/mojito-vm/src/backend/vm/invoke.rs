@@ -586,10 +586,15 @@ impl VmBackend {
             Value::Struct { name, .. } => {
                 let method_argc = args.len();
                 let source_fname = format!("{name}.{method}");
-                let fname = prog.runtime_method_name(name, method, resolved, method_argc);
-                let fidx = prog.index_of(&fname).ok_or_else(|| {
-                    RuntimeError::Unsupported(format!("vm: unknown method '{fname}'"))
-                })?;
+                let (fname, fidx) = prog
+                    .runtime_method_name(name, method, resolved, method_argc)
+                    .and_then(|fname| {
+                        let fidx = prog.index_of(&fname)?;
+                        Some((fname, fidx))
+                    })
+                    .ok_or_else(|| {
+                        RuntimeError::Unsupported(format!("vm: unknown method '{source_fname}'"))
+                    })?;
                 // Bind ordinary arguments through the same signature metadata as
                 // free functions, then prepend `self` in frame slot zero.
                 let (bound, slots) = if let Some(signature) = prog.sigs.get(&fname) {
