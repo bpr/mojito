@@ -2277,14 +2277,13 @@ impl Checker {
                             error: sig.error.clone(),
                             mutates_receiver: false,
                             consumes_receiver: false,
-                            lowered_name: (sigs.len() > 1).then(|| {
-                                method_lowered_name(
-                                    name,
-                                    "__init__",
-                                    sig,
-                                    self.self_instance_ty(name).as_ref(),
-                                )
-                            }),
+                            lowered_name: Some(constructor_symbol(
+                                name,
+                                "__init__",
+                                sigs.len() > 1,
+                                sig,
+                                self.self_instance_ty(name).as_ref(),
+                            )),
                             ref_params: sig.ref_params.clone(),
                             ref_return: None,
                             param_types: params,
@@ -2445,6 +2444,13 @@ impl Checker {
                     &arg_tys,
                     &partitioned.explicit_origins,
                 )?;
+                self.record_at(span.clone()).overload_target = Some(constructor_symbol(
+                    name,
+                    "__init__",
+                    false,
+                    sig,
+                    self.self_instance_ty(name).as_ref(),
+                ));
                 self.record_construction_instantiation(
                     span,
                     name,
@@ -2864,17 +2870,13 @@ impl Checker {
                     }
                 }
                 // The template overload the source spelled.
-                let target = overloaded.then(|| {
-                    method_lowered_name(
-                        name,
-                        "__init__",
-                        &sig,
-                        self.self_instance_ty(name).as_ref(),
-                    )
-                });
-                if let Some(target) = target {
-                    self.record_at(span.clone()).overload_target = Some(target);
-                }
+                self.record_at(span.clone()).overload_target = Some(constructor_symbol(
+                    name,
+                    "__init__",
+                    overloaded,
+                    &sig,
+                    self.self_instance_ty(name).as_ref(),
+                ));
                 self.record_construction_instantiation(
                     span,
                     name,
@@ -3663,10 +3665,8 @@ impl Checker {
         kwargs: &[mojito_ast::ast::KwArg],
         partitioned: &super::type_resolution::PartitionedStructArgs,
     ) -> Result<Ty, TypeError> {
-        let sig = info
-            .methods
-            .get("__copyinit__")
-            .and_then(|sigs| sigs.iter().find(|sig| sig.params.len() == 1));
+        let sigs = info.methods.get("__copyinit__");
+        let sig = sigs.and_then(|sigs| sigs.iter().find(|sig| sig.params.len() == 1));
         if sig.is_none() {
             if !info.conforms.iter().any(|conformance| {
                 matches!(conformance.as_str(), "Copyable" | "ImplicitlyCopyable")
@@ -3687,10 +3687,8 @@ impl Checker {
                 }),
             };
         }
-        let params = sig
-            .expect("explicit copy constructor was resolved")
-            .params
-            .clone();
+        let sig = sig.expect("explicit copy constructor was resolved");
+        let params = sig.params.clone();
         let decls = info.decls.clone();
         let arg_ty = self.infer(&kwargs[0].value)?;
         self.record_read_temporary_argument(&kwargs[0].value);
@@ -3725,6 +3723,13 @@ impl Checker {
                 context: format!("argument 'copy' to '{name}.__init__'"),
             });
         }
+        self.record_at(span.clone()).overload_target = Some(constructor_symbol(
+            name,
+            "__copyinit__",
+            sigs.is_some_and(|sigs| sigs.len() > 1),
+            sig,
+            self.self_instance_ty(name).as_ref(),
+        ));
         // A copy keeps the source's origin tail.
         let mut arguments = tyargs;
         match arg_ty.kind() {

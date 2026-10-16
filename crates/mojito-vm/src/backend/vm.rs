@@ -676,7 +676,7 @@ impl Prog {
     /// name it runs, when the program declares that struct and the symbol's
     /// declaration takes a receiver: a `def` nested in a constructor is
     /// lifted under the constructor's name but builds nothing. An `__init__`
-    /// builds its call's result type, `constructed`, when that is a declared
+    /// or a called `__copyinit__` builds its call's result type, `constructed`, when that is a declared
     /// struct: an owner-less instance (`Box.__init__$mono`) names no struct
     /// the program declares, so the symbol's own struct is only the fallback.
     fn lifecycle_constructor<'s>(
@@ -686,7 +686,9 @@ impl Prog {
     ) -> Option<(&'s str, &'s str)> {
         let (parsed, member) = mojito_symbol::symbol::lifecycle_constructor(symbol)?;
         let struct_name = constructed
-            .filter(|name| member == "__init__" && self.structs.contains_key(*name))
+            .filter(|name| {
+                matches!(member, "__init__" | "__copyinit__") && self.structs.contains_key(*name)
+            })
             .unwrap_or(parsed);
         (self.structs.contains_key(struct_name)
             && self

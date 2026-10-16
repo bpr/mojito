@@ -640,6 +640,9 @@ pub enum SemanticAdjustment {
     /// The error type raised by the `@implicit` constructor of the
     /// `ImplicitConversion` at the same site: the conversion is a raising call.
     ConversionRaises(Ty),
+    /// The struct arguments the constructor of the `ImplicitConversion` at
+    /// the same site takes, which its declaration restates first.
+    ConversionInstantiatedArguments(Vec<mojito_types::types::TyArg>),
     /// Materialize an exact, compile-time-only numeric literal expression into
     /// its checked runtime scalar type.  Keeping this distinct from a user
     /// `@implicit` constructor preserves the language boundary: literal
@@ -4990,6 +4993,11 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
             if let Some(error) = &facts.conversion_raises {
                 adjustments.push(SemanticAdjustment::ConversionRaises(error.clone()));
             }
+            if let Some(arguments) = &facts.conversion_instantiation {
+                adjustments.push(SemanticAdjustment::ConversionInstantiatedArguments(
+                    arguments.clone(),
+                ));
+            }
             if let Some(mutable) = &facts.conversion_source_borrow {
                 adjustments.push(SemanticAdjustment::BorrowConversionSource { mutable: *mutable });
             }
@@ -5260,6 +5268,8 @@ node_facts! {
         implicit_conversion_type: Ty,
         conversion_source_borrow: bool,
         conversion_raises: Ty,
+        /// The struct arguments an implicit conversion's constructor takes.
+        conversion_instantiation: Vec<mojito_types::types::TyArg>,
         ty: Ty,
         binding: mojito_types::origin::OwnerId,
         /// The binding a declaring statement introduces.

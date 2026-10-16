@@ -5398,12 +5398,20 @@ point where a slot declared in a loop is uninitialized again.
   (`mir::MirDeclarations::reached_from_type`, `Specializer::table_key`,
   R1006). Those stay live through the calls that name them, and the VM
   reads the table where a composed `{struct}.{method}` name defines
-  nothing. A construction a compiled `__init__` serves names the
-  constructor instance it reaches, as upstream's call names the
-  constructor's symbol: the elaborator respells every call naming such a
-  struct, `make[String]()`'s `T()` included, so no backend resolves an
-  overload by arity for it; only a fieldwise struct with no `__init__` and
-  `T(copy=x)` keep the struct's name. A constructor that removed one of its
+  nothing. A construction names the constructor the check selected from
+  lowering on, as upstream's call names the selected `__init__` generator
+  (`overload_support::constructor_symbol`, R1020): `Box[n](5)` calls
+  `Box.__init__` with the struct's arguments as that constructor's, since
+  its declaration restates the struct's parameters, so a constructor that
+  removed `n` leaves a construction that passes none; an `@implicit`
+  conversion passes them the same way (`ConversionInstantiatedArguments`),
+  and `T(copy=x)` over an explicit copy constructor calls
+  `T.__copyinit__` with the spelled `T[n]` as its receiver, as a static
+  call carries it. The elaborator respells each to the instance it
+  reaches, and also every call it makes itself that names a struct,
+  `make[String]()`'s `T()` included, so no backend resolves an overload by
+  arity for it; only a fieldwise struct with no `__init__` and a
+  synthesized `T(copy=x)` keep the struct's name. A constructor that removed one of its
   struct's parameters is owner-less like any other method, and the VM builds the call's destination
   type through it (`Prog::lifecycle_constructor`, `CallTypes::constructed`),
   so `Box[1](1)` and `Box[2](2)` share one `Box.__init__$mono`. The two

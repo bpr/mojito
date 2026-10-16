@@ -459,6 +459,23 @@ pub(super) fn method_lowered_name(
     }
 }
 
+/// The lowered symbol of the constructor a construction selected: the
+/// overload's canonical symbol when the struct declares several, else the
+/// lone constructor's plain `{type}.{method}`, as MIR declares it.
+pub(super) fn constructor_symbol(
+    type_name: &str,
+    method: &str,
+    overloaded: bool,
+    sig: &MethodSig,
+    self_ty: Option<&Ty>,
+) -> String {
+    if overloaded {
+        method_lowered_name(type_name, method, sig, self_ty)
+    } else {
+        format!("{type_name}.{method}")
+    }
+}
+
 /// The raw-slot operations on `UnsafePointer` are an implementation privilege,
 /// not source-language API. Linked expressions retain their exact source path;
 /// only files physically shipped in the compiler's collection library receive

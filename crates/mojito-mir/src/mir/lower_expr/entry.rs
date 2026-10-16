@@ -259,6 +259,18 @@ impl<'a> Flatten<'a> {
                     _ => None,
                 })
                 .cloned();
+            let instantiated_args = e
+                .adjustments()
+                .iter()
+                .find_map(|adjustment| {
+                    match adjustment {
+                    mojito_checked::checked::SemanticAdjustment::ConversionInstantiatedArguments(
+                        arguments,
+                    ) => Some(arguments.clone()),
+                    _ => None,
+                }
+                })
+                .unwrap_or_default();
             self.emit(MirInstr::Call {
                 dest,
                 func: FuncRef::named(&target),
@@ -270,7 +282,7 @@ impl<'a> Flatten<'a> {
                 capture_accesses: Vec::new(),
                 param_arg_regs: Vec::new(),
                 receiver: None,
-                instantiated_args: Vec::new(),
+                instantiated_args,
                 spread: None,
             });
             if let Some(source_place) = source_place {

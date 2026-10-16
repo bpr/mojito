@@ -2430,10 +2430,10 @@ impl<'a> Specializer<'a> {
     }
 
     /// The compiled constructor a default's conversion target names. The
-    /// checker records the overload symbol, or — for a hand-written
-    /// `@implicit` constructor — the bare struct name, which resolves through
-    /// the shared callable-symbol policy over the single wrapped literal, as
-    /// the VM's `constructor_name` resolves it.
+    /// checker records the selected constructor's symbol; a bare struct name,
+    /// which only hand-written MIR spells, resolves through the shared
+    /// callable-symbol policy over the single wrapped literal, as the VM's
+    /// `constructor_name` resolves it.
     fn constructed_default_target(&self, target: &str) -> Option<String> {
         if self.functions.contains_key(target) {
             return Some(target.to_string());
@@ -2804,7 +2804,7 @@ impl<'a> Specializer<'a> {
                         // A direct constructor call's destination is its
                         // `out self`, not the declared `None` return — bind
                         // it as the receiver.
-                        let receiver = (func.0.contains(".__init__")
+                        let receiver = (mojito_symbol::symbol::is_initializer_symbol(&func.0)
                             && function.reg_types.contains_key(&dest.0))
                         .then_some(*dest);
                         let (target, mut bindings, arguments) = self.infer_call(

@@ -151,6 +151,7 @@ assets/ok/conditional_member_availability.mojo	-	ineligible	no-scalar-entry-shap
 assets/ok/conditional_member_trivial_value_clauses.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/conforms_to_library_types_unasked_traits.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/conforms_to_user_and_unasked_traits.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/construction_unread_struct_parameter_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/constructor_read_temporary_drop_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/constructor_reads_no_struct_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/container_hashable.mojo	-	ineligible	no-scalar-entry-shape

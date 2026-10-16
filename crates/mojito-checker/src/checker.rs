@@ -1651,11 +1651,13 @@ impl Checker {
         match matches.as_slice() {
             [] => Ok(None),
             [sig] => {
-                let target = if constructors.len() == 1 {
-                    name.clone()
-                } else {
-                    method_lowered_name(name, "__init__", sig, self.self_instance_ty(name).as_ref())
-                };
+                let target = constructor_symbol(
+                    name,
+                    "__init__",
+                    constructors.len() > 1,
+                    sig,
+                    self.self_instance_ty(name).as_ref(),
+                );
                 let source_borrow = sig
                     .ref_params
                     .first()
@@ -1742,6 +1744,18 @@ impl Checker {
             {
                 self.materialize_borrow_owner(expression, mutable)?;
             }
+        }
+        // A constructor restates its struct's parameters, so the conversion
+        // passes the converted-to type's binder prefix as any construction
+        // does.
+        if let TyKind::Struct(name, arguments) = to.kind()
+            && mojito_symbol::symbol::lifecycle_constructor(&target)
+                .is_some_and(|(_, method)| method == "__init__")
+            && let Some(info) = self.structs.get(name)
+            && !info.decls.is_empty()
+        {
+            self.record_at(span.clone()).conversion_instantiation =
+                Some(arguments[..info.decls.len().min(arguments.len())].to_vec());
         }
         self.record_at(span.clone()).implicit_conversion_type = Some(to.clone());
         self.record_at(span).implicit_conversion = Some(target);

@@ -409,9 +409,12 @@ impl VmBackend {
             )));
         }
         // A resolved constructor symbol — an overload, a closed instance's
-        // own clone (`Box.__init__$y3:Int`), or an owner-less instance —
-        // constructs the call's result struct through that exact body.
-        if let Some((struct_name, "__init__")) = prog.lifecycle_constructor(name, constructed) {
+        // own clone (`Box.__init__$y3:Int`), an owner-less instance, or a
+        // `T(copy=x)`'s copy constructor — constructs the call's result
+        // struct through that exact body.
+        if let Some((struct_name, "__init__" | "__copyinit__")) =
+            prog.lifecycle_constructor(name, constructed)
+        {
             return self.construct_via_init(prog, struct_name, Some(name), args, kwargs);
         }
         match name {

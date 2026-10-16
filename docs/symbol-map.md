@@ -91,7 +91,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`StructInfo`, `MethodSig` with its `SignatureDefault` attribute — `Constant`, `Parameter`, or `Evaluated` — overload helpers, `ConformanceOracle`), and the
   call-effect/coercion helpers; the `ConformanceOracle` impl lives in
   `checker/conformance.rs`, and the free overload/signature and trait-support
-  helpers live in `checker/overload_support.rs` and
+  helpers live in `checker/overload_support.rs` (`constructor_symbol` spells
+  the constructor a construction or `@implicit` conversion selected) and
   `checker/traits_support.rs`. Submodules extract by responsibility, not by
   line count; a moved method is `pub(super)` so siblings and the parent can call
   it.

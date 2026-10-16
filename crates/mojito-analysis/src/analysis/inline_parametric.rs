@@ -672,8 +672,8 @@ impl<'c> Inliner<'_, 'c> {
     /// parameters and its owner's bound to the call's, and the binding of
     /// each of its parameters, when the pass inlines the call.
     ///
-    /// A call naming a struct is a call of its `__init__`, whose `out self`
-    /// is the call's result. A call through a closure the caller makes is a
+    /// A call naming an initializer, or a struct (a call of its `__init__`),
+    /// constructs: the initializer's `out self` is the call's result. A call through a closure the caller makes is a
     /// call of the nested `def` it lifts, whose captures bind the places the
     /// closure captures.
     fn inlinable(
@@ -696,12 +696,14 @@ impl<'c> Inliner<'_, 'c> {
                     spread: None,
                     ..
                 } if capture_accesses.is_empty() => {
-                    let constructed = self.declarations.structure(&func.0).is_some();
-                    let target = if constructed {
+                    let struct_named = self.declarations.structure(&func.0).is_some();
+                    let target = if struct_named {
                         Cow::Owned(format!("{}.__init__", func.0))
                     } else {
                         Cow::Borrowed(func.0.as_str())
                     };
+                    let constructed =
+                        struct_named || mojito_symbol::symbol::is_initializer_symbol(&func.0);
                     let receiver = constructed.then_some(Receiver::Constructed);
                     (
                         *dest,

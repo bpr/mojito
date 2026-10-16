@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1049**.
+Next free ID: **R1051**.
 
 ## Ordered Work
 
@@ -755,28 +755,35 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1044, R1045, R1043.
   - Model: Fable, Not Planned.
 
-- [ ] **R1020 A construction calls its struct, not the constructor the
-  check selected**
+- [ ] **R1049 A fieldwise construction calls its struct, not a
+  synthesized constructor**
 
-  `mk[n]()` returning `Box[n](5).v` keeps `n`, where the pin removes it
-  because `Box.__init__` is `_REMOVED_ARG`.
-  - MIR spells `Box[n](5)` as `call { func: Box, instantiated_args: [n] }`,
-    an undeclared callee whose types `mir::unread_parameters` reads whole,
-    and the elaborator picks the overload again by arity.
-  - Upstream's construction is a call of the selected `__init__` generator
-    with the struct's parameters, so `RemoveUnusedParams` rewrites it like
-    any call.
-  - Lower a construction as a call of the checker-selected constructor
-    (`GenericInstantiation`'s overload key) with the spelled struct as its
-    `receiver`, as a static call is, so `drop_receiver_arguments` and the
-    declared-`Call` arm read it.
-  - The VM, Pliron, the elaborator's construction arm,
-    `eliminate-dead-symbols`, and the copy form `T(copy=…)` follow.
-  - Also merges `Box.make() -> Self` and an `__iter__` that constructs
-    `NIter[Self.n]`.
-  - Found while landing R998 (2026-10-15).
+  `mkf[n]()` returning `Fw[n](5).v` over `@fieldwise_init struct Fw[n: Int]`
+  keeps `n`, where upstream synthesizes `Fw.__init__` and calls it.
+  - The struct has no `__init__` to name, so the call stays
+    `call { func: Fw }`, an undeclared callee whose types
+    `mir::unread_parameters` reads whole.
+  - Synthesize the fieldwise `__init__` in MIR lowering, as R1044 plans
+    for the copy and move constructors, and have the check name it.
+  - Found while landing R1020 (2026-10-16).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1050 A copy constructor's declaration does not restate its
+  struct's parameters, as an `__init__`'s does**
+
+  `T(copy=x)` calls `T.__copyinit__` with the spelled `T[n]` as its
+  `receiver`, where upstream's copy constructor is an `__init__` overload
+  whose generator lists the struct's parameters.
+  - `lower_method` prepends the struct's `param_decls` only when the
+    method is named `__init__`, and the lifecycle rename has already made
+    it `__copyinit__` or `__moveinit__`.
+  - Restate them for both, then pass a copy construction's struct
+    arguments as `instantiated_args`, as any construction does, and drop
+    its `receiver`.
+  - Found while landing R1020 (2026-10-16).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1021 `len(b)` reads its argument's struct whole, whatever
   `__len__` removed**

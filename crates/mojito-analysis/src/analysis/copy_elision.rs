@@ -193,7 +193,12 @@ fn dying_copy(
     let [(keyword, operand)] = kwargs.as_slice() else {
         return None;
     };
-    if keyword != "copy" || !args.is_empty() || declarations.structure(&func.0).is_none() {
+    let copy_constructor = declarations.structure(&func.0).is_some()
+        || matches!(
+            mojito_symbol::symbol::lifecycle_constructor(&func.0),
+            Some((_, "__copyinit__"))
+        );
+    if keyword != "copy" || !args.is_empty() || !copy_constructor {
         return None;
     }
     let MirInstr::LoadPlace {

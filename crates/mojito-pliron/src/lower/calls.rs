@@ -116,7 +116,7 @@ impl FnLowering<'_> {
         // as the `out self` receiver: allocate the result storage and bind
         // the remaining arguments past the receiver — the struct-name
         // constructor path's exact contract.
-        if name.contains(".__init__")
+        if mojito_symbol::symbol::is_initializer_symbol(name)
             && !params.is_empty()
             && let Some(struct_ty) = self.func.reg_types.get(&dest.0).cloned()
             && matches!(struct_ty.kind(), TyKind::Struct(..))

@@ -1,0 +1,78 @@
+  functions: [
+      fn {
+        name: "Box.__init__",
+        registers: 3,
+        vars: 3,
+        var_names: [self, value, Self],
+        params: 2,
+        param_types: [struct_type { name: Box, arguments: [] }, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Box, arguments: [] } }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: struct_type { name: Box, arguments: [value_arg(ct_expr(param_decl_ref { owner: "Box", slot: 0, name: k, type: meta_value(Int) }))] } }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 131, end: 136, origin: present($v1) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 139, end: 145, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 131, end: 145, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v1, mode: copy },
+              place.load { dest: %r1, place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [] }), projections: [projection { op: field(k), type: Int }], type: present(Int), through: absent } },
+              binary { op: mul, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [] }), projections: [projection { op: field(value), type: Int }], type: present(Int), through: absent }, src: %r2 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: constructor,
+        registers: 7,
+        vars: 5,
+        var_names: [x, b, "self$inline2", "value$inline2", "Self$inline2"],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: struct_type { name: Box, arguments: [value_arg(ct_int(4))] } }, var_type { var: $v2, type: struct_type { name: Box, arguments: [value_arg(ct_int(4))] } }, var_type { var: $v3, type: Int }, var_type { var: $v4, type: struct_type { name: Box, arguments: [value_arg(ct_int(4))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: Box, arguments: [value_arg(ct_int(4))] } }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 463, end: 464, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 456, end: 465, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 477, end: 484, origin: present($v1) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 477, end: 484, origin: present($v1) }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 456, end: 465, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 456, end: 465, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 456, end: 465, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              ownership.mark_initialized { place: place { root: $v2, root_type: present(struct_type { name: Box, arguments: [value_arg(ct_int(4))] }), projections: [], type: present(struct_type { name: Box, arguments: [value_arg(ct_int(4))] }), through: absent } },
+              var.store { var: $v3, src: %r0, binding_type: present(Int), in_place: false }
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb1 {
+            instructions: [
+              var.use { dest: %r4, var: $v3, mode: copy },
+              const { dest: %r5, value: int(4) },
+              binary { op: mul, dest: %r6, a: %r4, b: %r5, resolved: absent, raises: absent },
+              place.store { place: place { root: $v2, root_type: present(struct_type { name: Box, arguments: [value_arg(ct_int(4))] }), projections: [projection { op: field(value), type: Int }], type: present(Int), through: absent }, src: %r6 }
+            ],
+            terminator: jump { target: bb2 }
+          },
+          bb2 {
+            instructions: [
+              var.use { dest: %r1, var: $v2, mode: move },
+              var.store { var: $v1, src: %r1, binding_type: present(struct_type { name: Box, arguments: [value_arg(ct_int(4))] }), in_place: false },
+              place.load { dest: %r2, place: place { root: $v1, root_type: present(struct_type { name: Box, arguments: [value_arg(ct_int(4))] }), projections: [projection { op: field(value), type: Int }], type: present(Int), through: absent } },
+              drop.var { var: $v1 },
+              value.copy { dest: %r3, value: %r2 }
+            ],
+            terminator: return { value: present(%r3) }
+          }
+        ]
+      }
+  ]
