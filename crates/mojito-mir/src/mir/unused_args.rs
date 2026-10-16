@@ -12,6 +12,7 @@
 use crate::mir::{
     MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirTerm,
     instruction_regions, instruction_regions_mut, instruction_slots, retire_parameters,
+    table_member,
 };
 use mojito_hir::hir::VarId;
 use mojito_types::origin::Origin;
@@ -22,11 +23,14 @@ use std::collections::BTreeSet;
 /// uses ([`used_slots`]), ascending: the arguments upstream's
 /// `RemoveUnusedParams` removes from the generator a direct call names.
 ///
-/// Only a top-level free function, the only callee whose every direct
-/// call the elaborator reduces, has candidates: neither a method nor a
-/// nested, lifted, or variadic function, nor one whose signature ties an
-/// origin or a returned reference to a parameter. A `deinit` parameter and
-/// a callable one are never candidates.
+/// Only a top-level free function and a method a resolved method call
+/// names, the callees whose every direct call the elaborator reduces, have
+/// candidates: neither a static method, a constructor, nor a dunder or
+/// table member ([`crate::mir::table_member`]), which an operator, a
+/// subscript, or a backend reaches without a call naming it, nor a nested,
+/// lifted, or variadic function, nor one whose signature ties an origin or
+/// a returned reference to a parameter. A method's receiver, a `deinit`
+/// parameter, and a callable one are never candidates.
 pub fn unused_arguments(
     name: &str,
     function: &MirFunction,
@@ -39,7 +43,7 @@ pub fn unused_arguments(
         return Vec::new();
     }
     let used = used_slots(function, declarations);
-    (0..function.n_params)
+    (usize::from(declaration.has_receiver)..function.n_params)
         .filter(|&slot| {
             !function.deinit_params.get(slot).copied().unwrap_or(true)
                 && !mentions(&function.param_types[slot], &|ty| {
@@ -79,7 +83,9 @@ pub fn used_slots(function: &MirFunction, declarations: &MirDeclarations) -> BTr
 ///
 /// It is the generator upstream's `RemoveUnusedParams` leaves a direct call
 /// naming: each slot's drops leave the body, its parameter entries the body
-/// and the declaration, and every slot above one moves down past it.
+/// and the declaration, and every slot above one moves down past it. A
+/// method's receiver slot has no declaration entry, so a slot past it is
+/// the declaration's position one lower.
 pub fn without_removed_arguments(
     function: &MirFunction,
     declaration: &MirFunctionDeclaration,
@@ -91,8 +97,12 @@ pub fn without_removed_arguments(
     retire_parameters(&mut view, &retired);
     view.removed_args.clear();
     let mut declaration = declaration.clone();
-    for &slot in retired.iter().rev() {
-        let position = slot as usize;
+    let receiver = usize::from(declaration.has_receiver);
+    let positions: BTreeSet<usize> = retired
+        .iter()
+        .filter_map(|&slot| (slot as usize).checked_sub(receiver))
+        .collect();
+    for &position in positions.iter().rev() {
         let remove = |length: usize| position < length;
         if remove(declaration.param_names.len()) {
             declaration.param_names.remove(position);
@@ -116,7 +126,7 @@ pub fn without_removed_arguments(
             declaration.param_writes.remove(position);
         }
     }
-    let shifted = |limit: usize| limit - retired.range(..limit as VarId).count();
+    let shifted = |limit: usize| limit - positions.range(..limit).count();
     declaration.positional_only = declaration.positional_only.map(shifted);
     declaration.keyword_only = declaration.keyword_only.map(shifted);
     (view, declaration)
@@ -126,15 +136,17 @@ pub fn without_removed_arguments(
 /// remove ([`unused_arguments`]).
 fn reducible(name: &str, function: &MirFunction, declaration: &MirFunctionDeclaration) -> bool {
     name != "__toplevel__"
-        && !declaration.has_receiver
-        && mojito_symbol::symbol::split_method_symbol(name).is_none()
+        && mojito_symbol::symbol::split_method_symbol(name).is_none_or(|(_, method)| {
+            declaration.has_receiver && !method.starts_with("__") && table_member(method).is_none()
+        })
         && mojito_symbol::symbol::lifted_owner(name).is_none()
         && declaration.enclosing.is_none()
         && declaration.region_binders.is_empty()
         && declaration.variadic.is_none()
         && declaration.kw_variadic.is_none()
         && !declaration.returns_reference
-        && declaration.param_names.len() == function.n_params
+        && usize::from(declaration.has_receiver) + declaration.param_names.len()
+            == function.n_params
         && !declaration
             .param_types
             .iter()

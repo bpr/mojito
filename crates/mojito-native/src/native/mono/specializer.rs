@@ -223,7 +223,9 @@ impl<'a> Specializer<'a> {
     /// each call of a generator it removed an argument from: the call binds
     /// against `target`'s full declaration, and a positional or keyword
     /// argument leaves with its place, while an omitted one, whose default
-    /// is never evaluated, leaves nothing.
+    /// is never evaluated, leaves nothing. A method call's arguments follow
+    /// its receiver, so a removed slot past the receiver binds the
+    /// declaration's position one lower.
     pub(super) fn drop_removed_arguments(
         &self,
         owner: &str,
@@ -261,8 +263,10 @@ impl<'a> Specializer<'a> {
         })?;
         let mut positional = BTreeSet::new();
         let mut keyword = BTreeSet::new();
+        let receiver = usize::from(declaration.has_receiver);
         for &slot in &function.removed_args {
-            match slots.slots.get(slot as usize) {
+            let position = (slot as usize).checked_sub(receiver);
+            match position.and_then(|position| slots.slots.get(position)) {
                 Some(ArgSlot::Positional(index)) => {
                     positional.insert(*index);
                 }
@@ -480,14 +484,13 @@ impl<'a> Specializer<'a> {
             template
         };
         let name = if let Some(owner) = &key.owner {
-            let base = mojito_symbol::symbol::retarget_method_symbol(template, owner).ok_or_else(
-                || {
+            let base = mojito_symbol::symbol::retarget_method_symbol(template_spelling, owner)
+                .ok_or_else(|| {
                     self.error(
                         Some(template),
                         format!("owner-bound instance `{template}` is not a method symbol"),
                     )
-                },
-            )?;
+                })?;
             if spelled {
                 mojito_symbol::symbol::instance_symbol(&base, &key.arguments)
             } else {
@@ -2776,6 +2779,8 @@ impl<'a> Specializer<'a> {
                         result_adapter,
                         args,
                         kwargs,
+                        arg_places,
+                        kwarg_places,
                         param_arg_regs,
                         param_decls,
                         instantiated_args,
@@ -2906,7 +2911,18 @@ impl<'a> Specializer<'a> {
                             param_arg_regs,
                             instantiated_args,
                         )?;
+                        let reduced = bindings.reduced;
                         let concrete = self.enqueue(&target, bindings, arguments)?;
+                        if reduced {
+                            self.drop_removed_arguments(
+                                owner,
+                                &target,
+                                args,
+                                arg_places,
+                                kwargs,
+                                kwarg_places,
+                            )?;
+                        }
                         *resolved = Some(concrete);
                         param_arg_regs.clear();
                         instantiated_args.clear();

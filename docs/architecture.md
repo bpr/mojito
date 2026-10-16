@@ -5423,9 +5423,13 @@ point where a slot declared in a loop is uninitialized again.
   `mir::retire_parameters`, `mir::unread_parameters_of`), so a parameter
   only an unused argument's type named is unread too: `fa[n](a: Arr[n])`
   and `fav[n](var a: Arr[n])` remove `a` and then `n`. Only a top-level free
-  function, neither variadic nor tying an origin or a returned reference
-  to a parameter, has candidates (`mir::unused_arguments`), and never a
-  `deinit` or callable parameter. As upstream calls a `_REMOVED_ARG` clone
+  function and a method with a receiver that is neither a dunder nor a
+  `mir::table_member` (R1011), neither variadic nor tying an origin or a
+  returned reference to a parameter, has candidates
+  (`mir::unused_arguments`), and never a receiver, a `deinit`, or a
+  callable parameter: a removed method slot past the receiver is the
+  declaration's position one lower, and the resolved `MethodCall` arm
+  drops its argument as the `Call` arms do. As upstream calls a `_REMOVED_ARG` clone
   of the generator from every direct call and keeps the original for any
   other use, the elaborator instantiates the reduced generator
   (`InstanceKey::reduced`, named by `symbol::removed_argument_symbol`,

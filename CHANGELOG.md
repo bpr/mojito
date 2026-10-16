@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A method's runtime argument its body never uses leaves the generator a
+  resolved method call names (R1011), as upstream's `RemoveUnusedParams`
+  clones every generator without it: `Holder.m[n](self, a: Arr[n])`
+  returning `self.k` has one instance, `Holder.m$REMOVED$ARG$mono`, for
+  every `n`, and the call passes no `a`. A static method (R1032), a dunder
+  or member-table member (R1033), and the receiver (R1012) still keep
+  theirs. Corpus concrete instructions 389,429 → 387,662; no program's
+  output changes.
 - A callable struct's `__call__` joins the concrete program only from a
   call that reaches it (R1009), as upstream instantiates only what a call
   names, instead of with every struct instance a body names. The checker

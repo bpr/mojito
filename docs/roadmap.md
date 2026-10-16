@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1032**.
+Next free ID: **R1034**.
 
 ## Ordered Work
 
@@ -531,22 +531,36 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R909.
   - Model: Fable, Not Planned.
 
-- [ ] **R1011 A method's unused argument keeps the parameters its type
-  names**
+- [ ] **R1032 A static method's unused argument keeps the parameters its
+  type names**
 
-  `Holder.m[n](self, a: Arr[n])` returning `self.k` keeps one instance per
-  `n`, where the pin's `_REMOVED_ARG` clone takes only `self`.
-  - `mir::unused_arguments` gives no method candidates, since only the
-    `Call` arms of `rewrite_blocks` drop a reduced generator's arguments
-    (`Specializer::drop_removed_arguments`).
-  - The resolved `MethodCall` arms that call `infer_call` would drop the
-    argument too, mapping declaration position `i` past the receiver to
-    the call's `args[i - 1]`.
-  - A `mir::composed_member` stays out: the backends reach it by name, not
-    through a call (R1001).
-  - Found while landing R997 (2026-10-15).
+  `S.st[n](a: Arr[n])` returning `3` keeps one instance per `n`, where
+  upstream's pass clones the generator without `a` (`_REMOVED_ARG`).
+  - `mir::unused_arguments` gives candidates only to a free function and
+    a method with a receiver, since a static method is reached through a
+    `Call` (`S.st(a)`) and through a resolved `MethodCall` on an instance
+    (`s.st(a)`), and each arm must drop the argument.
+  - Both arms already call `Specializer::drop_removed_arguments`; the
+    static declaration has no receiver slot, so no position shifts.
+  - Found while landing R1011 (2026-10-15).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R1033 A dunder or table member's unused argument keeps the
+  parameters its type names**
+
+  `Grid.__getitem__[n](self, i: Int, a: Arr[n])` or an `__add__` that
+  ignores its operand keeps one instance per `n`, where upstream's pass
+  clones the generator without the argument.
+  - `mir::unused_arguments` gives no candidate to a `__*__` method or a
+    `mir::table_member`: an operator, a subscript (`MirSubscriptCall`), an
+    iteration step, and the backends' member-table lookups reach them
+    without a `MethodCall` arm that drops the argument.
+  - Each such demand would take the reduced generator and drop its operand,
+    and a member-table entry would name the reduced instance.
+  - Found while landing R1011 (2026-10-15).
+  - Depends on R1032.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1012 A method's unused receiver stays its argument**
 

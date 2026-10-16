@@ -1945,3 +1945,28 @@ each fall to one instance, as on the pin; `fneg` keeps one per argument,
 as on the pin. A construction (R1020) and `len` (R1021) still read their
 struct whole. The corpus effect on `benchmarks/instantiation.tsv` is left
 to its next regeneration.
+
+## A method's unused argument leaves the generator a method call names (2026-10-15, R1011)
+
+`remove-unused-params` now removes a method's runtime argument its body
+never uses, past the receiver, and the elaborator's resolved `MethodCall`
+arm names the reduced generator and drops the argument, as upstream's
+`RemoveUnusedParams` clones every generator (`_REMOVED_ARG`). Over the
+1,049 `assets/ok` and benchmark fixtures elaborated before and after
+(`benchmarks/instantiation.tsv`, debug binary, the parent commit before):
+
+| | before | after | change |
+|---|---:|---:|---:|
+| `concrete_functions` | 28,376 | 28,260 | −116 |
+| `concrete_instructions` | 389,429 | 387,662 | −1,767 |
+| `generator_instances` | 16,481 | 16,401 | −80 |
+| `generator_instance_instructions` | 171,516 | 170,423 | −1,093 |
+
+No fixture's concrete program grows, and no program's output changes. A
+few fixtures gain a generator: a non-generic method that loses its
+argument becomes a reduced clone, as R997's non-generic free function
+does (`S.g` in `assets/ok/overloaded_signature_module_constant.mojo`). The new
+fixture, `assets/ok/method_unused_argument_instances.mojo`, has one
+instance of each of `Holder.m`, `Holder.mk`, and `PBox.m` for `Arr[1]`
+and `Arr[2]`, as on the pin. A static method (R1032), a dunder or table
+member (R1033), and the receiver (R1012) still keep their arguments.
