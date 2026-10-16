@@ -5422,14 +5422,33 @@ point where a slot declared in a loop is uninitialized again.
   with them gone (`mir::without_removed_arguments`,
   `mir::retire_parameters`, `mir::unread_parameters_of`), so a parameter
   only an unused argument's type named is unread too: `fa[n](a: Arr[n])`
-  and `fav[n](var a: Arr[n])` remove `a` and then `n`. Only a top-level free
-  function and a method with a receiver that is neither a dunder nor a
-  `mir::table_member` (R1011), neither variadic nor tying an origin or a
-  returned reference to a parameter, has candidates
-  (`mir::unused_arguments`), and never a `deinit` or a callable
-  parameter: a removed method slot past the receiver is the
-  declaration's position one lower, and the resolved `MethodCall` arm
-  drops its argument as the `Call` arms do. A method's unused receiver
+  and `fav[n](var a: Arr[n])` remove `a` and then `n`. Only a free
+  function, a nested one, and a method with a receiver that is neither a
+  dunder nor a `mir::table_member` (R1011), none declared in a
+  compile-time region nor tying an origin or a returned reference to a
+  parameter, has candidates (`mir::unused_arguments`), and never a
+  `deinit` or a callable parameter. A slot maps to its parameter by the
+  body-slot layout (`FunctionDeclaration::slot_parameter`): a removed
+  method slot past the receiver is the declaration's position one lower,
+  and the resolved `MethodCall` arm drops its argument as the `Call` arms
+  do. A borrowed collector is a candidate too (R1014): the reduced
+  declaration collects nothing, its call drops every overflow operand of
+  that kind, and `infer_call` still binds the parameters the elements
+  spell but keys no arity, while an owned `var *args` or `**kwargs` is
+  used by its drop, which runs code. A nested body's captures are its
+  leading arguments, candidates like any other (R1014). Every call of a
+  nested body is a `call.indirect` through its closure, which the
+  elaborator rewrites to a direct call of the reduced generator, splicing
+  the reference captures in front; `mir::escaping_nested_bodies`, over the
+  `mir::callable_targets` dataflow both the pass and the elaborator read,
+  names the nested bodies some other use reaches (a function value, a
+  copied or moved capture, a closure the dataflow does not resolve). Only
+  those keep a full instance beside the reduced one
+  (`Specializer::calls_reduced_only`, `nested_templates`), and the
+  enclosing function reads every binder through such a body, whose entry
+  joins the snapshot with no removals; the closure storage of a body with
+  no full instance erases to the `Int` placeholder generic callable
+  storage takes. A method's unused receiver
   is a candidate too (R1012): the reduced declaration has no receiver,
   and the `MethodCall` arm becomes a `Call` of the reduced instance with
   no receiver (`Specializer::removes_receiver`), as upstream's

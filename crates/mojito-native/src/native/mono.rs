@@ -7,7 +7,8 @@
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use equiv::*;
 use mojito_mir::mir::{
-    addressed_slots, destroyed_structs, relocated_structs, renumber_slots, retire_slots,
+    addressed_slots, callable_targets, destroyed_structs, nested_instructions, relocated_structs,
+    renumber_slots, retire_slots,
 };
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use promote::*;
@@ -363,6 +364,8 @@ struct FunctionFrame {
     constant_values: HashMap<u32, CtValue>,
     callable_targets: HashMap<u32, (String, bool)>,
     closure_captures: HashMap<String, Vec<MirClosureCapture>>,
+    escaping_nested: BTreeSet<String>,
+    nested_templates: HashMap<String, String>,
     enclosing: Bindings,
     folded_slots: HashSet<u32>,
 }
@@ -635,6 +638,13 @@ struct Specializer<'a> {
     /// The environment of each lifted body closed over in the function being
     /// specialized (see [`equiv::function_closure_captures`]).
     closure_captures: HashMap<String, Vec<MirClosureCapture>>,
+    /// The bodies nested in the function being specialized that a use
+    /// other than a call reaches ([`mojito_mir::mir::escaping_nested_bodies`]):
+    /// only these keep a full instance beside the reduced one.
+    escaping_nested: BTreeSet<String>,
+    /// The template of each full nested instance the function being
+    /// specialized names, so a call of it may name the reduced generator.
+    nested_templates: HashMap<String, String>,
     /// The bindings of the instance being specialized: an erased body
     /// forwarding its own binder as a callee's type argument
     /// (`hash[Self.H](key)`), or building a value argument from its own

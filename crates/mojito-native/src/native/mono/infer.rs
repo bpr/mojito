@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_mir::mir::SlotParameter;
 use mojito_types::types::TyKind;
 
 impl Specializer<'_> {
@@ -327,6 +328,15 @@ impl Specializer<'_> {
         // arity: each overflow positional unifies against the pack element
         // and the arity joins the instance identity. Checker-specialized
         // packs (a concrete `RuntimePack`) keep their identity.
+        // The reduced generator of a callee that removed its collector has
+        // no pack: the overflow still binds the parameters its elements
+        // spell, but no arity keys the instance.
+        let removed_pack = bindings.reduced
+            && self.functions.get(target).is_some_and(|function| {
+                function.removed_args.iter().any(|&slot| {
+                    declaration.slot_parameter(slot as usize) == SlotParameter::Variadic
+                })
+            });
         let variadic_arity = match &declaration.variadic {
             // A type pack binds to the overflow's element types whole, one
             // per position, unless the call's recorded solution bound it.
@@ -359,8 +369,12 @@ impl Specializer<'_> {
                         self.error(Some(owner), format!("monomorphizing `{target}` pack: {e}"))
                     })?;
                 }
-                bindings.variadic_arity = Some(slots.positional_overflow.len());
-                Some(slots.positional_overflow.len())
+                if removed_pack {
+                    None
+                } else {
+                    bindings.variadic_arity = Some(slots.positional_overflow.len());
+                    Some(slots.positional_overflow.len())
+                }
             }
             _ => None,
         };

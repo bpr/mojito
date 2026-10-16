@@ -219,7 +219,11 @@ folds the operators over it (R840);
    removes the enclosing parameters it never reads, and its enclosing
    function reads through it only the rest (R908). A static method
    removes the struct parameters it never reads, and a static call's
-   receiver forwards them (R909). The pin goes further than this core: it
+   receiver forwards them (R909). A nested `def`, captures included, and a
+   borrowed `*args` lose their unused arguments as a free function does
+   (R1014): the elaborator rewrites a nested body's indirect calls to name
+   its reduced generator, and only a nested body some other use reaches
+   keeps its full one. The pin goes further than this core: it
    removes a nested generic `def`'s own unread parameters, a `comptime
    for` nested body's, a struct parameter a method with a receiver
    ignores or that only spells a by-address argument's type, and a few

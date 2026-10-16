@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1036**.
+Next free ID: **R1041**.
 
 ## Ordered Work
 
@@ -595,21 +595,74 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1014 A nested, lifted, or variadic function keeps an unused
-  argument**
+- [ ] **R1036 A forward to a nested body's removed argument is a use**
 
-  A nested `def` that ignores its argument, or a function whose `*args`
-  it never reads, keeps the argument and the parameters its type names,
-  where the pin removes them.
-  - `mir::unused_arguments` gives no candidates to a body with
-    `enclosing`, a lifted `$comptime$`/`$default$` body, or a variadic
-    declaration.
-  - Closures and `call.indirect` reach a nested body, so its direct calls
-    alone could take the reduced generator, and a pack argument is spread
-    by `expand_pack_spreads` before the call binds.
-  - Found while landing R997 (2026-10-15).
-  - Depends on R1011.
-  - Model: Fable, Not Planned.
+  `h[n](x: Arr[n])` returning `ign2(x)`, where the nested `ign2(y: Arr[n])`
+  never reads `y`, keeps `x` and one instance per `n`, where the pin
+  removes both.
+  - `mir::without_removed_argument_forwards` and the elaborator's Keep
+    view drop operands only from a `call` and a resolved `method.call`,
+    never from the `call.indirect` a nested body's call is.
+  - That call's operands also lack the captures the elaborator splices in
+    front, so its binding against the nested declaration is off by them.
+  - Found while landing R1014 (2026-10-16).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1037 A call of a nested `def` is an indirect call through its
+  closure**
+
+  Mojito lowers a call of a nested `def` by name to `closure.make` and
+  `call.indirect`, where upstream calls the lifted closure generator
+  directly and passes its captures as arguments.
+  - The pass and the elaborator recover the direct call by dataflow
+    (`mir::callable_targets`, `mir::escaping_nested_bodies`).
+  - Lowering such a call to a direct `call` would retire that dataflow and
+    R1036 with it, and simplify R963 and R966.
+  - Found while landing R1014 (2026-10-16).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R1038 A nested `def` with a copied or moved capture keeps its
+  unused arguments**
+
+  `vc(x) {var j}` returning `j + 1` keeps `x`, where the pin's
+  `vc(Int)_REMOVED_ARG(i64)` keeps only the capture.
+  - `mir::escaping_nested_bodies` counts a closure that captures by copy
+    or move as escaping, since `Specializer::capture_arguments` passes
+    only reference captures to a direct call.
+  - Pass the closure's environment entry as the capture argument, as R962
+    needs for inlining.
+  - Found while landing R1014 (2026-10-16).
+  - Depends on R962.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1039 A nested `def` declared in a `comptime for` keeps its
+  unused arguments**
+
+  A nested body with region binders has no candidates in
+  `mir::unused_arguments`, where the pin removes its unused arguments.
+  - Its calls reach it through `Specializer::region_generators`, which
+    names each unrolled copy's generator.
+  - A copy's call must name the reduced generator and drop the removed
+    operands, as the plain nested path does.
+  - Found while landing R1014 (2026-10-16).
+  - Depends on R974.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1040 A homogeneous variadic instance is keyed by its call's
+  arity**
+
+  `fused(*args: Int)` called with two and with three arguments has two
+  instances, `fused$mono$V2` and `fused$mono$V3`, where the pin's takes a
+  runtime `VariadicList` and has one.
+  - `infer_call` pushes the overflow count into the instance identity
+    (`Bindings::variadic_arity`), which sizes the pack slot's tuple type.
+  - Removing an unread borrowed pack (R1014) only hides it for packs the
+    body never reads.
+  - Found while landing R1014 (2026-10-16).
+  - Depends on nothing.
+  - Model: Fable, Planned.
 
 - [ ] **R1016 A drop names no destructor; the backends look it up from
   the value's type**

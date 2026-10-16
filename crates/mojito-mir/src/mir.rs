@@ -29,8 +29,9 @@ use mojito_checked::checked::{
 };
 use mojito_checked::declaration::compiler_trait_declaration;
 pub use mojito_checked::declaration::{
-    FunctionDeclaration as MirFunctionDeclaration, StructDeclaration as MirStructDeclaration,
-    StructMember as MirStructMember, TraitDeclaration, TraitRequirement,
+    FunctionDeclaration as MirFunctionDeclaration, SlotParameter,
+    StructDeclaration as MirStructDeclaration, StructMember as MirStructMember, TraitDeclaration,
+    TraitRequirement,
 };
 use mojito_checked::unit::LoweringUnit;
 use mojito_common::timing;
@@ -53,6 +54,8 @@ pub mod visit;
 
 mod call_defaults;
 pub use call_defaults::{evaluate_omitted_defaults, evaluated_at_call_site};
+mod callable_values;
+pub use callable_values::{callable_targets, escaping_nested_bodies, nested_instructions};
 mod calls;
 mod copies;
 pub use copies::{Relocated, relocated_structs};

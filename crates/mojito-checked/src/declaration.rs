@@ -371,6 +371,36 @@ impl FunctionDeclaration {
             .collect()
     }
 
+    /// The parameter a body slot of the function binds, in the layout the
+    /// call binding builds: the receiver first, then the regular
+    /// parameters with the positional collector at `variadic_index` among
+    /// them and the keyword collector at `kw_variadic_index` among both.
+    pub fn slot_parameter(&self, slot: usize) -> SlotParameter {
+        let Some(mut index) = slot.checked_sub(usize::from(self.has_receiver)) else {
+            return SlotParameter::Receiver;
+        };
+        let positional = self
+            .variadic
+            .as_ref()
+            .map(|_| self.variadic_index.unwrap_or(self.param_names.len()));
+        if self.kw_variadic.is_some() {
+            let keyword = self
+                .kw_variadic_index
+                .unwrap_or_else(|| self.param_names.len() + usize::from(positional.is_some()));
+            if index == keyword {
+                return SlotParameter::KwVariadic;
+            }
+            index -= usize::from(index > keyword);
+        }
+        if let Some(positional) = positional {
+            if index == positional {
+                return SlotParameter::Variadic;
+            }
+            index -= usize::from(index > positional);
+        }
+        SlotParameter::Position(index)
+    }
+
     /// The overload set the function belongs to, beside its source arity;
     /// `None` for a nested or lifted function, which no lookup by name
     /// finds.
@@ -380,6 +410,19 @@ impl FunctionDeclaration {
         }
         overload_family(&self.lowered_name).map(|family| (family, self.source_arity()))
     }
+}
+
+/// The parameter a body slot binds ([`FunctionDeclaration::slot_parameter`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SlotParameter {
+    /// A method's receiver.
+    Receiver,
+    /// The regular parameter at this declaration position.
+    Position(usize),
+    /// The positional collector, `*args`.
+    Variadic,
+    /// The keyword collector, `**kwargs`.
+    KwVariadic,
 }
 
 /// How a callable asks to be inlined, as upstream's function op records the

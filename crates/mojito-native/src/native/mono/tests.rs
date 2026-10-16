@@ -2660,3 +2660,90 @@ fn a_forward_to_a_removed_argument_leaves_one_reduced_instance() {
         });
     assert_eq!(call, Some(("fa$REMOVED$ARG$mono".to_string(), 0)));
 }
+
+#[test]
+fn a_nested_body_ignoring_its_argument_is_called_as_its_reduced_generator() {
+    let source = "@no_inline\n\
+     def apply(f: def(Int) thin -> Int) -> Int:\n\
+     \x20   return f(4)\n\
+     def outer(k: Int) -> Int:\n\
+     \x20   @no_inline\n\
+     \x20   def cap(x: Int) {imm k} -> Int:\n\
+     \x20       return k + 1\n\
+     \x20   @no_inline\n\
+     \x20   def ign(x: Int) -> Int:\n\
+     \x20       return 3\n\
+     \x20   var f = ign\n\
+     \x20   return cap(1) + cap(2) + f(5) + apply(ign)\n\
+     def main() raises:\n\
+     \x20   print(outer(2))\n";
+    let specialized = specialized_with_removed(source, &[]).expect("specialize");
+    assert_eq!(
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
+    );
+    let mut nested = specialized
+        .program
+        .functions
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .filter(|name| name.starts_with("outer$"))
+        .collect::<Vec<_>>();
+    nested.sort_unstable();
+    // `ign` escapes into `apply`, so its full instance stays beside the
+    // reduced one its call through `f` names; `cap` is only called.
+    assert_eq!(
+        nested,
+        [
+            "outer$cap$REMOVED$ARG",
+            "outer$ign",
+            "outer$ign$REMOVED$ARG"
+        ]
+    );
+    let calls = instructions(&function(&specialized, "outer").blocks)
+        .into_iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::Call { func, args, .. } => Some((func.0.clone(), args.len())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        calls,
+        [
+            ("outer$cap$REMOVED$ARG".to_string(), 1),
+            ("outer$cap$REMOVED$ARG".to_string(), 1),
+            ("outer$ign$REMOVED$ARG".to_string(), 0),
+            ("apply".to_string(), 1),
+        ]
+    );
+}
+
+#[test]
+fn an_unread_borrowed_pack_leaves_one_reduced_instance_for_every_arity() {
+    let source = "@no_inline\n\
+     def fw(k: Int, *args: Int) -> Int:\n\
+     \x20   return k\n\
+     def main() raises:\n\
+     \x20   print(fw(1, 2), fw(1, 2, 3))\n";
+    let specialized = specialized_with_removed(source, &[]).expect("specialize");
+    assert_eq!(
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
+    );
+    let instances = specialized
+        .program
+        .functions
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .filter(|name| name.starts_with("fw"))
+        .collect::<Vec<_>>();
+    assert_eq!(instances, ["fw$REMOVED$ARG"]);
+    let calls = instructions(&function(&specialized, "main").blocks)
+        .into_iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::Call { func, args, .. } if func.0.starts_with("fw") => Some(args.len()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(calls, [1, 1]);
+}

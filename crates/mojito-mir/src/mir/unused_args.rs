@@ -13,8 +13,8 @@ use crate::mir::param_uses::{erase_forward_chains, register_reads};
 use crate::mir::verify::instruction_result_regs;
 use crate::mir::{
     MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace, MirTerm,
-    Reg, instruction_regions, instruction_regions_mut, instruction_slots, retire_parameters,
-    table_member,
+    Reg, SlotParameter, instruction_regions, instruction_regions_mut, instruction_slots,
+    retire_parameters, table_member,
 };
 use mojito_ast::call::{ArgSlot, CallVariadics, MatchError, match_call_slots};
 use mojito_hir::hir::VarId;
@@ -26,15 +26,20 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 /// uses ([`used_slots`]), ascending: the arguments upstream's
 /// `RemoveUnusedParams` removes from the generator a direct call names.
 ///
-/// Only a top-level free function and a method a resolved method call
+/// Only a free function, a nested one, and a method a resolved method call
 /// names, the callees whose every direct call the elaborator reduces, have
 /// candidates: neither a static method, a constructor, nor a dunder or
 /// table member ([`crate::mir::table_member`]), which an operator, a
-/// subscript, or a backend reaches without a call naming it, nor a nested,
-/// lifted, or variadic function, nor one whose signature ties an origin or
-/// a returned reference to a parameter. A `deinit` parameter and a
-/// callable one are never candidates; a method's receiver is one like any
-/// other argument, and the call of a generator without it passes none.
+/// subscript, or a backend reaches without a call naming it, nor a body
+/// declared in a compile-time region, nor one whose signature ties an
+/// origin or a returned reference to a parameter. A nested body's direct
+/// calls are the indirect calls the elaborator rewrites to name it
+/// ([`crate::mir::escaping_nested_bodies`]), and its captures are leading
+/// arguments like any other. A `deinit` parameter and a callable one are
+/// never candidates; a method's receiver is one like any other argument,
+/// and the call of a generator without it passes none. A collector is one
+/// too, whose elements the rewritten call passes none of, but an owned
+/// collector's drop runs code, so it is a use.
 pub fn unused_arguments(
     name: &str,
     function: &MirFunction,
@@ -87,10 +92,10 @@ pub fn used_slots(function: &MirFunction, declarations: &MirDeclarations) -> BTr
 ///
 /// It is the generator upstream's `RemoveUnusedParams` leaves a direct call
 /// naming: each slot's drops leave the body, its parameter entries the body
-/// and the declaration, and every slot above one moves down past it. A
-/// method's receiver slot has no declaration entry, so a slot past it is
-/// the declaration's position one lower, and a generator without its
-/// receiver declares none.
+/// and the declaration, and every slot above one moves down past it. Each
+/// slot maps to its parameter by the body-slot layout
+/// ([`MirFunctionDeclaration::slot_parameter`]): a generator without its
+/// receiver declares none, and one without a collector collects nothing.
 pub fn without_removed_arguments(
     function: &MirFunction,
     declaration: &MirFunctionDeclaration,
@@ -102,15 +107,44 @@ pub fn without_removed_arguments(
     retire_parameters(&mut view, &retired);
     view.removed_args.clear();
     let mut declaration = declaration.clone();
-    let receiver = usize::from(declaration.has_receiver);
-    if declaration.has_receiver && retired.contains(&0) {
-        declaration.has_receiver = false;
-        declaration.receiver_convention = None;
-    }
-    let positions: BTreeSet<usize> = retired
+    let parameters: Vec<SlotParameter> = retired
         .iter()
-        .filter_map(|&slot| (slot as usize).checked_sub(receiver))
+        .map(|&slot| declaration.slot_parameter(slot as usize))
         .collect();
+    let positions: BTreeSet<usize> = parameters
+        .iter()
+        .filter_map(|parameter| match parameter {
+            SlotParameter::Position(position) => Some(*position),
+            _ => None,
+        })
+        .collect();
+    let below = |limit: usize| positions.range(..limit).count();
+    let mut keyword_shift = declaration.kw_variadic_index.map_or(0, below);
+    declaration.variadic_index = declaration.variadic_index.map(|index| index - below(index));
+    for parameter in &parameters {
+        match parameter {
+            SlotParameter::Receiver => {
+                declaration.has_receiver = false;
+                declaration.receiver_convention = None;
+            }
+            SlotParameter::Variadic => {
+                declaration.variadic = None;
+                declaration.variadic_convention = None;
+                declaration.variadic_index = None;
+                // The keyword collector comes last, past the positional one.
+                keyword_shift += 1;
+            }
+            SlotParameter::KwVariadic => {
+                declaration.kw_variadic = None;
+                declaration.kw_variadic_convention = None;
+                declaration.kw_variadic_index = None;
+            }
+            SlotParameter::Position(_) => {}
+        }
+    }
+    declaration.kw_variadic_index = declaration
+        .kw_variadic_index
+        .map(|index| index - keyword_shift);
     for &position in positions.iter().rev() {
         let remove = |length: usize| position < length;
         if remove(declaration.param_names.len()) {
@@ -135,7 +169,7 @@ pub fn without_removed_arguments(
             declaration.param_writes.remove(position);
         }
     }
-    let shifted = |limit: usize| limit - positions.range(..limit).count();
+    let shifted = |limit: usize| limit - below(limit);
     declaration.positional_only = declaration.positional_only.map(shifted);
     declaration.keyword_only = declaration.keyword_only.map(shifted);
     (view, declaration)
@@ -147,8 +181,8 @@ pub fn without_removed_arguments(
 ///
 /// They are the operands upstream's rewritten call of the generator
 /// without those slots passes none of. A removed slot the call
-/// omits, whose default is never evaluated, binds none; a method's slot
-/// past its receiver binds the declaration's position one lower.
+/// omits, whose default is never evaluated, binds none, and a removed
+/// collector binds every overflow operand of its kind.
 pub fn removed_argument_operands(
     declaration: &MirFunctionDeclaration,
     removed: &[VarId],
@@ -167,21 +201,24 @@ pub fn removed_argument_operands(
             keyword: declaration.kw_variadic.is_some(),
         },
     )?;
-    let receiver = usize::from(declaration.has_receiver);
     let mut positionals = BTreeSet::new();
     let mut keyword_operands = BTreeSet::new();
     for &slot in removed {
-        match (slot as usize)
-            .checked_sub(receiver)
-            .and_then(|position| slots.slots.get(position))
-        {
-            Some(ArgSlot::Positional(index)) => {
-                positionals.insert(*index);
+        match declaration.slot_parameter(slot as usize) {
+            SlotParameter::Position(position) => match slots.slots.get(position) {
+                Some(ArgSlot::Positional(index)) => {
+                    positionals.insert(*index);
+                }
+                Some(ArgSlot::Keyword(index)) => {
+                    keyword_operands.insert(*index);
+                }
+                Some(ArgSlot::Default) | None => {}
+            },
+            SlotParameter::Variadic => positionals.extend(slots.positional_overflow.iter()),
+            SlotParameter::KwVariadic => {
+                keyword_operands.extend(slots.keyword_overflow.iter());
             }
-            Some(ArgSlot::Keyword(index)) => {
-                keyword_operands.insert(*index);
-            }
-            Some(ArgSlot::Default) | None => {}
+            SlotParameter::Receiver => {}
         }
     }
     Ok((positionals, keyword_operands))
@@ -256,16 +293,18 @@ pub fn erase_removed_operands(
 /// remove ([`unused_arguments`]).
 fn reducible(name: &str, function: &MirFunction, declaration: &MirFunctionDeclaration) -> bool {
     name != "__toplevel__"
-        && mojito_symbol::symbol::split_method_symbol(name).is_none_or(|(_, method)| {
-            declaration.has_receiver && !method.starts_with("__") && table_member(method).is_none()
-        })
-        && mojito_symbol::symbol::lifted_owner(name).is_none()
-        && declaration.enclosing.is_none()
+        && (declaration.enclosing.is_some()
+            || mojito_symbol::symbol::split_method_symbol(name).is_none_or(|(_, method)| {
+                declaration.has_receiver
+                    && !method.starts_with("__")
+                    && table_member(method).is_none()
+            }))
         && declaration.region_binders.is_empty()
-        && declaration.variadic.is_none()
-        && declaration.kw_variadic.is_none()
         && !declaration.returns_reference
-        && usize::from(declaration.has_receiver) + declaration.param_names.len()
+        && usize::from(declaration.has_receiver)
+            + declaration.param_names.len()
+            + usize::from(declaration.variadic.is_some())
+            + usize::from(declaration.kw_variadic.is_some())
             == function.n_params
         && !declaration
             .param_types
@@ -507,6 +546,7 @@ fn drop_removed_operands<'a>(
                 recv_place,
                 arg_places,
                 kwarg_places,
+                spread,
                 ..
             } => {
                 let Some((slots, declaration)) = callee(target) else {
@@ -519,7 +559,10 @@ fn drop_removed_operands<'a>(
                     kwargs,
                     kwarg_places,
                 };
-                let mut changed = call.drop(declaration, slots, operands, dropped);
+                // A spread operand binds as many slots as its pack holds,
+                // which only the elaborator's expansion knows.
+                let mut changed =
+                    spread.is_none() && call.drop(declaration, slots, operands, dropped);
                 if declaration.has_receiver && slots.contains(&0) {
                     changed = true;
                     // The rewritten call passes no receiver, but still

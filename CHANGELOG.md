@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A nested `def` and a function with a borrowed `*args` lose an argument
+  their body never uses (R1014), as upstream's `RemoveUnusedParams`
+  treats them like any generator: a nested body's capture is an argument
+  like any other, each call of a nested body names its reduced generator
+  (`outer$cap$REMOVED$ARG`), and only a nested body some use other than a
+  call reaches, such as a function value, keeps its full generator beside
+  it. `fv[n](k, *args: Arr[n])` returning `k` has one instance for every
+  `n`, while an owned `var *args`, whose drop runs code, stays. Corpus
+  concrete instructions fall by 393; no program's output changes.
 - A runtime argument a body only passes on to a callee's removed argument
   is unused too (R1013), as upstream's `RemoveUnusedParams` walks callees
   first and rewrites each call to the clone without the argument:

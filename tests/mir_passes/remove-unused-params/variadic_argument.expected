@@ -1,0 +1,140 @@
+  functions: [
+      fn {
+        name: fv,
+        registers: 1,
+        vars: 2,
+        var_names: [k, args],
+        params: 2,
+        param_types: [Int, variadic_pack(struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fv", slot: 0, name: n, type: meta_value(Int) }))] })],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: variadic_pack(struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fv", slot: 0, name: n, type: meta_value(Int) }))] }) }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }],
+        removed_params: [param_id { owner: "fv", slot: 0 }],
+        removed_args: [$v1],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy }
+            ],
+            terminator: return { value: present(%r0) }
+          }
+        ]
+      },
+      fn {
+        name: fw,
+        registers: 1,
+        vars: 2,
+        var_names: [k, args],
+        params: 2,
+        param_types: [Int, variadic_pack(Int)],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: variadic_pack(Int) }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }],
+        removed_args: [$v1],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy }
+            ],
+            terminator: return { value: present(%r0) }
+          }
+        ]
+      },
+      fn {
+        name: fpre,
+        registers: 2,
+        vars: 2,
+        var_names: [a, args],
+        params: 2,
+        param_types: [struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fpre", slot: 0, name: n, type: meta_value(Int) }))] }, variadic_pack(Int)],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fpre", slot: 0, name: n, type: meta_value(Int) }))] } }, var_type { var: $v1, type: variadic_pack(Int) }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: variadic_pack(Int) }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }],
+        removed_params: [param_id { owner: "fpre", slot: 0 }],
+        removed_args: [$v0],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v1, root_type: present(variadic_pack(Int)), projections: [], type: present(variadic_pack(Int)), through: absent } },
+              call { dest: %r1, func: len, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: fo,
+        registers: 1,
+        vars: 2,
+        var_names: [k, args],
+        params: 2,
+        param_types: [Int, variadic_pack(struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fo", slot: 0, name: n, type: meta_value(Int) }))] })],
+        owned_params: [false, true],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: variadic_pack(struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fo", slot: 0, name: n, type: meta_value(Int) }))] }) }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              drop.var { var: $v1 },
+              var.use { dest: %r0, var: $v0, mode: copy }
+            ],
+            terminator: return { value: present(%r0) }
+          }
+        ]
+      },
+      fn {
+        name: fused,
+        registers: 2,
+        vars: 1,
+        var_names: [args],
+        params: 1,
+        param_types: [variadic_pack(Int)],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: variadic_pack(Int) }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: variadic_pack(Int) }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(variadic_pack(Int)), projections: [], type: present(variadic_pack(Int)), through: absent } },
+              call { dest: %r1, func: len, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      }
+  ]

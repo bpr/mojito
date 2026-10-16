@@ -348,7 +348,7 @@ impl Specializer<'_> {
                     else {
                         continue;
                     };
-                    let (bindings, arguments) = self.nested_bindings(target, iteration)?;
+                    let (bindings, arguments) = self.nested_bindings(target, iteration, false)?;
                     *target = if generic {
                         let generator = mojito_symbol::symbol::instance_symbol(target, &arguments);
                         self.region_generators

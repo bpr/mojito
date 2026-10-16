@@ -45,7 +45,13 @@
 //! as upstream lifts a closure to one: the pass removes those it never
 //! reads, the elaborator keys its instances on the rest, and the enclosing
 //! function reads through a nested body it names only the binders that
-//! body kept. Those removals join the snapshot the verifier reads.
+//! body kept. Those removals join the snapshot the verifier reads. A nested
+//! body loses its unused arguments, captures included, like any other: the
+//! elaborator rewrites each of its indirect calls to name the reduced
+//! generator, and only a body some other use reaches
+//! ([`mojito_mir::mir::escaping_nested_bodies`]) keeps its full generator
+//! too, whose every binder the enclosing function then reads; such a body
+//! joins the snapshot with no removals.
 //!
 //! A lifted compile-time function (`$comptime$f$…`, `$default$f$…`) is a
 //! generator over every binder it declares, whoever owns it: the
@@ -70,9 +76,9 @@ use super::pre_elaboration::{CallGraphPass, Callees};
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
     Const, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
-    instruction_regions, instruction_subscript_call, lifecycle_callees, method_owner_params,
-    named_lifted_bodies, unread_parameters_of, unused_arguments, without_removed_argument_forwards,
-    without_removed_arguments, without_removed_forwards,
+    escaping_nested_bodies, instruction_regions, instruction_subscript_call, lifecycle_callees,
+    method_owner_params, named_lifted_bodies, unread_parameters_of, unused_arguments,
+    without_removed_argument_forwards, without_removed_arguments, without_removed_forwards,
 };
 use mojito_types::param_expr::ParamId;
 use std::collections::{BTreeMap, BTreeSet};
@@ -143,13 +149,26 @@ pub fn remove_unused_params(
     let mut nested_targets = BTreeSet::new();
     nested_bodies(&body.blocks, declarations, &mut nested_targets);
     let lifted_targets = named_lifted_bodies(name, body, declarations);
+    // A nested body some use other than a call reaches keeps its full
+    // generator beside the reduced one, which reads every binder.
+    let escaping = if nested_targets.is_empty() {
+        BTreeSet::new()
+    } else {
+        escaping_nested_bodies(body, &|target| nested_targets.contains(target))
+    };
+    let mut full = BTreeSet::new();
     let nested: BTreeMap<&str, &[ParamId]> = nested_targets
         .into_iter()
         .chain(lifted_targets.iter().map(String::as_str))
         .filter_map(|target| {
-            callees
-                .unit_body(target)
-                .map(|body| (target, body.removed_params.as_slice()))
+            callees.unit_body(target).map(|body| {
+                if !body.removed_args.is_empty() && escaping.contains(target) {
+                    full.insert(target);
+                    (target, &[][..])
+                } else {
+                    (target, body.removed_params.as_slice())
+                }
+            })
         })
         .collect();
     let nested_removals = |body: &str| nested.get(body).copied();
@@ -189,7 +208,7 @@ pub fn remove_unused_params(
             }
         }
         for (body, ids) in nested {
-            if (!ids.is_empty() || lifted_targets.contains(body))
+            if (!ids.is_empty() || lifted_targets.contains(body) || full.contains(body))
                 && !discounted.iter().any(|(callee, _)| callee == body)
             {
                 discounted.push((body.to_string(), ids.to_vec()));
