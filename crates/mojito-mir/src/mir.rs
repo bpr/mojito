@@ -51,6 +51,8 @@ pub mod text;
 pub mod verify;
 pub mod visit;
 
+mod call_defaults;
+pub use call_defaults::evaluate_omitted_defaults;
 mod calls;
 mod copies;
 pub use copies::{Relocated, relocated_structs};
@@ -801,6 +803,7 @@ pub fn lower_package_unit(
         &mut MirDeclarations::default(),
         &mut invariant_errors,
     );
+    evaluate_omitted_defaults(&mut functions, declarations);
     for (name, function) in &mut functions {
         close_register_types(name, function, declarations, &mut invariant_errors);
         let registers = function.n_regs;
@@ -913,6 +916,7 @@ fn lower_program(
     }
     adopt_member_defaults(checked, &mut declarations, &mut invariant_errors);
     record_lifecycle_members(&mut declarations);
+    evaluate_omitted_defaults(&mut functions, &declarations);
     {
         let _close = timing::span("close_register_types");
         for (name, function) in &mut functions {

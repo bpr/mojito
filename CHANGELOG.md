@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An omitted evaluated default of a top-level free function is evaluated
+  at the call site (R1004), as upstream does: `mir::evaluate_omitted_defaults`
+  gives a direct call that leaves the slot out a call of the lifted
+  `$default$f$x` under the call's own parameter arguments, before
+  ownership analysis, so a borrowed default is the caller's temporary and
+  is destroyed when the call returns (`use()` over
+  `r: R = R(String("dflt"))` now prints `drop dflt`, as on the pin), and
+  the default's instance is named by the call. The default of an argument
+  the callee never uses is still not evaluated. A method's, a nested
+  `def`'s, and a bundled function's default stay with the callee
+  (R1022, R1023).
 - A drop, copy, or move reads only the struct arguments its lifecycle
   member kept (R999), as on the pin: `fd[n](var b: DBox[n])`, whose
   `DBox.__deinit__` prints only `self.v`, is one instance for every `n`,

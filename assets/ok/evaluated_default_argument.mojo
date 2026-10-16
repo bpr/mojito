@@ -1,7 +1,8 @@
 # Omitted arguments whose default is an evaluated expression: MIR lowers the
 # default as a zero-parameter function, and both backends call it at the call
 # site that leaves the slot out. A borrowed slot's value is the caller's
-# temporary; a `var` slot's value transfers to the callee.
+# temporary, destroyed when the call returns (`use` prints `drop dflt`); a
+# `var` slot's value transfers to the callee.
 @fieldwise_init
 struct P(Copyable):
     var x: Int
@@ -45,6 +46,11 @@ def h(n: Int, p: P = P(3, String("pp")), k: Int = String("four").byte_length()) 
     return n + p.x + k
 
 
+def use(r: Owner = Owner(String("dflt"))) -> Int:
+    print("use", r.tag)
+    return 1
+
+
 def take(var r: Owner = Owner(String("owned"))) -> Int:
     print("take", r.tag)
     return 2
@@ -69,6 +75,7 @@ def main() raises:
     print(h(1))
     print(h(1, k=10))
     print(take())
+    print(use())
     print(gen(3))
     print(gen(String("q")))
     print(rz())

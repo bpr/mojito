@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1022**.
+Next free ID: **R1025**.
 
 ## Ordered Work
 
@@ -662,22 +662,53 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R988.
   - Model: Fable, Not Planned.
 
-- [ ] **R1004 An omitted evaluated default is evaluated by the callee
-  instance, not at the call site**
+- [ ] **R1022 A method's omitted evaluated default is evaluated by the
+  callee instance, not at the call site**
 
-  `scaled[1, 3]()` runs `$default$scaled$x` as the `scaled[1, 3]`
-  instance's declaration names it, where upstream fills the default in at
-  the call site, under the call's own parameter arguments.
-  - The VM (`invoke.rs`'s `make_default`) and the native backend
-    (`evaluated_default_value`) read the default off the callee
-    instance's declaration, which `instantiate_constructed_defaults`
-    respells per owner instance.
-  - The call site should evaluate the lifted default's instance under
-    the call's `instantiated_args`, so the callee's declaration need not
-    name one per instance.
-  - No output changes; R1005 builds on it.
-  - Found while landing R982 (2026-10-15).
+  `Box[2](1).get[5]()`, over `get[m](self, x: Int = Self.n + 1)`, runs
+  `$default$Box.get$x` as the method instance's declaration names it,
+  where upstream fills the default in at the call site.
+  - `mir::evaluate_omitted_defaults` fills only a direct `Call` of a
+    top-level free function; a `MethodCall`, a static-method or
+    constructor `Call`, and a `__init__` call are left to the callee.
+  - The default's binders mix the struct's (bound by the receiver's
+    type) and the method's own (the call's `instantiated_args`), so the
+    pass must map both.
+  - A borrowed default with a destructor is then destroyed after a
+    method call too, which closes the method half of R111.
+  - Found while landing R1004 (2026-10-15).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1023 A nested function's or a bundled function's omitted
+  evaluated default is evaluated by the callee**
+
+  A call of a nested `def` or of a free function the bundled package
+  compiled leaves its evaluated default to the callee's binding, where
+  upstream fills it in at the call site.
+  - A nested call prepends its captures to `args`, so the call's binding
+    against the declaration needs them skipped.
+  - A callee outside the lowered set has no body at hand, so
+    `unused_arguments` cannot say whether its argument is removed;
+    the package would have to record that per function.
+  - Found while landing R1004 (2026-10-15).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1024 A callee's declaration still names an evaluated default per
+  instance**
+
+  `instantiate_constructed_defaults` respells every `CheckedConst::Evaluate`
+  default to the owner instance's default instance, and the VM's
+  `make_default` and the native `evaluated_default_value` run it, where
+  upstream's callee names no default at all.
+  - Once every call shape fills its omitted defaults (R1022, R1023), the
+    callee-side path is dead: drop the respelling and both backends'
+    evaluation of an `Evaluate` slot.
+  - A function value called without an argument it defaults, if Mojo
+    allows one, is the remaining caller to check first.
+  - Found while landing R1004 (2026-10-15).
+  - Depends on R1022, R1023.
   - Model: Opus, Not Planned.
 
 - [ ] **R1005 A parameter read only by an evaluated default is kept**

@@ -1732,8 +1732,17 @@ form, including treating positive and negative zero as numerically equal.
 A parameter default is declaration metadata too (`CheckedConst`): a literal,
 an `@implicit` conversion of one (`Construct`), or, for any other default,
 `Evaluate`, a zero-parameter function MIR lowers from the default expression
-(`$default$<owner>$<parameter>`) and the VM runs for each call leaving the
-slot out. A default reading a binder in scope (`Self.n`, an enclosing `n`,
+(`$default$<owner>$<parameter>`) and each call leaving the slot out runs.
+A direct call of a top-level free function evaluates it at the call site,
+as upstream does: once every declaration is lowered and linked, and before
+ownership analysis, `mir::evaluate_omitted_defaults` gives the call a call
+of the default under the call's own `instantiated_args`, passed in the
+omitted slot through the read-temporary or forwarding slot a written
+argument would get, so drop elaboration destroys a borrowed default after
+the call. The default of an argument the callee never uses is left out,
+as upstream's `RemoveUnusedParams` removes it. Any other call (a method's,
+a nested `def`'s, a bundled function's: R1022, R1023) leaves the slot to the
+callee's binding, which the VM's `bind_for_call` fills. A default reading a binder in scope (`Self.n`, an enclosing `n`,
 `T`) declares the binders in scope as its function's parameters, and
 `native::mono` instantiates it under the owner instance's arguments; a
 nested `def`'s default reading an enclosing value parameter reads it as a
@@ -5369,8 +5378,10 @@ point where a slot declared in a loop is uninitialized again.
   removals join that function's `callee_removed_params`, a lifted body's
   even when empty; one whose run is not at hand reads every parameter. An
   evaluated default still reads its kept binders through the callee,
-  which holds it, where upstream evaluates it at the call site and the
-  callee reads none of them (R1004, R1005). Another parameter's
+  whose signature names it, where upstream's callee reads none of them
+  (R1005): a free function's direct call evaluates it at the call site,
+  but the callee's declaration still names it for the calls that do not
+  (R1024). Another parameter's
   default is not a read: the call site evaluates it. A function in a
   `comptime for` (R974), a nested function's own parameters (R973), and
   `__toplevel__` have no candidates. A callable value parameter is one
