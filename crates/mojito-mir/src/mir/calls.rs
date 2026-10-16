@@ -61,6 +61,33 @@ pub(super) struct SetupReference {
     read_start: Option<(MirBlockId, usize)>,
 }
 
+/// Whether a literal register of type `found` materializes at the checked
+/// parameter type `target` as a written literal argument does: a numeric
+/// literal at a scalar, or at a multi-lane vector it splats to.
+pub(super) fn literal_materializes_to(found: &Ty, target: &Ty) -> bool {
+    let scalar = match found.kind() {
+        TyKind::IntLiteral => {
+            matches!(target.kind(), TyKind::Int | TyKind::UInt | TyKind::Float64)
+                || mojito_types::types::is_scalar_simd(target)
+        }
+        TyKind::FloatLiteral => {
+            matches!(target.kind(), TyKind::Float64)
+                || mojito_types::types::scalar_simd_dtype(target)
+                    .is_some_and(mojito_ast::ast::Dtype::is_float)
+        }
+        _ => false,
+    };
+    scalar
+        || mojito_types::types::simd_shape(target).is_some_and(|(dtype, width)| {
+            width > 1
+                && matches!(found.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)
+                && mojito_types::types::splats_to(
+                    found,
+                    &mojito_types::types::SimdDtype::Known(dtype),
+                )
+        })
+}
+
 /// Whether a value of this type owns storage that destruction must release:
 /// an aggregate (a struct with a destructor or owning fields, tuple/pack
 /// storage, a variant, or a still-abstract parameter type). Kept textually
@@ -117,6 +144,18 @@ impl<'a> Flatten<'a> {
     }
 
     /// Bind `value`, the lowered `expression`, through
+    /// Record the call writing `dest` for
+    /// [`crate::mir::fill_omitted_arguments`]: the callee the checked call
+    /// selected, whose regular parameter slots begin after `leading`
+    /// operands its declaration does not list.
+    pub(super) fn record_call(&mut self, dest: Reg, callee: Option<String>, leading: usize) {
+        self.f.lowered_calls.push(crate::mir::LoweredCall {
+            dest,
+            callee,
+            leading,
+        });
+    }
+
     /// [`Self::bind_temporary_argument`] when the checker marked it
     /// `ReadTemporaryArgument`: an owned temporary a read parameter, a read
     /// receiver, or a read dunder operand takes, which the caller destroys once the call

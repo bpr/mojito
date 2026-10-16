@@ -506,6 +506,7 @@ fn verify_rejects_an_untyped_used_slot() {
                     callee_removed_params: Vec::new(),
                     callee_removed_args: Vec::new(),
                     removed_args: Vec::new(),
+                    lowered_calls: Vec::new(),
                 },
             )],
             declarations: MirDeclarations::default(),
@@ -5084,14 +5085,16 @@ def main() raises:
         defaults(&outer),
         [("$default$outer$inner$y".to_string(), 1)]
     );
+    // A call of the nested `def` by name is a direct call of its lifted
+    // body: the captured `base`, then `x`, then `y`, filled or written.
     let inner_arities: Vec<usize> = outer
         .iter()
         .filter_map(|instruction| match instruction {
-            MirInstr::CallIndirect { args, .. } => Some(args.len()),
+            MirInstr::Call { func, args, .. } if func.0.ends_with("$inner") => Some(args.len()),
             _ => None,
         })
         .collect();
-    assert_eq!(inner_arities, [2, 2]);
+    assert_eq!(inner_arities, [3, 3]);
     let main = calls("main");
     assert!(
         defaults(&main)

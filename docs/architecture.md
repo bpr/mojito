@@ -1739,34 +1739,40 @@ form, including treating positive and negative zero as numerically equal.
 A parameter default is declaration metadata too (`CheckedConst`): a literal,
 an `@implicit` conversion of one (`Construct`), or, for any other default,
 `Evaluate`, a zero-parameter function MIR lowers from the default expression
-(`$default$<owner>$<parameter>`) and each call leaving the slot out runs.
-A direct call, a method call, a static-method call, a construction, a
-nested `def`'s direct call from the body declaring it or one nested under
-it, the `call.indirect` of a copy- or move-capturing nested `def`'s closure
-from that body, and the `call.indirect` of a register statically holding a
-free function's value, evaluate it at the call site, as upstream does: once every declaration is lowered and linked,
-and before ownership analysis, `mir::evaluate_omitted_defaults` gives the
-call a call of the default under the call's own `instantiated_args`, the
-receiver type's struct arguments, and the enclosing binders in scope,
-passed in the omitted slot through the read-temporary or forwarding slot a
-written argument would get, so drop elaboration destroys a borrowed
-default after the call. A nested call binds past the leading captures its
-lifted body declares, which the elaborator passes later. The default of an
-argument the callee never uses is left out, as upstream's
-`RemoveUnusedParams` removes it: the program's own callee's by
-`mir::unused_arguments`, a bundled callee's by the `removed_args` of its
-finished package body, which the program's lowering reads through
-`PackageBodies`. Any other call (a subscript, R1077; a sibling's call of a
-nested `def`, R1077; a bundled body's call into another unit, R1077; a
-call through a trait bound, R1077; a rebound function value, R1077) leaves
-the slot to the callee's binding, which the VM's `bind_for_call` fills. A default reading a binder in scope (`Self.n`, an enclosing `n`,
-`T`) declares the binders in scope as its function's parameters, and
-`native::mono` instantiates it under the owner instance's arguments; a
-nested `def`'s default reading an enclosing value parameter reads it as a
-parameter, as its body does. The pin evaluates a default once at
-compile time, so the checker rejects one naming runtime storage and the
-elaborator one that does I/O; for what remains, evaluating at each call is
-indistinguishable.
+(`$default$<owner>$<parameter>`). Every default is the call's to evaluate,
+as upstream's call binding writes the callee's default attribute into the
+call: the lowering of each checked call records the callee it selected and
+the operands preceding its regular slots (`MirFunction::lowered_calls`,
+a `LoweredCall` per call), and once every declaration is lowered and
+linked, before ownership analysis, `mir::fill_omitted_arguments` binds each
+recorded call against its callee's declaration and writes every omitted
+argument into the call: a literal's constant materialized at the parameter
+type, a conversion's constructor run on it, or a call of the default
+function under the call's own `instantiated_args`, the receiver type's
+struct arguments, and the enclosing binders in scope, each passed in the
+omitted slot through the read-temporary or forwarding slot a written
+argument would get, so drop elaboration destroys a borrowed default after
+the call. A direct call, a method call, a static-method call, a
+construction, a subscript (an `Index` carrying one becomes a `MultiIndex`),
+a nested `def`'s direct call (its captured places lead) or its closure's
+`call.indirect` (its captures lead the lifted body's parameters), a call
+through a trait bound to a trait default's body (the requirement's dispatch
+symbol names the member body, whose `self` leads), and a function value's
+`call.indirect` (the function its register statically holds,
+`mir::callable_targets`, a variable every definition of which holds the
+same function included) are all filled; a default whose binders the call
+does not bind is an invariant error. The default of an argument the callee
+never uses is filled too, and `remove-unused-params` drops the operand as it
+drops a written one (R1083). The callee evaluates no default: the
+elaborator enqueues no default function from a declaration, and a slot a
+call shape still leaves out is an explicit `Unsupported` error on both
+backends. A default reading a binder in scope (`Self.n`, an enclosing `n`,
+`T`) declares the binders in scope as its function's parameters, which the
+call binds; the callee's instances are keyed without a binder only its
+default reads, as upstream's callee names no default. A nested `def`'s
+default reading an enclosing value parameter reads it as a parameter, as
+its body does. The checker rejects a default naming runtime storage, as the
+pin does.
 
 Current Mojo reflection enters through the zero-sized `reflect[T]` compile-time
 handle. Mojito implements `is_struct`, `field_count`, `field_names`,
@@ -5473,13 +5479,10 @@ point where a slot declared in a loop is uninitialized again.
   a body or its signature names (`mir::named_lifted_bodies`) count as
   call-graph edges, so either runs before the function naming it, and its
   removals join that function's `callee_removed_params`, a lifted body's
-  even when empty; one whose run is not at hand reads every parameter. An
-  evaluated default every direct call omitting it evaluates at the call
-  site (`mir::evaluated_at_call_site`: a program's own free function's, by
-  value, non-raising, not positional-only) is no read, as upstream's
-  callee names no default (R1005); any other still reads its kept binders
-  through the callee, whose signature names it (R1060, R1025). Another
-  parameter's default is not a read: the call site evaluates it. A function in a
+  even when empty; one whose run is not at hand reads every parameter. A
+  runtime default is no read, since every call omitting it evaluates it at
+  the call (`mir::fill_omitted_arguments`), as upstream's callee names no
+  default (R1005). A function in a
   `comptime for` (R974), a nested function's own parameters (R973), and
   `__toplevel__` have no candidates. A callable value parameter is one
   like any other (R910): the elaborator binds no runtime closure or

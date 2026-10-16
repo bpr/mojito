@@ -906,16 +906,13 @@ fn reachable_set<'p>(
             }
         }
         // An omitted argument whose default is a recorded constructor
-        // (`dir: Optional[String] = None`) or a lowered default function
-        // (`s: String = String("a")`) calls it from the caller's lowering:
-        // an edge no call instruction spells.
+        // (`dir: Optional[String] = None`) calls it from the caller's
+        // lowering: an edge no call instruction spells. A lowered default
+        // function is called by the call that leaves the slot out.
         if let Some(declaration) = declarations.get(name) {
             for default in declaration.defaults.iter().flatten() {
                 use mojito_checked::checked::CheckedConst;
-                if let CheckedConst::Construct { target, .. }
-                | CheckedConst::Evaluate {
-                    function: target, ..
-                } = default
+                if let CheckedConst::Construct { target, .. } = default
                     && let Some((callee, _)) = functions.get_key_value(target.as_str())
                     && reachable.insert(*callee)
                 {
@@ -1489,6 +1486,7 @@ mod tests {
                 callee_removed_params: Vec::new(),
                 callee_removed_args: Vec::new(),
                 removed_args: Vec::new(),
+                lowered_calls: Vec::new(),
             }
         }
 

@@ -324,6 +324,7 @@ mod constant_tuple_place_tests {
             callee_removed_params: Vec::new(),
             callee_removed_args: Vec::new(),
             removed_args: Vec::new(),
+            lowered_calls: Vec::new(),
         };
 
         assert!(!is_droppable_root(&function, 1));
@@ -353,6 +354,7 @@ mod constant_tuple_place_tests {
             callee_removed_params: Vec::new(),
             callee_removed_args: Vec::new(),
             removed_args: Vec::new(),
+            lowered_calls: Vec::new(),
         };
         assert!(is_droppable_root(&function, 0));
         assert!(!is_droppable_root(&function, 1));
@@ -460,6 +462,7 @@ mod interior_origin_tests {
             callee_removed_params: Vec::new(),
             callee_removed_args: Vec::new(),
             removed_args: Vec::new(),
+            lowered_calls: Vec::new(),
         }
     }
 

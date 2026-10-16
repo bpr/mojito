@@ -1655,6 +1655,7 @@ fn method_call_spread_expands_into_the_bound_pack_elements() {
         callee_removed_params: Vec::new(),
         callee_removed_args: Vec::new(),
         removed_args: Vec::new(),
+        lowered_calls: Vec::new(),
     };
     expand_pack_spreads("fwd", &mut function).expect("expand the method-call spread");
     let instrs = &function.blocks[0].instrs;

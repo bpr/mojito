@@ -1090,7 +1090,7 @@ impl<'a> Specializer<'a> {
                     );
                 }
             }
-            self.instantiate_constructed_defaults(&key.template, &mut declaration, bindings)?;
+            self.instantiate_constructed_defaults(&key.template, &mut declaration)?;
             self.enqueue_keyword_collector(&key.template, &declaration)?;
             self.output_function_decls.push(declaration);
         }
@@ -2062,54 +2062,21 @@ impl<'a> Specializer<'a> {
         Ok(())
     }
 
-    /// A parameter defaulting to a lowered default function
-    /// (`s: String = String("a")`) enqueues that function, under the owner
-    /// instance's arguments for each binder the function declares
-    /// (`x: Int = Self.n * 2`). One defaulting to
-    /// a recorded constructor over a generic
-    /// struct instance (`dir: Optional[String] = None`, `x: Optional[Int] = 5`):
+    /// A parameter defaulting to a recorded constructor over a generic struct
+    /// instance (`dir: Optional[String] = None`, `x: Optional[Int] = 5`):
     /// the omitted-argument path runs the constructor's instance for the
     /// concrete parameter type, so enqueue it and respell the default's target
     /// to that instance. The instance is keyed on the parameter's type, so the
-    /// wrapped literal plays no part in selecting it.
+    /// wrapped literal plays no part in selecting it. A lowered default
+    /// function (`s: String = String("a")`) is the call's to run: every call
+    /// leaving the slot out names its instance, so the declaration enqueues
+    /// none.
     fn instantiate_constructed_defaults(
         &mut self,
         owner: &str,
         declaration: &mut MirFunctionDeclaration,
-        bindings: &Bindings,
     ) -> Result<(), MonoError> {
         for (index, default) in declaration.defaults.iter_mut().enumerate() {
-            // A lowered default function has one instance per assignment of
-            // the binders it reads, which only this default reaches.
-            if let Some(CheckedConst::Evaluate {
-                function,
-                arguments,
-            }) = default
-            {
-                // The pin evaluates a default once, at compile time, where
-                // the VM runs it at each call leaving the slot out: the two
-                // agree only for a default that does no I/O.
-                if let Some(effectful) = effectful_callee(self.source, function) {
-                    let parameter = declaration
-                        .param_names
-                        .get(index)
-                        .map_or("_", String::as_str);
-                    return Err(self.error(
-                        Some(owner),
-                        format!(
-                            "the default value of parameter '{parameter}' of '{owner}' is not \
-                             safe for VM-backed compile-time execution: it reaches `{effectful}`"
-                        ),
-                    ));
-                }
-                if self.functions.contains_key(function.as_str()) {
-                    let (default_bindings, instance) =
-                        self.default_function_bindings(function, arguments, bindings)?;
-                    *function = self.enqueue(function, default_bindings, instance)?;
-                    arguments.clear();
-                }
-                continue;
-            }
             let Some(CheckedConst::Construct { target, arg }) = default else {
                 continue;
             };
@@ -2263,69 +2230,6 @@ impl<'a> Specializer<'a> {
             })
             .collect::<Result<_, _>>()?;
         Ok((bindings, arguments))
-    }
-
-    /// The bindings and instance arguments of the lowered default function
-    /// `function` under its owner's `bindings`: each binder it declares takes
-    /// the owner's solution, or a lifted body's folded capture of its name.
-    /// A default `applied` to arguments (a wrapper reaching its trait
-    /// member's default) takes each binder's solution from its argument,
-    /// substituted under the owner's `bindings`. A binder the function
-    /// removed is bound but not keyed.
-    fn default_function_bindings(
-        &self,
-        function: &str,
-        applied: &[TyArg],
-        bindings: &Bindings,
-    ) -> Result<(Bindings, Vec<InstanceArg>), MonoError> {
-        let mut default_bindings = self.base_bindings();
-        let mut arguments = Vec::new();
-        let scope = self
-            .declarations
-            .get(function)
-            .map_or(&[][..], |declaration| &declaration.param_decls);
-        let applied_bindings;
-        let bindings = if applied.is_empty() {
-            bindings
-        } else {
-            let concrete = applied
-                .iter()
-                .map(|argument| substitute_arg(argument, bindings))
-                .collect::<Result<Vec<_>, _>>()?;
-            let mut own = self.base_bindings();
-            bind_ty_args(scope, &concrete, &mut own)
-                .map_err(|error| self.error(Some(function), error))?;
-            applied_bindings = own;
-            &applied_bindings
-        };
-        let removed = self.removed_params(function, false);
-        for decl in scope {
-            let keyed = !removed.contains(decl.id());
-            let binder = decl.binder();
-            let unresolved = || {
-                self.error(
-                    Some(function),
-                    format!("default reading unresolved parameter `{}`", binder.name),
-                )
-            };
-            match decl {
-                ParamDecl::Type { .. } => {
-                    let ty = bindings.types.get(&binder).ok_or_else(unresolved)?;
-                    if keyed {
-                        arguments.push(InstanceArg::Ty(ty.clone()));
-                    }
-                    default_bindings.types.insert(binder, ty.clone());
-                }
-                ParamDecl::Value { .. } => {
-                    let value = bindings.values.get(&binder).ok_or_else(unresolved)?;
-                    if keyed {
-                        arguments.push(InstanceArg::Value(value.clone()));
-                    }
-                    default_bindings.values.insert(binder, value.clone());
-                }
-            }
-        }
-        Ok((default_bindings, arguments))
     }
 
     /// A `**kwargs: element` parameter binds a `StringDict[element]` the

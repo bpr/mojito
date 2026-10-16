@@ -954,6 +954,7 @@ impl<'a> Flatten<'a> {
         );
         self.emit_checked_call_boundary(&plan.getter, &target.location());
         let handle = self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
+        self.record_call(handle, Some(getter_call.target.clone()), 0);
         self.emit(MirInstr::Index {
             dest: handle,
             base: receiver,
@@ -1030,6 +1031,7 @@ impl<'a> Flatten<'a> {
                     self.emit_checked_call_boundary(&plan.getter, &target.location());
                     let handle =
                         self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
+                    self.record_call(handle, Some(getter_call.target.clone()), 0);
                     self.emit(MirInstr::Index {
                         dest: handle,
                         base: receiver,
@@ -1099,6 +1101,7 @@ impl<'a> Flatten<'a> {
                 self.emit_checked_call_boundary(&plan.getter, &target.location());
                 let current =
                     self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
+                self.record_call(current, Some(getter_call.target.clone()), 0);
                 self.emit(MirInstr::Index {
                     dest: current,
                     base: receiver,
@@ -1441,6 +1444,7 @@ impl<'a> Flatten<'a> {
                     self.emit_checked_call_boundary(&plan.getter, &target.location());
                     let handle =
                         self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
+                    self.record_call(handle, Some(getter_call.target.clone()), 0);
                     self.emit(MirInstr::MultiIndex {
                         dest: handle,
                         object: receiver,
@@ -1494,6 +1498,7 @@ impl<'a> Flatten<'a> {
                 self.emit_checked_call_boundary(&plan.getter, &target.location());
                 let current =
                     self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
+                self.record_call(current, Some(getter_call.target.clone()), 0);
                 self.emit(MirInstr::MultiIndex {
                     dest: current,
                     object: receiver,

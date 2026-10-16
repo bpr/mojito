@@ -48,6 +48,7 @@ impl<'a> Flatten<'a> {
         self.close_call_setup(Some(call));
         let dest = self.fresh(call.location(), None);
         self.emit_call_invalidations(call, args, kwargs);
+        self.record_call(dest, Some(contract.target.clone()), 0);
         self.emit(MirInstr::Call {
             dest,
             func: FuncRef::named(&contract.target),
@@ -117,6 +118,7 @@ impl<'a> Flatten<'a> {
             });
         let transfer_arg_places = arg_places.clone();
         let transfer_recv_place = callee_place.clone();
+        self.record_call(dest, resolved.clone(), 0);
         self.emit(MirInstr::CallIndirect {
             dest,
             callee,
@@ -181,6 +183,11 @@ impl<'a> Flatten<'a> {
             .map(|contract| contract.result_ty.clone())
             .expect("element-call plan carries the getter contract");
         let element = self.fresh_typed(call.location(), None, element_ty);
+        self.record_call(
+            element,
+            getter.as_ref().map(|contract| contract.target.clone()),
+            0,
+        );
         if let [index] = index_regs.as_slice() {
             self.emit(MirInstr::Index {
                 dest: element,
@@ -343,6 +350,7 @@ impl<'a> Flatten<'a> {
             .map_or((None, Vec::new()), |(contract, arguments)| {
                 (Some(contract), arguments)
             });
+        self.record_call(d, Some(info.mangled.clone()), info.captures.len());
         self.emit(MirInstr::CallIndirect {
             dest: d,
             callee,
@@ -429,6 +437,9 @@ impl<'a> Flatten<'a> {
             .instantiated_callable_contract()
             .map_or_else(|| call.instantiated_args(), |(_, arguments)| arguments);
         let spread = Self::spread_position(args).map(|position| position + captured.len());
+        // The captured places fill the lifted body's leading parameters,
+        // which its declaration lists.
+        self.record_call(d, Some(info.mangled.clone()), 0);
         let mut all_args: Vec<Reg> = captured.iter().map(|(reg, _)| *reg).collect();
         all_args.extend(arg_regs);
         let mut all_places: Vec<Option<MirPlace>> =
@@ -732,26 +743,7 @@ impl<'a> Flatten<'a> {
         let Some(found) = self.f.reg_types.get(&value.0) else {
             return value;
         };
-        let compatible =
-            match found.kind() {
-                TyKind::IntLiteral => {
-                    matches!(target.kind(), TyKind::Int | TyKind::UInt | TyKind::Float64)
-                        || mojito_types::types::is_scalar_simd(target)
-                }
-                TyKind::FloatLiteral => {
-                    matches!(target.kind(), TyKind::Float64)
-                        || mojito_types::types::scalar_simd_dtype(target)
-                            .is_some_and(mojito_ast::ast::Dtype::is_float)
-                }
-                _ => false,
-            } || mojito_types::types::simd_shape(target).is_some_and(|(dtype, width)| {
-                width > 1
-                    && matches!(found.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)
-                    && mojito_types::types::splats_to(
-                        found,
-                        &mojito_types::types::SimdDtype::Known(dtype),
-                    )
-            });
+        let compatible = crate::mir::calls::literal_materializes_to(found, target);
         if !compatible {
             return value;
         }

@@ -24,7 +24,7 @@ the shapes stop being entries at all.
 | Gap | Upstream shape | Entry now | Folded in |
 |---|---|---|---|
 | A call of a nested `def` is `closure.make` + `call.indirect`, and passes recover the direct call by dataflow | Direct call of the lifted generator, captures passed as arguments | R1037 | R1036 |
-| Evaluated defaults are filled late, in MIR, per call shape (`mir::evaluate_omitted_defaults`), and every other shape is left to the callee | Call binding writes every omitted argument into the call | R1077, then R1060 | R1053–R1059, R1061–R1063, R960, R961 |
+| Evaluated defaults are filled late, in MIR, per call shape (`mir::evaluate_omitted_defaults`), and every other shape is left to the callee | Call binding writes every omitted argument into the call | landed 2026-10-16 (R1077, R1060; residues R1083, R1084) | R1053–R1059, R1061–R1063, R960, R961 |
 | Drops and copies are their own instructions, and the backends recurse into fields by type | A synthesized `__del__`/copy constructor, called by a plain call | R1041, R1044, R1045, R1042, R1043, R1046 (existing chain) | — |
 | `inline-parametric` substitutes some binder kinds and refuses the rest, one entry per refusal | One substitution over every parameter kind | R1078, R1079, R1080, R1081 | R945, R947–R949, R951, R952, R954, R955, R957–R959, R962–R968, R1067, R1068 |
 
@@ -45,9 +45,11 @@ by binders nothing reads.
    the `escaping_nested_bodies` dataflow (`callable_targets` stays for
    callable binders and function-value calls) and unblocks R1080 and
    R1038.
-2. **R1077, then R1060, defaults filled at call binding.** The checker
-   records every omitted default in the checked call. Then the callee-side
-   evaluation and `evaluated_at_call_site`'s guards go.
+2. **R1077, then R1060, defaults filled at call binding.** Landed
+   2026-10-16: the lowering of every checked call records its callee, and
+   `mir::fill_omitted_arguments` writes each omitted argument into the
+   call once every declaration is lowered. The callee-side evaluation and
+   `evaluated_at_call_site` are gone.
 3. **R1041 → R1046, lifecycle operations as calls.** Synthesized
    destructors and copy/move constructors, cleanup lists naming
    destructors, then drops and copies lowered to calls.

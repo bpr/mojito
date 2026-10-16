@@ -73,13 +73,6 @@ pub(super) fn verify_concrete_program(program: &MirProgram, errors: &mut Vec<Str
         for ty in types {
             require_concrete(&head, "signature", ty, errors);
         }
-        if declaration.defaults.iter().flatten().any(|default| {
-            matches!(default, mojito_checked::checked::CheckedConst::Evaluate { arguments, .. } if !arguments.is_empty())
-        }) {
-            errors.push(format!(
-                "{head} still applies an evaluated default to compile-time arguments"
-            ));
-        }
     }
     let defined: std::collections::HashSet<&str> = program
         .functions
@@ -506,6 +499,7 @@ mod tests {
             callee_removed_params: Vec::new(),
             callee_removed_args: Vec::new(),
             removed_args: Vec::new(),
+            lowered_calls: Vec::new(),
         }
     }
 

@@ -1,12 +1,19 @@
-# Omitted arguments whose default is an evaluated expression: MIR lowers the
-# default as a zero-parameter function, and both backends call it at the call
-# site that leaves the slot out, a method's, static method's, constructor's,
-# nested `def`'s, or function value's too, under the struct's parameters, the
-# enclosing function's, and its own. A borrowed slot's value is the caller's
-# temporary, destroyed when the call returns (`use` prints `drop dflt`,
-# `hold` prints `drop method`, `plain` prints `drop nested`, `through`
-# called through a value prints `drop value`); a `var` slot's value
-# transfers to the callee.
+# Omitted arguments are filled at the call, for every call shape, as
+# upstream's call binding writes the callee's default into the call: the
+# lowering of each checked call records its callee, and once every
+# declaration is lowered the fill writes each omitted argument into the
+# call, under the struct's parameters, the enclosing function's, and the
+# callee's own. A default that is neither a literal nor a conversion of one
+# is a zero-parameter default function the call runs. A borrowed slot's
+# value is the caller's temporary, destroyed when the call returns (`use`
+# prints `drop dflt`, `hold` prints `drop method`, `plain` prints `drop
+# nested`, `through` called through a value prints `drop value`, `a[1]`
+# prints `drop sub`, `sib` calling `plain` through its capture prints `drop
+# nested`, and `g` rebound to `use` prints `drop dflt`); a `var` slot's
+# value transfers to the callee. A literal default is filled the same way,
+# so a positional-only slot after an omitted one is passed by position
+# (`plit[1, 2]()`), and a requirement's `None` default reaches a conformer
+# called through its bound (`go(a)`).
 @fieldwise_init
 struct P(Copyable):
     var x: Int
@@ -21,6 +28,27 @@ struct Owner:
 
     def __deinit__(deinit self):
         print("drop", self.tag)
+
+
+trait Shows:
+    def show(self, x: Optional[Int] = None) -> Int:
+        ...
+
+
+struct A(Shows):
+    var v: Int
+
+    def __init__(out self, v: Int):
+        self.v = v
+
+    def show(self, x: Optional[Int] = None) -> Int:
+        if x:
+            return self.v + x.value()
+        return self.v
+
+    def __getitem__(self, i: Int, r: Owner = Owner(String("sub"))) -> Int:
+        print("getitem", r.tag)
+        return self.v + i
 
 
 struct G[T: ImplicitlyCopyable & Deinitable]:
@@ -52,6 +80,10 @@ struct Box[n: Int]:
     @staticmethod
     def make(k: Int = Self.n * 10) -> Int:
         return k
+
+
+def go[T: Shows](x: T) -> Int:
+    return x.show()
 
 
 def f(s: String = String("a")) -> String:
@@ -94,21 +126,30 @@ def rz(s: String = String("r")) raises -> String:
     return s
 
 
+def plit[n: Int, m: Int](x: Int = 1, y: Int = m * 2, /) -> Int:
+    return n + x + y
+
+
 def outer[n: Int](k: Int) -> Int:
     var base = k
 
     def inner(x: Int, y: Int = n * 3, z: Int = n + 1) {imm base} -> Int:
         return base + x + y * z
 
-    def plain(r: Owner = Owner(String("nested"))) -> Int:
+    def plain(r: Owner = Owner(String("nested"))) {imm base} -> Int:
         print("plain", r.tag)
-        return 1
+        if base > 0:
+            return 1
+        return 0
 
     def owned(var r: Owner = Owner(String("nested owned"))) -> Int:
         print("owned", r.tag)
         return 2
 
-    return plain() + owned() + inner(1) + inner(1, 2) + inner(1, z=4)
+    def sib() {imm plain} -> Int:
+        return plain()
+
+    return plain() + owned() + inner(1) + inner(1, 2) + inner(1, z=4) + sib()
 
 
 def main() raises:
@@ -133,3 +174,11 @@ def main() raises:
     print(outer[2](10))
     var called = through
     print(called())
+    var a = A(5)
+    print(a[1])
+    print(go(a))
+    var rebound = use
+    rebound = use
+    print(rebound())
+    print(plit[1, 2]())
+    print(plit[1, 2](10))

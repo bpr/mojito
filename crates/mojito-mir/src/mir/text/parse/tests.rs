@@ -64,6 +64,7 @@ fn function_with(reg_types: Vec<Ty>, instrs: Vec<MirInstr>) -> MirFunction {
         callee_removed_params: Vec::new(),
         callee_removed_args: Vec::new(),
         removed_args: Vec::new(),
+        lowered_calls: Vec::new(),
     }
 }
 

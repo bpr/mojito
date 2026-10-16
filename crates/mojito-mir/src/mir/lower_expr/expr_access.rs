@@ -307,6 +307,7 @@ impl<'a> Flatten<'a> {
         let d = self.fresh(e.location(), None);
         self.emit_interior_invalidations(index, None);
         self.emit_interior_invalidations(e, None);
+        self.record_call(d, call.as_ref().map(|call| call.target.clone()), 0);
         self.emit(MirInstr::Index {
             dest: d,
             base,
@@ -455,6 +456,7 @@ impl<'a> Flatten<'a> {
             }
         }
         self.emit_interior_invalidations(e, None);
+        self.record_call(dest, call.as_ref().map(|call| call.target.clone()), 0);
         self.emit(MirInstr::MultiIndex {
             dest,
             object: object_reg,

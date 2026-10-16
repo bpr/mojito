@@ -47,9 +47,8 @@ use crate::mir::verify::{instruction_operand_regs, instruction_places, instructi
 use crate::mir::{
     MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg,
     MirPlace, MirSubscriptArg, MirTerm, Proj, Reg, TyArg, UseMode, count_register_reads,
-    destroyed_structs, evaluated_at_call_site, instruction_regions, instruction_regions_mut,
-    instruction_slots, instruction_subscript_call, matched_parameter_arguments,
-    supplied_parameter_arguments,
+    destroyed_structs, instruction_regions, instruction_regions_mut, instruction_slots,
+    instruction_subscript_call, matched_parameter_arguments, supplied_parameter_arguments,
 };
 use mojito_ast::ast::InfixOp;
 use mojito_hir::hir::VarId;
@@ -72,9 +71,9 @@ use std::fmt;
 /// binders it declares that they keep; one `nested` does not answer reads
 /// them all.
 ///
-/// A default of another parameter is not a read, since a default is the
-/// call site's, nor is a runtime default every call omitting it evaluates
-/// ([`crate::mir::evaluated_at_call_site`]). A function inside a `comptime for`, `__toplevel__`, and a
+/// A runtime default is not a read, since every call omitting it evaluates
+/// it at the call ([`crate::mir::fill_omitted_arguments`]), as upstream's
+/// callee names none. A function inside a `comptime for`, `__toplevel__`, and a
 /// function without a declaration have no candidates, nor has a nested
 /// function's own parameter. A callable value parameter is a candidate like
 /// any other: a call through it reads it, and the elaborator binds no
@@ -1235,10 +1234,10 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
 
     /// The declaration's signature: its runtime parameters, collectors,
     /// result, and error, as the walk's mode reads them, and whole its
-    /// runtime defaults, `where` clauses, and each compile-time parameter's
-    /// type and constraints. Not a compile-time parameter's default, nor a
-    /// runtime one every call omitting it evaluates
-    /// ([`crate::mir::evaluated_at_call_site`]), which the call site does.
+    /// `where` clauses and each compile-time parameter's type and
+    /// constraints. Not a compile-time parameter's default, nor a runtime
+    /// one, which every call omitting it evaluates at the call
+    /// ([`crate::mir::fill_omitted_arguments`]).
     fn signature(&mut self, declaration: &MirFunctionDeclaration) {
         for ty in declaration
             .param_types
@@ -1251,13 +1250,6 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
             self.ty(ty);
         }
         let layout = std::mem::replace(&mut self.layout, false);
-        for (slot, default) in declaration.defaults.iter().enumerate() {
-            if !self.declarations.is_some_and(|declarations| {
-                evaluated_at_call_site(&declaration.lowered_name, declaration, slot, declarations)
-            }) {
-                self.visit(default);
-            }
-        }
         self.visit(&declaration.availability);
         for decl in &declaration.param_decls {
             match decl {

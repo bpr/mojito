@@ -144,6 +144,7 @@ impl Decoder {
                 callee_removed_params,
                 removed_args,
                 callee_removed_args,
+                lowered_calls: Vec::new(),
             },
         ))
     }

@@ -98,6 +98,7 @@ impl<'a> Flatten<'a> {
             // A callable-struct value is the receiver of its own
             // `__call__` transfer effects; its place is the callee's.
             let transfer_recv_place = callee_place.clone();
+            self.record_call(dest, callable_target(&node.adjustments), 0);
             self.emit(MirInstr::CallIndirect {
                 dest,
                 callee,
@@ -653,6 +654,7 @@ impl<'a> Flatten<'a> {
             Some((_, "__copyinit__")) => (Vec::new(), Self::static_receiver(call)),
             _ => (param_arg_regs, None),
         };
+        self.record_call(d, Some(target.clone()), 0);
         self.emit(MirInstr::Call {
             dest: d,
             func: FuncRef::named(&target),
@@ -859,6 +861,7 @@ impl<'a> Flatten<'a> {
                 callable_target(&node.adjustments).unwrap_or_else(|| format!("{name}.{field}"));
             self.emit_call_invalidations(call, args, kwargs);
             let receiver = Self::static_receiver(object);
+            self.record_call(dest, Some(target.clone()), 0);
             self.emit(MirInstr::Call {
                 dest,
                 func: FuncRef::named(&target),
@@ -907,6 +910,7 @@ impl<'a> Flatten<'a> {
         let dest = self.fresh(call.location(), None);
         self.emit_interior_invalidations(object, None);
         self.emit_call_invalidations(call, args, kwargs);
+        self.record_call(dest, callable_target(&node.adjustments), 0);
         self.emit(MirInstr::MethodCall {
             dest,
             recv,

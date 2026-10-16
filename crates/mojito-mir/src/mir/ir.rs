@@ -2922,6 +2922,29 @@ pub struct MirFunction {
     /// `removed_params`. Empty on a concrete instance.
     #[serde(skip)]
     pub callee_removed_args: Vec<(String, Vec<VarId>)>,
+    /// Every call the body lowered from a checked call, which
+    /// [`super::fill_omitted_arguments`] binds against its callee's
+    /// declaration once every declaration is lowered, writing each omitted
+    /// argument into the call as upstream's call binding does. Not encoded;
+    /// empty once lowering is done.
+    #[serde(skip)]
+    pub lowered_calls: Vec<LoweredCall>,
+}
+
+/// A call lowered from a checked call: the register its result writes, the
+/// callee the checked call selected, and how many leading operands precede
+/// the callee's regular parameter slots.
+///
+/// `callee` is `None` for a call through a function value whose callee the
+/// check did not name; the fill resolves it from the function the callee
+/// register statically holds ([`super::callable_targets`]). `leading`
+/// counts a nested body's captured places, which lead its lifted body's
+/// parameters and which its declaration does not list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoweredCall {
+    pub dest: Reg,
+    pub callee: Option<String>,
+    pub leading: usize,
 }
 
 impl MirFunction {
@@ -3024,6 +3047,7 @@ mod tests {
             callee_removed_params: Vec::new(),
             callee_removed_args: Vec::new(),
             removed_args: Vec::new(),
+            lowered_calls: Vec::new(),
         }
     }
 

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1083**.
+Next free ID: **R1085**.
 
 ## Ordered Work
 
@@ -56,62 +56,25 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R1077 An omitted default is filled in after the check, call shape
-  by call shape, where upstream fills it in at call binding**
+- [ ] **R1083 The default of an argument the callee never uses is still
+  evaluated at the call**
 
-  `mir::evaluate_omitted_defaults` adds an omitted evaluated default to the
-  call shapes it recognizes and leaves every other shape to the callee's
-  binding, where upstream's call binding writes every omitted argument into
-  the call.
-  - Shapes left to the callee today: a subscript (`a[1]` over
-    `__getitem__(self, i: Int, j: Int = ...)`), a sibling nested `def`'s
-    call, a bundled body's call into another lowering unit, a call through
-    a trait bound (`x.show()` in `go[T: Shows]`), and a rebound function
-    value (`var g = use; g = use; g()`).
-  - In each, a borrowed default with a destructor is never destroyed after
-    the call, where the pin prints its `drop` line.
-  - A positional-only slot after an omitted literal default (`plit`) or an
-    unused one (`pafter`) cannot be passed by position, since only
-    evaluated defaults are filled.
-  - The lever: `mojito_ast::call` binding already maps every slot. Have the
-    checker record every omitted default, literal or computed, in the
-    checked call as an argument, so MIR lowering lowers it as any argument.
-  - A computed default is a compile-time value under the call's bindings,
-    upstream's `kgen.param.constant`, not a runtime call.
-  - An omitted argument the callee never uses passes a valueless operand,
-    as upstream's `_REMOVED_ARG` call passes none.
-  - Then delete `evaluate_omitted_defaults` and its `CallSite`.
-  - Done when each shape above runs as on the pin in
-    `assets/ok/evaluated_default_argument.mojo`.
-  - Done also when `inline-parametric` inlines a call omitting
-    `s: String = String("a")`, `x: Int = Self.n * 2`,
-    `v: SIMD[DType.int32, 4] = 1`, or `x: Optional[Int] = 5`, in a pass
-    test with a clean differential.
+  `mir::fill_omitted_arguments` fills every omitted slot, and
+  `remove-unused-params` then drops the operand of a slot the callee never
+  uses, leaving the default's evaluation as a dead call, where the pin runs
+  nothing for it.
+  - Probe: `pafter[n, m](x: Int = side(), y: Int = m * 2, /)` with `side`
+    printing, called as `pafter[1, 2]()`: Mojito prints `side`, the pin
+    does not (`assets/ok/lifted_body_owner_instances.mojo` keeps its `side`
+    silent so both agree).
+  - The lever: where the elaborator drops a removed argument's operand
+    (`drop_removed_arguments`), remove the `$default$` call, and the
+    read-temporary or forwarding slot bound to it, that only that operand
+    read.
+  - Measure by the instruction counters: the fill's read temporary also
+    costs a drop per such call.
+  - Found while landing R1077 (2026-10-16).
   - Depends on nothing.
-  - Model: Fable, Planned.
-
-- [ ] **R1060 A callee still evaluates an omitted default, and its
-  instances keep the binders only that default reads**
-
-  `instantiate_constructed_defaults` respells every `CheckedConst::Evaluate`
-  default to the owner instance's default instance, and the VM's
-  `make_default` and the native `evaluated_default_value` run it, where
-  upstream's callee names no default at all.
-  - Once every call fills its defaults, drop the respelling and both
-    backends' evaluation of an `Evaluate` slot.
-  - `mir::evaluated_at_call_site` then counts every default as no read:
-    drop its free-function, `has_receiver`, nested `enclosing`,
-    own-function, and `earlier_defaults_filled` guards.
-  - Probes: `get[m](self, x: Int = Self.n + m)` loses `m`, and
-    `inner(x: Int, y: Int = n * 3)` nested in `outer[n]` loses `n`.
-  - Probes: `plit[n, m](x: Int = 1, y: Int = m * 2, /)` and
-    `pafter[n, m](x: Int = side(), y: Int = m * 2, /)` have one instance
-    per `n`, as on the pin.
-  - Add them to `assets/ok/lifted_body_owner_instances.mojo` and
-    `assets/ok/nested_unread_enclosing_instances.mojo`, and pin a bundled
-    function's default with a parameter-removal test over a package body.
-  - Found while landing R1004 (2026-10-15).
-  - Depends on R1077.
   - Model: Opus, Not Planned.
 
 - [ ] **R1041 A struct with droppable fields and no `__deinit__` has no
@@ -2432,6 +2395,26 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     fail with "'None' is not callable", and in a `comptime for` with a
     `comptime if i == 0` arm they print `1 1`.
   - Found while landing R329 (2026-10-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1084 A call of a function value rebound to another function
+  rejects, where the pin binds the first function's defaults**
+
+  `var g = first; g = second; print(g())` over `first(r: Owner =
+  Owner(String("first")))` and `second(r: Owner = Owner(String("second")))`
+  prints `second first` on the pin: the variable's function literal type
+  carries the defaults of the function it was declared from. Mojito's
+  `FuncTy` carries only `required`, so `mir::fill_omitted_arguments` fills
+  such a call only when every definition of the variable holds the same
+  function (`mir::callable_targets`), and otherwise the VM and Pliron
+  reject the omitted `Evaluate` slot at the call.
+  - A literal default of such a value is still bound by the callee, so
+    `second`'s own literal default is taken where the pin takes `first`'s.
+  - The lever: a function literal type that keeps its declaration's
+    default attributes, which the check records on the variable's type and
+    the fill reads instead of tracing the register.
+  - Found while landing R1077 (2026-10-16).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7688,6 +7671,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     trait, so its conversion (`None` into `Optional`) is known there.
   - This spans the checked call node, HIR, MIR, the VM, and Pliron: the
     planning session should split it into chained entries.
+  - Probe: `go(a)` in `assets/ok/evaluated_default_argument.mojo`, over
+    `trait Shows: def show(self, x: Optional[Int] = None)`: the
+    requirement's `None` is still the conformer's to bind, since a bodiless
+    requirement has no lowered declaration for `mir::fill_omitted_arguments`
+    to read, where a trait default's body is filled through its dispatch
+    symbol (`u.f()` in `assets/ok/trait_default_parameter_defaults.mojo`).
   - Found while landing R590 (2026-10-13).
   - Depends on nothing.
   - Model: Fable, Not Planned.

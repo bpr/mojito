@@ -8,6 +8,28 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Every omitted argument is filled at the call, for every call shape
+  (R1077, R1060), as upstream's call binding writes the callee's default
+  into the call: the lowering of each checked call records its callee, and
+  `mir::fill_omitted_arguments` writes each omitted argument into the call
+  once every declaration is lowered, a literal materialized at the
+  parameter type, a conversion's constructor, or a call of the lifted
+  default function under the call's bindings. A subscript (`a[1]` over
+  `__getitem__(self, i: Int, r: Owner = Owner(String("sub")))`), a sibling
+  nested `def`'s call through its capture, a bundled unit's call into
+  another, a call through a trait bound to a trait default's body, and a
+  function value rebound to the same function now destroy a borrowed
+  default after the call, as on the pin, and a positional-only slot after
+  an omitted literal default is passed by position. The callee evaluates
+  no default: the elaborator's declaration-side default instance, the VM's
+  and Pliron's evaluation of an `Evaluate` slot, and the
+  `evaluate_omitted_defaults` post-pass with its `CallSite` reconstruction
+  are gone, and a callee's instances are keyed without the binders only a
+  default reads (`Box[n].get[m](self, x: Int = Self.n + m)` has one
+  instance however `m` varies:
+  assets/ok/evaluated_default_argument.mojo,
+  assets/ok/lifted_body_owner_instances.mojo,
+  assets/ok/nested_unread_enclosing_instances.mojo).
 - A call of a nested `def` by name is a direct call of its lifted body
   (R1037), passing the captured places as its leading reference
   arguments, as the pin calls the lifted closure generator; a closure is

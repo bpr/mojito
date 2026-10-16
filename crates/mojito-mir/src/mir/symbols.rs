@@ -93,6 +93,7 @@ impl<'t> SymbolTable<'t> {
             callee_removed_params: _,
             callee_removed_args: _,
             removed_args: _,
+            lowered_calls: _,
         } = function;
         let mut uses = self.uses(blocks);
         uses.extend(self.implicit_uses(blocks, reg_types));

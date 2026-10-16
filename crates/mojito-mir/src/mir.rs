@@ -53,7 +53,7 @@ pub mod verify;
 pub mod visit;
 
 mod call_defaults;
-pub use call_defaults::{evaluate_omitted_defaults, evaluated_at_call_site};
+pub use call_defaults::fill_omitted_arguments;
 mod callable_values;
 pub use callable_values::{callable_targets, nested_instructions};
 mod calls;
@@ -682,20 +682,15 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
 ///
 /// A declaration the package compiled is not lowered again, and the
 /// package's MIR declarations are attached to the program's before its
-/// functions are closed and verified. The package's functions stay out of the result; a
-/// consumer reaches them through the package, whose bodies a call omitting
-/// a package function's evaluated default reads for the arguments it
-/// removed ([`evaluate_omitted_defaults`]).
+/// calls are filled, closed, and verified. The package's functions stay out
+/// of the result; a consumer reaches them through the package.
 ///
 /// # Panics
 ///
 /// As [`lower_checked_program`].
 pub fn lower_checked_program_importing(
     checked: &CheckedProgram,
-    package: Option<(
-        &std::sync::Arc<text::package::PackageDeclarations>,
-        &text::package::PackageBodies,
-    )>,
+    package: Option<&std::sync::Arc<text::package::PackageDeclarations>>,
 ) -> MirProgram {
     lower_program(checked, package).0
 }
@@ -834,7 +829,7 @@ pub fn lower_package_unit(
         &mut MirDeclarations::default(),
         &mut invariant_errors,
     );
-    evaluate_omitted_defaults(&mut functions, declarations, None);
+    fill_omitted_arguments(&mut functions, declarations, &mut invariant_errors);
     for (name, function) in &mut functions {
         close_register_types(name, function, declarations, &mut invariant_errors);
         name_constructors(function, declarations);
@@ -853,10 +848,7 @@ pub fn lower_package_unit(
 
 fn lower_program(
     checked: &CheckedProgram,
-    package: Option<(
-        &std::sync::Arc<text::package::PackageDeclarations>,
-        &text::package::PackageBodies,
-    )>,
+    package: Option<&std::sync::Arc<text::package::PackageDeclarations>>,
 ) -> (MirProgram, Vec<std::ops::Range<usize>>) {
     let mut functions = Vec::new();
     let mut declarations = MirDeclarations {
@@ -946,16 +938,12 @@ fn lower_program(
     // The synthetic module initializer returns nothing and never raises.
     toplevel_fn.ret_ty = Some(Ty::none());
     functions.push(("__toplevel__".to_string(), toplevel_fn));
-    if let Some((compiled, _)) = package {
+    if let Some(compiled) = package {
         link::link_declarations(&mut declarations, compiled);
     }
     adopt_member_defaults(checked, &mut declarations, &mut invariant_errors);
     record_lifecycle_members(&mut declarations);
-    evaluate_omitted_defaults(
-        &mut functions,
-        &declarations,
-        package.map(|(_, bodies)| bodies),
-    );
+    fill_omitted_arguments(&mut functions, &declarations, &mut invariant_errors);
     {
         let _close = timing::span("close_register_types");
         for (name, function) in &mut functions {
@@ -3898,6 +3886,7 @@ fn lower_cfg_body(
         callee_removed_params: Vec::new(),
         callee_removed_args: Vec::new(),
         removed_args: Vec::new(),
+        lowered_calls: Vec::new(),
     };
 
     {

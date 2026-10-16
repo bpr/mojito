@@ -106,9 +106,6 @@ impl FnLowering<'_> {
             }
             self.emit_release_reg(ctx, reg, &ty)?;
         }
-        for (storage, ty) in std::mem::take(&mut self.default_temps) {
-            self.emit_release_temp(ctx, storage, &ty)?;
-        }
         Ok(())
     }
 
