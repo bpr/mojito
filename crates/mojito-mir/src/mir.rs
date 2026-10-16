@@ -52,7 +52,7 @@ pub mod verify;
 pub mod visit;
 
 mod call_defaults;
-pub use call_defaults::evaluate_omitted_defaults;
+pub use call_defaults::{evaluate_omitted_defaults, evaluated_at_call_site};
 mod calls;
 mod copies;
 pub use copies::{Relocated, relocated_structs};

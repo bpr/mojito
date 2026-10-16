@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A parameter only a free function's evaluated default reads is removed
+  (R1005), as on the pin: each direct call omitting the default evaluates
+  it at the call site, so the callee's signature naming it reads nothing
+  (`mir::evaluated_at_call_site`). `dflt[n, m](x: Int = n * 2)` returning
+  `x` is one instance, and `scaled[n, m](x: Int = m * 2)` one per `n`
+  (`assets/ok/lifted_body_owner_instances.mojo`). A method's, a nested
+  `def`'s, and a bundled function's default still read through the callee
+  (R1022, R1023).
 - An omitted evaluated default of a top-level free function is evaluated
   at the call site (R1004), as upstream does: `mir::evaluate_omitted_defaults`
   gives a direct call that leaves the slot out a call of the lifted

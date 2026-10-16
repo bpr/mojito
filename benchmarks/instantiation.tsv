@@ -63,7 +63,7 @@ assets/ok/comptime_annotated_scalar.mojo	elaborated	6	93	1	1	8	7	14	1	1
 assets/ok/comptime_application_argument.mojo	elaborated	44	333	14	37	180	230	52	33	37
 assets/ok/comptime_applied_constant_in_signature.mojo	elaborated	6	74	0	0	0	0	14	0	0
 assets/ok/comptime_array_materialized_frozen.mojo	elaborated	15	247	6	6	89	84	38	18	18
-assets/ok/comptime_call_callee_shapes.mojo	elaborated	60	337	40	53	131	97	68	43	53
+assets/ok/comptime_call_callee_shapes.mojo	elaborated	59	335	40	52	131	95	67	43	52
 assets/ok/comptime_call_signature.mojo	elaborated	33	189	19	27	66	48	41	19	27
 assets/ok/comptime_collections.mojo	elaborated	136	1938	58	117	792	1602	368	146	319
 assets/ok/comptime_ctfe.mojo	elaborated	12	144	2	2	16	14	29	5	5
@@ -175,7 +175,7 @@ assets/ok/decorators.mojo	elaborated	7	78	0	0	0	0	15	0	0
 assets/ok/def_aggregate_value_binder_served.mojo	elaborated	14	169	4	5	34	40	31	7	8
 assets/ok/default_args.mojo	elaborated	7	102	0	0	0	0	20	0	0
 assets/ok/default_converting_constructor.mojo	elaborated	25	265	7	9	71	77	51	16	21
-assets/ok/default_reads_binder.mojo	elaborated	47	273	17	36	52	61	71	20	39
+assets/ok/default_reads_binder.mojo	elaborated	41	276	17	30	52	53	65	20	33
 assets/ok/defines_main.mojo	elaborated	5	66	0	0	0	0	13	0	0
 assets/ok/deinit_body_field_last_use.mojo	elaborated	20	224	0	0	0	0	31	0	0
 assets/ok/deinit_param_destruction_timing.mojo	elaborated	20	196	0	0	0	0	28	0	0
@@ -218,7 +218,7 @@ assets/ok/element_store_from_same_list.mojo	elaborated	42	534	15	31	168	325	101	
 assets/ok/entry_redeclares_library_names.mojo	elaborated	28	341	12	14	116	116	62	26	31
 assets/ok/env_roundtrip.mojo	elaborated	20	408	2	2	16	14	57	5	5
 assets/ok/errno_strerror.mojo	elaborated	28	457	4	4	142	140	65	13	13
-assets/ok/evaluated_default_argument.mojo	elaborated	38	468	6	7	23	24	69	9	10
+assets/ok/evaluated_default_argument.mojo	elaborated	40	528	6	7	23	24	71	9	10
 assets/ok/exceptions.mojo	elaborated	6	70	0	0	0	0	16	0	0
 assets/ok/explicit_destroy_consumed_field_droppable.mojo	elaborated	19	180	6	10	29	40	36	9	13
 assets/ok/explicit_destroy_partial_fields.mojo	elaborated	10	111	0	0	0	0	18	0	0
@@ -313,8 +313,8 @@ assets/ok/lane_template_served.mojo	elaborated	20	166	7	15	42	65	28	11	15
 assets/ok/late_initialized_local.mojo	elaborated	25	270	5	5	50	42	60	12	12
 assets/ok/layout_allocation.mojo	elaborated	19	191	14	14	59	57	30	17	17
 assets/ok/lifecycle_deprecated_spellings.mojo	elaborated	9	88	0	0	0	0	17	0	0
-assets/ok/lifted_body_owner_instances.mojo	elaborated	25	279	8	11	36	38	57	11	14
-assets/ok/lifted_unread_parameter_instances.mojo	elaborated	18	107	7	13	25	23	26	9	13
+assets/ok/lifted_body_owner_instances.mojo	elaborated	27	295	10	13	44	44	59	13	16
+assets/ok/lifted_unread_parameter_instances.mojo	elaborated	17	109	7	12	25	20	25	9	12
 assets/ok/line_continuation.mojo	elaborated	5	66	0	0	0	0	13	0	0
 assets/ok/list_and_struct.mojo	elaborated	19	277	13	13	163	154	53	36	36
 assets/ok/list_anytype_element.mojo	elaborated	10	110	5	5	43	40	24	11	11
@@ -980,7 +980,7 @@ assets/ok/untracked_pointer_ref_params.mojo	elaborated	9	103	2	2	16	14	20	5	5
 assets/ok/unused_argument_instances.mojo	elaborated	35	887	13	16	34	40	219	16	19
 assets/ok/unused_parameter_instances.mojo	elaborated	15	117	8	10	20	21	23	8	10
 assets/ok/user_iterator.mojo	elaborated	7	95	0	0	0	0	21	0	0
-assets/ok/value_argument_from_caller_parameter.mojo	elaborated	23	121	9	18	50	36	31	9	18
+assets/ok/value_argument_from_caller_parameter.mojo	elaborated	22	119	9	17	50	34	30	9	17
 assets/ok/value_pack_aggregate_served.mojo	elaborated	7	75	2	2	3	3	15	2	2
 assets/ok/value_pack_bracket_spread.mojo	elaborated	33	165	19	27	99	89	48	30	34
 assets/ok/value_pack_comptime_for_served.mojo	elaborated	8	77	2	3	11	9	16	11	3
@@ -1044,4 +1044,4 @@ benchmarks/compile/stdlib_heavy.mojo	elaborated	122	1700	46	106	654	1377	313	118
 benchmarks/compile/trait_defaults.mojo	elaborated	163	1476	21	115	215	1063	202	37	134
 benchmarks/compile/tstring.mojo	elaborated	22	219	8	12	44	79	39	17	15
 benchmarks/compile/tuple.mojo	elaborated	28	238	8	16	37	68	45	11	19
-total	1045	28360	388324	9927	16466	112155	170961	71438	24045	35862
+total	1045	28355	388401	9929	16459	112163	170952	71433	24047	35855

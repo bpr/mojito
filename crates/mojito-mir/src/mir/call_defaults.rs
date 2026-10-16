@@ -67,6 +67,30 @@ pub fn evaluate_omitted_defaults(
     }
 }
 
+/// Whether every direct call omitting `slot` of `name`, so declared,
+/// evaluates its default itself ([`evaluate_omitted_defaults`]).
+///
+/// It is an evaluated default of a free function the program itself
+/// declares, by value, that does not raise, reads only `name`'s binders,
+/// and fills no positional-only slot, which an earlier unfilled one could
+/// leave to the callee. Such a default is no read of `name`, as upstream's
+/// callee names none.
+pub fn evaluated_at_call_site(
+    name: &str,
+    declaration: &MirFunctionDeclaration,
+    slot: usize,
+    declarations: &MirDeclarations,
+) -> bool {
+    declarations
+        .functions
+        .iter()
+        .any(|own| own.lowered_name == name)
+        && declaration
+            .positional_only
+            .is_none_or(|limit| slot >= limit)
+        && call_site_default(name, declaration, slot, declarations).is_some()
+}
+
 /// The free functions whose omitted evaluated defaults a call evaluates,
 /// each with the argument slots its body never uses.
 struct Callees<'a> {
@@ -129,12 +153,6 @@ fn fill_call(
     ) else {
         return;
     };
-    if callee.has_receiver
-        || callee.enclosing.is_some()
-        || mojito_symbol::symbol::split_method_symbol(&func.0).is_some()
-    {
-        return;
-    }
     let keywords: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
     let Ok(matched) = match_call_slots(
         &callee.param_names,
@@ -159,7 +177,13 @@ fn fill_call(
                 && VarId::try_from(*slot).is_ok_and(|slot| !unused.contains(&slot))
         })
         .filter_map(|(slot, _)| {
-            omitted_default(callee, slot, instantiated_args, callees.declarations)
+            omitted_default(
+                &func.0,
+                callee,
+                slot,
+                instantiated_args,
+                callees.declarations,
+            )
         })
         .collect();
     let location = function.spans.0.get(&dest.0).map(|(span, _)| span.clone());
@@ -212,34 +236,19 @@ fn fill_call(
     }
 }
 
-/// The default `callee` declares at `slot`, when the call can evaluate it:
-/// an evaluated default that does not raise, whose binders each name a
-/// binder of `callee` the call's `instantiated` arguments bind, and whose
-/// parameter type those arguments close.
+/// The default `callee`, the free function `name`, declares at `slot`,
+/// when the call can evaluate it: one [`call_site_default`] admits whose
+/// binders the call's `instantiated` arguments bind and whose parameter
+/// type they close.
 fn omitted_default(
+    name: &str,
     callee: &MirFunctionDeclaration,
     slot: usize,
     instantiated: &[TyArg],
     declarations: &MirDeclarations,
 ) -> Option<Omitted> {
-    let Some(CheckedConst::Evaluate {
-        function,
-        arguments,
-    }) = callee.defaults.get(slot)?
-    else {
-        return None;
-    };
+    let (function, thunk) = call_site_default(name, callee, slot, declarations)?;
     let convention = callee.param_conventions.get(slot).copied().flatten();
-    if !arguments.is_empty()
-        || ArgConvention::is_reference(convention)
-        || matches!(convention, Some(ArgConvention::Out))
-    {
-        return None;
-    }
-    let thunk = declarations.function(function)?;
-    if thunk.raises {
-        return None;
-    }
     let bound = |decl: &ParamDecl| {
         callee
             .param_decls
@@ -262,6 +271,46 @@ fn omitted_default(
         function: function.clone(),
         arguments,
     })
+}
+
+/// The lifted function and declaration of the evaluated default `callee`,
+/// the function `name`, declares at `slot`, when a call can evaluate it:
+/// `callee` is a free function, the default takes no runtime argument, its
+/// parameter is passed by value, and the default does not raise and binds
+/// only `callee`'s binders.
+fn call_site_default<'d>(
+    name: &str,
+    callee: &'d MirFunctionDeclaration,
+    slot: usize,
+    declarations: &'d MirDeclarations,
+) -> Option<(&'d String, &'d MirFunctionDeclaration)> {
+    if callee.has_receiver
+        || callee.enclosing.is_some()
+        || mojito_symbol::symbol::split_method_symbol(name).is_some()
+    {
+        return None;
+    }
+    let Some(CheckedConst::Evaluate {
+        function,
+        arguments,
+    }) = callee.defaults.get(slot)?
+    else {
+        return None;
+    };
+    let convention = callee.param_conventions.get(slot).copied().flatten();
+    if !arguments.is_empty()
+        || ArgConvention::is_reference(convention)
+        || matches!(convention, Some(ArgConvention::Out))
+    {
+        return None;
+    }
+    let thunk = declarations.function(function)?;
+    (!thunk.raises
+        && thunk
+            .param_decls
+            .iter()
+            .all(|decl| callee.param_decls.iter().any(|own| own.id() == decl.id())))
+    .then_some((function, thunk))
 }
 
 /// `ty`, a parameter type of `callee`, under the call's `instantiated`

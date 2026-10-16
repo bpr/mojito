@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1025**.
+Next free ID: **R1026**.
 
 ## Ordered Work
 
@@ -711,20 +711,23 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1022, R1023.
   - Model: Opus, Not Planned.
 
-- [ ] **R1005 A parameter read only by an evaluated default is kept**
+- [ ] **R1025 A parameter read only by a bundled function's or a
+  positional-only parameter's evaluated default is kept**
 
-  `scaled[n, m](x: Int = m * 2)` keeps `m`, and `dflt[n, m](x: Int = n * 2)`
-  returning `x` keeps `n`, where the pin removes both
-  (`scaled[...]_REMOVED_ARG,n=1`, `dflt[...]_REMOVED_ARG`).
-  - `mir::unread_parameters` reads a `$default$f$x` the signature names
-    as reading the binders that body kept (R982).
-  - Once the call site evaluates the default (R1004), a binder only it
-    reads is no read of the function, and the signature's name of it
-    should read nothing.
-  - `assets/ok/lifted_body_owner_instances.mojo`'s `dflt` then has one
-    instance.
-  - Found while landing R982 (2026-10-15).
-  - Depends on R1004.
+  A bundled generic function whose evaluated default alone reads `n`
+  keeps `n`, where the pin, evaluating the default at the call site,
+  removes it.
+  - `mir::evaluated_at_call_site` counts only a default of the program's
+    own free function, by value and not positional-only, as no read.
+  - A bundled callee's default is the callee's until R1023, so its
+    signature must still read it; once R1023 lands, drop the own-function
+    check.
+  - A positional-only slot after an unused, unfilled one is left to the
+    callee; filling it in that case too lets the check go.
+  - Add a bundled and a positional-only case to
+    `assets/ok/lifted_body_owner_instances.mojo`.
+  - Found while landing R1005 (2026-10-15).
+  - Depends on R1023.
   - Model: Opus, Not Planned.
 
 - [ ] **R983 With the pre-elaboration pipeline off, a capturing callable

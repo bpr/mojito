@@ -5377,12 +5377,12 @@ point where a slot declared in a loop is uninitialized again.
   call-graph edges, so either runs before the function naming it, and its
   removals join that function's `callee_removed_params`, a lifted body's
   even when empty; one whose run is not at hand reads every parameter. An
-  evaluated default still reads its kept binders through the callee,
-  whose signature names it, where upstream's callee reads none of them
-  (R1005): a free function's direct call evaluates it at the call site,
-  but the callee's declaration still names it for the calls that do not
-  (R1024). Another parameter's
-  default is not a read: the call site evaluates it. A function in a
+  evaluated default every direct call omitting it evaluates at the call
+  site (`mir::evaluated_at_call_site`: a program's own free function's, by
+  value, non-raising, not positional-only) is no read, as upstream's
+  callee names no default (R1005); any other still reads its kept binders
+  through the callee, whose signature names it (R1022, R1023). Another
+  parameter's default is not a read: the call site evaluates it. A function in a
   `comptime for` (R974), a nested function's own parameters (R973), and
   `__toplevel__` have no candidates. A callable value parameter is one
   like any other (R910): the elaborator binds no runtime closure or
