@@ -270,7 +270,8 @@ impl FnLowering<'_> {
     /// (owned, released after `dest`'s own final use, or stolen by a String
     /// constructor).
     ///
-    /// A register that aliases a *place* copies out instead. MIR types this
+    /// A register that aliases a *place*, or snapshots one
+    /// ([`FnLowering::load_from`]), copies out instead. MIR types this
     /// builtin's result as a fresh owned string carrying no loans, so the
     /// ownership analysis reads the call as the place's last use and drops it
     /// between this instruction and the constructor that reads the
@@ -287,7 +288,9 @@ impl FnLowering<'_> {
     ) -> Result<(), PlironError> {
         let mut data = data;
         let mut owned = self.owned_temps.remove(&arg.0).is_some();
-        if !owned && self.aliased_load_regs.contains(&arg.0) {
+        if !owned
+            && (self.aliased_load_regs.contains(&arg.0) || self.storage_reads.contains(&arg.0))
+        {
             let copy = self.emit_alloc(ctx, len, 1, dest);
             self.mem_copy_dynamic(ctx, copy, data, len, dest);
             data = copy;

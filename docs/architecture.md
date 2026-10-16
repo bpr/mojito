@@ -4450,8 +4450,11 @@ The verifier holds a copy or move to the same rule as a drop. A borrow, a
 forward, and a copy or move of a type whose struct records no such member
 (a trivial or built-in type, or a struct with no constructor of its own)
 name none and stay a value copy; captures, variant payloads,
-reference-read results, `T(copy=x)`, and backend clone-out reads still find
-their constructor from the type (`mir::relocated_structs`). The instruction
+reference-read results, and `T(copy=x)` still find their constructor from
+the type (`mir::relocated_structs`). A read out of storage and a store copy
+nothing in either backend: Pliron's `FnLowering::load_from` takes a byte
+snapshot sharing its storage's buffers and `FnLowering::store_to` stores
+what the MIR hands it, as the VM does. The instruction
 stays a slot use rather than a call, for the drop flags, tombstone, and
 `String` bridges the backends attach to it.
 

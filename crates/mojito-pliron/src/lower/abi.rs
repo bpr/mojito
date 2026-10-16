@@ -354,11 +354,10 @@ impl FnLowering<'_> {
     }
 
     /// Load the value at `address` with checked type `ty` into `dest`:
-    /// scalars load directly; an aggregate whose consumers are not all
-    /// borrowing, or whose copy is the value itself (see
-    /// `collect_aliased_load_regs`), copies out into fresh
-    /// storage — a clone for a value with copy work of its own, otherwise a
-    /// byte copy.
+    /// scalars load directly; an aggregate is a byte snapshot in fresh
+    /// storage that still shares its storage's buffers, as the VM's read
+    /// does. A read copies nothing: the MIR names every copy (`var.use
+    /// copy`, `value.copy`) its consumers need.
     pub(super) fn load_from(
         &mut self,
         ctx: &mut Context,
@@ -373,12 +372,10 @@ impl FnLowering<'_> {
                 self.define(ctx, dest, load.get_operation(), load.get_result(ctx))
             }
             LowerTy::Aggregate { ty, layout } => {
-                if self.clone_needs_work(&ty) {
-                    return self.copy_aggregate(ctx, dest, &ty, layout, address);
-                }
                 let storage = self.value_storage(ctx, &ty, layout);
                 self.copy_value(ctx, storage, address, &ty, layout, dest);
                 self.reg_values.insert(dest.0, storage);
+                self.storage_reads.insert(dest.0);
                 Ok(())
             }
             LowerTy::ZeroSized => {
@@ -428,38 +425,14 @@ impl FnLowering<'_> {
                     ));
                 }
                 // An owned temporary transfers into the designated storage;
-                // a borrowed heap-owning source clones instead — its byte
-                // copy would alias buffers both owners release.
-                if self.owned_temps.remove(&src.0).is_some() || !self.owns_heap(&ty) {
-                    self.copy_value(ctx, address, ptr, &ty, layout, src);
-                    return Ok(());
-                }
-                self.fork_value_into(ctx, address, &ty, layout, ptr, src)
+                // any other source is stored as the VM stores it, the MIR
+                // having copied it first wherever the storage owns it.
+                self.owned_temps.remove(&src.0);
+                self.copy_value(ctx, address, ptr, &ty, layout, src);
+                Ok(())
             }
             LowerTy::ZeroSized => Ok(()),
         }
-    }
-
-    /// Store register `src` (checked type `ty`) to `address` for a reader
-    /// that never releases it: a borrowed heap-owning source is aliased
-    /// where [`Self::store_to`] would clone it.
-    pub(super) fn lend_to(
-        &mut self,
-        ctx: &mut Context,
-        address: Value,
-        ty: &Ty,
-        src: Reg,
-    ) -> Result<(), PlironError> {
-        if !self.owned_temps.contains_key(&src.0)
-            && let LowerTy::Aggregate { ty, layout } =
-                lower_ty(self.name, ty, &self.layout, self.reg_span(src))?
-            && !matches!(*ty.kind(), TyKind::StringLiteral)
-        {
-            let ptr = self.reg_ptr(ctx, src)?;
-            self.copy_value(ctx, address, ptr, &ty, layout, src);
-            return Ok(());
-        }
-        self.store_to(ctx, address, ty, src)
     }
 
     /// `StringLiteral` consumed as storage materializes on first use as a

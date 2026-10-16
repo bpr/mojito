@@ -5,21 +5,19 @@
 //! moved, so a symbol walk reaches it. A `var.use copy`, `var.use move`, or
 //! `value.copy` names the constructor it runs, which a symbol walk
 //! follows; the rest of what a body copies or moves (a site naming none, a
-//! capture, a payload, a load out of storage) names none, and the VM and
+//! capture, a payload) names none, and the VM and
 //! the native backend find the struct's member from the value's type. This
 //! module answers which structs those are: the types copied and moved
 //! without a name, and every field type a copy or a move of them may
 //! reach.
 
 use super::destroys::close_over_fields;
-use crate::mir::verify::{instruction_operand_regs, instruction_result_regs};
 use crate::mir::{
     MirBlock, MirCaptureMode, MirFunction, MirInstr, MirPlace, Reg, StructFields, UseMode,
     instruction_regions,
 };
 use mojito_hir::hir::VarId;
 use mojito_types::types::Ty;
-use std::collections::HashMap;
 
 /// What a body copies and moves without naming a constructor.
 pub struct Relocated {
@@ -37,23 +35,21 @@ pub struct Relocated {
 /// What the body `function` copies and moves without naming a constructor.
 ///
 /// A copy is a `var.use copy`, a `value.copy`, an owned closure capture, a
-/// variant payload, a `Type(copy=value)` construction, a method result
-/// read through its reference, a borrowed value stored into owning
-/// storage, and any read whose result a backend may clone out of storage
-/// (a load, a field, an element, an iterator's next value). A move is a
-/// `var.use move` and an owned closure capture. Through `fields`, every
+/// variant payload, a `Type(copy=value)` construction, and a method or
+/// iterator result read through its reference: the points the VM and the native backend
+/// copy at. A read out of storage (a load, a field, an element) and a
+/// store copy nothing. A move is a `var.use move` and an owned closure
+/// capture. Through `fields`, every
 /// field of a struct those reach joins, since a struct without the member
 /// copies or moves its fields one by one. A copy or move naming its
 /// constructor runs it instead, and joins [`Relocated::named`].
 pub fn relocated_structs(function: &MirFunction, fields: &StructFields<'_>) -> Relocated {
     let mut walk = Walk {
         function,
-        borrowed: HashMap::new(),
         copied: Vec::new(),
         moved: Vec::new(),
         named: Vec::new(),
     };
-    walk.borrows(&function.blocks);
     walk.blocks(&function.blocks);
     let copied = close_over_fields(walk.copied, fields);
     let moved = close_over_fields(walk.moved, fields);
@@ -68,33 +64,12 @@ pub fn relocated_structs(function: &MirFunction, fields: &StructFields<'_>) -> R
 /// The types a body's instructions copy and move.
 struct Walk<'f> {
     function: &'f MirFunction,
-    /// Each register a shared or mutable borrow of a slot defines.
-    borrowed: HashMap<u32, VarId>,
     copied: Vec<(Ty, bool)>,
     moved: Vec<(Ty, bool)>,
     named: Vec<(Ty, String)>,
 }
 
 impl Walk<'_> {
-    fn borrows(&mut self, blocks: &[MirBlock]) {
-        for block in blocks {
-            for instruction in &block.instrs {
-                if let MirInstr::UseVar {
-                    dest,
-                    var,
-                    mode: UseMode::BorrowShared | UseMode::BorrowMut,
-                    ..
-                } = instruction
-                {
-                    self.borrowed.insert(dest.0, *var);
-                }
-                for region in instruction_regions(instruction) {
-                    self.borrows(region);
-                }
-            }
-        }
-    }
-
     fn blocks(&mut self, blocks: &[MirBlock]) {
         for block in blocks {
             for instruction in &block.instrs {
@@ -142,6 +117,9 @@ impl Walk<'_> {
                 result_adapter: Some(_),
                 ..
             } => self.register(*dest),
+            MirInstr::TryNext { dest, call, .. } if call.result_adapter.is_some() => {
+                self.register(*dest);
+            }
             MirInstr::Call {
                 dest, args, kwargs, ..
             } if args.is_empty()
@@ -149,64 +127,10 @@ impl Walk<'_> {
             {
                 self.register(*dest);
             }
-            // Fresh values, and reads that relocate rather than clone.
-            MirInstr::MakeRef { .. }
-            | MirInstr::Const { .. }
-            | MirInstr::SizeOf { .. }
-            | MirInstr::ParamListAddress { .. }
-            | MirInstr::TypeName { .. }
-            | MirInstr::ConstructTypeParam { .. }
-            | MirInstr::ConstructType { .. }
-            | MirInstr::MaterializeLiteral { .. }
-            | MirInstr::StoreToMem { .. }
-            | MirInstr::MovePlace { .. }
-            | MirInstr::UnOp { .. }
-            | MirInstr::BinOp { .. }
-            | MirInstr::Call { .. }
-            | MirInstr::CallIndirect { .. }
-            | MirInstr::MethodCall { .. }
-            | MirInstr::PointerStorageTake { .. }
-            | MirInstr::PointerStorageDestroy { .. }
-            | MirInstr::UninitStorageTake { .. }
-            | MirInstr::UninitStorageDestroy { .. }
-            | MirInstr::MakeSimd { .. }
-            | MirInstr::SimdCast { .. }
-            | MirInstr::SimdBitcast { .. }
-            | MirInstr::SimdShuffle { .. }
-            | MirInstr::VariantIs { .. }
-            | MirInstr::VariantTake { .. }
-            | MirInstr::VariantDeinitWith { .. }
-            | MirInstr::HasNext { .. }
-            | MirInstr::EstablishLoans { .. }
-            | MirInstr::InvalidateInteriors { .. }
-            | MirInstr::ConsumePlace { .. } => {}
-            _ => {
-                let mut results = Vec::new();
-                instruction_result_regs(instruction, &mut results);
-                for register in results {
-                    self.register(register);
-                }
-            }
-        }
-        // A borrowed value stored into owning storage is cloned there.
-        if matches!(
-            instruction,
-            MirInstr::Store { .. }
-                | MirInstr::WriteRef { .. }
-                | MirInstr::MakeTuple { .. }
-                | MirInstr::MakeVariant { .. }
-                | MirInstr::VariantSet { .. }
-                | MirInstr::VariantReplace { .. }
-                | MirInstr::UninitStorage { .. }
-                | MirInstr::MultiSet { .. }
-        ) {
-            let mut operands = Vec::new();
-            instruction_operand_regs(instruction, &mut operands);
-            for register in operands {
-                if let Some(&var) = self.borrowed.get(&register.0) {
-                    self.var(var, false);
-                }
-            }
+            MirInstr::CopyValue { dest, .. } => self.register(*dest),
+            // Every other instruction, a read out of storage included,
+            // copies nothing.
+            _ => {}
         }
     }
 

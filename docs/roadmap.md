@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1064**.
+Next free ID: **R1065**.
 
 ## Ordered Work
 
@@ -1446,25 +1446,6 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1010 A load or field read keeps its struct's copy constructor
-  alive although nothing copies**
-
-  `mir::relocated_structs` counts every read a backend may clone out of
-  storage as a copy, so `s.name` on a `String` field keeps
-  `String.__copyinit__` where the pin and the VM copy nothing.
-  - Native lowering clones on `place.load`, `field.get`, element and
-    variant reads (`load_from`), and forks a borrowed value stored into
-    owning storage (`store_to`); the VM copies only at `var.use copy`,
-    `value.copy`, owned captures, variant payloads, and reference-read
-    method results.
-  - Make native lowering copy only where the MIR says so, then drop the
-    clone-out-read and borrowed-store rules from `relocated_structs`.
-  - Done when a probe reading a `String` field into a borrow keeps no
-    `String.__copyinit__` and the parity lane is unchanged.
-  - Found while landing R994 (2026-10-15).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R936 A program cannot declare a native root with `@export`**
 
   Upstream's `@export` marks a function as a root of its
@@ -1596,6 +1577,20 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Check `inline-parametric`'s `Returned::Out` result move the same way.
   - `return c^` from a local moves once at both.
   - Found while landing R1017 (2026-10-16).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1064 Constructing a `Variant` copies the value it takes**
+
+  Problem: `Variant[CBox[n], Int](b.copy())`, over a `CBox` whose copy
+  constructor adds 100, reads back `201`, where the pin reads `101`.
+  - The pin's `Variant.__init__` takes `var value: T` and moves it in;
+    the VM's `variant.make` (`clone_value`) and Pliron's
+    (`copy_aggregate` in `variants.rs`) copy the payload again.
+  - Make `variant.make` take its operand, after checking MIR lowering
+    copies a borrowed argument first; `variant.set` and
+    `variant.replace` may share the fix.
+  - Found while landing R1010 (2026-10-16).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

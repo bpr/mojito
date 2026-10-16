@@ -268,6 +268,7 @@ pub fn lower_body(
         leaf_flags: HashMap::new(),
         aliased_load_regs: collect_aliased_load_regs(func, env.declarations, env.mir_declarations),
         loaded_places: collect_loaded_places(&func.blocks),
+        storage_reads: HashSet::new(),
         pointer_slot_refs: HashSet::new(),
         initialized_vars: HashSet::new(),
         reference_places: HashMap::new(),
@@ -491,6 +492,10 @@ struct FnLowering<'a> {
     /// holds its place's address and no copy lifecycle runs (MIR's aggregate
     /// load is a shallow read; `CopyValue` is the copy boundary).
     aliased_load_regs: HashSet<u32>,
+    /// Aggregate registers read out of storage (a load, a field, an
+    /// element, a payload): byte snapshots sharing their storage's buffers,
+    /// which the storage's drop may free while the register is still read.
+    storage_reads: HashSet<u32>,
     /// Original places behind every `LoadPlace`. Immutable aggregate calls
     /// can borrow these directly even when the checker did not retain an
     /// explicit `arg_place` on the call contract.

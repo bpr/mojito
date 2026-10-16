@@ -144,8 +144,8 @@ pub fn collect_projected_move_places<'m>(
 /// aggregate load is a shallow read whose owner stays live through every
 /// consumer, so the address is valid wherever the register is read; a
 /// callable is excluded because its owner is retained for one hop only. Any
-/// owning or unclassified consumer keeps the copy — the conservative side is
-/// an extra copy, never two owners of one buffer. A load of a
+/// owning or unclassified consumer keeps the byte snapshot, which no later
+/// store to the place reaches; the MIR names the copy an owner needs. A load of a
 /// register-passable trivial value is that value, as upstream's
 /// `lit.ref.load` is, so it always copies out: a forwarded copy
 /// ([`MirDeclarations::copy_is_identity`]) reads the register in the copy's

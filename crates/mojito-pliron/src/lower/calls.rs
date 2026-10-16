@@ -270,7 +270,6 @@ impl FnLowering<'_> {
             ));
         };
         let variadic = decl.variadic.clone().map(|ty| (ty, decl.variadic_index));
-        let owning_collector = matches!(decl.variadic_convention, Some(ArgConvention::Var));
         let kw_variadic = decl
             .kw_variadic
             .clone()
@@ -341,16 +340,10 @@ impl FnLowering<'_> {
                     } else {
                         self.gep_byte(ctx, storage, *offset, dest)
                     };
-                    // Overflow arguments relocate into an owning pack (the
-                    // VM's `Tuple(*args^)` move): `store_to` transfers owned
-                    // temporaries and forks borrowed heap-owners. A read
-                    // collector lends each element, as a `read` parameter
-                    // lends its argument.
-                    if owning_collector {
-                        self.store_to(ctx, address, element, args[*arg])?;
-                    } else {
-                        self.lend_to(ctx, address, element, args[*arg])?;
-                    }
+                    // Overflow arguments relocate into the pack (the VM's
+                    // `Tuple(*args)`): `store_to` transfers owned temporaries
+                    // and stores the rest as the MIR left them.
+                    self.store_to(ctx, address, element, args[*arg])?;
                 }
                 Some((index, storage))
             }

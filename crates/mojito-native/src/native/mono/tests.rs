@@ -2345,6 +2345,8 @@ fn a_destructor_that_reads_no_struct_parameter_is_one_instance() {
     assert_one_member_instance(source, "DBox", "__deinit__", "DBox.__deinit__$mono");
 }
 
+/// `b.copy()` names the constructor it runs and nothing else copies, so
+/// neither member table lists it.
 #[test]
 fn a_copy_constructor_that_reads_no_struct_parameter_is_one_instance() {
     let source = "struct CBox[n: Int](Copyable, Movable):\n\
@@ -2358,7 +2360,13 @@ fn a_copy_constructor_that_reads_no_struct_parameter_is_one_instance() {
          \x20   return c.v\n\
          def main():\n\
          \x20   print(dup(CBox[1](1)), dup(CBox[2](2)))\n";
-    assert_one_member_instance(source, "CBox", "__copyinit__", "CBox.__copyinit__$mono");
+    assert_one_instance_tabled(
+        source,
+        "CBox",
+        "__copyinit__",
+        "CBox.__copyinit__$mono",
+        &[],
+    );
 }
 
 /// A `WBox[n]` whose display and equality members read no struct
@@ -2428,6 +2436,18 @@ fn a_trait_requirement_that_reads_no_struct_parameter_is_one_table_instance() {
 /// `source`'s `owner[1]` and `owner[2]` share one owner-less `instance` of
 /// their `member`, which both member tables name.
 fn assert_one_member_instance(source: &str, owner: &str, member: &str, instance: &str) {
+    assert_one_instance_tabled(source, owner, member, instance, &[instance]);
+}
+
+/// `source`'s `owner[1]` and `owner[2]` share one owner-less `instance` of
+/// their `member`, and each member table names `table` for it.
+fn assert_one_instance_tabled(
+    source: &str,
+    owner: &str,
+    member: &str,
+    instance: &str,
+    table: &[&str],
+) {
     let specialized = specialized_with_removed(source, &[]).expect("specialize");
     assert_eq!(
         mojito_mir::mir::verify::verify_concrete(&specialized.program),
@@ -2446,7 +2466,7 @@ fn assert_one_member_instance(source: &str, owner: &str, member: &str, instance:
                 .members_of(member)
                 .map(|entry| entry.symbol.as_str())
                 .collect::<Vec<_>>(),
-            [instance],
+            table,
             "`{name}`'s member table"
         );
     }

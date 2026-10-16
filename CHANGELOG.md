@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A read out of storage (a load, a field, an element, a variant payload)
+  and a store copy nothing in the native backend either (R1010), as on
+  the pin and the VM: it copies only where the MIR names a copy, so a
+  struct whose values are only read keeps no copy constructor (corpus
+  concrete functions 28,205 → 27,318). No program's output changes.
+  Constructing a `Variant` still copies its payload (R1064).
 - The VM runs an operator, protocol method, trait requirement, or other
   member it reaches from a value's type through the struct's member
   table (R1027), as upstream reaches it through a conformance's witness

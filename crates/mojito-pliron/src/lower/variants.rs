@@ -292,11 +292,7 @@ impl FnLowering<'_> {
             self.emit_variant_tag_guard(ctx, ptr, index, dest)?;
         }
         let payload = self.offset_address(ctx, ptr, layout.payload_offset);
-        self.load_from(ctx, payload, selected, dest)?;
-        if self.needs_drop(selected) {
-            self.mark_owned_temp(dest, selected.clone())?;
-        }
-        Ok(())
+        self.load_from(ctx, payload, selected, dest)
     }
 
     pub(super) fn lower_variant_take(
