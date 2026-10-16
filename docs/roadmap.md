@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1034**.
+Next free ID: **R1036**.
 
 ## Ordered Work
 
@@ -562,19 +562,36 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1032.
   - Model: Fable, Not Planned.
 
-- [ ] **R1013 Forwarding an argument to a removed argument is a use**
+- [ ] **R1034 A runtime argument a function only passes to itself is a
+  use**
 
-  `fwd[n](a: Arr[n])` returning `fa(a) + 1`, where `fa` removes `a`, keeps
-  `a` and one instance per `n`, where the pin's `fwd[…]_REMOVED_ARG()`
-  takes nothing.
-  - `mir::without_removed_forwards` drops a removed parameter's argument
-    from a call, but not a removed runtime argument's operand and the
-    `var.use` or load that fed it.
-  - The callee's `removed_args` would join `callee_removed_params`'
-    snapshot for the verifier, a MIR text bump.
-  - `has_own_parameters` must follow every callee with an argument, so the
-    callee runs first.
-  - Found while landing R997 (2026-10-15).
+  `frec[n](a: Arr[n], k: Int)` returning `frec(a, k - 1) + 1` keeps `a` and
+  one instance per `n`, where the pin's `frec…_REMOVED_ARG(i64)` takes
+  only `k`.
+  - A self-recursive body lies on a cycle, so `Callees::unit_body` gives
+    the pass no finished body to read its removed arguments from.
+  - Upstream's `RemoveUnusedParams` treats an argument a recursive call
+    passes back in its own position as unused.
+  - Found while planning R1013 (2026-10-15).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1035 A package body's cycle check misses the calls its drops
+  add**
+
+  `PackageBodies::on_cycle` walks the lowered bodies, before drop
+  elaboration, so a cycle closed by a destructor call
+  (`FileHandle.close` dropping a `FileHandle` whose `__deinit__` calls
+  `close`) is not seen.
+  - Finishing such a body reached itself again and deadlocked once
+    `remove-unused-params` followed every callee with an argument (R1013).
+  - `PackageBodies::finishing_body` now answers such a reentry as a cycle,
+    so the member finished first still reads the other's removals, where
+    upstream's call graph puts both in one strongly connected component.
+  - The walk should follow the lifecycle members each body's drops will
+    run, as the program seam's `bottom_up_order` does over drop-elaborated
+    bodies.
+  - Found while landing R1013 (2026-10-15).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

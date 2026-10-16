@@ -1994,3 +1994,28 @@ receiver becomes a reduced clone, a generator with one instance, as
 R1011's non-generic methods did (`StringSpan._lead_width$REMOVED$ARG` in
 the string fixtures). The new fixture, `assets/ok/method_unused_receiver.mojo`,
 has one instance of `Grid.k3` for `Grid[1]` and `Grid[2]`, as on the pin.
+
+## An argument only forwarded to a removed argument is unused (2026-10-15, R1013)
+
+`remove-unused-params` now reads a body as upstream's `RemoveUnusedParams`
+leaves it once it has rewritten each call of a callee it removed an
+argument from (`mir::without_removed_argument_forwards`), and the
+elaborator builds every instance through the same view
+(`mir::with_removed_argument_forwards_erased`). Over the 1,051 `assets/ok`
+and benchmark fixtures elaborated before and after
+(`benchmarks/instantiation.tsv`, debug binary, the parent commit before;
+the new fixture's row aside):
+
+| | before | after | change |
+|---|---:|---:|---:|
+| `concrete_functions` | 28,228 | 28,211 | −17 |
+| `concrete_instructions` | 386,911 | 386,767 | −144 |
+| `generator_instances` | 16,478 | 16,462 | −16 |
+| `generator_instance_instructions` | 175,393 | 175,304 | −89 |
+
+No program's output changes over the 1,089 `assets/ok`, `ownership_ok`,
+and `runtime_error` fixtures (HEAD worktree differential). The new
+fixture, `assets/ok/forwarded_argument_instances.mojo`, has one instance
+of each of `fwd`, `fkw`, `fchain`, `fmove`, and `frecv` for `n = 1, 2`,
+and keeps two of `fcopy`, `fboth`, and `fwdk`, as on the pin. An argument
+a function passes only to itself (R1034) still keeps its instances.

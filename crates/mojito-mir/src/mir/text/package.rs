@@ -153,6 +153,16 @@ impl PackageBodies {
             .map_or(&[], |finished| finished.reached.as_slice())
     }
 
+    /// Whether this thread is finishing the body of `name`: a pass reading
+    /// it from inside that finish reached it again around a cycle, one a
+    /// drop elaboration closed, which the lowered bodies
+    /// [`Self::on_cycle`] walks do not show.
+    pub fn finishing_body(&self, name: &str) -> bool {
+        self.package.body_row(name).is_some_and(|row| {
+            FINISHING.with(|finishing| finishing.borrow().contains(&(self.identity(), row)))
+        })
+    }
+
     /// The body of `name` as its unit lowers to it, before it is finished.
     ///
     /// # Errors
@@ -288,11 +298,19 @@ impl PackageBodies {
     /// The finished body of `name`, finishing it on first use.
     fn finished(&self, name: &str) -> Option<&FinishedBody> {
         let row = self.package.body_row(name)?;
-        Some(
-            self.decoded
-                .get(row)?
-                .get_or_init(|| self.finish_body(name)),
-        )
+        Some(self.decoded.get(row)?.get_or_init(|| {
+            let key = (self.identity(), row);
+            FINISHING.with(|finishing| finishing.borrow_mut().push(key));
+            let finished = self.finish_body(name);
+            FINISHING.with(|finishing| finishing.borrow_mut().retain(|held| *held != key));
+            finished
+        }))
+    }
+
+    /// This package's address, which tells its rows from another's in
+    /// [`FINISHING`].
+    fn identity(&self) -> usize {
+        std::ptr::from_ref(self) as usize
     }
 
     /// Lower the body of `name`, finish it, and verify it.
@@ -690,6 +708,12 @@ pub fn read_package(bytes: PackageBytes, root: &LibraryRoot) -> Result<Package, 
             finish: None,
         },
     })
+}
+
+thread_local! {
+    /// The package bodies, by package and row, this thread is finishing.
+    static FINISHING: std::cell::RefCell<Vec<(usize, usize)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// A package body as its importer finished it, and its verdict.

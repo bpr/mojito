@@ -504,6 +504,7 @@ mod tests {
             reg_types: HashMap::from([(0, dest_ty)]),
             removed_params: Vec::new(),
             callee_removed_params: Vec::new(),
+            callee_removed_args: Vec::new(),
             removed_args: Vec::new(),
         }
     }

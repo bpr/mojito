@@ -80,9 +80,10 @@ use mojito_mir::mir::visit::{
 use mojito_mir::mir::{
     Const, FuncRef, MirBlock, MirCaptureMode, MirClosureCapture, MirDeclarations, MirFunction,
     MirFunctionDeclaration, MirInstr, MirParamArg, MirPlace, MirTerm, Proj, Reg, UseMode,
-    has_no_destructor, instruction_regions, instruction_regions_mut, instruction_regs_mut,
-    instruction_slots, region_escape_targets, renumber_block_slots, terminator_regs_mut,
-    terminator_targets, terminator_targets_mut,
+    count_register_reads, erase_removed_operands, has_no_destructor, instruction_regions,
+    instruction_regions_mut, instruction_regs_mut, instruction_slots, region_escape_targets,
+    removed_argument_operands, renumber_block_slots, terminator_regs_mut, terminator_targets,
+    terminator_targets_mut, without_removed_arguments,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{
@@ -94,7 +95,7 @@ use mojito_types::types::{
     replace_value_parameters, rewrite_ty, scalar_simd_dtype,
 };
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 pub const INLINE_PARAMETRIC: CallGraphPass = CallGraphPass {
     name: "inline-parametric",
@@ -123,6 +124,8 @@ pub fn inline_parametric(
     declarations: &MirDeclarations,
     callees: &Callees<'_>,
 ) -> bool {
+    let mut reads = vec![0; function.n_regs as usize];
+    count_register_reads(&mut function.blocks, &mut reads);
     let mut blocks = std::mem::take(&mut function.blocks);
     let closures = Closures::of(&blocks);
     let mut inliner = Inliner {
@@ -131,9 +134,14 @@ pub fn inline_parametric(
         callees,
         closures,
         raise_held: Vec::new(),
+        dropped_operands: false,
     };
     let changed = inliner.block_list(&mut blocks, true);
+    let dropped_operands = inliner.dropped_operands;
     function.blocks = blocks;
+    if dropped_operands {
+        erase_removed_operands(function, declarations, &reads);
+    }
     changed
 }
 
@@ -156,6 +164,9 @@ struct Inliner<'f, 'c> {
     /// The inlined slots a raise leaving the block list being inlined into
     /// may hold, for the nearest enclosing `try`'s raise-edge cleanup.
     raise_held: Vec<VarId>,
+    /// Whether an inlined call passed an operand for a removed argument,
+    /// which the inlined generator does not take.
+    dropped_operands: bool,
 }
 
 /// Where an inlined call stands: its block, its index there, and the
@@ -553,9 +564,10 @@ impl<'c> Inliner<'_, 'c> {
                         break;
                     }
                 }
-                if let Some((dest, callee, bindings)) = self.inlinable(&list[block], index)
+                if let Some((dest, callee, bindings, dropped)) = self.inlinable(&list[block], index)
                     && let Some(blocks) = self.inlined_blocks(&callee, &bindings, dest)
                 {
+                    self.dropped_operands |= dropped;
                     let site = CallSite { block, index, dest };
                     if callee.raises {
                         self.raise_held.extend(raise_held(
@@ -670,7 +682,7 @@ impl<'c> Inliner<'_, 'c> {
         &self,
         block: &MirBlock,
         index: usize,
-    ) -> Option<(Reg, Cow<'c, MirFunction>, Vec<Binding>)> {
+    ) -> Option<(Reg, Cow<'c, MirFunction>, Vec<Binding>, bool)> {
         let (dest, target, call, compile_time, receiver, receiver_place, captures) =
             match &block.instrs[index] {
                 MirInstr::Call {
@@ -767,8 +779,68 @@ impl<'c> Inliner<'_, 'c> {
                 }
                 _ => return None,
             };
-        let callee = self.callees.body(&target)?;
-        let declaration = self.declarations.function(&target)?;
+        let full = self.callees.body(&target)?;
+        let full_declaration = self.declarations.function(&target)?;
+        // A direct call names the generator without its removed arguments,
+        // as upstream's `RemoveUnusedParams` rewrote it, and passes no
+        // operand for them; that generator is the body inlined.
+        let removed = match receiver {
+            Some(Receiver::Constructed) => &[][..],
+            _ if !captures.is_empty() => &[][..],
+            _ => full.removed_args.as_slice(),
+        };
+        let (reduced, declaration, positional, keyword) = if removed.is_empty() {
+            (
+                None,
+                Cow::Borrowed(full_declaration),
+                BTreeSet::new(),
+                BTreeSet::new(),
+            )
+        } else {
+            let keywords: Vec<&str> = call.kwargs.iter().map(|(name, _)| name.as_str()).collect();
+            let (positional, keyword) =
+                removed_argument_operands(full_declaration, removed, call.args.len(), &keywords)
+                    .ok()?;
+            let (body, declaration) = without_removed_arguments(full, full_declaration, removed);
+            (Some(body), Cow::Owned(declaration), positional, keyword)
+        };
+        let callee = reduced.as_ref().unwrap_or(full);
+        let declaration = declaration.as_ref();
+        let kept = |indexes: &BTreeSet<usize>, length: usize| {
+            (0..length)
+                .filter(|index| !indexes.contains(index))
+                .collect::<Vec<_>>()
+        };
+        let args: Vec<Reg> = kept(&positional, call.args.len())
+            .into_iter()
+            .map(|index| call.args[index])
+            .collect();
+        let arg_places: Vec<Option<MirPlace>> = kept(&positional, call.arg_places.len())
+            .into_iter()
+            .map(|index| call.arg_places[index].clone())
+            .collect();
+        let kwargs: Vec<(String, Reg)> = kept(&keyword, call.kwargs.len())
+            .into_iter()
+            .map(|index| call.kwargs[index].clone())
+            .collect();
+        let kwarg_places: Vec<Option<MirPlace>> = kept(&keyword, call.kwarg_places.len())
+            .into_iter()
+            .map(|index| call.kwarg_places[index].clone())
+            .collect();
+        let mut dropped = !positional.is_empty() || !keyword.is_empty();
+        let call = CallArguments {
+            args: &args,
+            arg_places: &arg_places,
+            kwargs: &kwargs,
+            kwarg_places: &kwarg_places,
+        };
+        let receives = match receiver {
+            Some(Receiver::Argument(_)) if !declaration.has_receiver => {
+                dropped = true;
+                false
+            }
+            other => other.is_some(),
+        };
         let owner_ty = match receiver {
             Some(Receiver::Constructed) => {
                 if declaration.receiver_convention != Some(ArgConvention::Out) {
@@ -780,29 +852,34 @@ impl<'c> Inliner<'_, 'c> {
             None => None,
         };
         if !is_closed(callee, declaration)
-            || declaration.param_names.len() + usize::from(receiver.is_some()) != callee.n_params
+            || declaration.param_names.len() + usize::from(receives) != callee.n_params
         {
             return None;
         }
         let slots = call.slots(declaration, captures.len())?;
-        let owner = match owner_ty.map(|ty| self.owner(callee, ty)) {
+        let owner = match owner_ty.map(|ty| self.owner(full, ty)) {
             Some(Some(Owner::Applied(owner))) => Some(owner),
             Some(Some(Owner::Unbound)) | None => None,
             Some(None) => return None,
         };
-        let mut callee = instantiated(callee, declaration, owner.as_ref(), compile_time)?;
+        let mut callee = match &reduced {
+            Some(body) => Cow::Owned(
+                instantiated(body, declaration, owner.as_ref(), compile_time)?.into_owned(),
+            ),
+            None => instantiated(full, declaration, owner.as_ref(), compile_time)?,
+        };
         if declaration.enclosing.is_some() {
             read_enclosing_binders(callee.to_mut(), declaration, self.declarations)?;
         }
-        let skip = usize::from(receiver.is_some()) + captures.len();
+        let skip = usize::from(receives) + captures.len();
         let mut bindings = Vec::with_capacity(callee.n_params);
         match receiver {
             Some(Receiver::Constructed) => bindings.push(Binding::Out),
-            Some(Receiver::Argument(recv)) => {
+            Some(Receiver::Argument(recv)) if receives => {
                 let place = receiver_place.filter(|_| is_reference_parameter(&callee, 0));
                 bindings.push(argument_binding(&callee, block, index, 0, recv, place)?);
             }
-            None => {}
+            Some(Receiver::Argument(_)) | None => {}
         }
         for (param, capture) in captures.iter().enumerate() {
             if capture.mode != MirCaptureMode::Reference || !is_reference_parameter(&callee, param)
@@ -834,7 +911,7 @@ impl<'c> Inliner<'_, 'c> {
                 place.and_then(Option::as_ref),
             )?);
         }
-        Some((dest, callee, bindings))
+        Some((dest, callee, bindings, dropped))
     }
 
     /// The struct whose method `callee` is, instantiated at `ty`, the type
@@ -1075,8 +1152,6 @@ impl<'c> Inliner<'_, 'c> {
     }
 }
 
-/// The constant a read of the parameter value `value` at `ty` is: its
-/// typed constant when closed, the parameter expression otherwise.
 /// Add to a caller's `callee_removed_params` an inlined callee's: the
 /// spliced body forwards to the callee's callees as the callee did, by
 /// their removals then.
@@ -1097,6 +1172,8 @@ fn merge_callee_removals(
     }
 }
 
+/// The constant a read of the parameter value `value` at `ty` is: its
+/// typed constant when closed, the parameter expression otherwise.
 fn parameter_constant(value: &ParamExpr, ty: Option<&Ty>) -> Const {
     value
         .as_constant()

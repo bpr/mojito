@@ -1,0 +1,253 @@
+  functions: [
+      fn {
+        name: fa,
+        registers: 2,
+        vars: 1,
+        var_names: [a],
+        params: 1,
+        param_types: [struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fa", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fa", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 160, end: 161, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 160, end: 161, origin: absent }) }],
+        removed_params: [param_id { owner: "fa", slot: 0 }],
+        removed_args: [$v0],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(3) },
+              literal.materialize { dest: %r1, value: %r0, target: Int }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: fav,
+        registers: 2,
+        vars: 1,
+        var_names: [a],
+        params: 1,
+        param_types: [struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fav", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [true],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fav", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 225, end: 226, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 225, end: 226, origin: absent }) }],
+        removed_params: [param_id { owner: "fav", slot: 0 }],
+        removed_args: [$v0],
+        blocks: [
+          bb0 {
+            instructions: [
+              drop.var { var: $v0 },
+              const { dest: %r0, value: int_literal(5) },
+              literal.materialize { dest: %r1, value: %r0, target: Int }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: fwd,
+        registers: 5,
+        vars: 1,
+        var_names: [a],
+        params: 1,
+        param_types: [struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fwd", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fwd", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fwd", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 289, end: 290, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 286, end: 291, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 294, end: 295, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 294, end: 295, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 286, end: 295, origin: absent }) }],
+        removed_params: [param_id { owner: "fwd", slot: 0 }],
+        callee_removed_params: [callee_params { callee: "fa", params: [param_id { owner: "fa", slot: 0 }] }],
+        removed_args: [$v0],
+        callee_removed_args: [callee_args { callee: "fa", args: [$v0] }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fwd", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [], type: present(struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fwd", slot: 0, name: n, type: meta_value(Int) }))] }), through: absent } },
+              call { dest: %r1, func: fa, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "fwd", slot: 0, name: n, type: meta_value(Int) }))], spread: absent },
+              const { dest: %r2, value: int_literal(1) },
+              literal.materialize { dest: %r3, value: %r2, target: Int },
+              binary { op: add, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r4) }
+          }
+        ]
+      },
+      fn {
+        name: fkw,
+        registers: 5,
+        vars: 1,
+        var_names: [a],
+        params: 1,
+        param_types: [struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fkw", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fkw", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fkw", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 360, end: 361, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 355, end: 362, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 365, end: 366, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 365, end: 366, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 355, end: 366, origin: absent }) }],
+        removed_params: [param_id { owner: "fkw", slot: 0 }],
+        callee_removed_params: [callee_params { callee: "fa", params: [param_id { owner: "fa", slot: 0 }] }],
+        removed_args: [$v0],
+        callee_removed_args: [callee_args { callee: "fa", args: [$v0] }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fkw", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [], type: present(struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fkw", slot: 0, name: n, type: meta_value(Int) }))] }), through: absent } },
+              call { dest: %r1, func: fa, raises: absent, args: [], kwargs: [keyword { name: a, value: %r0 }], arg_places: [], kwarg_places: [absent], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "fkw", slot: 0, name: n, type: meta_value(Int) }))], spread: absent },
+              const { dest: %r2, value: int_literal(3) },
+              literal.materialize { dest: %r3, value: %r2, target: Int },
+              binary { op: add, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r4) }
+          }
+        ]
+      },
+      fn {
+        name: fmove,
+        registers: 5,
+        vars: 1,
+        var_names: [a],
+        params: 1,
+        param_types: [struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fmove", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [true],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fmove", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fmove", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 436, end: 438, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 432, end: 439, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 442, end: 443, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 442, end: 443, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 432, end: 443, origin: absent }) }],
+        removed_params: [param_id { owner: "fmove", slot: 0 }],
+        callee_removed_params: [callee_params { callee: "fav", params: [param_id { owner: "fav", slot: 0 }] }],
+        removed_args: [$v0],
+        callee_removed_args: [callee_args { callee: "fav", args: [$v0] }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: forward },
+              call { dest: %r1, func: fav, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "fmove", slot: 0, name: n, type: meta_value(Int) }))], spread: absent },
+              const { dest: %r2, value: int_literal(2) },
+              literal.materialize { dest: %r3, value: %r2, target: Int },
+              binary { op: add, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r4) }
+          }
+        ]
+      },
+      fn {
+        name: fcopy,
+        registers: 5,
+        vars: 1,
+        var_names: [a],
+        params: 1,
+        param_types: [struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fcopy", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fcopy", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fcopy", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 509, end: 510, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 505, end: 511, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 514, end: 515, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 514, end: 515, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 505, end: 515, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              call { dest: %r1, func: fav, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "fcopy", slot: 0, name: n, type: meta_value(Int) }))], spread: absent },
+              const { dest: %r2, value: int_literal(1) },
+              literal.materialize { dest: %r3, value: %r2, target: Int },
+              binary { op: add, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r4) }
+          }
+        ]
+      },
+      fn {
+        name: fi,
+        registers: 1,
+        vars: 2,
+        var_names: [x, y],
+        params: 2,
+        param_types: [Int, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 571, end: 572, origin: present($v1) }) }],
+        removed_args: [$v0],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v1, mode: copy }
+            ],
+            terminator: return { value: present(%r0) }
+          }
+        ]
+      },
+      fn {
+        name: fwdi,
+        registers: 6,
+        vars: 2,
+        var_names: [x, y],
+        params: 2,
+        param_types: [Int, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 633, end: 634, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 636, end: 637, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 630, end: 638, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 641, end: 642, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 641, end: 642, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 630, end: 642, origin: absent }) }],
+        removed_args: [$v0],
+        callee_removed_args: [callee_args { callee: "fi", args: [$v0] }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              var.use { dest: %r1, var: $v1, mode: copy },
+              call { dest: %r2, func: fi, raises: absent, args: [%r0, %r1], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              const { dest: %r3, value: int_literal(1) },
+              literal.materialize { dest: %r4, value: %r3, target: Int },
+              binary { op: add, dest: %r5, a: %r2, b: %r4, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r5) }
+          }
+        ]
+      }
+  ]

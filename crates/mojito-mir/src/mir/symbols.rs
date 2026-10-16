@@ -91,6 +91,7 @@ impl<'t> SymbolTable<'t> {
             // The function's own binders name no symbol.
             removed_params: _,
             callee_removed_params: _,
+            callee_removed_args: _,
             removed_args: _,
         } = function;
         let mut uses = self.uses(blocks);

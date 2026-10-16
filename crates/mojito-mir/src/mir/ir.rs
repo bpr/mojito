@@ -2890,6 +2890,13 @@ pub struct MirFunction {
     /// instance.
     #[serde(skip)]
     pub removed_args: Vec<VarId>,
+    /// Each callee whose removed arguments `removed_args` relied on
+    /// dropping a forward to, with those arguments, sorted by callee: the
+    /// calls upstream's `RemoveUnusedParams` rewrote to pass no operand
+    /// for them, which the verifier drops in turn. Not encoded, as
+    /// `removed_params`. Empty on a concrete instance.
+    #[serde(skip)]
+    pub callee_removed_args: Vec<(String, Vec<VarId>)>,
 }
 
 impl MirFunction {
@@ -2990,6 +2997,7 @@ mod tests {
             reg_types: HashMap::new(),
             removed_params: Vec::new(),
             callee_removed_params: Vec::new(),
+            callee_removed_args: Vec::new(),
             removed_args: Vec::new(),
         }
     }

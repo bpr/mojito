@@ -1640,6 +1640,7 @@ fn method_call_spread_expands_into_the_bound_pack_elements() {
         reg_types: HashMap::from([(0, pack), (2, Ty::int())]),
         removed_params: Vec::new(),
         callee_removed_params: Vec::new(),
+        callee_removed_args: Vec::new(),
         removed_args: Vec::new(),
     };
     expand_pack_spreads("fwd", &mut function).expect("expand the method-call spread");
@@ -2616,4 +2617,46 @@ fn a_method_call_names_the_generator_without_its_unused_receiver() {
         })
         .collect::<Vec<_>>();
     assert_eq!(calls, [0, 0], "each call passes no receiver");
+}
+
+/// An argument a body only forwards to a callee's removed argument is
+/// unused too, as upstream rewrote the call first: `fwd` has one reduced
+/// instance for every `n`, and its call of `fa`'s passes no argument.
+#[test]
+fn a_forward_to_a_removed_argument_leaves_one_reduced_instance() {
+    let source = "@fieldwise_init\n\
+     struct Arr[n: Int](Copyable, Movable):\n\
+     \x20   var v: SIMD[DType.int64, Self.n]\n\
+     @no_inline\n\
+     def fa[n: Int](a: Arr[n]) -> Int:\n\
+     \x20   return 3\n\
+     @no_inline\n\
+     def fwd[n: Int](a: Arr[n]) -> Int:\n\
+     \x20   return fa(a) + 1\n\
+     def main() raises:\n\
+     \x20   var a1 = Arr[1](SIMD[DType.int64, 1](1))\n\
+     \x20   var a2 = Arr[2](SIMD[DType.int64, 2](2))\n\
+     \x20   print(fwd(a1), fwd(a2))\n";
+    let specialized = specialized_with_removed(source, &[]).expect("specialize");
+    assert_eq!(
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
+    );
+    let forwards = specialized
+        .program
+        .functions
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .filter(|name| name.starts_with("fwd"))
+        .collect::<Vec<_>>();
+    assert_eq!(forwards, ["fwd$REMOVED$ARG$mono"]);
+    let call = instructions(&function(&specialized, "fwd$REMOVED$ARG$mono").blocks)
+        .into_iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::Call { func, args, .. } if func.0.starts_with("fa") => {
+                Some((func.0.clone(), args.len()))
+            }
+            _ => None,
+        });
+    assert_eq!(call, Some(("fa$REMOVED$ARG$mono".to_string(), 0)));
 }

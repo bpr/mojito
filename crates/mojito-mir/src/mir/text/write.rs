@@ -612,6 +612,16 @@ fn write_function(
         let removed = function.removed_args.iter().copied().map(var_value);
         writeln!(output, "{pad}    removed_args: {},", list(removed)).unwrap();
     }
+    if !function.callee_removed_args.is_empty() {
+        let callees = function.callee_removed_args.iter().map(|(callee, slots)| {
+            let args = slots.iter().copied().map(var_value);
+            record(
+                "callee_args",
+                &[("callee", quote(callee)), ("args", list(args))],
+            )
+        });
+        writeln!(output, "{pad}    callee_removed_args: {},", list(callees)).unwrap();
+    }
     writeln!(output, "{pad}    blocks: [").unwrap();
     write_blocks(output, &function.blocks, indent + 3);
     writeln!(output, "{pad}    ]").unwrap();

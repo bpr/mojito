@@ -336,6 +336,128 @@ pub fn with_removed_forwards_erased<'a>(
         .map(|(view, _)| view)
 }
 
+/// Erase from `function` every instruction that only computes a value
+/// nothing reads and that may go without a trace: one
+/// [`MirInstr::would_be_trivially_dead`] allows, a copy of a slot whose
+/// type has no destructor or of a `callables` slot, or a built-in operator
+/// over such operands that cannot trap (integer arithmetic wraps). A
+/// built-in operator that can trap goes too when every read of it the body
+/// held before the view dropped arguments (`original`) was a dropped
+/// argument's or an erased instruction's that only fed one: a call's
+/// parameter argument is a compile-time attribute on the pin, which
+/// `RemoveUnusedParams` drops with no operation left to trap. Repeats until
+/// nothing changes, drops the erased registers' types, and returns them.
+///
+/// A move of a parameter slot whose drop runs no code
+/// ([`MirDeclarations::drop_runs_no_code`]) goes when every read of it
+/// was a dropped argument's: the argument it handed a call is no longer
+/// passed, and nothing is left to destroy. A copy of any other slot stays,
+/// since the copy is a call of its own.
+pub fn erase_forward_chains(
+    function: &mut MirFunction,
+    declarations: &MirDeclarations,
+    callables: &HashSet<VarId>,
+    original: &[u32],
+) -> HashSet<u32> {
+    let mut erased = HashSet::new();
+    let mut forwarded: Vec<u32> = original
+        .iter()
+        .zip(register_reads(function))
+        .map(|(before, after)| before.saturating_sub(after))
+        .collect();
+    loop {
+        let reads = register_reads(function);
+        let before = erased.len();
+        let MirFunction {
+            blocks,
+            var_tys,
+            reg_types,
+            n_params,
+            ..
+        } = &mut *function;
+        let trivial = |reg: &crate::mir::Reg| reg_types.get(&reg.0).is_some_and(has_no_destructor);
+        erase_unread(
+            blocks,
+            &mut |instruction| {
+                let mut results = Vec::new();
+                instruction_result_regs(instruction, &mut results);
+                let forward_only = results.iter().all(|reg| {
+                    let index = reg.0 as usize;
+                    original.get(index).is_some_and(|reads| *reads > 0)
+                        && forwarded.get(index) == original.get(index)
+                });
+                let erasable = match instruction {
+                    MirInstr::UseVar { var, mode, .. } => {
+                        callables.contains(var)
+                            || var_tys.get(var).is_some_and(has_no_destructor)
+                            || (forward_only
+                                && matches!(mode, UseMode::Forward | UseMode::Move)
+                                && (*var as usize) < *n_params
+                                && var_tys
+                                    .get(var)
+                                    .is_some_and(|ty| declarations.drop_runs_no_code(ty)))
+                    }
+                    MirInstr::UnOp {
+                        a, raises: None, ..
+                    } => trivial(a),
+                    MirInstr::BinOp {
+                        op,
+                        a,
+                        b,
+                        resolved: None,
+                        raises: None,
+                        ..
+                    } => {
+                        (forward_only
+                            || matches!(
+                                op,
+                                InfixOp::Add
+                                    | InfixOp::Sub
+                                    | InfixOp::Mul
+                                    | InfixOp::BitAnd
+                                    | InfixOp::BitOr
+                                    | InfixOp::BitXor
+                                    | InfixOp::Eq
+                                    | InfixOp::Ne
+                                    | InfixOp::Lt
+                                    | InfixOp::Gt
+                                    | InfixOp::Le
+                                    | InfixOp::Ge
+                            ))
+                            && trivial(a)
+                            && trivial(b)
+                    }
+                    _ => instruction.would_be_trivially_dead(),
+                };
+                if erasable && forward_only {
+                    let mut operands = Vec::new();
+                    instruction_operand_regs(instruction, &mut operands);
+                    for reg in operands {
+                        if let Some(count) = forwarded.get_mut(reg.0 as usize) {
+                            *count += 1;
+                        }
+                    }
+                }
+                erasable
+            },
+            &reads,
+            &mut erased,
+        );
+        if erased.len() == before {
+            break;
+        }
+    }
+    function.reg_types.retain(|reg, _| !erased.contains(reg));
+    erased
+}
+
+/// How many times `function`'s body reads each of its registers.
+pub fn register_reads(function: &mut MirFunction) -> Vec<u32> {
+    let mut reads = vec![0_u32; function.n_regs as usize];
+    count_register_reads(&mut function.blocks, &mut reads);
+    reads
+}
+
 /// The parameters `unread_parameters` may remove from `name`: its own
 /// compile-time parameters and, for a method, its struct's, or a nested
 /// function's enclosing declarations' parameters, each once. A lifted
@@ -468,7 +590,7 @@ fn removed_forwards_view<'a>(
         .function(name)
         .map(|declaration| callable_parameter_slots(function, &declaration.param_decls))
         .unwrap_or_default();
-    erase_forward_chains(&mut view, &callables, &original);
+    erase_forward_chains(&mut view, declarations, &callables, &original);
     Some((view, discounted.into_iter().collect()))
 }
 
@@ -731,108 +853,6 @@ fn drop_arguments(
         }
     }
     changed
-}
-
-/// Erase from `function` every instruction that only computes a value
-/// nothing reads and that may go without a trace: one
-/// [`MirInstr::would_be_trivially_dead`] allows, a copy of a slot whose
-/// type has no destructor or of a `callables` slot, or a built-in operator
-/// over such operands that cannot trap (integer arithmetic wraps). A
-/// built-in operator that can trap goes too when every read of it the body
-/// held before the view dropped arguments (`original`) was a dropped
-/// argument's or an erased instruction's that only fed one: a call's
-/// parameter argument is a compile-time attribute on the pin, which
-/// `RemoveUnusedParams` drops with no operation left to trap. Repeats until
-/// nothing changes, and drops the erased registers' types.
-fn erase_forward_chains(function: &mut MirFunction, callables: &HashSet<VarId>, original: &[u32]) {
-    let mut erased = HashSet::new();
-    let mut forwarded: Vec<u32> = original
-        .iter()
-        .zip(register_reads(function))
-        .map(|(before, after)| before.saturating_sub(after))
-        .collect();
-    loop {
-        let reads = register_reads(function);
-        let before = erased.len();
-        let MirFunction {
-            blocks,
-            var_tys,
-            reg_types,
-            ..
-        } = &mut *function;
-        let trivial = |reg: &crate::mir::Reg| reg_types.get(&reg.0).is_some_and(has_no_destructor);
-        erase_unread(
-            blocks,
-            &mut |instruction| {
-                let mut results = Vec::new();
-                instruction_result_regs(instruction, &mut results);
-                let forward_only = results.iter().all(|reg| {
-                    let index = reg.0 as usize;
-                    original.get(index).is_some_and(|reads| *reads > 0)
-                        && forwarded.get(index) == original.get(index)
-                });
-                let erasable = match instruction {
-                    MirInstr::UseVar { var, .. } => {
-                        callables.contains(var) || var_tys.get(var).is_some_and(has_no_destructor)
-                    }
-                    MirInstr::UnOp {
-                        a, raises: None, ..
-                    } => trivial(a),
-                    MirInstr::BinOp {
-                        op,
-                        a,
-                        b,
-                        resolved: None,
-                        raises: None,
-                        ..
-                    } => {
-                        (forward_only
-                            || matches!(
-                                op,
-                                InfixOp::Add
-                                    | InfixOp::Sub
-                                    | InfixOp::Mul
-                                    | InfixOp::BitAnd
-                                    | InfixOp::BitOr
-                                    | InfixOp::BitXor
-                                    | InfixOp::Eq
-                                    | InfixOp::Ne
-                                    | InfixOp::Lt
-                                    | InfixOp::Gt
-                                    | InfixOp::Le
-                                    | InfixOp::Ge
-                            ))
-                            && trivial(a)
-                            && trivial(b)
-                    }
-                    _ => instruction.would_be_trivially_dead(),
-                };
-                if erasable && forward_only {
-                    let mut operands = Vec::new();
-                    instruction_operand_regs(instruction, &mut operands);
-                    for reg in operands {
-                        if let Some(count) = forwarded.get_mut(reg.0 as usize) {
-                            *count += 1;
-                        }
-                    }
-                }
-                erasable
-            },
-            &reads,
-            &mut erased,
-        );
-        if erased.len() == before {
-            break;
-        }
-    }
-    function.reg_types.retain(|reg, _| !erased.contains(reg));
-}
-
-/// How many times `function`'s body reads each of its registers.
-fn register_reads(function: &mut MirFunction) -> Vec<u32> {
-    let mut reads = vec![0_u32; function.n_regs as usize];
-    count_register_reads(&mut function.blocks, &mut reads);
-    reads
 }
 
 /// Remove each instruction of `blocks` and their regions that `erasable`

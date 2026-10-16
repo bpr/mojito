@@ -252,20 +252,12 @@ impl<'a> Specializer<'a> {
         else {
             return Ok(());
         };
-        let slots = match_call_slots(
-            &declaration.param_names,
-            &declaration.required,
-            declaration.positional_only,
-            declaration.keyword_only,
+        let keywords: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
+        let (positional, keyword) = mojito_mir::mir::removed_argument_operands(
+            declaration,
+            &function.removed_args,
             args.len(),
-            &kwargs
-                .iter()
-                .map(|(name, _)| name.as_str())
-                .collect::<Vec<_>>(),
-            CallVariadics {
-                positional: declaration.variadic.is_some(),
-                keyword: declaration.kw_variadic.is_some(),
-            },
+            &keywords,
         )
         .map_err(|e| {
             self.error(
@@ -273,21 +265,6 @@ impl<'a> Specializer<'a> {
                 format!("binding call to `{target}` during argument removal: {e:?}"),
             )
         })?;
-        let mut positional = BTreeSet::new();
-        let mut keyword = BTreeSet::new();
-        let receiver = usize::from(declaration.has_receiver);
-        for &slot in &function.removed_args {
-            let position = (slot as usize).checked_sub(receiver);
-            match position.and_then(|position| slots.slots.get(position)) {
-                Some(ArgSlot::Positional(index)) => {
-                    positional.insert(*index);
-                }
-                Some(ArgSlot::Keyword(index)) => {
-                    keyword.insert(*index);
-                }
-                Some(ArgSlot::Default) | None => {}
-            }
-        }
         for &index in positional.iter().rev() {
             args.remove(index);
             if index < arg_places.len() {
@@ -917,6 +894,26 @@ impl<'a> Specializer<'a> {
                 construct: findings.join("; "),
             });
         }
+        // Each direct call of a generator that removed an argument passes
+        // it no operand, as upstream's `RemoveUnusedParams` rewrote the call
+        // to name the clone without it, so the instance computes none.
+        let arguments = (!template.callee_removed_args.is_empty())
+            .then(|| {
+                mojito_mir::mir::with_removed_argument_forwards_erased(
+                    template,
+                    &self.source.declarations,
+                    &|callee| {
+                        template
+                            .callee_removed_args
+                            .iter()
+                            .find(|(name, _)| name == callee)
+                            .map(|(_, slots)| slots.as_slice())
+                    },
+                )
+            })
+            .flatten();
+        let template = arguments.as_ref().map_or(template, |(view, _)| view);
+        let undefined_operands = arguments.as_ref().map(|(_, operands)| operands.clone());
         // The generator a direct call names has its unused arguments
         // removed, from its body and its declaration alike.
         let reduced = key
@@ -975,6 +972,7 @@ impl<'a> Specializer<'a> {
         let unreached_failures = std::mem::take(&mut self.unreached_failures);
         function.removed_params.clear();
         function.callee_removed_params.clear();
+        function.callee_removed_args.clear();
         function.removed_args.clear();
         expand_pack_spreads(&key.template, &mut function)?;
         self.select_comptime_branches(&key.template, &mut function, bindings)?;
@@ -1060,6 +1058,9 @@ impl<'a> Specializer<'a> {
         self.rewrite_blocks(&key.template, &mut function, &mut blocks)?;
         function.blocks = blocks;
         erase_dropped_argument_reads(&mut function, &arguments);
+        if let Some(operands) = undefined_operands {
+            shed_dropped_operand_types(&mut function, &operands);
+        }
         retire_forwarded_packs(&mut function);
         erase_specialized_generic_callable_storage(&mut function);
 
@@ -4059,6 +4060,22 @@ fn erase_dropped_argument_reads(function: &mut MirFunction, arguments: &HashSet<
     for reg in erased {
         function.reg_types.remove(&reg);
         function.spans.0.remove(&reg);
+    }
+}
+
+/// Drop the types of `operands`, the registers a call passed for a
+/// removed argument whose definitions the instance erased
+/// ([`mojito_mir::mir::with_removed_argument_forwards_erased`]), once no
+/// instruction reads them: the call dropped them, as upstream's rewritten
+/// call passes none, so the instance holds no register for one.
+fn shed_dropped_operand_types(function: &mut MirFunction, operands: &[Reg]) {
+    let mut reads = vec![0; function.n_regs as usize];
+    mojito_mir::mir::count_register_reads(&mut function.blocks, &mut reads);
+    for reg in operands {
+        if reads.get(reg.0 as usize) == Some(&0) {
+            function.reg_types.remove(&reg.0);
+            function.spans.0.remove(&reg.0);
+        }
     }
 }
 

@@ -79,7 +79,11 @@ pub use struct_reads::{
 mod symbols;
 pub use symbols::{SymbolTable, implicit_callees, replace_symbol_uses};
 mod unused_args;
-pub use unused_args::{unused_arguments, used_slots, without_removed_arguments};
+pub use unused_args::{
+    erase_removed_operands, removed_argument_operands, unused_arguments, used_slots,
+    with_removed_argument_forwards_erased, without_removed_argument_forwards,
+    without_removed_arguments,
+};
 
 /// Lower a whole HIR control-flow graph (one function body) into a
 /// `MirFunction`.
@@ -3844,6 +3848,7 @@ fn lower_cfg_body(
         reg_types: HashMap::new(),
         removed_params: Vec::new(),
         callee_removed_params: Vec::new(),
+        callee_removed_args: Vec::new(),
         removed_args: Vec::new(),
     };
 

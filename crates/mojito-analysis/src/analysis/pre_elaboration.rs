@@ -88,7 +88,9 @@ impl Callees<'_> {
     /// package callee's cycle is one of the calls any of them follows
     /// ([`followed_by_a_call_graph_pass`]): a cycle that mixes the passes'
     /// edges would otherwise reach the body being finished, and the
-    /// package's cycle memo, by row, would answer one pass for another.
+    /// package's cycle memo, by row, would answer one pass for another. A
+    /// callee whose finish is under way on this thread lies on a cycle too,
+    /// one a drop elaboration closed ([`PackageBodies::finishing_body`]).
     pub fn body(&self, name: &str) -> Option<&MirFunction> {
         if let Some(program) = &self.program
             && let Some(&row) = program.rows.get(name)
@@ -113,6 +115,9 @@ impl Callees<'_> {
                 })
             })
         }) {
+            return None;
+        }
+        if package.finishing_body(name) {
             return None;
         }
         package.get(name)

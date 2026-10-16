@@ -32,6 +32,21 @@ pub(super) fn verify_scope(
     errors: &mut Vec<String>,
 ) {
     let head = format!("MIR function '{name}'");
+    // A forward to a callee's removed argument is no use: upstream's
+    // `RemoveUnusedParams` rewrote the call without it. The body reads as
+    // that rewrite leaves it, for the callees its snapshot names.
+    let arguments_view = (!function.callee_removed_args.is_empty())
+        .then(|| {
+            crate::mir::without_removed_argument_forwards(function, declarations, &|callee| {
+                function
+                    .callee_removed_args
+                    .iter()
+                    .find(|(name, _)| name == callee)
+                    .map(|(_, slots)| slots.as_slice())
+            })
+        })
+        .flatten();
+    let function = arguments_view.as_ref().map_or(function, |(view, _)| view);
     // A removed argument no longer exists: the body reads as the generator
     // a direct call names, with the argument gone, and uses its slot only
     // to drop a value whose drop runs no code.
@@ -913,6 +928,7 @@ mod tests {
                 .collect(),
             removed_params: Vec::new(),
             callee_removed_params: Vec::new(),
+            callee_removed_args: Vec::new(),
             removed_args: Vec::new(),
         }
     }
@@ -1138,8 +1154,6 @@ mod tests {
         );
     }
 
-    /// A pack element over a declared variadic binder and its loop index is
-    /// in scope, and a contract binder is bound by its contract.
     /// A removed argument is used by nothing but a drop that runs no code:
     /// its drop is no use, and any other instruction naming it is.
     #[test]
@@ -1183,6 +1197,72 @@ mod tests {
         );
     }
 
+    /// A removed argument the body only forwards to a callee's removed
+    /// argument is unused, but only for a callee its snapshot names.
+    #[test]
+    fn scope_reads_a_forward_to_a_removed_argument_through_the_snapshot() {
+        let mut declarations = declarations("f", Vec::new());
+        let declaration = &mut declarations.functions[0];
+        declaration.param_names = vec!["a".to_string()];
+        declaration.param_types = vec![Ty::int()];
+        declaration.defaults = vec![None];
+        declaration.required = vec![true];
+        declaration.param_conventions = vec![None];
+        declaration.ref_params = vec![false];
+        declaration.param_writes = vec![false];
+        let mut callee = declarations.functions[0].clone();
+        callee.lowered_name = "g".to_string();
+        declarations.functions.push(callee);
+        let forward = |snapshot: Vec<(String, Vec<mojito_hir::hir::VarId>)>| MirFunction {
+            blocks: vec![MirBlock {
+                instrs: vec![
+                    MirInstr::UseVar {
+                        dest: Reg(0),
+                        var: 0,
+                        mode: crate::mir::UseMode::Copy,
+                    },
+                    MirInstr::Call {
+                        dest: Reg(1),
+                        func: crate::mir::FuncRef::named("g"),
+                        raises: None,
+                        args: vec![Reg(0)],
+                        kwargs: Vec::new(),
+                        arg_places: vec![None],
+                        kwarg_places: Vec::new(),
+                        capture_accesses: Vec::new(),
+                        param_arg_regs: Vec::new(),
+                        receiver: None,
+                        instantiated_args: Vec::new(),
+                        spread: None,
+                    },
+                ],
+                term: MirTerm::Return(None),
+            }],
+            n_regs: 2,
+            n_vars: 1,
+            var_names: vec!["a".to_string()],
+            n_params: 1,
+            param_types: vec![Ty::int()],
+            owned_params: vec![false],
+            deinit_params: vec![false],
+            ref_params: vec![false],
+            var_tys: HashMap::from([(0, Ty::int())]),
+            removed_args: vec![0],
+            callee_removed_args: snapshot,
+            ..function_with(vec![Ty::int(), Ty::int()])
+        };
+        assert_eq!(
+            findings(&forward(vec![("g".to_string(), vec![0])]), &declarations),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            findings(&forward(Vec::new()), &declarations),
+            vec!["MIR function 'f' removes argument slot 0, which it uses".to_string()]
+        );
+    }
+
+    /// A pack element over a declared variadic binder and its loop index is
+    /// in scope, and a contract binder is bound by its contract.
     #[test]
     fn scope_accepts_pack_elements_and_contract_binders() {
         let context = ParamContext::detached();

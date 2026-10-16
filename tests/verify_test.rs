@@ -45,6 +45,7 @@ fn function(blocks: Vec<MirBlock>, n_regs: u32, reg_types: &[(u32, Ty)]) -> MirF
         reg_types: reg_types.iter().cloned().collect(),
         removed_params: Vec::new(),
         callee_removed_params: Vec::new(),
+        callee_removed_args: Vec::new(),
         removed_args: Vec::new(),
     }
 }

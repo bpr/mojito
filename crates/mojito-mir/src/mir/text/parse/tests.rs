@@ -62,6 +62,7 @@ fn function_with(reg_types: Vec<Ty>, instrs: Vec<MirInstr>) -> MirFunction {
             .collect(),
         removed_params: Vec::new(),
         callee_removed_params: Vec::new(),
+        callee_removed_args: Vec::new(),
         removed_args: Vec::new(),
     }
 }

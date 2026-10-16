@@ -12,7 +12,13 @@
 //! call and keeps the original for any other use; the elaborator does the
 //! same, instantiating the reduced generator for a direct call, which
 //! passes no argument for them, and the full one, keeping every parameter,
-//! for a function value or any other demand.
+//! for a function value or any other demand. An argument the body only
+//! passes on to a callee's removed argument is unused too, as upstream
+//! rewrote that call before reaching the caller: the pass reads the body
+//! with those operands gone
+//! ([`mojito_mir::mir::without_removed_argument_forwards`]), and records the
+//! callees it relied on, which the verifier and the elaborator read the
+//! body through.
 //!
 //! The pass records on the body the function's own compile-time parameters,
 //! and a method's struct's, that nothing in its body or signature reads
@@ -61,18 +67,19 @@
 //! cleanup pass, so a read they removed keeps no parameter.
 
 use super::pre_elaboration::{CallGraphPass, Callees};
+use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
     Const, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
     instruction_regions, instruction_subscript_call, lifecycle_callees, method_owner_params,
-    named_lifted_bodies, unread_parameters_of, unused_arguments, without_removed_arguments,
-    without_removed_forwards,
+    named_lifted_bodies, unread_parameters_of, unused_arguments, without_removed_argument_forwards,
+    without_removed_arguments, without_removed_forwards,
 };
 use mojito_types::param_expr::ParamId;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const REMOVE_UNUSED_PARAMS: CallGraphPass = CallGraphPass {
     name: "remove-unused-params",
-    follows: has_own_parameters,
+    follows: has_parameters,
     run: remove_unused_params,
 };
 
@@ -81,6 +88,10 @@ pub const REMOVE_UNUSED_PARAMS: CallGraphPass = CallGraphPass {
 ///
 /// The unused arguments are its `removed_args`, and the parameters the
 /// body reads none of without them its `removed_params`.
+///
+/// A forward to a callee's removed argument is no use, and the callees
+/// whose removed arguments discounted one become its
+/// `callee_removed_args` when it removed anything.
 ///
 /// A forward to a callee's removed parameter is no read, and the callees
 /// whose removals discounted one become its `callee_removed_params`, as do
@@ -92,16 +103,31 @@ pub fn remove_unused_params(
     declarations: &MirDeclarations,
     callees: &Callees<'_>,
 ) -> bool {
-    let removed_args = unused_arguments(name, function, declarations);
+    let mut forwarded = BTreeSet::new();
+    call_targets(&function.blocks, &mut forwarded);
+    let argument_removals: BTreeMap<&str, &[VarId]> = forwarded
+        .into_iter()
+        .filter_map(|target| {
+            callees
+                .unit_body(target)
+                .filter(|body| !body.removed_args.is_empty())
+                .map(|body| (target, body.removed_args.as_slice()))
+        })
+        .collect();
+    let arguments_view = without_removed_argument_forwards(function, declarations, &|callee| {
+        argument_removals.get(callee).copied()
+    });
+    let source = arguments_view.as_ref().map_or(&*function, |(view, _)| view);
+    let removed_args = unused_arguments(name, source, declarations);
     let reduced = declarations
         .function(name)
         .filter(|_| !removed_args.is_empty())
-        .map(|declaration| without_removed_arguments(function, declaration, &removed_args));
+        .map(|declaration| without_removed_arguments(source, declaration, &removed_args));
     let declaration = reduced
         .as_ref()
         .map(|(_, declaration)| declaration)
         .or_else(|| declarations.function(name));
-    let body = reduced.as_ref().map_or(&*function, |(view, _)| view);
+    let body = reduced.as_ref().map_or(source, |(view, _)| view);
     let lifecycle = lifecycle_callees(body, declarations);
     let mut targets: BTreeSet<&str> = lifecycle.iter().map(String::as_str).collect();
     call_targets(&body.blocks, &mut targets);
@@ -172,27 +198,36 @@ pub fn remove_unused_params(
         discounted.sort();
         discounted
     };
+    let argument_discounted: Vec<(String, Vec<VarId>)> = match &arguments_view {
+        Some((_, callees)) if !removed_args.is_empty() || !removed.is_empty() => callees
+            .iter()
+            .map(|callee| (callee.clone(), argument_removals[callee.as_str()].to_vec()))
+            .collect(),
+        _ => Vec::new(),
+    };
     if removed == function.removed_params
         && discounted == function.callee_removed_params
         && removed_args == function.removed_args
+        && argument_discounted == function.callee_removed_args
     {
         return false;
     }
     function.removed_params = removed;
     function.callee_removed_params = discounted;
     function.removed_args = removed_args;
+    function.callee_removed_args = argument_discounted;
     true
 }
 
-/// Whether the function so declared has a compile-time parameter of its
-/// own or, as a method, its struct's, which a call of it may pass on, is
-/// nested in another, whose parameters it may read, or is lifted and
-/// declares binders, which its application binds.
-fn has_own_parameters(
-    declaration: &MirFunctionDeclaration,
-    declarations: &MirDeclarations,
-) -> bool {
-    declaration.enclosing.is_some()
+/// Whether the function so declared has a parameter a call of it may pass
+/// on: a runtime argument, a receiver, or a compile-time parameter of its
+/// own or, as a method, its struct's; or is nested in another, whose
+/// parameters it may read, or is lifted and declares binders, which its
+/// application binds.
+fn has_parameters(declaration: &MirFunctionDeclaration, declarations: &MirDeclarations) -> bool {
+    declaration.has_receiver
+        || !declaration.param_names.is_empty()
+        || declaration.enclosing.is_some()
         || (!declaration.param_decls.is_empty()
             && mojito_symbol::symbol::lifted_owner(&declaration.lowered_name).is_some())
         || declaration

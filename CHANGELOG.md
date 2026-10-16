@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A runtime argument a body only passes on to a callee's removed argument
+  is unused too (R1013), as upstream's `RemoveUnusedParams` walks callees
+  first and rewrites each call to the clone without the argument:
+  `fwd[n](a: Arr[n])` returning `fa(a) + 1` has one instance,
+  `fwd$REMOVED$ARG$mono`, for every `n`, as do forwards by keyword, into
+  an owned argument, and through a removed receiver, and
+  `inline-parametric` inlines a callee's generator without its removed
+  arguments. Copying a struct into an owned argument stays a use, as on
+  the pin. MIR text 1.66 adds `callee_removed_args`. Corpus concrete
+  instructions 386,911 → 386,767; no program's output changes.
 - A method whose body never uses its receiver leaves the generator a
   resolved method call names without it (R1012), as upstream's
   `k3(q::Holder)_REMOVED_ARG()`: the call becomes a call with no

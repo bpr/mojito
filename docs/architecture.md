@@ -5478,6 +5478,31 @@ point where a slot declared in a loop is uninitialized again.
   on, a callee's or a nested body's, as `MirFunction::callee_removed_params`, the verifier reads the body
   through the same view built from that snapshot, and `inline-parametric`
   merges an inlined callee's snapshot into its caller's.
+  A forward to a callee's removed runtime argument is no use either
+  (R1013): before it records `removed_args`, the pass reads the body with
+  each direct call or resolved method call of a finished callee that
+  removed arguments passing no operand for them
+  (`mir::without_removed_argument_forwards`, binding by
+  `mir::removed_argument_operands`, the matcher the elaborator's
+  `Specializer::drop_removed_arguments` uses) and the instructions that
+  only computed one erased: a whole-place or field load, a borrow, a copy
+  of a slot whose type has no destructor, or a move of a parameter whose
+  drop runs no code. A copy of any other value is a call of its own and
+  stays, as the pin keeps `fcopy`. A removed receiver becomes a register no
+  instruction defines, of the receiver's type, so the call still reads the
+  struct arguments its member kept. The pass follows every callee with an
+  argument (`has_parameters`), and records the callees it relied on as
+  `MirFunction::callee_removed_args`, which the verifier reads through and
+  the elaborator builds every instance by
+  (`mir::with_removed_argument_forwards_erased`, which keeps the operands
+  for the call arms to drop and the types of those it left undefined,
+  shed once dropped). `inline-parametric` inlines a callee's generator
+  without its removed arguments, as upstream inlines the rewritten call,
+  passing no operand for them, and erases what only computed one
+  (`mir::erase_removed_operands`). At the package seam a body whose finish
+  reaches itself again lies on a cycle (`PackageBodies::finishing_body`):
+  `PackageBodies::on_cycle` walks the bodies before drop elaboration,
+  which misses a cycle a destructor call closes (R1035).
   An instance takes a struct type whose argument names a removed
   parameter with that argument erased, as upstream's generator spells it
   `_REMOVED_ARG` (R976): `Bindings::removed` holds the template's removed

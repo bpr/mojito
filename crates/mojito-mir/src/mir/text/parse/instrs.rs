@@ -4,6 +4,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use crate::mir::{LoopLabel, MirElif};
+use mojito_hir::hir::VarId;
 use mojito_types::types::TyKind;
 
 impl Decoder {
@@ -67,6 +68,11 @@ impl Decoder {
             .and_then(|value| self.list(value).ok())
             .map(|values| values.iter().filter_map(|value| self.var(value)).collect())
             .unwrap_or_default();
+        let callee_removed_args = self
+            .field(fields, "callee_removed_args")
+            .ok()
+            .map(|value| self.callee_args(value))
+            .unwrap_or_default();
         if var_names.len() != n_vars {
             self.error(
                 value.span,
@@ -109,6 +115,7 @@ impl Decoder {
                 "removed_params",
                 "callee_removed_params",
                 "removed_args",
+                "callee_removed_args",
             ],
         );
         Some((
@@ -136,6 +143,7 @@ impl Decoder {
                 removed_params,
                 callee_removed_params,
                 removed_args,
+                callee_removed_args,
             },
         ))
     }
@@ -175,6 +183,29 @@ impl Decoder {
                 let params = self.param_ids(self.field(fields, "params").ok()?);
                 self.unknown(fields, &["callee", "params"]);
                 Some((callee, params))
+            })
+            .collect()
+    }
+
+    /// A function's `callee_removed_args` (schema 1.66): each callee whose
+    /// removed arguments its `removed_args` relied on dropping a forward to.
+    fn callee_args(&mut self, value: &Value) -> Vec<(String, Vec<VarId>)> {
+        let Ok(values) = self.list(value) else {
+            return Vec::new();
+        };
+        values
+            .iter()
+            .filter_map(|value| {
+                let fields = self.record(value, "callee_args").ok()?;
+                let callee = self.req(value, fields, "callee", Self::string)?;
+                let args = self
+                    .list(self.field(fields, "args").ok()?)
+                    .ok()?
+                    .iter()
+                    .filter_map(|value| self.var(value))
+                    .collect();
+                self.unknown(fields, &["callee", "args"]);
+                Some((callee, args))
             })
             .collect()
     }

@@ -500,6 +500,7 @@ fn verify_rejects_an_untyped_used_slot() {
                     reg_types: HashMap::from([(0, Ty::int())]),
                     removed_params: Vec::new(),
                     callee_removed_params: Vec::new(),
+                    callee_removed_args: Vec::new(),
                     removed_args: Vec::new(),
                 },
             )],

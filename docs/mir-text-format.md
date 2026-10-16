@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.65
+# Mojito Textual MIR Format, Version 1.66
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.65 is implemented end to end for inspection and loading: canonical
+Version 1.66 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.65
+mojito-mir 1.66
 ```
 
-The writer emits 1.65. The reader accepts 1.0 through 1.65; *Schema 1.0*
+The writer emits 1.66. The reader accepts 1.0 through 1.66; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -601,6 +601,20 @@ full body, keeping every parameter, for any other use. The verifier reports
 a listed slot the body uses otherwise. The writer omits the field when it is
 empty, the reader takes an absent field as empty, and a package does not
 encode it.
+
+Such a body may also carry `callee_removed_args: [callee_args { callee:
+"fa", args: [$v0] }, ...]` right after `removed_args` (schema 1.66): each
+callee whose removed arguments the body's `removed_args` and
+`removed_params` relied on dropping a forward to, with those arguments,
+sorted by callee. Upstream's `RemoveUnusedParams` rewrites such a call to
+the clone without them; Mojito keeps the call, so the verifier reads the
+body with their operands, and the instructions that only computed them,
+dropped (`mir::without_removed_argument_forwards`) before it checks
+`removed_args`, and the elaborator builds each instance through the same
+view with the operands kept for it to drop
+(`mir::with_removed_argument_forwards_erased`). The writer omits the field
+when it is empty, the reader takes an absent field as empty, and a package
+does not encode it.
 
 ## Values, Types, and Semantic Records
 
