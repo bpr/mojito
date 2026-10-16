@@ -36,7 +36,17 @@ pub fn destroyed_structs(function: &MirFunction, fields: &StructFields<'_>) -> D
         pending: Vec::new(),
     };
     walk.blocks(&function.blocks);
-    let mut pending = walk.pending;
+    close_over_fields(walk.pending, fields)
+}
+
+/// The struct types the values `pending` reach, each beside whether the
+/// whole value is reached or only its fields: a reached struct's fields
+/// are reached whole through `fields`, as is each element of a tuple,
+/// pack, or variant. A symbolic type marks the result symbolic.
+pub(super) fn close_over_fields(
+    mut pending: Vec<(Ty, bool)>,
+    fields: &StructFields<'_>,
+) -> Destroyed {
     let mut seen = HashSet::new();
     let mut destroyed = Destroyed {
         structs: Vec::new(),

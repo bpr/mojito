@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct's copy and move constructors are instantiated only where a
+  body copies or moves a value of the struct (R994), as upstream's copy and
+  move insertion calls them at each site, rather than with every struct a
+  body names: the elaborator demands `__copyinit__` and `__moveinit__` from
+  each copy, move, owned closure capture, variant payload, reference-read
+  method result, and clone-out read, and the fields they reach, and
+  `eliminate-dead-symbols` keeps them on the same terms. So
+  `assets/ok/mut_owned_params.mojo`, which only forwards its `String`,
+  keeps neither of `String`'s. Corpus concrete functions 29,001 → 28,325,
+  concrete instructions 392,176 → 387,437 (`benchmarks/instantiation.tsv`).
+  No program's output changes.
 - A struct's constructor is instantiated only where a call reaches it
   (R993), as upstream instantiates only what a call reaches, rather than
   every `__init__` overload of each struct a body names: a call naming it,

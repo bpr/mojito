@@ -426,10 +426,12 @@ impl<'a> Specializer<'a> {
             .insert(key.clone(), self.instances.len());
         self.instance_names
             .insert(name.clone(), self.instances.len());
-        // A destructor is a reference of each body that drops its struct
-        // (`enqueue_destructors`), not a member of every value's closure.
+        // A destructor, a copy, and a move constructor are references of
+        // each body that drops, copies, or moves its struct
+        // (`enqueue_lifecycle_members`), not members of every value's
+        // closure.
         if let Some((owner, method)) = mojito_symbol::symbol::split_method_symbol(&name)
-            && ["__init__", "__copyinit__", "__moveinit__", "__del__"]
+            && ["__init__", "__del__"]
                 .iter()
                 .any(|lifecycle| method.starts_with(lifecycle))
         {
@@ -3176,28 +3178,20 @@ impl<'a> Specializer<'a> {
                 self.instance_conformances(&template.conformances, &bindings);
             declaration.declared = self.instance_conformances(&template.declared, &bindings);
             self.declare_output_struct(declaration);
-            // The backends copy and move a value through the members its
-            // type names (the nominal String's `__copyinit__` too: native
-            // lowering bridges it and never reaches the body, but the VM
-            // runs it). A `__call__` joins them: a value of the struct
-            // passed where a function type is expected is called through
-            // its dispatch symbol, which names no instance. A constructor
-            // is the calls' to demand, as upstream instantiates only what a
-            // call reaches, and the destructor the drops'.
-            // Nothing constructs, calls, copies, or moves through a member
-            // an erased instance (`Box[_REMOVED_ARG]`) or one over an erased
-            // type (`Holder[Box[_REMOVED_ARG]]`): a construction spells the
-            // struct's arguments, and a copy or a move that runs a declared
-            // member reads them (`mir::StructReads::member_reads`), so no
-            // generator that does either removed them.
+            // A value of the struct passed where a function type is
+            // expected is called through its `__call__` dispatch symbol,
+            // which names no instance. A constructor is the calls' to
+            // demand, as upstream instantiates only what a call reaches, and
+            // the destructor, copy, and move constructors the drops',
+            // copies', and moves'. Nothing calls through a member of an
+            // erased instance (`Box[_REMOVED_ARG]`) or one over an erased
+            // type (`Holder[Box[_REMOVED_ARG]]`).
             if !bindings.removed.is_empty() || mojito_types::types::erases_an_argument(&ty) {
                 continue;
             }
-            for method in ["__copyinit__", "__moveinit__", "__call__"] {
-                self.enqueue_struct_members(&template_name, &bindings, method)?;
-            }
+            self.enqueue_struct_members(&template_name, &bindings, "__call__")?;
         }
-        self.enqueue_destructors(owner, function)
+        self.enqueue_lifecycle_members(owner, function)
     }
 
     /// The substituted `fields` of a struct instance under `bindings`. An
@@ -3238,43 +3232,69 @@ impl<'a> Specializer<'a> {
         }
     }
 
-    /// Enqueue the destructor of every struct `function` tears down without
-    /// naming it ([`destroyed_structs`]), as upstream's destructor insertion
-    /// leaves a call to it at each death: the destructor is a reference of
-    /// the body, as a call is. A body that drops a value of a symbolic type
-    /// demands the destructor of every struct it names.
-    fn enqueue_destructors(
+    /// Enqueue the destructor of every struct `function` tears down
+    /// ([`destroyed_structs`]), and the copy and move constructors of every
+    /// struct it copies and moves ([`relocated_structs`]), without naming
+    /// them, as upstream's destructor and copy/move insertion leaves a call
+    /// to each at its site: the member is a reference of the body, as a
+    /// call is. A body that drops, copies, or moves a value of a symbolic
+    /// type demands that member of every struct it names. No copy or move
+    /// runs a member of an erased instance (`Box[_REMOVED_ARG]`) or one
+    /// over an erased type: a member it runs reads the struct's arguments
+    /// (`mir::StructReads::member_reads`), so no generator that copies or
+    /// moves the struct removed them.
+    fn enqueue_lifecycle_members(
         &mut self,
         owner: &str,
         function: &MirFunction,
     ) -> Result<(), MonoError> {
-        let destroyed = destroyed_structs(function, &|name| {
+        let fields = |name: &str| {
             self.output_struct_positions
                 .get(name)
                 .map(|&position| self.output_structs[position].fields.as_slice())
-        });
-        let mut structs = destroyed.structs;
-        if destroyed.symbolic {
+        };
+        let destroyed = destroyed_structs(function, &fields);
+        let relocated = relocated_structs(function, &fields);
+        let named = || {
             let mut types = function_types(function).cloned().collect::<Vec<_>>();
             push_instruction_types(&function.blocks, &mut types);
+            let mut structs = Vec::new();
             while let Some(ty) = types.pop() {
                 collect_nested_types(&ty, &mut types);
                 if matches!(ty.kind(), TyKind::Struct(..)) {
                     structs.push(ty);
                 }
             }
-        }
-        let mut seen = HashSet::new();
-        for ty in structs {
-            if !seen.insert(ty.clone()) {
-                continue;
+            structs
+        };
+        let demands = [
+            ("__deinit__", destroyed.structs, destroyed.symbolic),
+            ("__copyinit__", relocated.copied, relocated.symbolic),
+            ("__moveinit__", relocated.moved, relocated.symbolic),
+        ];
+        for (method, mut structs, symbolic) in demands {
+            if symbolic {
+                structs.extend(named());
             }
-            let TyKind::Struct(name, _) = ty.kind() else {
-                continue;
-            };
-            let template_name = name.split("$mono").next().unwrap_or(name).to_string();
-            if let Some(bindings) = self.struct_bindings(owner, &ty)? {
-                self.enqueue_struct_members(&template_name, &bindings, "__deinit__")?;
+            let mut seen = HashSet::new();
+            for ty in structs {
+                if !seen.insert(ty.clone()) {
+                    continue;
+                }
+                let TyKind::Struct(name, _) = ty.kind() else {
+                    continue;
+                };
+                let template_name = name.split("$mono").next().unwrap_or(name).to_string();
+                let Some(bindings) = self.struct_bindings(owner, &ty)? else {
+                    continue;
+                };
+                if method != "__deinit__"
+                    && (!bindings.removed.is_empty()
+                        || mojito_types::types::erases_an_argument(&ty))
+                {
+                    continue;
+                }
+                self.enqueue_struct_members(&template_name, &bindings, method)?;
             }
         }
         Ok(())

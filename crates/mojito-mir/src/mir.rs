@@ -52,6 +52,8 @@ pub mod verify;
 pub mod visit;
 
 mod calls;
+mod copies;
+pub use copies::{Relocated, relocated_structs};
 mod destroys;
 pub use destroys::{Destroyed, StructFields, destroyed_structs};
 mod facts;

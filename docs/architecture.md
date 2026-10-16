@@ -5411,7 +5411,8 @@ point where a slot declared in a loop is uninitialized again.
   each would read the erased arguments, so none of `__call__`,
   `__copyinit__`, and `__moveinit__` is enqueued for it; its destructor is
   the drops' to demand, and, as for every struct, a constructor the calls'
-  (R993). The verifier takes it as the type of any instance of the same
+  (R993) and a copy or move constructor the copies' and moves'
+  (`Specializer::enqueue_lifecycle_members`, R994). The verifier takes it as the type of any instance of the same
   template whose other arguments agree (`verify/types.rs`'s
   `erased_struct_agrees`), and the VM destroys a value in a slot of an
   erased type through that type's members (`dispatch::erased_instance_value`),

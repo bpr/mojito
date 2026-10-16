@@ -6,7 +6,9 @@
 
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use equiv::*;
-use mojito_mir::mir::{addressed_slots, destroyed_structs, renumber_slots, retire_slots};
+use mojito_mir::mir::{
+    addressed_slots, destroyed_structs, relocated_structs, renumber_slots, retire_slots,
+};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use promote::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]

@@ -12,7 +12,7 @@ use super::pre_elaboration::ProgramPass;
 use mojito_common::timing;
 use mojito_mir::mir::{
     MirFunction, MirFunctionDeclaration, MirProgram, MirStructDeclaration, SymbolTable,
-    destroyed_structs, entry_roots,
+    destroyed_structs, entry_roots, relocated_structs,
 };
 use mojito_symbol::symbol::{OV_SEP, split_method_symbol};
 use mojito_types::types::TyKind;
@@ -28,16 +28,18 @@ pub const ELIMINATE_DEAD_SYMBOLS: ProgramPass = ProgramPass {
 /// nor `exports` reach, with their declarations, keeping the rest in order.
 ///
 /// A live function makes live every symbol its body or declaration names,
-/// every member of its overload family, every function nested in it, and
-/// the destructor of every struct its drops may tear down
-/// ([`destroyed_structs`]), as upstream's destructor insertion leaves a
-/// call to it at each death. A live struct makes live every symbol its
-/// declaration names and its other methods: the elaborator reaches a
-/// struct's constructors, display, hash, and trait-requirement methods from
-/// its type alone, as upstream nests a struct's members under its symbol. A
-/// body that drops a value of a type only an instantiation resolves, or a
-/// program that imports bodies the walk cannot see, keeps every live
-/// struct's destructor.
+/// every member of its overload family, every function nested in it, the
+/// destructor of every struct its drops may tear down
+/// ([`destroyed_structs`]), and the copy and move constructors of every
+/// struct it may copy or move ([`relocated_structs`]), as upstream's
+/// destructor and copy/move insertion leaves a call to each at its site. A
+/// live struct makes live every symbol its declaration names and its other
+/// methods: the elaborator reaches a struct's constructors, display, hash,
+/// and trait-requirement methods from its type alone, as upstream nests a
+/// struct's members under its symbol. A body that drops, copies, or moves a
+/// value of a type only an instantiation resolves, or a program that
+/// imports bodies the walk cannot see, keeps every live struct's
+/// destructor, copy, and move constructors.
 pub fn eliminate_dead_symbols(program: &mut MirProgram, exports: &[String]) {
     let (live, live_structs) = {
         let (functions, structs) = Symbols::of(program).live(exports);
@@ -80,10 +82,11 @@ struct Symbols<'p> {
     structs: HashMap<&'p str, &'p MirStructDeclaration>,
     /// Every own function and struct name: what a use may name.
     table: SymbolTable<'p>,
-    /// Each own struct's methods but its destructor.
+    /// Each own struct's methods but its lifecycle members.
     methods: HashMap<&'p str, Vec<&'p str>>,
-    /// Each own struct's destructor.
-    destructors: HashMap<&'p str, &'p str>,
+    /// Each own struct's destructor, copy, and move constructors, by the
+    /// struct and the member's name.
+    lifecycle: HashMap<(&'p str, &'p str), &'p str>,
     /// Each overload family's members, by the family's base name.
     families: HashMap<&'p str, Vec<&'p str>>,
     /// The functions nested in each function.
@@ -111,7 +114,7 @@ impl<'p> Symbols<'p> {
             .collect();
         let table = SymbolTable::new(functions.keys().chain(structs.keys()).copied());
         let mut methods: HashMap<_, Vec<_>> = HashMap::new();
-        let mut destructors = HashMap::new();
+        let mut lifecycle = HashMap::new();
         let mut families: HashMap<_, Vec<_>> = HashMap::new();
         let mut nested: HashMap<_, Vec<_>> = HashMap::new();
         for (name, _) in &program.functions {
@@ -119,8 +122,8 @@ impl<'p> Symbols<'p> {
             if let Some((owner, method)) = split_method_symbol(name)
                 && structs.contains_key(owner)
             {
-                if method == "__deinit__" {
-                    destructors.insert(owner, name);
+                if let Some(&member) = LIFECYCLE.iter().find(|&&member| member == method) {
+                    lifecycle.insert((owner, member), name);
                 } else {
                     methods.entry(owner).or_default().push(name);
                 }
@@ -140,7 +143,7 @@ impl<'p> Symbols<'p> {
             structs,
             table,
             methods,
-            destructors,
+            lifecycle,
             families,
             nested,
         }
@@ -156,32 +159,41 @@ impl<'p> Symbols<'p> {
             .map(|(&name, _)| name)
             .collect();
         let mut live = HashSet::new();
-        let mut live_structs = HashSet::new();
-        // Set once a live body drops a value of a symbolic type. A body the
-        // program imports is not walked, and may drop any value.
-        let mut every_destructor = self.program.declarations.imported.is_some();
+        let mut live_structs: HashSet<&'p str> = HashSet::new();
+        // Set once a live body drops, copies, or moves a value of a
+        // symbolic type. A body the program imports is not walked, and may
+        // do so to any value.
+        let mut every_member = self.program.declarations.imported.is_some();
         while let Some(name) = pending.pop() {
             if let Some(function) = self.functions.get(name)
                 && live.insert(name)
             {
                 pending.extend(self.table.function_uses(function));
-                let destroyed = destroyed_structs(function, &|name| {
+                let fields = |name: &str| {
                     self.structs
                         .get(name)
                         .map(|declaration| declaration.fields.as_slice())
-                });
-                if destroyed.symbolic && !every_destructor {
-                    every_destructor = true;
-                    pending.extend(
-                        live_structs
-                            .iter()
-                            .filter_map(|name| self.destructors.get(name).copied()),
-                    );
+                };
+                let destroyed = destroyed_structs(function, &fields);
+                let relocated = relocated_structs(function, &fields);
+                if (destroyed.symbolic || relocated.symbolic) && !every_member {
+                    every_member = true;
+                    for &owner in &live_structs {
+                        pending.extend(self.members(owner));
+                    }
                 }
-                pending.extend(destroyed.structs.iter().filter_map(|ty| match ty.kind() {
-                    TyKind::Struct(name, _) => self.destructors.get(name.as_str()).copied(),
-                    _ => None,
-                }));
+                for (member, structs) in [
+                    ("__deinit__", &destroyed.structs),
+                    ("__copyinit__", &relocated.copied),
+                    ("__moveinit__", &relocated.moved),
+                ] {
+                    pending.extend(structs.iter().filter_map(|ty| match ty.kind() {
+                        TyKind::Struct(name, _) => {
+                            self.lifecycle.get(&(name.as_str(), member)).copied()
+                        }
+                        _ => None,
+                    }));
+                }
                 if let Some(declaration) = self.declarations.get(name) {
                     pending.extend(self.table.uses(*declaration));
                 }
@@ -193,14 +205,24 @@ impl<'p> Symbols<'p> {
             {
                 pending.extend(self.table.uses(*declaration));
                 pending.extend(self.methods.get(name).into_iter().flatten());
-                if every_destructor {
-                    pending.extend(self.destructors.get(name).copied());
+                if every_member {
+                    pending.extend(self.members(name));
                 }
             }
         }
         (live, live_structs)
     }
+
+    /// The struct `owner`'s destructor, copy, and move constructors.
+    fn members(&self, owner: &'p str) -> impl Iterator<Item = &'p str> + '_ {
+        LIFECYCLE
+            .iter()
+            .filter_map(move |&member| self.lifecycle.get(&(owner, member)).copied())
+    }
 }
+
+/// The members the backends run by name from a value's type.
+const LIFECYCLE: [&str; 3] = ["__deinit__", "__copyinit__", "__moveinit__"];
 
 /// The overload family `name` belongs to: its spelling before the overload
 /// qualifier.

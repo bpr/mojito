@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1010**.
+Next free ID: **R1011**.
 
 ## Ordered Work
 
@@ -436,21 +436,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Done when a fixture naming a struct with an uncalled `__call__` keeps
     none in its concrete program and the HEAD differential is clean.
   - Found while landing R993 (2026-10-15).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R994 Every copy and move member of a struct a body names stays in
-  the concrete program, copied or not**
-
-  `assets/ok/mut_owned_params.mojo` keeps `String.__copyinit__` although
-  nothing copies a `String`, where upstream's copies call the member.
-  - The VM and the native backend run `__copyinit__` and `__moveinit__` by
-    name from a value's type, so no instruction references them.
-  - Have each copy and move site demand its member, as R985 made each drop
-    demand its destructor (`mir::destroyed_structs`).
-  - Done when that fixture's concrete program has no `String.__copyinit__`
-    and the HEAD differential is clean.
-  - Found while landing R985 (2026-10-15).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1154,6 +1139,25 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Done when a `--backend pliron` `.ll` of a `len(xs)` probe marks
     `List.__len__` as the pin does and the parity lane is unchanged.
   - Found while landing R939 (2026-10-15).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1010 A load or field read keeps its struct's copy constructor
+  alive although nothing copies**
+
+  `mir::relocated_structs` counts every read a backend may clone out of
+  storage as a copy, so `s.name` on a `String` field keeps
+  `String.__copyinit__` where the pin and the VM copy nothing.
+  - Native lowering clones on `place.load`, `field.get`, element and
+    variant reads (`load_from`), and forks a borrowed value stored into
+    owning storage (`store_to`); the VM copies only at `var.use copy`,
+    `value.copy`, owned captures, variant payloads, and reference-read
+    method results.
+  - Make native lowering copy only where the MIR says so, then drop the
+    clone-out-read and borrowed-store rules from `relocated_structs`.
+  - Done when a probe reading a `String` field into a borrow keeps no
+    `String.__copyinit__` and the parity lane is unchanged.
+  - Found while landing R994 (2026-10-15).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
