@@ -1733,16 +1733,23 @@ A parameter default is declaration metadata too (`CheckedConst`): a literal,
 an `@implicit` conversion of one (`Construct`), or, for any other default,
 `Evaluate`, a zero-parameter function MIR lowers from the default expression
 (`$default$<owner>$<parameter>`) and each call leaving the slot out runs.
-A direct call of a top-level free function evaluates it at the call site,
-as upstream does: once every declaration is lowered and linked, and before
-ownership analysis, `mir::evaluate_omitted_defaults` gives the call a call
-of the default under the call's own `instantiated_args`, passed in the
-omitted slot through the read-temporary or forwarding slot a written
-argument would get, so drop elaboration destroys a borrowed default after
-the call. The default of an argument the callee never uses is left out,
-as upstream's `RemoveUnusedParams` removes it. Any other call (a method's,
-a nested `def`'s, a bundled function's: R1022, R1023) leaves the slot to the
-callee's binding, which the VM's `bind_for_call` fills. A default reading a binder in scope (`Self.n`, an enclosing `n`,
+A direct call, a method call, a static-method call, a construction, and a
+nested `def`'s `call.indirect` from the body declaring it evaluate it at the
+call site, as upstream does: once every declaration is lowered and linked,
+and before ownership analysis, `mir::evaluate_omitted_defaults` gives the
+call a call of the default under the call's own `instantiated_args`, the
+receiver type's struct arguments, and the enclosing binders in scope,
+passed in the omitted slot through the read-temporary or forwarding slot a
+written argument would get, so drop elaboration destroys a borrowed
+default after the call. A nested call binds past the leading captures its
+lifted body declares, which the elaborator passes later. The default of an
+argument the callee never uses is left out, as upstream's
+`RemoveUnusedParams` removes it: the program's own callee's by
+`mir::unused_arguments`, a bundled callee's by the `removed_args` of its
+finished package body, which the program's lowering reads through
+`PackageBodies`. Any other call (a subscript, R1053; a sibling's call of a
+nested `def`, R1056; a bundled body's call into another unit, R1055) leaves
+the slot to the callee's binding, which the VM's `bind_for_call` fills. A default reading a binder in scope (`Self.n`, an enclosing `n`,
 `T`) declares the binders in scope as its function's parameters, and
 `native::mono` instantiates it under the owner instance's arguments; a
 nested `def`'s default reading an enclosing value parameter reads it as a
@@ -5436,7 +5443,7 @@ point where a slot declared in a loop is uninitialized again.
   site (`mir::evaluated_at_call_site`: a program's own free function's, by
   value, non-raising, not positional-only) is no read, as upstream's
   callee names no default (R1005); any other still reads its kept binders
-  through the callee, whose signature names it (R1022, R1023). Another
+  through the callee, whose signature names it (R1054, R1057, R1025). Another
   parameter's default is not a read: the call site evaluates it. A function in a
   `comptime for` (R974), a nested function's own parameters (R973), and
   `__toplevel__` have no candidates. A callable value parameter is one

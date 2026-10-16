@@ -4,15 +4,17 @@
 //! the call's own parameter arguments, as an argument the caller owns: a
 //! borrowed default is the caller's temporary, destroyed once the call
 //! returns, and an owned one is handed to the callee. A direct call, a
-//! method call, a static-method call, and a construction here run the lifted
-//! default (`$default$f$x`) the same way, before ownership analysis, so the
-//! temporary is destroyed like any other argument's and each default
-//! instance is named by the call that needs it.
+//! method call, a static-method call, a construction, and a call of a nested
+//! `def` here run the lifted default (`$default$f$x`) the same way, before
+//! ownership analysis, so the temporary is destroyed like any other
+//! argument's and each default instance is named by the call that needs it.
 
+use crate::mir::text::package::PackageBodies;
 use crate::mir::{
     FORWARDED_ARGUMENT_SLOT, FuncRef, MirBlock, MirDeclarations, MirFunction,
     MirFunctionDeclaration, MirInstr, MirPlace, READ_TEMPORARY_SLOT, Reg, SlotParameter, UseMode,
-    calls::owns_droppable_storage, instruction_regions_mut, unused_arguments,
+    callable_targets, calls::owns_droppable_storage, instruction_regions, instruction_regions_mut,
+    unused_arguments,
 };
 use mojito_ast::ast::ArgConvention;
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
@@ -23,52 +25,55 @@ use mojito_types::types::{ParamDecl, Ty, TyArg, TyKind, names_binder, replace_pa
 use std::collections::HashMap;
 
 /// Evaluate at each call in `functions` the evaluated defaults it leaves out
-/// of a function among them.
+/// of a function among them or of one the imported `package` compiled.
 ///
 /// The call gets a call of the default under the arguments it binds the
 /// callee's binders and, for a method, its struct's to ([`CallSite`]),
 /// passed in the omitted slot: positionally when every earlier slot is,
 /// else by name. A borrowed default of droppable type is bound to a
 /// read-temporary slot the call reads, an owned one to a forwarding slot
-/// the call takes.
+/// the call takes. A nested `def`'s call is the `call.indirect` of its
+/// closure, made in the body that declares it, which passes no capture, so
+/// it binds past the leading captures the lifted body declares.
 ///
 /// A default the call cannot spell is left to the callee: one of a
-/// subscript, a nested function, or a function outside `functions`; a raising
-/// default; one reading a binder the call binds no argument for, or whose
-/// type the call's arguments do not close. So is the default of an
-/// argument the callee never uses ([`unused_arguments`]), which upstream's
-/// `RemoveUnusedParams` removes with its evaluation.
+/// subscript, of a nested function some other body calls, or of a function
+/// neither `functions` nor `package` holds; a raising default; one reading
+/// a binder the call binds no argument for, or whose type the call's
+/// arguments do not close. So is the default of an argument the callee
+/// never uses ([`unused_arguments`], or the package body's
+/// [`MirFunction::removed_args`]), which upstream's `RemoveUnusedParams`
+/// removes with its evaluation.
 pub fn evaluate_omitted_defaults(
     functions: &mut [(String, MirFunction)],
     declarations: &MirDeclarations,
+    package: Option<&PackageBodies>,
 ) {
-    let unused: HashMap<String, Vec<SlotParameter>> = functions
+    let unused: HashMap<String, Option<Vec<SlotParameter>>> = functions
         .iter()
         .filter_map(|(name, function)| {
             let declaration = declarations.function(name)?;
-            declaration
-                .defaults
-                .iter()
-                .any(|default| matches!(default, Some(CheckedConst::Evaluate { .. })))
-                .then(|| {
-                    let unused = unused_arguments(name, function, declarations)
-                        .into_iter()
-                        .map(|slot| declaration.slot_parameter(slot as usize))
-                        .collect();
-                    (name.clone(), unused)
-                })
+            evaluates_defaults(declaration).then(|| {
+                let unused = unused_arguments(name, function, declarations)
+                    .into_iter()
+                    .map(|slot| declaration.slot_parameter(slot as usize))
+                    .collect();
+                (name.clone(), Some(unused))
+            })
         })
         .collect();
-    if unused.is_empty() {
+    if unused.is_empty() && package.is_none() {
         return;
     }
-    let callees = Callees {
+    let mut callees = Callees {
         declarations,
-        unused: &unused,
+        package,
+        unused,
     };
-    for (_, function) in functions {
+    for (name, function) in functions {
+        let caller = Caller::of(name, function);
         let mut blocks = std::mem::take(&mut function.blocks);
-        fill_blocks(&mut blocks, function, &callees);
+        fill_blocks(&mut blocks, function, &caller, &mut callees);
         function.blocks = blocks;
     }
 }
@@ -93,6 +98,7 @@ pub fn evaluated_at_call_site(
         .iter()
         .any(|own| own.lowered_name == name)
         && !declaration.has_receiver
+        && declaration.enclosing.is_none()
         && mojito_symbol::symbol::split_method_symbol(name).is_none()
         && declaration
             .positional_only
@@ -100,11 +106,95 @@ pub fn evaluated_at_call_site(
         && call_site_default(name, declaration, slot, declarations).is_some()
 }
 
+/// Whether `declaration` declares an evaluated default.
+fn evaluates_defaults(declaration: &MirFunctionDeclaration) -> bool {
+    declaration
+        .defaults
+        .iter()
+        .any(|default| matches!(default, Some(CheckedConst::Evaluate { .. })))
+}
+
+/// The binders in scope around `callee`, the function `name`, beside its
+/// own: its struct's, for a method, and for a nested function each
+/// enclosing function's and its struct's, innermost first.
+fn scope_binders(
+    name: &str,
+    callee: &MirFunctionDeclaration,
+    declarations: &MirDeclarations,
+) -> Vec<ParamDecl> {
+    let mut binders = Vec::new();
+    let mut scope = Some((name, callee));
+    while let Some((name, declaration)) = scope {
+        if !std::ptr::eq(declaration, callee) {
+            binders.extend(declaration.param_decls.iter().cloned());
+        }
+        if let Some(owner) = mojito_symbol::symbol::split_method_symbol(name)
+            .and_then(|(owner, _)| declarations.structure(owner))
+        {
+            binders.extend(owner.param_decls.iter().cloned());
+        }
+        scope = declaration.enclosing.as_deref().and_then(|enclosing| {
+            declarations
+                .function(enclosing)
+                .map(|declaration| (enclosing, declaration))
+        });
+    }
+    binders
+}
+
 /// The functions whose omitted evaluated defaults a call evaluates, each
-/// with the parameters its body never uses.
+/// with the parameters its body never uses: the program's own, and each
+/// package function a call reaches, whose finished body says which
+/// arguments it removed. `None` for a package body that did not finish.
 struct Callees<'a> {
     declarations: &'a MirDeclarations,
-    unused: &'a HashMap<String, Vec<SlotParameter>>,
+    package: Option<&'a PackageBodies>,
+    unused: HashMap<String, Option<Vec<SlotParameter>>>,
+}
+
+impl Callees<'_> {
+    /// The parameters `name`, so declared, never uses, once its omitted
+    /// defaults are the call's to evaluate.
+    fn unused(&mut self, name: &str, callee: &MirFunctionDeclaration) -> Option<&[SlotParameter]> {
+        if !self.unused.contains_key(name) {
+            let package = self.package?;
+            if !package.contains(name) || !evaluates_defaults(callee) {
+                return None;
+            }
+            let removed = package.get(name).map(|body| {
+                body.removed_args
+                    .iter()
+                    .map(|&slot| callee.slot_parameter(slot as usize))
+                    .collect()
+            });
+            self.unused.insert(name.to_string(), removed);
+        }
+        self.unused.get(name)?.as_deref()
+    }
+}
+
+/// The body whose calls are filled: its name, the function each register
+/// statically holds, and how many captures each closure it makes passes.
+struct Caller<'f> {
+    name: &'f str,
+    targets: HashMap<u32, (String, bool)>,
+    captures: HashMap<String, usize>,
+}
+
+impl<'f> Caller<'f> {
+    fn of(name: &'f str, function: &MirFunction) -> Self {
+        let mut captures = HashMap::new();
+        closure_captures(&function.blocks, &mut captures);
+        Self {
+            name,
+            targets: if captures.is_empty() {
+                HashMap::new()
+            } else {
+                callable_targets(function)
+            },
+            captures,
+        }
+    }
 }
 
 /// One omitted default the call evaluates: the parameter it fills and the
@@ -118,15 +208,20 @@ struct Omitted {
     arguments: Vec<TyArg>,
 }
 
-fn fill_blocks(blocks: &mut [MirBlock], function: &mut MirFunction, callees: &Callees<'_>) {
+fn fill_blocks(
+    blocks: &mut [MirBlock],
+    function: &mut MirFunction,
+    caller: &Caller<'_>,
+    callees: &mut Callees<'_>,
+) {
     for block in blocks {
         let instructions = std::mem::take(&mut block.instrs);
         let mut filled = Vec::with_capacity(instructions.len());
         for mut instruction in instructions {
             for region in instruction_regions_mut(&mut instruction) {
-                fill_blocks(region, function, callees);
+                fill_blocks(region, function, caller, callees);
             }
-            fill_call(&mut instruction, function, callees, &mut filled);
+            fill_call(&mut instruction, function, caller, callees, &mut filled);
             filled.push(instruction);
         }
         block.instrs = filled;
@@ -138,24 +233,31 @@ fn fill_blocks(blocks: &mut [MirBlock], function: &mut MirFunction, callees: &Ca
 fn fill_call(
     instruction: &mut MirInstr,
     function: &mut MirFunction,
-    callees: &Callees<'_>,
+    caller: &Caller<'_>,
+    callees: &mut Callees<'_>,
     prelude: &mut Vec<MirInstr>,
 ) {
-    let Some(site) = CallSite::of(instruction, function, callees.declarations) else {
+    let declarations = callees.declarations;
+    let Some(site) = CallSite::of(instruction, function, caller, declarations) else {
         return;
     };
-    let (Some(unused), Some(callee)) = (
-        callees.unused.get(site.callee),
-        callees.declarations.function(site.callee),
-    ) else {
+    let Some(callee) = declarations.function(&site.callee) else {
         return;
     };
+    let Some(unused) = callees.unused(&site.callee, callee) else {
+        return;
+    };
+    let skip = site.captures;
     let keywords: Vec<&str> = site.kwargs.iter().map(|(name, _)| name.as_str()).collect();
     let Ok(matched) = match_call_slots(
-        &callee.param_names,
-        &callee.required,
-        callee.positional_only,
-        callee.keyword_only,
+        callee.param_names.get(skip..).unwrap_or_default(),
+        callee.required.get(skip..).unwrap_or_default(),
+        callee
+            .positional_only
+            .and_then(|limit| limit.checked_sub(skip)),
+        callee
+            .keyword_only
+            .and_then(|limit| limit.checked_sub(skip)),
         site.args.len(),
         &keywords,
         CallVariadics {
@@ -169,11 +271,12 @@ fn fill_call(
         .slots
         .iter()
         .enumerate()
+        .map(|(slot, kind)| (slot + skip, kind))
         .filter(|(slot, kind)| {
             matches!(kind, ArgSlot::Default) && !unused.contains(&SlotParameter::Position(*slot))
         })
         .filter_map(|(slot, _)| {
-            omitted_default(site.callee, callee, slot, &site.bound, callees.declarations)
+            omitted_default(&site.callee, callee, slot, &site.bound, declarations)
         })
         .collect();
     let location = function
@@ -188,7 +291,7 @@ fn fill_call(
     site.arg_places.resize(site.args.len(), None);
     site.kwarg_places.resize(site.kwargs.len(), None);
     for default in omitted {
-        let positional = default.slot == site.args.len()
+        let positional = default.slot == skip + site.args.len()
             && default.slot < positional_limit
             && callee
                 .variadic_index
@@ -231,6 +334,7 @@ fn fill_call(
 }
 
 /// A call whose omitted defaults the caller may fill: the callee it names,
+/// the leading captures the callee declares that the call passes none of,
 /// its argument lists, and the arguments it binds each of the callee's
 /// binders to.
 ///
@@ -238,10 +342,13 @@ fn fill_call(
 /// static method's call and a method call bind the struct's to the
 /// arguments of its receiver's type too, as a default may read both. A
 /// receiver typed by the bare struct is the struct's own `Self`, whose
-/// binders stand for themselves.
+/// binders stand for themselves. A nested `def`'s call is the `call.indirect`
+/// of a closure the caller makes of a body it declares, whose enclosing
+/// binders ([`scope_binders`]) stand for themselves there too.
 struct CallSite<'i> {
     dest: Reg,
-    callee: &'i str,
+    callee: String,
+    captures: usize,
     args: &'i mut Vec<Reg>,
     kwargs: &'i mut Vec<(String, Reg)>,
     arg_places: &'i mut Vec<Option<MirPlace>>,
@@ -253,6 +360,7 @@ impl<'i> CallSite<'i> {
     fn of(
         instruction: &'i mut MirInstr,
         function: &MirFunction,
+        caller: &Caller<'_>,
         declarations: &MirDeclarations,
     ) -> Option<Self> {
         let (dest, callee, receiver, instantiated, args, kwargs, arg_places, kwarg_places) =
@@ -270,7 +378,7 @@ impl<'i> CallSite<'i> {
                     ..
                 } => (
                     *dest,
-                    func.0.as_str(),
+                    func.0.clone(),
                     receiver.clone(),
                     &*instantiated_args,
                     args,
@@ -292,7 +400,7 @@ impl<'i> CallSite<'i> {
                     ..
                 } => (
                     *dest,
-                    resolved.as_str(),
+                    resolved.clone(),
                     Some(
                         function
                             .reg_types
@@ -306,9 +414,51 @@ impl<'i> CallSite<'i> {
                     arg_places,
                     kwarg_places,
                 ),
+                MirInstr::CallIndirect {
+                    dest,
+                    callee,
+                    args,
+                    kwargs,
+                    arg_places,
+                    kwarg_places,
+                    instantiated_args,
+                    spread: None,
+                    ..
+                } => {
+                    let (target, _) = caller.targets.get(&callee.0)?;
+                    let declaration = declarations.function(target)?;
+                    if declaration.enclosing.as_deref() != Some(caller.name) {
+                        return None;
+                    }
+                    let own = declaration.param_decls.iter().cloned();
+                    let mut bound: Vec<(ParamDecl, TyArg)> =
+                        own.zip(instantiated_args.iter().cloned()).collect();
+                    bound.extend(
+                        scope_binders(target, declaration, declarations)
+                            .into_iter()
+                            .map(|decl| {
+                                let argument = decl.own_argument();
+                                (decl, argument)
+                            }),
+                    );
+                    return Some(Self {
+                        dest: *dest,
+                        captures: *caller.captures.get(target)?,
+                        callee: target.clone(),
+                        args,
+                        kwargs,
+                        arg_places,
+                        kwarg_places,
+                        bound,
+                    });
+                }
                 _ => return None,
             };
-        let own = declarations.function(callee)?.param_decls.iter().cloned();
+        let declaration = declarations.function(&callee)?;
+        if declaration.enclosing.is_some() {
+            return None;
+        }
+        let own = declaration.param_decls.iter().cloned();
         let mut bound: Vec<(ParamDecl, TyArg)> = own.zip(instantiated.iter().cloned()).collect();
         if let Some(receiver) = receiver {
             let TyKind::Struct(name, arguments) = receiver.kind() else {
@@ -335,6 +485,7 @@ impl<'i> CallSite<'i> {
         Some(Self {
             dest,
             callee,
+            captures: 0,
             args,
             kwargs,
             arg_places,
@@ -380,18 +531,15 @@ fn omitted_default(
 
 /// The lifted function and declaration of the evaluated default `callee`,
 /// the function `name`, declares at `slot`, when a call can evaluate it:
-/// `callee` is not nested, the default takes no runtime argument, its
-/// parameter is passed by value, and the default does not raise and binds
-/// only `callee`'s binders and its struct's.
+/// the default takes no runtime argument, its parameter is passed by
+/// value, and the default does not raise and binds only `callee`'s binders
+/// and those of the scopes around it ([`scope_binders`]).
 fn call_site_default<'d>(
     name: &str,
     callee: &'d MirFunctionDeclaration,
     slot: usize,
     declarations: &'d MirDeclarations,
 ) -> Option<(&'d String, &'d MirFunctionDeclaration)> {
-    if callee.enclosing.is_some() {
-        return None;
-    }
     let Some(CheckedConst::Evaluate {
         function,
         arguments,
@@ -406,16 +554,14 @@ fn call_site_default<'d>(
     {
         return None;
     }
-    let owner = mojito_symbol::symbol::split_method_symbol(name)
-        .and_then(|(owner, _)| declarations.structure(owner))
-        .map_or(&[][..], |owner| &owner.param_decls);
+    let scope = scope_binders(name, callee, declarations);
     let thunk = declarations.function(function)?;
     (!thunk.raises
         && thunk.param_decls.iter().all(|decl| {
             callee
                 .param_decls
                 .iter()
-                .chain(owner)
+                .chain(&scope)
                 .any(|own| own.id() == decl.id())
         }))
     .then_some((function, thunk))
@@ -496,4 +642,22 @@ fn fresh_reg(function: &mut MirFunction, location: Option<SourceSpan>, ty: Ty) -
         function.spans.0.insert(reg.0, (location, None));
     }
     reg
+}
+
+/// How many captures each closure `blocks` make passes, by the body it
+/// closes over.
+fn closure_captures(blocks: &[MirBlock], captures: &mut HashMap<String, usize>) {
+    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+        if let MirInstr::MakeClosure {
+            function,
+            captures: captured,
+            ..
+        } = instruction
+        {
+            captures.insert(function.clone(), captured.len());
+        }
+        for region in instruction_regions(instruction) {
+            closure_captures(region, captures);
+        }
+    }
 }

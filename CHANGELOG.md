@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call of a nested `def` from the body declaring it, and the program's
+  call of a function or method the bundled package compiled, evaluate an
+  omitted evaluated default at the call site (R1023), as upstream does:
+  a nested `def`'s borrowed default with a destructor is now destroyed
+  when the call returns, as on the pin, and a bundled callee's default is
+  skipped for an argument its finished body removed.
 - A method call, a static-method call, and a construction evaluate an
   omitted evaluated default at the call site (R1022), as upstream does,
   binding the struct's parameters from the receiver's type and the

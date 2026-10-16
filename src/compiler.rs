@@ -585,7 +585,9 @@ impl Compiler {
             let _lower = timing::span("mir.lower");
             crate::mir::lower_checked_program_importing(
                 &checked,
-                package.as_deref().map(|package| &package.declarations),
+                package
+                    .as_deref()
+                    .map(|package| (&package.declarations, &package.bodies)),
             )
         };
         timing::count("mir_functions", mir.functions.len() as u64);

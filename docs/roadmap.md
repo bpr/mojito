@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1055**.
+Next free ID: **R1058**.
 
 ## Ordered Work
 
@@ -864,19 +864,50 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1053, R1023.
   - Model: Opus, Not Planned.
 
-- [ ] **R1023 A nested function's or a bundled function's omitted
-  evaluated default is evaluated by the callee**
+- [ ] **R1055 A package body's call of a package function another unit
+  lowers leaves its omitted evaluated default to the callee**
 
-  A call of a nested `def` or of a free function the bundled package
-  compiled leaves its evaluated default to the callee's binding, where
-  upstream fills it in at the call site.
-  - A nested call prepends its captures to `args`, so the call's binding
-    against the declaration needs them skipped.
-  - A callee outside the lowered set has no body at hand, so
-    `unused_arguments` cannot say whether its argument is removed;
-    the package would have to record that per function.
-  - Found while landing R1004 (2026-10-15).
+  A bundled body calling a bundled function from another lowering unit
+  binds the omitted default in the callee, where upstream fills it in at
+  the call site.
+  - `lower_package_unit` passes `mir::evaluate_omitted_defaults` no
+    package bodies, so only a callee of the same unit is filled.
+  - Reading another unit's finished body there would lower it from inside
+    a unit's lowering; it needs a cycle-safe view of each package
+    function's removed arguments, or recording them in the package.
+  - Found while landing R1023 (2026-10-16).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1056 A nested `def` called from a sibling evaluates its omitted
+  default in the callee**
+
+  `sib` calling a sibling `plain(r: Owner = Owner(...))` leaves the
+  default to `plain`'s binding, so the borrowed `Owner` is never
+  destroyed, where the pin prints `drop sib`.
+  - `mir::evaluate_omitted_defaults` resolves a nested call only through a
+    closure the caller itself makes; a sibling reaches `plain` through a
+    capture, which `callable_targets` does not follow.
+  - Resolve the captured closure as the elaborator's
+    `capture_arguments` does, and bind the enclosing binders the sibling
+    shares.
+  - Found while landing R1023 (2026-10-16).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1057 A binder read only by a nested `def`'s evaluated default
+  is kept**
+
+  `inner(x: Int, y: Int = n * 3)` nested in `outer[n]` still reads `n`
+  through its default, where the pin, evaluating it at the call site,
+  removes `n` from `inner`.
+  - `mir::evaluated_at_call_site` excludes a nested callee, since a
+    sibling's call (R1056) still leaves its default to the callee.
+  - Once every call of a nested body fills its defaults, drop the
+    `enclosing` check there and add a case to
+    `assets/ok/nested_unread_enclosing_instances.mojo`.
+  - Found while landing R1023 (2026-10-16).
+  - Depends on R1056.
   - Model: Opus, Not Planned.
 
 - [ ] **R1024 A callee's declaration still names an evaluated default per

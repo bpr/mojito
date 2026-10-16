@@ -683,14 +683,19 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
 /// A declaration the package compiled is not lowered again, and the
 /// package's MIR declarations are attached to the program's before its
 /// functions are closed and verified. The package's functions stay out of the result; a
-/// consumer reaches them through the package.
+/// consumer reaches them through the package, whose bodies a call omitting
+/// a package function's evaluated default reads for the arguments it
+/// removed ([`evaluate_omitted_defaults`]).
 ///
 /// # Panics
 ///
 /// As [`lower_checked_program`].
 pub fn lower_checked_program_importing(
     checked: &CheckedProgram,
-    package: Option<&std::sync::Arc<text::package::PackageDeclarations>>,
+    package: Option<(
+        &std::sync::Arc<text::package::PackageDeclarations>,
+        &text::package::PackageBodies,
+    )>,
 ) -> MirProgram {
     lower_program(checked, package).0
 }
@@ -829,7 +834,7 @@ pub fn lower_package_unit(
         &mut MirDeclarations::default(),
         &mut invariant_errors,
     );
-    evaluate_omitted_defaults(&mut functions, declarations);
+    evaluate_omitted_defaults(&mut functions, declarations, None);
     for (name, function) in &mut functions {
         close_register_types(name, function, declarations, &mut invariant_errors);
         name_constructors(function, declarations);
@@ -848,7 +853,10 @@ pub fn lower_package_unit(
 
 fn lower_program(
     checked: &CheckedProgram,
-    package: Option<&std::sync::Arc<text::package::PackageDeclarations>>,
+    package: Option<(
+        &std::sync::Arc<text::package::PackageDeclarations>,
+        &text::package::PackageBodies,
+    )>,
 ) -> (MirProgram, Vec<std::ops::Range<usize>>) {
     let mut functions = Vec::new();
     let mut declarations = MirDeclarations {
@@ -938,12 +946,16 @@ fn lower_program(
     // The synthetic module initializer returns nothing and never raises.
     toplevel_fn.ret_ty = Some(Ty::none());
     functions.push(("__toplevel__".to_string(), toplevel_fn));
-    if let Some(compiled) = package {
+    if let Some((compiled, _)) = package {
         link::link_declarations(&mut declarations, compiled);
     }
     adopt_member_defaults(checked, &mut declarations, &mut invariant_errors);
     record_lifecycle_members(&mut declarations);
-    evaluate_omitted_defaults(&mut functions, &declarations);
+    evaluate_omitted_defaults(
+        &mut functions,
+        &declarations,
+        package.map(|(_, bodies)| bodies),
+    );
     {
         let _close = timing::span("close_register_types");
         for (name, function) in &mut functions {

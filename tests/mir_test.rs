@@ -4921,3 +4921,74 @@ def main():
         .collect();
     assert_eq!(get_arities, [1, 1]);
 }
+
+#[test]
+fn nested_and_bundled_calls_evaluate_omitted_defaults() {
+    let mir = driver_mir(
+        r#"
+def outer[n: Int](k: Int) -> Int:
+    var base = k
+
+    def inner(x: Int, y: Int = n * 3) {imm base} -> Int:
+        return base + x + y
+
+    return inner(1) + inner(1, 2)
+
+
+def main() raises:
+    print(outer[2](10))
+    with open("/dev/null", "r") as f:
+        print(f.seek(0))
+"#,
+    );
+    let calls = |name: &str| -> Vec<MirInstr> {
+        mojito::mir::nested_instructions(&mir_function(&mir, name).blocks)
+            .into_iter()
+            .cloned()
+            .collect()
+    };
+    let defaults = |instructions: &[MirInstr]| -> Vec<(String, usize)> {
+        instructions
+            .iter()
+            .filter_map(|instruction| match instruction {
+                MirInstr::Call {
+                    func,
+                    instantiated_args,
+                    ..
+                } if func.0.starts_with("$default$") => {
+                    Some((func.0.clone(), instantiated_args.len()))
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    let outer = calls("outer");
+    assert_eq!(
+        defaults(&outer),
+        [("$default$outer$inner$y".to_string(), 1)]
+    );
+    let inner_arities: Vec<usize> = outer
+        .iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::CallIndirect { args, .. } => Some(args.len()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(inner_arities, [2, 2]);
+    let main = calls("main");
+    assert!(
+        defaults(&main)
+            .iter()
+            .any(|(name, _)| name.ends_with("FileHandle.seek$whence")),
+        "{:?}",
+        defaults(&main)
+    );
+    let seek_arities: Vec<usize> = main
+        .iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::MethodCall { method, args, .. } if method == "seek" => Some(args.len()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(seek_arities, [2]);
+}
