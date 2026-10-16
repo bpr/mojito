@@ -2677,33 +2677,24 @@ impl<'a> Specializer<'a> {
                                     if let Some((_, concrete)) = &bindings.self_instance {
                                         function.reg_types.insert(dest.0, concrete.clone());
                                     }
-                                    // An instance keyed by the call's element
-                                    // count, by a generic constructor's own
-                                    // binders, or by none of its struct's
-                                    // instance (one that removed a struct
-                                    // parameter, as upstream's direct call
-                                    // names the reduced constructor) has a
-                                    // symbol no by-name constructor lookup
-                                    // composes: the call names it.
-                                    let arity_keyed = bindings.variadic_arity.is_some();
-                                    let own_keyed = instantiated_args.len()
-                                        > self
-                                            .structs
-                                            .get(template.as_str())
-                                            .map_or(0, |owner| owner.param_decls.len());
-                                    let instance = self.enqueue(&target, bindings, arguments)?;
-                                    let owner_less = matches!(
-                                        function.reg_types.get(&dest.0).map(Ty::kind),
-                                        Some(TyKind::Struct(concrete, _))
-                                            if mojito_symbol::symbol::split_method_symbol(&instance)
-                                                .is_some_and(|(owner, _)| owner != concrete)
-                                    );
-                                    if arity_keyed || own_keyed || owner_less {
-                                        func.0 = instance;
-                                        param_arg_regs.clear();
-                                        instantiated_args.clear();
-                                        continue;
+                                    // The call names the constructor instance
+                                    // it reaches, as upstream's names the
+                                    // constructor's symbol.
+                                    let reduced = bindings.reduced;
+                                    func.0 = self.enqueue(&target, bindings, arguments)?;
+                                    if reduced {
+                                        self.drop_removed_arguments(
+                                            owner,
+                                            &target,
+                                            args,
+                                            arg_places,
+                                            kwargs,
+                                            kwarg_places,
+                                        )?;
                                     }
+                                    param_arg_regs.clear();
+                                    instantiated_args.clear();
+                                    continue;
                                 }
                                 // A generic struct's output declaration is
                                 // instance-named; respell the constructor

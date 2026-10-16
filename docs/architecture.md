@@ -5360,10 +5360,13 @@ point where a slot declared in a loop is uninitialized again.
   (`mir::MirDeclarations::reached_from_type`, `Specializer::table_key`,
   R1006). Those stay live through the calls that name them, and the VM
   reads the table where a composed `{struct}.{method}` name defines
-  nothing. A constructor that removed one of its struct's
-  parameters is owner-less like any other method: the elaborator respells
-  each construction that reaches it to name it, as upstream's direct call
-  names the reduced constructor, and the VM builds the call's destination
+  nothing. A construction a compiled `__init__` serves names the
+  constructor instance it reaches, as upstream's call names the
+  constructor's symbol: the elaborator respells every call naming such a
+  struct, `make[String]()`'s `T()` included, so no backend resolves an
+  overload by arity for it; only a fieldwise struct with no `__init__` and
+  `T(copy=x)` keep the struct's name. A constructor that removed one of its
+  struct's parameters is owner-less like any other method, and the VM builds the call's destination
   type through it (`Prog::lifecycle_constructor`, `CallTypes::constructed`),
   so `Box[1](1)` and `Box[2](2)` share one `Box.__init__$mono`. The two
   constructors a backend runs with no call naming them, a keyword

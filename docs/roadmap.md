@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1029**.
+Next free ID: **R1030**.
 
 ## Ordered Work
 
@@ -382,23 +382,21 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1007 The elaborator leaves a call naming a struct for the
-  backends to resolve to a constructor at run time**
+- [ ] **R1029 The backends still resolve a call naming a struct to an
+  `__init__` overload by arity**
 
-  `make[String]()`'s `T()` reaches the concrete program as a call naming
-  `String`, which the VM's `constructor_name` and native lowering's
-  `constructor_init` each resolve to an `__init__` overload by arity, where
-  upstream's call names the constructor's symbol.
-  - The elaborator already resolves and enqueues that constructor
-    (`mono/specializer.rs`'s struct-named `Call` arm); it respells the call
-    only when the instance is arity- or own-keyed.
-  - Respell every such call to the constructor instance it enqueued, as a
-    direct constructor call already runs in both backends; a fieldwise
-    struct with no `__init__` and `T(copy=x)` keep their forms.
-  - Done when no concrete call naming a struct with a compiled `__init__`
-    remains in `assets/ok/string_default_construction.mojo` and the HEAD
-    differential is clean.
-  - Found while landing R993 (2026-10-15).
+  The concrete program names every compiled constructor a call reaches,
+  yet the VM's `Call` arms (`exec.rs`, `dispatch.rs`) and Pliron's
+  `constructor_init`/`constructor_init_target` still look one up by arity
+  for a call naming a struct, where upstream's backends take the symbol
+  the call names.
+  - Only a fieldwise struct with no `__init__` and `T(copy=x)` reach
+    those arms now.
+  - Drop the by-arity lookup there, keeping the VM-synthesized
+    constructions (`construct_via_init` with no target) that name no call.
+  - Done when neither backend's `Call` lowering resolves a constructor by
+    arity and the HEAD differential is clean.
+  - Found while landing R1007 (2026-10-15).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

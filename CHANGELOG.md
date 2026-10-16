@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Every construction a compiled `__init__` serves names its constructor
+  instance in the concrete program (R1007), as upstream's call names the
+  constructor's symbol: `make[String]()`'s `T()` calls
+  `String.__init__$ov$` instead of a call naming `String` that the VM and
+  native lowering each resolved to an overload by arity. A fieldwise
+  struct with no `__init__` and `T(copy=x)` keep the struct's name.
 - `s & t` over two `Set[Int]` values, and
   `benchmarks/compile/collections_many.mojo`, elaborate again (R1026):
   R995's erasure of a removed parameter's valueless argument fixed the
