@@ -1,4 +1,4 @@
-mojito-mir 1.61
+mojito-mir 1.72
 artifact {
   features: [],
   files: [
@@ -73,7 +73,7 @@ artifact {
       },
       fn {
         name: destructor_drop,
-        registers: 5,
+        registers: 7,
         vars: 3,
         var_names: [x, d, n],
         params: 1,
@@ -86,8 +86,8 @@ artifact {
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "destructor_drop", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 291, end: 292, origin: present($v2) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 294, end: 295, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 289, end: 296, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 308, end: 311, origin: present($v1) }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 308, end: 311, origin: present($v1) }) }],
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "destructor_drop", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "destructor_drop", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r6, type: None }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 291, end: 292, origin: present($v2) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 294, end: 295, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 289, end: 296, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 308, end: 311, origin: present($v1) }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 308, end: 311, origin: present($v1) }) }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }],
         blocks: [
           bb0 {
             instructions: [
@@ -97,7 +97,8 @@ artifact {
               call { dest: %r2, func: D, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: present(%r0), expr: present(param_decl_ref { owner: "destructor_drop", slot: 0, name: n, type: meta_value(Int) }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "destructor_drop", slot: 0, name: n, type: meta_value(Int) }))], spread: absent },
               var.store { var: $v1, src: %r2, binding_type: present(struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "destructor_drop", slot: 0, name: n, type: meta_value(Int) }))] }), in_place: true },
               place.load { dest: %r3, place: place { root: $v1, root_type: present(struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "destructor_drop", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
-              drop.var { var: $v1, destructor: "D.__deinit__" },
+              var.use { dest: %r5, var: $v1, mode: forward },
+              call.method { dest: %r6, recv: %r5, method: __deinit__, resolved: present("D.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
               value.copy { dest: %r4, value: %r3 }
             ],
             terminator: return { value: present(%r4) }

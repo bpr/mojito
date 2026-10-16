@@ -65,6 +65,8 @@ mod copies;
 pub use copies::{Relocated, StructDeclarations, relocated_structs};
 mod destroys;
 pub use destroys::{Destroyed, StructFields, destroyed_structs};
+mod drop_calls;
+pub use drop_calls::lower_whole_drops;
 mod facts;
 pub mod link;
 mod lower_control_flow;

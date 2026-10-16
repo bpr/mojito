@@ -54,7 +54,7 @@
       },
       fn {
         name: spend,
-        registers: 2,
+        registers: 4,
         vars: 1,
         var_names: [t],
         params: 1,
@@ -67,13 +67,14 @@
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 963, end: 967, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 963, end: 967, origin: present($v0) }) }],
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: Token, arguments: [] } }, reg_type { reg: %r3, type: None }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 963, end: 967, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 963, end: 967, origin: present($v0) }) }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }],
         blocks: [
           bb0 {
             instructions: [
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Token, arguments: [] }), projections: [projection { op: field(id), type: Int }], type: present(Int), through: absent } },
-              drop.var { var: $v0, destructor: "Token.__deinit__" },
+              var.use { dest: %r2, var: $v0, mode: forward },
+              call.method { dest: %r3, recv: %r2, method: __deinit__, resolved: present("Token.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
               value.copy { dest: %r1, value: %r0 }
             ],
             terminator: return { value: present(%r1) }
@@ -82,7 +83,7 @@
       },
       fn {
         name: owned_param_dropped,
-        registers: 6,
+        registers: 8,
         vars: 3,
         var_names: [x, "$fwd_arg_r1", "t$inline2"],
         params: 1,
@@ -95,8 +96,8 @@
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: Token, arguments: [] } }, reg_type { reg: %r2, type: struct_type { name: Token, arguments: [] } }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 1033, end: 1034, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 1027, end: 1035, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 1027, end: 1035, origin: present($v1) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 1021, end: 1036, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 1021, end: 1036, origin: absent }) }, reg_loc { reg: %r5, location: absent }],
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: Token, arguments: [] } }, reg_type { reg: %r2, type: struct_type { name: Token, arguments: [] } }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r6, type: struct_type { name: Token, arguments: [] } }, reg_type { reg: %r7, type: None }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 1033, end: 1034, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 1027, end: 1035, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 1027, end: 1035, origin: present($v1) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 1021, end: 1036, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 1021, end: 1036, origin: absent }) }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 1021, end: 1036, origin: absent }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 1021, end: 1036, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
@@ -111,7 +112,8 @@
           bb1 {
             instructions: [
               place.load { dest: %r4, place: place { root: $v2, root_type: present(struct_type { name: Token, arguments: [] }), projections: [projection { op: field(id), type: Int }], type: present(Int), through: absent } },
-              drop.var { var: $v2, destructor: "Token.__deinit__" },
+              var.use { dest: %r6, var: $v2, mode: forward },
+              call.method { dest: %r7, recv: %r6, method: __deinit__, resolved: present("Token.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
               value.copy { dest: %r3, value: %r4 }
             ],
             terminator: jump { target: bb2 }

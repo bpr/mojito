@@ -115,7 +115,7 @@
       },
       fn {
         name: take,
-        registers: 2,
+        registers: 4,
         vars: 1,
         var_names: [b],
         params: 1,
@@ -128,13 +128,14 @@
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 310, end: 314, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 310, end: 314, origin: present($v0) }) }],
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: Box, arguments: [] } }, reg_type { reg: %r3, type: None }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 310, end: 314, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 310, end: 314, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 310, end: 314, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 310, end: 314, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [] }), projections: [projection { op: field(id), type: Int }], type: present(Int), through: absent } },
-              drop.var { var: $v0, destructor: "Box.__deinit__" },
+              var.use { dest: %r2, var: $v0, mode: forward },
+              call.method { dest: %r3, recv: %r2, method: __deinit__, resolved: present("Box.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
               value.copy { dest: %r1, value: %r0 }
             ],
             terminator: return { value: present(%r1) }

@@ -51,6 +51,18 @@ pub fn prune_unreachable_blocks(function: &mut MirFunction) {
     super::verify::cut_try_cleanups(function);
 }
 
+/// A fresh register of `function`, of type `ty`, located at `span` when it
+/// has a location.
+pub fn fresh_register(function: &mut MirFunction, ty: Ty, span: Option<&SourceSpan>) -> Reg {
+    let reg = Reg(function.n_regs);
+    function.n_regs += 1;
+    function.reg_types.insert(reg.0, ty);
+    if let Some(span) = span {
+        function.spans.0.insert(reg.0, (span.clone(), None));
+    }
+    reg
+}
+
 /// Every region an instruction holds, each a block list with local block
 /// ids.
 ///

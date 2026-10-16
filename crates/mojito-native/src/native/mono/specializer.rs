@@ -1098,6 +1098,7 @@ impl<'a> Specializer<'a> {
         }
         self.discover_structs(&key.template, &function)?;
         self.name_lifecycle_calls(&key.template, &mut function)?;
+        mojito_mir::mir::lower_whole_drops(&mut function);
         self.answer_layout_queries(&key.template, &mut function)?;
         ensure_concrete_function(&key.template, &name, &function)?;
         self.output_positions

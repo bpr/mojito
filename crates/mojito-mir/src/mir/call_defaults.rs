@@ -15,7 +15,7 @@ use crate::mir::{
     Const, FORWARDED_ARGUMENT_SLOT, FuncRef, LoweredCall, MirBlock, MirDeclarations, MirFunction,
     MirFunctionDeclaration, MirInstr, MirPlace, MirSubscriptArg, READ_TEMPORARY_SLOT, Reg, UseMode,
     callable_targets, calls::literal_materializes_to, calls::owns_droppable_storage,
-    instruction_regions_mut,
+    fresh_register, instruction_regions_mut,
 };
 use mojito_ast::ast::ArgConvention;
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
@@ -221,9 +221,9 @@ fn fill_call(
             && callee
                 .variadic_index
                 .is_none_or(|collector| default.slot < collector);
-        let value = evaluate_default(function, &default, location.clone(), prelude);
+        let value = evaluate_default(function, &default, location.as_ref(), prelude);
         let argument = if owns_droppable_storage(&default.ty) {
-            bind_temporary(function, value, &default, location.clone(), prelude)
+            bind_temporary(function, value, &default, location.as_ref(), prelude)
         } else {
             value
         };
@@ -800,7 +800,7 @@ fn close_parameter_type(ty: &Ty, bound: &[(ParamDecl, TyArg)]) -> Option<Ty> {
 fn evaluate_default(
     function: &mut MirFunction,
     default: &Omitted,
-    location: Option<SourceSpan>,
+    location: Option<&SourceSpan>,
     prelude: &mut Vec<MirInstr>,
 ) -> Reg {
     evaluate_constant(function, &default.default, &default.ty, location, prelude)
@@ -810,7 +810,7 @@ fn evaluate_constant(
     function: &mut MirFunction,
     default: &CheckedConst,
     ty: &Ty,
-    location: Option<SourceSpan>,
+    location: Option<&SourceSpan>,
     prelude: &mut Vec<MirInstr>,
 ) -> Reg {
     match default {
@@ -818,7 +818,7 @@ fn evaluate_constant(
             function: thunk,
             arguments,
         } => {
-            let value = fresh_reg(function, location, ty.clone());
+            let value = fresh_register(function, ty.clone(), location);
             prelude.push(MirInstr::Call {
                 dest: value,
                 func: FuncRef::named(thunk),
@@ -837,8 +837,8 @@ fn evaluate_constant(
         }
         CheckedConst::Construct { target, arg } => {
             let literal_ty = literal_type(arg);
-            let argument = evaluate_constant(function, arg, &literal_ty, location.clone(), prelude);
-            let value = fresh_reg(function, location, ty.clone());
+            let argument = evaluate_constant(function, arg, &literal_ty, location, prelude);
+            let value = fresh_register(function, ty.clone(), location);
             // The spelled instance names the struct the constructor builds,
             // as a static call's receiver does.
             let receiver =
@@ -862,7 +862,7 @@ fn evaluate_constant(
         }
         literal => {
             let literal_ty = literal_type(literal);
-            let value = fresh_reg(function, location.clone(), literal_ty.clone());
+            let value = fresh_register(function, literal_ty.clone(), location);
             prelude.push(MirInstr::Const {
                 dest: value,
                 k: literal_constant(literal),
@@ -907,13 +907,13 @@ fn materialize(
     value: Reg,
     found: &Ty,
     target: &Ty,
-    location: Option<SourceSpan>,
+    location: Option<&SourceSpan>,
     prelude: &mut Vec<MirInstr>,
 ) -> Reg {
     if !literal_materializes_to(found, target) {
         return value;
     }
-    let dest = fresh_reg(function, location, target.clone());
+    let dest = fresh_register(function, target.clone(), location);
     if let Some((dtype, width)) = mojito_types::types::simd_slots(target)
         && width.known().is_none_or(|width| width > 1)
     {
@@ -941,7 +941,7 @@ fn bind_temporary(
     function: &mut MirFunction,
     value: Reg,
     default: &Omitted,
-    location: Option<SourceSpan>,
+    location: Option<&SourceSpan>,
     prelude: &mut Vec<MirInstr>,
 ) -> Reg {
     let prefix = if default.owned {
@@ -959,7 +959,7 @@ fn bind_temporary(
         binding_ty: Some(default.ty.clone()),
         in_place: default.owned,
     });
-    let read = fresh_reg(function, location, default.ty.clone());
+    let read = fresh_register(function, default.ty.clone(), location);
     prelude.push(if default.owned {
         MirInstr::UseVar {
             dest: read,
@@ -974,14 +974,4 @@ fn bind_temporary(
         }
     });
     read
-}
-
-fn fresh_reg(function: &mut MirFunction, location: Option<SourceSpan>, ty: Ty) -> Reg {
-    let reg = Reg(function.n_regs);
-    function.n_regs += 1;
-    function.reg_types.insert(reg.0, ty);
-    if let Some(location) = location {
-        function.spans.0.insert(reg.0, (location, None));
-    }
-    reg
 }

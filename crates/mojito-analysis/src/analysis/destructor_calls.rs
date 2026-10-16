@@ -9,19 +9,25 @@
 //! no consumer looks the destructor up from the value's type again. A drop
 //! of a type the member table names no `__deinit__` for, a symbolic one
 //! included, keeps `None`: the elaborator names an instance's destructor
-//! once its type is concrete.
+//! once its type is concrete. A named drop whose slot holds a whole value
+//! on every path to it then becomes the call upstream leaves
+//! (`mir::lower_whole_drops`), the elaborator doing the same once it has
+//! named an instance's.
 
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
-    CleanupDrop, MirBlock, MirDeclarations, MirFunction, MirInstr, MirTerm, instruction_regions_mut,
+    CleanupDrop, MirBlock, MirDeclarations, MirFunction, MirInstr, MirTerm,
+    instruction_regions_mut, lower_whole_drops,
 };
 use mojito_types::types::Ty;
 use std::collections::HashMap;
 
 /// Name the destructor of every drop in `function`, regions and cleanup
-/// lists included.
+/// lists included, and lower each named drop of a whole slot to the call
+/// of its destructor.
 pub fn name_destructors(function: &mut MirFunction, declarations: &MirDeclarations) {
     name_in_blocks(&mut function.blocks, &function.var_tys, declarations);
+    lower_whole_drops(function);
 }
 
 fn name_in_blocks(
