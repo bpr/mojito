@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A positional-only parameter's evaluated default no longer reads the
+  free function's parameters when every earlier omitted default is
+  filled at the call site too (R1025), as on the pin:
+  `ponly[n, m](x: Int, y: Int = m * 2, /)` has one instance per `n`. One
+  after an omitted literal default (R1061) or an unused one (R1062), and a
+  bundled function's (R1063), still read them.
 - A call of a free function's value (`var g = use; g()`) evaluates an
   omitted evaluated default at the call site (R1024), as upstream does: a
   borrowed default with a destructor is now destroyed when the call

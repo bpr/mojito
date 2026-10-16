@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1061**.
+Next free ID: **R1064**.
 
 ## Ordered Work
 
@@ -962,23 +962,54 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1053, R1055, R1056, R1058, R1059, R1025.
   - Model: Opus, Not Planned.
 
-- [ ] **R1025 A parameter read only by a bundled function's or a
-  positional-only parameter's evaluated default is kept**
+- [ ] **R1061 A positional-only parameter's evaluated default after an
+  omitted literal default is left to the callee**
+
+  `plit[n, m](x: Int = 1, y: Int = m * 2, /)` keeps `m`, where the pin,
+  evaluating every omitted default at the call site, removes it.
+  - `mir::evaluate_omitted_defaults` fills only an evaluated default, so a
+    call omitting `x` passes nothing for it and cannot pass `y` by
+    position.
+  - Fill an omitted literal default at the call site too, as upstream's
+    call spells it, then admit such a slot in
+    `mir::evaluated_at_call_site`'s `earlier_defaults_filled`.
+  - Add `plit` to `assets/ok/lifted_body_owner_instances.mojo`.
+  - Found while landing R1025 (2026-10-16).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1062 A positional-only parameter's evaluated default after an
+  unused omitted one is left to the callee**
+
+  `pafter[n, m](x: Int = side(), y: Int = m * 2, /)` returning `n + y`
+  keeps one instance per `(n, m)`, where the pin has one per `n`.
+  - The call evaluates no default for the unused `x`, as its removed
+    parameter takes none, so it cannot pass `y` by position before the
+    elaborator drops `x`'s operand.
+  - It needs a valueless operand for a removed argument, which the
+    verifier and ownership analysis accept and the elaborator drops, as
+    upstream's call of the `_REMOVED_ARG` generator passes none.
+  - Then admit the slot in `mir::evaluated_at_call_site` and add `pafter`
+    to `assets/ok/lifted_body_owner_instances.mojo`.
+  - Found while landing R1025 (2026-10-16).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1063 A parameter read only by a bundled function's evaluated
+  default is kept**
 
   A bundled generic function whose evaluated default alone reads `n`
   keeps `n`, where the pin, evaluating the default at the call site,
   removes it.
-  - `mir::evaluated_at_call_site` counts only a default of the program's
-    own free function, by value and not positional-only, as no read.
-  - A bundled callee's default is the callee's until R1023, so its
-    signature must still read it; once R1023 lands, drop the own-function
-    check.
-  - A positional-only slot after an unused, unfilled one is left to the
-    callee; filling it in that case too lets the check go.
-  - Add a bundled and a positional-only case to
-    `assets/ok/lifted_body_owner_instances.mojo`.
-  - Found while landing R1005 (2026-10-15).
-  - Depends on R1023.
+  - `mir::evaluated_at_call_site` admits only the program's own function,
+    since a package body's call across units still leaves the default to
+    the callee (R1055).
+  - Once every call of a package function fills its defaults, drop the
+    own-function check.
+  - std declares no generic function with such a default today, so pin
+    the rule with a parameter-removal test over a package body.
+  - Found while landing R1025 (2026-10-16).
+  - Depends on R1055.
   - Model: Opus, Not Planned.
 
 - [ ] **R983 With the pre-elaboration pipeline off, a capturing callable

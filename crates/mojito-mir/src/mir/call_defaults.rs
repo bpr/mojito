@@ -83,9 +83,12 @@ pub fn evaluate_omitted_defaults(
 /// evaluates its default itself ([`evaluate_omitted_defaults`]).
 ///
 /// It is an evaluated default of a free function the program itself
-/// declares, by value, that does not raise, reads only `name`'s binders,
-/// and fills no positional-only slot, which an earlier unfilled one could
-/// leave to the callee. Such a default is no read of `name`, as upstream's
+/// declares, by value, that does not raise and reads only `name`'s
+/// binders. A positional-only slot is filled only after every earlier
+/// omitted one is, so each earlier default must be one too, and kept:
+/// `declaration`, when it is the generator without its unused arguments
+/// ([`crate::mir::without_removed_arguments`]), lacks a removed one, which a
+/// call leaves unfilled. Such a default is no read of `name`, as upstream's
 /// callee names none. A method's is still a read: a subscript leaves it to
 /// the callee.
 pub fn evaluated_at_call_site(
@@ -101,10 +104,11 @@ pub fn evaluated_at_call_site(
         && !declaration.has_receiver
         && declaration.enclosing.is_none()
         && mojito_symbol::symbol::split_method_symbol(name).is_none()
-        && declaration
+        && call_site_default(name, declaration, slot, declarations).is_some()
+        && (declaration
             .positional_only
             .is_none_or(|limit| slot >= limit)
-        && call_site_default(name, declaration, slot, declarations).is_some()
+            || earlier_defaults_filled(name, declaration, slot, declarations))
 }
 
 /// Whether `declaration` declares an evaluated default.
@@ -573,6 +577,33 @@ fn call_site_default<'d>(
                 .any(|own| own.id() == decl.id())
         }))
     .then_some((function, thunk))
+}
+
+/// Whether a call omitting `slot` of `name`, so declared, fills every
+/// earlier omitted slot of its full declaration: each defaulted one is a
+/// [`call_site_default`] that `declaration` still declares.
+fn earlier_defaults_filled(
+    name: &str,
+    declaration: &MirFunctionDeclaration,
+    slot: usize,
+    declarations: &MirDeclarations,
+) -> bool {
+    let Some(full) = declarations.function(name) else {
+        return false;
+    };
+    let Some(position) = declaration
+        .param_names
+        .get(slot)
+        .and_then(|own| full.param_names.iter().position(|name| name == own))
+    else {
+        return false;
+    };
+    (0..position)
+        .filter(|&earlier| !full.required.get(earlier).copied().unwrap_or(true))
+        .all(|earlier| {
+            declaration.param_names.contains(&full.param_names[earlier])
+                && call_site_default(name, full, earlier, declarations).is_some()
+        })
 }
 
 /// `ty`, a parameter type of the callee, under the call's `bound`

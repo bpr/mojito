@@ -5,12 +5,22 @@
 # evaluated default is the call site's, so it reads none of the callee's
 # parameters: `dflt[n, m]` returning `x` has one instance, and
 # `scaled[n, m]`, defaulting `x` to `m * 2`, one per `n`, as on the pin.
+# So is a positional-only one every earlier omitted default precedes:
+# `ponly[n, m]` has one instance per `n`, and `pboth[n, m]` one.
 def dflt[n: Int, m: Int](x: Int = n * 2) -> Int:
     return x
 
 
 def scaled[n: Int, m: Int](x: Int = m * 2) -> Int:
     return n + x
+
+
+def ponly[n: Int, m: Int](x: Int, y: Int = m * 2, /) -> Int:
+    return n + x + y
+
+
+def pboth[n: Int, m: Int](x: Int = n + 1, y: Int = m * 2, /) -> Int:
+    return x + y
 
 
 def lifted[n: Int, m: Int]() -> Int:
@@ -35,6 +45,12 @@ def main():
     print(scaled[1, 3]())
     print(scaled[1, 4]())
     print(scaled[2, 4](7))
+    print(ponly[1, 3](0))
+    print(ponly[1, 4](0))
+    print(ponly[2, 4](0, 7))
+    print(pboth[1, 3]())
+    print(pboth[2, 4]())
+    print(pboth[2, 4](1, 2))
     print(lifted[1, 3]())
     print(lifted[1, 4]())
     print(lifted[2, 4]())

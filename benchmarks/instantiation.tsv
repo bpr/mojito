@@ -317,7 +317,7 @@ assets/ok/late_initialized_local.mojo	elaborated	25	270	5	5	50	42	60	12	12
 assets/ok/layout_allocation.mojo	elaborated	19	191	14	14	59	57	30	17	17
 assets/ok/lifecycle_deprecated_spellings.mojo	elaborated	9	88	0	0	0	0	17	0	0
 assets/ok/lifecycle_member_unread_struct_parameter_instances.mojo	elaborated	26	225	19	21	70	78	34	19	21
-assets/ok/lifted_body_owner_instances.mojo	elaborated	25	273	10	13	44	44	54	13	16
+assets/ok/lifted_body_owner_instances.mojo	elaborated	34	313	15	22	65	63	63	18	25
 assets/ok/lifted_unread_parameter_instances.mojo	elaborated	17	109	7	12	25	20	25	9	12
 assets/ok/line_continuation.mojo	elaborated	5	66	0	0	0	0	13	0	0
 assets/ok/list_and_struct.mojo	elaborated	19	277	13	13	163	154	53	36	36
@@ -1053,4 +1053,4 @@ benchmarks/compile/stdlib_heavy.mojo	elaborated	120	1686	46	104	654	1363	311	118
 benchmarks/compile/trait_defaults.mojo	elaborated	163	1470	26	120	222	1064	202	42	139
 benchmarks/compile/tstring.mojo	elaborated	22	219	8	12	44	79	39	17	15
 benchmarks/compile/tuple.mojo	elaborated	28	238	8	16	37	68	45	11	19
-total	1054	28178	386999	10207	16464	119704	175286	71144	27473	38879
+total	1054	28187	387039	10212	16473	119725	175305	71153	27478	38888
