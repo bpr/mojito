@@ -3,7 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::TyKind;
+use mojito_types::types::{TyKind, erase_origin_arguments};
 
 impl FnLowering<'_> {
     /// A constructor call to declared struct `name`: the fieldwise copy form
@@ -370,7 +370,18 @@ impl FnLowering<'_> {
             self.reg_values.insert(dest.0, load.get_result(ctx));
             return Ok(());
         }
-        if matches!(ty.kind(), TyKind::Pointer { .. }) {
+        // A reference typed as one to the pointer itself, whatever origin
+        // either spells, borrows its storage: a read of it is the pointer,
+        // not its pointee.
+        let borrows_pointer = match (self.func.reg_types.get(&dest.0).map(Ty::kind), ty.kind()) {
+            (Some(TyKind::Ref(reference)), TyKind::Pointer { element, .. }) => matches!(
+                reference.referent.kind(),
+                TyKind::Pointer { element: referent, .. }
+                    if erase_origin_arguments(referent) == erase_origin_arguments(element)
+            ),
+            _ => false,
+        };
+        if matches!(ty.kind(), TyKind::Pointer { .. }) && !borrows_pointer {
             self.pointer_slot_refs.insert(dest.0);
         }
         self.reg_values.insert(dest.0, address);

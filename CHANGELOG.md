@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Tuple`'s `nodebug` `__len__` and `__getitem_param__` are inlined
+  (R986), as at the pin: the tuple's element types bind its one type
+  pack, element by element or over the caller's own parameters, and
+  `t[0]` holds the accessor's body with the index bound to its constant,
+  so 4 fixtures rather than 148 keep a `__getitem_param__` instance and
+  the corpus has 690 fewer concrete functions. A receiver typed by a
+  computed pack list, as in `Tuple.concat`, still keeps its call (R1068).
+  Natively, a reference to a `Pointer` element is no longer read through
+  the pointer it borrows. No program's output changes
+  (assets/ok/always_inline_nodebug_tuple_members.mojo).
 - A call of a `nodebug` function with a variadic compile-time parameter
   is inlined (R946), as at the pin: `*values: Int` binds to the call's
   element list and `*Ts` to its types, so `last[4, 5]()` and

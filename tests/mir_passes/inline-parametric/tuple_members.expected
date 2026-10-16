@@ -1,0 +1,150 @@
+  functions: [
+      fn {
+        name: tuple_members,
+        registers: 24,
+        vars: 7,
+        var_names: [t, "$call_ref_r11", "self$inline2", "index$inline2", "self$inline4", "self$inline5", "index$inline5"],
+        params: 1,
+        param_types: [struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] } }, var_type { var: $v1, type: ref { referent: Int, origin: origin_place { root: $v126, path: [] }, mutability: immutable } }, var_type { var: $v2, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] } }, var_type { var: $v3, type: Int }, var_type { var: $v4, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] } }, var_type { var: $v5, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] } }, var_type { var: $v6, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] } }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: ref { referent: Bool, origin: origin_place { root: $v126, path: [] }, mutability: immutable } }, reg_type { reg: %r4, type: Bool }, reg_type { reg: %r5, type: Bool }, reg_type { reg: %r6, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] } }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] } }, reg_type { reg: %r9, type: IntLiteral }, reg_type { reg: %r10, type: Int }, reg_type { reg: %r11, type: ref { referent: Int, origin: origin_place { root: $v126, path: [] }, mutability: immutable } }, reg_type { reg: %r12, type: None }, reg_type { reg: %r13, type: Int }, reg_type { reg: %r14, type: Int }, reg_type { reg: %r15, type: Int }, reg_type { reg: %r16, type: IntLiteral }, reg_type { reg: %r17, type: Int }, reg_type { reg: %r18, type: Int }, reg_type { reg: %r20, type: tuple([Int, Bool]) }, reg_type { reg: %r22, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 54, end: 55, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 56, end: 57, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 56, end: 57, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 54, end: 58, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 54, end: 58, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 54, end: 58, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 75, end: 76, origin: present($v0) }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 75, end: 86, origin: absent }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 89, end: 90, origin: present($v0) }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 91, end: 92, origin: absent }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 91, end: 92, origin: absent }) }, reg_loc { reg: %r11, location: present(loc { file: file0, start: 89, end: 93, origin: absent }) }, reg_loc { reg: %r12, location: present(loc { file: file0, start: 89, end: 93, origin: present($v0) }) }, reg_loc { reg: %r13, location: present(loc { file: file0, start: 89, end: 93, origin: present($v1) }) }, reg_loc { reg: %r14, location: present(loc { file: file0, start: 89, end: 93, origin: absent }) }, reg_loc { reg: %r15, location: present(loc { file: file0, start: 75, end: 93, origin: absent }) }, reg_loc { reg: %r16, location: present(loc { file: file0, start: 105, end: 106, origin: absent }) }, reg_loc { reg: %r17, location: present(loc { file: file0, start: 105, end: 106, origin: absent }) }, reg_loc { reg: %r18, location: present(loc { file: file0, start: 54, end: 58, origin: absent }) }, reg_loc { reg: %r19, location: absent }, reg_loc { reg: %r20, location: present(loc { file: file0, start: 75, end: 86, origin: absent }) }, reg_loc { reg: %r21, location: absent }, reg_loc { reg: %r22, location: present(loc { file: file0, start: 89, end: 93, origin: absent }) }, reg_loc { reg: %r23, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r1, value: int_literal(1) },
+              literal.materialize { dest: %r2, value: %r1, target: Int },
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), through: absent } }
+            ],
+            terminator: jump { target: bb4 }
+          },
+          bb1 {
+            instructions: [
+              const { dest: %r16, value: int_literal(0) },
+              literal.materialize { dest: %r17, value: %r16, target: Int }
+            ],
+            terminator: return { value: present(%r17) }
+          },
+          bb2 {
+            instructions: [
+              place.load { dest: %r6, place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), through: absent } }
+            ],
+            terminator: jump { target: bb6 }
+          },
+          bb3 {
+            instructions: [
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb4 {
+            instructions: [
+              const { dest: %r18, value: int(1) },
+              ref.make { dest: %r3, place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), projections: [projection { op: field(storage), type: tuple([Int, Bool]) }, projection { op: index(%r18), type: Bool }], type: present(Bool), through: absent } }
+            ],
+            terminator: jump { target: bb5 }
+          },
+          bb5 {
+            instructions: [
+              ref.read { dest: %r4, reference: %r3 },
+              value.copy { dest: %r5, value: %r4 }
+            ],
+            terminator: branch { condition: %r5, then: bb2, else: bb3 }
+          },
+          bb6 {
+            instructions: [
+              place.load { dest: %r20, place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), projections: [projection { op: field(storage), type: tuple([Int, Bool]) }], type: present(tuple([Int, Bool])), through: absent } },
+              call { dest: %r7, func: len, raises: absent, args: [%r20], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: jump { target: bb7 }
+          },
+          bb7 {
+            instructions: [
+              const { dest: %r9, value: int_literal(0) },
+              literal.materialize { dest: %r10, value: %r9, target: Int },
+              place.load { dest: %r8, place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), through: absent } }
+            ],
+            terminator: jump { target: bb8 }
+          },
+          bb8 {
+            instructions: [
+              const { dest: %r22, value: int(0) },
+              ref.make { dest: %r11, place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), projections: [projection { op: field(storage), type: tuple([Int, Bool]) }, projection { op: index(%r22), type: Int }], type: present(Int), through: absent } }
+            ],
+            terminator: jump { target: bb9 }
+          },
+          bb9 {
+            instructions: [
+              var.store { var: $v1, src: %r11, binding_type: present(ref { referent: Int, origin: origin_place { root: $v126, path: [] }, mutability: immutable }), in_place: false },
+              loans.establish { reference: $v1, loans: [loan { place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), through: absent }, mutable: false, interior: absent, shared: false, setup: true }], marker: %r12, dest_interior: absent },
+              place.load { dest: %r13, place: place { root: $v1, root_type: present(ref { referent: Int, origin: origin_place { root: $v126, path: [] }, mutability: immutable }), projections: [], type: present(Int), through: present($v1) } },
+              drop.var { var: $v1 },
+              value.copy { dest: %r14, value: %r13 },
+              binary { op: add, dest: %r15, a: %r7, b: %r14, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r15) }
+          }
+        ]
+      },
+      fn {
+        name: "Tuple.__getitem_param__",
+        registers: 2,
+        vars: 2,
+        var_names: [self, index],
+        params: 1,
+        param_types: [struct_type { name: Tuple, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [true],
+        returns_reference: true,
+        var_types: [var_type { var: $v0, type: struct_type { name: Tuple, arguments: [] } }, var_type { var: $v1, type: Int }],
+        return_type: present(dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_decl_ref { owner: "Tuple.__getitem_param__", slot: 0, name: index, type: meta_value(Int) } })),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: ref { referent: dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_decl_ref { owner: "Tuple.__getitem_param__", slot: 0, name: index, type: meta_value(Int) } }), origin: origin_untracked { mutable: true }, mutability: mutable } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v1, mode: copy },
+              drop.var { var: $v1 },
+              ref.make { dest: %r1, place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [] }), projections: [projection { op: field(storage), type: tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }]) }, projection { op: index(%r0), type: dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_decl_ref { owner: "Tuple.__getitem_param__", slot: 0, name: index, type: meta_value(Int) } }) }], type: present(dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_decl_ref { owner: "Tuple.__getitem_param__", slot: 0, name: index, type: meta_value(Int) } })), through: absent } }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: "Tuple.__len__$ov$SelfRead",
+        registers: 2,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: Tuple, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Tuple, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }]) }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [] }), projections: [projection { op: field(storage), type: tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }]) }], type: present(tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }])), through: absent } },
+              call { dest: %r1, func: len, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      }
+  ]

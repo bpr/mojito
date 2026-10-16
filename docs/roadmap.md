@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1068**.
+Next free ID: **R1070**.
 
 ## Ordered Work
 
@@ -291,19 +291,21 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R986 A `nodebug` member of a struct with a type pack is called,
-  not inlined**
+- [ ] **R1068 A `Tuple` member over a receiver typed by a computed pack
+  list is called, not inlined**
 
-  `t.__len__()` and `t[0]` on a `Tuple` keep their calls to
-  `Tuple.__len__` and `Tuple.__getitem_param__`, both `nodebug`, where the
-  pin inlines them (148 fixtures keep a `__getitem_param__` instance).
-  - R917 binds an owner's binders from the receiver's type arguments, and
-    `Tuple[*Ts]`'s one variadic binder takes the whole argument list.
-  - `__getitem_param__` also returns a reference (R953).
-  - Done when `t.__len__()` over a `(1, "a", 2.5)` local inlines and the
-    differential is clean.
-  - Found while landing R939 (2026-10-15).
-  - Depends on R946.
+  `result[i]` in `Tuple.reverse` and `Tuple.concat`, whose `result` is a
+  `Tuple[*Self.Ts.reverse()]` or `Tuple[*TypeList._concat[..]()]`, keeps
+  its call to `Tuple.__getitem_param__`, where the pin inlines it.
+  - `inline-parametric` binds `Tuple`'s one pack from the receiver's
+    element list, and a computed list (`list_spread_argument`) is not one.
+  - Bind the pack to the list expression itself, as the elaborator closes
+    it once the owner's pack is known.
+  - Done when `pair.concat(suffix)` in
+    `assets/ok/tuple_reverse_concat.mojo` holds no `__getitem_param__`
+    call and its output is unchanged.
+  - Found while landing R986 (2026-10-16).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R947 A `nodebug` callee with a `where` clause or a constrained
@@ -1238,6 +1240,24 @@ Track: `native`.
 
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
+
+- [ ] **R1069 Natively, a place's type carries an origin that varies from
+  run to run**
+
+  Problem: compiling `assets/ok/pointer_tuple_field_write.mojo` twice gives
+  a `Pointer` field place in `main` the origin `Self.o1` on one run and the
+  local's place origin on the next, so the lowering sees two types for one
+  place.
+  - `lower_make_ref` now compares a borrowed pointer's type modulo origin,
+    so the emitted IR no longer differs, but any other type equality over
+    a place's type is exposed.
+  - The nondeterminism is likely a hash-ordered lookup in `place_address`'s
+    type resolution.
+  - Done when the `.ll` of that fixture is byte-identical across runs with
+    the comparison made exact.
+  - Found while landing R986 (2026-10-16).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R852 Natively, `~` on a `UInt` is unsupported**
 

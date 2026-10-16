@@ -9,7 +9,8 @@
 //! The pin inlines such a callee at any size, and refuses one that lies on a
 //! cycle of such calls or holds a `try`.
 //!
-//! A callee this pass inlines is a function, a method, a struct's one
+//! A callee this pass inlines is a function, a method, a subscript's
+//! accessor, which calls it on the subscripted base, a struct's one
 //! `__init__`, which a call naming the struct calls, or a nested `def`,
 //! which a call through a closure the caller makes calls, whose own
 //! compile-time parameters the call binds in full; it takes its arguments
@@ -26,7 +27,8 @@
 //! binders stays symbolic, for the elaborator to fold in each instance of
 //! the caller. A parametric owner's binders take the arguments of the
 //! receiver's type, or of the constructed one, which the member's bare
-//! spelling of its owner denotes too. A read of a value binder, the
+//! spelling of its owner denotes too; an owner keyed on one type pack
+//! (`Tuple[*Ts]`) binds it to that type's element list. A read of a value binder, the
 //! owner's (`Self.k`) included, becomes its argument as a constant,
 //! upstream's `kgen.param.constant`. A variadic binder binds to its element
 //! list, a spread of a type pack (`Tuple[*Ts]`) to its elements, and a pack
@@ -84,8 +86,8 @@ use mojito_mir::mir::visit::{
 };
 use mojito_mir::mir::{
     Const, FuncRef, MirBlock, MirCaptureMode, MirClosureCapture, MirDeclarations, MirFunction,
-    MirFunctionDeclaration, MirInstr, MirParamArg, MirPlace, MirTerm, Proj, Reg, UseMode,
-    count_register_reads, erase_removed_operands, has_no_destructor, instruction_regions,
+    MirFunctionDeclaration, MirInstr, MirParamArg, MirPlace, MirSubscriptCall, MirTerm, Proj, Reg,
+    UseMode, count_register_reads, erase_removed_operands, has_no_destructor, instruction_regions,
     instruction_regions_mut, instruction_regs_mut, instruction_slots, name_constructors,
     region_escape_targets, removed_argument_operands, renumber_block_slots, terminator_regs_mut,
     terminator_targets, terminator_targets_mut, without_removed_arguments,
@@ -96,8 +98,9 @@ use mojito_types::param_expr::{
 };
 use mojito_types::types::{
     GenericConstraint, LaneMask, ParamDecl, Ty, TyArg, TyKind, TyRewrite, VariantIndex,
-    is_scalar_simd, pack_spread, replace_argument_parameters, replace_constraint_parameters,
-    replace_parameters, replace_value_parameters, rewrite_ty, scalar_simd_dtype,
+    default_literal, is_scalar_simd, list_spread_argument, pack_spread, pack_spread_argument,
+    replace_argument_parameters, replace_constraint_parameters, replace_parameters,
+    replace_value_parameters, rewrite_ty, scalar_simd_dtype,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
@@ -686,6 +689,10 @@ impl<'c> Inliner<'_, 'c> {
         block: &MirBlock,
         index: usize,
     ) -> Option<(Reg, Cow<'c, MirFunction>, Vec<Binding>, bool)> {
+        let index_places = match &block.instrs[index] {
+            MirInstr::Index { index_place, .. } => vec![index_place.as_deref().cloned()],
+            _ => Vec::new(),
+        };
         let (dest, target, call, compile_time, receiver, receiver_place, captures) =
             match &block.instrs[index] {
                 MirInstr::Call {
@@ -719,7 +726,7 @@ impl<'c> Inliner<'_, 'c> {
                             kwargs,
                             kwarg_places,
                         },
-                        instantiated_args,
+                        Cow::Borrowed(instantiated_args.as_slice()),
                         receiver,
                         None,
                         &[][..],
@@ -748,11 +755,46 @@ impl<'c> Inliner<'_, 'c> {
                         kwargs,
                         kwarg_places,
                     },
-                    instantiated_args,
+                    Cow::Borrowed(instantiated_args.as_slice()),
                     Some(Receiver::Argument(*recv)),
                     recv_place.as_deref(),
                     &[][..],
                 ),
+                // A checker-selected subscript calls its accessor on the
+                // base, passing the index as the accessor's one runtime
+                // argument or, to one keyed on a value parameter of its own
+                // (`Tuple.__getitem_param__[index: Int]`), as that
+                // parameter's constant, as the VM and the elaborator pass it.
+                MirInstr::Index {
+                    dest,
+                    base,
+                    index: operand,
+                    base_place,
+                    call: Some(subscript),
+                    intrinsic: None,
+                    ..
+                } if subscript.capture_accesses.is_empty() => {
+                    let parameterless = subscript.arguments.is_empty();
+                    let (args, arg_places) = if parameterless {
+                        (&[][..], &[][..])
+                    } else {
+                        (std::slice::from_ref(operand), index_places.as_slice())
+                    };
+                    (
+                        *dest,
+                        Cow::Borrowed(subscript.target.as_str()),
+                        CallArguments {
+                            args,
+                            arg_places,
+                            kwargs: &[],
+                            kwarg_places: &[],
+                        },
+                        Cow::Owned(subscript_parameter_arguments(block, index, subscript)?),
+                        Some(Receiver::Argument(*base)),
+                        base_place.as_deref(),
+                        &[][..],
+                    )
+                }
                 MirInstr::CallIndirect {
                     dest,
                     callee,
@@ -775,7 +817,7 @@ impl<'c> Inliner<'_, 'c> {
                             kwargs,
                             kwarg_places,
                         },
-                        instantiated_args,
+                        Cow::Borrowed(instantiated_args.as_slice()),
                         None,
                         None,
                         closure.captures.as_slice(),
@@ -868,9 +910,9 @@ impl<'c> Inliner<'_, 'c> {
         };
         let mut callee = match &reduced {
             Some(body) => Cow::Owned(
-                instantiated(body, declaration, owner.as_ref(), compile_time)?.into_owned(),
+                instantiated(body, declaration, owner.as_ref(), &compile_time)?.into_owned(),
             ),
-            None => instantiated(full, declaration, owner.as_ref(), compile_time)?,
+            None => instantiated(full, declaration, owner.as_ref(), &compile_time)?,
         };
         if declaration.enclosing.is_some() {
             read_enclosing_binders(callee.to_mut(), declaration, self.declarations)?;
@@ -1627,6 +1669,82 @@ fn instantiated<'c>(
     Some(Cow::Owned(function))
 }
 
+/// The compile-time arguments the subscript `call` at `index` of `block`
+/// passes its accessor's own value parameters: each the constant its
+/// register holds there, or the expression over the caller's binders it
+/// records, a literal index taking the value it materializes to at the
+/// parameter's `Int`; `None` when one is neither.
+fn subscript_parameter_arguments(
+    block: &MirBlock,
+    index: usize,
+    call: &MirSubscriptCall,
+) -> Option<Vec<TyArg>> {
+    let preceding = &block.instrs[..index];
+    call.param_arg_regs
+        .iter()
+        .map(|argument| {
+            match (
+                argument
+                    .value
+                    .and_then(|reg| defined_constant(preceding, reg)),
+                &argument.expr,
+            ) {
+                (Some(Const::Int(value)), _) => Some(CtValue::Int(*value)),
+                (Some(Const::IntLiteral(literal)), _) => literal.to_i64().map(CtValue::Int),
+                (Some(Const::Bool(value)), _) => Some(CtValue::Bool(*value)),
+                (_, Some(expr)) => Some(CtValue::Expr(expr.clone())),
+                _ => None,
+            }
+            .map(TyArg::Val)
+        })
+        .collect()
+}
+
+/// The constant the last of `instructions` defining `reg` gives it, through
+/// a literal's materialization.
+fn defined_constant(instructions: &[MirInstr], reg: Reg) -> Option<&Const> {
+    instructions
+        .iter()
+        .rev()
+        .find_map(|instruction| match instruction {
+            MirInstr::Const { dest, k } if *dest == reg => Some(Some(k)),
+            MirInstr::MaterializeLiteral { dest, value, .. } if *dest == reg => {
+                Some(defined_constant(instructions, *value))
+            }
+            _ => None,
+        })
+        .flatten()
+}
+
+/// `arguments`, an application's of a struct declaring `decls`, one per
+/// binder: a struct keyed on its lone pack and applied element by element
+/// (`Tuple[Int, String]`) binds the pack to the element list, as the
+/// elaborator binds it, its literal-typed elements materialized; `None`
+/// when the arguments do not cover the binders.
+fn owner_binder_arguments<'a>(
+    decls: &[ParamDecl],
+    arguments: &'a [TyArg],
+) -> Option<Cow<'a, [TyArg]>> {
+    match decls {
+        [ParamDecl::Type { variadic: true, .. }]
+            if !matches!(arguments, [TyArg::Val(_)])
+                && pack_spread_argument(arguments).is_none()
+                && list_spread_argument(arguments).is_none() =>
+        {
+            let elements = arguments
+                .iter()
+                .filter_map(|argument| match argument {
+                    TyArg::Ty(ty) => Some(Some(CtValue::Type(default_literal(ty)))),
+                    TyArg::Origin(_) => None,
+                    TyArg::Val(_) => Some(None),
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some(Cow::Owned(vec![TyArg::Val(CtValue::Tuple(elements))]))
+        }
+        _ => (arguments.len() == decls.len()).then_some(Cow::Borrowed(arguments)),
+    }
+}
+
 /// Rewrite each read of an enclosing declaration's value binder in
 /// `callee`, a nested `def`'s body, which spells it as a slot of its own,
 /// into a reference to that binder, which the caller, a body in the
@@ -1744,10 +1862,8 @@ impl Instantiation {
             let TyKind::Struct(_, owner_arguments) = owner.ty.kind() else {
                 return None;
             };
-            if owner_arguments.len() != owner.decls.len() {
-                return None;
-            }
-            for (decl, argument) in owner.decls.iter().zip(owner_arguments) {
+            let owner_arguments = owner_binder_arguments(owner.decls, owner_arguments)?;
+            for (decl, argument) in owner.decls.iter().zip(owner_arguments.iter()) {
                 if let Bound::Value(value) = instantiation.bind(decl, argument)?
                     && !owner.fields.iter().any(|(field, _)| field == decl.name())
                 {
@@ -1788,7 +1904,8 @@ impl Instantiation {
                 Some(Bound::Type)
             }
             // A pack binds as the elaborator binds it: its element list as
-            // a value, and as the runtime pack a spread of it expands to; a
+            // a value, one over the caller's binders included, and as the
+            // runtime pack a spread of it expands to; a
             // caller's own pack it forwards (`f[*Us]()`) binds as that pack.
             (
                 ParamDecl::Type {
@@ -1802,7 +1919,7 @@ impl Instantiation {
                 argument,
             ) if constraints.is_empty() => {
                 let (value, ty) = match argument {
-                    TyArg::Val(value @ CtValue::Tuple(elements)) => {
+                    TyArg::Val(CtValue::Tuple(elements)) => {
                         let elements = elements
                             .iter()
                             .map(|element| match element {
@@ -1811,7 +1928,7 @@ impl Instantiation {
                             })
                             .collect::<Option<Vec<_>>>()?;
                         (
-                            self.context.constant(value.clone()).ok()?,
+                            self.context.type_list(elements.clone()).ok()?,
                             TyKind::RuntimePack(elements).into(),
                         )
                     }
@@ -1866,7 +1983,10 @@ impl Instantiation {
             Some((template, owner)) => rewrite_ty(ty, &mut BareOwner { template, owner })?,
             None => ty.clone(),
         };
-        replace_parameters(&self.context, &ty, &self.bindings, 0)
+        rewrite_ty(
+            &replace_parameters(&self.context, &ty, &self.bindings, 0)?,
+            &mut SelectedShapes,
+        )
     }
 
     /// Rewrite each read of a value binder's slot in `function` into its
@@ -2126,6 +2246,27 @@ impl TyRewrite for BareOwner<'_> {
 
     fn visits_closed(&self) -> bool {
         true
+    }
+}
+
+/// The rewrite of a dependent type the substitution selected from a pack
+/// bound over the caller's binders (`Ts[0]` at `Ts = [A, B]`) to the type
+/// it selected, which is the type itself.
+struct SelectedShapes;
+
+impl TyRewrite for SelectedShapes {
+    fn whole(&mut self, ty: &Ty) -> Option<Ty> {
+        let TyKind::Dependent(dependent) = ty.kind() else {
+            return None;
+        };
+        let ParamKind::TypeShape(shape) = dependent.expr().kind() else {
+            return None;
+        };
+        rewrite_ty(shape, self).ok()
+    }
+
+    fn expr(&mut self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        Ok(expr.clone())
     }
 }
 
