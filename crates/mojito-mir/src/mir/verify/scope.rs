@@ -1113,6 +1113,7 @@ mod tests {
             associated_types: Vec::new(),
             parameterized_associated_types: Vec::new(),
             associated_values: Vec::new(),
+            members: Vec::new(),
         });
         let boxed = TyKind::Struct("Box".into(), vec![TyArg::Val(CtValue::Expr(n.clone()))]);
         let mut erased = function_with(vec![boxed.into()]);
@@ -1221,6 +1222,7 @@ mod tests {
             associated_types: Vec::new(),
             parameterized_associated_types: Vec::new(),
             associated_values: Vec::new(),
+            members: Vec::new(),
         });
         let mut errors = Vec::new();
         verify_scope("Bag.first", &function, &declarations, &mut errors);

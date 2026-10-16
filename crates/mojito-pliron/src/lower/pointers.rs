@@ -303,9 +303,7 @@ impl FnLowering<'_> {
             return Ok(());
         }
         if let TyKind::Struct(name, _) = ty.kind()
-            && self
-                .declarations
-                .contains_key(&format!("{name}.__copyinit__"))
+            && self.lifecycle_symbol(name, "__copyinit__").is_some()
         {
             let name = name.clone();
             return self.emit_copyinit_call(ctx, &name, dst, src_ptr, span);
@@ -411,8 +409,13 @@ impl FnLowering<'_> {
         src: Value,
         span: Reg,
     ) -> Result<(), PlironError> {
-        let copyinit = format!("{name}.__copyinit__");
-        let Some(signature) = self.signatures.get(&copyinit) else {
+        let Some(copyinit) = self.lifecycle_symbol(name, "__copyinit__") else {
+            return Err(self.unsupported_reg(
+                format!("copy of `{name}`, which owns no copy constructor"),
+                span,
+            ));
+        };
+        let Some(signature) = self.signatures.get(copyinit) else {
             return Err(self.unsupported_reg(format!("copy via uncompiled `{copyinit}`"), span));
         };
         if signature.outcome.is_some() {

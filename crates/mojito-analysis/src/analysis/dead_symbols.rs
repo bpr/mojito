@@ -11,8 +11,8 @@
 use super::pre_elaboration::ProgramPass;
 use mojito_common::timing;
 use mojito_mir::mir::{
-    MirFunction, MirFunctionDeclaration, MirProgram, MirStructDeclaration, SymbolTable,
-    destroyed_structs, entry_roots, relocated_structs,
+    LIFECYCLE_MEMBERS, MirFunction, MirFunctionDeclaration, MirProgram, MirStructDeclaration,
+    SymbolTable, destroyed_structs, entry_roots, relocated_structs,
 };
 use mojito_symbol::symbol::{OV_SEP, split_method_symbol};
 use mojito_types::types::TyKind;
@@ -66,6 +66,11 @@ pub fn eliminate_dead_symbols(program: &mut MirProgram, exports: &[String]) {
     declarations
         .structs
         .retain(|declaration| live_structs.contains(&declaration.name));
+    for declaration in &mut declarations.structs {
+        declaration
+            .members
+            .retain(|entry| !dead.contains(&entry.symbol));
+    }
     timing::count("dead_functions", dead.len() as u64);
     timing::count("dead_instructions", instructions as u64);
     timing::count(
@@ -85,7 +90,7 @@ struct Symbols<'p> {
     /// Each own struct's methods but its lifecycle members.
     methods: HashMap<&'p str, Vec<&'p str>>,
     /// Each own struct's destructor, copy, and move constructors, by the
-    /// struct and the member's name.
+    /// struct and the member's name, as its member table names them.
     lifecycle: HashMap<(&'p str, &'p str), &'p str>,
     /// Each overload family's members, by the family's base name.
     families: HashMap<&'p str, Vec<&'p str>>,
@@ -113,20 +118,29 @@ impl<'p> Symbols<'p> {
             .map(|declaration| (declaration.name.as_str(), declaration))
             .collect();
         let table = SymbolTable::new(functions.keys().chain(structs.keys()).copied());
-        let mut methods: HashMap<_, Vec<_>> = HashMap::new();
         let mut lifecycle = HashMap::new();
+        for declaration in &program.declarations.structs {
+            for entry in &declaration.members {
+                if let Some(member) = LIFECYCLE_MEMBERS
+                    .into_iter()
+                    .find(|member| *member == entry.member)
+                    && let Some((&symbol, _)) = functions.get_key_value(entry.symbol.as_str())
+                {
+                    lifecycle.insert((declaration.name.as_str(), member), symbol);
+                }
+            }
+        }
+        let members: HashSet<&str> = lifecycle.values().copied().collect();
+        let mut methods: HashMap<_, Vec<_>> = HashMap::new();
         let mut families: HashMap<_, Vec<_>> = HashMap::new();
         let mut nested: HashMap<_, Vec<_>> = HashMap::new();
         for (name, _) in &program.functions {
             let name = name.as_str();
-            if let Some((owner, method)) = split_method_symbol(name)
+            if let Some((owner, _)) = split_method_symbol(name)
                 && structs.contains_key(owner)
+                && !members.contains(name)
             {
-                if let Some(&member) = LIFECYCLE.iter().find(|&&member| member == method) {
-                    lifecycle.insert((owner, member), name);
-                } else {
-                    methods.entry(owner).or_default().push(name);
-                }
+                methods.entry(owner).or_default().push(name);
             }
             families.entry(family(name)).or_default().push(name);
             if let Some(enclosing) = declarations
@@ -215,14 +229,11 @@ impl<'p> Symbols<'p> {
 
     /// The struct `owner`'s destructor, copy, and move constructors.
     fn members(&self, owner: &'p str) -> impl Iterator<Item = &'p str> + '_ {
-        LIFECYCLE
+        LIFECYCLE_MEMBERS
             .iter()
             .filter_map(move |&member| self.lifecycle.get(&(owner, member)).copied())
     }
 }
-
-/// The members the backends run by name from a value's type.
-const LIFECYCLE: [&str; 3] = ["__deinit__", "__copyinit__", "__moveinit__"];
 
 /// The overload family `name` belongs to: its spelling before the overload
 /// qualifier.

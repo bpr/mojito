@@ -365,8 +365,15 @@ impl FnLowering<'_> {
         name: &str,
         layout: Layout,
     ) -> Result<(), PlironError> {
-        let moveinit = format!("{name}.__moveinit__");
-        let signature = &self.signatures[&moveinit];
+        let Some((moveinit, signature)) = self
+            .lifecycle_symbol(name, "__moveinit__")
+            .and_then(|moveinit| Some((moveinit, self.signatures.get(moveinit)?)))
+        else {
+            return Err(self.unsupported_reg(
+                format!("move of `{name}` via an uncompiled `__moveinit__`"),
+                dest,
+            ));
+        };
         if signature.outcome.is_some() {
             return Err(self.unsupported_reg(format!("raising `{moveinit}`"), dest));
         }

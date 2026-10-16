@@ -5,7 +5,18 @@
 use super::*;
 use mojito_types::types::TyKind;
 
-impl FnLowering<'_> {
+impl<'a> FnLowering<'a> {
+    /// The symbol of the lifecycle member `member` (`__deinit__`,
+    /// `__copyinit__`, `__moveinit__`) the struct `name` owns, from its
+    /// declaration's member table, when the program declares it.
+    pub(super) fn lifecycle_symbol(&self, name: &str, member: &str) -> Option<&'a str> {
+        self.struct_decls
+            .get(name)
+            .copied()?
+            .member(member)
+            .filter(|symbol| self.declarations.contains_key(*symbol))
+    }
+
     /// `DropVar` — the VM's `drop_value`: nothing for scalars; for aggregates
     /// run the compiled `__deinit__` when defined (its body consumes the
     /// receiver's fields), else destroy the fields in declaration order.
@@ -473,9 +484,10 @@ impl FnLowering<'_> {
                 Ok(())
             }
             TyKind::Struct(name, _) => {
-                let deinit = format!("{name}.__deinit__");
-                if !skip_whole_deinit && self.declarations.contains_key(&deinit) {
-                    let Some(signature) = self.signatures.get(&deinit) else {
+                if !skip_whole_deinit
+                    && let Some(deinit) = self.lifecycle_symbol(name, "__deinit__")
+                {
+                    let Some(signature) = self.signatures.get(deinit) else {
                         return Err(
                             self.unsupported(format!("drop via uncompiled `{deinit}`"), None)
                         );
@@ -575,11 +587,9 @@ impl FnLowering<'_> {
         }
     }
 
-    /// Whether `ty` is a struct whose program declares `method` for it.
+    /// Whether `ty` is a struct that owns the lifecycle member `method`.
     pub(super) fn has_lifecycle_method(&self, ty: &Ty, method: &str) -> bool {
-        matches!(ty.kind(), TyKind::Struct(name, _) if self
-            .declarations
-            .contains_key(&format!("{name}.{method}")))
+        matches!(ty.kind(), TyKind::Struct(name, _) if self.lifecycle_symbol(name, method).is_some())
     }
 
     /// Whether `ty` or any transitive field declares `method`.

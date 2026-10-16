@@ -214,63 +214,77 @@ fn write_structs(output: &mut String, declarations: &[MirStructDeclaration]) {
                 )
             }))
         };
-        let value = record(
-            "struct",
-            &[
-                ("name", symbol(&declaration.name)),
-                ("fields", fields),
-                (
-                    "mut_self_methods",
-                    list(methods.into_iter().map(|name| symbol(name))),
+        let mut entries = vec![
+            ("name", symbol(&declaration.name)),
+            ("fields", fields),
+            (
+                "mut_self_methods",
+                list(methods.into_iter().map(|name| symbol(name))),
+            ),
+            ("fieldwise_init", declaration.fieldwise_init.to_string()),
+            (
+                "param_decls",
+                list(declaration.param_decls.iter().map(param_decl)),
+            ),
+            (
+                "explicit_destroy_message",
+                option(explicit_destroy.map(|info| quote(&info.message))),
+            ),
+            ("explicit_destructors", destructors),
+            (
+                "explicit_destroy_declared",
+                explicit_destroy
+                    .is_some_and(|info| info.declared)
+                    .to_string(),
+            ),
+            ("explicit_destroy_fields", obligated_fields),
+            ("conformances", conformance_rows(&declaration.conformances)),
+            ("declared", conformance_rows(&declaration.declared)),
+            (
+                "associated_types",
+                list(declaration.associated_types.iter().map(|(name, ty)| {
+                    record(
+                        "associated_type",
+                        &[("name", symbol(name)), ("type", ty_value(ty))],
+                    )
+                })),
+            ),
+            (
+                "parameterized_associated_types",
+                list(
+                    declaration
+                        .parameterized_associated_types
+                        .iter()
+                        .map(parameterized_associated_type),
                 ),
-                ("fieldwise_init", declaration.fieldwise_init.to_string()),
-                (
-                    "param_decls",
-                    list(declaration.param_decls.iter().map(param_decl)),
-                ),
-                (
-                    "explicit_destroy_message",
-                    option(explicit_destroy.map(|info| quote(&info.message))),
-                ),
-                ("explicit_destructors", destructors),
-                (
-                    "explicit_destroy_declared",
-                    explicit_destroy
-                        .is_some_and(|info| info.declared)
-                        .to_string(),
-                ),
-                ("explicit_destroy_fields", obligated_fields),
-                ("conformances", conformance_rows(&declaration.conformances)),
-                ("declared", conformance_rows(&declaration.declared)),
-                (
-                    "associated_types",
-                    list(declaration.associated_types.iter().map(|(name, ty)| {
-                        record(
-                            "associated_type",
-                            &[("name", symbol(name)), ("type", ty_value(ty))],
-                        )
-                    })),
-                ),
-                (
-                    "parameterized_associated_types",
-                    list(
-                        declaration
-                            .parameterized_associated_types
-                            .iter()
-                            .map(parameterized_associated_type),
-                    ),
-                ),
-                (
-                    "associated_values",
-                    list(declaration.associated_values.iter().map(|(name, value)| {
-                        record(
-                            "associated_value",
-                            &[("name", symbol(name)), ("value", param_expr(value))],
-                        )
-                    })),
-                ),
-            ],
-        );
+            ),
+            (
+                "associated_values",
+                list(declaration.associated_values.iter().map(|(name, value)| {
+                    record(
+                        "associated_value",
+                        &[("name", symbol(name)), ("value", param_expr(value))],
+                    )
+                })),
+            ),
+        ];
+        // Schema 1.65 carries the member table, written only when the
+        // struct owns a lifecycle member.
+        if !declaration.members.is_empty() {
+            entries.push((
+                "members",
+                list(declaration.members.iter().map(|entry| {
+                    record(
+                        "member",
+                        &[
+                            ("name", symbol(&entry.member)),
+                            ("symbol", symbol(&entry.symbol)),
+                        ],
+                    )
+                })),
+            ));
+        }
+        let value = record("struct", &entries);
         write!(output, "    {value}").unwrap();
         writeln!(
             output,

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1016**.
+Next free ID: **R1018**.
 
 ## Ordered Work
 
@@ -593,28 +593,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1011.
   - Model: Fable, Not Planned.
 
-- [ ] **R1001 A destructor or copy or move constructor that reads no
-  struct parameter keeps one instance per struct instance**
-
-  `DBox[1]` and `DBox[2]` reach two `DBox.__deinit__`, whose body prints
-  only `self.v`, where the pin keeps one; the same holds for
-  `__copyinit__`, `__moveinit__`, and a copy `__init__`.
-  - `remove-unused-params` removes `n` from them, but the elaborator keeps
-    them keyed and named by their struct instance
-    (`mir::composed_member`), because the backends find them by composing
-    `{struct}.{member}` from a value's type (`pliron` `drops.rs`,
-    `release.rs`, `pointers.rs`, `places.rs`; the VM's `values.rs`,
-    `dispatch.rs`).
-  - Upstream names the generator instance at every death, copy, and move.
-  - Record each concrete struct declaration's lifecycle-member instance
-    symbols and have every composing site look them up there, then drop
-    these members from `composed_member`.
-  - Pinned by `assets/ok/receiver_unread_struct_parameter_instances.mojo`
-    (`DBox.__deinit__`).
-  - Found while landing R978 (2026-10-15).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1003 A display, hash, or equality member that reads no struct
   parameter keeps one instance per struct instance**
 
@@ -631,6 +609,36 @@ which names the upstream pass each one follows. Each is measured by the
     `composed_member` once R1000 lands too.
   - Found while landing R978 (2026-10-15).
   - Depends on R1001.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1016 A drop names no destructor; the backends look it up from
+  the value's type**
+
+  `drop.var` and `drop.place` name no symbol, so the VM and Pliron find the
+  destructor in the struct declaration's member table, where upstream's
+  destructor insertion leaves a call naming the `__del__` instance at each
+  death.
+  - The backends also expand a struct with no destructor into its fields'
+    drops themselves, where upstream synthesizes a `__del__` for a struct
+    whose fields need one.
+  - Insert the call after drop elaboration, so the elaborator respells it
+    and `eliminate-dead-symbols` follows it as any call.
+  - Relates to R968 (synthesized destructor inlining).
+  - Found while landing R1001 (2026-10-15).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1017 A copy or move names no constructor; the backends look it up
+  from the value's type**
+
+  `var.use copy`, `value.copy`, and `var.use move` name no symbol, so the
+  VM and Pliron find `__copyinit__` and `__moveinit__` in the struct
+  declaration's member table, where upstream's copy/move insertion leaves
+  a call naming the constructor instance at each site.
+  - Insert the call as R1016 does for drops; a trivial copy or move stays
+    a value copy.
+  - Found while landing R1001 (2026-10-15).
+  - Depends on R1016.
   - Model: Fable, Not Planned.
 
 - [ ] **R1000 A constructor that reads no struct parameter keeps one

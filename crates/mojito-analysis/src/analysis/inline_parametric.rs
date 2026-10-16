@@ -137,11 +137,11 @@ pub fn inline_parametric(
     changed
 }
 
-/// The destructor a drop of a value of type `ty` runs, as the VM looks it
-/// up: its struct's `__deinit__`.
-pub fn destructor_of(ty: &Ty) -> Option<String> {
+/// The destructor a drop of a value of type `ty` runs, as the backends look
+/// it up: the `__deinit__` its struct's member table names.
+pub fn destructor_of<'d>(ty: &Ty, declarations: &'d MirDeclarations) -> Option<&'d str> {
     match ty.kind() {
-        TyKind::Struct(name, _) => Some(mojito_mir::mir::struct_member(name, "__deinit__")),
+        TyKind::Struct(name, _) => declarations.lifecycle_member(name, "__deinit__"),
         _ => None,
     }
 }
@@ -633,9 +633,9 @@ impl<'c> Inliner<'_, 'c> {
             return None;
         };
         let ty = self.function.var_tys.get(&var)?;
-        let target = destructor_of(ty)?;
-        let callee = self.callees.body(&target)?;
-        let declaration = self.declarations.function(&target)?;
+        let target = destructor_of(ty, self.declarations)?;
+        let callee = self.callees.body(target)?;
+        let declaration = self.declarations.function(target)?;
         if !is_closed(callee, declaration)
             || callee.raises
             || callee.n_params != 1

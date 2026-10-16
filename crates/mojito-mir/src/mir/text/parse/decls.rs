@@ -263,6 +263,28 @@ impl Decoder {
                     .collect()
             })
             .unwrap_or_default();
+        // Schema 1.65 carries the member table; an artifact without one
+        // owns no lifecycle member.
+        let members = self
+            .field(fields, "members")
+            .ok()
+            .and_then(|entries| self.list(entries).ok())
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(|entry| {
+                        let entry_fields = self.record(entry, "member").ok()?;
+                        let member = self.req(entry, entry_fields, "name", Self::symbol);
+                        let symbol = self.req(entry, entry_fields, "symbol", Self::symbol);
+                        self.unknown(entry_fields, &["name", "symbol"]);
+                        Some(crate::mir::MirStructMember {
+                            member: member?,
+                            symbol: symbol?,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         self.unknown(
             fields,
             &[
@@ -280,6 +302,7 @@ impl Decoder {
                 "associated_types",
                 "parameterized_associated_types",
                 "associated_values",
+                "members",
             ],
         );
         Some(MirStructDeclaration {
@@ -295,6 +318,7 @@ impl Decoder {
             associated_types,
             parameterized_associated_types,
             associated_values,
+            members,
         })
     }
 

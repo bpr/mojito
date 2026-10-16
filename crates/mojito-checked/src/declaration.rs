@@ -65,6 +65,13 @@ pub struct StructDeclaration {
     /// binders: the elaborator answers `T.K` from them once `T` is bound to
     /// an instance, so elaborated MIR carries none.
     pub associated_values: Vec<(String, ParamExpr)>,
+    /// The symbols of the lifecycle members the struct owns (its
+    /// destructor, copy, and move constructors), sorted by member, as
+    /// upstream's struct nests its member functions: in a template, the
+    /// ones it declares; in a concrete struct, the instances the elaborator
+    /// made for it. A drop, copy, or move of a value finds the member it
+    /// runs here, never by composing a name from the value's type.
+    pub members: Vec<StructMember>,
 }
 
 /// An associated type with explicit parameters of its own (`comptime
@@ -90,7 +97,42 @@ pub enum AssociatedParameter {
     Origin(OriginParamId),
 }
 
+/// One entry of [`StructDeclaration::members`]: a member's name
+/// (`__deinit__`) and the symbol of the function that is it. The symbol is
+/// a definition the struct owns, not a use of one.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StructMember {
+    pub member: String,
+    pub symbol: String,
+}
+
 impl StructDeclaration {
+    /// The symbol of the struct's lifecycle member `member`, when it owns
+    /// one.
+    pub fn member(&self, member: &str) -> Option<&str> {
+        self.members
+            .iter()
+            .find(|entry| entry.member == member)
+            .map(|entry| entry.symbol.as_str())
+    }
+
+    /// Record `symbol` as the struct's member `member`, keeping the table
+    /// sorted; an entry already there stays.
+    pub fn record_member(&mut self, member: &str, symbol: &str) {
+        if let Err(position) = self
+            .members
+            .binary_search_by(|entry| entry.member.as_str().cmp(member))
+        {
+            self.members.insert(
+                position,
+                StructMember {
+                    member: member.to_string(),
+                    symbol: symbol.to_string(),
+                },
+            );
+        }
+    }
+
     /// The parameter names of the struct's synthesized `@fieldwise_init`
     /// constructor, its field names in order; `None` when it has none.
     pub fn fieldwise_parameters(&self) -> Option<Vec<String>> {

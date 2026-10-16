@@ -52,25 +52,21 @@ pub fn struct_layout_reads(name: &str, declarations: &MirDeclarations) -> Layout
     StructReads::new(declarations).layout(name)
 }
 
-/// The symbol of the lifecycle member `member` (`__deinit__`,
-/// `__copyinit__`, `__moveinit__`) of the struct `name`, as the backends
-/// look it up from a value's type.
-pub fn struct_member(name: &str, member: &str) -> String {
-    format!("{name}.{member}")
-}
+/// The lifecycle members a drop, a copy, and a move run, which a struct
+/// declaration's member table (`StructDeclaration::members`) records.
+pub const LIFECYCLE_MEMBERS: [&str; 3] = ["__deinit__", "__copyinit__", "__moveinit__"];
 
-/// Whether the backends find the struct method `method` by composing
-/// [`struct_member`] from a value's type, not from the instance a call
-/// names.
+/// Whether the backends find the struct method `method` by composing its
+/// symbol from a value's type, not from the instance a call names.
 ///
-/// Those are the lifecycle members a construction, a copy, a move, or a
-/// drop runs (`__init__`, `__copyinit__`, `__moveinit__`, `__deinit__` or
-/// `__del__`), display (`write_to`, `write_repr_to`, `write_string`),
-/// hashing (`__hash__`, `_update_with_simd`), equality (`__eq__`, and
-/// `__ne__` through it), the `__int__` a scalar construction converts
-/// through, a keyword collector's `__setitem__`, and the `__call__` a
-/// callable value dispatches. Such a member keeps one instance per struct
-/// instance, named after it, whatever parameters it removed.
+/// Those are the constructors a construction runs (`__init__`), display
+/// (`write_to`, `write_repr_to`, `write_string`), hashing (`__hash__`,
+/// `_update_with_simd`), equality (`__eq__`, and `__ne__` through it), the
+/// `__int__` a scalar construction converts through, a keyword collector's
+/// `__setitem__`, and the `__call__` a callable value dispatches. A
+/// destructor, copy, or move constructor is not one: the struct
+/// declaration's member table names it. Such a member keeps one instance
+/// per struct instance, named after it, whatever parameters it removed.
 pub fn composed_member(method: &str) -> bool {
     mojito_symbol::symbol::split_method_symbol(method)
         .map(|(_, member)| member.split('$').next().unwrap_or(member))
@@ -78,10 +74,6 @@ pub fn composed_member(method: &str) -> bool {
             matches!(
                 member,
                 "__init__"
-                    | "__copyinit__"
-                    | "__moveinit__"
-                    | "__deinit__"
-                    | "__del__"
                     | "write_to"
                     | "write_repr_to"
                     | "write_string"
@@ -202,10 +194,7 @@ impl<'d> StructReads<'d> {
             return needs.clone();
         }
         let structure = self.declarations.structure(name)?;
-        if self
-            .declarations
-            .function(&struct_member(name, member))
-            .is_some()
+        if structure.member(member).is_some()
             || structure.param_decls.iter().any(is_variadic)
             || visiting.iter().any(|seen| seen == name)
         {
@@ -380,12 +369,13 @@ mod tests {
             associated_types: Vec::new(),
             parameterized_associated_types: Vec::new(),
             associated_values: Vec::new(),
+            members: Vec::new(),
         }
     }
 
     fn destructor(name: &str) -> MirFunctionDeclaration {
         MirFunctionDeclaration {
-            lowered_name: struct_member(name, "__deinit__"),
+            lowered_name: format!("{name}.__deinit__"),
             param_names: Vec::new(),
             param_types: Vec::new(),
             defaults: Vec::new(),
@@ -485,7 +475,11 @@ mod tests {
                         Ty::int(),
                     ],
                 ),
-                structure("NBox", value_decl("NBox", "n"), vec![Ty::int()]),
+                {
+                    let mut nbox = structure("NBox", value_decl("NBox", "n"), vec![Ty::int()]);
+                    nbox.record_member("__deinit__", "NBox.__deinit__");
+                    nbox
+                },
             ],
             functions: vec![destructor("NBox")],
             traits: Vec::new(),

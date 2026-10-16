@@ -5311,13 +5311,17 @@ point where a slot declared in a loop is uninitialized again.
   names no owner instance, and the bare spelling in its body stands for
   the struct with the removed arguments erased
   (`Specializer::erase_removed_owner`, `Box$mono$V$REMOVED$ARG`), which
-  every receiver's instance agrees with. A member the backends find by
-  composing `{struct}.{member}` from a value's type rather than from the
-  instance a call names (`mir::composed_member`: the constructors and
-  lifecycle members, display, hashing, equality, `__int__`, a keyword
-  collector's `__setitem__`, `__call__`) keeps its owner instance and its
-  name, removals and all, until each struct instance carries its members'
-  instance symbols (R1001). A static call's spelled receiver `S[n]` is a
+  every receiver's instance agrees with. A destructor, copy, or move
+  constructor is such a generator too: each concrete struct declaration's
+  member table (`StructDeclaration::members`) names the instance its drops,
+  copies, and moves run, which the elaborator records as it demands it
+  (`Specializer::record_struct_member`), so `DBox[1]` and `DBox[2]` share
+  one `DBox.__deinit__$mono`, as upstream's struct nests its member
+  generators. A member the backends find by composing `{struct}.{member}`
+  from a value's type rather than from the instance a call names
+  (`mir::composed_member`: the constructors, display, hashing, equality,
+  `__int__`, a keyword collector's `__setitem__`, `__call__`) keeps its
+  owner instance and its name, removals and all. A static call's spelled receiver `S[n]` is a
   forward of `n` to the struct parameter the callee removed; in a body
   that removed `n` it is the erased `S[_REMOVED_ARG]`, which binds nothing
   and names the erased instance (`Specializer::bind_static_receiver`). A body lifted from a compile-time

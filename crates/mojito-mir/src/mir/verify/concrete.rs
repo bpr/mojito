@@ -46,7 +46,8 @@ pub fn concrete_function_findings(name: &str, function: &MirFunction) -> Vec<Str
 /// The program-wide concreteness findings: every function body, and every
 /// declaration the bodies are checked against. A declaration's availability
 /// clauses and conformance conditions are decided when it is instantiated,
-/// and an instance has no enclosing binders, so none survives.
+/// and an instance has no enclosing binders, so none survives. A struct's
+/// member table names only lifecycle members the program defines.
 pub(super) fn verify_concrete_program(program: &MirProgram, errors: &mut Vec<String>) {
     for (name, function) in &program.functions {
         errors.extend(concrete_function_findings(name, function));
@@ -80,11 +81,29 @@ pub(super) fn verify_concrete_program(program: &MirProgram, errors: &mut Vec<Str
             ));
         }
     }
+    let defined: std::collections::HashSet<&str> = program
+        .functions
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
     for declaration in &program.declarations.structs {
         let head = format!("MIR struct '{}' declaration", declaration.name);
         require_no_parameters(&head, &declaration.param_decls, errors);
         for (field, ty) in &declaration.fields {
             require_concrete(&head, &format!("field `{field}`"), ty, errors);
+        }
+        for entry in &declaration.members {
+            if !crate::mir::LIFECYCLE_MEMBERS.contains(&entry.member.as_str()) {
+                errors.push(format!(
+                    "{head} names `{}` as its member `{}`, which is no lifecycle member",
+                    entry.symbol, entry.member
+                ));
+            } else if !defined.contains(entry.symbol.as_str()) {
+                errors.push(format!(
+                    "{head} names `{}` as its `{}`, which the program does not define",
+                    entry.symbol, entry.member
+                ));
+            }
         }
         errors.extend(
             declaration

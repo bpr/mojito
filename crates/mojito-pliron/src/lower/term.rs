@@ -282,7 +282,7 @@ impl FnLowering<'_> {
                         template,
                         "List" | "Dict" | "Set" | "Optional" | "Array" | "Span" | "StringSpan"
                     );
-                if !stdlib && self.declarations.contains_key(&format!("{name}.{method}")) {
+                if !stdlib && self.lifecycle_symbol(name, method).is_some() {
                     return true;
                 }
                 self.struct_decls.get(name.as_str()).is_some_and(|decl| {

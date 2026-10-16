@@ -1492,6 +1492,10 @@ fn declaration_metadata_reprints_byte_identically() {
                 ),
             ),
         ],
+        members: vec![crate::mir::MirStructMember {
+            member: "__deinit__".into(),
+            symbol: "Box.__deinit__".into(),
+        }],
     };
     let zebra = MirStructDeclaration {
         name: "Zebra needs quoting!".into(),
@@ -1506,6 +1510,7 @@ fn declaration_metadata_reprints_byte_identically() {
         associated_types: Vec::new(),
         parameterized_associated_types: Vec::new(),
         associated_values: Vec::new(),
+        members: Vec::new(),
     };
     let add = MirFunctionDeclaration {
         lowered_name: "add".into(),

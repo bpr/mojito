@@ -601,8 +601,7 @@ impl VmBackend {
                 "vm: keyword arguments to '{name}' are not supported"
             )));
         }
-        let copy = format!("{name}.__copyinit__");
-        let fidx = prog.index_of(&copy).ok_or_else(|| {
+        let fidx = prog.lifecycle_member(name, "__copyinit__").ok_or_else(|| {
             RuntimeError::Unsupported(format!("vm: struct '{name}' has no copy constructor"))
         })?;
         let skeleton = Self::struct_skeleton(prog, name);
@@ -619,8 +618,7 @@ impl VmBackend {
     pub(super) fn clone_value(&mut self, prog: &Prog, v: &Value) -> Result<Value, RuntimeError> {
         match v {
             Value::Struct { name, fields } => {
-                let copy = format!("{name}.__copyinit__");
-                if let Some(fidx) = prog.index_of(&copy) {
+                if let Some(fidx) = prog.lifecycle_member(name, "__copyinit__") {
                     let skeleton = Self::struct_skeleton(prog, name);
                     let (_, frame_vars) = self.call_frame(prog, fidx, vec![skeleton, v.clone()])?;
                     Ok(frame_vars.into_iter().next().unwrap_or(Value::None))
@@ -750,7 +748,7 @@ impl VmBackend {
         v: Value,
     ) -> Result<Value, RuntimeError> {
         if let Value::Struct { name, .. } = &v
-            && let Some(fidx) = prog.index_of(&format!("{name}.__moveinit__"))
+            && let Some(fidx) = prog.lifecycle_member(name, "__moveinit__")
         {
             let skeleton = Self::struct_skeleton(prog, name);
             let (_, frame_vars) = self.call_frame(prog, fidx, vec![skeleton, v])?;

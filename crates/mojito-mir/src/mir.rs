@@ -30,7 +30,7 @@ use mojito_checked::checked::{
 use mojito_checked::declaration::compiler_trait_declaration;
 pub use mojito_checked::declaration::{
     FunctionDeclaration as MirFunctionDeclaration, StructDeclaration as MirStructDeclaration,
-    TraitDeclaration, TraitRequirement,
+    StructMember as MirStructMember, TraitDeclaration, TraitRequirement,
 };
 use mojito_checked::unit::LoweringUnit;
 use mojito_common::timing;
@@ -70,7 +70,7 @@ pub use param_uses::{
 };
 mod struct_reads;
 pub use struct_reads::{
-    LayoutReads, StructReads, composed_member, struct_layout_reads, struct_member,
+    LIFECYCLE_MEMBERS, LayoutReads, StructReads, composed_member, struct_layout_reads,
 };
 mod symbols;
 pub use symbols::{SymbolTable, implicit_callees, replace_symbol_uses};
@@ -260,6 +260,13 @@ impl MirDeclarations {
             .or_else(|| self.imported.as_ref()?.structure(name))
     }
 
+    /// The symbol of the lifecycle member `member` (`__deinit__`,
+    /// `__copyinit__`, `__moveinit__`) the struct `name` owns, from its
+    /// declaration's member table.
+    pub fn lifecycle_member(&self, name: &str, member: &str) -> Option<&str> {
+        self.structure(name)?.member(member)
+    }
+
     /// Whether the program or its package declares the trait `name`,
     /// decoding nothing.
     pub fn declares_trait(&self, name: &str) -> bool {
@@ -296,8 +303,8 @@ impl MirDeclarations {
     /// (`types::trivially_register_passable_leaf`), or a struct that
     /// declares it unconditionally, directly or through a refining trait.
     /// The trait forbids a custom copy constructor or destructor and requires
-    /// every field to conform, so such a struct also defines no
-    /// `__copyinit__` or `__del__` and holds only fields of concrete types
+    /// every field to conform, so such a struct also owns no
+    /// `__copyinit__` or `__deinit__` and holds only fields of concrete types
     /// this answers for. A field typed by a
     /// parameter answers no until an instance closes it, and a conditional
     /// conformance until the elaborator decides it.
@@ -313,9 +320,9 @@ impl MirDeclarations {
                 (row.trait_name == "TrivialRegisterPassable"
                     || self.trait_refines(&row.trait_name, "TrivialRegisterPassable"))
                     && matches!(row.conditions.as_slice(), [GenericConstraint::Bool(true)])
-            }) && ["__copyinit__", "__del__"]
+            }) && ["__copyinit__", "__deinit__"]
                 .iter()
-                .all(|member| self.function(&format!("{name}.{member}")).is_none())
+                .all(|member| declaration.member(member).is_none())
                 && declaration.fields.iter().all(|(_, field)| {
                     !mojito_types::types::is_symbolic(field) && self.copy_is_identity(field)
                 })
@@ -349,9 +356,7 @@ impl MirDeclarations {
                 };
                 if declaration.explicit_destroy.is_some()
                     || !declaration.explicit_destructors.is_empty()
-                    || ["__del__", "__deinit__"]
-                        .iter()
-                        .any(|member| self.function(&format!("{name}.{member}")).is_some())
+                    || declaration.member("__deinit__").is_some()
                 {
                     return false;
                 }
@@ -906,6 +911,7 @@ fn lower_program(
         link::link_declarations(&mut declarations, compiled);
     }
     adopt_member_defaults(checked, &mut declarations, &mut invariant_errors);
+    record_lifecycle_members(&mut declarations);
     {
         let _close = timing::span("close_register_types");
         for (name, function) in &mut functions {
@@ -928,6 +934,28 @@ fn lower_program(
     let _verify = timing::span("verify.pre_drop");
     result.invariant_errors.extend(verify::verify(&result));
     (result, ranges)
+}
+
+/// Record in each struct declaration's member table the lifecycle members
+/// it declares: the functions lowering named `{struct}.{member}`.
+fn record_lifecycle_members(declarations: &mut MirDeclarations) {
+    let lowered: HashSet<&str> = declarations
+        .functions
+        .iter()
+        .map(|declaration| declaration.lowered_name.as_str())
+        .collect();
+    let mut found = Vec::new();
+    for (position, declaration) in declarations.structs.iter().enumerate() {
+        for member in LIFECYCLE_MEMBERS {
+            let symbol = format!("{}.{member}", declaration.name);
+            if lowered.contains(symbol.as_str()) {
+                found.push((position, member, symbol));
+            }
+        }
+    }
+    for (position, member, symbol) in found {
+        declarations.structs[position].record_member(member, &symbol);
+    }
 }
 
 /// The MIR declaration of the struct the statement node `root` declares, if
@@ -1047,6 +1075,7 @@ fn struct_declaration(
             .get(name)
             .cloned()
             .unwrap_or_default(),
+        members: Vec::new(),
     })
 }
 

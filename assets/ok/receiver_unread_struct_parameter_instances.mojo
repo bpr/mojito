@@ -5,9 +5,10 @@
 # `bump(mut self)`, and `Wrap.get`, whose `DBox[n]` field lays out an `Int`.
 # A method keeps one instance per value where it reads `Self.n` and where
 # its struct's layout reads `n` (`Arr[n]` holds a `SIMD[int64, n]`), as on
-# the pin. The pin also keeps one `twice`, which calls `self.get()`, one
-# `Wrap.take`, whose drop of `self` runs `DBox`'s destructor, and one
-# destructor and constructor; Mojito still keeps those one per value.
+# the pin. `DBox`'s destructor, which reads no struct parameter, is one
+# instance, as on the pin. The pin also keeps one `twice`, which calls
+# `self.get()`, one `Wrap.take`, whose drop of `self` runs `DBox`'s
+# destructor, and one constructor; Mojito still keeps those one per value.
 struct Box[n: Int](Copyable, Movable):
     var v: Int
 

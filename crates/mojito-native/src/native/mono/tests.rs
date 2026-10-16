@@ -2186,8 +2186,11 @@ fn a_receiver_method_that_reads_no_struct_parameter_is_one_instance() {
     );
 }
 
+/// A destructor or copy constructor that reads no struct parameter is one
+/// instance for every instance of its struct, as on the pin, and each
+/// struct instance's member table names it.
 #[test]
-fn a_destructor_that_reads_no_struct_parameter_keeps_its_instance_name() {
+fn a_destructor_that_reads_no_struct_parameter_is_one_instance() {
     let source = "struct DBox[n: Int](Movable):\n\
          \x20   var v: Int\n\
          \x20   def __init__(out self, v: Int):\n\
@@ -2198,16 +2201,49 @@ fn a_destructor_that_reads_no_struct_parameter_keeps_its_instance_name() {
          \x20   var a = DBox[1](1)\n\
          \x20   var b = DBox[2](2)\n\
          \x20   print(a.v, b.v)\n";
+    assert_one_lifecycle_instance(source, "DBox", "__deinit__");
+}
+
+#[test]
+fn a_copy_constructor_that_reads_no_struct_parameter_is_one_instance() {
+    let source = "struct CBox[n: Int](Copyable, Movable):\n\
+         \x20   var v: Int\n\
+         \x20   def __init__(out self, v: Int):\n\
+         \x20       self.v = v\n\
+         \x20   def __init__(out self, *, copy: Self):\n\
+         \x20       self.v = copy.v + 100\n\
+         def dup[n: Int](b: CBox[n]) -> Int:\n\
+         \x20   var c = b.copy()\n\
+         \x20   return c.v\n\
+         def main():\n\
+         \x20   print(dup(CBox[1](1)), dup(CBox[2](2)))\n";
+    assert_one_lifecycle_instance(source, "CBox", "__copyinit__");
+}
+
+/// `source`'s `owner[1]` and `owner[2]` share one owner-less instance of
+/// their `member`, which both member tables name.
+fn assert_one_lifecycle_instance(source: &str, owner: &str, member: &str) {
     let specialized = specialized_with_removed(source, &[]).expect("specialize");
-    // The backends find a destructor by composing its struct instance's
-    // name, so it stays one per instance under that name.
     assert_eq!(
-        [
-            instances_of(&specialized, "DBox$mono$V1.__deinit__"),
-            instances_of(&specialized, "DBox$mono$V2.__deinit__"),
-        ],
-        [["DBox$mono$V1.__deinit__"], ["DBox$mono$V2.__deinit__"]]
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
     );
+    let instance = format!("{owner}.{member}$mono");
+    assert_eq!(
+        instances_of(&specialized, &format!("{owner}.{member}")),
+        [instance.as_str()]
+    );
+    for argument in ["V1", "V2"] {
+        let name = format!("{owner}$mono${argument}");
+        assert_eq!(
+            specialized
+                .program
+                .declarations
+                .lifecycle_member(&name, member),
+            Some(instance.as_str()),
+            "`{name}`'s member table"
+        );
+    }
 }
 
 /// A direct call of a function whose argument its body never uses names

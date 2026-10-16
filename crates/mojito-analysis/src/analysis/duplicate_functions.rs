@@ -119,9 +119,18 @@ fn pinned(program: &mut MirProgram, exports: &[String]) -> HashSet<String> {
             *uses.entry(name).or_default() += 1;
         }
     }
+    // A struct's member table names its lifecycle members, which the
+    // backends run from a value's type.
+    let members: HashSet<&str> = declarations
+        .structs
+        .iter()
+        .flat_map(|declaration| &declaration.members)
+        .map(|entry| entry.symbol.as_str())
+        .collect();
     let method = |name: &str| {
-        split_method_symbol(name)
-            .is_some_and(|(owner, method)| declarations.reached_from_type(owner, method))
+        members.contains(name)
+            || split_method_symbol(name)
+                .is_some_and(|(owner, method)| declarations.reached_from_type(owner, method))
     };
     let unreached = |name: &str| {
         uses.get(name).copied().unwrap_or_default()

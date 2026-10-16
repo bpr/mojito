@@ -461,7 +461,12 @@ fn followed_callees(
     declarations: &MirDeclarations,
     followed: impl Fn(&str) -> bool,
 ) -> Vec<String> {
-    fn walk(blocks: &[mojito_mir::mir::MirBlock], function: &MirFunction, out: &mut Vec<String>) {
+    fn walk(
+        blocks: &[mojito_mir::mir::MirBlock],
+        function: &MirFunction,
+        declarations: &MirDeclarations,
+        out: &mut Vec<String>,
+    ) {
         for block in blocks {
             for instruction in &block.instrs {
                 match instruction {
@@ -476,7 +481,11 @@ fn followed_callees(
                         ..
                     } => out.push(function.clone()),
                     MirInstr::DropVar { var } => {
-                        out.extend(function.var_tys.get(var).and_then(destructor_of));
+                        out.extend(
+                            (function.var_tys.get(var))
+                                .and_then(|ty| destructor_of(ty, declarations))
+                                .map(str::to_string),
+                        );
                     }
                     _ => out.extend(
                         mojito_mir::mir::instruction_subscript_call(instruction)
@@ -484,13 +493,13 @@ fn followed_callees(
                     ),
                 }
                 for region in instruction_regions(instruction) {
-                    walk(region, function, out);
+                    walk(region, function, declarations, out);
                 }
             }
         }
     }
     let mut callees = Vec::new();
-    walk(&function.blocks, function, &mut callees);
+    walk(&function.blocks, function, declarations, &mut callees);
     callees.extend(mojito_mir::mir::named_lifted_bodies(
         name,
         function,

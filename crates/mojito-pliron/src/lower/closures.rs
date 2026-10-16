@@ -154,9 +154,7 @@ impl FnLowering<'_> {
                     // semantics, so mirror the event.
                     if self.trace_lifecycle
                         && let TyKind::Struct(name, _) = ty.kind()
-                        && self
-                            .declarations
-                            .contains_key(&format!("{name}.__moveinit__"))
+                        && self.lifecycle_symbol(name, "__moveinit__").is_some()
                     {
                         let name = name.clone();
                         self.emit_trace_text(

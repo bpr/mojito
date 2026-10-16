@@ -889,8 +889,13 @@ fn reachable_set<'p>(
                 {
                     continue;
                 }
-                let lifecycle = format!("{struct_name}.{method}");
-                if let Some((callee, _)) = functions.get_key_value(lifecycle.as_str())
+                let Some(lifecycle) = structs
+                    .get(struct_name)
+                    .and_then(|declaration| declaration.member(method))
+                else {
+                    continue;
+                };
+                if let Some((callee, _)) = functions.get_key_value(lifecycle)
                     && reachable.insert(*callee)
                 {
                     queue.push_back(*callee);
@@ -1272,8 +1277,12 @@ fn visit_call_edges<'p>(
                     mode: mojito_mir::mir::UseMode::Move,
                     ..
                 } => {
-                    if let Some(TyKind::Struct(name, _)) = function.var_tys.get(var).map(Ty::kind) {
-                        push_named(&mut targets, &format!("{name}.__moveinit__"));
+                    if let Some(TyKind::Struct(name, _)) = function.var_tys.get(var).map(Ty::kind)
+                        && let Some(moveinit) = structs
+                            .get(name.as_str())
+                            .and_then(|declaration| declaration.member("__moveinit__"))
+                    {
+                        push_named(&mut targets, moveinit);
                     }
                 }
                 _ => {}
@@ -1532,6 +1541,16 @@ mod tests {
                     associated_types: Vec::new(),
                     parameterized_associated_types: Vec::new(),
                     associated_values: Vec::new(),
+                    members: vec![
+                        mojito_mir::mir::MirStructMember {
+                            member: "__copyinit__".to_string(),
+                            symbol: "Point.__copyinit__".to_string(),
+                        },
+                        mojito_mir::mir::MirStructMember {
+                            member: "__deinit__".to_string(),
+                            symbol: "Point.__deinit__".to_string(),
+                        },
+                    ],
                 }],
                 functions: Vec::new(),
                 traits: Vec::new(),

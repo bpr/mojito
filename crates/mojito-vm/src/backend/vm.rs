@@ -136,8 +136,8 @@ impl VmBackend {
     fn configure_lifecycle(&mut self, prog: &Prog) {
         // A program with no lifecycle copy/move methods uses the default (raw clone /
         // slot transfer) path everywhere — so non-lifecycle programs are unchanged.
-        self.has_copyinit = prog.defines(".__copyinit__");
-        self.has_moveinit = prog.defines(".__moveinit__");
+        self.has_copyinit = prog.owns_member("__copyinit__");
+        self.has_moveinit = prog.owns_member("__moveinit__");
     }
 
     fn burn_ctfe(&mut self) -> Result<(), RuntimeError> {
@@ -748,10 +748,26 @@ impl Prog {
         }
     }
 
-    /// Whether any function name ends with `suffix` (e.g. `.__copyinit__`) — used to
-    /// decide whether copy/move needs the lifecycle-method path at all.
-    fn defines(&self, suffix: &str) -> bool {
-        self.mir.functions.iter().any(|(n, _)| n.ends_with(suffix))
+    /// Whether any struct owns the lifecycle member `member` (e.g.
+    /// `__copyinit__`) — used to decide whether copy/move needs the
+    /// lifecycle-method path at all.
+    fn owns_member(&self, member: &str) -> bool {
+        self.structs
+            .values()
+            .any(|declaration| declaration.members.iter().any(|(name, _)| name == member))
+    }
+
+    /// The function index of the lifecycle member `member` (`__deinit__`,
+    /// `__copyinit__`, `__moveinit__`) the struct `name` owns, from its
+    /// declaration's member table.
+    pub(super) fn lifecycle_member(&self, name: &str, member: &str) -> Option<usize> {
+        let (_, symbol) = self
+            .structs
+            .get(name)?
+            .members
+            .iter()
+            .find(|(known, _)| known == member)?;
+        self.index_of(symbol)
     }
 
     /// Arity-based overload fallback: resolve a *source* name to the lowered
@@ -933,6 +949,8 @@ struct StructDef {
     fields: Vec<(String, Ty)>,
     mut_self_methods: std::collections::HashSet<String>,
     fieldwise_init: bool,
+    /// The lifecycle members the struct owns, with their symbols.
+    members: Vec<(String, String)>,
 }
 
 /// Whether the struct `name` is an instance of the nominal `Tuple`.
@@ -1148,6 +1166,11 @@ fn build_structs(declarations: &mojito_mir::mir::MirDeclarations) -> HashMap<Str
                     fields: declaration.fields.clone(),
                     mut_self_methods: declaration.mut_self_methods.clone(),
                     fieldwise_init: declaration.fieldwise_init,
+                    members: declaration
+                        .members
+                        .iter()
+                        .map(|entry| (entry.member.clone(), entry.symbol.clone()))
+                        .collect(),
                 },
             )
         })

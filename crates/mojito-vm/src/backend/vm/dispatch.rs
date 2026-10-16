@@ -127,8 +127,7 @@ impl VmBackend {
                     }
                     return Ok(());
                 }
-                let del = format!("{name}.__deinit__");
-                if let Some(idx) = prog.index_of(&del) {
+                if let Some(idx) = prog.lifecycle_member(&name, "__deinit__") {
                     self.record_lifecycle(format!("drop {name}"));
                     // `self` is the whole struct, owned by the destructor: its
                     // elaborated `ConsumeVar` destroys the residual fields at

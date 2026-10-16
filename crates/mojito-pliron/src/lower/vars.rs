@@ -86,8 +86,8 @@ impl FnLowering<'_> {
                         // defines the move semantics.
                         if let TyKind::Struct(name, _) = &ty.kind()
                             && self
-                                .signatures
-                                .contains_key(&format!("{name}.__moveinit__"))
+                                .lifecycle_symbol(name, "__moveinit__")
+                                .is_some_and(|moveinit| self.signatures.contains_key(moveinit))
                         {
                             let name = name.clone();
                             return self.move_via_moveinit(ctx, dest, var, &name, layout);

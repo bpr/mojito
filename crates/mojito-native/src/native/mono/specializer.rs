@@ -61,6 +61,7 @@ impl<'a> Specializer<'a> {
             output_function_decls: Vec::new(),
             output_structs: Vec::new(),
             output_struct_positions: HashMap::new(),
+            pending_struct_members: HashMap::new(),
             conformance_answers: RefCell::default(),
             layout_structs: Rc::default(),
             constant_values: HashMap::new(),
@@ -378,6 +379,7 @@ impl<'a> Specializer<'a> {
     ) -> Result<String, MonoError> {
         bindings.erase_origins();
         bindings.reduced = self.reduces(template, &bindings);
+        let lifecycle = lifecycle_owner(template, &bindings);
         if let Some(declaration) = self.declarations.get(template)
             && let Availability::Disproven(message) = self.availability(declaration, &bindings)
         {
@@ -398,9 +400,10 @@ impl<'a> Specializer<'a> {
             // A method that removed one of its struct's parameters is a
             // generator over the ones it kept, as upstream's method
             // generator lists them before its own: it names no owner
-            // instance, and its kept owner arguments lead its own. A member
-            // the backends find by its struct instance's name keeps that
-            // name.
+            // instance, and its kept owner arguments lead its own: a
+            // destructor, copy, or move constructor too, which each struct
+            // instance's member table names. A member the backends find by
+            // its struct instance's name keeps that name.
             Some((owner_template, _))
                 if !mojito_mir::mir::composed_member(template)
                     && self
@@ -445,6 +448,7 @@ impl<'a> Specializer<'a> {
         };
         if let Some(&index) = self.instance_index.get(&key) {
             let name = self.instances[index].1.clone();
+            self.record_struct_member(lifecycle, &name);
             self.note_reference(&name);
             return Ok(name);
         }
@@ -509,6 +513,7 @@ impl<'a> Specializer<'a> {
                     .zip(self.functions.get(template))
                     .is_some_and(|(known, template)| functions_equivalent(known, template))
         }) {
+            self.record_struct_member(lifecycle, &name);
             self.note_reference(&name);
             return Ok(name);
         }
@@ -542,8 +547,26 @@ impl<'a> Specializer<'a> {
         self.states.push(InstanceState::Pending);
         self.references.push(Vec::new());
         self.queue.push_back((key, bindings));
+        self.record_struct_member(lifecycle, &name);
         self.note_reference(&name);
         Ok(name)
+    }
+
+    /// Record `instance` as the member `lifecycle` names of its struct's
+    /// output declaration, or of the one it gets when declared, as
+    /// upstream's struct nests the member instances it owns.
+    fn record_struct_member(&mut self, lifecycle: Option<(String, &'static str)>, instance: &str) {
+        let Some((name, member)) = lifecycle else {
+            return;
+        };
+        if let Some(&position) = self.output_struct_positions.get(&name) {
+            self.output_structs[position].record_member(member, instance);
+            return;
+        }
+        let pending = self.pending_struct_members.entry(name).or_default();
+        if !pending.iter().any(|(known, _)| *known == member) {
+            pending.push((member, instance.to_string()));
+        }
     }
 
     /// Materialize every pending instance on the queue, the instances their
@@ -1421,7 +1444,19 @@ impl<'a> Specializer<'a> {
                 .map(|&position| self.output_functions[position].clone())
                 .collect(),
             declarations: MirDeclarations {
-                structs: self.output_structs.clone(),
+                // A member table names only the instances the fragment
+                // holds.
+                structs: self
+                    .output_structs
+                    .iter()
+                    .map(|declaration| {
+                        let mut declaration = declaration.clone();
+                        declaration
+                            .members
+                            .retain(|entry| names.contains(entry.symbol.as_str()));
+                        declaration
+                    })
+                    .collect(),
                 functions: self
                     .output_function_decls
                     .iter()
@@ -1490,7 +1525,15 @@ impl<'a> Specializer<'a> {
 
     /// Add `declaration` to the output structs and, unless a non-generic
     /// source struct already answers its name, to the layout field index.
-    fn declare_output_struct(&mut self, declaration: MirStructDeclaration) {
+    fn declare_output_struct(&mut self, mut declaration: MirStructDeclaration) {
+        for (member, instance) in self
+            .pending_struct_members
+            .remove(&declaration.name)
+            .into_iter()
+            .flatten()
+        {
+            declaration.record_member(member, &instance);
+        }
         let shadowed = self
             .structs
             .get(declaration.name.as_str())
@@ -3211,6 +3254,7 @@ impl<'a> Specializer<'a> {
                         associated_types: Vec::new(),
                         parameterized_associated_types: Vec::new(),
                         associated_values: Vec::new(),
+                        members: Vec::new(),
                     });
                 }
                 continue;
@@ -3267,6 +3311,7 @@ impl<'a> Specializer<'a> {
             declaration.associated_types.clear();
             declaration.parameterized_associated_types.clear();
             declaration.associated_values.clear();
+            declaration.members.clear();
             // Overload-qualified `mut self` entries name the template
             // (for example, a signature-qualified `List.pop`); respell them
             // under the instance so
@@ -3958,4 +4003,21 @@ fn elaboration_counts(
     };
     counts.recount(program);
     counts
+}
+
+/// The concrete struct whose lifecycle member (`__deinit__`,
+/// `__copyinit__`, `__moveinit__`) an instance of `template` under
+/// `bindings` is, with the member: its owner instance, else its
+/// non-generic owner. `None` for any other function.
+fn lifecycle_owner(template: &str, bindings: &Bindings) -> Option<(String, &'static str)> {
+    let (owner, method) = mojito_symbol::symbol::split_method_symbol(template)?;
+    let method = method.split('$').next().unwrap_or(method);
+    let member = mojito_mir::mir::LIFECYCLE_MEMBERS
+        .into_iter()
+        .find(|member| *member == method)?;
+    let name = match bindings.self_instance.as_ref().map(|(_, ty)| ty.kind()) {
+        Some(TyKind::Struct(name, _)) => name.clone(),
+        _ => owner.to_string(),
+    };
+    Some((name, member))
 }

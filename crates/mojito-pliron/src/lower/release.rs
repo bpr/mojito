@@ -14,9 +14,7 @@ impl FnLowering<'_> {
             TyKind::Error => true,
             TyKind::Struct(name, _) if mojito_symbol::symbol::is_stdlib_string_struct(name) => true,
             TyKind::Struct(name, _) => {
-                !self
-                    .declarations
-                    .contains_key(&format!("{name}.__copyinit__"))
+                self.lifecycle_symbol(name, "__copyinit__").is_none()
                     && self.struct_decls.get(name.as_str()).is_some_and(|decl| {
                         decl.fields
                             .iter()
@@ -179,7 +177,10 @@ impl FnLowering<'_> {
                 "List" | "Dict" | "Set" | "Optional" | "Array" | "Span" | "StringSpan"
             );
         stdlib
-            && (self.signatures.contains_key(&format!("{name}.__deinit__")) || self.needs_drop(ty))
+            && (self
+                .lifecycle_symbol(name, "__deinit__")
+                .is_some_and(|deinit| self.signatures.contains_key(deinit))
+                || self.needs_drop(ty))
     }
 
     /// Recursively free the owned heap buffers inside `ty`-typed storage.

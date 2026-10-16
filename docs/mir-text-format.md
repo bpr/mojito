@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.64
+# Mojito Textual MIR Format, Version 1.65
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.64 is implemented end to end for inspection and loading: canonical
+Version 1.65 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.64
+mojito-mir 1.65
 ```
 
-The writer emits 1.64. The reader accepts 1.0 through 1.64; *Schema 1.0*
+The writer emits 1.65. The reader accepts 1.0 through 1.65; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -453,6 +453,19 @@ undeclared with no obligated field. `associated_types` contains
 `parameterized_associated_types` the minor-46 records sorted by name, and
 `associated_values` contains `associated_value { name: symbol, value:
 param-expr }` records sorted by name.
+
+A struct that owns a lifecycle member carries `members: [member { name:
+symbol, symbol: symbol }, ...]` after `associated_values` (schema 1.65):
+its member table, sorted by member, naming the function that is its
+`__deinit__`, `__copyinit__`, or `__moveinit__`. A drop, copy, or move of
+a value of the struct runs the member the table names, never one composed
+from the struct's name. MIR lowering records a template's declared members
+(`S.__deinit__`); the elaborator records each concrete struct's instances,
+so an owner-less member shared by every instance of its struct
+(`DBox.__deinit__$mono`) appears in each instance's table. The concrete
+verifier reports a table naming a function the program does not define.
+The writer omits the field when it is empty, the reader takes an absent
+field as empty.
 
 ### Function declarations
 

@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A destructor, copy, or move constructor that reads no struct parameter
+  is one instance for every instance of its struct (R1001), as on the
+  pin: `DBox[1]` and `DBox[2]` share `DBox.__deinit__$mono`. Each struct
+  declaration carries a member table naming its lifecycle members'
+  symbols (`StructDeclaration::members`, MIR text 1.65), which MIR
+  lowering fills for a template and the elaborator for each concrete
+  struct with the instances it made, as upstream's struct nests its
+  member generators, and every drop, copy, and move reads it: the VM, the
+  Pliron backend, `eliminate-dead-symbols`,
+  `eliminate-duplicate-functions`, `inline-parametric`, and the
+  trivial-copy and trivial-drop queries. No program's output changes.
 - A runtime argument a free function's body never uses leaves the
   generator its direct calls name (R997), as upstream's
   `RemoveUnusedParams` removes it first and then the parameters only its

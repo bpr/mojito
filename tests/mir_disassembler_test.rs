@@ -157,6 +157,7 @@ fn metadata_program() -> MirProgram {
             associated_types: Vec::new(),
             parameterized_associated_types: Vec::new(),
             associated_values: Vec::new(),
+            members: Vec::new(),
         }],
         functions: vec![MirFunctionDeclaration {
             lowered_name: "scale".into(),
