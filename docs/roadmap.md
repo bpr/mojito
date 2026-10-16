@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1077**.
+Next free ID: **R1082**.
 
 ## Ordered Work
 
@@ -56,323 +56,270 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R951 A `nodebug` constructor of a struct with several
-  `__init__`s is called, not inlined**
+- [ ] **R1037 A call of a nested `def` is an indirect call through its
+  closure**
 
-  `inline-parametric` inlines a call naming a struct only when the struct
-  declares one `__init__`, because MIR's `call` names the struct and not
-  the overload the check selected, where the pin inlines whichever
-  `C.__init__` the call resolves to.
-  - The elaborator and the VM each re-resolve the overload by arity
-    (`resolve_callable_symbol`, `constructor_name`).
-  - Carry the checked `__init__` symbol on the MIR call, as upstream's call
-    names it, and have the inliner read it.
-  - Done when a `nodebug` overloaded constructor (`String`'s) inlines and
+  Mojito lowers a call of a nested `def` by name to `closure.make` and
+  `call.indirect`, where upstream calls the lifted closure generator
+  directly and passes its captures as arguments.
+  - The pass and the elaborator recover the direct call by dataflow
+    (`mir::callable_targets`, `mir::escaping_nested_bodies`).
+  - Lower such a call to a direct `call` that passes the captures, and
+    retire that dataflow.
+  - A forward to a nested body's removed argument then drops its operand
+    as any direct call's does.
+  - Probe: `h[n](x: Arr[n])` returning `ign2(x)`, where the nested
+    `ign2(y: Arr[n])` never reads `y`, keeps neither `x` nor one instance
+    per `n`, as on the pin.
+  - Add it to `assets/ok/unused_argument_nested_variadic_instances.mojo`.
+  - Found while landing R1014 (2026-10-16).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R1077 An omitted default is filled in after the check, call shape
+  by call shape, where upstream fills it in at call binding**
+
+  `mir::evaluate_omitted_defaults` adds an omitted evaluated default to the
+  call shapes it recognizes and leaves every other shape to the callee's
+  binding, where upstream's call binding writes every omitted argument into
+  the call.
+  - Shapes left to the callee today: a subscript (`a[1]` over
+    `__getitem__(self, i: Int, j: Int = ...)`), a sibling nested `def`'s
+    call, a bundled body's call into another lowering unit, a call through
+    a trait bound (`x.show()` in `go[T: Shows]`), and a rebound function
+    value (`var g = use; g = use; g()`).
+  - In each, a borrowed default with a destructor is never destroyed after
+    the call, where the pin prints its `drop` line.
+  - A positional-only slot after an omitted literal default (`plit`) or an
+    unused one (`pafter`) cannot be passed by position, since only
+    evaluated defaults are filled.
+  - The lever: `mojito_ast::call` binding already maps every slot. Have the
+    checker record every omitted default, literal or computed, in the
+    checked call as an argument, so MIR lowering lowers it as any argument.
+  - A computed default is a compile-time value under the call's bindings,
+    upstream's `kgen.param.constant`, not a runtime call.
+  - An omitted argument the callee never uses passes a valueless operand,
+    as upstream's `_REMOVED_ARG` call passes none.
+  - Then delete `evaluate_omitted_defaults` and its `CallSite`.
+  - Done when each shape above runs as on the pin in
+    `assets/ok/evaluated_default_argument.mojo`.
+  - Done also when `inline-parametric` inlines a call omitting
+    `s: String = String("a")`, `x: Int = Self.n * 2`,
+    `v: SIMD[DType.int32, 4] = 1`, or `x: Optional[Int] = 5`, in a pass
+    test with a clean differential.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R1060 A callee still evaluates an omitted default, and its
+  instances keep the binders only that default reads**
+
+  `instantiate_constructed_defaults` respells every `CheckedConst::Evaluate`
+  default to the owner instance's default instance, and the VM's
+  `make_default` and the native `evaluated_default_value` run it, where
+  upstream's callee names no default at all.
+  - Once every call fills its defaults, drop the respelling and both
+    backends' evaluation of an `Evaluate` slot.
+  - `mir::evaluated_at_call_site` then counts every default as no read:
+    drop its free-function, `has_receiver`, nested `enclosing`,
+    own-function, and `earlier_defaults_filled` guards.
+  - Probes: `get[m](self, x: Int = Self.n + m)` loses `m`, and
+    `inner(x: Int, y: Int = n * 3)` nested in `outer[n]` loses `n`.
+  - Probes: `plit[n, m](x: Int = 1, y: Int = m * 2, /)` and
+    `pafter[n, m](x: Int = side(), y: Int = m * 2, /)` have one instance
+    per `n`, as on the pin.
+  - Add them to `assets/ok/lifted_body_owner_instances.mojo` and
+    `assets/ok/nested_unread_enclosing_instances.mojo`, and pin a bundled
+    function's default with a parameter-removal test over a package body.
+  - Found while landing R1004 (2026-10-15).
+  - Depends on R1077.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1041 A struct with droppable fields and no `__deinit__` has no
+  destructor function; the backends drop its fields by type**
+
+  A drop of such a struct names no destructor, so the VM's `drop_named`
+  and Pliron's `emit_drop` recurse into its fields and find each field's
+  `__deinit__` in the member table, where upstream synthesizes a `__del__`
+  for the struct and calls it at the drop.
+  - Synthesize `S.__deinit__(deinit self)` with an empty body in MIR
+    lowering, recorded in the member table and marked `nodebug`;
+    `refine_deinit_fields` then gives it a named `drop.place` per field.
+  - The VM must not trace a synthesized destructor (no `drop S` line).
+  - Then drop `destroyed_structs`' field closure for named drops.
+  - Storage destroys, `VariantSet` payloads, owned captures, and tuple,
+    pack, and variant elements stay type-directed; upstream's are library
+    code calling `__del__`.
+  - R968 then reduces to inlining that destructor.
+  - Found while landing R1016 (2026-10-16).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1044 A struct with copyable or movable fields and no
+  constructor of its own has none; the backends copy its fields by type**
+
+  A copy or move of such a struct names no constructor, so the VM's
+  `clone_value` and Pliron's `fork_value_into` recurse into its fields and
+  find each field's `__copyinit__` in the member table, where upstream
+  synthesizes a fieldwise `__copyinit__` and `__moveinit__` and calls it at
+  the site.
+  - The pin inlines the synthesized copy, so `T` holding a `C` field has
+    no `T` copy function in its LLVM output.
+  - Synthesize both in MIR lowering, record them in the member table, and
+    mark them `nodebug`, as R1041 does for `__deinit__`.
+  - Then drop `relocated_structs`' field closure for unnamed sites.
+  - Found while landing R1017 (2026-10-16).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1045 An owned capture, a variant payload, or a reference-read
+  method result copies without naming a constructor**
+
+  The VM's `clone_value` and Pliron's `fork_value_into` find
+  `__copyinit__` in the member table for `closure.make` captures,
+  `variant.make`/`variant.set`/`variant.replace` payloads, and
+  `result_adapter` reads, where upstream's copy insertion names it.
+  - Name a `constructor` on each, as R1017 did for `var.use` and
+    `value.copy`, and respell it in `Specializer::name_lifecycle_calls`.
+  - `T(copy=x)` is R1020/R1029's, and Pliron's clone-out reads are R1010's.
+  - Found while landing R1017 (2026-10-16).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1042 A cleanup list names only slots; the backends look up each
+  slot's destructor**
+
+  A `try`'s raise-edge cleanup and a return's or escape's cleanup list are
+  `Vec<VarId>`, so the VM's `run_cleanup` and Pliron's `cleanup_destructor`
+  find each destructor from the slot's type, where upstream emits the
+  destructor calls in the unwind blocks.
+  - Make each entry carry its destructor, as `drop.var` does since R1016,
+    and respell it in `Specializer::name_destructors`.
+  - About 300 uses in 47 files; then delete `cleanup_destructor` and the
+    VM's lookup.
+  - Found while landing R1016 (2026-10-16).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1043 A drop is its own instruction, not a call of its destructor**
+
+  `drop.var` names its destructor but stays a drop, where upstream's
+  destructor insertion leaves a plain call.
+  - Pliron's drop and leaf-presence flags and the VM's runtime
+    partial-aggregate rule exist because Mojito's drop states are not
+    definite at every death; upstream's lifetime checker makes them so.
+  - Once they are, lower a named drop to `call @D.__deinit__` of the slot.
+  - Found while landing R1016 (2026-10-16).
+  - Depends on R1041, R1042.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1046 A copy or move is a slot use, not a call of its
+  constructor**
+
+  `var.use copy` names its constructor but stays a slot use, where
+  upstream's copy/move insertion leaves a plain call.
+  - Pliron's drop flags, the VM's moved-slot tombstone, and the `String`
+    buffer bridges hang on the use, as they do on a drop for R1043.
+  - Once they do not, lower a named copy or move to a call of the
+    constructor into fresh storage.
+  - Found while landing R1017 (2026-10-16).
+  - Depends on R1044, R1045, R1043.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1078 `inline-parametric` binds a callee's compile-time
+  parameters case by case and refuses every other kind**
+
+  The pass substitutes a call's type and value arguments into the callee
+  and keeps the call when the callee has any other binder or construct,
+  where the pin's inliner substitutes every parameter alike.
+  - Kept today: a callable binder (`apply[f: def(Int) thin -> Int]`), an
+    origin or infer-only binder (`Span.__len__`, `Span.unsafe_ptr`), and a
+    `where` clause or constrained binder.
+  - Kept today: `T()` or `T(copy=x)` at a concrete binding, a
+    `conforms_to(T, Trait)` test, a `comptime for` in a generic callee
+    (`weighted[1, 2, 3]()`), and an overloaded constructor (`String`'s).
+  - Kept today: a borrowed argument with no place to bind, and a
+    place-bound parameter used other than as a place's root.
+  - The lever: one binding map from every binder kind to the call's
+    argument, the elaborator's `ParamBindings`, applied by one substitution
+    over the body, so the pass and the elaborator close a body alike.
+  - `conforms_to` needs a type operand, since `GenericConstraint::Conforms`
+    names a binder.
+  - `T()` needs the elaborator's `construct_type_parameter` below
+    `mojito-native`.
+  - Probe the pin on `where` first: whether the clause is judged at the
+    call or per instance decides whether inlining may drop it.
+  - Spill a placeless borrowed temporary to a fresh slot the caller drops,
+    and read a whole-slot use of a place-bound parameter through the
+    caller's place.
+  - The only refusals left are R924's legality list and the size bound.
+  - Done when each probe above inlines in a pass test
+    (`tests/mir_passes/inline-parametric/generic_kept.mir` among them) and
     the differential is clean.
   - Depends on nothing.
-  - Model: Opus, Not Planned.
+  - Model: Fable, Planned.
 
-- [ ] **R952 A `nodebug` member of a struct with an origin parameter is
-  called, not inlined**
+- [ ] **R1079 `inline-parametric` keeps every call that collects or
+  spreads arguments**
 
-  `inline-parametric` keeps a call whose owner struct declares an origin
-  binder, or an infer-only one the type's arguments omit, where the pin
-  inlines `Span.__len__` and `Span.unsafe_ptr`, marked `builtin`.
-  - `Span[Int, origin]`'s arguments do not align with its three binders,
-    and `ParamBindings` binds no origin.
-  - Bind an origin binder to the receiver's origin argument, and an
-    infer-only binder to what the type determines.
-  - Done when `s.__len__()` over a `Span` inlines and the differential is
-    clean.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
+  A callee with a homogeneous collector (`def total(*xs: Int)`), a spread
+  call (`show(*args)`), a keyword collector or forward (`**kwargs`,
+  `**kwargs^`), and a `Tuple` member over a computed pack list
+  (`Tuple.reverse`, `Tuple.concat`) keep their calls, where the pin inlines
+  all four.
+  - The VM builds each collector at binding: a pack for `*xs`, a
+    `StringDict` for `**kwargs`.
+  - The lever: the caller builds the collector, so the collector parameter
+    is an ordinary argument R1078's substitution binds.
+  - That argument is the pack descriptor R1040 made for `*xs`, the
+    dictionary for `**kwargs`, the caller's own collector for a spread, and
+    the list expression for a computed pack.
+  - The bundled library's `write` wrappers are variadic forwards, so this
+    is what lets `print`'s wrappers inline.
+  - Done when each form inlines in a pass test and `pair.concat(suffix)`
+    in `assets/ok/tuple_reverse_concat.mojo` holds no `__getitem_param__`
+    call, with a clean differential.
+  - Depends on R1078.
+  - Model: Fable, Planned.
 
-- [ ] **R954 A `nodebug` callee with a `deinit` parameter is called, not
-  inlined**
+- [ ] **R1080 `inline-parametric` keeps a call of a nested `def` whose
+  closure the caller does not show**
 
-  `inline-parametric` keeps a call whose callee takes a `deinit`
-  parameter, a named destructor's `deinit self` included, where the pin
-  inlines it.
-  - The VM vacates the caller's slot before such a call, and the callee's
-    `ConsumeVar` destroys the residual fields.
-  - Bind the parameter as a fresh slot the argument moves into, keeping the
-    callee's consumption of it.
-  - Done when a `nodebug` named destructor called as `x^.finish()` inlines
-    and the differential is clean.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
+  A nested `def` with a copied or moved capture (`{var x}`, `{x^}`), one
+  called through a sibling's captured closure (`def twice() {get}`), one
+  declared in a `comptime for`, and a callee passed a capturing closure as
+  its callable binder (`apply[plus](3)`) keep their calls, where the pin
+  inlines them.
+  - An inlined nested `def`'s closure also stays made, stored, and
+    dropped, where upstream erases it.
+  - Once a nested call is a direct call passing its captures (R1037), no
+    closure stands between the caller and the body.
+  - Bind a copied or moved capture to the closure environment's entry, a
+    `comptime for` index slot to the caller's loop binder, and a capturing
+    callable binder through R1078's map.
+  - Erase a closure slot nothing reads but its drop, and its `closure.make`.
+  - Done when each shape inlines in a pass test,
+    `tests/mir_passes/inline-parametric/nested_captures.mir`'s callers keep
+    no closure, and the differential is clean.
+  - Depends on R1037, R1078.
+  - Model: Opus, Planned.
 
-- [ ] **R955 A `nodebug` call whose borrowed argument has no place to bind
-  is called, not inlined**
+- [ ] **R1081 `inline-parametric` keeps destructor calls that a drop
+  does not spell as a call**
 
-  `inline-parametric` keeps a call when a `read` argument of a type with a
-  destructor was not loaded from a place, or when the callee names a
-  place-bound parameter other than as a place's root (`var.use` of its
-  slot), where the pin inlines both.
-  - Upstream substitutes the argument's address, so a temporary gets one
-    and a whole-slot use reads through it.
-  - Rewrite a whole-slot use of a place-bound parameter into a load of the
-    caller's place, and spill a placeless temporary to a fresh slot the
-    caller already drops.
-  - Done when each shape inlines in a pass test and the differential is
-    clean.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R957 A `nodebug` callee with a homogeneous variadic collector is
-  called, not inlined**
-
-  `inline-parametric` keeps a call whose callee declares `*xs: T`, where
-  the pin inlines it.
-  - The VM packs the call's positional overflow into the collector at
-    binding, and the pliron lowering builds the same storage.
-  - Bind the collector slot to a pack the caller builds from the
-    overflow registers, so the body's `len(xs)`, `xs[i]`, and `for`
-    read it.
-  - Done when `total(1, 2, 3)` over `def total(*xs: Int)` inlines in a
-    pass test and the differential is clean.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R958 A `nodebug` call spreading a pack (`show(*args)`) is called,
-  not inlined**
-
-  `inline-parametric` keeps a call with a `spread`, where the pin inlines
-  it.
-  - The spread passes the caller's own collector whole, so the callee's
-    collector binds to that place and its `*Ts` binder to the caller's
-    pack.
-  - Done when a spread call of a `nodebug` callee inlines in a pass test
-    and the differential is clean.
-  - Depends on R946, R957.
-  - Model: Opus, Not Planned.
-
-- [ ] **R959 A `nodebug` callee with a keyword collector is called, not
-  inlined**
-
-  `inline-parametric` keeps a call whose callee declares `**kwargs`, or
-  that forwards one (`**kwargs^`), where the pin inlines it.
-  - The VM builds the collector's `StringDict` at binding, one
-    `__setitem__` per collected keyword.
-  - Emit that construction in the caller and bind the collector slot to
-    it; a forwarded dictionary binds as an owned argument.
-  - Done when each form inlines in a pass test and the differential is
-    clean.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R960 An omitted argument whose default is computed is not
-  inlined**
-
-  `inline-parametric` keeps a call that omits an argument whose default
-  is a lowered default function (`s: String = String("a")`,
-  `x: Int = Self.n * 2`), where the pin inlines it.
-  - The pin evaluates such a default at compile time, where the VM runs
-    the function at each call; the elaborator rejects one that does I/O.
-  - Materialize it as the function's compile-time value under the
-    callee's bindings, upstream's `kgen.param.constant`, not as a call.
-  - Done when both defaults above inline in a pass test and the
-    differential is clean.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R961 A literal default at a SIMD vector or a constructor's binder
-  is not inlined**
-
-  `inline-parametric` keeps a call omitting a literal default at a
-  multi-lane SIMD parameter (`v: SIMD[DType.int32, 4] = 1`) or a
-  converting-constructor default whose literal its owner's binder types
-  (`x: Optional[Int] = 5`), where the pin inlines both.
-  - The VM splats the first and passes the second to `T` bound at `Int`.
-  - Materialize the splat, and the literal at the constructed type's
-    argument for the binder.
-  - Done when both inline in a pass test and the differential is clean.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R962 A `nodebug` nested `def` with a copied or moved capture is
-  called, not inlined**
-
-  `inline-parametric` keeps a call through a closure that captures a
-  value by copy or move (`{var x}`, `{x^}`), where the pin inlines it.
-  - The lifted body borrows that capture from the closure's own
-    environment, which MIR names by no place the splice could bind.
-  - Bind the capture parameter to the closure's environment entry, as
-    upstream reads the closure object's field.
-  - Done when a `{var x}` capture's call inlines in a pass test and the
-    differential is clean.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R963 A call through a closure the caller does not make is not
-  inlined**
-
-  `inline-parametric` inlines a nested `nodebug` def only through a
-  `closure.make` in the caller, so a call through a sibling closure the
-  caller captured (`def twice() {get}`) keeps the call.
-  - The callee slot is a capture parameter of the caller, bound to the
-    enclosing frame's closure, whose target and captures the caller's
-    body does not show.
-  - The callee's declared captures are the caller's own capture
-    parameters' places, as the enclosing body's closure made them.
-  - Done when the sibling call inlines in a pass test and the
-    differential is clean.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R964 A `nodebug` nested `def` declared in a `comptime for` is
-  called, not inlined**
-
-  `inline-parametric` keeps a call to a nested def whose declaration has
-  region binders, where the pin inlines it.
-  - The body reads the loop's index by a slot of its own, which must
-    become the caller's `comptime for` binder, as an enclosing
-    declaration's value binder already does.
-  - Done when a nested def reading the loop index inlines in a pass test
-    and the differential is clean.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R965 A `nodebug` callee passed a capturing closure as its
-  callable binder is called, not inlined**
-
-  `inline-parametric` keeps a `call` carrying capture accesses
-  (`apply[plus](3)` with `plus` capturing), where the pin inlines it.
-  - The accesses record the closure's captured places the callee's body
-    reaches through its callable binder.
-  - Once the binder binds (R945), the body's call through it is a call
-    through the closure, which the splice can inline in turn.
-  - Done when that call inlines in a pass test and the differential is
-    clean.
-  - Depends on R945.
-  - Model: Opus, Not Planned.
-
-- [ ] **R966 An inlined nested `def`'s closure stays constructed**
-
-  After `inline-parametric` inlines every call through a closure, the
-  caller still makes it, stores it, and drops it.
-  - Upstream's pipeline erases the dead closure construction after
-    inlining.
-  - Erase a closure slot no remaining instruction reads but its drop, and
-    its `closure.make`.
-  - Done when `tests/mir_passes/inline-parametric/nested_captures.mir`'s
-    callers keep no closure after the round, and the differential is
-    clean.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R945 A `nodebug` callee with a callable compile-time parameter
-  is called, not inlined**
-
-  `inline-parametric` keeps a call whose callee declares a callable binder
-  (`apply[f: def(Int) thin -> Int]`), where the pin inlines it.
-  - The call passes the function as a runtime `param_arg` register, and
-    the body calls it through a `call.indirect` on the binder's slot.
-  - Bind the slot's reads to the call's function constant, as the
-    elaborator's `bindings.callables` does by spelling.
-  - Pinned by `tests/mir_passes/inline-parametric/generic_kept.mir`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1067 A generic `nodebug` callee holding a `comptime for` is
-  called, not inlined**
-
-  `inline-parametric` keeps a call whose callee binds compile-time
-  parameters and loops over a `comptime for`, where the pin inlines it:
-  `weighted[1, 2, 3]()` over `comptime for i in range(len(values))` keeps
-  its call.
-  - The pass's `Instantiation` refuses every `ComptimeSequence`
-    (`visit_sequence`), so the loop's sequence is never substituted.
-  - Substitute the sequence's types and parameter expressions under the
-    call's bindings, as the elaborator closes it per instance.
-  - Done when `weighted[1, 2, 3]()` inlines in a pass test and the
-    program's output is unchanged.
-  - Found while landing R946 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1068 A `Tuple` member over a receiver typed by a computed pack
-  list is called, not inlined**
-
-  `result[i]` in `Tuple.reverse` and `Tuple.concat`, whose `result` is a
-  `Tuple[*Self.Ts.reverse()]` or `Tuple[*TypeList._concat[..]()]`, keeps
-  its call to `Tuple.__getitem_param__`, where the pin inlines it.
-  - `inline-parametric` binds `Tuple`'s one pack from the receiver's
-    element list, and a computed list (`list_spread_argument`) is not one.
-  - Bind the pack to the list expression itself, as the elaborator closes
-    it once the owner's pack is known.
-  - Done when `pair.concat(suffix)` in
-    `assets/ok/tuple_reverse_concat.mojo` holds no `__getitem_param__`
-    call and its output is unchanged.
-  - Found while landing R986 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R947 A `nodebug` callee with a `where` clause or a constrained
-  binder is called, not inlined**
-
-  `inline-parametric` keeps a call whose callee has a `where` clause or a
-  binder constraint, where the pin inlines it.
-  - Probe the pin first: whether the clause is judged at the call or in
-    each instance decides whether inlining may drop it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R948 A `nodebug` callee constructing its type parameter is
-  called at a concrete binding**
-
-  `inline-parametric` keeps a call to a callee holding `T()` or
-  `T(copy=x)` when the call binds `T` to a concrete type, where the pin
-  inlines it.
-  - Lowering such a construction at a concrete type is the elaborator's
-    policy (`construct_type_parameter`, `default_construct_parameters`).
-  - The fix moves that policy below `mojito-native`, or has lowering emit
-    the construction the binding denotes.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R949 A `nodebug` callee testing its binder's conformance is
-  called at a concrete binding**
-
-  `inline-parametric` keeps a call to a callee whose `comptime if` tests
-  `conforms_to(T, Trait)` when the call binds `T` to a concrete type,
-  where the pin inlines it.
-  - `GenericConstraint::Conforms` names a binder, not a type, so it has
-    no operand to hold the binding (`types::replace_constraint_parameters`).
-  - The fix gives the proposition a type operand, as upstream's
-    `kgen.param` conformance attribute takes a type.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R967 A drop inside a region of a slot stored outside it keeps its
-  `nodebug` destructor's call**
-
-  `inline-parametric` treats every slot as empty where a region's body is
-  entered, so `var t = String("x")` dropped inside a later `try` body
-  still runs `String.__deinit__` as a call, where the pin inlines it.
-  - Seed the region body's entry state from the enclosing list's state at
-    the region instruction (`is_whole_at`), instead of all-empty.
-  - Done when that `try` probe's drop of `t` inlines and the differential
-    is clean.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R968 A drop of a struct with no destructor of its own does not
-  inline its fields' `nodebug` destructors**
-
-  The pin inlines a struct's synthesized destructor at the drop, so a
-  `comptime assert` in a field's `nodebug` `__deinit__` fails as a call
-  expansion at `struct S` with no instantiation note, and Mojito's
-  `drop.var` runs the field destructors inside the VM.
-  - Expand such a drop into a drop of each field in declaration order, the
-    VM's `drop_value` order, then inline each field's destructor as a
-    drop of a whole slot's is.
-  - A field drop is a `drop.place`, which `inline-parametric` does not
-    expand yet; the whole-value test must then cover places.
-  - Done when `S[k]` holding a `D[k]` field drops through `D`'s inlined
-    destructor and the differential is clean.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
+  A `deinit` parameter (`x^.finish()`), a drop inside a region of a slot
+  stored before it (`var t = String("x")` dropped in a later `try`), and
+  the drop of a struct with no destructor of its own keep their `nodebug`
+  destructors as calls, where the pin inlines all three.
+  - Once every struct has a destructor (R1041) and a drop is a call of it
+    (R1043), each is an ordinary call R1078's substitution inlines.
+  - Bind a `deinit` parameter to a fresh slot the argument moves into,
+    keeping the callee's consumption of it.
+  - Seed a region body's entry state from the enclosing state at the region
+    instruction (`is_whole_at`), not all-empty.
+  - Done when each probe inlines, `S[k]` holding a `D[k]` field drops
+    through `D`'s inlined destructor, and the differential is clean.
+  - Depends on R1041, R1043, R1078.
+  - Model: Opus, Planned.
 
 - [ ] **R1029 The backends still resolve a call naming a struct to an
   `__init__` overload by arity**
@@ -606,34 +553,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1036 A forward to a nested body's removed argument is a use**
-
-  `h[n](x: Arr[n])` returning `ign2(x)`, where the nested `ign2(y: Arr[n])`
-  never reads `y`, keeps `x` and one instance per `n`, where the pin
-  removes both.
-  - `mir::without_removed_argument_forwards` and the elaborator's Keep
-    view drop operands only from a `call` and a resolved `method.call`,
-    never from the `call.indirect` a nested body's call is.
-  - That call's operands also lack the captures the elaborator splices in
-    front, so its binding against the nested declaration is off by them.
-  - Found while landing R1014 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1037 A call of a nested `def` is an indirect call through its
-  closure**
-
-  Mojito lowers a call of a nested `def` by name to `closure.make` and
-  `call.indirect`, where upstream calls the lifted closure generator
-  directly and passes its captures as arguments.
-  - The pass and the elaborator recover the direct call by dataflow
-    (`mir::callable_targets`, `mir::escaping_nested_bodies`).
-  - Lowering such a call to a direct `call` would retire that dataflow and
-    R1036 with it, and simplify R963 and R966.
-  - Found while landing R1014 (2026-10-16).
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R1038 A nested `def` with a copied or moved capture keeps its
   unused arguments**
 
@@ -645,7 +564,7 @@ which names the upstream pass each one follows. Each is measured by the
   - Pass the closure's environment entry as the capture argument, as R962
     needs for inlining.
   - Found while landing R1014 (2026-10-16).
-  - Depends on R962.
+  - Depends on R1037, R1080.
   - Model: Opus, Not Planned.
 
 - [ ] **R1039 A nested `def` declared in a `comptime for` keeps its
@@ -660,97 +579,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Found while landing R1014 (2026-10-16).
   - Depends on R974.
   - Model: Opus, Not Planned.
-
-- [ ] **R1041 A struct with droppable fields and no `__deinit__` has no
-  destructor function; the backends drop its fields by type**
-
-  A drop of such a struct names no destructor, so the VM's `drop_named`
-  and Pliron's `emit_drop` recurse into its fields and find each field's
-  `__deinit__` in the member table, where upstream synthesizes a `__del__`
-  for the struct and calls it at the drop.
-  - Synthesize `S.__deinit__(deinit self)` with an empty body in MIR
-    lowering, recorded in the member table and marked `nodebug`;
-    `refine_deinit_fields` then gives it a named `drop.place` per field.
-  - The VM must not trace a synthesized destructor (no `drop S` line).
-  - Then drop `destroyed_structs`' field closure for named drops.
-  - Storage destroys, `VariantSet` payloads, owned captures, and tuple,
-    pack, and variant elements stay type-directed; upstream's are library
-    code calling `__del__`.
-  - R968 then reduces to inlining that destructor.
-  - Found while landing R1016 (2026-10-16).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
-- [ ] **R1044 A struct with copyable or movable fields and no
-  constructor of its own has none; the backends copy its fields by type**
-
-  A copy or move of such a struct names no constructor, so the VM's
-  `clone_value` and Pliron's `fork_value_into` recurse into its fields and
-  find each field's `__copyinit__` in the member table, where upstream
-  synthesizes a fieldwise `__copyinit__` and `__moveinit__` and calls it at
-  the site.
-  - The pin inlines the synthesized copy, so `T` holding a `C` field has
-    no `T` copy function in its LLVM output.
-  - Synthesize both in MIR lowering, record them in the member table, and
-    mark them `nodebug`, as R1041 does for `__deinit__`.
-  - Then drop `relocated_structs`' field closure for unnamed sites.
-  - Found while landing R1017 (2026-10-16).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
-- [ ] **R1045 An owned capture, a variant payload, or a reference-read
-  method result copies without naming a constructor**
-
-  The VM's `clone_value` and Pliron's `fork_value_into` find
-  `__copyinit__` in the member table for `closure.make` captures,
-  `variant.make`/`variant.set`/`variant.replace` payloads, and
-  `result_adapter` reads, where upstream's copy insertion names it.
-  - Name a `constructor` on each, as R1017 did for `var.use` and
-    `value.copy`, and respell it in `Specializer::name_lifecycle_calls`.
-  - `T(copy=x)` is R1020/R1029's, and Pliron's clone-out reads are R1010's.
-  - Found while landing R1017 (2026-10-16).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
-- [ ] **R1042 A cleanup list names only slots; the backends look up each
-  slot's destructor**
-
-  A `try`'s raise-edge cleanup and a return's or escape's cleanup list are
-  `Vec<VarId>`, so the VM's `run_cleanup` and Pliron's `cleanup_destructor`
-  find each destructor from the slot's type, where upstream emits the
-  destructor calls in the unwind blocks.
-  - Make each entry carry its destructor, as `drop.var` does since R1016,
-    and respell it in `Specializer::name_destructors`.
-  - About 300 uses in 47 files; then delete `cleanup_destructor` and the
-    VM's lookup.
-  - Found while landing R1016 (2026-10-16).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
-- [ ] **R1043 A drop is its own instruction, not a call of its destructor**
-
-  `drop.var` names its destructor but stays a drop, where upstream's
-  destructor insertion leaves a plain call.
-  - Pliron's drop and leaf-presence flags and the VM's runtime
-    partial-aggregate rule exist because Mojito's drop states are not
-    definite at every death; upstream's lifetime checker makes them so.
-  - Once they are, lower a named drop to `call @D.__deinit__` of the slot.
-  - Found while landing R1016 (2026-10-16).
-  - Depends on R1041, R1042.
-  - Model: Fable, Not Planned.
-
-- [ ] **R1046 A copy or move is a slot use, not a call of its
-  constructor**
-
-  `var.use copy` names its constructor but stays a slot use, where
-  upstream's copy/move insertion leaves a plain call.
-  - Pliron's drop flags, the VM's moved-slot tombstone, and the `String`
-    buffer bridges hang on the use, as they do on a drop for R1043.
-  - Once they do not, lower a named copy or move to a call of the
-    constructor into fresh storage.
-  - Found while landing R1017 (2026-10-16).
-  - Depends on R1044, R1045, R1043.
-  - Model: Fable, Not Planned.
 
 - [ ] **R1049 A fieldwise construction calls its struct, not a
   synthesized constructor**
@@ -828,186 +656,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Found while landing R998 (2026-10-15).
   - Depends on R1051, R988, R923, R1052.
   - Model: Fable, Not Planned.
-
-- [ ] **R1053 A subscript's omitted evaluated default is evaluated by the
-  callee, not at the call site**
-
-  `a[1]`, over `__getitem__(self, i: Int, j: Int = String("abcd").byte_length())`,
-  runs `$default$A.__getitem__$j` in the callee's binding, where upstream
-  fills the default in at the call site.
-  - `mir::evaluate_omitted_defaults` fills a direct `Call` and a
-    `MethodCall`, but not an `index.get` or `index.set`, whose index
-    operands bind against the dunder's declaration.
-  - A borrowed default with a destructor is then destroyed after a
-    subscript too.
-  - Add a subscript case to `assets/ok/evaluated_default_argument.mojo`.
-  - Found while landing R1022 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1054 A method parameter read only by the method's evaluated
-  default is kept**
-
-  `get[m](self, x: Int = Self.n + m)` keeps `m` in every instance, where
-  the pin, evaluating the default at the call site, removes it.
-  - `mir::evaluated_at_call_site` counts only a free function's default
-    as no read, since a subscript (R1053), a bundled method (R1023), and a
-    receiver whose type lowering left unknown still leave a method's
-    default to the callee, which then needs the binder.
-  - Once every method call shape fills its defaults, drop the
-    `has_receiver` and method-symbol checks there, and add a case to
-    `assets/ok/lifted_body_owner_instances.mojo`.
-  - Found while landing R1022 (2026-10-16).
-  - Depends on R1053, R1023.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1055 A package body's call of a package function another unit
-  lowers leaves its omitted evaluated default to the callee**
-
-  A bundled body calling a bundled function from another lowering unit
-  binds the omitted default in the callee, where upstream fills it in at
-  the call site.
-  - `lower_package_unit` passes `mir::evaluate_omitted_defaults` no
-    package bodies, so only a callee of the same unit is filled.
-  - Reading another unit's finished body there would lower it from inside
-    a unit's lowering; it needs a cycle-safe view of each package
-    function's removed arguments, or recording them in the package.
-  - Found while landing R1023 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1056 A nested `def` called from a sibling evaluates its omitted
-  default in the callee**
-
-  `sib` calling a sibling `plain(r: Owner = Owner(...))` leaves the
-  default to `plain`'s binding, so the borrowed `Owner` is never
-  destroyed, where the pin prints `drop sib`.
-  - `mir::evaluate_omitted_defaults` resolves a nested call only through a
-    closure the caller itself makes; a sibling reaches `plain` through a
-    capture, which `callable_targets` does not follow.
-  - Resolve the captured closure as the elaborator's
-    `capture_arguments` does, and bind the enclosing binders the sibling
-    shares.
-  - Found while landing R1023 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1057 A binder read only by a nested `def`'s evaluated default
-  is kept**
-
-  `inner(x: Int, y: Int = n * 3)` nested in `outer[n]` still reads `n`
-  through its default, where the pin, evaluating it at the call site,
-  removes `n` from `inner`.
-  - `mir::evaluated_at_call_site` excludes a nested callee, since a
-    sibling's call (R1056) still leaves its default to the callee.
-  - Once every call of a nested body fills its defaults, drop the
-    `enclosing` check there and add a case to
-    `assets/ok/nested_unread_enclosing_instances.mojo`.
-  - Found while landing R1023 (2026-10-16).
-  - Depends on R1056.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1058 A call through a trait bound leaves its omitted evaluated
-  default to the conformer**
-
-  `x.show()` in `go[T: Shows]` runs the conformer's
-  `$default$A.show$x` in the callee's binding, where upstream fills the
-  default in at the call site.
-  - `mir::evaluate_omitted_defaults` runs before elaboration, where the
-    receiver is the bound `T`, whose type names no struct declaration, so
-    `CallSite::of` finds no callee.
-  - Bind the requirement's own default at the call, or fill the call once
-    the elaborator resolves it to the conformer's instance.
-  - A trait requirement's default beyond literals and constants is
-    rejected today; the pin prints `drop trait` after such a call.
-  - Found while landing R1024 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1059 A call of a rebound function value leaves its omitted
-  evaluated default to the callee**
-
-  `var g = use; g = use; g()` never destroys `use`'s borrowed default,
-  where the pin prints `drop dflt` after the call.
-  - `callable_targets` names a variable's function only while one
-    definition is its sole write, so the rebound `g` resolves to nothing.
-  - Upstream's function value has the function's own literal type, which
-    keeps its defaults: the call names the callee whatever the dataflow.
-  - Carry the function's symbol in the defaults-keeping `func` type and
-    resolve the call from it.
-  - Found while landing R1024 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1060 A callee's declaration still names an evaluated default per
-  instance**
-
-  `instantiate_constructed_defaults` respells every `CheckedConst::Evaluate`
-  default to the owner instance's default instance, and the VM's
-  `make_default` and the native `evaluated_default_value` run it, where
-  upstream's callee names no default at all.
-  - Once every call shape fills its omitted defaults, the callee-side path
-    is dead: drop the respelling and both backends' evaluation of an
-    `Evaluate` slot.
-  - The shapes still left to the callee: a subscript (R1053), a package
-    call across units (R1055), a sibling nested call (R1056), a call
-    through a trait bound (R1058), a rebound function value (R1059), and a
-    positional-only slot after an unfilled one (R1025).
-  - An omitted argument the callee never uses must then pass no value, as
-    its removed parameter takes none.
-  - Found while landing R1004 (2026-10-15).
-  - Depends on R1053, R1055, R1056, R1058, R1059, R1025.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1061 A positional-only parameter's evaluated default after an
-  omitted literal default is left to the callee**
-
-  `plit[n, m](x: Int = 1, y: Int = m * 2, /)` keeps `m`, where the pin,
-  evaluating every omitted default at the call site, removes it.
-  - `mir::evaluate_omitted_defaults` fills only an evaluated default, so a
-    call omitting `x` passes nothing for it and cannot pass `y` by
-    position.
-  - Fill an omitted literal default at the call site too, as upstream's
-    call spells it, then admit such a slot in
-    `mir::evaluated_at_call_site`'s `earlier_defaults_filled`.
-  - Add `plit` to `assets/ok/lifted_body_owner_instances.mojo`.
-  - Found while landing R1025 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1062 A positional-only parameter's evaluated default after an
-  unused omitted one is left to the callee**
-
-  `pafter[n, m](x: Int = side(), y: Int = m * 2, /)` returning `n + y`
-  keeps one instance per `(n, m)`, where the pin has one per `n`.
-  - The call evaluates no default for the unused `x`, as its removed
-    parameter takes none, so it cannot pass `y` by position before the
-    elaborator drops `x`'s operand.
-  - It needs a valueless operand for a removed argument, which the
-    verifier and ownership analysis accept and the elaborator drops, as
-    upstream's call of the `_REMOVED_ARG` generator passes none.
-  - Then admit the slot in `mir::evaluated_at_call_site` and add `pafter`
-    to `assets/ok/lifted_body_owner_instances.mojo`.
-  - Found while landing R1025 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1063 A parameter read only by a bundled function's evaluated
-  default is kept**
-
-  A bundled generic function whose evaluated default alone reads `n`
-  keeps `n`, where the pin, evaluating the default at the call site,
-  removes it.
-  - `mir::evaluated_at_call_site` admits only the program's own function,
-    since a package body's call across units still leaves the default to
-    the callee (R1055).
-  - Once every call of a package function fills its defaults, drop the
-    own-function check.
-  - std declares no generic function with such a default today, so pin
-    the rule with a parameter-removal test over a package body.
-  - Found while landing R1025 (2026-10-16).
-  - Depends on R1055.
-  - Model: Opus, Not Planned.
 
 - [ ] **R983 With the pre-elaboration pipeline off, a capturing callable
   parameter its body never calls fails to elaborate**
