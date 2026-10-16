@@ -1,8 +1,10 @@
 # Omitted arguments whose default is an evaluated expression: MIR lowers the
 # default as a zero-parameter function, and both backends call it at the call
-# site that leaves the slot out. A borrowed slot's value is the caller's
-# temporary, destroyed when the call returns (`use` prints `drop dflt`); a
-# `var` slot's value transfers to the callee.
+# site that leaves the slot out, a method's, static method's, or
+# constructor's too, under the struct's parameters and its own. A borrowed
+# slot's value is the caller's temporary, destroyed when the call returns
+# (`use` prints `drop dflt`, `hold` prints `drop method`); a `var` slot's
+# value transfers to the callee.
 @fieldwise_init
 struct P(Copyable):
     var x: Int
@@ -30,6 +32,24 @@ struct G[T: ImplicitlyCopyable & Deinitable]:
 
     def __getitem__(self, i: Int, suffix: String = String("su") + String("f")) -> String:
         return suffix
+
+
+struct Box[n: Int]:
+    var v: Int
+
+    def __init__(out self, v: Int, scale: Int = Self.n * 2):
+        self.v = v * scale
+
+    def get[m: Int](self, x: Int = Self.n + m) -> Int:
+        return self.v + x
+
+    def hold(self, r: Owner = Owner(String("method"))) -> Int:
+        print("hold", r.tag)
+        return self.v
+
+    @staticmethod
+    def make(k: Int = Self.n * 10) -> Int:
+        return k
 
 
 def f(s: String = String("a")) -> String:
@@ -82,3 +102,7 @@ def main() raises:
     var held = G[Int](1)
     print(held.show())
     print(held[0])
+    var b = Box[2](1)
+    print(b.get[5]())
+    print(b.hold())
+    print(Box[4].make())

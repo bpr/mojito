@@ -4862,3 +4862,62 @@ def main():
         "{names:?}"
     );
 }
+
+#[test]
+fn method_static_and_constructor_calls_evaluate_omitted_defaults() {
+    let mir = driver_mir(
+        r"
+struct Box[n: Int]:
+    var v: Int
+
+    def __init__(out self, v: Int, scale: Int = Self.n * 2):
+        self.v = v * scale
+
+    def get[m: Int](self, x: Int = Self.n + m) -> Int:
+        return self.v + x
+
+    @staticmethod
+    def make(k: Int = Self.n * 10) -> Int:
+        return k
+
+
+def main():
+    var b = Box[2](1)
+    print(b.get[5]())
+    print(b.get[5](100))
+    print(Box[4].make())
+",
+    );
+    let main = mir_function(&mir, "main");
+    let defaults: Vec<(&str, usize)> = main.blocks[0]
+        .instrs
+        .iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::Call {
+                func,
+                instantiated_args,
+                ..
+            } if func.0.starts_with("$default$") => {
+                Some((func.0.as_str(), instantiated_args.len()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        defaults,
+        [
+            ("$default$Box.__init__$scale", 1),
+            ("$default$Box.get$x", 2),
+            ("$default$Box.make$k", 1),
+        ]
+    );
+    let get_arities: Vec<usize> = main.blocks[0]
+        .instrs
+        .iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::MethodCall { method, args, .. } if method == "get" => Some(args.len()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(get_arities, [1, 1]);
+}

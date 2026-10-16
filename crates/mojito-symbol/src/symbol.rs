@@ -1381,15 +1381,17 @@ pub fn lifecycle_constructor(symbol: &str) -> Option<(&str, &str)> {
 /// Whether `symbol` names a lifecycle initializer, whose receiver is `out self`.
 ///
 /// Recognizes `Type.__init__`, `Type.__copyinit__`, and `Type.__moveinit__`,
-/// bare or with a `$`-mangled overload or specialization suffix.
+/// bare or with a `$`-mangled overload or specialization suffix, but not a
+/// function lifted from one ([`lifted_owner`]), which has no receiver.
 pub fn is_initializer_symbol(symbol: &str) -> bool {
-    [".__init__", ".__copyinit__", ".__moveinit__"]
-        .iter()
-        .any(|initializer| {
-            symbol
-                .rsplit_once(initializer)
-                .is_some_and(|(_, rest)| rest.is_empty() || rest.starts_with('$'))
-        })
+    lifted_owner(symbol).is_none()
+        && [".__init__", ".__copyinit__", ".__moveinit__"]
+            .iter()
+            .any(|initializer| {
+                symbol
+                    .rsplit_once(initializer)
+                    .is_some_and(|(_, rest)| rest.is_empty() || rest.starts_with('$'))
+            })
 }
 
 /// Which identity a mangled type spelling serves: an overload key, or a
@@ -2967,5 +2969,16 @@ mod tests {
             Some(LiftedOwner::Numbered("S.g$ov$Int"))
         );
         assert_eq!(lifted_owner("$comptime$$7"), None);
+    }
+
+    #[test]
+    fn a_function_lifted_from_an_initializer_is_no_initializer() {
+        assert!(is_initializer_symbol("Box.__init__"));
+        assert!(is_initializer_symbol("Box.__init__$ov$Int"));
+        assert!(!is_initializer_symbol(&lifted_default_name(
+            "Box.__init__",
+            "scale"
+        )));
+        assert!(!is_initializer_symbol(&lifted_body_name("Box.__init__", 0)));
     }
 }

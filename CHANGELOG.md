@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A method call, a static-method call, and a construction evaluate an
+  omitted evaluated default at the call site (R1022), as upstream does,
+  binding the struct's parameters from the receiver's type and the
+  method's own from the call: a borrowed default with a destructor is now
+  destroyed when a method call returns, as on the pin. A function lifted
+  from a constructor (`$default$T.__init__$x`) is no longer mistaken for
+  the constructor itself.
 - A construction names the constructor the check selected (R1020), as
   upstream's call names the selected `__init__` generator with the
   struct's parameters as its own: a struct's lone `__init__`, an

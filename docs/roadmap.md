@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1053**.
+Next free ID: **R1055**.
 
 ## Ordered Work
 
@@ -832,22 +832,36 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1051, R988, R923, R1052.
   - Model: Fable, Not Planned.
 
-- [ ] **R1022 A method's omitted evaluated default is evaluated by the
-  callee instance, not at the call site**
+- [ ] **R1053 A subscript's omitted evaluated default is evaluated by the
+  callee, not at the call site**
 
-  `Box[2](1).get[5]()`, over `get[m](self, x: Int = Self.n + 1)`, runs
-  `$default$Box.get$x` as the method instance's declaration names it,
-  where upstream fills the default in at the call site.
-  - `mir::evaluate_omitted_defaults` fills only a direct `Call` of a
-    top-level free function; a `MethodCall`, a static-method or
-    constructor `Call`, and a `__init__` call are left to the callee.
-  - The default's binders mix the struct's (bound by the receiver's
-    type) and the method's own (the call's `instantiated_args`), so the
-    pass must map both.
+  `a[1]`, over `__getitem__(self, i: Int, j: Int = String("abcd").byte_length())`,
+  runs `$default$A.__getitem__$j` in the callee's binding, where upstream
+  fills the default in at the call site.
+  - `mir::evaluate_omitted_defaults` fills a direct `Call` and a
+    `MethodCall`, but not an `index.get` or `index.set`, whose index
+    operands bind against the dunder's declaration.
   - A borrowed default with a destructor is then destroyed after a
-    method call too, which closes the method half of R111.
-  - Found while landing R1004 (2026-10-15).
+    subscript too.
+  - Add a subscript case to `assets/ok/evaluated_default_argument.mojo`.
+  - Found while landing R1022 (2026-10-16).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1054 A method parameter read only by the method's evaluated
+  default is kept**
+
+  `get[m](self, x: Int = Self.n + m)` keeps `m` in every instance, where
+  the pin, evaluating the default at the call site, removes it.
+  - `mir::evaluated_at_call_site` counts only a free function's default
+    as no read, since a subscript (R1053), a bundled method (R1023), and a
+    receiver whose type lowering left unknown still leave a method's
+    default to the callee, which then needs the binder.
+  - Once every method call shape fills its defaults, drop the
+    `has_receiver` and method-symbol checks there, and add a case to
+    `assets/ok/lifted_body_owner_instances.mojo`.
+  - Found while landing R1022 (2026-10-16).
+  - Depends on R1053, R1023.
   - Model: Opus, Not Planned.
 
 - [ ] **R1023 A nested function's or a bundled function's omitted
