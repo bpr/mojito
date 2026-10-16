@@ -623,21 +623,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1016.
   - Model: Fable, Not Planned.
 
-- [ ] **R1002 A method call on a field reads the root struct's arguments
-  whole**
-
-  `SBox[n].take(var self)` returning `self.s.byte_length()` keeps `n`,
-  where the pin removes it.
-  - `Walker::nominal_instruction` reads every type a member-dispatch
-    instruction names nominally, the receiver place's root and projection
-    types included.
-  - Only the type whose member runs (the projected receiver's) is
-    nominal; the root and the projections only address it, so they read
-    their layout.
-  - Found while landing R978 (2026-10-15).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R998 A method call or a constructor reads its struct's arguments
   whole, whatever the member removed**
 

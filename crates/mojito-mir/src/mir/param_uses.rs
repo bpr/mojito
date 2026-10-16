@@ -20,8 +20,10 @@
 //! is read whole where upstream's IR keeps it nominal: a type value (a
 //! call's parameter arguments, a compile-time constant or condition), an
 //! instruction that runs a member of the struct (a method call, a
-//! subscript, an iteration, a resolved operator), and the lifecycle member
-//! a copy, a move, or a drop runs, which reads what that member reads.
+//! subscript, an iteration, a resolved operator; of a method call's place,
+//! only the type it designates, the root and projections addressing it
+//! reading their layout), and the lifecycle member a copy, a move, or a
+//! drop runs, which reads what that member reads.
 //!
 //! Two further reads are not identities: a value parameter's runtime reads
 //! go through the slot its name binds, and a body nested in the function
@@ -1137,7 +1139,10 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
     /// lifecycle member a copy or a move runs, and, for an instruction that
     /// may run a member of a struct it names (a builtin such as `len`
     /// dispatches to its argument's `__len__`), the instruction and every
-    /// type of its registers and slots. Drops are
+    /// type of its registers and slots. A method call's places only address
+    /// the values it passes, so of each place only the type it designates
+    /// (the projected receiver's, whose member runs) is read whole; its
+    /// root and projections read their layout with the body. Drops are
     /// [`Self::nominal_reads`]'s.
     fn nominal_instruction(
         &mut self,
@@ -1217,21 +1222,56 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
             | MirInstr::If { .. }
             | MirInstr::Loop { .. }
             | MirInstr::Try { .. } => {}
-            _ => {
-                self.visit(instruction);
-                let mut registers = Vec::new();
-                instruction_operand_regs(instruction, &mut registers);
-                instruction_result_regs(instruction, &mut registers);
-                for register in registers {
-                    if let Some(ty) = function.reg_types.get(&register.0) {
-                        self.ty(ty);
+            MirInstr::MethodCall {
+                recv_place,
+                arg_places,
+                kwarg_places,
+                ..
+            } => {
+                let mut dispatched = instruction.clone();
+                if let MirInstr::MethodCall {
+                    recv_place,
+                    arg_places,
+                    kwarg_places,
+                    ..
+                } = &mut dispatched
+                {
+                    *recv_place = None;
+                    for place in arg_places.iter_mut().chain(kwarg_places.iter_mut()) {
+                        *place = None;
                     }
                 }
-                for slot in instruction_slots(instruction) {
-                    if let Some(ty) = function.var_tys.get(&slot) {
-                        self.ty(ty);
+                self.dispatching_instruction(function, &dispatched);
+                for place in recv_place
+                    .as_deref()
+                    .into_iter()
+                    .chain(arg_places.iter().chain(kwarg_places).flatten())
+                {
+                    match &place.ty {
+                        Some(ty) => self.ty(ty),
+                        None => self.visit(place),
                     }
                 }
+            }
+            _ => self.dispatching_instruction(function, instruction),
+        }
+    }
+
+    /// The reads of an instruction that may run a member of a struct it
+    /// names: the instruction and every type of its registers and slots.
+    fn dispatching_instruction(&mut self, function: &MirFunction, instruction: &MirInstr) {
+        self.visit(instruction);
+        let mut registers = Vec::new();
+        instruction_operand_regs(instruction, &mut registers);
+        instruction_result_regs(instruction, &mut registers);
+        for register in registers {
+            if let Some(ty) = function.reg_types.get(&register.0) {
+                self.ty(ty);
+            }
+        }
+        for slot in instruction_slots(instruction) {
+            if let Some(ty) = function.var_tys.get(&slot) {
+                self.ty(ty);
             }
         }
     }

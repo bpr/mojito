@@ -24,8 +24,7 @@ struct WBox[n: Int](Writable, Hashable, Equatable, Intable, ImplicitlyCopyable):
 
     @no_inline
     def __hash__[H: Hasher](self, mut hasher: H):
-        var x = self.v
-        x.__hash__(hasher)
+        self.v.__hash__(hasher)
 
     @no_inline
     def __eq__(self, other: Self) -> Bool:

@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A method that calls a method on a field reads only the root struct's
+  layout (R1002), as on the pin: `SBox[1]` and `SBox[2]` share one
+  `take(var self)` returning `self.s.byte_length()`. `remove-unused-params`
+  reads a method call's receiver and argument places by the type each
+  designates, whose member runs, not by the root and projection types
+  that only address it.
 - A constructor that reads no struct parameter is one instance for every
   instance of its struct (R1000), as on the pin: `Box[1](1)` and
   `Box[2](2)` share `Box.__init__$mono`. The elaborator keys such a

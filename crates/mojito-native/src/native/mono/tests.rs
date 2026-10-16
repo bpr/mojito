@@ -2186,6 +2186,25 @@ fn a_receiver_method_that_reads_no_struct_parameter_is_one_instance() {
     );
 }
 
+#[test]
+fn a_method_call_on_a_field_reads_the_root_struct_s_layout() {
+    let source = "struct SBox[n: Int](Movable):\n\
+         \x20   var s: String\n\
+         \x20   def __init__(out self, var s: String):\n\
+         \x20       self.s = s^\n\
+         \x20   @no_inline\n\
+         \x20   def take(var self) -> Int:\n\
+         \x20       return self.s.byte_length()\n\
+         def main():\n\
+         \x20   print(SBox[1](\"ab\").take(), SBox[2](\"abc\").take())\n";
+    let specialized = specialized_with_removed(source, &[]).expect("specialize");
+    assert_eq!(
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
+    );
+    assert_eq!(instances_of(&specialized, "SBox.take"), ["SBox.take$mono"]);
+}
+
 /// A destructor or copy constructor that reads no struct parameter is one
 /// instance for every instance of its struct, as on the pin, and each
 /// struct instance's member table names it.
@@ -2245,6 +2264,25 @@ fn a_display_member_that_reads_no_struct_parameter_is_one_instance() {
 #[test]
 fn an_equality_member_that_reads_no_struct_parameter_is_one_instance() {
     assert_one_member_instance(WBOX_SOURCE, "WBox", "__eq__", "WBox.__eq__$mono");
+}
+
+#[test]
+fn a_hash_member_that_hashes_a_field_is_one_instance() {
+    let source = "from std.hashlib import Hasher\n\
+         @fieldwise_init\n\
+         struct HBox[n: Int](Hashable, ImplicitlyCopyable):\n\
+         \x20   var v: Int\n\
+         \x20   @no_inline\n\
+         \x20   def __hash__[H: Hasher](self, mut hasher: H):\n\
+         \x20       self.v.__hash__(hasher)\n\
+         def main():\n\
+         \x20   print(hash(HBox[1](1)) == hash(HBox[2](1)))\n";
+    assert_one_member_instance(
+        source,
+        "HBox",
+        "__hash__",
+        "HBox.__hash__$mono$T$$module$std$hashlib$$ahash$AHasher$mono$V$0$$0$$0$$0$$$$SIMD$DType$uint64$$4$",
+    );
 }
 
 /// `source`'s `owner[1]` and `owner[2]` share one owner-less `instance` of
