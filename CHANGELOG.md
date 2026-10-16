@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A parameter every self-recursive call passes as itself, and that the
+  body reads nowhere else, leaves the instance key (R1028), as upstream's
+  `RemoveUnusedParams` discounts that forward: `rec[n](k)` calling
+  `leaf[n]()` and `rec[n](k - 1)` has one instance for every `n`, by a
+  call or a method call. A static method's recursion through its spelled
+  receiver still keeps the parameter (R1065). No program's output
+  changes.
 - A read out of storage (a load, a field, an element, a variant payload)
   and a store copy nothing in the native backend either (R1010), as on
   the pin and the VM: it copies only where the MIR names a copy, so a

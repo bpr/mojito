@@ -238,7 +238,7 @@ assets/ok/float16_display.mojo	elaborated	13	174	5	5	64	49	35	14	13
 assets/ok/float16_semantics.mojo	elaborated	29	490	18	23	266	247	66	48	46
 assets/ok/forward_struct_reference_iterator.mojo	elaborated	20	224	10	10	117	110	51	28	28
 assets/ok/forwarded_argument_instances.mojo	elaborated	22	163	13	17	44	49	30	13	17
-assets/ok/forwarded_parameter_instances.mojo	elaborated	35	193	25	30	98	62	45	27	32
+assets/ok/forwarded_parameter_instances.mojo	elaborated	38	232	27	33	121	84	54	33	41
 assets/ok/free_function_origin_binder_result.mojo	elaborated	31	374	16	23	153	227	79	41	63
 assets/ok/free_function_origin_binders.mojo	elaborated	7	81	0	0	0	0	15	0	0
 assets/ok/func_styles.mojo	elaborated	6	69	0	0	0	0	14	0	0
@@ -1053,4 +1053,4 @@ benchmarks/compile/stdlib_heavy.mojo	elaborated	114	1558	45	98	646	1235	293	117	
 benchmarks/compile/trait_defaults.mojo	elaborated	161	1420	25	119	193	1037	194	38	135
 benchmarks/compile/tstring.mojo	elaborated	21	196	8	12	44	79	35	17	15
 benchmarks/compile/tuple.mojo	elaborated	28	238	8	16	37	68	45	11	19
-total	1054	27318	367578	9893	15868	112700	161776	68029	26436	36805
+total	1054	27321	367617	9895	15871	112723	161798	68038	26442	36814

@@ -67,20 +67,25 @@
 //!
 //! The pass reads a callee's removals only from a finished body of the same
 //! unit, as upstream skips an external generator, and only off a cycle
-//! ([`Callees::unit_body`]): a forward around a recursive call stays a
-//! read, as the pin keeps the parameter. Each run records the body's unread
-//! parameters afresh, and the pipeline's last round runs it after every
-//! cleanup pass, so a read they removed keeps no parameter.
+//! ([`Callees::unit_body`]). A self-recursive call is the one cycle it
+//! reads through, as upstream's walk does (`isRecursive`): a parameter
+//! every such call passes as itself, and that the body reads nowhere else,
+//! is removed, the greatest such set found by assuming the call removed it
+//! until the assumption holds; a forward around a longer cycle stays a
+//! read. Each run records the body's unread parameters afresh, and the
+//! pipeline's last round runs it after every cleanup pass, so a read they
+//! removed keeps no parameter.
 
 use super::pre_elaboration::{CallGraphPass, Callees};
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
     Const, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
     escaping_nested_bodies, instruction_regions, instruction_subscript_call, lifecycle_callees,
-    method_owner_params, named_lifted_bodies, unread_parameters_of, unused_arguments,
-    without_removed_argument_forwards, without_removed_arguments, without_removed_forwards,
+    method_owner_params, named_lifted_bodies, supplied_parameter_arguments, unread_parameters_of,
+    unused_arguments, without_removed_argument_forwards, without_removed_arguments,
+    without_removed_forwards,
 };
-use mojito_types::param_expr::ParamId;
+use mojito_types::param_expr::{ParamId, ParamKind};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const REMOVE_UNUSED_PARAMS: CallGraphPass = CallGraphPass {
@@ -137,15 +142,6 @@ pub fn remove_unused_params(
     let lifecycle = lifecycle_callees(body, declarations);
     let mut targets: BTreeSet<&str> = lifecycle.iter().map(String::as_str).collect();
     call_targets(&body.blocks, &mut targets);
-    let removals: BTreeMap<&str, &[ParamId]> = targets
-        .iter()
-        .filter_map(|&target| {
-            callees
-                .unit_body(target)
-                .map(|body| (target, body.removed_params.as_slice()))
-        })
-        .collect();
-    let callee_removals = |callee: &str| removals.get(callee).copied();
     let mut nested_targets = BTreeSet::new();
     nested_bodies(&body.blocks, declarations, &mut nested_targets);
     let lifted_targets = named_lifted_bodies(name, body, declarations);
@@ -171,42 +167,66 @@ pub fn remove_unused_params(
             })
         })
         .collect();
-    let nested_removals = |body: &str| nested.get(body).copied();
-    let view = without_removed_forwards(name, body, declarations, &callee_removals);
-    let unread = |body: &MirFunction| {
-        declaration
-            .map(|declaration| {
-                unread_parameters_of(
-                    name,
-                    body,
-                    declaration,
-                    declarations,
-                    &nested_removals,
-                    &callee_removals,
-                )
-            })
-            .unwrap_or_default()
-    };
-    let (unread, mut discounted): (_, Vec<(String, Vec<ParamId>)>) = match &view {
-        Some((view, discounted)) => (
-            unread(view),
-            discounted
+    // Assume each self-recursive call removed the parameters it forwards
+    // to themselves, narrowing to those found unread until none drops out.
+    let mut recursive = self_forwarded_parameters(name, &body.blocks, declarations);
+    let (removed, mut discounted) = loop {
+        let (unread, discounted) = {
+            let mut removals: BTreeMap<&str, &[ParamId]> = targets
                 .iter()
-                .map(|callee| (callee.clone(), removals[callee.as_str()].to_vec()))
-                .collect(),
-        ),
-        None => (unread(body), Vec::new()),
+                .filter_map(|&target| {
+                    callees
+                        .unit_body(target)
+                        .map(|body| (target, body.removed_params.as_slice()))
+                })
+                .collect();
+            if !recursive.is_empty() {
+                removals.insert(name, recursive.as_slice());
+            }
+            let callee_removals = |callee: &str| removals.get(callee).copied();
+            let nested_removals = |body: &str| nested.get(body).copied();
+            let unread = |body: &MirFunction| {
+                declaration
+                    .map(|declaration| {
+                        unread_parameters_of(
+                            name,
+                            body,
+                            declaration,
+                            declarations,
+                            &nested_removals,
+                            &callee_removals,
+                        )
+                    })
+                    .unwrap_or_default()
+            };
+            let view = without_removed_forwards(name, body, declarations, &callee_removals);
+            let (unread, mut discounted): (_, Vec<(String, Vec<ParamId>)>) = match &view {
+                Some((view, discounted)) => (
+                    unread(view),
+                    discounted
+                        .iter()
+                        .map(|callee| (callee.clone(), removals[callee.as_str()].to_vec()))
+                        .collect(),
+                ),
+                None => (unread(body), Vec::new()),
+            };
+            for callee in &unread.member_callees {
+                if !discounted.iter().any(|(seen, _)| seen == callee) {
+                    let ids = removals[callee.as_str()].to_vec();
+                    discounted.push((callee.clone(), ids));
+                }
+            }
+            (unread.params, discounted)
+        };
+        let kept = recursive.len();
+        recursive.retain(|id| unread.contains(id));
+        if recursive.len() == kept {
+            break (unread, discounted);
+        }
     };
-    let removed = unread.params;
     let discounted = if removed.is_empty() {
         Vec::new()
     } else {
-        for callee in unread.member_callees {
-            if !discounted.iter().any(|(seen, _)| *seen == callee) {
-                let ids = removals[callee.as_str()].to_vec();
-                discounted.push((callee, ids));
-            }
-        }
         for (body, ids) in nested {
             if (!ids.is_empty() || lifted_targets.contains(body) || full.contains(body))
                 && !discounted.iter().any(|(callee, _)| callee == body)
@@ -236,6 +256,19 @@ pub fn remove_unused_params(
     function.removed_args = removed_args;
     function.callee_removed_args = argument_discounted;
     true
+}
+
+/// The compile-time parameters of `name` that every call of `name` in
+/// `blocks` and their regions, direct or a resolved method call, supplies
+/// as the parameter itself; none when `name` never calls itself.
+fn self_forwarded_parameters(
+    name: &str,
+    blocks: &[MirBlock],
+    declarations: &MirDeclarations,
+) -> Vec<ParamId> {
+    let mut forwarded = None;
+    self_forwards(name, blocks, declarations, &mut forwarded);
+    forwarded.unwrap_or_default()
 }
 
 /// Whether the function so declared has a parameter a call of it may pass
@@ -318,6 +351,52 @@ fn nested_bodies<'a>(
         }
         for region in instruction_regions(instruction) {
             nested_bodies(region, declarations, bodies);
+        }
+    }
+}
+
+/// Narrow `forwarded` to the parameters each call of `name` in `blocks`
+/// and their regions supplies as themselves; the first call sets it.
+fn self_forwards(
+    name: &str,
+    blocks: &[MirBlock],
+    declarations: &MirDeclarations,
+    forwarded: &mut Option<Vec<ParamId>>,
+) {
+    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+        let call = match instruction {
+            MirInstr::Call {
+                func,
+                param_arg_regs,
+                ..
+            } if func.0 == name => declarations
+                .function(name)
+                .map(|callee| (callee.param_decls.as_slice(), param_arg_regs)),
+            MirInstr::MethodCall {
+                resolved: Some(target),
+                param_arg_regs,
+                param_decls,
+                ..
+            } if target == name => Some((param_decls.as_slice(), param_arg_regs)),
+            _ => None,
+        };
+        if let Some((decls, arguments)) = call {
+            let itself: Vec<ParamId> = supplied_parameter_arguments(decls, arguments)
+                .into_iter()
+                .filter(|(decl, argument)| {
+                    argument.expr.as_ref().is_some_and(|expr| {
+                        matches!(expr.kind(), ParamKind::DeclRef(reference) if reference.id == *decl.id())
+                    })
+                })
+                .map(|(decl, _)| decl.id().clone())
+                .collect();
+            match forwarded {
+                Some(ids) => ids.retain(|id| itself.contains(id)),
+                None => *forwarded = Some(itself),
+            }
+        }
+        for region in instruction_regions(instruction) {
+            self_forwards(name, region, declarations, forwarded);
         }
     }
 }

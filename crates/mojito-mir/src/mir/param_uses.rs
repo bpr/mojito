@@ -675,16 +675,34 @@ fn drop_removed_arguments<'a>(
                 param_decls,
                 instantiated_args,
                 ..
-            } => (
-                &*target,
-                param_decls.as_slice(),
-                param_arg_regs,
-                (spellings == Spellings::Drop).then_some(instantiated_args),
-            ),
+            } => {
+                let Some(ids) = removed(target) else {
+                    continue;
+                };
+                let dropped = drop_arguments(
+                    target,
+                    param_decls,
+                    ids,
+                    param_arg_regs,
+                    (spellings == Spellings::Drop).then_some(instantiated_args),
+                );
+                if let Some(dropped) = dropped {
+                    // The rewritten call declares no removed parameter
+                    // either: a self-recursive call's own declarations
+                    // name the caller's binders.
+                    if spellings == Spellings::Drop {
+                        for index in dropped.into_iter().rev() {
+                            param_decls.remove(index);
+                        }
+                    }
+                    discounted.insert(target.clone());
+                }
+                continue;
+            }
             _ => continue,
         };
         if let Some(ids) = removed(target)
-            && drop_arguments(target, decls, ids, param_arg_regs, instantiated_args)
+            && drop_arguments(target, decls, ids, param_arg_regs, instantiated_args).is_some()
         {
             discounted.insert(target.clone());
         }
@@ -770,15 +788,13 @@ fn drop_subscript_arguments<'a>(
         .iter()
         .filter_map(|argument| argument.value)
         .collect();
-    if !drop_arguments(
+    drop_arguments(
         &call.target,
         &call.param_decls,
         ids,
         &mut call.param_arg_regs,
         None,
-    ) {
-        return None;
-    }
+    )?;
     if call.arguments.is_empty() {
         let kept: Vec<Reg> = call
             .param_arg_regs
@@ -806,16 +822,17 @@ fn index_operands(args: &mut [MirSubscriptArg]) -> Vec<&mut Reg> {
 
 /// Drop from one call of `target`, whose compile-time parameters are
 /// `decls`, the arguments of its removed parameters `ids`, and their
-/// entries in its `instantiated_args` when it has them; returns whether it
-/// dropped one. A removed parameter's argument stays when the call omits a
-/// kept parameter whose default reads it.
+/// entries in its `instantiated_args` when it has them; returns the indices
+/// in `decls` of the parameters it dropped, when it dropped one. A removed
+/// parameter's argument stays when the call omits a kept parameter whose
+/// default reads it.
 fn drop_arguments(
     target: &str,
     decls: &[ParamDecl],
     ids: &[ParamId],
     param_arg_regs: &mut [MirParamArg],
     instantiated_args: Option<&mut Vec<TyArg>>,
-) -> bool {
+) -> Option<Vec<usize>> {
     let supplied: Vec<&ParamId> = supplied_parameter_arguments(decls, param_arg_regs)
         .into_iter()
         .map(|(decl, _)| decl.id())
@@ -862,7 +879,7 @@ fn drop_arguments(
             changed = true;
         }
     }
-    changed
+    changed.then_some(dropped)
 }
 
 /// Remove each instruction of `blocks` and their regions that `erasable`

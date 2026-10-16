@@ -3,9 +3,9 @@
 # walks its call graph callees first, even through an operator that could
 # trap, whose operation the pin never emits for a parameter argument, so
 # that `10 // n` at `n == 0` fails nothing, and
-# to a parameter only a default the call supplies reads; a forward to a
-# parameter the callee reads, a read of its own, or a forward around a
-# recursive call keeps it.
+# to a parameter only a default the call supplies reads, and one only
+# passed as itself to a self-recursive call, by a call or a method call;
+# a forward to a parameter the callee reads, or a read of its own, keeps it.
 def leaf[n: Int]() -> Int:
     return 1
 
@@ -97,6 +97,20 @@ def rec[n: Int](k: Int) -> Int:
         return leaf[n]()
     return rec[n](k - 1)
 
+def rec_reader[n: Int](k: Int) -> Int:
+    if k == 0:
+        return n
+    return rec_reader[n](k - 1)
+
+@fieldwise_init
+struct Countdown(Copyable):
+    var v: Int
+
+    def down[n: Int](self, k: Int) -> Int:
+        if k == 0:
+            return self.v
+        return self.down[n](k - 1)
+
 def main():
     print(mid[1]() + mid[2]())
     print(two_hop[1]() + two_hop[2]())
@@ -115,3 +129,5 @@ def main():
     print(subscript_expr_fwd[1]() + subscript_expr_fwd[2]())
     print(subscript_reader[1]() + subscript_reader[2]())
     print(rec[1](2) + rec[2](2))
+    print(rec_reader[1](2) + rec_reader[2](2))
+    print(Countdown(3).down[1](2) + Countdown(3).down[2](2))

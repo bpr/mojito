@@ -4212,8 +4212,19 @@ fn forwarded_parameters_leave_the_instance_key() {
         ("subscript_reader", 2),
         ("Row.__getitem_param__", 2),
         ("rec", 1),
+        ("Countdown.down", 1),
+        ("rec_reader", 2),
     ] {
         assert_eq!(instances(template), count, "instances of `{template}`");
+    }
+    let names: Vec<&str> = concrete
+        .program
+        .functions
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
+    for name in ["rec$mono", "Countdown.down$mono"] {
+        assert!(names.contains(&name), "no concrete `{name}`: {names:?}");
     }
 }
 

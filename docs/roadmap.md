@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1065**.
+Next free ID: **R1066**.
 
 ## Ordered Work
 
@@ -8814,21 +8814,21 @@ follow-ups the landed producer stages filed come last.
   - Depends on R907.
   - Model: Fable, Not Planned.
 
-- [ ] **R1028 A parameter forwarded only around a self-recursive call
-  stays in its instance key, where the pin removes it**
+- [ ] **R1065 A static method's self-recursive call keeps the struct
+  parameter it forwards to itself, where the pin removes it**
 
-  `rec[n](k)`, which calls `leaf[n]()` (ignoring `n`) and `rec[n](k - 1)`,
-  keeps `n`, where the pin's `RemoveUnusedParams` emits one
-  `rec…_REMOVED_ARG` with no `n=` in its symbol.
-  - Mojito's `remove-unused-params` counts the recursive forward as a read,
-    so `rec[1]` and `rec[2]` are two instances that only
-    `eliminate-duplicate-functions` merges.
-  - Upstream's walk treats a self-recursive forward of the parameter to
-    itself as no read (`isRecursive`).
-  - Fix in `mir/param_uses.rs`' forward walk, then drop the "forward around
-    a recursive call keeps it" clause from
-    `assets/ok/forwarded_parameter_instances.mojo` and `docs/features.md`.
-  - Found while landing R995 (2026-10-15).
+  `S[n].down(k)`, which returns `7` or `S[Self.n].down(k - 1)` (or
+  `Self.down(k - 1)`), keeps `n`, where the pin emits one
+  `S::down(…)_REMOVED_ARG` with no `n=` in its symbol.
+  - R1028 discounts a self-recursive forward only through a call's or a
+    resolved method call's own parameter arguments
+    (`self_forwarded_parameters` in `analysis/unused_params.rs`).
+  - A static call's spelled receiver (`S[Self.n]`) or `Self` forwards the
+    struct's parameters instead, which `drop_receiver_arguments` in
+    `mir/param_uses.rs` drops, so the walk should count a receiver argument
+    naming the parameter itself as a self-forward too.
+  - Add the case to `assets/ok/static_method_unread_owner_instances.mojo`.
+  - Found while landing R1028 (2026-10-16).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
