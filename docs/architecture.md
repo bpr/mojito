@@ -5277,9 +5277,17 @@ point where a slot declared in a loop is uninitialized again.
   may run a member of a struct it names (a constructor, R1020, or the
   builtin `len`, R988), and the parts of a dropped, copied,
   or moved value's type its lifecycle member reads
-  (`StructReads::member_reads`): every argument of a struct declaring the
-  member, and through one that does not what its fields' members read,
-  as upstream synthesizes it. A call of a struct's member (a resolved
+  (`StructReads::member_reads`). Upstream's destructor and copy/move
+  insertion leaves a call of that member, which passes the struct's kept
+  parameters as values, so a struct declaring the member reads the
+  arguments at the parameters it kept, whole, when its removals are at
+  hand (`StructReads::with_members` over the callees' removals, R999) and
+  every argument otherwise, and one that does not reads what its fields'
+  members read, as upstream synthesizes it. Each declared member a drop,
+  copy, or move runs (`mir::lifecycle_callees`) is a call-graph edge, so
+  it is finished before the body running it, and joins the
+  `callee_removed_params` snapshot, empty removals included
+  (`StructReads::consulted`). A call of a struct's member (a resolved
   method call, a subscript call, a resolved operator, a prefix `-`/`~`,
   which the check resolves to its dunder and MIR lowers to that method
   call, and an iteration step) passes the member's parameters as values on
@@ -5460,19 +5468,21 @@ point where a slot declared in a loop is uninitialized again.
   names a removed parameter or erases an argument points to `None`
   instead (`substitute::substitute_field`), as `LowerLIT` lowers every
   pointer field's pointee, so `PtrBox[_REMOVED_ARG]` and
-  `List[Box[_REMOVED_ARG]]` lay out their addresses alone. Nothing
-  constructs, calls, copies, or moves through a declared member an erased
-  instance or one over an erased type (`Holder[Box[_REMOVED_ARG]]`), since
-  each would read the erased arguments, so none of `__call__`,
-  `__copyinit__`, and `__moveinit__` is enqueued for it; its destructor is
-  the drops' to demand, and, as for every struct, a constructor the calls'
-  (R993) and a copy or move constructor the copies' and moves'
-  (`Specializer::enqueue_lifecycle_members`, R994). The verifier takes it as the type of any instance of the same
-  template whose other arguments agree (`verify/types.rs`'s
-  `erased_struct_agrees`), and the VM destroys a value in a slot of an
-  erased type through that type's members (`dispatch::erased_instance_value`),
-  as upstream's destructor call is static, rather than by the value's own
-  instance name.
+  `List[Box[_REMOVED_ARG]]` lay out their addresses alone. Its destructor
+  is the drops' to demand, and, as for every struct, a constructor the
+  calls' (R993) and a copy or move constructor the copies' and moves'
+  (`Specializer::enqueue_lifecycle_members`, R994); a copy or move of an
+  erased instance or of one over an erased type
+  (`Holder[Box[_REMOVED_ARG]]`) demands its constructor only when that
+  member removed every erased parameter, as the generator copying or
+  moving it read the member's kept parameters alone (R999). The verifier
+  takes it as the type of any instance of the same template whose other
+  arguments agree (`verify/types.rs`'s `erased_struct_agrees`), and the VM
+  destroys, copies, and moves a value in a slot or register of an erased
+  type through that type's members (`dispatch::erased_instance_value`,
+  `VmBackend::{drop_value_as, clone_value_as, move_value_as}`), as
+  upstream's lifecycle calls are static, rather than by the value's own
+  instance name, which a copy or move keeps.
 - **Two seams, once per body.** `CompiledProgram::elaborated_mir` runs
   `pre_elaborate_program` over the program's own bodies after
   `elaborate_drops_program` (the `pre_elaboration` `--timings` span), and an

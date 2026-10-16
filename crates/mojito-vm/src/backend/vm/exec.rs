@@ -101,7 +101,11 @@ impl VmBackend {
             MirInstr::CopyValue { dest, value } => {
                 let source = regs[value.0 as usize].clone();
                 regs[dest.0 as usize] = if self.has_copyinit {
-                    self.clone_value(prog, &source)?
+                    self.clone_value_as(
+                        prog,
+                        &source,
+                        prog.mir.functions[function].1.reg_types.get(&dest.0),
+                    )?
                 } else {
                     source
                 };
@@ -237,7 +241,11 @@ impl VmBackend {
                 let value = if mode.moves() {
                     let moved = std::mem::replace(&mut vars[slot], Value::Moved);
                     if self.has_moveinit && *mode == mojito_mir::mir::UseMode::Move {
-                        self.move_typed_value(prog, moved)?
+                        self.move_value_as(
+                            prog,
+                            moved,
+                            prog.mir.functions[function].1.var_tys.get(var),
+                        )?
                     } else {
                         moved
                     }
@@ -261,10 +269,12 @@ impl VmBackend {
                         | mojito_mir::mir::UseMode::BorrowMut => vars[slot].clone(),
                         // A copy runs `__copyinit__` (deep copy) for a lifecycle type;
                         // otherwise a plain deep `Clone`.
-                        mojito_mir::mir::UseMode::Copy if self.has_copyinit => {
-                            let value = vars[slot].clone();
-                            self.clone_value(prog, &value)?
-                        }
+                        mojito_mir::mir::UseMode::Copy if self.has_copyinit => self
+                            .clone_value_as(
+                                prog,
+                                &vars[slot],
+                                prog.mir.functions[function].1.var_tys.get(var),
+                            )?,
                         mojito_mir::mir::UseMode::Copy => vars[slot].clone(),
                     }
                 };

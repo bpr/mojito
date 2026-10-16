@@ -65,8 +65,8 @@ mod lower_stmt;
 mod node;
 mod param_uses;
 pub use param_uses::{
-    Removals, UnreadParameters, has_no_destructor, method_owner_params, named_lifted_bodies,
-    unread_parameters, unread_parameters_of, without_removed_forwards,
+    Removals, UnreadParameters, has_no_destructor, lifecycle_callees, method_owner_params,
+    named_lifted_bodies, unread_parameters, unread_parameters_of, without_removed_forwards,
 };
 mod struct_reads;
 pub use struct_reads::{

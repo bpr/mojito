@@ -19,8 +19,11 @@
 //! the arguments its lowered layout reads ([`StructReads`]). A struct type
 //! is read whole where upstream's IR keeps it nominal: a type value (a
 //! call's parameter arguments, a compile-time constant or condition), and
-//! the lifecycle member a copy, a move, or a drop runs, which reads what
-//! that member reads. A call of a member of the struct (a method call, a
+//! the lifecycle member a copy, a move, or a drop runs: upstream's
+//! destructor and copy/move insertion leaves a call of it, so a declared
+//! member reads the value's arguments at the struct parameters it kept,
+//! when its removals are at hand, and all of them otherwise, while a
+//! synthesized one reads what its fields' members read. A call of a member of the struct (a method call, a
 //! subscript, a resolved operator, an iteration step) passes the member's
 //! parameters as values, so it reads the receiver's arguments at the
 //! struct parameters the member kept, when the member's removals are at
@@ -76,7 +79,9 @@ use std::fmt;
 /// runtime closure or environment for one it removed.
 ///
 /// A call of a member whose removals `callees` answers reads only the
-/// receiver's arguments at the struct parameters that member kept.
+/// receiver's arguments at the struct parameters that member kept, as a
+/// drop, copy, or move running a declared lifecycle member it answers reads
+/// only the value's arguments at the parameters that member kept.
 pub fn unread_parameters<'a>(
     name: &str,
     function: &MirFunction,
@@ -126,7 +131,7 @@ pub fn unread_parameters_of<'a>(
     if !bodies.contains(&name) {
         bodies.push(name);
     }
-    let structs = StructReads::new(declarations);
+    let structs = StructReads::with_members(declarations, callees);
     let mut walker = Walker::new(owners, nested);
     walker.bodies = bodies;
     walker.declarations = Some(declarations);
@@ -178,14 +183,17 @@ pub fn unread_parameters_of<'a>(
         .map(|decl| decl.id().clone())
         .collect();
     unread.sort();
+    let mut member_callees = walker.member_callees;
+    member_callees.extend(structs.consulted());
     UnreadParameters {
         params: unread,
-        member_callees: walker.member_callees,
+        member_callees,
     }
 }
 
 /// The parameters [`unread_parameters`] found unread, and the member
-/// callees whose removals the walk relied on.
+/// callees, called or run by a drop, copy, or move, whose removals the walk
+/// relied on.
 #[derive(Debug, Default)]
 pub struct UnreadParameters {
     pub params: Vec<ParamId>,
@@ -195,6 +203,49 @@ pub struct UnreadParameters {
 /// The removals of a body the function being analysed names, by its name:
 /// `None` when its analysis is not at hand.
 pub type Removals<'a> = dyn Fn(&str) -> Option<&'a [ParamId]> + 'a;
+
+/// The declared lifecycle members `function`'s drops, copies, and moves
+/// run.
+///
+/// Upstream's destructor and copy/move insertion leaves a call of each: a
+/// drop's destructor, and through a synthesized one its fields'
+/// ([`crate::mir::destroyed_structs`]), and each copy or move site's
+/// constructor ([`StructReads::member_symbols`]).
+pub fn lifecycle_callees(
+    function: &MirFunction,
+    declarations: &MirDeclarations,
+) -> BTreeSet<String> {
+    fn sites<'f>(
+        function: &'f MirFunction,
+        blocks: &'f [MirBlock],
+        out: &mut Vec<(&'f Ty, &'static str)>,
+    ) {
+        for block in blocks {
+            for instruction in &block.instrs {
+                out.extend(lifecycle_site(function, instruction));
+                for region in instruction_regions(instruction) {
+                    sites(function, region, out);
+                }
+            }
+        }
+    }
+    let structs = StructReads::new(declarations);
+    let destroyed = destroyed_structs(function, &|name| {
+        declarations
+            .structure(name)
+            .map(|structure| structure.fields.as_slice())
+    });
+    let mut found: Vec<(&Ty, &'static str)> = destroyed
+        .structs
+        .iter()
+        .map(|ty| (ty, "__deinit__"))
+        .collect();
+    sites(function, &function.blocks, &mut found);
+    found
+        .into_iter()
+        .flat_map(|(ty, member)| structs.member_symbols(ty, member))
+        .collect()
+}
 
 /// The lifted bodies `function`, the body of `name`, or its signature names.
 ///
@@ -834,6 +885,35 @@ fn receiver_parameter_reads<'d>(
 }
 
 /// The type of the storage `place` designates.
+/// The type a copy or move `instruction` relocates and the lifecycle member
+/// that runs on it: a copying or moving slot use, a register copy, or a
+/// place move.
+fn lifecycle_site<'f>(
+    function: &'f MirFunction,
+    instruction: &'f MirInstr,
+) -> Option<(&'f Ty, &'static str)> {
+    match instruction {
+        MirInstr::UseVar {
+            var,
+            mode: UseMode::Copy,
+            ..
+        } => function.var_tys.get(var).map(|ty| (ty, "__copyinit__")),
+        MirInstr::UseVar {
+            var,
+            mode: UseMode::Move,
+            ..
+        } => function.var_tys.get(var).map(|ty| (ty, "__moveinit__")),
+        MirInstr::CopyValue { dest, .. } => function
+            .reg_types
+            .get(&dest.0)
+            .map(|ty| (ty, "__copyinit__")),
+        MirInstr::MovePlace { place, .. } => {
+            place_ty(function, place).map(|ty| (ty, "__moveinit__"))
+        }
+        _ => None,
+    }
+}
+
 fn place_ty<'f>(function: &'f MirFunction, place: &'f MirPlace) -> Option<&'f Ty> {
     place
         .ty
@@ -941,7 +1021,7 @@ struct Walker<'o, 'a, 'n> {
     /// `self_spelling`'s name.
     self_arguments: bool,
     /// The struct reads a `layout` walk consults.
-    structs: Option<&'n StructReads<'n>>,
+    structs: Option<&'n StructReads<'n, 'a>>,
     /// Whether a struct type reads only the arguments its lowered layout
     /// reads, as upstream's walk over `LowerLIT`'s structural types does.
     layout: bool,
@@ -1188,7 +1268,6 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
         if self.member_instruction(function, declarations, instruction) {
             return;
         }
-        let member = |ty: Option<&Ty>, member| ty.and_then(|ty| self.member_reads(ty, member));
         match instruction {
             MirInstr::Call {
                 func,
@@ -1209,25 +1288,10 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
                 self.visit(binder);
                 self.visit(source);
             }
-            MirInstr::UseVar { var, mode, .. } => {
-                let lifecycle = match mode {
-                    UseMode::Copy => Some("__copyinit__"),
-                    UseMode::Move => Some("__moveinit__"),
-                    UseMode::BorrowShared | UseMode::BorrowMut | UseMode::Forward => None,
-                };
-                if let Some(reads) =
-                    lifecycle.and_then(|lifecycle| member(function.var_tys.get(var), lifecycle))
+            MirInstr::UseVar { .. } | MirInstr::CopyValue { .. } | MirInstr::MovePlace { .. } => {
+                if let Some(reads) = lifecycle_site(function, instruction)
+                    .and_then(|(ty, member)| self.member_reads(ty, member))
                 {
-                    self.visit(&reads);
-                }
-            }
-            MirInstr::CopyValue { dest, .. } => {
-                if let Some(reads) = member(function.reg_types.get(&dest.0), "__copyinit__") {
-                    self.visit(&reads);
-                }
-            }
-            MirInstr::MovePlace { place, .. } => {
-                if let Some(reads) = member(place_ty(function, place), "__moveinit__") {
                     self.visit(&reads);
                 }
             }

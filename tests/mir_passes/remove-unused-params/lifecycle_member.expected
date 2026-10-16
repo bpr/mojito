@@ -1,0 +1,179 @@
+  functions: [
+      fn {
+        name: fi,
+        registers: 3,
+        vars: 2,
+        var_names: [b, c],
+        params: 1,
+        param_types: [struct_type { name: IBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fi", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: IBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fi", slot: 0, name: n, type: meta_value(Int) }))] } }, var_type { var: $v1, type: struct_type { name: IBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fi", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: IBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fi", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 47, end: 48, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 60, end: 63, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 60, end: 63, origin: present($v1) }) }],
+        removed_params: [param_id { owner: "fi", slot: 0 }],
+        callee_removed_params: [callee_params { callee: "IBox.__copyinit__", params: [param_id { owner: "IBox", slot: 0 }] }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              var.store { var: $v1, src: %r0, binding_type: present(struct_type { name: IBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fi", slot: 0, name: n, type: meta_value(Int) }))] }), in_place: false },
+              place.load { dest: %r1, place: place { root: $v1, root_type: present(struct_type { name: IBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fi", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
+              drop.var { var: $v1 },
+              value.copy { dest: %r2, value: %r1 }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      },
+      fn {
+        name: fm,
+        registers: 3,
+        vars: 2,
+        var_names: [b, c],
+        params: 1,
+        param_types: [struct_type { name: MBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fm", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [true],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: MBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fm", slot: 0, name: n, type: meta_value(Int) }))] } }, var_type { var: $v1, type: struct_type { name: MBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fm", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: MBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fm", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 117, end: 119, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 131, end: 134, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 131, end: 134, origin: present($v1) }) }],
+        removed_params: [param_id { owner: "fm", slot: 0 }],
+        callee_removed_params: [callee_params { callee: "MBox.__moveinit__", params: [param_id { owner: "MBox", slot: 0 }] }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: move },
+              var.store { var: $v1, src: %r0, binding_type: present(struct_type { name: MBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fm", slot: 0, name: n, type: meta_value(Int) }))] }), in_place: false },
+              place.load { dest: %r1, place: place { root: $v1, root_type: present(struct_type { name: MBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fm", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
+              drop.var { var: $v1 },
+              value.copy { dest: %r2, value: %r1 }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      },
+      fn {
+        name: fk,
+        registers: 0,
+        vars: 1,
+        var_names: [b],
+        params: 1,
+        param_types: [struct_type { name: KBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fk", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [true],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: KBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fk", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [],
+        locations: [],
+        blocks: [
+          bb0 {
+            instructions: [
+              drop.var { var: $v0 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: "IBox.__copyinit__",
+        registers: 2,
+        vars: 2,
+        var_names: [self, copy],
+        params: 2,
+        param_types: [struct_type { name: IBox, arguments: [] }, struct_type { name: IBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "IBox", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: IBox, arguments: [] } }, var_type { var: $v1, type: struct_type { name: IBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "IBox", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 428, end: 434, origin: present($v1) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 428, end: 434, origin: present($v1) }) }],
+        removed_params: [param_id { owner: "IBox", slot: 0 }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v1, root_type: present(struct_type { name: IBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "IBox", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
+              value.copy { dest: %r1, value: %r0 },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: IBox, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent }, src: %r1 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: "MBox.__moveinit__",
+        registers: 2,
+        vars: 2,
+        var_names: [self, move],
+        params: 2,
+        param_types: [struct_type { name: MBox, arguments: [] }, struct_type { name: MBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "MBox", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [false, false],
+        deinit_params: [false, true],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: MBox, arguments: [] } }, var_type { var: $v1, type: struct_type { name: MBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "MBox", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 606, end: 612, origin: present($v1) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 606, end: 612, origin: present($v1) }) }],
+        removed_params: [param_id { owner: "MBox", slot: 0 }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v1, root_type: present(struct_type { name: MBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "MBox", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
+              value.copy { dest: %r1, value: %r0 },
+              consume.var { var: $v1 },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: MBox, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent }, src: %r1 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: "KBox.__deinit__",
+        registers: 2,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: KBox, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [true],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: KBox, arguments: [] } }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: None }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 764, end: 770, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 758, end: 771, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              consume.var { var: $v0 },
+              const { dest: %r0, value: param(param_decl_ref { owner: "KBox", slot: 0, name: n, type: meta_value(Int) }) },
+              call { dest: %r1, func: print, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      }
+  ]

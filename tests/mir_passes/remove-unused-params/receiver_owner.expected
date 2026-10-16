@@ -413,6 +413,8 @@
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 978, end: 986, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 978, end: 986, origin: present($v0) }) }],
+        removed_params: [param_id { owner: "Wrap", slot: 0 }],
+        callee_removed_params: [callee_params { callee: "DBox.__deinit__", params: [param_id { owner: "DBox", slot: 0 }] }],
         blocks: [
           bb0 {
             instructions: [

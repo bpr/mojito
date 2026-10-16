@@ -103,6 +103,46 @@ impl VmBackend {
         self.drop_value(prog, value)
     }
 
+    /// Copy `value` held in a slot or register of the static type `ty`: as
+    /// [`Self::clone_value`], through `ty`'s members where it is an erased
+    /// struct instance ([`erased_instance_value`]). The copy keeps `value`'s
+    /// own instance names, as it is the same instance wherever it goes.
+    pub(super) fn clone_value_as(
+        &mut self,
+        prog: &Prog,
+        value: &Value,
+        ty: Option<&Ty>,
+    ) -> Result<Value, RuntimeError> {
+        match ty.filter(|ty| mojito_types::types::erases_an_argument(ty)) {
+            Some(ty) => {
+                let erased = erased_instance_value(prog, value.clone(), ty);
+                let copy = self.clone_value(prog, &erased)?;
+                Ok(with_names_of(value, copy))
+            }
+            None => self.clone_value(prog, value),
+        }
+    }
+
+    /// Relocate `value` moved out of a slot of the static type `ty`: as
+    /// [`Self::move_typed_value`], through `ty`'s members where it is an
+    /// erased struct instance ([`erased_instance_value`]), the moved value
+    /// keeping `value`'s own instance names.
+    pub(super) fn move_value_as(
+        &mut self,
+        prog: &Prog,
+        value: Value,
+        ty: Option<&Ty>,
+    ) -> Result<Value, RuntimeError> {
+        match ty.filter(|ty| mojito_types::types::erases_an_argument(ty)) {
+            Some(ty) => {
+                let names = value.clone();
+                let moved = self.move_typed_value(prog, erased_instance_value(prog, value, ty))?;
+                Ok(with_names_of(&names, moved))
+            }
+            None => self.move_typed_value(prog, value),
+        }
+    }
+
     /// Recursively destroy a value (ASAP drop): run a struct's `__deinit__` if
     /// it defines one (its body consumes the receiver's fields at their last
     /// use), else drop the fields in declaration order — Mojo's order.
@@ -777,8 +817,8 @@ impl VmBackend {
 
 /// `value` as the erased struct instance `ty` its slot declares
 /// (`Box$mono$V$REMOVED$ARG`, `List$mono$TBox$mono$V$REMOVED$ARG`), when it
-/// is one: upstream calls a value's
-/// destructor by its static type, and the erased instance lays out as every
+/// is one: upstream calls a value's destructor, copy constructor, and move
+/// constructor by its static type, and the erased instance lays out as every
 /// instance of its template that agrees on the kept arguments, so the value
 /// keeps its fields and takes the erased instance's name, and so its members.
 /// Its fields of erased types follow. Any other value is returned as it is.
@@ -813,6 +853,33 @@ pub(super) fn erased_instance_value(prog: &Prog, value: Value, ty: &Ty) -> Value
             }
         }
         value => value,
+    }
+}
+
+/// `value` with the struct instance names of `original`, field by field:
+/// the copy or move of `original` an erased instance's member made.
+fn with_names_of(original: &Value, value: Value) -> Value {
+    match (original, value) {
+        (
+            Value::Struct {
+                name,
+                fields: originals,
+            },
+            Value::Struct { fields, .. },
+        ) => Value::Struct {
+            name: name.clone(),
+            fields: fields
+                .into_iter()
+                .map(|(field, value)| {
+                    let value = match originals.iter().find(|(name, _)| *name == field) {
+                        Some((_, original)) => with_names_of(original, value),
+                        None => value,
+                    };
+                    (field, value)
+                })
+                .collect(),
+        },
+        (_, value) => value,
     }
 }
 

@@ -662,21 +662,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R988.
   - Model: Fable, Not Planned.
 
-- [ ] **R999 A drop, copy, or move reads a declared lifecycle member's
-  struct arguments whole**
-
-  `fd[n](var b: DBox[n])`, whose `DBox.__del__` prints only `self.v`,
-  keeps `n`, where the pin removes it because the destructor is
-  `_REMOVED_ARG`.
-  - `mir::StructReads::member_reads` reads every argument of a struct that
-    declares the member, and through a synthesized one what its fields'
-    members read.
-  - Read the declared member's kept parameters instead, once R978 lets a
-    member remove its struct's parameters.
-  - Found while landing R977 (2026-10-15).
-  - Depends on R978.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1004 An omitted evaluated default is evaluated by the callee
   instance, not at the call site**
 

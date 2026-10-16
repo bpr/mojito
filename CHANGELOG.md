@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A drop, copy, or move reads only the struct arguments its lifecycle
+  member kept (R999), as on the pin: `fd[n](var b: DBox[n])`, whose
+  `DBox.__deinit__` prints only `self.v`, is one instance for every `n`,
+  as are a copy through a declared `__init__(copy=)`, a move through
+  `__init__(deinit move=)`, a type parameter, and the same through a
+  synthesized member, while a destructor reading `Self.n` keeps one per
+  `n`. `remove-unused-params` orders each declared lifecycle member a body
+  runs before the body and reads it through that member's removals; the
+  elaborator demands the copy or move constructor of an erased instance
+  when that member removed every erased parameter, and the VM copies and
+  moves an erased slot's value through the slot's type
+  (`assets/ok/lifecycle_member_unread_struct_parameter_instances.mojo`).
 - A call of a struct's member reads only the struct arguments the member
   kept (R998), as on the pin: `fg[n](b: NBox[n])` returning `b.get()` is
   one instance for every `n`, as are a call on `self`, a subscript, an

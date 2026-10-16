@@ -30,7 +30,10 @@
 //! it reads only the receiver's arguments at the struct parameters that
 //! member kept; each such member joins the snapshot too, empty removals
 //! included, since the verifier reads a call of a member it has none for
-//! whole.
+//! whole. A drop, copy, or move leaves a call of the lifecycle member it
+//! runs on the pin, so it reads the same way, and each declared lifecycle
+//! member it runs ([`mojito_mir::mir::lifecycle_callees`]) joins the
+//! snapshot as well.
 //!
 //! A nested body is a generator over the binders of its enclosing scope,
 //! as upstream lifts a closure to one: the pass removes those it never
@@ -60,8 +63,9 @@
 use super::pre_elaboration::{CallGraphPass, Callees};
 use mojito_mir::mir::{
     Const, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
-    instruction_regions, instruction_subscript_call, method_owner_params, named_lifted_bodies,
-    unread_parameters_of, unused_arguments, without_removed_arguments, without_removed_forwards,
+    instruction_regions, instruction_subscript_call, lifecycle_callees, method_owner_params,
+    named_lifted_bodies, unread_parameters_of, unused_arguments, without_removed_arguments,
+    without_removed_forwards,
 };
 use mojito_types::param_expr::ParamId;
 use std::collections::{BTreeMap, BTreeSet};
@@ -98,7 +102,8 @@ pub fn remove_unused_params(
         .map(|(_, declaration)| declaration)
         .or_else(|| declarations.function(name));
     let body = reduced.as_ref().map_or(&*function, |(view, _)| view);
-    let mut targets = BTreeSet::new();
+    let lifecycle = lifecycle_callees(body, declarations);
+    let mut targets: BTreeSet<&str> = lifecycle.iter().map(String::as_str).collect();
     call_targets(&body.blocks, &mut targets);
     let removals: BTreeMap<&str, &[ParamId]> = targets
         .iter()

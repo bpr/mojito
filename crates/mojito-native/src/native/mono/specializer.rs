@@ -3446,11 +3446,12 @@ impl<'a> Specializer<'a> {
     /// them, as upstream's destructor and copy/move insertion leaves a call
     /// to each at its site: the member is a reference of the body, as a
     /// call is. A body that drops, copies, or moves a value of a symbolic
-    /// type demands that member of every struct it names. No copy or move
-    /// runs a member of an erased instance (`Box[_REMOVED_ARG]`) or one
-    /// over an erased type: a member it runs reads the struct's arguments
-    /// (`mir::StructReads::member_reads`), so no generator that copies or
-    /// moves the struct removed them.
+    /// type demands that member of every struct it names. A copy or move
+    /// of an erased instance (`Box[_REMOVED_ARG]`), or of one over an
+    /// erased type, runs its member only when that member removed every
+    /// erased parameter, as the generator that copies or moves it read the
+    /// member's kept parameters alone (`mir::StructReads::member_reads`);
+    /// a member keeping one is demanded by no generator that erased it.
     fn enqueue_lifecycle_members(
         &mut self,
         owner: &str,
@@ -3497,8 +3498,7 @@ impl<'a> Specializer<'a> {
                     continue;
                 };
                 if method != "__deinit__"
-                    && (!bindings.removed.is_empty()
-                        || mojito_types::types::erases_an_argument(&ty))
+                    && self.keeps_an_erased_parameter(&template_name, &ty, &bindings, method)
                 {
                     continue;
                 }
@@ -3506,6 +3506,48 @@ impl<'a> Specializer<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Whether an overload of `{template_name}.{method}` keeps a parameter
+    /// of its struct that the instance `ty`, bound by `bindings`, erased or
+    /// binds to a type erasing an argument.
+    fn keeps_an_erased_parameter(
+        &self,
+        template_name: &str,
+        ty: &Ty,
+        bindings: &Bindings,
+        method: &str,
+    ) -> bool {
+        let Some(template) = self.structs.get(template_name) else {
+            return false;
+        };
+        let arguments = match ty.kind() {
+            TyKind::Struct(_, arguments) => arguments.as_slice(),
+            _ => &[],
+        };
+        let erased: Vec<&mojito_types::param_expr::ParamId> = template
+            .param_decls
+            .iter()
+            .enumerate()
+            .filter(|(position, decl)| {
+                bindings
+                    .removed
+                    .iter()
+                    .any(|binder| binder.id == *decl.id())
+                    || matches!(arguments.get(*position), Some(TyArg::Ty(argument))
+                        if mojito_types::types::erases_an_argument(argument))
+            })
+            .map(|(_, decl)| decl.id())
+            .collect();
+        !erased.is_empty()
+            && self
+                .functions
+                .family(&format!("{template_name}.{method}"))
+                .iter()
+                .any(|candidate| {
+                    let removed = self.removed_params(candidate, false);
+                    erased.iter().any(|id| !removed.contains(id))
+                })
     }
 
     /// The bindings of the struct instance `ty`, `None` when it names no

@@ -5,10 +5,13 @@
 //! each `!lit.struct<@Box, [n]>` into the structural `!kgen.struct` of its
 //! substituted fields (`lowerStructType`): a struct argument that no field
 //! type spells is gone from every type the pass walks, and a pointer
-//! field's pointee is `none` (`PointerType::get(noneType, …)`). A struct argument stays a read where a member
-//! runs, since its call passes the struct's arguments as parameter values;
-//! a member the struct does not declare is synthesized from its fields'
-//! members, so it reads what they read.
+//! field's pointee is `none` (`PointerType::get(noneType, …)`). A struct
+//! argument stays a read where a member runs, since its call passes the
+//! struct's parameters the member kept as values: a declared member whose
+//! removals are at hand reads the arguments at the parameters it kept, one
+//! whose removals are not reads them all, and a member the struct does not
+//! declare is synthesized from its fields' members, so it reads what they
+//! read.
 //!
 //! Mojito's MIR keeps the nominal type, so this module answers both
 //! questions over the declarations, and `unread_parameters` walks a struct
@@ -16,6 +19,7 @@
 //! parametric alignment or register-passability today; one that did would
 //! read what it names as well.
 
+use crate::mir::param_uses::Removals;
 use crate::mir::{MirDeclarations, has_no_destructor};
 use mojito_types::types::{ParamDecl, Ty, TyArg, TyKind, names_binder};
 use std::cell::RefCell;
@@ -99,19 +103,51 @@ pub fn table_member(method: &str) -> Option<&'static str> {
 
 /// [`struct_layout_reads`] and the member reads of one walk's struct types,
 /// each struct answered once.
-pub struct StructReads<'d> {
+pub struct StructReads<'d, 'a> {
     declarations: &'d MirDeclarations,
+    removals: Option<&'d Removals<'a>>,
     layouts: RefCell<HashMap<String, LayoutReads>>,
     members: RefCell<HashMap<(String, &'static str), MemberNeeds>>,
+    consulted: RefCell<BTreeSet<String>>,
 }
 
-impl<'d> StructReads<'d> {
+impl<'d, 'a> StructReads<'d, 'a> {
+    /// The reads of `declarations`' structs, a declared lifecycle member
+    /// reading every argument of its struct.
     pub fn new(declarations: &'d MirDeclarations) -> Self {
         Self {
             declarations,
+            removals: None,
             layouts: RefCell::new(HashMap::new()),
             members: RefCell::new(HashMap::new()),
+            consulted: RefCell::new(BTreeSet::new()),
         }
+    }
+
+    /// The reads of `declarations`' structs, a declared lifecycle member
+    /// whose removals `removals` answers reading only the arguments at the
+    /// struct parameters it kept.
+    pub fn with_members(declarations: &'d MirDeclarations, removals: &'d Removals<'a>) -> Self {
+        Self {
+            removals: Some(removals),
+            ..Self::new(declarations)
+        }
+    }
+
+    /// The declared lifecycle members whose removals a member read relied
+    /// on, empty removals included.
+    pub fn consulted(&self) -> BTreeSet<String> {
+        self.consulted.borrow().clone()
+    }
+
+    /// The declared members running the lifecycle `member` on a value of
+    /// `ty` reaches: a struct declaring it contributes its own, one that
+    /// does not the members of its fields' types and its arguments, as do a
+    /// tuple's, pack's, or variant's items.
+    pub fn member_symbols(&self, ty: &Ty, member: &'static str) -> BTreeSet<String> {
+        let mut symbols = BTreeSet::new();
+        self.member_symbols_in(ty, member, &mut Vec::new(), &mut symbols);
+        symbols
     }
 
     /// [`struct_layout_reads`] of `name`.
@@ -120,7 +156,8 @@ impl<'d> StructReads<'d> {
     }
 
     /// The parts of `ty` that running its lifecycle `member` reads in full:
-    /// a struct argument a declared member takes, a type parameter whose
+    /// a struct argument a declared member takes (at the parameters it
+    /// kept, when its removals are at hand), a type parameter whose
     /// values it runs the member on, and anything this cannot see into.
     /// Empty when the member runs no code that reads a parameter, as for a
     /// struct with no declared member over fields with none.
@@ -189,24 +226,79 @@ impl<'d> StructReads<'d> {
         }
     }
 
+    fn member_symbols_in(
+        &self,
+        ty: &Ty,
+        member: &'static str,
+        visiting: &mut Vec<String>,
+        symbols: &mut BTreeSet<String>,
+    ) {
+        match ty.kind() {
+            TyKind::Struct(name, arguments) => {
+                let Some(structure) = self.declarations.structure(name) else {
+                    return;
+                };
+                if let Some(symbol) = structure.member(member) {
+                    symbols.insert(symbol.to_string());
+                    return;
+                }
+                if visiting.iter().any(|seen| seen == name) {
+                    return;
+                }
+                visiting.push(name.clone());
+                for (_, field) in &structure.fields {
+                    self.member_symbols_in(field, member, visiting, symbols);
+                }
+                visiting.pop();
+                for argument in arguments {
+                    if let TyArg::Ty(argument) = argument {
+                        self.member_symbols_in(argument, member, visiting, symbols);
+                    }
+                }
+            }
+            TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {
+                for item in items {
+                    self.member_symbols_in(item, member, visiting, symbols);
+                }
+            }
+            TyKind::ComptimeList(item) | TyKind::VariadicPack(item) => {
+                self.member_symbols_in(item, member, visiting, symbols);
+            }
+            _ => {}
+        }
+    }
+
     /// What `name`'s `member` reads of each of its parameters, by position:
-    /// `None` when it reads every one whole (a declared member, an unknown
-    /// or variadic struct, or one that contains itself).
+    /// `None` when it reads every one whole (a declared member whose
+    /// removals are not at hand, an unknown or variadic struct, or one that
+    /// contains itself). A declared member whose removals are at hand reads
+    /// the parameters it kept whole and the others not at all.
     fn member_needs(
         &self,
         name: &str,
         member: &'static str,
         visiting: &mut Vec<String>,
     ) -> MemberNeeds {
+        let structure = self.declarations.structure(name)?;
+        if structure.param_decls.iter().any(is_variadic) {
+            return None;
+        }
+        if let Some(symbol) = structure.member(member) {
+            let removed = self.removals.and_then(|removals| removals(symbol))?;
+            self.consulted.borrow_mut().insert(symbol.to_string());
+            return Some(
+                structure
+                    .param_decls
+                    .iter()
+                    .map(|decl| (!removed.contains(decl.id())).then_some(Need::Whole))
+                    .collect(),
+            );
+        }
         let key = (name.to_string(), member);
         if let Some(needs) = self.members.borrow().get(&key) {
             return needs.clone();
         }
-        let structure = self.declarations.structure(name)?;
-        if structure.member(member).is_some()
-            || structure.param_decls.iter().any(is_variadic)
-            || visiting.iter().any(|seen| seen == name)
-        {
+        if visiting.iter().any(|seen| seen == name) {
             return None;
         }
         visiting.push(name.to_string());
@@ -517,25 +609,44 @@ mod tests {
     }
 
     /// Dropping a value reads the arguments of a struct that declares its
-    /// destructor whole, through a struct that does not only where a field
-    /// runs one, and nothing of a struct whose destruction runs no code.
+    /// destructor at the parameters that destructor kept (all of them when
+    /// its removals are not at hand), through a struct that does not only
+    /// where a field runs one, and nothing of a struct whose destruction
+    /// runs no code.
     #[test]
-    fn destruction_reads_declared_destructors_only() {
+    fn destruction_reads_declared_destructors_kept_parameters() {
         let declarations = declarations();
         let structs = StructReads::new(&declarations);
         let n = value("f", "n");
         let nbox = applied("NBox", n.clone());
+        let holder = applied("Holder", TyArg::Ty(nbox.clone()));
         assert_eq!(structs.member_reads(&nbox, "__deinit__"), vec![n.clone()]);
-        assert_eq!(
-            structs.member_reads(&applied("Holder", TyArg::Ty(nbox)), "__deinit__"),
-            vec![n.clone()]
-        );
-        let boxed = applied("Holder", TyArg::Ty(applied("Box", n)));
+        assert_eq!(structs.member_reads(&holder, "__deinit__"), vec![n.clone()]);
+        assert!(structs.consulted().is_empty());
+        let boxed = applied("Holder", TyArg::Ty(applied("Box", n.clone())));
         assert!(structs.member_reads(&boxed, "__deinit__").is_empty());
         let generic = applied("Holder", TyArg::Ty(param("f", "T")));
         assert_eq!(
             structs.member_reads(&generic, "__deinit__"),
             vec![TyArg::Ty(param("f", "T"))]
         );
+        assert_eq!(
+            structs.member_symbols(&holder, "__deinit__"),
+            BTreeSet::from(["NBox.__deinit__".to_string()])
+        );
+
+        let removed = [ParamId::new("NBox", 0)];
+        let removing = |symbol: &str| (symbol == "NBox.__deinit__").then_some(&removed[..]);
+        let structs = StructReads::with_members(&declarations, &removing);
+        assert!(structs.member_reads(&nbox, "__deinit__").is_empty());
+        assert!(structs.member_reads(&holder, "__deinit__").is_empty());
+        assert_eq!(
+            structs.consulted(),
+            BTreeSet::from(["NBox.__deinit__".to_string()])
+        );
+
+        let keeping = |_: &str| Some(&[][..]);
+        let structs = StructReads::with_members(&declarations, &keeping);
+        assert_eq!(structs.member_reads(&nbox, "__deinit__"), vec![n]);
     }
 }
