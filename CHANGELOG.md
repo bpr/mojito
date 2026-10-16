@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A method whose body never uses its receiver leaves the generator a
+  resolved method call names without it (R1012), as upstream's
+  `k3(q::Holder)_REMOVED_ARG()`: the call becomes a call with no
+  receiver, and `Grid[n].k3(self)` returning `3` has one instance,
+  `Grid.k3$REMOVED$ARG$mono`, for every `n`. Corpus concrete
+  instructions 387,807 → 386,911; no program's output changes.
 - A method's runtime argument its body never uses leaves the generator a
   resolved method call names (R1011), as upstream's `RemoveUnusedParams`
   clones every generator without it: `Holder.m[n](self, a: Arr[n])`

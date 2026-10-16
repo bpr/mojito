@@ -218,6 +218,18 @@ impl<'a> Specializer<'a> {
                 .is_some_and(|function| !function.removed_args.is_empty())
     }
 
+    /// Whether `target`'s reduced generator removed its method receiver
+    /// ([`MirFunction::removed_args`]), so a call of it passes none.
+    pub(super) fn removes_receiver(&self, target: &str) -> bool {
+        self.declarations
+            .get(target)
+            .is_some_and(|declaration| declaration.has_receiver)
+            && self
+                .functions
+                .get(target)
+                .is_some_and(|function| function.removed_args.contains(&0))
+    }
+
     /// Drop from a direct call of `target`'s reduced generator the
     /// arguments that bind the parameters it removed, as upstream rewrites
     /// each call of a generator it removed an argument from: the call binds
@@ -2776,11 +2788,13 @@ impl<'a> Specializer<'a> {
                         recv,
                         method,
                         resolved,
+                        raises,
                         result_adapter,
                         args,
                         kwargs,
                         arg_places,
                         kwarg_places,
+                        capture_accesses,
                         param_arg_regs,
                         param_decls,
                         instantiated_args,
@@ -2922,6 +2936,26 @@ impl<'a> Specializer<'a> {
                                 kwargs,
                                 kwarg_places,
                             )?;
+                        }
+                        // A generator without its receiver takes none: the
+                        // call names it as upstream's rewritten call names
+                        // `k3(q::Holder)_REMOVED_ARG()`, with no receiver.
+                        if reduced && self.removes_receiver(&target) {
+                            *instruction = MirInstr::Call {
+                                dest: *dest,
+                                func: mojito_mir::mir::FuncRef::named(&concrete),
+                                raises: raises.take(),
+                                args: std::mem::take(args),
+                                kwargs: std::mem::take(kwargs),
+                                arg_places: std::mem::take(arg_places),
+                                kwarg_places: std::mem::take(kwarg_places),
+                                capture_accesses: std::mem::take(capture_accesses),
+                                param_arg_regs: Vec::new(),
+                                receiver: None,
+                                instantiated_args: Vec::new(),
+                                spread: None,
+                            };
+                            continue;
                         }
                         *resolved = Some(concrete);
                         param_arg_regs.clear();

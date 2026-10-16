@@ -562,16 +562,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1032.
   - Model: Fable, Not Planned.
 
-- [ ] **R1012 A method's unused receiver stays its argument**
-
-  `Holder.k3(self)` returning `3` takes `self`, where the pin's
-  `k3(q::Holder)_REMOVED_ARG()` takes nothing.
-  - Removing the receiver turns the resolved `MethodCall` into a `Call`
-    with no receiver, and the reduced declaration loses `has_receiver`.
-  - Found while landing R997 (2026-10-15).
-  - Depends on R1011.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1013 Forwarding an argument to a removed argument is a use**
 
   `fwd[n](a: Arr[n])` returning `fa(a) + 1`, where `fa` removes `a`, keeps

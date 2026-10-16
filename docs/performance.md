@@ -1970,3 +1970,27 @@ fixture, `assets/ok/method_unused_argument_instances.mojo`, has one
 instance of each of `Holder.m`, `Holder.mk`, and `PBox.m` for `Arr[1]`
 and `Arr[2]`, as on the pin. A static method (R1032), a dunder or table
 member (R1033), and the receiver (R1012) still keep their arguments.
+
+## A method's unused receiver leaves the generator a method call names (2026-10-15, R1012)
+
+`remove-unused-params` now removes a method's receiver its body never
+uses, as upstream's `RemoveUnusedParams` does (`k3(q::Holder)_REMOVED_ARG()`),
+and the elaborator's resolved `MethodCall` arm becomes a `Call` of the
+reduced generator with no receiver. Over the 1,050 `assets/ok` and
+benchmark fixtures elaborated before and after
+(`benchmarks/instantiation.tsv`, debug binary, the parent commit before;
+the new fixture's row aside):
+
+| | before | after | change |
+|---|---:|---:|---:|
+| `concrete_functions` | 28,272 | 28,207 | −65 |
+| `concrete_instructions` | 387,807 | 386,697 | −1,110 |
+| `generator_instances` | 16,407 | 16,470 | +63 |
+| `generator_instance_instructions` | 170,442 | 175,370 | +4,928 |
+
+No fixture's concrete program grows, and no program's output changes.
+The generator counters grow because a non-generic method that loses its
+receiver becomes a reduced clone, a generator with one instance, as
+R1011's non-generic methods did (`StringSpan._lead_width$REMOVED$ARG` in
+the string fixtures). The new fixture, `assets/ok/method_unused_receiver.mojo`,
+has one instance of `Grid.k3` for `Grid[1]` and `Grid[2]`, as on the pin.

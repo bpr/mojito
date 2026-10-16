@@ -5426,10 +5426,14 @@ point where a slot declared in a loop is uninitialized again.
   function and a method with a receiver that is neither a dunder nor a
   `mir::table_member` (R1011), neither variadic nor tying an origin or a
   returned reference to a parameter, has candidates
-  (`mir::unused_arguments`), and never a receiver, a `deinit`, or a
-  callable parameter: a removed method slot past the receiver is the
+  (`mir::unused_arguments`), and never a `deinit` or a callable
+  parameter: a removed method slot past the receiver is the
   declaration's position one lower, and the resolved `MethodCall` arm
-  drops its argument as the `Call` arms do. As upstream calls a `_REMOVED_ARG` clone
+  drops its argument as the `Call` arms do. A method's unused receiver
+  is a candidate too (R1012): the reduced declaration has no receiver,
+  and the `MethodCall` arm becomes a `Call` of the reduced instance with
+  no receiver (`Specializer::removes_receiver`), as upstream's
+  `k3(q::Holder)_REMOVED_ARG()`. As upstream calls a `_REMOVED_ARG` clone
   of the generator from every direct call and keeps the original for any
   other use, the elaborator instantiates the reduced generator
   (`InstanceKey::reduced`, named by `symbol::removed_argument_symbol`,

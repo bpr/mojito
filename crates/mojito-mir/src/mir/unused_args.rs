@@ -29,8 +29,9 @@ use std::collections::BTreeSet;
 /// table member ([`crate::mir::table_member`]), which an operator, a
 /// subscript, or a backend reaches without a call naming it, nor a nested,
 /// lifted, or variadic function, nor one whose signature ties an origin or
-/// a returned reference to a parameter. A method's receiver, a `deinit`
-/// parameter, and a callable one are never candidates.
+/// a returned reference to a parameter. A `deinit` parameter and a
+/// callable one are never candidates; a method's receiver is one like any
+/// other argument, and the call of a generator without it passes none.
 pub fn unused_arguments(
     name: &str,
     function: &MirFunction,
@@ -43,7 +44,7 @@ pub fn unused_arguments(
         return Vec::new();
     }
     let used = used_slots(function, declarations);
-    (usize::from(declaration.has_receiver)..function.n_params)
+    (0..function.n_params)
         .filter(|&slot| {
             !function.deinit_params.get(slot).copied().unwrap_or(true)
                 && !mentions(&function.param_types[slot], &|ty| {
@@ -85,7 +86,8 @@ pub fn used_slots(function: &MirFunction, declarations: &MirDeclarations) -> BTr
 /// naming: each slot's drops leave the body, its parameter entries the body
 /// and the declaration, and every slot above one moves down past it. A
 /// method's receiver slot has no declaration entry, so a slot past it is
-/// the declaration's position one lower.
+/// the declaration's position one lower, and a generator without its
+/// receiver declares none.
 pub fn without_removed_arguments(
     function: &MirFunction,
     declaration: &MirFunctionDeclaration,
@@ -98,6 +100,10 @@ pub fn without_removed_arguments(
     view.removed_args.clear();
     let mut declaration = declaration.clone();
     let receiver = usize::from(declaration.has_receiver);
+    if declaration.has_receiver && retired.contains(&0) {
+        declaration.has_receiver = false;
+        declaration.receiver_convention = None;
+    }
     let positions: BTreeSet<usize> = retired
         .iter()
         .filter_map(|&slot| (slot as usize).checked_sub(receiver))

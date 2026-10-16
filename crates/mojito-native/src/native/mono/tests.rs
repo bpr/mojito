@@ -2574,3 +2574,46 @@ fn a_direct_call_names_the_generator_without_its_unused_argument() {
         });
     assert_eq!(direct, Some(0), "the direct call passes no argument");
 }
+
+/// A method whose body never uses its receiver leaves the generator a
+/// resolved method call names without it, as upstream's
+/// `k3(q::Holder)_REMOVED_ARG()`: the call passes no receiver, and nothing
+/// left reads the struct's parameter, so every owner instance shares it.
+#[test]
+fn a_method_call_names_the_generator_without_its_unused_receiver() {
+    let source = "struct Grid[n: Int](Copyable, Movable):\n\
+     \x20   var k: Int\n\
+     \x20   def __init__(out self, k: Int):\n\
+     \x20       self.k = k\n\
+     \x20   @no_inline\n\
+     \x20   def k3(self) -> Int:\n\
+     \x20       return 3\n\
+     def main() raises:\n\
+     \x20   var g1 = Grid[1](7)\n\
+     \x20   var g2 = Grid[2](8)\n\
+     \x20   print(g1.k3(), g2.k3())\n";
+    let specialized = specialized_with_removed(source, &[]).expect("specialize");
+    assert_eq!(
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
+    );
+    let name = "Grid.k3$REMOVED$ARG$mono";
+    assert_eq!(function(&specialized, name).n_params, 0);
+    let declaration = specialized
+        .program
+        .declarations
+        .functions
+        .iter()
+        .find(|declaration| declaration.lowered_name == name)
+        .expect("the instance is declared");
+    assert!(!declaration.has_receiver);
+    let calls = instructions(&function(&specialized, "main").blocks)
+        .into_iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::Call { func, args, .. } if func.0 == name => Some(args.len()),
+            MirInstr::MethodCall { method, .. } if method == "k3" => Some(usize::MAX),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(calls, [0, 0], "each call passes no receiver");
+}
