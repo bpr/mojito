@@ -4143,7 +4143,7 @@ fn nominal_indirect_call_mir_retains_and_verifies_the_selected_overload() {
             .expect("indirect call lowered")
     }
 
-    let src = "@fieldwise_init\nstruct Choose(def(Int) -> Int):\n    def __call__(self, value: Bool) -> Int:\n        return 0\n\n    def __call__(self, value: Int) -> Int:\n        return value + 1\n\ndef invoke(callback: def(Int) -> Int) -> Int:\n    return callback(41)\n\ndef main():\n    print(Choose()(41))\n    print(invoke(Choose()))\n";
+    let src = "@fieldwise_init\nstruct Choose(def(Int) -> Int):\n    def __call__(self, value: Bool) -> Int:\n        return 0\n\n    def __call__(self, value: Int) -> Int:\n        return value + 1\n\ndef invoke(callback: def(Int) -> Int) -> Int:\n    return callback(41)\n\ndef increment(value: Int) -> Int:\n    return value + 1\n\ndef main():\n    print(Choose()(41))\n    print(invoke(increment))\n";
     let mut mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
     assert!(
         mir.invariant_errors.is_empty(),

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1031**.
+Next free ID: **R1032**.
 
 ## Ordered Work
 
@@ -419,21 +419,20 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1009 Every `__call__` of a struct a body names stays in the
-  concrete program, called or not**
+- [ ] **R1031 The VM still dispatches an indirect call on a struct value
+  by name**
 
-  `discover_structs` enqueues each `__call__` overload of every struct
-  instance a body names, where upstream instantiates only what a call
-  reaches.
-  - A struct value passed where a function type is expected is called
-    through a dispatch symbol that names no instance, so no reference
-    demands the member.
-  - Have that conversion site demand the struct's `__call__`, as R993 made
-    each call demand its constructor, and drop `__call__` from
-    `discover_structs`' list.
-  - Done when a fixture naming a struct with an uncalled `__call__` keeps
-    none in its concrete program and the HEAD differential is clean.
-  - Found while landing R993 (2026-10-15).
+  `CallIndirect` over a `Value::Struct` callee looks `__call__` up through
+  `Prog::selected_struct_member`, though no checked program reaches it.
+  - R1009 made the checker reject a callable struct where a `def(...)`
+    value is expected, so a struct callee is only ever a direct call the
+    elaborator devirtualizes into a `MethodCall` naming the instance.
+  - Delete the `Value::Struct` arms in `backend/vm/frames.rs` and
+    `backend/vm/exec.rs` (and `nominal_receiver`), so a struct callee fails
+    as any other non-callable value, after confirming the elaborator's
+    devirtualization never `continue`s for a checked program.
+  - Done when the arms are gone and the HEAD differential is clean.
+  - Found while landing R1009 (2026-10-15).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

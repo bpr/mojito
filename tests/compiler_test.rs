@@ -249,6 +249,38 @@ fn overloaded_constructor_family_is_instantiated_as_one_overload_set() {
 }
 
 #[test]
+fn callable_struct_call_member_is_instantiated_only_where_called() {
+    // A struct's `__call__` joins the concrete program only from a call that
+    // reaches it, as upstream instantiates only what a call names.
+    let compiler = Compiler::default();
+    let concrete_names = |body: &str| {
+        let program = compiler
+            .compile_source(
+                &format!(
+                    "@fieldwise_init\nstruct Scale(def(Int) -> Int, ImplicitlyCopyable):\n    var factor: Int\n\n    def __call__(self, value: Int) -> Int:\n        return value * self.factor\n\ndef main():\n    var scale = Scale(3)\n{body}"
+                ),
+                std::path::Path::new("/tmp/mojito_callable_struct_demand.mojo"),
+            )
+            .expect("compile the callable struct");
+        let concrete = program.concrete_mir().expect("elaborate");
+        concrete
+            .program
+            .functions
+            .iter()
+            .map(|(name, _)| name.clone())
+            .filter(|name| name.contains("__call__"))
+            .collect::<Vec<_>>()
+    };
+    let uncalled = concrete_names("    print(scale.factor)\n");
+    assert!(
+        uncalled.is_empty(),
+        "no call reaches `__call__`: {uncalled:?}"
+    );
+    let called = concrete_names("    print(scale(14))\n");
+    assert_eq!(called, ["Scale.__call__"], "the call reaches `__call__`");
+}
+
+#[test]
 fn instance_members_are_instantiated_from_their_templates() {
     // On a closed generic-struct instance, every member — one holding a
     // compile-time construct reached by `len(x)`, the `==` dunder, `repr(x)`

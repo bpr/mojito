@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A callable struct's `__call__` joins the concrete program only from a
+  call that reaches it (R1009), as upstream instantiates only what a call
+  names, instead of with every struct instance a body names. The checker
+  now rejects such a struct where a `def(...)` value is expected, as the
+  pin does ("cannot be converted from 'Scale' to 'def(Int) -> Int'"), so
+  no call reaches `__call__` through a contract's dispatch symbol.
 - `eliminate-dead-symbols` over the concrete program drops a constructor or
   an overload nothing names (R1008), as upstream removes any symbol nothing
   references; only the pre-elaboration runs, whose generic bodies the

@@ -3504,18 +3504,6 @@ impl<'a> Specializer<'a> {
                 self.instance_conformances(&template.conformances, &bindings);
             declaration.declared = self.instance_conformances(&template.declared, &bindings);
             self.declare_output_struct(declaration);
-            // A value of the struct passed where a function type is
-            // expected is called through its `__call__` dispatch symbol,
-            // which names no instance. A constructor is the calls' to
-            // demand, as upstream instantiates only what a call reaches, and
-            // the destructor, copy, and move constructors the drops',
-            // copies', and moves'. Nothing calls through a member of an
-            // erased instance (`Box[_REMOVED_ARG]`) or one over an erased
-            // type (`Holder[Box[_REMOVED_ARG]]`).
-            if !bindings.removed.is_empty() || mojito_types::types::erases_an_argument(&ty) {
-                continue;
-            }
-            self.enqueue_struct_members(&template_name, &bindings, "__call__")?;
         }
         self.enqueue_lifecycle_members(owner, function)
     }

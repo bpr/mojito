@@ -3496,8 +3496,11 @@ Calls through a function-typed local or a general callable expression lower to
 VM before it pushes the ordinary explicit frame. It retains positional and
 keyword argument places and, for nominal callable values, the callee place plus
 the exact checker-selected `__call__` symbol. A `def(...)`-typed parameter
-retains the same signature as an abstract dispatch symbol; if its runtime value
-is a nominal callable, the VM retargets that suffix to the concrete struct.
+retains the same signature as an abstract dispatch symbol; its value is a
+function or closure, never a struct, since the checker rejects a nominal
+callable where a `def(...)` value is expected, as the pin does. The elaborator
+devirtualizes every nominal-callee `CallIndirect` into a `MethodCall` naming
+the `__call__` instance, and that call is what demands the member (R1009).
 Consequently same-arity `__call__` overloads do not fall back to runtime value
 tags or source-name/arity selection. The checker has already matched the
 arguments against the callable signature, so indirect execution shares the same
@@ -5490,7 +5493,8 @@ point where a slot declared in a loop is uninitialized again.
   pointer field's pointee, so `PtrBox[_REMOVED_ARG]` and
   `List[Box[_REMOVED_ARG]]` lay out their addresses alone. Its destructor
   is the drops' to demand, and, as for every struct, a constructor the
-  calls' (R993) and a copy or move constructor the copies' and moves'
+  calls' (R993), a `__call__` the calls' (R1009), and a copy or move
+  constructor the copies' and moves'
   (`Specializer::enqueue_lifecycle_members`, R994); a copy or move of an
   erased instance or of one over an erased type
   (`Holder[Box[_REMOVED_ARG]]`) demands its constructor only when that

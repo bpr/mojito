@@ -252,7 +252,7 @@ fn nominal_callable_rejects_a_value_result_for_a_reference_result_contract() {
 
 #[test]
 fn nominal_callable_selects_the_contract_matching_same_arity_overload() {
-    let source = "@fieldwise_init\nstruct Choose(def(Int) -> Int):\n    def __call__(self, value: Bool) -> Int:\n        return 0\n\n    def __call__(self, value: Int) -> Int:\n        return value + 1\n\ndef invoke(callback: def(Int) -> Int) -> Int:\n    return callback(41)\n\ndef main():\n    print(Choose()(41))\n    print(invoke(Choose()))\n";
+    let source = "@fieldwise_init\nstruct Choose(def(Int) -> Int):\n    def __call__(self, value: Bool) -> Int:\n        return 0\n\n    def __call__(self, value: Int) -> Int:\n        return value + 1\n\ndef invoke(callback: def(Int) -> Int) -> Int:\n    return callback(41)\n\ndef increment(value: Int) -> Int:\n    return value + 1\n\ndef main():\n    print(Choose()(41))\n    print(invoke(increment))\n";
     let program = mojito::parse(source).expect("parse overloaded nominal callable");
     let checked = mojito::check_program(&program).expect("check overloaded nominal callable");
     assert!(
@@ -277,6 +277,19 @@ fn nominal_callable_rejects_when_no_same_arity_overload_matches_the_contract() {
         "struct Bad(def(String) -> Int):\n    def __call__(self, value: Bool) -> Int:\n        return 0\n\n    def __call__(self, value: Int) -> Int:\n        return value\n",
     );
     assert!(matches!(error, TypeError::TraitMethodMismatch { .. }));
+}
+
+#[test]
+fn nominal_callable_struct_is_not_a_def_typed_value() {
+    let error = err(
+        "@fieldwise_init\nstruct Scale(def(Int) -> Int):\n    var factor: Int\n    def __call__(self, value: Int) -> Int:\n        return value * self.factor\n\ndef apply(callback: def(Int) -> Int, value: Int) -> Int:\n    return callback(value)\n\ndef main():\n    print(apply(Scale(3), 14))\n",
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("expected def(Int) -> Int, found Scale"),
+        "{error}"
+    );
 }
 
 #[test]

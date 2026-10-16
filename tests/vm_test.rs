@@ -884,19 +884,19 @@ fn callable_type_bounds_execute_top_level_captured_and_nominal_values() {
 
 #[test]
 fn nominal_callable_struct_requires_and_executes_call_contract() {
-    let src = "@fieldwise_init\nstruct Scale(def(Int) -> Int):\n    var factor: Int\n    def __call__(self, value: Int) -> Int:\n        return value * self.factor\n\ndef apply(callback: def(Int) -> Int, value: Int) -> Int:\n    return callback(value)\n\ndef main():\n    var scale = Scale(3)\n    print(apply(scale, 14))\n";
+    let src = "@fieldwise_init\nstruct Scale(def(Int) -> Int):\n    var factor: Int\n    def __call__(self, value: Int) -> Int:\n        return value * self.factor\n\ndef apply[F: def(Int) -> Int](callback: F, value: Int) -> Int:\n    return callback(value)\n\ndef main():\n    var scale = Scale(3)\n    print(apply(scale, 14))\n";
     assert_eq!(parity(src), "42\n");
 }
 
 #[test]
 fn nominal_callable_same_arity_overload_uses_the_checked_target_in_both_vm_paths() {
-    let src = "@fieldwise_init\nstruct Choose(def(Int) -> Int):\n    def __call__(self, value: Bool) -> Int:\n        return 0\n\n    def __call__(self, value: Int) -> Int:\n        return value + 1\n\ndef invoke(callback: def(Int) -> Int, value: Int) -> Int:\n    return callback(value)\n\ndef main():\n    print(invoke(Choose(), 41))\n    try:\n        print(Choose()(41))\n    except error:\n        print(error)\n";
+    let src = "@fieldwise_init\nstruct Choose(def(Int) -> Int):\n    def __call__(self, value: Bool) -> Int:\n        return 0\n\n    def __call__(self, value: Int) -> Int:\n        return value + 1\n\ndef invoke[F: def(Int) -> Int](callback: F, value: Int) -> Int:\n    return callback(value)\n\ndef main():\n    print(invoke(Choose(), 41))\n    try:\n        print(Choose()(41))\n    except error:\n        print(error)\n";
     assert_eq!(vm(src), "42\n42\n");
 }
 
 #[test]
 fn nominal_callable_contract_preserves_mut_parameter_convention() {
-    let src = "@fieldwise_init\nstruct Mutator(def(mut Int) -> None):\n    def __call__(self, mut value: Int, /) capturing:\n        value += 1\n\ndef apply(callback: def(mut Int) -> None, mut value: Int):\n    callback(value)\n\ndef main():\n    var value = 41\n    apply(Mutator(), value)\n    print(value)\n";
+    let src = "@fieldwise_init\nstruct Mutator(def(mut Int) -> None):\n    def __call__(self, mut value: Int, /) capturing:\n        value += 1\n\ndef apply[F: def(mut Int) -> None](callback: F, mut value: Int):\n    callback(value)\n\ndef main():\n    var value = 41\n    apply(Mutator(), value)\n    print(value)\n";
     assert_eq!(vm(src), "42\n");
 }
 

@@ -1441,14 +1441,6 @@ impl Checker {
         ) {
             return callable_bound_accepts(from, to);
         }
-        if let TyKind::Struct(name, _) = from.kind()
-            && let Some(callable) = self
-                .structs
-                .get(name)
-                .and_then(|info| info.callable_conformance.as_ref())
-        {
-            return coerces(callable, to);
-        }
         let (
             Some(GenericFuncTy { decls, func }),
             Some(FuncTy {
