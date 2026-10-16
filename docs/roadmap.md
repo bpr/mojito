@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1067**.
+Next free ID: **R1068**.
 
 ## Ordered Work
 
@@ -274,15 +274,20 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R946 A `nodebug` callee with a variadic compile-time parameter
-  is called, not inlined**
+- [ ] **R1067 A generic `nodebug` callee holding a `comptime for` is
+  called, not inlined**
 
-  `inline-parametric` keeps a call whose callee declares a variadic binder
-  or type pack (`*Ts`), where the pin inlines it.
-  - A spread over the pack (`Variant[*Ts]`, a pack's length) needs the
-    bound list, which `ParamBindings` holds only as one expression.
-  - Done when a `nodebug` callee over `*Ts` inlines in a pass test and
-    the program's output is unchanged.
+  `inline-parametric` keeps a call whose callee binds compile-time
+  parameters and loops over a `comptime for`, where the pin inlines it:
+  `weighted[1, 2, 3]()` over `comptime for i in range(len(values))` keeps
+  its call.
+  - The pass's `Instantiation` refuses every `ComptimeSequence`
+    (`visit_sequence`), so the loop's sequence is never substituted.
+  - Substitute the sequence's types and parameter expressions under the
+    call's bindings, as the elaborator closes it per instance.
+  - Done when `weighted[1, 2, 3]()` inlines in a pass test and the
+    program's output is unchanged.
+  - Found while landing R946 (2026-10-16).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

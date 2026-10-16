@@ -28,10 +28,12 @@
 //! receiver's type, or of the constructed one, which the member's bare
 //! spelling of its owner denotes too. A read of a value binder, the
 //! owner's (`Self.k`) included, becomes its argument as a constant,
-//! upstream's `kgen.param.constant`. A binder that is callable, variadic,
-//! or an origin, a `where` clause, or a binding the body's sites cannot
-//! hold (`T()` at a concrete `T`, a conformance test of a concrete binding)
-//! keeps the call.
+//! upstream's `kgen.param.constant`. A variadic binder binds to its element
+//! list, a spread of a type pack (`Tuple[*Ts]`) to its elements, and a pack
+//! the call forwards (`f[*Us]()`) to the caller's own. A binder that is
+//! callable or an origin, a `where` clause, a `comptime for` sequence, or a
+//! binding the body's sites cannot hold (`T()` at a concrete `T`, a
+//! conformance test of a concrete binding) keeps the call.
 //!
 //! An owned parameter, or a `read` one of a type no destructor tears down,
 //! is a fresh slot the argument initializes; a `mut` or `ref` parameter,
@@ -90,12 +92,12 @@ use mojito_mir::mir::{
 };
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{
-    MetaTy, ParamBindings, ParamContext, ParamError, ParamExpr, ParamRef,
+    MetaTy, ParamBindings, ParamContext, ParamError, ParamExpr, ParamKind, ParamRef,
 };
 use mojito_types::types::{
     GenericConstraint, LaneMask, ParamDecl, Ty, TyArg, TyKind, TyRewrite, VariantIndex,
-    is_scalar_simd, replace_argument_parameters, replace_constraint_parameters, replace_parameters,
-    replace_value_parameters, rewrite_ty, scalar_simd_dtype,
+    is_scalar_simd, pack_spread, replace_argument_parameters, replace_constraint_parameters,
+    replace_parameters, replace_value_parameters, rewrite_ty, scalar_simd_dtype,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
@@ -1785,12 +1787,62 @@ impl Instantiation {
                 });
                 Some(Bound::Type)
             }
+            // A pack binds as the elaborator binds it: its element list as
+            // a value, and as the runtime pack a spread of it expands to; a
+            // caller's own pack it forwards (`f[*Us]()`) binds as that pack.
+            (
+                ParamDecl::Type {
+                    id,
+                    name,
+                    callable_bound: None,
+                    variadic: true,
+                    constraints,
+                    ..
+                },
+                argument,
+            ) if constraints.is_empty() => {
+                let (value, ty) = match argument {
+                    TyArg::Val(value @ CtValue::Tuple(elements)) => {
+                        let elements = elements
+                            .iter()
+                            .map(|element| match element {
+                                CtValue::Type(ty) => Some(ty.clone()),
+                                _ => None,
+                            })
+                            .collect::<Option<Vec<_>>>()?;
+                        (
+                            self.context.constant(value.clone()).ok()?,
+                            TyKind::RuntimePack(elements).into(),
+                        )
+                    }
+                    TyArg::Ty(pack) => {
+                        let TyKind::Param { binder, .. } =
+                            pack_spread(std::slice::from_ref(pack))?.kind()
+                        else {
+                            return None;
+                        };
+                        let value = self.context.decl_ref(
+                            binder.id.clone(),
+                            binder.name.trim_start_matches('*'),
+                            MetaTy::ParamList(Box::new(MetaTy::Type)),
+                        );
+                        (value, pack.clone())
+                    }
+                    _ => return None,
+                };
+                self.bindings.bind(id.clone(), value);
+                self.bindings.bind_type(id.clone(), ty);
+                self.types.push(ParamRef {
+                    id: id.clone(),
+                    name: name.as_str().into(),
+                });
+                Some(Bound::Type)
+            }
             (
                 ParamDecl::Value {
                     id,
                     ty,
                     callable_default: None,
-                    variadic: false,
                     constraints,
                     ..
                 },
@@ -1863,9 +1915,21 @@ impl MutTypeVisitor for Instantiation {
         Ok(())
     }
 
+    /// An index into a bound pack's alternatives closes only through the
+    /// elaborator's pack logic, so one left open keeps the call.
     fn visit_variant_index(&mut self, index: &mut VariantIndex) -> Result<(), ParamError> {
         *index = index.try_map_expr(|expr| self.context.replace(expr, &self.bindings))?;
-        Ok(())
+        match index {
+            VariantIndex::Expr(expr)
+                if matches!(expr.kind(), ParamKind::PackQuery { pack, .. }
+                    if self.types.iter().any(|bound| bound.id == pack.id)) =>
+            {
+                Err(ParamError::Unsupported(format!(
+                    "an index into the bound pack of `{expr}`"
+                )))
+            }
+            _ => Ok(()),
+        }
     }
 
     fn visit_lane_mask(&mut self, mask: &mut LaneMask) -> Result<(), ParamError> {

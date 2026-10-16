@@ -1,8 +1,8 @@
 # Calls to generic `@always_inline("nodebug")` functions are inlined before
 # elaboration, their compile-time parameters bound to the call's: a literal
 # argument, one over the caller's own parameters, an inferred or defaulted
-# one, and a method's own parameters. Each prints what the call computes
-# either way.
+# one, a method's own parameters, and a variadic pack's elements. Each
+# prints what the call computes either way.
 
 from std.bit import rotate_bits_left
 
@@ -49,6 +49,21 @@ struct Meter:
         return self.value + Int(x)
 
 
+@always_inline("nodebug")
+def arity[*Ts: Copyable](t: Tuple[*Ts], x: Int) -> Int:
+    return x + len(Ts)
+
+
+@always_inline("nodebug")
+def last[*values: Int]() -> Int:
+    comptime n = len(values)
+    return n * 10 + values[n - 1]
+
+
+def relayed[*Us: Copyable](t: Tuple[*Us]) -> Int:
+    return arity(t, 1)
+
+
 def shifted[n: Int](x: Int) -> Int:
     return scaled[n + 1](x) + pick[n > 2](x)
 
@@ -65,3 +80,5 @@ def main():
         rotate_bits_left[4](bits),
         rotate_bits_left[8](bits),
     )
+    var pair = (3, "a")
+    print(arity(pair, 2), last[4, 5](), relayed(pair))

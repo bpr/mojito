@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call of a `nodebug` function with a variadic compile-time parameter
+  is inlined (R946), as at the pin: `*values: Int` binds to the call's
+  element list and `*Ts` to its types, so `last[4, 5]()` and
+  `arity(pair, 2)` over `t: Tuple[*Ts]` hold the callee's body, and a
+  pack the caller forwards binds to the caller's own. A generic callee
+  holding a `comptime for` still keeps its call (R1067). No program's
+  output changes.
 - A call of a `nodebug` function or method returning a reference is
   inlined (R953), as at the pin: the reference the body makes is to the
   caller's place the call passes, a `read` argument's included, so

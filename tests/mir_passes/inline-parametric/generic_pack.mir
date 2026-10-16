@@ -1,0 +1,103 @@
+mojito-mir 1.68
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("cases.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+    struct { name: Tuple, fields: [field { name: storage, type: tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }]) }], mut_self_methods: [__getitem_param__], fieldwise_init: false, param_decls: [type_param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent, default: absent, infer_only: false, variadic: true, constraints: [] }], explicit_destroy_message: present("Use `deinit_with()` to explicitly destroy a `Tuple` with non-`Deinitable` elements"), explicit_destructors: [destructor { name: concat, raises: false }, destructor { name: consume_elements, raises: false }, destructor { name: deinit_with, raises: false }, destructor { name: reverse, raises: false }], explicit_destroy_declared: true, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: Copyable }, conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: ImplicitlyCopyable }] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: Deinitable }] }, conformance { trait: IsTriviallyCopyable, conditions: [and { left: or { left: conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: Copyable }, right: conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: ImplicitlyCopyable } }, right: trivial { lifecycle: copyable, operand: operand_type(tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }])) } }] }, conformance { trait: IsTriviallyMovable, conditions: [and { left: constraint_bool(true), right: trivial { lifecycle: movable, operand: operand_type(tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }])) } }] }, conformance { trait: IsTriviallyDeinitable, conditions: [and { left: conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: Deinitable }, right: trivial { lifecycle: deinitable, operand: operand_type(tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }])) } }] }], declared: [conformance { trait: Comparable, conditions: [and { left: conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: Comparable }, right: conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: Equatable } }] }, conformance { trait: Copyable, conditions: [conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: Copyable }] }, conformance { trait: Defaultable, conditions: [conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: Defaultable }] }, conformance { trait: Equatable, conditions: [conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: Equatable }] }, conformance { trait: Hashable, conditions: [conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: Hashable }] }, conformance { trait: ImplicitlyCopyable, conditions: [conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: ImplicitlyCopyable }] }, conformance { trait: Deinitable, conditions: [conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: Deinitable }] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: RegisterPassable, conditions: [conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: RegisterPassable }] }, conformance { trait: Sized, conditions: [constraint_bool(true)] }, conformance { trait: Writable, conditions: [conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: Writable }] }], associated_types: [associated_type { name: element_types, type: param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent } }], parameterized_associated_types: [], associated_values: [] }
+  ],
+  decls: [
+    decl { lowered_name: arity, param_names: [t, x], param_types: [struct_type { name: Tuple, arguments: [type_arg(param { owner: "arity", slot: 0, name: "*Ts", bounds: [Copyable], callable_bound: absent })] }, Int], defaults: [absent, absent], required: [true, true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [type_param { owner: "arity", slot: 0, name: "*Ts", bounds: [Copyable], callable_bound: absent, default: absent, infer_only: false, variadic: true, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent, absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false, false], param_writes: [false, false], availability: [], enclosing: absent, region_binders: [], inline: nodebug },
+    decl { lowered_name: generic_pack, param_names: [t, x], param_types: [struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Int)] }, Int], defaults: [absent, absent], required: [true, true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent, absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false, false], param_writes: [false, false], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: generic_pack_forwarded, param_names: [t], param_types: [struct_type { name: Tuple, arguments: [type_arg(param { owner: "generic_pack_forwarded", slot: 0, name: "*Us", bounds: [Copyable], callable_bound: absent })] }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [type_param { owner: "generic_pack_forwarded", slot: 0, name: "*Us", bounds: [Copyable], callable_bound: absent, default: absent, infer_only: false, variadic: true, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: arity,
+        registers: 3,
+        vars: 2,
+        var_names: [t, x],
+        params: 2,
+        param_types: [struct_type { name: Tuple, arguments: [type_arg(param { owner: "arity", slot: 0, name: "*Ts", bounds: [Copyable], callable_bound: absent })] }, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Tuple, arguments: [type_arg(param { owner: "arity", slot: 0, name: "*Ts", bounds: [Copyable], callable_bound: absent })] } }, var_type { var: $v1, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 93, end: 94, origin: present($v1) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 97, end: 104, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 93, end: 104, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r1, value: param(param_pack_query { pack: binder { owner: "arity", slot: 0, name: Ts }, query: pack_length }) },
+              var.use { dest: %r0, var: $v1, mode: copy },
+              binary { op: add, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      },
+      fn {
+        name: generic_pack,
+        registers: 3,
+        vars: 2,
+        var_names: [t, x],
+        params: 2,
+        param_types: [struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Int)] }, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Int)] } }, var_type { var: $v1, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Int)] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 177, end: 178, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 180, end: 181, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 171, end: 182, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Int)] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Int)] }), through: absent } },
+              var.use { dest: %r1, var: $v1, mode: copy },
+              call { dest: %r2, func: arity, raises: absent, args: [%r0, %r1], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [value_arg(ct_tuple([ct_type(Int), ct_type(Int)]))], spread: absent }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      },
+      fn {
+        name: generic_pack_forwarded,
+        registers: 4,
+        vars: 1,
+        var_names: [t],
+        params: 1,
+        param_types: [struct_type { name: Tuple, arguments: [type_arg(param { owner: "generic_pack_forwarded", slot: 0, name: "*Us", bounds: [Copyable], callable_bound: absent })] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Tuple, arguments: [type_arg(param { owner: "generic_pack_forwarded", slot: 0, name: "*Us", bounds: [Copyable], callable_bound: absent })] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: Tuple, arguments: [type_arg(param { owner: "generic_pack_forwarded", slot: 0, name: "*Us", bounds: [Copyable], callable_bound: absent })] } }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 267, end: 268, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 270, end: 271, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 270, end: 271, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 261, end: 272, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r1, value: int_literal(1) },
+              literal.materialize { dest: %r2, value: %r1, target: Int },
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [type_arg(param { owner: "generic_pack_forwarded", slot: 0, name: "*Us", bounds: [Copyable], callable_bound: absent })] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(param { owner: "generic_pack_forwarded", slot: 0, name: "*Us", bounds: [Copyable], callable_bound: absent })] }), through: absent } },
+              call { dest: %r3, func: arity, raises: absent, args: [%r0, %r2], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [type_arg(param { owner: "generic_pack_forwarded", slot: 0, name: "*Us", bounds: [Copyable], callable_bound: absent })], spread: absent }
+            ],
+            terminator: return { value: present(%r3) }
+          }
+        ]
+      }
+  ]
+}

@@ -3513,6 +3513,10 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
     let optional = |ty: &Option<Ty>, rewrite: &mut dyn TyRewrite| {
         ty.as_ref().map(|ty| rewrite_ty(ty, rewrite)).transpose()
     };
+    let list = |types: &[Ty], rewrite: &mut dyn TyRewrite| match bound_pack(types, rewrite) {
+        Some(elements) => Ok(elements),
+        None => all(types, rewrite),
+    };
     Ok(match ty.kind() {
         TyKind::Param {
             binder,
@@ -3535,6 +3539,21 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
                 name.clone(),
                 spread_arguments(name, &rewrite.expr(list)?)?,
             )),
+        // A spread of a pack the rewrite binds is its elements, spelled as
+        // `expand_pack_spread` spells them.
+        TyKind::Struct(name, arguments)
+            if let Some(elements) = pack_spread_argument(arguments)
+                .and_then(|pack| bound_pack(std::slice::from_ref(pack), rewrite)) =>
+        {
+            let arguments = if binds_pack_elementwise(name) {
+                elements.into_iter().map(TyArg::Ty).collect()
+            } else {
+                vec![TyArg::Val(CtValue::Tuple(
+                    elements.into_iter().map(CtValue::Type).collect(),
+                ))]
+            };
+            ty.reusing(TyKind::Struct(name.clone(), arguments))
+        }
         TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
             name.clone(),
             rewrite_tyargs(arguments, rewrite)?,
@@ -3542,9 +3561,9 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
         TyKind::Dependent(dependent) => DependentType::resolve(rewrite.expr(dependent.expr())?),
         TyKind::ComptimeList(element) => TyKind::ComptimeList(rewrite_ty(element, rewrite)?).into(),
         TyKind::VariadicPack(element) => TyKind::VariadicPack(rewrite_ty(element, rewrite)?).into(),
-        TyKind::Tuple(elements) => TyKind::Tuple(all(elements, rewrite)?).into(),
-        TyKind::RuntimePack(elements) => TyKind::RuntimePack(all(elements, rewrite)?).into(),
-        TyKind::Variant(alternatives) => TyKind::Variant(all(alternatives, rewrite)?).into(),
+        TyKind::Tuple(elements) => TyKind::Tuple(list(elements, rewrite)?).into(),
+        TyKind::RuntimePack(elements) => TyKind::RuntimePack(list(elements, rewrite)?).into(),
+        TyKind::Variant(alternatives) => TyKind::Variant(list(alternatives, rewrite)?).into(),
         TyKind::Overload(candidates) => TyKind::Overload(all(candidates, rewrite)?).into(),
         TyKind::Pointer { element, origin } => TyKind::Pointer {
             element: rewrite_ty(element, rewrite)?,
@@ -4449,6 +4468,18 @@ fn rewrite_decl(decl: &ParamDecl, rewrite: &mut dyn TyRewrite) -> Result<ParamDe
             constraints: constraints.clone(),
         },
     })
+}
+
+/// The elements of the pack `types` spreads, when `rewrite` binds it to a
+/// list of types, as the elaborator binds a pack to a `RuntimePack`.
+fn bound_pack(types: &[Ty], rewrite: &mut dyn TyRewrite) -> Option<Vec<Ty>> {
+    let TyKind::Param { binder, .. } = pack_spread(types)?.kind() else {
+        return None;
+    };
+    match rewrite.param(binder)?.kind() {
+        TyKind::RuntimePack(elements) => Some(elements.clone()),
+        _ => None,
+    }
 }
 
 fn rewrite_callable_default(
