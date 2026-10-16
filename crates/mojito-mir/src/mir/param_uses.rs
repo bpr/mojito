@@ -209,10 +209,10 @@ pub type Removals<'a> = dyn Fn(&str) -> Option<&'a [ParamId]> + 'a;
 /// The declared lifecycle members `function`'s drops, copies, and moves
 /// run.
 ///
-/// Upstream's destructor and copy/move insertion leaves a call of each: a
-/// drop's destructor, and through a synthesized one its fields'
-/// ([`crate::mir::destroyed_structs`]), and each copy or move site's
-/// constructor ([`StructReads::member_symbols`]).
+/// Upstream's destructor and copy/move insertion leaves a call of each: the
+/// destructor a drop names, the one a drop naming none runs and, through a
+/// synthesized one, its fields' ([`crate::mir::destroyed_structs`]), and
+/// each copy or move site's constructor ([`StructReads::member_symbols`]).
 pub fn lifecycle_callees(
     function: &MirFunction,
     declarations: &MirDeclarations,
@@ -246,6 +246,12 @@ pub fn lifecycle_callees(
     found
         .into_iter()
         .flat_map(|(ty, member)| structs.member_symbols(ty, member))
+        .chain(
+            destroyed
+                .named
+                .into_iter()
+                .map(|(_, destructor)| destructor),
+        )
         .collect()
 }
 
@@ -1031,7 +1037,7 @@ impl SlotReads<'_> {
 
     fn instruction(&mut self, instruction: &MirInstr) {
         match instruction {
-            MirInstr::DropVar { var }
+            MirInstr::DropVar { var, .. }
             | MirInstr::ConsumeVar { var }
             | MirInstr::DeclareVar { var } => {
                 self.drops(std::slice::from_ref(var));
@@ -1280,7 +1286,8 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
                 .structure(name)
                 .map(|structure| structure.fields.as_slice())
         });
-        for ty in &destroyed.structs {
+        let named = destroyed.named.iter().map(|(ty, _)| ty);
+        for ty in destroyed.structs.iter().chain(named) {
             if let Some(reads) = self.member_reads(ty, "__deinit__") {
                 self.visit(&reads);
             }

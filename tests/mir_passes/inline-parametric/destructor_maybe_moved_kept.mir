@@ -110,7 +110,7 @@ artifact {
           },
           bb2 {
             instructions: [
-              drop.var { var: $v1 }
+              drop.var { var: $v1, destructor: "D.__deinit__" }
             ],
             terminator: return { value: present(%r4) }
           }

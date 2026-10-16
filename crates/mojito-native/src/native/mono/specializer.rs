@@ -1150,6 +1150,7 @@ impl<'a> Specializer<'a> {
             self.output_function_decls.push(declaration);
         }
         self.discover_structs(&key.template, &function)?;
+        self.name_destructors(&key.template, &mut function)?;
         self.answer_layout_queries(&key.template, &mut function)?;
         ensure_concrete_function(&key.template, &name, &function)?;
         self.output_positions
@@ -3745,6 +3746,53 @@ impl<'a> Specializer<'a> {
         Ok(())
     }
 
+    /// Name, at each drop of `function`, the `__deinit__` instance of the
+    /// dropped value's type, as upstream's elaborator specializes the
+    /// destructor call its destructor insertion left at each death: the
+    /// instance [`Self::enqueue`] makes, which the struct's concrete member
+    /// table records. A drop whose type was symbolic in the template gets
+    /// its instance's destructor here too.
+    fn name_destructors(
+        &mut self,
+        owner: &str,
+        function: &mut MirFunction,
+    ) -> Result<(), MonoError> {
+        let mut named: HashMap<Ty, Option<String>> = HashMap::new();
+        for_each_drop_mut(
+            &mut function.blocks,
+            &function.var_tys,
+            &mut |ty, destructor| {
+                if !named.contains_key(ty) {
+                    let instance = self.destructor_instance(owner, ty)?;
+                    named.insert(ty.clone(), instance);
+                }
+                destructor.clone_from(&named[ty]);
+                Ok(())
+            },
+        )
+    }
+
+    /// The one `__deinit__` instance of the struct instance `ty`, `None`
+    /// when it has none.
+    fn destructor_instance(&mut self, owner: &str, ty: &Ty) -> Result<Option<String>, MonoError> {
+        let TyKind::Struct(name, _) = ty.kind() else {
+            return Ok(None);
+        };
+        let Some(bindings) = self.struct_bindings(owner, ty)? else {
+            return Ok(None);
+        };
+        let instances = self.enqueue_struct_overloads(
+            nominal_template(name),
+            &bindings,
+            "__deinit__",
+            &|_, _| true,
+        )?;
+        Ok(match instances.as_slice() {
+            [(_, instance)] => Some(instance.clone()),
+            _ => None,
+        })
+    }
+
     /// Whether an overload of `{template_name}.{method}` keeps a parameter
     /// of its struct that the instance `ty`, bound by `bindings`, erased or
     /// binds to a type erasing an argument.
@@ -4338,4 +4386,36 @@ fn elaboration_counts(
 fn constructed_member(name: &str, template: &str) -> Option<(String, String)> {
     let (_, method) = mojito_symbol::symbol::split_method_symbol(template)?;
     Some((name.to_string(), method.to_string()))
+}
+
+/// What [`for_each_drop_mut`] calls on each drop: its value's type and its
+/// `destructor` operand.
+type DropNamer<'n> = dyn FnMut(&Ty, &mut Option<String>) -> Result<(), MonoError> + 'n;
+
+/// Call `name` on each `drop.var` and `drop.place` of `blocks`, regions
+/// included, with the dropped value's type and the drop's `destructor`.
+fn for_each_drop_mut(
+    blocks: &mut [MirBlock],
+    var_tys: &HashMap<mojito_hir::hir::VarId, Ty>,
+    name: &mut DropNamer<'_>,
+) -> Result<(), MonoError> {
+    for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+        match instruction {
+            MirInstr::DropVar { var, destructor } => {
+                if let Some(ty) = var_tys.get(var) {
+                    name(ty, destructor)?;
+                }
+            }
+            MirInstr::DropPlace { place, destructor } => {
+                if let Some(ty) = &place.ty {
+                    name(ty, destructor)?;
+                }
+            }
+            _ => {}
+        }
+        for region in mojito_mir::mir::instruction_regions_mut(instruction) {
+            for_each_drop_mut(region, var_tys, name)?;
+        }
+    }
+    Ok(())
 }

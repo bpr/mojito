@@ -198,7 +198,7 @@ pub(super) fn transfer_interior_instruction(
     f: &MirFunction,
 ) {
     match instr {
-        MirInstr::DropVar { var } | MirInstr::ConsumeVar { var } => {
+        MirInstr::DropVar { var, .. } | MirInstr::ConsumeVar { var } => {
             remove_active_interior_reference(state, *var);
         }
         // Moving a variable out relocates the storage its interior
@@ -831,7 +831,7 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
             add_place(&mut uses, place, *factory);
         }
         MirInstr::ConsumePlace { place, marker } => add_place(&mut uses, place, *marker),
-        MirInstr::DropPlace { place } => add_place(&mut uses, place, Reg(0)),
+        MirInstr::DropPlace { place, .. } => add_place(&mut uses, place, Reg(0)),
         MirInstr::HasNext { dest, iter, .. }
         | MirInstr::Next { dest, iter, .. }
         | MirInstr::TryNext { dest, iter, .. } => {

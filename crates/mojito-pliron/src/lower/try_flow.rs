@@ -104,7 +104,7 @@ impl FnLowering<'_> {
         // → finalbody order `record_last_uses` used.
         self.current = Some(landing);
         for &var in cleanup {
-            self.lower_drop_var(ctx, var)?;
+            self.lower_drop_var(ctx, var, self.cleanup_destructor(var))?;
         }
         match handler {
             Some((error_var, handler_blocks)) => {
@@ -356,7 +356,7 @@ impl FnLowering<'_> {
                 let cleanup = cleanup.clone();
                 let overrides = self.exit_sites[site].overrides.clone();
                 for var in cleanup {
-                    self.lower_drop_var(ctx, var)?;
+                    self.lower_drop_var(ctx, var, self.cleanup_destructor(var))?;
                 }
                 // The VM merges an overridden return's cleanup roots after
                 // the overriding return's own (distinct-union; flags make
@@ -452,7 +452,7 @@ impl FnLowering<'_> {
                 let saved = self.current;
                 self.current = Some(case);
                 for var in cleanup {
-                    self.lower_drop_var(ctx, var)?;
+                    self.lower_drop_var(ctx, var, self.cleanup_destructor(var))?;
                 }
                 for inner in inner_overrides.into_iter().rev() {
                     self.emit_pending_resolution(ctx, inner)?;
@@ -631,7 +631,7 @@ impl FnLowering<'_> {
         edge_cleanup: &[u32],
     ) -> Result<(), PlironError> {
         for &var in edge_cleanup {
-            self.lower_drop_var(ctx, var)?;
+            self.lower_drop_var(ctx, var, self.cleanup_destructor(var))?;
         }
         Ok(())
     }

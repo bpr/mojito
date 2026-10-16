@@ -43,8 +43,9 @@ pub(super) fn verify_instruction(
     }
     // A slot an instruction declares, reads, or drops has the type its
     // declaring op gave it.
-    if let MirInstr::UseVar { var, .. } | MirInstr::DeclareVar { var } | MirInstr::DropVar { var } =
-        instruction
+    if let MirInstr::UseVar { var, .. }
+    | MirInstr::DeclareVar { var }
+    | MirInstr::DropVar { var, .. } = instruction
         && (*var as usize) < function.n_vars
         && !function.var_tys.contains_key(var)
     {
@@ -102,6 +103,17 @@ pub(super) fn verify_instruction(
         }
         MirInstr::Call { .. } | MirInstr::MethodCall { .. } | MirInstr::CallIndirect { .. } => {
             verify_call_instruction(&cx, instruction, errors);
+        }
+        MirInstr::DropVar { var, destructor } => {
+            verify_drop_destructor(
+                &cx,
+                function.var_tys.get(var),
+                destructor.as_deref(),
+                errors,
+            );
+        }
+        MirInstr::DropPlace { place, destructor } => {
+            verify_drop_destructor(&cx, place.ty.as_ref(), destructor.as_deref(), errors);
         }
         // A parameter value constant is a closed vector, a struct or tuple
         // of such values, scalars, and strings, a string read at the
@@ -162,6 +174,37 @@ fn verify_effect_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
     if instruction.call_error().is_some() && !cx.function.raises && !cx.context.protected {
         errors.push(format!(
             "{prefix}: unprotected raising call in nonraising function"
+        ));
+    }
+}
+
+/// A drop names the destructor its value's struct records, the template
+/// member in a parametric body and its instance in concrete MIR, and only
+/// a declared function: a pass that makes a drop names it, as upstream's
+/// destructor insertion names the `__del__` at each death.
+fn verify_drop_destructor(
+    cx: &InstrCx<'_>,
+    ty: Option<&Ty>,
+    destructor: Option<&str>,
+    errors: &mut Vec<String>,
+) {
+    let prefix = cx.prefix;
+    if let Some(destructor) = destructor
+        && cx.declarations.function(destructor).is_none()
+    {
+        errors.push(format!(
+            "{prefix}: drop names the undeclared destructor `{destructor}`"
+        ));
+    }
+    let Some(ty) = ty else {
+        return;
+    };
+    if let Some(recorded) = cx.declarations.destructor(ty)
+        && destructor != Some(recorded)
+    {
+        errors.push(format!(
+            "{prefix}: drop of `{ty}` names {}, not its destructor `{recorded}`",
+            destructor.map_or_else(|| "no destructor".to_string(), |d| format!("`{d}`"))
         ));
     }
 }

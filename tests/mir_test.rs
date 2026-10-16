@@ -212,7 +212,7 @@ fn dying_copy_at_read_parameter_lends_its_source() {
     assert!(
         instrs[call_at..]
             .iter()
-            .any(|instr| matches!(instr, MirInstr::DropVar { var } if *var == a)),
+            .any(|instr| matches!(instr, MirInstr::DropVar { var, .. } if *var == a)),
         "{main:#?}"
     );
 }
@@ -266,7 +266,7 @@ fn dying_copy_at_read_receiver_lends_its_source() {
     assert!(
         instrs[call_at..]
             .iter()
-            .any(|instr| matches!(instr, MirInstr::DropVar { var } if *var == a)),
+            .any(|instr| matches!(instr, MirInstr::DropVar { var, .. } if *var == a)),
         "{main:#?}"
     );
 }
@@ -479,7 +479,10 @@ fn verify_rejects_an_untyped_used_slot() {
                                 var: 0,
                                 mode: UseMode::Copy,
                             },
-                            MirInstr::DropVar { var: 1 },
+                            MirInstr::DropVar {
+                                var: 1,
+                                destructor: None,
+                            },
                         ],
                         term: MirTerm::Return(Some(Reg(0))),
                     }],

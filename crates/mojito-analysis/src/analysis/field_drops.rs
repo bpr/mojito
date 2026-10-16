@@ -222,6 +222,7 @@ fn refine_region(
             dying.retain(|position| !before.contains(position));
             rebuilt.extend(before.into_iter().map(|position| MirInstr::DropPlace {
                 place: root.place(position),
+                destructor: None,
             }));
             rebuilt.push(instr);
             i += 1;
@@ -770,6 +771,7 @@ fn append_field_drops(instrs: &mut Vec<MirInstr>, root: &DeinitRoot, mut positio
     for position in positions {
         instrs.push(MirInstr::DropPlace {
             place: root.place(position),
+            destructor: None,
         });
     }
 }
@@ -794,6 +796,7 @@ fn prepend_field_drops(instrs: &mut Vec<MirInstr>, root: &DeinitRoot, mut positi
             lead + offset,
             MirInstr::DropPlace {
                 place: root.place(position),
+                destructor: None,
             },
         );
     }

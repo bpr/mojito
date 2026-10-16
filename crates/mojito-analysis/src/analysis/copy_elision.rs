@@ -219,7 +219,7 @@ fn dying_copy(
         .iter()
         .take_while(|instruction| is_drop(instruction))
         .position(
-            |instruction| matches!(instruction, MirInstr::DropVar { var: dying } if *dying == var),
+            |instruction| matches!(instruction, MirInstr::DropVar { var: dying, .. } if *dying == var),
         )?
         + binding_at.unwrap_or(at)
         + 1;
@@ -358,7 +358,9 @@ fn lending_use(
     })?;
     let last_death = instrs
         .iter()
-        .rposition(|instruction| matches!(instruction, MirInstr::DropVar { var } if *var == slot))
+        .rposition(
+            |instruction| matches!(instruction, MirInstr::DropVar { var, .. } if *var == slot),
+        )
         .filter(|&death| death > consumer_at)?;
     let silent = instrs[binding_at + 1..consumer_at].iter().all(cannot_raise);
     let untouched = !instrs[binding_at + 1..=last_death]
@@ -438,7 +440,7 @@ const fn cannot_raise(instruction: &MirInstr) -> bool {
 fn names(instruction: &MirInstr, var: VarId) -> bool {
     matches!(
         instruction,
-        MirInstr::DropVar { var: named } | MirInstr::DeclareVar { var: named } if *named == var
+        MirInstr::DropVar { var: named, .. } | MirInstr::DeclareVar { var: named } if *named == var
     ) || var_def(instruction) == Some(var)
         || vars_moved(instruction).contains(&var)
         || var_uses(instruction).iter().any(|(named, _)| *named == var)
@@ -485,7 +487,7 @@ fn rename_deaths(blocks: &mut [MirBlock], sources: &HashMap<VarId, VarId>) {
     for block in blocks {
         for instruction in &mut block.instrs {
             match instruction {
-                MirInstr::DropVar { var } => {
+                MirInstr::DropVar { var, .. } => {
                     if let Some(&source) = sources.get(var) {
                         *var = source;
                     }

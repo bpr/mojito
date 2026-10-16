@@ -209,6 +209,7 @@ fn splice_blocks(
                 if let Some(place) = overwrites.get(&std::ptr::from_ref(instr)) {
                     instrs.push(MirInstr::DropPlace {
                         place: place.clone(),
+                        destructor: None,
                     });
                 }
                 instrs.push(splice_instruction(instr, overwrites));

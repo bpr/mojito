@@ -232,6 +232,14 @@ pub fn replace_symbol_uses(blocks: &mut [MirBlock], replace: &mut dyn FnMut(&mut
                 | MirInstr::MultiSet { call, .. } => replace(&mut call.target),
                 MirInstr::TryNext { call, .. } => replace(&mut call.target),
                 MirInstr::GetIter { prepare, .. } => prepare.iter_mut().for_each(&mut *replace),
+                MirInstr::DropVar {
+                    destructor: Some(target),
+                    ..
+                }
+                | MirInstr::DropPlace {
+                    destructor: Some(target),
+                    ..
+                } => replace(target),
                 _ => {}
             }
             for region in instruction_regions_mut(instruction) {

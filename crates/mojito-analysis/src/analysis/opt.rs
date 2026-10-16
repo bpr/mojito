@@ -106,7 +106,7 @@ mod tests {
             block.instrs = std::mem::take(&mut block.instrs)
                 .into_iter()
                 .flat_map(|instruction| match instruction {
-                    MirInstr::DropVar { var } => vec![instruction, MirInstr::DropVar { var }],
+                    MirInstr::DropVar { .. } => vec![instruction.clone(), instruction],
                     other => vec![other],
                 })
                 .collect();

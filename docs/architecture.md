@@ -4406,10 +4406,26 @@ ASAP destruction is implemented as a MIR rewrite. The analysis computes where
 owned variables stop being live and conservatively splices explicit:
 
 ```rust
-MirInstr::DropVar { var }
+MirInstr::DropVar { var, destructor }
 ```
 
-after each variable's last use.
+after each variable's last use. Its last step, `name_destructors`
+(`analysis/destructor_calls.rs`), sets each `DropVar` and `DropPlace`'s
+`destructor` to the `__deinit__` the dropped value's struct records in its
+member table (`MirDeclarations::destructor`), as upstream's destructor
+insertion leaves a call naming the `__del__` at each death, so a symbol
+walk, the elaborator, and `eliminate-dead-symbols` follow the destructor as
+they follow a call's callee, and neither backend looks it up from the
+type. A drop of a type with no destructor of its own, or of a symbolic type,
+names none; the elaborator names the instance's (`Specializer::name_destructors`),
+and the verifier reports a drop that names another symbol than its
+struct's `__deinit__`, or none where the struct has one. The instruction stays
+a drop rather than a call: its runtime partial-aggregate rule, Pliron's drop
+and leaf flags, and an owned pack's reverse order need drop states upstream's
+lifetime checker makes definite. A cleanup list's slots, a consumed residue,
+a storage destroy, a variant store, an owned capture, and a field a drop of a
+struct naming no destructor recurses into still find their destructor from
+the type (`mir::destroyed_structs`).
 
 Three timing rules complete the last-use model, each pinned against the
 current Mojo:
@@ -5155,9 +5171,9 @@ point where a slot declared in a loop is uninitialized again.
   enclosing `try`. An initializer's `out self` is never listed, being
   partly initialized at a raise. Outside any `try` the slots leave the
   function held, as every raise leaving a function does (R20). A
-  `drop.var` of a slot whose struct's `__deinit__` is followed (the
-  private `destructor_of` names it, as the VM's `drop_value` looks it up)
-  is expanded into that destructor's body, as upstream inserts the
+  `drop.var` naming a followed destructor (the `__deinit__` drop
+  elaboration named, or the dropped default's slot type's,
+  `MirDeclarations::destructor`) is expanded into that destructor's body, as upstream inserts the
   destructor's call at the death point and inlines it as any call: its
   `deinit self` binds the dropped slot itself (`Binding::Slot`, the slot
   renumbered to the caller's), so the body's `consume.var` ends it, and
@@ -5544,7 +5560,11 @@ point where a slot declared in a loop is uninitialized again.
   instead (`substitute::substitute_field`), as `LowerLIT` lowers every
   pointer field's pointee, so `PtrBox[_REMOVED_ARG]` and
   `List[Box[_REMOVED_ARG]]` lay out their addresses alone. Its destructor
-  is the drops' to demand, and, as for every struct, a constructor the
+  is the drops' to demand: the elaborator names, at each `drop.var` and
+  `drop.place`, the `__deinit__` instance `enqueue` makes for the dropped
+  type (`Specializer::name_destructors`), which the struct's concrete
+  member table records, and demands by type only what no drop names
+  (`destroyed_structs`); and, as for every struct, a constructor the
   calls' (R993), a `__call__` the calls' (R1009), and a copy or move
   constructor the copies' and moves'
   (`Specializer::enqueue_lifecycle_members`, R994); a copy or move of an
@@ -5891,7 +5911,8 @@ This makes the VM a useful backstop and executable model for ownership semantics
 `DropVar` removes the value from a variable slot and recursively destroys it.
 
 Dropping is observably a no-op for scalars and destructor-less leaf values. For
-structs with `__deinit__`, it calls the destructor and then drops fields. A
+a struct, it calls the destructor the drop names (which consumes the
+receiver's fields); a drop naming none drops the fields. A
 destructor-less struct still recursively destroys aggregate fields; elements
 inside compiler-private tuple storage are visited left-to-right, and those
 of an owning positional collector last to first. Moved-out fields are skipped so partial moves do not double-drop.

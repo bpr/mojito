@@ -145,15 +145,6 @@ pub fn inline_parametric(
     changed
 }
 
-/// The destructor a drop of a value of type `ty` runs, as the backends look
-/// it up: the `__deinit__` its struct's member table names.
-pub fn destructor_of<'d>(ty: &Ty, declarations: &'d MirDeclarations) -> Option<&'d str> {
-    match ty.kind() {
-        TyKind::Struct(name, _) => declarations.lifecycle_member(name, "__deinit__"),
-        _ => None,
-    }
-}
-
 /// The caller, its blocks taken out, and where its callees come from.
 struct Inliner<'f, 'c> {
     function: &'f mut MirFunction,
@@ -641,11 +632,15 @@ impl<'c> Inliner<'_, 'c> {
         index: usize,
         top: bool,
     ) -> Option<(VarId, Cow<'c, MirFunction>)> {
-        let MirInstr::DropVar { var } = list[block].instrs[index] else {
+        let MirInstr::DropVar {
+            var,
+            destructor: Some(target),
+        } = &list[block].instrs[index]
+        else {
             return None;
         };
+        let (var, target) = (*var, target.as_str());
         let ty = self.function.var_tys.get(&var)?;
-        let target = destructor_of(ty, self.declarations)?;
         let callee = self.callees.body(target)?;
         let declaration = self.declarations.function(target)?;
         if !is_closed(callee, declaration)
@@ -1008,6 +1003,7 @@ impl<'c> Inliner<'_, 'c> {
         bindings: &[Binding],
         mut blocks: Vec<MirBlock>,
     ) {
+        let declarations = self.declarations;
         let function = &mut *self.function;
         merge_callee_removals(
             &mut function.callee_removed_params,
@@ -1094,8 +1090,14 @@ impl<'c> Inliner<'_, 'c> {
             }
         }
         resumed.extend(bindings.iter().enumerate().filter_map(|(param, binding)| {
-            matches!(binding, Binding::Default { dropped: true, .. }).then_some(MirInstr::DropVar {
-                var: param as VarId + var_base,
+            let var = param as VarId + var_base;
+            matches!(binding, Binding::Default { dropped: true, .. }).then(|| MirInstr::DropVar {
+                var,
+                destructor: function
+                    .var_tys
+                    .get(&var)
+                    .and_then(|ty| declarations.destructor(ty))
+                    .map(str::to_owned),
             })
         }));
         resumed.extend(after.into_iter().map(|instruction| match instruction {
@@ -1334,7 +1336,7 @@ fn raise_held(
                 }
             };
             match instruction {
-                MirInstr::DropVar { var } | MirInstr::ConsumeVar { var } => set(*var, false),
+                MirInstr::DropVar { var, .. } | MirInstr::ConsumeVar { var } => set(*var, false),
                 _ => {
                     for var in instruction_slots(instruction) {
                         set(var, true);
@@ -1343,7 +1345,7 @@ fn raise_held(
                         MirInstr::UseVar { var, mode, .. } if mode.moves() => set(*var, false),
                         MirInstr::MovePlace { place, .. }
                         | MirInstr::ConsumePlace { place, .. }
-                        | MirInstr::DropPlace { place }
+                        | MirInstr::DropPlace { place, .. }
                         | MirInstr::MarkDestroyed { place }
                             if place.is_whole_root() =>
                         {
@@ -1905,7 +1907,7 @@ fn read_binder(
                 MirInstr::LoadPlace { dest, place } if place.root == slot => {
                     Some((*dest, Some(place)))
                 }
-                MirInstr::DropVar { var } | MirInstr::ConsumeVar { var } if *var == slot => {
+                MirInstr::DropVar { var, .. } | MirInstr::ConsumeVar { var } if *var == slot => {
                     continue;
                 }
                 _ => None,

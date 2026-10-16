@@ -405,9 +405,9 @@ const fn slot_use(instruction: &MirInstr) -> Option<(VarId, Mention)> {
                 },
             ))
         }
-        MirInstr::DeclareVar { var } | MirInstr::DropVar { var } | MirInstr::ConsumeVar { var } => {
-            Some((*var, Mention::Kill))
-        }
+        MirInstr::DeclareVar { var }
+        | MirInstr::DropVar { var, .. }
+        | MirInstr::ConsumeVar { var } => Some((*var, Mention::Kill)),
         _ => None,
     }
 }

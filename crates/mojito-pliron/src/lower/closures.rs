@@ -237,7 +237,7 @@ impl FnLowering<'_> {
                 } else {
                     lowering.gep_byte_unspanned(ctx, env, *offset)
                 };
-                lowering.emit_drop_value(ctx, address, ty, false)?;
+                lowering.emit_drop_value(ctx, address, ty)?;
             }
             let null = ZeroOp::new(ctx, ptr_ty);
             lowering.append(ctx, null.get_operation(), None);

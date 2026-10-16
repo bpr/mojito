@@ -320,7 +320,7 @@ pub(super) fn elaborate_drops(
                 && f.deinit_params.get(var as usize).copied().unwrap_or(false)
         };
         for_each_instr_deep_mut(&mut blocks, &mut |instr| {
-            if let MirInstr::DropVar { var } = instr
+            if let MirInstr::DropVar { var, .. } = instr
                 && is_deinit_param(*var)
             {
                 *instr = MirInstr::ConsumeVar { var: *var };
@@ -531,7 +531,13 @@ pub(super) fn elaborate_try_interior(
             && ctx.droppable(*bound)
             && let Some(entry) = h.first_mut()
         {
-            entry.instrs.insert(0, MirInstr::DropVar { var: *bound });
+            entry.instrs.insert(
+                0,
+                MirInstr::DropVar {
+                    var: *bound,
+                    destructor: None,
+                },
+            );
         }
         (live, held)
     });
@@ -1285,7 +1291,10 @@ pub(super) fn predecessor_counts(f: &MirFunction) -> Vec<usize> {
 pub(super) fn append_drops(instrs: &mut Vec<MirInstr>, mut vars: Vec<VarId>) {
     vars.sort_unstable_by(|a, b| b.cmp(a));
     for v in vars {
-        instrs.push(MirInstr::DropVar { var: v });
+        instrs.push(MirInstr::DropVar {
+            var: v,
+            destructor: None,
+        });
     }
 }
 
@@ -1293,7 +1302,13 @@ pub(super) fn append_drops(instrs: &mut Vec<MirInstr>, mut vars: Vec<VarId>) {
 pub(super) fn prepend_drops(instrs: &mut Vec<MirInstr>, mut vars: Vec<VarId>) {
     vars.sort_unstable_by(|a, b| b.cmp(a));
     for (i, v) in vars.into_iter().enumerate() {
-        instrs.insert(i, MirInstr::DropVar { var: v });
+        instrs.insert(
+            i,
+            MirInstr::DropVar {
+                var: v,
+                destructor: None,
+            },
+        );
     }
 }
 
@@ -1571,12 +1586,10 @@ impl BlockReplay<'_> {
                 _ => push_drops_reversed(&mut reversed, dying),
             }
             reversed.push(cloned.unwrap_or(instr));
-            reversed.extend(
-                loaded
-                    .into_iter()
-                    .rev()
-                    .map(|var| MirInstr::DropVar { var }),
-            );
+            reversed.extend(loaded.into_iter().rev().map(|var| MirInstr::DropVar {
+                var,
+                destructor: None,
+            }));
             push_drops_reversed(&mut reversed, entry_dead);
         }
         if let Some(held) = pending {
@@ -1622,7 +1635,10 @@ impl InPlaceDeaths {
         let drops = rest
             .into_iter()
             .chain(own.then_some(self.var))
-            .map(|var| MirInstr::DropVar { var });
+            .map(|var| MirInstr::DropVar {
+                var,
+                destructor: None,
+            });
         reversed.splice(self.mark..self.mark, drops);
     }
 }
@@ -1655,7 +1671,7 @@ fn transfer_instruction_drop_liveness(
 /// elaboration splices no second drop of it.
 const fn teardown(instr: &MirInstr) -> Option<VarId> {
     match instr {
-        MirInstr::ConsumeVar { var } | MirInstr::DropVar { var } => Some(*var),
+        MirInstr::ConsumeVar { var } | MirInstr::DropVar { var, .. } => Some(*var),
         _ => None,
     }
 }
@@ -1714,7 +1730,10 @@ fn loan_extras(
 /// [`append_drops`] for a block being built back to front.
 fn push_drops_reversed(reversed: &mut Vec<MirInstr>, mut vars: Vec<VarId>) {
     vars.sort_unstable();
-    reversed.extend(vars.into_iter().map(|var| MirInstr::DropVar { var }));
+    reversed.extend(vars.into_iter().map(|var| MirInstr::DropVar {
+        var,
+        destructor: None,
+    }));
 }
 
 /// Seed a `try`'s raise-edge cleanup with the outer variables a raise in

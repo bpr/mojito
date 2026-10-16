@@ -389,7 +389,7 @@ impl<'a> Walk<'a> {
     /// One instruction's effect, reporting a drop or consume of a slot
     /// already ended on every path when `report`.
     fn step(&mut self, index: usize, state: &mut Ended, instruction: &MirInstr, report: bool) {
-        if let MirInstr::DropVar { var } | MirInstr::ConsumeVar { var } = instruction {
+        if let MirInstr::DropVar { var, .. } | MirInstr::ConsumeVar { var } = instruction {
             if report && state.get(*var as usize) == Some(&true) {
                 let spelling = if matches!(instruction, MirInstr::DropVar { .. }) {
                     "drop.var"
@@ -413,7 +413,7 @@ impl<'a> Walk<'a> {
             MirInstr::UseVar { var, mode, .. } if mode.moves() => set(state, *var, true),
             MirInstr::MovePlace { place, .. }
             | MirInstr::ConsumePlace { place, .. }
-            | MirInstr::DropPlace { place }
+            | MirInstr::DropPlace { place, .. }
             | MirInstr::MarkDestroyed { place }
                 if place.is_whole_root() =>
             {

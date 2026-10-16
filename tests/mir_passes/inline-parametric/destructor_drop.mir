@@ -97,7 +97,7 @@ artifact {
               call { dest: %r2, func: D, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: present(%r0), expr: present(param_decl_ref { owner: "destructor_drop", slot: 0, name: n, type: meta_value(Int) }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "destructor_drop", slot: 0, name: n, type: meta_value(Int) }))], spread: absent },
               var.store { var: $v1, src: %r2, binding_type: present(struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "destructor_drop", slot: 0, name: n, type: meta_value(Int) }))] }), in_place: true },
               place.load { dest: %r3, place: place { root: $v1, root_type: present(struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "destructor_drop", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
-              drop.var { var: $v1 },
+              drop.var { var: $v1, destructor: "D.__deinit__" },
               value.copy { dest: %r4, value: %r3 }
             ],
             terminator: return { value: present(%r4) }

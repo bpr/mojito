@@ -1184,7 +1184,10 @@ mod tests {
             removed_args: vec![0],
             ..function_with(vec![Ty::int()])
         };
-        let dropped = with(vec![MirInstr::DropVar { var: 0 }]);
+        let dropped = with(vec![MirInstr::DropVar {
+            var: 0,
+            destructor: None,
+        }]);
         assert_eq!(findings(&dropped, &declarations), Vec::<String>::new());
         let read = with(vec![MirInstr::UseVar {
             dest: Reg(0),

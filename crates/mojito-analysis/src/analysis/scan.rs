@@ -54,7 +54,7 @@ pub(super) fn var_uses(i: &MirInstr) -> Vec<(VarId, Reg)> {
         // whole-variable teardown must follow the field consumption, not
         // precede it.
         MirInstr::ConsumePlace { place, marker } => place_loan_uses(place, *marker),
-        MirInstr::DropPlace { place }
+        MirInstr::DropPlace { place, .. }
         | MirInstr::MarkInitialized { place }
         | MirInstr::MarkDestroyed { place } => place_loan_uses(place, Reg(0)),
         // Call arguments are evaluated into registers first, but mutable/ref

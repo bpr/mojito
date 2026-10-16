@@ -532,7 +532,7 @@ impl FnLowering<'_> {
             );
             self.append(ctx, branch.get_operation(), None);
             self.current = Some(drop_block);
-            self.emit_drop_value(ctx, payload, alternative, false)?;
+            self.emit_drop_value(ctx, payload, alternative)?;
             let jump = BrOp::new(ctx, continuation, vec![]);
             self.append(ctx, jump.get_operation(), None);
             next = rest;

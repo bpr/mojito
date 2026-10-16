@@ -58,7 +58,7 @@ artifact {
           },
           bb3 {
             instructions: [
-              drop.var { var: $v1 }
+              drop.var { var: $v1, destructor: "Noisy.__deinit__" }
             ],
             terminator: jump { target: bb1 }
           }

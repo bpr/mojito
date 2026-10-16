@@ -73,7 +73,7 @@
           bb0 {
             instructions: [
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Token, arguments: [] }), projections: [projection { op: field(id), type: Int }], type: present(Int), through: absent } },
-              drop.var { var: $v0 },
+              drop.var { var: $v0, destructor: "Token.__deinit__" },
               value.copy { dest: %r1, value: %r0 }
             ],
             terminator: return { value: present(%r1) }
@@ -111,7 +111,7 @@
           bb1 {
             instructions: [
               place.load { dest: %r4, place: place { root: $v2, root_type: present(struct_type { name: Token, arguments: [] }), projections: [projection { op: field(id), type: Int }], type: present(Int), through: absent } },
-              drop.var { var: $v2 },
+              drop.var { var: $v2, destructor: "Token.__deinit__" },
               value.copy { dest: %r3, value: %r4 }
             ],
             terminator: jump { target: bb2 }

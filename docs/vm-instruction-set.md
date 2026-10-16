@@ -169,7 +169,7 @@ a body — and the VM rejects one as unsupported.
 | `ref.read` | `ReadRef` | Read through a runtime reference handle |
 | `ref.write` | `WriteRef` | Write through a runtime reference handle |
 | `lifetime.keep_alive` | `KeepAlive` | Extend an owner's MIR live range without copying it; absent from concrete MIR (erased by `lower-lit`), so the VM refuses one |
-| `drop.var` | `DropVar` | Destroy the value in a variable slot |
+| `drop.var` | `DropVar` | Destroy the value in a variable slot, running the destructor the drop names |
 | `consume.var` | `ConsumeVar` | Consume an explicitly destroyed aggregate — the named destructor's own receiver at its last use; then destroy its residual fields in declaration order |
 | `consume.place` | `ConsumePlace` | Consume one projected subobject after its named destructor succeeds |
 | `drop.reg` | `Drop` | Reserved register-drop operation |
@@ -859,12 +859,15 @@ instead of panicking or silently executing the wrong behavior.
 ### `drop.var` — Destroy Variable
 
 ```text
-drop.var $variable
+drop.var $variable [destructor @symbol]
 ```
 
 Removes the value from `$variable`, leaving `None`, and destroys the removed
-value. For a struct this can invoke `__deinit__`; fields are then dropped in reverse
-declaration order. Public collections are nominal structs and follow that rule.
+value. A drop of a struct with a `__deinit__` names it, as upstream's
+destructor insertion leaves a call to the `__del__` at each death, and the
+VM calls that function on the whole value; a struct naming none has its
+fields dropped, each by its own type's destructor, in declaration order. A partly moved struct drops only its residual fields. `drop.place`
+destroys one projected place the same way. Public collections are nominal structs and follow that rule.
 Elements of the compiler-private heterogeneous pack carrier use Mojo's
 left-to-right order. Moved fields and relocated pack storage are skipped at
 their old owner, preventing double destruction after a partial move. This is

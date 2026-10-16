@@ -83,7 +83,7 @@
         blocks: [
           bb0 {
             instructions: [
-              drop.var { var: $v0 }
+              drop.var { var: $v0, destructor: "KBox.__deinit__" }
             ],
             terminator: return { value: absent }
           }

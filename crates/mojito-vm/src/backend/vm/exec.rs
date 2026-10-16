@@ -1849,9 +1849,9 @@ impl VmBackend {
                 }
             }
             MirInstr::DeclareVar { .. } => {}
-            // ASAP destruction (Stage 7): drop the value at the variable's last
-            // use, running its `__deinit__` if it has one.
-            MirInstr::DropVar { var } => {
+            // ASAP destruction: drop the value at the variable's last use,
+            // running the destructor the drop names.
+            MirInstr::DropVar { var, destructor } => {
                 let v = std::mem::replace(&mut vars[*var as usize], Value::None);
                 let name = &prog.mir.functions[function].0;
                 match v {
@@ -1863,10 +1863,11 @@ impl VmBackend {
                     {
                         self.drop_owned_pack(prog, items)?;
                     }
-                    v => self.drop_value_as(
+                    v => self.drop_named(
                         prog,
                         v,
                         prog.mir.functions[function].1.var_tys.get(var),
+                        destructor.as_deref(),
                     )?,
                 }
             }
@@ -1922,7 +1923,7 @@ impl VmBackend {
                     vars[place.root as usize] = skeleton;
                 }
             }
-            MirInstr::DropPlace { place } => {
+            MirInstr::DropPlace { place, destructor } => {
                 let reference = self.place_handle(frame_id, place, regs, vars)?;
                 let value = if let Some(reference) = reference {
                     let old = self.read_reference(&reference, frame_id, vars)?;
@@ -1931,7 +1932,7 @@ impl VmBackend {
                 } else {
                     std::mem::replace(nav_mut(vars, regs, place)?, Value::Moved)
                 };
-                self.drop_value_as(prog, value, place.ty.as_ref())?;
+                self.drop_named(prog, value, place.ty.as_ref(), destructor.as_deref())?;
             }
             MirInstr::Unsupported(what) => {
                 return Err(RuntimeError::Unsupported(format!(

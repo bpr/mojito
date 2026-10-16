@@ -90,7 +90,9 @@ pub(super) fn transfer_loan_generation(
         }
         // A definition with no following `EstablishLoans` replaces a
         // reference-bearing value with one carrying no owner dependency.
-        MirInstr::DefVar { var, .. } | MirInstr::DropVar { var } | MirInstr::ConsumeVar { var } => {
+        MirInstr::DefVar { var, .. }
+        | MirInstr::DropVar { var, .. }
+        | MirInstr::ConsumeVar { var } => {
             state.active.remove(var);
         }
         _ => {}
@@ -691,7 +693,7 @@ pub(super) fn loan_accesses(
         MirInstr::ConsumePlace { place, marker } => {
             vec![(place.clone(), LoanAccess::Write, span_for(*marker))]
         }
-        MirInstr::DropPlace { place }
+        MirInstr::DropPlace { place, .. }
         | MirInstr::MarkInitialized { place }
         | MirInstr::MarkDestroyed { place } => {
             vec![(place.clone(), LoanAccess::Write, span_for(Reg(0)))]
@@ -818,7 +820,7 @@ pub(super) fn loan_accesses(
             );
             accesses
         }
-        MirInstr::DropVar { var } => {
+        MirInstr::DropVar { var, .. } => {
             vec![(MirPlace::root(*var, None), LoanAccess::Write, fallback)]
         }
         _ => Vec::new(),

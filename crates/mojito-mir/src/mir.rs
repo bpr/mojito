@@ -278,6 +278,16 @@ impl MirDeclarations {
         self.structure(name)?.member(member)
     }
 
+    /// The destructor a drop of a value of type `ty` names: the `__deinit__`
+    /// its struct's member table records, `None` for a struct without one
+    /// or any other type. Drop producers name it; consumers read the drop.
+    pub fn destructor(&self, ty: &Ty) -> Option<&str> {
+        match ty.kind() {
+            TyKind::Struct(name, _) => self.lifecycle_member(name, "__deinit__"),
+            _ => None,
+        }
+    }
+
     /// Whether the program or its package declares the trait `name`,
     /// decoding nothing.
     pub fn declares_trait(&self, name: &str) -> bool {

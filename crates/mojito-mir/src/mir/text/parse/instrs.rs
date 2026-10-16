@@ -836,6 +836,7 @@ impl Decoder {
             }),
             "drop.var" => Some(MirInstr::DropVar {
                 var: self.req(value, fields, "var", Self::var)?,
+                destructor: self.destructor(fields),
             }),
             "consume.var" => Some(MirInstr::ConsumeVar {
                 var: self.req(value, fields, "var", Self::var)?,
@@ -846,6 +847,7 @@ impl Decoder {
             }),
             "drop.place" => Some(MirInstr::DropPlace {
                 place: self.req(value, fields, "place", Self::place)?,
+                destructor: self.destructor(fields),
             }),
             "ownership.mark_initialized" => Some(MirInstr::MarkInitialized {
                 place: self.req(value, fields, "place", Self::place)?,
@@ -963,6 +965,13 @@ impl Decoder {
 
     /// The `elif` arms of an `if`: each a condition region and the arm it
     /// selects.
+    /// A drop's `destructor` (schema 1.67), absent when it names none.
+    fn destructor(&mut self, fields: &[Field]) -> Option<String> {
+        self.field(fields, "destructor")
+            .ok()
+            .and_then(|value| self.symbol(value))
+    }
+
     fn elifs(&mut self, value: &Value) -> Vec<MirElif> {
         let Ok(values) = self.list(value) else {
             return Vec::new();

@@ -341,7 +341,7 @@ fn collect_used(blocks: &[MirBlock], trivial: &dyn Fn(VarId) -> bool, used: &mut
     for block in blocks {
         for instruction in &block.instrs {
             match instruction {
-                MirInstr::DropVar { var } if trivial(*var) => {}
+                MirInstr::DropVar { var, .. } if trivial(*var) => {}
                 MirInstr::Try {
                     handler,
                     cleanup: slots,
@@ -370,7 +370,7 @@ fn collect_used(blocks: &[MirBlock], trivial: &dyn Fn(VarId) -> bool, used: &mut
 fn remove_drops(blocks: &mut [MirBlock], retired: &BTreeSet<VarId>) {
     for block in blocks {
         block.instrs.retain(
-            |instruction| !matches!(instruction, MirInstr::DropVar { var } if retired.contains(var)),
+            |instruction| !matches!(instruction, MirInstr::DropVar { var, .. } if retired.contains(var)),
         );
         for instruction in &mut block.instrs {
             if let MirInstr::Try { cleanup, .. } = instruction {

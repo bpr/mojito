@@ -124,7 +124,7 @@ impl FnLowering<'_> {
         cleanup: &[u32],
     ) -> Result<(), PlironError> {
         for &var in cleanup {
-            self.lower_drop_var(ctx, var)?;
+            self.lower_drop_var(ctx, var, self.cleanup_destructor(var))?;
         }
         let crosses_finally = self.try_frames.iter().any(|frame| frame.finally.is_some());
         if !crosses_finally && self.finally_overrides.is_empty() {
@@ -167,7 +167,7 @@ impl FnLowering<'_> {
         // same flags, so this closes only still-live local slots.
         for var in (self.func.n_params..self.func.n_vars).rev() {
             if self.drop_flags.contains_key(&(var as u32)) {
-                self.lower_drop_var(ctx, var as u32)?;
+                self.lower_drop_var(ctx, var as u32, self.cleanup_destructor(var as u32))?;
             }
         }
         // A `deinit` receiver's elaborated `ConsumeVar` consumes its residual
@@ -258,7 +258,7 @@ impl FnLowering<'_> {
             let cont = self.begin_flag_guard(ctx, flag);
             let traced = self.trace_lifecycle;
             self.trace_lifecycle = false;
-            let released = self.emit_drop_value(ctx, ptr, &ty, false);
+            let released = self.emit_drop_value(ctx, ptr, &ty);
             self.trace_lifecycle = traced;
             released?;
             self.set_drop_flag(ctx, var, false);

@@ -152,7 +152,7 @@ impl FnLowering<'_> {
         if self.stdlib_deinit_temp(ty) && !self.owns_heap(ty) && !uninit_wrapper {
             let traced = self.trace_lifecycle;
             self.trace_lifecycle = false;
-            let released = self.emit_drop_value(ctx, storage, ty, false);
+            let released = self.emit_drop_value(ctx, storage, ty);
             self.trace_lifecycle = traced;
             return released;
         }

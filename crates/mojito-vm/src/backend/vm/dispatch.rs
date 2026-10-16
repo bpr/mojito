@@ -87,6 +87,48 @@ impl VmBackend {
         Ok(())
     }
 
+    /// Destroy `value`, which a `drop.var` or `drop.place` of the static
+    /// type `ty` ends, by running `destructor`, the `__deinit__` the drop
+    /// names, on the whole value, else by dropping its fields. A partial
+    /// aggregate drops only its residual fields, as [`Self::drop_value`].
+    /// A field, and what a cleanup list or any other teardown ends, still
+    /// finds its destructor in its struct's member table.
+    pub(super) fn drop_named(
+        &mut self,
+        prog: &Prog,
+        value: Value,
+        ty: Option<&Ty>,
+        destructor: Option<&str>,
+    ) -> Result<(), RuntimeError> {
+        let value = match ty {
+            Some(ty) => erased_instance_value(prog, value, ty),
+            None => value,
+        };
+        match value {
+            Value::Struct { name, fields }
+                if !fields
+                    .iter()
+                    .any(|(_, value)| matches!(value, Value::Moved)) =>
+            {
+                let Some(destructor) = destructor else {
+                    for (_, value) in fields {
+                        self.drop_value(prog, value)?;
+                    }
+                    return Ok(());
+                };
+                let index = prog.index_of(destructor).ok_or_else(|| {
+                    RuntimeError::Unsupported(format!(
+                        "vm: the destructor `{destructor}` a drop names is not defined"
+                    ))
+                })?;
+                self.record_lifecycle(format!("drop {name}"));
+                self.call_function(prog, index, vec![Value::Struct { name, fields }])?;
+                Ok(())
+            }
+            value => self.drop_value(prog, value),
+        }
+    }
+
     /// Destroy `value` held in a slot of the static type `ty`: as
     /// [`Self::drop_value`], through `ty`'s members where it is an erased
     /// struct instance ([`erased_instance_value`]).

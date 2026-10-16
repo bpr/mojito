@@ -47,21 +47,28 @@ impl<'a> FnLowering<'a> {
         candidates.resolve(method, argc)
     }
 
-    /// `DropVar` — the VM's `drop_value`: nothing for scalars; for aggregates
-    /// run the compiled `__deinit__` when defined (its body consumes the
-    /// receiver's fields), else destroy the fields in declaration order.
-    /// Combinations whose residual state is only
+    /// The destructor a cleanup list's or a frame exit's drop of `var` runs,
+    /// which no instruction names: [`Self::type_destructor`] of its slot.
+    pub(super) fn cleanup_destructor(&self, var: u32) -> Option<&'a str> {
+        self.type_destructor(self.func.var_tys.get(&var)?)
+    }
+
+    /// `DropVar` — the VM's `drop_named`: nothing for scalars; for aggregates
+    /// call `destructor`, the compiled `__deinit__` the drop names (its body
+    /// consumes the receiver's fields), else destroy the fields in
+    /// declaration order. Combinations whose residual state is only
     /// dynamically knowable (a destructor plus independently droppable
     /// fields, or a partially-moved variable) reject instead of guessing.
     pub(super) fn lower_drop_var(
         &mut self,
         ctx: &mut Context,
         var: u32,
+        destructor: Option<&str>,
     ) -> Result<(), PlironError> {
         match self.var_lower_ty(var)? {
             LowerTy::Scalar(_) | LowerTy::ZeroSized => Ok(()),
             LowerTy::Aggregate { ty, .. } => {
-                if !self.needs_drop(&ty) {
+                if !self.needs_named_drop(&ty, destructor) {
                     return Ok(());
                 }
                 if self.partially_moved.contains(&var) {
@@ -83,7 +90,7 @@ impl<'a> FnLowering<'a> {
                     // any absent leaf suppresses the whole-value destructor
                     // (the VM's partial-aggregate rule).
                     let cont = flag.map(|flag| self.begin_flag_guard(ctx, flag));
-                    if self.has_lifecycle_method(&ty, "__deinit__") {
+                    if destructor.is_some() {
                         // `__deinit__` runs only when every tracked leaf
                         // survives. Its compiled `deinit self` epilogue
                         // consumes the receiver and destroys its residual
@@ -92,7 +99,7 @@ impl<'a> FnLowering<'a> {
                             .values()
                             .map(|&leaf| self.begin_flag_guard(ctx, leaf))
                             .collect();
-                        self.emit_drop_value(ctx, ptr, &ty, false)?;
+                        self.emit_drop(ctx, ptr, &ty, destructor)?;
                         for guard in guards.into_iter().rev() {
                             self.end_flag_guard(ctx, guard);
                         }
@@ -112,12 +119,12 @@ impl<'a> FnLowering<'a> {
                 match flag {
                     Some(flag) => {
                         let cont = self.begin_flag_guard(ctx, flag);
-                        self.emit_drop_value(ctx, ptr, &ty, false)?;
+                        self.emit_drop(ctx, ptr, &ty, destructor)?;
                         self.set_drop_flag(ctx, var, false);
                         self.end_flag_guard(ctx, cont);
                         Ok(())
                     }
-                    None => self.emit_drop_value(ctx, ptr, &ty, false),
+                    None => self.emit_drop(ctx, ptr, &ty, destructor),
                 }
             }
         }
@@ -187,11 +194,13 @@ impl<'a> FnLowering<'a> {
     /// tracks every depth-1 `DropPlace` place. A nested or reference-rooted
     /// place has no flag: drop elaboration emits one only where the place is
     /// statically initialized (a store about to overwrite it), so it drops
-    /// unguarded at its address.
+    /// unguarded at its address. `destructor` is the place value's own
+    /// `__deinit__` the drop names.
     pub(super) fn lower_drop_place(
         &mut self,
         ctx: &mut Context,
         place: &MirPlace,
+        destructor: Option<&str>,
     ) -> Result<(), PlironError> {
         let flagged = self.leaf_position(place).and_then(|position| {
             self.leaf_flags
@@ -201,8 +210,8 @@ impl<'a> FnLowering<'a> {
         });
         let Some((position, flag)) = flagged else {
             let (address, ty) = self.place_address(ctx, place, Reg(0))?;
-            return if self.needs_drop(&ty) {
-                self.emit_drop_value(ctx, address, &ty, false)
+            return if self.needs_named_drop(&ty, destructor) {
+                self.emit_drop(ctx, address, &ty, destructor)
             } else {
                 Ok(())
             };
@@ -219,7 +228,7 @@ impl<'a> FnLowering<'a> {
             _ => return Ok(()),
         };
         let element = element_tys[position].clone();
-        if !self.needs_drop(&element) {
+        if !self.needs_named_drop(&element, destructor) {
             return Ok(());
         }
         let composed = self
@@ -234,7 +243,7 @@ impl<'a> FnLowering<'a> {
             self.gep_byte_unspanned(ctx, ptr, offset)
         };
         let cont = self.begin_flag_guard(ctx, flag);
-        self.emit_drop_value(ctx, address, &element, false)?;
+        self.emit_drop(ctx, address, &element, destructor)?;
         let absent = self.bool_constant(ctx, false);
         let store = StoreOp::new(ctx, absent, flag);
         self.append(ctx, store.get_operation(), None);
@@ -404,10 +413,10 @@ impl<'a> FnLowering<'a> {
             match leaves.get(&position).copied() {
                 Some(flag) => {
                     let cont = self.begin_flag_guard(ctx, flag);
-                    self.emit_drop_value(ctx, address, &element, false)?;
+                    self.emit_drop_value(ctx, address, &element)?;
                     self.end_flag_guard(ctx, cont);
                 }
-                None => self.emit_drop_value(ctx, address, &element, false)?,
+                None => self.emit_drop_value(ctx, address, &element)?,
             }
         }
         Ok(())
@@ -461,15 +470,29 @@ impl<'a> FnLowering<'a> {
         }
     }
 
-    /// Emit the VM's `drop_value` over storage: the struct's compiled
-    /// `__deinit__` (its own body consumes the receiver's residual fields),
-    /// else recurse into fields in declaration order.
+    /// Emit the VM's `drop_value` over storage no drop instruction names a
+    /// destructor for (a field, a storage destroy, a variant payload, a
+    /// capture, a frame-exit release): [`Self::emit_drop`] with the
+    /// `__deinit__` the member table of `ty`'s struct records.
     pub(super) fn emit_drop_value(
         &mut self,
         ctx: &mut Context,
         ptr: Value,
         ty: &Ty,
-        skip_whole_deinit: bool,
+    ) -> Result<(), PlironError> {
+        self.emit_drop(ctx, ptr, ty, self.type_destructor(ty))
+    }
+
+    /// Emit the drop of the value of type `ty` at `ptr`: a call of
+    /// `destructor`, a struct's compiled `__deinit__` (its own body consumes
+    /// the receiver's residual fields), else recurse into fields in
+    /// declaration order.
+    fn emit_drop(
+        &mut self,
+        ctx: &mut Context,
+        ptr: Value,
+        ty: &Ty,
+        destructor: Option<&str>,
     ) -> Result<(), PlironError> {
         match ty.kind() {
             // The built-in error has no user destructor; dropping it frees
@@ -514,9 +537,7 @@ impl<'a> FnLowering<'a> {
                 Ok(())
             }
             TyKind::Struct(name, _) => {
-                if !skip_whole_deinit
-                    && let Some(deinit) = self.lifecycle_symbol(name, "__deinit__")
-                {
+                if let Some(deinit) = destructor {
                     let Some(signature) = self.signatures.get(deinit) else {
                         return Err(
                             self.unsupported(format!("drop via uncompiled `{deinit}`"), None)
@@ -560,7 +581,7 @@ impl<'a> FnLowering<'a> {
                     } else {
                         self.gep_byte_unspanned(ctx, ptr, offset)
                     };
-                    self.emit_drop_value(ctx, address, field_ty, false)?;
+                    self.emit_drop_value(ctx, address, field_ty)?;
                 }
                 Ok(())
             }
@@ -580,7 +601,7 @@ impl<'a> FnLowering<'a> {
                     } else {
                         self.gep_byte_unspanned(ctx, ptr, offset)
                     };
-                    self.emit_drop_value(ctx, address, element, false)?;
+                    self.emit_drop_value(ctx, address, element)?;
                 }
                 Ok(())
             }
@@ -594,8 +615,22 @@ impl<'a> FnLowering<'a> {
     /// (its environment record may carry owned droppable captures — a
     /// null-guarded header dispatch, free when there are none).
     pub(super) fn needs_drop(&self, ty: &Ty) -> bool {
-        matches!(ty.kind(), TyKind::Error | TyKind::Func(_))
-            || self.has_lifecycle_method(ty, "__deinit__")
+        self.needs_named_drop(ty, self.type_destructor(ty))
+    }
+
+    /// The `__deinit__` the member table of `ty`'s struct records, for a
+    /// teardown no drop instruction names a destructor for.
+    fn type_destructor(&self, ty: &Ty) -> Option<&'a str> {
+        match ty.kind() {
+            TyKind::Struct(name, _) => self.lifecycle_symbol(name, "__deinit__"),
+            _ => None,
+        }
+    }
+
+    /// [`Self::needs_drop`] for a drop naming `destructor` as `ty`'s own.
+    fn needs_named_drop(&self, ty: &Ty, destructor: Option<&str>) -> bool {
+        destructor.is_some()
+            || matches!(ty.kind(), TyKind::Error | TyKind::Func(_))
             || self.fields_need_drop(ty)
     }
 

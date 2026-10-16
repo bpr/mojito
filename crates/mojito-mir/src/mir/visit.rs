@@ -212,7 +212,7 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
         | I::StoreRef { place, .. }
         | I::LoadPlace { place, .. }
         | I::ConsumePlace { place, .. }
-        | I::DropPlace { place }
+        | I::DropPlace { place, .. }
         | I::MarkInitialized { place }
         | I::MarkDestroyed { place } => visitor.visit_place(place),
         I::MakeClosure { captures, .. } => captures

@@ -159,7 +159,7 @@ impl FnLowering<'_> {
     ) -> Result<(), PlironError> {
         let ptr = self.reg_value(ctx, pointer, ScalarTy::Ptr)?;
         let address = self.pointer_element_address(ctx, ptr, index, element, dest)?;
-        self.emit_drop_value(ctx, address, element, false)?;
+        self.emit_drop_value(ctx, address, element)?;
         self.erased.insert(dest.0);
         Ok(())
     }
@@ -244,7 +244,7 @@ impl FnLowering<'_> {
             .struct_layout(&[Ty::bool(), element.clone()])
             .map_err(|error| self.unsupported_reg(format!("uninit storage ({error})"), dest))?;
         let payload = self.offset_address(ctx, ptr, fields.offsets[1]);
-        self.emit_drop_value(ctx, payload, element, false)?;
+        self.emit_drop_value(ctx, payload, element)?;
         self.erased.insert(dest.0);
         Ok(())
     }

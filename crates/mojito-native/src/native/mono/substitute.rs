@@ -294,7 +294,7 @@ pub(super) fn reject_parameter_storage_reads(
             }
         } else if matches!(
             instruction,
-            MirInstr::DropVar { var } | MirInstr::ConsumeVar { var } if *var == slot
+            MirInstr::DropVar { var, .. } | MirInstr::ConsumeVar { var } if *var == slot
         ) || mojito_mir::mir::verify::instruction_places(instruction)
             .iter()
             .any(|place| place.root == slot || place.through == Some(slot))

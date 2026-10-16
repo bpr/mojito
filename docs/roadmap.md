@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1041**.
+Next free ID: **R1044**.
 
 ## Ordered Work
 
@@ -664,21 +664,51 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1016 A drop names no destructor; the backends look it up from
-  the value's type**
+- [ ] **R1041 A struct with droppable fields and no `__deinit__` has no
+  destructor function; the backends drop its fields by type**
 
-  `drop.var` and `drop.place` name no symbol, so the VM and Pliron find the
-  destructor in the struct declaration's member table, where upstream's
-  destructor insertion leaves a call naming the `__del__` instance at each
-  death.
-  - The backends also expand a struct with no destructor into its fields'
-    drops themselves, where upstream synthesizes a `__del__` for a struct
-    whose fields need one.
-  - Insert the call after drop elaboration, so the elaborator respells it
-    and `eliminate-dead-symbols` follows it as any call.
-  - Relates to R968 (synthesized destructor inlining).
-  - Found while landing R1001 (2026-10-15).
+  A drop of such a struct names no destructor, so the VM's `drop_named`
+  and Pliron's `emit_drop` recurse into its fields and find each field's
+  `__deinit__` in the member table, where upstream synthesizes a `__del__`
+  for the struct and calls it at the drop.
+  - Synthesize `S.__deinit__(deinit self)` with an empty body in MIR
+    lowering, recorded in the member table and marked `nodebug`;
+    `refine_deinit_fields` then gives it a named `drop.place` per field.
+  - The VM must not trace a synthesized destructor (no `drop S` line).
+  - Then drop `destroyed_structs`' field closure for named drops.
+  - Storage destroys, `VariantSet` payloads, owned captures, and tuple,
+    pack, and variant elements stay type-directed; upstream's are library
+    code calling `__del__`.
+  - R968 then reduces to inlining that destructor.
+  - Found while landing R1016 (2026-10-16).
   - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1042 A cleanup list names only slots; the backends look up each
+  slot's destructor**
+
+  A `try`'s raise-edge cleanup and a return's or escape's cleanup list are
+  `Vec<VarId>`, so the VM's `run_cleanup` and Pliron's `cleanup_destructor`
+  find each destructor from the slot's type, where upstream emits the
+  destructor calls in the unwind blocks.
+  - Make each entry carry its destructor, as `drop.var` does since R1016,
+    and respell it in `Specializer::name_destructors`.
+  - About 300 uses in 47 files; then delete `cleanup_destructor` and the
+    VM's lookup.
+  - Found while landing R1016 (2026-10-16).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1043 A drop is its own instruction, not a call of its destructor**
+
+  `drop.var` names its destructor but stays a drop, where upstream's
+  destructor insertion leaves a plain call.
+  - Pliron's drop and leaf-presence flags and the VM's runtime
+    partial-aggregate rule exist because Mojito's drop states are not
+    definite at every death; upstream's lifetime checker makes them so.
+  - Once they are, lower a named drop to `call @D.__deinit__` of the slot.
+  - Found while landing R1016 (2026-10-16).
+  - Depends on R1041, R1042.
   - Model: Fable, Not Planned.
 
 - [ ] **R1017 A copy or move names no constructor; the backends look it up

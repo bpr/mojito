@@ -2107,7 +2107,10 @@ const fn move_x() -> MirInstr {
     }
 }
 
-const DROP_X: MirInstr = MirInstr::DropVar { var: 0 };
+const DROP_X: MirInstr = MirInstr::DropVar {
+    var: 0,
+    destructor: None,
+};
 
 fn raising_call() -> MirInstr {
     MirInstr::Call {

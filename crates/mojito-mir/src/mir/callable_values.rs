@@ -310,7 +310,7 @@ impl Escapes<'_> {
             MirInstr::UseVar { dest, var, .. } if self.registers.contains_key(&dest.0) => {
                 slots.retain(|slot| slot != var);
             }
-            MirInstr::DropVar { var } => slots.retain(|slot| slot != var),
+            MirInstr::DropVar { var, .. } => slots.retain(|slot| slot != var),
             _ => {}
         }
         for reg in operands {

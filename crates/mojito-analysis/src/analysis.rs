@@ -21,6 +21,7 @@ pub use dead_symbols::{
     ELIMINATE_DEAD_CONCRETE_SYMBOLS, ELIMINATE_DEAD_SYMBOLS, eliminate_dead_concrete_symbols,
     eliminate_dead_symbols,
 };
+pub use destructor_calls::name_destructors;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use drops::*;
 pub use duplicate_functions::{ELIMINATE_DUPLICATE_FUNCTIONS, eliminate_duplicate_functions};
@@ -203,6 +204,7 @@ pub fn elaborate_drops_program(prog: MirProgram) -> MirProgram {
             let elaborated = if name == "__toplevel__" {
                 let mut f = f;
                 elaborate_store_drops(&mut f, &name, &prog.declarations);
+                name_destructors(&mut f, &prog.declarations);
                 f
             } else {
                 elaborate_drops_function(&name, f, &prog.declarations)
@@ -240,6 +242,7 @@ pub fn elaborate_drops_function(
     let mut elaborated = elaborate_drops(function, &slots, declarations);
     elide_dying_copies(&mut elaborated, declarations);
     refine_deinit_fields(&mut elaborated, declarations);
+    name_destructors(&mut elaborated, declarations);
     elaborated
 }
 
@@ -247,6 +250,7 @@ mod canonicalize;
 mod copy_elision;
 mod cse;
 mod dead_symbols;
+mod destructor_calls;
 mod drops;
 mod duplicate_functions;
 mod field_drops;

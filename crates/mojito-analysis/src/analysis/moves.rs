@@ -494,7 +494,7 @@ pub(super) fn place_uses(
         MirInstr::ConsumePlace { place, marker } => {
             vec![(place.root, place_path(place), Touch::Read, *marker)]
         }
-        MirInstr::DropPlace { place } | MirInstr::MarkDestroyed { place } => {
+        MirInstr::DropPlace { place, .. } | MirInstr::MarkDestroyed { place } => {
             vec![(place.root, place_path(place), Touch::Read, Reg(0))]
         }
         MirInstr::MakeClosure { dest, captures, .. } => captures
@@ -618,7 +618,7 @@ pub(super) fn apply_effects(state: &mut [Node], i: &MirInstr, context: &MoveCont
         // A named destructor's receiver: consumed by the call it follows.
         MirInstr::ConsumeVar { var } => state[*var as usize].do_move(&[]),
         MirInstr::ConsumePlace { place, .. }
-        | MirInstr::DropPlace { place }
+        | MirInstr::DropPlace { place, .. }
         | MirInstr::MarkDestroyed { place } => {
             state[place.root as usize].do_move(&place_path(place));
         }

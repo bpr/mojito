@@ -1,11 +1,14 @@
 //! The destructors a body runs without naming them.
 //!
 //! Upstream's destructor insertion leaves a call to the destructor at each
-//! point a value dies, so a symbol walk reaches it. Here a drop names only
-//! the slot or place it tears down, and the VM and the native backend find
-//! the struct's `__deinit__` from the value's type. This module answers
-//! which structs those are: the dropped types, and every field type a drop
-//! of them may tear down field by field.
+//! point a value dies, so a symbol walk reaches it. A `drop.var` or
+//! `drop.place` names the destructor it runs on the whole value, which a
+//! symbol walk follows; the rest of what a body tears down names none, and
+//! the VM and the native backend find the struct's `__deinit__` from the
+//! value's type. This module answers which structs those are: the types a
+//! cleanup list, a consumed residue, a storage destroy, a variant store, an
+//! owned capture, or a drop naming no destructor tears down whole, and
+//! every field type any drop may tear down field by field.
 
 use crate::mir::{MirBlock, MirFunction, MirInstr, MirPlace, MirTerm, instruction_regions};
 use mojito_hir::hir::VarId;
@@ -22,21 +25,28 @@ pub struct Destroyed {
     /// Whether it tears down a value of a type only an instantiation
     /// resolves, whose destructor no walk of a generic body can name.
     pub symbolic: bool,
+    /// Each type a drop tears down whole beside the destructor it names.
+    pub named: Vec<(Ty, String)>,
 }
 
 /// What the body `function` destroys without naming a destructor.
 ///
-/// That is a whole value its drops and cleanup lists tear down, the fields
-/// of a value it consumes, and, through `fields`, every field of a struct
-/// those reach, since a struct without a destructor, or a partly moved one,
-/// drops its fields one by one.
+/// That is a whole value its cleanup lists and its drops naming no
+/// destructor tear down, the fields of a value it consumes or drops, and,
+/// through `fields`, every field of a struct those reach, since a struct
+/// without a destructor, or a partly moved one, drops its fields one by
+/// one. [`Destroyed::named`] holds the drops naming theirs.
 pub fn destroyed_structs(function: &MirFunction, fields: &StructFields<'_>) -> Destroyed {
     let mut walk = Walk {
         var_tys: &function.var_tys,
         pending: Vec::new(),
+        named: Vec::new(),
     };
     walk.blocks(&function.blocks);
-    close_over_fields(walk.pending, fields)
+    Destroyed {
+        named: walk.named,
+        ..close_over_fields(walk.pending, fields)
+    }
 }
 
 /// The struct types the values `pending` reach, each beside whether the
@@ -51,6 +61,7 @@ pub(super) fn close_over_fields(
     let mut destroyed = Destroyed {
         structs: Vec::new(),
         symbolic: false,
+        named: Vec::new(),
     };
     while let Some((ty, whole)) = pending.pop() {
         if !seen.insert((ty.clone(), whole)) {
@@ -90,6 +101,7 @@ pub(super) fn close_over_fields(
 struct Walk<'f> {
     var_tys: &'f HashMap<VarId, Ty>,
     pending: Vec<(Ty, bool)>,
+    named: Vec<(Ty, String)>,
 }
 
 impl Walk<'_> {
@@ -113,16 +125,25 @@ impl Walk<'_> {
 
     fn instruction(&mut self, instruction: &MirInstr) {
         match instruction {
-            MirInstr::DropVar { var } => self.var(*var, true),
+            // A drop naming its destructor reaches it by symbol; a partly
+            // moved value still drops its fields by their types.
+            MirInstr::DropVar { var, destructor } => {
+                self.var(*var, destructor.is_none());
+                self.named(self.var_tys.get(var), destructor.as_deref());
+            }
             MirInstr::ConsumeVar { var } => self.var(*var, false),
             MirInstr::Try { cleanup, .. } => {
                 for &var in cleanup {
                     self.var(var, true);
                 }
             }
-            MirInstr::DropPlace { place }
-            | MirInstr::VariantSet { place, .. }
-            | MirInstr::VariantSetInitWith { place, .. } => self.place(place, true),
+            MirInstr::DropPlace { place, destructor } => {
+                self.place(place, destructor.is_none());
+                self.named(place.ty.as_ref(), destructor.as_deref());
+            }
+            MirInstr::VariantSet { place, .. } | MirInstr::VariantSetInitWith { place, .. } => {
+                self.place(place, true);
+            }
             MirInstr::ConsumePlace { place, .. } => self.place(place, false),
             MirInstr::PointerStorageDestroy { element, .. }
             | MirInstr::UninitStorageDestroy { element, .. } => {
@@ -137,6 +158,12 @@ impl Walk<'_> {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn named(&mut self, ty: Option<&Ty>, destructor: Option<&str>) {
+        if let (Some(ty), Some(destructor)) = (ty, destructor) {
+            self.named.push((ty.clone(), destructor.to_owned()));
         }
     }
 

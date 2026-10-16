@@ -1152,13 +1152,19 @@ fn instruction_families_reprint_byte_identically() {
             var: 1,
             mode: UseMode::Forward,
         },
-        MirInstr::DropVar { var: 1 },
+        MirInstr::DropVar {
+            var: 1,
+            destructor: None,
+        },
         MirInstr::ConsumeVar { var: 2 },
         MirInstr::ConsumePlace {
             place: place(0),
             marker: Reg(3),
         },
-        MirInstr::DropPlace { place: place(0) },
+        MirInstr::DropPlace {
+            place: place(0),
+            destructor: Some("D.__deinit__".into()),
+        },
         MirInstr::MarkInitialized { place: place(0) },
         MirInstr::MarkDestroyed { place: place(0) },
         MirInstr::Unsupported("no lowering for frobnication".into()),

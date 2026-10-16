@@ -436,9 +436,13 @@ impl FnLowering<'_> {
             }
             // The slot's alloca already exists from function entry.
             MirInstr::DeclareVar { .. } => Ok(()),
-            MirInstr::DropVar { var } => self.lower_drop_var(ctx, *var),
+            MirInstr::DropVar { var, destructor } => {
+                self.lower_drop_var(ctx, *var, destructor.as_deref())
+            }
             MirInstr::ConsumeVar { var } => self.lower_consume_var(ctx, *var, false),
-            MirInstr::DropPlace { place } => self.lower_drop_place(ctx, place),
+            MirInstr::DropPlace { place, destructor } => {
+                self.lower_drop_place(ctx, place, destructor.as_deref())
+            }
             // The receiver's alloca and its leaf drop flags already exist;
             // the marked storage is filled by the writes that follow.
             MirInstr::MarkInitialized { .. } => Ok(()),

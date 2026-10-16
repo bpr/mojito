@@ -1450,9 +1450,13 @@ fn instruction_value(instruction: &MirInstr) -> String {
             record(tag, &fields)
         }
         MirInstr::Drop { reg } => record(tag, &[("reg", reg_value(*reg))]),
-        MirInstr::DeclareVar { var } | MirInstr::DropVar { var } | MirInstr::ConsumeVar { var } => {
+        MirInstr::DeclareVar { var } | MirInstr::ConsumeVar { var } => {
             record(tag, &[("var", var_value(*var))])
         }
+        MirInstr::DropVar { var, destructor } => record(
+            tag,
+            &with_destructor(("var", var_value(*var)), destructor.as_deref()),
+        ),
         MirInstr::ConsumePlace { place, marker } => record(
             tag,
             &[
@@ -1460,9 +1464,13 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("marker", reg_value(*marker)),
             ],
         ),
-        MirInstr::DropPlace { place }
-        | MirInstr::MarkInitialized { place }
-        | MirInstr::MarkDestroyed { place } => record(tag, &[("place", place_value(place))]),
+        MirInstr::DropPlace { place, destructor } => record(
+            tag,
+            &with_destructor(("place", place_value(place)), destructor.as_deref()),
+        ),
+        MirInstr::MarkInitialized { place } | MirInstr::MarkDestroyed { place } => {
+            record(tag, &[("place", place_value(place))])
+        }
         MirInstr::Unsupported(message) => record(tag, &[("message", quote(message))]),
         MirInstr::GetIter {
             source,
@@ -1585,6 +1593,17 @@ fn sequence_fields(source: &ComptimeSequence) -> Vec<(&'static str, String)> {
         ("next_iter", param_expr(&source.next_iter)),
         ("next_value", param_expr(&source.next_value)),
     ]
+}
+
+/// A drop's fields: its operand, then the `destructor` it names, omitted
+/// when the drop names none.
+fn with_destructor<'a>(
+    operand: (&'a str, String),
+    destructor: Option<&str>,
+) -> Vec<(&'a str, String)> {
+    std::iter::once(operand)
+        .chain(destructor.map(|d| ("destructor", symbol(d))))
+        .collect()
 }
 
 fn loop_label(label: LoopLabel) -> String {

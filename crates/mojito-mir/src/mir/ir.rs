@@ -628,7 +628,7 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             place_regs_mut(target, &mut out);
             out.push(marker);
         }
-        MirInstr::DropPlace { place: target }
+        MirInstr::DropPlace { place: target, .. }
         | MirInstr::MarkInitialized { place: target }
         | MirInstr::MarkDestroyed { place: target } => place_regs_mut(target, &mut out),
         MirInstr::TryNext { dest, yielded, .. } => out.extend([dest, yielded]),
@@ -678,7 +678,7 @@ pub fn instruction_slots(instruction: &MirInstr) -> Vec<VarId> {
         | MirInstr::UseVar { var, .. }
         | MirInstr::DefVar { var, .. }
         | MirInstr::DeclareVar { var }
-        | MirInstr::DropVar { var }
+        | MirInstr::DropVar { var, .. }
         | MirInstr::ConsumeVar { var } => out.push(*var),
         MirInstr::GetIter { source, dest, .. } => out.extend([*source, *dest]),
         MirInstr::HasNext { iter, .. }
@@ -731,7 +731,7 @@ pub fn for_each_instruction_slot_mut(
         | MirInstr::UseVar { var, .. }
         | MirInstr::DefVar { var, .. }
         | MirInstr::DeclareVar { var }
-        | MirInstr::DropVar { var }
+        | MirInstr::DropVar { var, .. }
         | MirInstr::ConsumeVar { var } => visit(var),
         MirInstr::GetIter { source, dest, .. } => {
             visit(source);
@@ -2281,13 +2281,18 @@ pub enum MirInstr {
     Drop {
         reg: Reg,
     },
-    /// Drop the value in a variable slot — spliced in by the Stage 7 liveness pass
-    /// at a variable's last use (ASAP destruction). Runs the value's `__deinit__` (and
-    /// its fields', in reverse order) and leaves the slot empty. A no-op for values
-    /// without a destructor, so it never changes observable behaviour except when a
-    /// struct defines `__deinit__`.
+    /// Drop the value in a variable slot — placed by drop elaboration at a
+    /// variable's last use (ASAP destruction) — and leave the slot empty.
+    /// `destructor` names the `__deinit__` the drop runs on the whole value,
+    /// as upstream's destructor insertion names it at each death: the
+    /// template member in a parametric body, its instance in concrete MIR.
+    /// `None` when the value's type has no destructor of its own; such a
+    /// value's fields are dropped by their types, in reverse order. A no-op
+    /// for values without anything to destroy.
     DropVar {
         var: VarId,
+        #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
+        destructor: Option<String>,
     },
     /// Consume a variable without running implicit destruction. Explicit-destroy
     /// calls emit this immediately after the call, so a raising call leaves the
@@ -2322,9 +2327,12 @@ pub enum MirInstr {
     /// parameter's direct fields, each at its own last use (the receiver's
     /// later `ConsumeVar` skips the tombstoned fields), and immediately
     /// before a `Store` that overwrites an initialized droppable sub-place,
-    /// so the replaced value is destroyed at the assignment.
+    /// so the replaced value is destroyed at the assignment. `destructor`
+    /// names the place value's own `__deinit__`, as on [`MirInstr::DropVar`].
     DropPlace {
         place: MirPlace,
+        #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
+        destructor: Option<String>,
     },
     /// A construct the MIR/backends don't lower yet (a `try` with its exceptional
     /// edges, a nested declaration). Kept as an explicit node — rather than a
@@ -3158,7 +3166,13 @@ mod tests {
         assert!(constant.would_be_trivially_dead());
         assert!(borrow.would_be_trivially_dead());
         assert!(!copy.would_be_trivially_dead());
-        assert!(!MirInstr::DropVar { var: 0 }.would_be_trivially_dead());
+        assert!(
+            !MirInstr::DropVar {
+                var: 0,
+                destructor: None
+            }
+            .would_be_trivially_dead()
+        );
     }
 
     #[test]
