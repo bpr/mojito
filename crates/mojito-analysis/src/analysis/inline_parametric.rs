@@ -14,9 +14,9 @@
 //! which a call through a closure the caller makes calls, whose own
 //! compile-time parameters the call binds in full; it takes its arguments
 //! into `read`, owned, `mut`, or `ref` parameters, declares no variadic
-//! collector, and returns a value. The call's positional and keyword arguments bind to
-//! the callee's parameters through `mojito_ast::call`'s matcher, as the VM
-//! binds them, and an omitted argument takes its default, materialized at
+//! collector, and returns a value or a reference. The call's positional and
+//! keyword arguments bind to the callee's parameters through
+//! `mojito_ast::call`'s matcher, as the VM binds them, and an omitted argument takes its default, materialized at
 //! the call as upstream's parser materializes it in the caller: a literal,
 //! or a converting constructor run on one. A default computed by a
 //! function of its own keeps the call.
@@ -38,7 +38,10 @@
 //! a `mut self` included, is the caller's place the call passes, and any
 //! other `read` parameter the caller's place the argument was loaded from,
 //! as upstream's inliner substitutes the argument's address for the
-//! callee's. A place-bound parameter the callee names other than as a
+//! callee's. A callee returning a reference binds a `read` parameter to the
+//! place the call retains for it too, so the reference its body makes is to
+//! the caller's place; one returned to a fresh slot keeps the call. A
+//! place-bound parameter the callee names other than as a
 //! place's root keeps the call. A default is a fresh slot, dropped after
 //! the body when the parameter only borrows it. An initializer's
 //! `out self` is a fresh slot the body initializes, and the call's result
@@ -724,7 +727,6 @@ impl<'c> Inliner<'_, 'c> {
                     dest,
                     recv,
                     resolved: Some(target),
-                    reference_result: None,
                     result_adapter: None,
                     args,
                     kwargs,
@@ -911,6 +913,9 @@ impl<'c> Inliner<'_, 'c> {
                 place.and_then(Option::as_ref),
             )?);
         }
+        if callee.returns_reference && !returns_bound_place(&callee, &bindings) {
+            return None;
+        }
         Some((dest, callee, bindings, dropped))
     }
 
@@ -1023,6 +1028,13 @@ impl<'c> Inliner<'_, 'c> {
         let entry = list.len();
         let continuation = entry + blocks.len();
         let result_slot = var_base + callee.n_vars as VarId;
+        // A returned reference is the call's, of the caller's reference
+        // type; the callee's own spells its origin untracked.
+        let result_ty = if callee.returns_reference {
+            function.reg_types.get(&dest.0).cloned()
+        } else {
+            callee.ret_ty.clone()
+        };
         for inlined in &mut blocks {
             for target in terminator_targets_mut(&mut inlined.term) {
                 *target += entry;
@@ -1032,7 +1044,7 @@ impl<'c> Inliner<'_, 'c> {
                     inlined.instrs.push(MirInstr::DefVar {
                         var: result_slot,
                         src: value,
-                        binding_ty: callee.ret_ty.clone(),
+                        binding_ty: result_ty.clone(),
                         in_place: false,
                     });
                     MirTerm::Jump(continuation)
@@ -1084,8 +1096,8 @@ impl<'c> Inliner<'_, 'c> {
             }),
             Returned::Slot => {
                 function.var_names.push(format!("$inline{var_base}$result"));
-                if let Some(ty) = &callee.ret_ty {
-                    function.var_tys.insert(result_slot, ty.clone());
+                if let Some(ty) = result_ty {
+                    function.var_tys.insert(result_slot, ty);
                 }
                 function.n_vars += 1;
                 resumed.push(MirInstr::UseVar {
@@ -1192,9 +1204,10 @@ fn parameter_constant(value: &ParamExpr, ty: Option<&Ty>) -> Const {
 
 /// How the callee's parameter `param` binds the call's `argument`, which
 /// the call passes with `place` retained: a `mut` or `ref` parameter binds
-/// that place, as the VM binds the parameter's slot to a reference to it;
-/// `None` when the call retains no place for one, for a `deinit`
-/// parameter, or for a `read` one the pass cannot bind.
+/// that place, as the VM binds the parameter's slot to a reference to it,
+/// and so does a `read` one of a callee returning a reference, which may
+/// be to it; `None` when the call retains no place for a `mut` or `ref`
+/// one, for a `deinit` parameter, or for a `read` one the pass cannot bind.
 fn argument_binding(
     callee: &MirFunction,
     block: &MirBlock,
@@ -1203,15 +1216,18 @@ fn argument_binding(
     argument: Reg,
     place: Option<&MirPlace>,
 ) -> Option<Binding> {
-    if is_reference_parameter(callee, param) {
-        return place.cloned().map(Binding::Place);
+    let owned = callee.owned_params.get(param).copied().unwrap_or(false);
+    let deinit = callee.deinit_params.get(param).copied().unwrap_or(true);
+    let reference = is_reference_parameter(callee, param);
+    if (reference || (callee.returns_reference && !owned && !deinit))
+        && let Some(place) = place
+    {
+        return Some(Binding::Place(place.clone()));
     }
-    if callee.deinit_params.get(param).copied().unwrap_or(true) || place.is_some() {
+    if reference || deinit || place.is_some() {
         return None;
     }
-    if callee.owned_params.get(param).copied().unwrap_or(false)
-        || callee.param_types.get(param).is_some_and(has_no_destructor)
-    {
+    if owned || callee.param_types.get(param).is_some_and(has_no_destructor) {
         return Some(Binding::Value(argument));
     }
     loaded_place(block, index, argument).map(Binding::Place)
@@ -1245,9 +1261,37 @@ fn is_reference_parameter(callee: &MirFunction, param: usize) -> bool {
     callee.ref_params.get(param).copied().unwrap_or(false)
 }
 
+/// Whether every reference `callee` returns is to a place its parameters'
+/// `bindings` give it from the caller: each returned register a reference
+/// made to a place-bound parameter's place, or any reference when every
+/// parameter is place-bound, since one to a local of its own the checker
+/// rejects. A reference to a fresh slot an argument initializes keeps the
+/// call, as the caller's loan names the argument's place, not that slot.
+fn returns_bound_place(callee: &MirFunction, bindings: &[Binding]) -> bool {
+    let place_bound = |var: VarId| matches!(bindings.get(var as usize), Some(Binding::Place(_)));
+    if (0..callee.n_params as VarId).all(place_bound) {
+        return true;
+    }
+    let made: HashMap<u32, &MirPlace> = callee
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .filter_map(|instruction| match instruction {
+            MirInstr::MakeRef { dest, place } => Some((dest.0, place)),
+            _ => None,
+        })
+        .collect();
+    callee.blocks.iter().all(|block| match block.term {
+        MirTerm::Return(Some(value)) => made.get(&value.0).is_some_and(|place| {
+            place.through.is_none_or(|var| var == place.root) && place_bound(place.root)
+        }),
+        _ => true,
+    })
+}
+
 /// Whether the callee has a shape the splice handles: a struct
-/// receiver if any, no binders of an enclosing region, no reference
-/// result, no variadic collector, and blocks of plain control flow with no
+/// receiver if any, no binders of an enclosing region, no variadic
+/// collector, and blocks of plain control flow with no
 /// `try`, region, or closure.
 fn is_closed(callee: &MirFunction, declaration: &MirFunctionDeclaration) -> bool {
     let receiver_closed = !declaration.has_receiver
@@ -1259,8 +1303,6 @@ fn is_closed(callee: &MirFunction, declaration: &MirFunctionDeclaration) -> bool
         && declaration.region_binders.is_empty()
         && declaration.variadic.is_none()
         && declaration.kw_variadic.is_none()
-        && !declaration.returns_reference
-        && !callee.returns_reference
         && callee.blocks.iter().all(|block| {
             block.instrs.iter().all(|instruction| {
                 !matches!(

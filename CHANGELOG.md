@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call of a `nodebug` function or method returning a reference is
+  inlined (R953), as at the pin: the reference the body makes is to the
+  caller's place the call passes, a `read` argument's included, so
+  `pick(y) += 1` over `pick(ref x) -> ref [x] Int` and `b.val() += 1`
+  over a `ref self` getter hold the callee's body. No program's output
+  changes (assets/ok/always_inline_nodebug_reference_results.mojo).
 - A parameter every self-recursive call passes as itself, and that the
   body reads nowhere else, leaves the instance key (R1028), as upstream's
   `RemoveUnusedParams` discounts that forward: `rec[n](k)` calling

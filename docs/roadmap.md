@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1066**.
+Next free ID: **R1067**.
 
 ## Ordered Work
 
@@ -84,21 +84,6 @@ which names the upstream pass each one follows. Each is measured by the
     infer-only binder to what the type determines.
   - Done when `s.__len__()` over a `Span` inlines and the differential is
     clean.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R953 A `nodebug` callee returning a reference is called, not
-  inlined**
-
-  `inline-parametric` keeps a call whose callee returns a reference
-  (`-> ref [x] Int`), or a method call carrying a reference result, where
-  the pin inlines it.
-  - The callee returns a `ref.make` register, and the caller's call or
-    `reference_result` adapter turns it into the place the caller uses.
-  - Bind the call's register to the returned reference, composed with the
-    caller's places as a reference parameter's are.
-  - Done when `pick(y) += 1` over a `nodebug` `pick(ref x) -> ref [x] Int`
-    inlines and the differential is clean.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1842,6 +1827,24 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     way, at `validate_origin_expr` and the body's origin resolution, with
     `Checker::register_passability`.
   - Found while landing R668 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1066 A result `ref [x]` over a read register-passable parameter
+  is accepted**
+
+  `def get(x: Int) -> ref [x] Int: return x` checks and runs, but the pin
+  rejects it: "value of type 'Int' doesn't have a memory origin in origin
+  specifier".
+  - `Checker::check_result_origins` already rejects the
+    `ref [origin_of(x)]` spelling of the same result
+    (`assets/type_error/result_origin_read_register_passable.mojo`); the
+    bare-place shorthand `[x]` escapes it.
+  - The lever: judge a shorthand origin place as `origin_of` of it, with
+    `Checker::register_passability`.
+  - Done when the shorthand is rejected with the pin's message and a
+    `type_error` fixture pins it.
+  - Found while landing R953 (2026-10-16).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
