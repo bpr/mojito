@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call of a generator that removed a parameter no longer evaluates that
+  parameter's argument (R995), as upstream's `RemoveUnusedParams` rewrote
+  the call: the elaborator runs each instance over
+  `mir::with_removed_forwards_erased`, which passes no operand and erases
+  the operations that only computed one, and erases (`_REMOVED_ARG`) a
+  spelled argument that has no value. `div_fwd[0]()` returning
+  `leaf[10 // n]()` prints `1` instead of failing elaboration, whichever
+  `div_fwd` is demanded first
+  (`assets/ok/forwarded_parameter_instances.mojo`), and `s & t` over two
+  `Set[Int]` values elaborates again.
 - `eliminate-duplicate-functions` merges a struct's special methods and
   trait requirements too (R1006). The elaborator records every instance
   of a member the struct's type reaches in its member table, as upstream's

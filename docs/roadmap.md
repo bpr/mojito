@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1028**.
+Next free ID: **R1029**.
 
 ## Ordered Work
 
@@ -8522,20 +8522,22 @@ follow-ups the landed producer stages filed come last.
   - Depends on R907.
   - Model: Fable, Not Planned.
 
-- [ ] **R995 A trapping forward demanded first fails elaboration where
-  the pin drops it**
+- [ ] **R1028 A parameter forwarded only around a self-recursive call
+  stays in its instance key, where the pin removes it**
 
-  `div_fwd[0]()` fails with "unsupported division by zero" when it is the
-  first `div_fwd` demanded, where the pin prints `1`.
-  - `div_fwd[n]` returns `leaf[10 // n]()` and `leaf` ignores `n`, so
-    `div_fwd` removed `n` (R969) and has one instance.
-  - The instance substitutes the first demand's `n`, and its call to
-    `leaf` still carries the parameter expression `10 // n` and the
-    run-time `floordiv` the masked view erased.
-  - Once callers' arguments are rewritten, the instance should carry
-    neither; pin `div_fwd[0]()` in
-    `assets/ok/forwarded_parameter_instances.mojo` then.
-  - Depends on R912.
+  `rec[n](k)`, which calls `leaf[n]()` (ignoring `n`) and `rec[n](k - 1)`,
+  keeps `n`, where the pin's `RemoveUnusedParams` emits one
+  `rec…_REMOVED_ARG` with no `n=` in its symbol.
+  - Mojito's `remove-unused-params` counts the recursive forward as a read,
+    so `rec[1]` and `rec[2]` are two instances that only
+    `eliminate-duplicate-functions` merges.
+  - Upstream's walk treats a self-recursive forward of the parameter to
+    itself as no read (`isRecursive`).
+  - Fix in `mir/param_uses.rs`' forward walk, then drop the "forward around
+    a recursive call keeps it" clause from
+    `assets/ok/forwarded_parameter_instances.mojo` and `docs/features.md`.
+  - Found while landing R995 (2026-10-15).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R937 `**` on integers and scalar displays call bundled bodies

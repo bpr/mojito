@@ -4164,6 +4164,10 @@ fn forwarded_parameters_leave_the_instance_key() {
         ("two_hop", 1),
         ("expr_fwd", 1),
         ("div_fwd", 1),
+        ("div_outer", 1),
+        ("div_kept", 1),
+        ("static_div_fwd", 1),
+        ("subscript_div_fwd", 1),
         ("dmid", 1),
         ("tmid", 1),
         ("method_fwd", 1),
@@ -4175,7 +4179,7 @@ fn forwarded_parameters_leave_the_instance_key() {
         ("to_reader", 2),
         ("subscript_reader", 2),
         ("Row.__getitem_param__", 2),
-        ("rec", 2),
+        ("rec", 1),
     ] {
         assert_eq!(instances(template), count, "instances of `{template}`");
     }

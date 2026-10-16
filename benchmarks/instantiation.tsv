@@ -236,7 +236,7 @@ assets/ok/file_handle_roundtrip.mojo	elaborated	164	3660	58	73	874	1186	631	147	
 assets/ok/float16_display.mojo	elaborated	14	197	5	5	64	49	39	14	13
 assets/ok/float16_semantics.mojo	elaborated	30	517	19	24	295	274	70	52	50
 assets/ok/forward_struct_reference_iterator.mojo	elaborated	21	251	11	11	146	137	55	32	32
-assets/ok/forwarded_parameter_instances.mojo	elaborated	30	172	20	25	77	55	40	22	27
+assets/ok/forwarded_parameter_instances.mojo	elaborated	35	193	25	30	98	62	45	27	32
 assets/ok/free_function_origin_binder_result.mojo	elaborated	33	429	17	25	182	282	87	45	71
 assets/ok/free_function_origin_binders.mojo	elaborated	7	81	0	0	0	0	15	0	0
 assets/ok/func_styles.mojo	elaborated	6	69	0	0	0	0	14	0	0
@@ -977,7 +977,7 @@ assets/ok/typelist_comptime_vocabulary.mojo	elaborated	5	78	0	0	0	0	13	0	0
 assets/ok/typelist_reverse_concat.mojo	elaborated	5	70	0	0	0	0	13	0	0
 assets/ok/typelist_where_clauses.mojo	elaborated	8	79	0	0	0	0	16	0	0
 assets/ok/uint_and_scalar_value_parameters.mojo	elaborated	10	82	3	5	4	4	18	3	5
-assets/ok/unread_callable_parameter_instances.mojo	elaborated	20	180	9	11	42	45	28	9	11
+assets/ok/unread_callable_parameter_instances.mojo	elaborated	20	179	9	11	42	44	28	9	11
 assets/ok/unsafe_pointer.mojo	elaborated	7	112	2	2	16	14	18	5	5
 assets/ok/unspelled_loan_carrying_type_argument.mojo	elaborated	23	309	14	16	149	153	57	37	42
 assets/ok/untracked_pointer_ref_params.mojo	elaborated	9	103	2	2	16	14	20	5	5
@@ -1038,7 +1038,7 @@ assets/ok/witness_default_differs_from_requirement.mojo	elaborated	21	207	6	10	3
 assets/ok/writable_extra_write_to_overload.mojo	elaborated	14	173	2	2	16	14	31	5	5
 assets/ok/writer_write_override.mojo	elaborated	29	403	7	13	75	177	52	18	16
 benchmarks/compile/add.mojo	elaborated	6	71	0	0	0	0	14	0	0
-benchmarks/compile/collections_many.mojo	elaborated	652	10149	97	628	1434	9492	1838	247	1757
+benchmarks/compile/collections_many.mojo	elaborated	648	10141	97	624	1434	9484	1834	247	1753
 benchmarks/compile/empty.mojo	elaborated	2	0	0	0	0	0	2	0	0
 benchmarks/compile/generic.mojo	elaborated	22	257	12	14	141	142	46	28	30
 benchmarks/compile/hello.mojo	elaborated	5	66	0	0	0	0	13	0	0
@@ -1048,4 +1048,4 @@ benchmarks/compile/stdlib_heavy.mojo	elaborated	122	1700	46	106	654	1377	313	118
 benchmarks/compile/trait_defaults.mojo	elaborated	163	1476	21	115	215	1063	202	37	134
 benchmarks/compile/tstring.mojo	elaborated	22	219	8	12	44	79	39	17	15
 benchmarks/compile/tuple.mojo	elaborated	28	238	8	16	37	68	45	11	19
-total	1049	28375	389417	10050	16480	113135	171518	71543	24240	35942
+total	1049	28376	389429	10055	16481	113156	171516	71544	24245	35943

@@ -1,7 +1,8 @@
 # A parameter only forwarded to a callee parameter the callee removes, by a
 # call, a method call, or a subscript call, is removed too, as upstream's `RemoveUnusedParams`
 # walks its call graph callees first, even through an operator that could
-# trap, whose operation the pin never emits for a parameter argument, and
+# trap, whose operation the pin never emits for a parameter argument, so
+# that `10 // n` at `n == 0` fails nothing, and
 # to a parameter only a default the call supplies reads; a forward to a
 # parameter the callee reads, a read of its own, or a forward around a
 # recursive call keeps it.
@@ -19,6 +20,12 @@ def expr_fwd[n: Int]() -> Int:
 
 def div_fwd[n: Int]() -> Int:
     return leaf[10 // n]()
+
+def div_outer[n: Int]() -> Int:
+    return div_fwd[10 // n]()
+
+def div_kept[n: Int]() -> Int:
+    return leaf[10 // n]() + n
 
 def dleaf[a: Int, b: Int = a]() -> Int:
     return b
@@ -65,6 +72,17 @@ struct Row(Copyable):
     def __getitem_param__[i: Int](self) -> Int:
         return self.v + i
 
+struct Static[n: Int]:
+    @staticmethod
+    def get() -> Int:
+        return 7
+
+def static_div_fwd[n: Int]() -> Int:
+    return Static[10 // n].get()
+
+def subscript_div_fwd[n: Int]() -> Int:
+    return Grid(5)[10 // n]
+
 def subscript_fwd[n: Int]() -> Int:
     return Grid(5)[n]
 
@@ -83,13 +101,17 @@ def main():
     print(mid[1]() + mid[2]())
     print(two_hop[1]() + two_hop[2]())
     print(expr_fwd[1]() + expr_fwd[2]())
-    print(div_fwd[1]() + div_fwd[2]())
+    print(div_fwd[0]() + div_fwd[2]())
+    print(div_outer[0]() + div_outer[3]())
+    print(div_kept[0]())
     print(dmid[1]() + dmid[2]())
     print(tmid[Int]() + tmid[String]())
     print(mixed[1]() + mixed[2]())
     print(to_reader[1]() + to_reader[2]())
     print(method_fwd[1]() + method_fwd[2]())
     print(subscript_fwd[1]() + subscript_fwd[2]())
+    print(subscript_div_fwd[0]() + subscript_div_fwd[1]())
+    print(static_div_fwd[0]() + static_div_fwd[1]())
     print(subscript_expr_fwd[1]() + subscript_expr_fwd[2]())
     print(subscript_reader[1]() + subscript_reader[2]())
     print(rec[1](2) + rec[2](2))

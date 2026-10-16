@@ -916,6 +916,16 @@ impl<'a> Specializer<'a> {
                 )
             });
         let template = reduced.as_ref().map_or(template, |(view, _)| view);
+        // Each call of a generator that removed a parameter passes it no
+        // argument, as upstream's `RemoveUnusedParams` rewrote the call, so
+        // the instance evaluates none.
+        let forwarded = mojito_mir::mir::with_removed_forwards_erased(
+            &key.template,
+            template,
+            &self.source.declarations,
+            &|callee| Some(self.removed_params(callee, true)),
+        );
+        let template = forwarded.as_ref().unwrap_or(template);
         let scope = &self.binder_scope(&key.template);
         let mut removed = bindings.removed.clone();
         removed.extend(
@@ -1095,11 +1105,79 @@ impl<'a> Specializer<'a> {
             bindings,
         )?;
         self.unroll_comptime_loops(name, &mut function, scope, bindings)?;
+        self.erase_valueless_removed_arguments(&mut function.blocks, bindings);
         substitute_function(&mut function, bindings, scope).map_err(|mut e| {
             e.function.get_or_insert_with(|| name.to_string());
             e
         })?;
         Ok(function)
+    }
+
+    /// Erase (`_REMOVED_ARG`) each argument in `blocks` and their regions
+    /// that binds a parameter its callee removed and has no value under
+    /// `bindings` (`10 // n` at `n == 0`), in a call's `instantiated_args`
+    /// or its static receiver: upstream's `RemoveUnusedParams` rewrote the
+    /// call without it, so nothing evaluates it. One with a value stays,
+    /// which binds the callee's removed parameter for inference.
+    fn erase_valueless_removed_arguments(&self, blocks: &mut [MirBlock], bindings: &Bindings) {
+        for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+            for region in mojito_mir::mir::instruction_regions_mut(instruction) {
+                self.erase_valueless_removed_arguments(region, bindings);
+            }
+            let (target, decls, instantiated_args, receiver) = match instruction {
+                MirInstr::Call {
+                    func,
+                    instantiated_args,
+                    receiver,
+                    ..
+                } => {
+                    let Some(declaration) = self.declarations.get(func.0.as_str()) else {
+                        continue;
+                    };
+                    (
+                        func.0.as_str(),
+                        declaration.param_decls.as_slice(),
+                        instantiated_args,
+                        receiver.as_mut(),
+                    )
+                }
+                MirInstr::MethodCall {
+                    resolved: Some(target),
+                    param_decls,
+                    instantiated_args,
+                    ..
+                } => (
+                    target.as_str(),
+                    param_decls.as_slice(),
+                    instantiated_args,
+                    None,
+                ),
+                _ => continue,
+            };
+            let removed = self.removed_params(target, true);
+            if removed.is_empty() {
+                continue;
+            }
+            let erase = |decls: &[ParamDecl], arguments: &mut [TyArg]| {
+                for (decl, argument) in decls.iter().zip(arguments) {
+                    if removed.contains(decl.id()) && substitute_arg(argument, bindings).is_err() {
+                        *argument = TyArg::Val(CtValue::RemovedArg);
+                    }
+                }
+            };
+            if instantiated_args.len() == decls.len() {
+                erase(decls, instantiated_args);
+            }
+            if let Some(receiver) = receiver
+                && let TyKind::Struct(name, arguments) = receiver.kind()
+                && let Some(owner) = self.structs.get(name.as_str())
+                && substitute_ty(receiver, bindings).is_err()
+            {
+                let mut arguments = arguments.clone();
+                erase(&owner.param_decls, &mut arguments);
+                *receiver = TyKind::Struct(name.clone(), arguments).into();
+            }
+        }
     }
 
     /// Demand every application the last substitution met with no value

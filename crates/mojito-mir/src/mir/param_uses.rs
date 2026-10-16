@@ -311,22 +311,29 @@ pub fn without_removed_forwards<'a>(
     declarations: &MirDeclarations,
     removed: &dyn Fn(&str) -> Option<&'a [ParamId]>,
 ) -> Option<(MirFunction, Vec<String>)> {
-    if !calls_with_removed(&function.blocks, removed) {
-        return None;
-    }
-    let mut view = function.clone();
-    let original = register_reads(&mut view);
-    let mut discounted = BTreeSet::new();
-    drop_removed_arguments(&mut view.blocks, declarations, removed, &mut discounted);
-    if discounted.is_empty() {
-        return None;
-    }
-    let callables = declarations
-        .function(name)
-        .map(|declaration| callable_parameter_slots(function, &declaration.param_decls))
-        .unwrap_or_default();
-    erase_forward_chains(&mut view, &callables, &original);
-    Some((view, discounted.into_iter().collect()))
+    removed_forwards_view(name, function, declarations, removed, Spellings::Drop)
+}
+
+/// The body of `name` an instance runs, without the operands its calls
+/// pass for their callees' removed parameters.
+///
+/// `function` with every call passing no operand for the callee's removed
+/// parameters, `removed(callee)`, and the instructions that only computed
+/// one erased, as [`without_removed_forwards`] views it; `None` when no
+/// call drops one. It is the body an instance runs once upstream's `RemoveUnusedParams`
+/// has rewritten each call of a generator it removed a parameter from: no
+/// operation computes the argument, so none can trap (`10 // n` at
+/// `n == 0`). A call's `instantiated_args` and a static receiver's
+/// arguments keep their spellings, which the elaborator still binds the
+/// callee's removed parameters from where they have a value.
+pub fn with_removed_forwards_erased<'a>(
+    name: &str,
+    function: &MirFunction,
+    declarations: &MirDeclarations,
+    removed: &dyn Fn(&str) -> Option<&'a [ParamId]>,
+) -> Option<MirFunction> {
+    removed_forwards_view(name, function, declarations, removed, Spellings::Keep)
+        .map(|(view, _)| view)
 }
 
 /// The parameters `unread_parameters` may remove from `name`: its own
@@ -421,6 +428,50 @@ fn callable_parameter_slots<'d>(
         .collect()
 }
 
+/// Whether a view of a body drops a removed parameter's argument from a
+/// call's `instantiated_args` and its static receiver, as
+/// [`without_removed_forwards`] does, or keeps them, as
+/// [`with_removed_forwards_erased`] does.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Spellings {
+    Drop,
+    Keep,
+}
+
+/// The view of `function` that [`without_removed_forwards`] or, by
+/// `spellings`, [`with_removed_forwards_erased`] describes, beside the
+/// callees whose calls dropped an argument.
+fn removed_forwards_view<'a>(
+    name: &str,
+    function: &MirFunction,
+    declarations: &MirDeclarations,
+    removed: &dyn Fn(&str) -> Option<&'a [ParamId]>,
+    spellings: Spellings,
+) -> Option<(MirFunction, Vec<String>)> {
+    if !calls_with_removed(&function.blocks, removed) {
+        return None;
+    }
+    let mut view = function.clone();
+    let original = register_reads(&mut view);
+    let mut discounted = BTreeSet::new();
+    drop_removed_arguments(
+        &mut view.blocks,
+        declarations,
+        removed,
+        spellings,
+        &mut discounted,
+    );
+    if discounted.is_empty() {
+        return None;
+    }
+    let callables = declarations
+        .function(name)
+        .map(|declaration| callable_parameter_slots(function, &declaration.param_decls))
+        .unwrap_or_default();
+    erase_forward_chains(&mut view, &callables, &original);
+    Some((view, discounted.into_iter().collect()))
+}
+
 /// Whether `blocks` or their regions call a callee `removed` names
 /// parameters of, by a call, a resolved method call, or a subscript call.
 fn calls_with_removed<'a>(
@@ -444,17 +495,19 @@ fn calls_with_removed<'a>(
 }
 
 /// Drop from each call in `blocks` and their regions the arguments of the
-/// callee's removed parameters, adding each callee that lost one to
-/// `discounted`.
+/// callee's removed parameters, their `instantiated_args` entries and
+/// static receiver arguments as `spellings` says, adding each callee that
+/// lost one to `discounted`.
 fn drop_removed_arguments<'a>(
     blocks: &mut [MirBlock],
     declarations: &MirDeclarations,
     removed: &dyn Fn(&str) -> Option<&'a [ParamId]>,
+    spellings: Spellings,
     discounted: &mut BTreeSet<String>,
 ) {
     for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
         for region in instruction_regions_mut(instruction) {
-            drop_removed_arguments(region, declarations, removed, discounted);
+            drop_removed_arguments(region, declarations, removed, spellings, discounted);
         }
         if let Some(target) = drop_subscript_arguments(instruction, removed) {
             discounted.insert(target);
@@ -472,6 +525,7 @@ fn drop_removed_arguments<'a>(
                     continue;
                 };
                 if let Some(ids) = removed(&func.0)
+                    && spellings == Spellings::Drop
                     && drop_receiver_arguments(receiver, declarations, ids)
                 {
                     discounted.insert(func.0.clone());
@@ -480,7 +534,7 @@ fn drop_removed_arguments<'a>(
                     &func.0,
                     callee.param_decls.as_slice(),
                     param_arg_regs,
-                    Some(instantiated_args),
+                    (spellings == Spellings::Drop).then_some(instantiated_args),
                 )
             }
             MirInstr::MethodCall {
@@ -493,7 +547,7 @@ fn drop_removed_arguments<'a>(
                 &*target,
                 param_decls.as_slice(),
                 param_arg_regs,
-                Some(instantiated_args),
+                (spellings == Spellings::Drop).then_some(instantiated_args),
             ),
             _ => continue,
         };

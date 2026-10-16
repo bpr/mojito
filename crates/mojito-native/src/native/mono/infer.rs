@@ -66,8 +66,14 @@ impl Specializer<'_> {
         // index binds before the receiver is inferred, so the result type
         // over it closes, and joins the instance identity.
         let mut explicit = Vec::new();
+        let removed = self.removed_params(&target, true);
         for (decl, param_arg) in call.param_decls.iter().zip(&call.param_arg_regs) {
-            if !matches!(decl, ParamDecl::Value { .. }) {
+            // The argument of a parameter the accessor removed is no longer
+            // passed ([`mojito_mir::mir::with_removed_forwards_erased`]).
+            let erased = param_arg.value.is_none()
+                && param_arg.expr.is_none()
+                && removed.contains(decl.id());
+            if !matches!(decl, ParamDecl::Value { .. }) || erased {
                 continue;
             }
             // A constant register is the value; an index built from the
@@ -835,7 +841,11 @@ impl Specializer<'_> {
                         variadic: false, ..
                     },
                     TyArg::Val(value),
-                ) if !matches!(value, CtValue::Deferred(_) | CtValue::Marker(_)) => {
+                ) if !matches!(
+                    value,
+                    CtValue::Deferred(_) | CtValue::Marker(_) | CtValue::RemovedArg
+                ) =>
+                {
                     let closed = match value {
                         CtValue::Expr(expr) => match eval_ct(expr, &self.enclosing) {
                             Ok(value) => value,
