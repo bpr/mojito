@@ -8,16 +8,19 @@
 //! capture, a payload) names none, and the VM and
 //! the native backend find the struct's member from the value's type. This
 //! module answers which structs those are: the types copied and moved
-//! without a name, and every field type a copy or a move of them may
-//! reach.
+//! without a name, and every field type a copy or a move of a struct
+//! without the member may reach.
 
-use super::destroys::close_over_fields;
 use crate::mir::{
-    MirBlock, MirCaptureMode, MirFunction, MirInstr, MirPlace, Reg, StructFields, UseMode,
+    MirBlock, MirCaptureMode, MirFunction, MirInstr, MirPlace, MirStructDeclaration, Reg, UseMode,
     instruction_regions,
 };
 use mojito_hir::hir::VarId;
-use mojito_types::types::Ty;
+use mojito_types::types::{Ty, TyKind};
+use std::collections::HashSet;
+
+/// A struct's declaration, by the struct's name.
+pub type StructDeclarations<'d> = dyn Fn(&str) -> Option<&'d MirStructDeclaration> + 'd;
 
 /// What a body copies and moves without naming a constructor.
 pub struct Relocated {
@@ -36,14 +39,16 @@ pub struct Relocated {
 ///
 /// A copy is a `var.use copy`, a `value.copy`, an owned closure capture, a
 /// variant payload, a `Type(copy=value)` construction, and a method or
-/// iterator result read through its reference: the points the VM and the native backend
-/// copy at. A read out of storage (a load, a field, an element) and a
-/// store copy nothing. A move is a `var.use move` and an owned closure
-/// capture. Through `fields`, every
-/// field of a struct those reach joins, since a struct without the member
-/// copies or moves its fields one by one. A copy or move naming its
-/// constructor runs it instead, and joins [`Relocated::named`].
-pub fn relocated_structs(function: &MirFunction, fields: &StructFields<'_>) -> Relocated {
+/// iterator result read through its reference: the points the VM and the
+/// native backend copy at. A read out of storage (a load, a field, an
+/// element) and a store copy nothing. A move is a `var.use move` and an
+/// owned closure capture. Through `structs`, every field of a struct those
+/// reach *without* the member joins, since such a struct copies or moves
+/// its fields one by one; a struct recording its own `__copyinit__` or
+/// `__moveinit__` reaches its fields through that member's body. A copy
+/// or move naming its constructor runs it instead, and joins
+/// [`Relocated::named`].
+pub fn relocated_structs(function: &MirFunction, structs: &StructDeclarations<'_>) -> Relocated {
     let mut walk = Walk {
         function,
         copied: Vec::new(),
@@ -51,21 +56,65 @@ pub fn relocated_structs(function: &MirFunction, fields: &StructFields<'_>) -> R
         named: Vec::new(),
     };
     walk.blocks(&function.blocks);
-    let copied = close_over_fields(walk.copied, fields);
-    let moved = close_over_fields(walk.moved, fields);
+    let (copied, copied_symbolic) = close_over_fields(walk.copied, "__copyinit__", structs);
+    let (moved, moved_symbolic) = close_over_fields(walk.moved, "__moveinit__", structs);
     Relocated {
-        copied: copied.structs,
-        moved: moved.structs,
-        symbolic: copied.symbolic || moved.symbolic,
+        copied,
+        moved,
+        symbolic: copied_symbolic || moved_symbolic,
         named: walk.named,
     }
+}
+
+/// The struct types the values `pending` reach, and whether one is
+/// symbolic: a struct's fields are reached through `structs` only where
+/// the struct records no `member`, as is each element of a tuple, pack,
+/// or variant.
+fn close_over_fields(
+    mut pending: Vec<Ty>,
+    member: &str,
+    structs: &StructDeclarations<'_>,
+) -> (Vec<Ty>, bool) {
+    let mut seen = HashSet::new();
+    let mut reached = Vec::new();
+    let mut symbolic = false;
+    while let Some(ty) = pending.pop() {
+        if !seen.insert(ty.clone()) {
+            continue;
+        }
+        match ty.kind() {
+            TyKind::Struct(name, _) => {
+                let declaration = structs(name);
+                if declaration.is_none_or(|declaration| declaration.member(member).is_none()) {
+                    pending.extend(
+                        declaration
+                            .into_iter()
+                            .flat_map(|declaration| &declaration.fields)
+                            .map(|(_, field)| field.clone()),
+                    );
+                }
+                reached.push(ty);
+            }
+            TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {
+                pending.extend(items.iter().cloned());
+            }
+            TyKind::ComptimeList(item) | TyKind::VariadicPack(item) => pending.push(item.clone()),
+            TyKind::Infer
+            | TyKind::Param { .. }
+            | TyKind::Assoc { .. }
+            | TyKind::Dependent(_)
+            | TyKind::SelfType => symbolic = true,
+            _ => {}
+        }
+    }
+    (reached, symbolic)
 }
 
 /// The types a body's instructions copy and move.
 struct Walk<'f> {
     function: &'f MirFunction,
-    copied: Vec<(Ty, bool)>,
-    moved: Vec<(Ty, bool)>,
+    copied: Vec<Ty>,
+    moved: Vec<Ty>,
     named: Vec<(Ty, String)>,
 }
 
@@ -142,7 +191,7 @@ impl Walk<'_> {
 
     fn register(&mut self, register: Reg) {
         if let Some(ty) = self.function.reg_types.get(&register.0) {
-            self.copied.push((ty.clone(), true));
+            self.copied.push(ty.clone());
         }
     }
 
@@ -167,9 +216,9 @@ impl Walk<'_> {
 
     fn push(&mut self, ty: Ty, moved: bool) {
         if moved {
-            self.moved.push((ty, true));
+            self.moved.push(ty);
         } else {
-            self.copied.push((ty, true));
+            self.copied.push(ty);
         }
     }
 }

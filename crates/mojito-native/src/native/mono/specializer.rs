@@ -3562,13 +3562,14 @@ impl<'a> Specializer<'a> {
         owner: &str,
         function: &MirFunction,
     ) -> Result<(), MonoError> {
-        let fields = |name: &str| {
+        let structs = |name: &str| {
             self.output_struct_positions
                 .get(name)
-                .map(|&position| self.output_structs[position].fields.as_slice())
+                .map(|&position| &self.output_structs[position])
         };
+        let fields = |name: &str| structs(name).map(|declaration| declaration.fields.as_slice());
         let destroyed = destroyed_structs(function, &fields);
-        let relocated = relocated_structs(function, &fields);
+        let relocated = relocated_structs(function, &structs);
         let named = || {
             let mut types = function_types(function).cloned().collect::<Vec<_>>();
             push_instruction_types(&function.blocks, &mut types);

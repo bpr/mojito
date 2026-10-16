@@ -237,13 +237,11 @@ impl<'p> Symbols<'p> {
                 && live.insert(name)
             {
                 pending.extend(self.table.function_uses(function));
-                let fields = |name: &str| {
-                    self.structs
-                        .get(name)
-                        .map(|declaration| declaration.fields.as_slice())
-                };
+                let structs = |name: &str| self.structs.get(name).copied();
+                let fields =
+                    |name: &str| structs(name).map(|declaration| declaration.fields.as_slice());
                 let destroyed = destroyed_structs(function, &fields);
-                let relocated = relocated_structs(function, &fields);
+                let relocated = relocated_structs(function, &structs);
                 if (destroyed.symbolic || relocated.symbolic) && !every_member {
                     every_member = true;
                     for &owner in &live_structs {

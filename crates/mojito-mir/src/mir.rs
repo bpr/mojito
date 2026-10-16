@@ -60,7 +60,7 @@ mod calls;
 mod constructor_calls;
 pub use constructor_calls::{name_constructors, use_constructor_member};
 mod copies;
-pub use copies::{Relocated, relocated_structs};
+pub use copies::{Relocated, StructDeclarations, relocated_structs};
 mod destroys;
 pub use destroys::{Destroyed, StructFields, destroyed_structs};
 mod facts;
@@ -783,12 +783,30 @@ pub fn lower_unit(
             let _other = timing::span("other");
             lower_function(root, checked, functions, declarations, invariant_errors);
         }
-        LoweringUnit::Destructor { root } => {
+        LoweringUnit::Destructor { root }
+        | LoweringUnit::CopyConstructor { root }
+        | LoweringUnit::MoveConstructor { root } => {
             let _struct = timing::span("struct");
             if let Some(node) = checked.tables().statement(root)
                 && let CheckedStmtOp::Struct(declaration) = &node.op
             {
-                lower_synthesized_destructor(&declaration.name, functions, declarations);
+                let fields: Vec<(String, Ty)> = declaration
+                    .fields
+                    .iter()
+                    .filter_map(|field| Some((field.name.clone(), field.ty.clone()?)))
+                    .collect();
+                let member = match unit {
+                    LoweringUnit::CopyConstructor { .. } => SynthesizedMember::Copy,
+                    LoweringUnit::MoveConstructor { .. } => SynthesizedMember::Move,
+                    _ => SynthesizedMember::Destroy,
+                };
+                lower_synthesized_member(
+                    &declaration.name,
+                    &fields,
+                    member,
+                    functions,
+                    declarations,
+                );
             }
         }
         // A module `comptime` declaration has no runtime form, as
@@ -999,26 +1017,120 @@ fn record_lifecycle_members(declarations: &mut MirDeclarations) {
     }
 }
 
-/// Lower the destructor the compiler synthesizes for the struct `name`
-/// ([`CheckedProgram::synthesizes_destructor`]): `{name}.__deinit__(deinit
-/// self)` with an empty body, marked `nodebug` and synthesized, as
-/// upstream synthesizes a `__del__` for a struct that declares none. Drop
-/// elaboration then destroys each field of the receiver at entry, naming
-/// the field's own destructor, so a drop of the struct names this one and
-/// reaches its fields' through it.
-fn lower_synthesized_destructor(
+/// A lifecycle member the compiler synthesizes for a struct that declares
+/// none, as upstream synthesizes a fieldwise `__copyinit__`, `__moveinit__`,
+/// and `__del__`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SynthesizedMember {
+    /// `{name}.__copyinit__(out self, *, copy: Self)`, copying each field of
+    /// `copy` into `self`'s.
+    Copy,
+    /// `{name}.__moveinit__(out self, deinit existing: Self)`, moving each
+    /// field of `existing` into `self`'s.
+    Move,
+    /// `{name}.__deinit__(deinit self)` with an empty body, which drop
+    /// elaboration refines into one named drop per field at entry.
+    Destroy,
+}
+
+/// Lower the lifecycle `member` the compiler synthesizes for the struct
+/// `name` over its `fields` ([`CheckedProgram::synthesizes_destructor`],
+/// [`CheckedProgram::synthesizes_copy_constructor`],
+/// [`CheckedProgram::synthesizes_move_constructor`]), marked `nodebug` and
+/// synthesized. Each field copies or moves by its own constructor, which
+/// [`name_constructors`] names on the field's `value.copy`, so a copy, move,
+/// or drop of the struct names the synthesized member and reaches its
+/// fields' through its body. A field whose copy is the value itself
+/// (`types::trivially_register_passable_leaf`) is stored as read.
+fn lower_synthesized_member(
     name: &str,
+    fields: &[(String, Ty)],
+    member: SynthesizedMember,
     functions: &mut Vec<(String, MirFunction)>,
     declarations: &mut MirDeclarations,
 ) {
-    let symbol = format!("{name}.__deinit__");
     let receiver: Ty = TyKind::Struct(name.to_string(), Vec::new()).into();
+    let (symbol, parameter, receiver_convention, keyword_only) = match member {
+        SynthesizedMember::Copy => (
+            format!("{name}.__copyinit__"),
+            Some(("copy", None)),
+            ArgConvention::Out,
+            Some(0),
+        ),
+        SynthesizedMember::Move => (
+            format!("{name}.__moveinit__"),
+            Some(("existing", Some(ArgConvention::Deinit))),
+            ArgConvention::Out,
+            None,
+        ),
+        SynthesizedMember::Destroy => (
+            format!("{name}.__deinit__"),
+            None,
+            ArgConvention::Deinit,
+            None,
+        ),
+    };
+    let source_param = parameter.is_some();
+    let field_place = |root: VarId, field: &str, ty: &Ty| MirPlace {
+        root,
+        root_ty: Some(receiver.clone()),
+        proj: vec![Proj::Field(field.to_string())],
+        projection_tys: vec![ty.clone()],
+        ty: Some(ty.clone()),
+        through: None,
+    };
+    let mut instrs = Vec::new();
+    let mut reg_types = HashMap::new();
+    let register = |ty: &Ty, reg_types: &mut HashMap<u32, Ty>| {
+        let reg = Reg(reg_types.len() as u32);
+        reg_types.insert(reg.0, ty.clone());
+        reg
+    };
+    for (field, ty) in fields {
+        match member {
+            SynthesizedMember::Copy => {
+                let read = register(ty, &mut reg_types);
+                instrs.push(MirInstr::LoadPlace {
+                    dest: read,
+                    place: field_place(1, field, ty),
+                });
+                let src = if mojito_types::types::trivially_register_passable_leaf(ty.kind()) {
+                    read
+                } else {
+                    let copy = register(ty, &mut reg_types);
+                    instrs.push(MirInstr::CopyValue {
+                        dest: copy,
+                        value: read,
+                        constructor: None,
+                    });
+                    copy
+                };
+                instrs.push(MirInstr::Store {
+                    place: field_place(0, field, ty),
+                    src,
+                });
+            }
+            SynthesizedMember::Move => {
+                let moved = register(ty, &mut reg_types);
+                instrs.push(MirInstr::MovePlace {
+                    dest: moved,
+                    place: field_place(1, field, ty),
+                });
+                instrs.push(MirInstr::Store {
+                    place: field_place(0, field, ty),
+                    src: moved,
+                });
+            }
+            SynthesizedMember::Destroy => {}
+        }
+    }
+    let (param_name, param_convention) = parameter.unzip();
     declarations.functions.push(MirFunctionDeclaration {
         lowered_name: symbol.clone(),
-        param_names: Vec::new(),
-        param_types: Vec::new(),
-        defaults: Vec::new(),
-        required: Vec::new(),
+        param_names: param_name.map(str::to_string).into_iter().collect(),
+        param_types: vec![receiver.clone(); usize::from(source_param)],
+        defaults: vec![None; usize::from(source_param)],
+        required: vec![true; usize::from(source_param)],
         variadic: None,
         variadic_convention: None,
         variadic_index: None,
@@ -1026,38 +1138,47 @@ fn lower_synthesized_destructor(
         kw_variadic_convention: None,
         kw_variadic_index: None,
         positional_only: None,
-        keyword_only: None,
+        keyword_only,
         param_decls: Vec::new(),
         has_receiver: true,
-        receiver_convention: Some(ArgConvention::Deinit),
-        param_conventions: Vec::new(),
+        receiver_convention: Some(receiver_convention),
+        param_conventions: param_convention.into_iter().collect(),
         ret_ty: Ty::none(),
         returns_reference: false,
         raises: false,
         error_ty: None,
-        ref_params: Vec::new(),
-        param_writes: Vec::new(),
+        ref_params: vec![false; usize::from(source_param)],
+        param_writes: vec![member == SynthesizedMember::Move; usize::from(source_param)],
         availability: Vec::new(),
         enclosing: None,
         region_binders: Vec::new(),
         inline: mojito_checked::declaration::InlineLevel::NoDebug,
         provenance: mojito_checked::declaration::FunctionProvenance::Synthesized,
     });
+    let n_params = 1 + usize::from(source_param);
+    let mut var_names = vec!["self".to_string()];
+    var_names.extend(param_name.map(str::to_string));
     functions.push((
         symbol,
         MirFunction {
             blocks: vec![MirBlock {
-                instrs: Vec::new(),
+                instrs,
                 term: MirTerm::Return(None),
             }],
-            n_vars: 1,
-            var_names: vec!["self".to_string()],
-            n_params: 1,
-            param_types: vec![receiver.clone()],
-            owned_params: vec![false],
-            deinit_params: vec![true],
-            ref_params: vec![false],
-            var_tys: HashMap::from([(0, receiver)]),
+            n_regs: reg_types.len() as u32,
+            n_vars: n_params,
+            var_names,
+            n_params,
+            param_types: vec![receiver.clone(); n_params],
+            owned_params: vec![false; n_params],
+            deinit_params: (0..n_params)
+                .map(|index| index == n_params - 1 && member != SynthesizedMember::Copy)
+                .collect(),
+            ref_params: vec![false; n_params],
+            var_tys: (0..n_params)
+                .map(|index| (index as VarId, receiver.clone()))
+                .collect(),
+            reg_types,
             ret_ty: Some(Ty::none()),
             ..MirFunction::default()
         },

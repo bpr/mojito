@@ -2135,21 +2135,36 @@ impl Checker {
             .struct_conformance_conditions(name, info, base)?
             .into_iter()
             .reduce(|left, right| GenericConstraint::Or(Box::new(left), Box::new(right)));
-        if let Some(capability) = capability {
-            register_passable.push(
-                info.fields
-                    .iter()
-                    .fold(capability, |joined, (_, field_ty)| {
-                        GenericConstraint::And(
-                            Box::new(joined),
-                            Box::new(GenericConstraint::Trivial(
-                                kind,
-                                ConstraintOperand::Type(field_ty.clone()),
-                            )),
-                        )
-                    }),
-            );
+        // A field whose facet no binder decides is folded here, as it holds
+        // or fails at every instance: a concrete type answers either way,
+        // and a scalar or pointer over a binder answers where its structure
+        // proves the facet; one a binder decides stays a conjunct.
+        let mut fieldwise = Some(capability?);
+        for (_, field_ty) in &info.fields {
+            let decided = if mojito_types::types::is_symbolic(field_ty) {
+                (matches!(
+                    field_ty.kind(),
+                    TyKind::Simd { .. } | TyKind::Pointer { .. }
+                ) && self.is_trivially(kind, field_ty))
+                .then_some(true)
+            } else {
+                Some(self.is_trivially(kind, field_ty))
+            };
+            fieldwise = match decided {
+                Some(true) => fieldwise,
+                Some(false) => None,
+                None => fieldwise.map(|joined| {
+                    GenericConstraint::And(
+                        Box::new(joined),
+                        Box::new(GenericConstraint::Trivial(
+                            kind,
+                            ConstraintOperand::Type(field_ty.clone()),
+                        )),
+                    )
+                }),
+            };
         }
+        register_passable.extend(fieldwise);
         Some(register_passable)
     }
 

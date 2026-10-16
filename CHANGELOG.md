@@ -8,6 +8,25 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct with copyable or movable fields and no copy or move constructor
+  of its own now has a synthesized one (R1044), as upstream synthesizes a
+  fieldwise `__copyinit__` and `__moveinit__` for every struct that
+  declares none: the check lists a `CopyConstructor` or `MoveConstructor`
+  lowering unit for each struct whose `IsTriviallyCopyable` or
+  `IsTriviallyMovable` conformance is possible but not unconditional, MIR
+  lowers it to `S.__copyinit__(out self, *, copy: Self)` or
+  `S.__moveinit__(out self, deinit existing: Self)` storing each field of
+  the source into `self`'s through a `value.copy` naming the field's
+  constructor or a `place.move`, marked `nodebug` and `synthesized`,
+  recorded in the struct's member table and packaged as any unit. Every
+  copy and move of such a struct names the constructor and reaches its
+  fields' through its body, so `relocated_structs` closes over the fields
+  only of a struct recording no such member. The checker folds a
+  trivial-lifecycle field conjunct no binder decides, so a generic struct
+  over `Int` and pointer fields gets no synthesized member, destructor
+  included. `inline-parametric` names the drops a splice substitutes, as
+  it names the copies, which 95 `assets/ok` fixtures had failed the
+  verifier on since R1041. The package format is 68.
 - A struct with droppable fields and no `__deinit__` now has a synthesized
   destructor (R1041), as upstream synthesizes a `__del__` for every struct
   that declares none: the check lists a `Destructor` lowering unit for

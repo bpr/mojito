@@ -3897,8 +3897,10 @@ pub(crate) enum StructShell {
     Method(usize),
     /// An inherited default's wrapper, whose body the unit holds beside.
     Wrapper,
-    /// The struct's synthesized destructor, which has no body.
-    Destructor,
+    /// A synthesized lifecycle member (the struct's destructor, copy
+    /// constructor, or move constructor), which has no checked body: its
+    /// lowering reads the struct's fields alone.
+    Synthesized,
 }
 
 /// What a node operand is replaced by when an op is copied
@@ -4062,7 +4064,11 @@ impl Extraction<'_> {
                 .map(|method| method.map_operands(self))
                 .into_iter()
                 .collect(),
-            StructShell::Wrapper | StructShell::Destructor => Vec::new(),
+            StructShell::Wrapper | StructShell::Synthesized => Vec::new(),
+        };
+        let fields = match shell {
+            StructShell::Synthesized => declaration.fields.clone(),
+            StructShell::Method(_) | StructShell::Wrapper => Vec::new(),
         };
         self.push(CheckedStmt {
             op: CheckedStmtOp::Struct(Box::new(CheckedStruct {
@@ -4070,7 +4076,7 @@ impl Extraction<'_> {
                 conforms: Vec::new(),
                 conformance_conditions: Vec::new(),
                 where_clauses: Vec::new(),
-                fields: Vec::new(),
+                fields,
                 associated: Vec::new(),
                 methods,
                 fieldwise_init: false,

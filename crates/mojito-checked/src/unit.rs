@@ -51,6 +51,14 @@ pub enum LoweringUnit<'a> {
     /// statement node is `root`, which declares none over fields whose
     /// destruction may run code ([`CheckedProgram::synthesizes_destructor`]).
     Destructor { root: CheckedStmtId },
+    /// The copy constructor the compiler synthesizes for the struct whose
+    /// statement node is `root`, which declares none over fields whose
+    /// copy may run code ([`CheckedProgram::synthesizes_copy_constructor`]).
+    CopyConstructor { root: CheckedStmtId },
+    /// The move constructor the compiler synthesizes for the struct whose
+    /// statement node is `root`, which declares none over fields whose
+    /// move may run code ([`CheckedProgram::synthesizes_move_constructor`]).
+    MoveConstructor { root: CheckedStmtId },
 }
 
 impl LoweringUnit<'_> {
@@ -83,25 +91,66 @@ impl CheckedProgram {
     /// whose every field's destruction runs no code gets none, as nothing
     /// would call it.
     pub fn synthesizes_destructor(&self, declaration: &CheckedStruct) -> bool {
-        !declaration
+        self.synthesizes_lifecycle_member(declaration, "__deinit__", "Deinitable")
+    }
+
+    /// Whether the compiler synthesizes `declaration`'s copy constructor,
+    /// as upstream synthesizes a fieldwise `__copyinit__` for every
+    /// `Copyable` struct that declares none: the struct declares no
+    /// `__copyinit__`, may conform to `Copyable`, and its synthesized
+    /// `IsTriviallyCopyable` conformance is not unconditional, so copying
+    /// a value of it may run a field's copy constructor. A struct whose
+    /// every field copies without running code gets none: its copy is the
+    /// value itself.
+    pub fn synthesizes_copy_constructor(&self, declaration: &CheckedStruct) -> bool {
+        self.synthesizes_lifecycle_member(declaration, "__copyinit__", "Copyable")
+    }
+
+    /// Whether the compiler synthesizes `declaration`'s move constructor,
+    /// as upstream synthesizes a fieldwise `__moveinit__` for every
+    /// `Movable` struct that declares none: the struct declares no
+    /// `__moveinit__`, may conform to `Movable`, and its synthesized
+    /// `IsTriviallyMovable` conformance is not unconditional, so moving a
+    /// value of it may run a field's move constructor.
+    pub fn synthesizes_move_constructor(&self, declaration: &CheckedStruct) -> bool {
+        self.synthesizes_lifecycle_member(declaration, "__moveinit__", "Movable")
+    }
+
+    /// Whether the compiler synthesizes the lifecycle member `member` of
+    /// `declaration`: the struct declares none, its `capability`
+    /// conformance is possible (a struct that can never be copied gets no
+    /// copy constructor), and its `IsTrivially{capability}` conformance is
+    /// not unconditional, so the member may run a field's.
+    fn synthesizes_lifecycle_member(
+        &self,
+        declaration: &CheckedStruct,
+        member: &str,
+        capability: &str,
+    ) -> bool {
+        if declaration
             .methods
             .iter()
-            .any(|method| method.registered == "__deinit__")
-            && self
-                .conformances()
-                .structs
-                .get(&declaration.name)
-                .and_then(|rows| {
-                    rows.iter()
-                        .find(|row| row.trait_name == "IsTriviallyDeinitable")
-                })
-                .is_some_and(|row| row.conditions != [GenericConstraint::Bool(true)])
+            .any(|method| method.registered == member)
+        {
+            return false;
+        }
+        let Some(rows) = self.conformances().structs.get(&declaration.name) else {
+            return false;
+        };
+        let row = |trait_name: &str| {
+            rows.iter()
+                .find(|row| row.trait_name == trait_name)
+                .map(|row| row.conditions.as_slice())
+        };
+        row(capability).is_some_and(|conditions| !conditions.is_empty())
+            && row(&format!("IsTrivially{capability}"))
+                .is_some_and(|conditions| conditions != [GenericConstraint::Bool(true)])
     }
 
     /// Every lowering unit of the program, in the order it lowers them: its
     /// statements' declarations in order, each struct's methods before its
-    /// wrappers and its synthesized destructor, and every module constant
-    /// last.
+    /// wrappers and its synthesized copy constructor, move constructor, and
+    /// destructor, and every module constant last.
     pub fn lowering_units(&self) -> Vec<LoweringUnit<'_>> {
         let mut units = Vec::new();
         let mut constants = Vec::new();
@@ -134,6 +183,12 @@ impl CheckedProgram {
                                 index,
                             }),
                     );
+                    if self.synthesizes_copy_constructor(declaration) {
+                        units.push(LoweringUnit::CopyConstructor { root });
+                    }
+                    if self.synthesizes_move_constructor(declaration) {
+                        units.push(LoweringUnit::MoveConstructor { root });
+                    }
                     if self.synthesizes_destructor(declaration) {
                         units.push(LoweringUnit::Destructor { root });
                     }
@@ -247,6 +302,10 @@ pub enum UnitKind {
     Constant,
     /// A struct's synthesized destructor.
     Destructor,
+    /// A struct's synthesized copy constructor.
+    CopyConstructor,
+    /// A struct's synthesized move constructor.
+    MoveConstructor,
 }
 
 /// One lowering unit's checked nodes and the facts of its declaration
@@ -288,7 +347,11 @@ impl CheckedUnit {
         };
         if matches!(
             self.kind,
-            UnitKind::Method { .. } | UnitKind::Wrapper | UnitKind::Destructor
+            UnitKind::Method { .. }
+                | UnitKind::Wrapper
+                | UnitKind::Destructor
+                | UnitKind::CopyConstructor
+                | UnitKind::MoveConstructor
         ) && let Some(structure) = self
             .tables
             .roots()
@@ -395,7 +458,19 @@ impl CheckedUnit {
             LoweringUnit::Destructor { root } => (
                 UnitKind::Destructor,
                 *root,
-                Some(StructShell::Destructor),
+                Some(StructShell::Synthesized),
+                &[][..],
+            ),
+            LoweringUnit::CopyConstructor { root } => (
+                UnitKind::CopyConstructor,
+                *root,
+                Some(StructShell::Synthesized),
+                &[][..],
+            ),
+            LoweringUnit::MoveConstructor { root } => (
+                UnitKind::MoveConstructor,
+                *root,
+                Some(StructShell::Synthesized),
                 &[][..],
             ),
         };
@@ -450,6 +525,8 @@ impl UnitProgram {
                 index: 0,
             },
             UnitKind::Destructor => LoweringUnit::Destructor { root },
+            UnitKind::CopyConstructor => LoweringUnit::CopyConstructor { root },
+            UnitKind::MoveConstructor => LoweringUnit::MoveConstructor { root },
         })
     }
 }

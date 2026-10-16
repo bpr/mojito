@@ -527,12 +527,16 @@ the declaration (package format 65).
 
 A declaration may end with `synthesized: true` after `inline` (schema
 1.70): the compiler synthesized the function for a struct that declares
-none, as upstream synthesizes a `__del__` for a struct without one
-(`S.__deinit__(deinit self)` with an empty body, `nodebug`). The writer
-omits the field for a function the source declares, and the reader takes an
-absent field as false. A package record carries the flag beside the rest of
-the declaration, and a package unit may be a struct's synthesized destructor
-(package format 67).
+none, as upstream synthesizes a `__del__`, `__copyinit__`, and
+`__moveinit__` for a struct without one (`S.__deinit__(deinit self)` with
+an empty body, `S.__copyinit__(out self, *, copy: Self)` and
+`S.__moveinit__(out self, deinit existing: Self)` storing each field of the
+source into `self`'s; all `nodebug`). The writer omits the field for a
+function the source declares, and the reader takes an absent field as
+false. A package record carries the flag beside the rest of the
+declaration, and a package unit may be a struct's synthesized destructor
+(package format 67), copy constructor, or move constructor (package format
+68).
 
 Abstract dispatch requirements (`__trait_dispatch.*`, `__iterator_dispatch.*`) have no concrete declaration record;
 a `__trait_dispatch.*` method's parameter contract is its trait requirement's (minor version 48).
@@ -1049,10 +1053,10 @@ lowering unit, one record per library declaration, and one module table
 holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 67`.
+MLIR bytecode throughout. The format line is `mojito-package 68`.
 
 ```text
-mojito-package 67
+mojito-package 68
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode, then the type section>

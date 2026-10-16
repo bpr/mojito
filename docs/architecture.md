@@ -153,9 +153,12 @@ import (every compilation that links the bundled library):
   included. A lowering unit (`CheckedProgram::lowering_units`) is a module
   `def`, one struct method (with its struct's name and the symbol it
   lowers to), an inherited default's wrapper, a struct's synthesized
-  destructor (`CheckedProgram::synthesizes_destructor`: a struct declaring
-  no `__deinit__` whose `IsTriviallyDeinitable` conformance is not
-  unconditional), a trait default, or a
+  destructor, copy constructor, or move constructor
+  (`CheckedProgram::{synthesizes_destructor, synthesizes_copy_constructor,
+  synthesizes_move_constructor}`: a struct declaring no `__deinit__`,
+  `__copyinit__`, or `__moveinit__` whose `IsTriviallyDeinitable`,
+  `IsTriviallyCopyable`, or `IsTriviallyMovable` conformance is possible
+  but not unconditional), a trait default, or a
   module constant's lifted applications; its record holds its checked
   tables (`CheckedProgram::units`, which copies each unit's nodes out of
   the whole program's checked tables, as upstream's unit is an op of its
@@ -4481,13 +4484,29 @@ each site. Lowering runs it on every body once the member tables exist (the
 `close_register_types` loops of `lower_program` and `lower_package_unit`),
 and each later producer of a copy or move reruns it: drop elaboration after
 copy elision, `inline-parametric` after a splice substitutes a callee's
-types, and the elaborator per instance (`Specializer::name_lifecycle_calls`).
-The verifier holds a copy or move to the same rule as a drop. A borrow, a
-forward, and a copy or move of a type whose struct records no such member
-(a trivial or built-in type, or a struct with no constructor of its own)
-name none and stay a value copy; captures, variant payloads,
-reference-read results, and `T(copy=x)` still find their constructor from
-the type (`mir::relocated_structs`). A read out of storage and a store copy
+types (which names the drops it substitutes the same way, by
+`name_destructors`), and the elaborator per instance
+(`Specializer::name_lifecycle_calls`). The verifier holds a copy or move to
+the same rule as a drop. A borrow, a forward, and a copy or move of a type
+whose struct records no such member (a trivial or built-in type, or a
+struct whose every field copies or moves without running code) name none
+and stay a value copy. A struct declaring none over fields whose copy or
+move may run code gets a synthesized `S.__copyinit__(out self, *, copy:
+Self)` and `S.__moveinit__(out self, deinit existing: Self)`
+(`mir::lower_unit` for `LoweringUnit::{CopyConstructor, MoveConstructor}`,
+listed by `CheckedProgram::{synthesizes_copy_constructor,
+synthesizes_move_constructor}` where the struct's `IsTriviallyCopyable` or
+`IsTriviallyMovable` conformance is possible but not unconditional; the
+checker folds a field's conjunct no binder decides, so a generic struct
+over `Int` and pointer fields gets none), marked `nodebug` and
+`synthesized`, whose body stores each field of the source into `self`'s
+through a `value.copy` naming the field's constructor or a `place.move`, as
+upstream synthesizes a fieldwise `__copyinit__` and `__moveinit__` for
+every struct that declares none; a copy or move of the struct names it and
+reaches its fields' constructors through its body. Captures, variant
+payloads, reference-read results, and `T(copy=x)` still find their
+constructor from the type (`mir::relocated_structs`, which closes over the
+fields only of a struct recording no such member). A read out of storage and a store copy
 nothing in either backend: Pliron's `FnLowering::load_from` takes a byte
 snapshot sharing its storage's buffers and `FnLowering::store_to` stores
 what the MIR hands it, as the VM does. The instruction

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1086**.
+Next free ID: **R1087**.
 
 ## Ordered Work
 
@@ -76,23 +76,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Found while landing R1077 (2026-10-16).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R1044 A struct with copyable or movable fields and no
-  constructor of its own has none; the backends copy its fields by type**
-
-  A copy or move of such a struct names no constructor, so the VM's
-  `clone_value` and Pliron's `fork_value_into` recurse into its fields and
-  find each field's `__copyinit__` in the member table, where upstream
-  synthesizes a fieldwise `__copyinit__` and `__moveinit__` and calls it at
-  the site.
-  - The pin inlines the synthesized copy, so `T` holding a `C` field has
-    no `T` copy function in its LLVM output.
-  - Synthesize both in MIR lowering, record them in the member table, and
-    mark them `nodebug`, as R1041 does for `__deinit__`.
-  - Then drop `relocated_structs`' field closure for unnamed sites.
-  - Found while landing R1017 (2026-10-16).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R1045 An owned capture, a variant payload, or a reference-read
   method result copies without naming a constructor**
@@ -537,8 +520,8 @@ which names the upstream pass each one follows. Each is measured by the
   - The struct has no `__init__` to name, so the call stays
     `call { func: Fw }`, an undeclared callee whose types
     `mir::unread_parameters` reads whole.
-  - Synthesize the fieldwise `__init__` in MIR lowering, as R1044 plans
-    for the copy and move constructors, and have the check name it.
+  - Synthesize the fieldwise `__init__` in MIR lowering, as R1044 did for
+    the copy and move constructors, and have the check name it.
   - Found while landing R1020 (2026-10-16).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -842,6 +825,21 @@ Track: `native`.
 
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
+
+- [ ] **R1086 Natively, copying a `Dict` with `Optional` keys loses its
+  keys**
+
+  `Dict[Optional[Int], String]` holding `None` and `3`, copied with
+  `.copy()`, raises `missing key` at `t2[None]` natively, where the VM
+  prints `2 none three three` (`assets/ok/nested_copy_lifecycle.mojo`).
+  - `Dict[Int, String]` copies natively; so do a fieldwise struct of
+    `UInt64`, `Optional[Int]`, and `String` fields and a `List` of them.
+  - Predates R1044: the native build before it fails the same way, and
+    the fixture's `exe-differential` row in `conformance/pliron-parity.tsv`
+    reports it.
+  - Found while landing R1044 (2026-10-16).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1069 Natively, a place's type carries an origin that varies from
   run to run**
@@ -1185,16 +1183,24 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1047 A move of a struct with no move initializer of its own
-  skips its fields' move initializers**
+- [ ] **R1047 A field move names no move constructor; the backends
+  relocate its bytes**
 
-  Problem: `var u = t^`, over a `T` holding a `C` whose move initializer
-  adds 100, prints `move / 101`, where the pin prints `move / move / 201`.
-  - The pin's synthesized move of `T` runs `C`'s; both backends relocate
-    `T`'s bytes.
-  - R1044's synthesized move constructor fixes it.
-  - Found while landing R1017 (2026-10-16).
-  - Depends on R1044.
+  `place.move` of a struct-typed field (`self.c = existing.c^`) carries no
+  `constructor`, so the VM transfers the value and Pliron copies the bytes,
+  where upstream's move insertion calls the field's `__moveinit__`.
+  - Probe: `var u = t^`, over a `T` holding a `C` whose move initializer
+    adds 100, prints `move / 101`, where the pin prints `move / move / 201`:
+    `T`'s synthesized `__moveinit__` (R1044) runs, and its `place.move` of
+    `c` runs no `C.__moveinit__`.
+  - A hand-written `__moveinit__` spelling `self.c = existing.c^` skips it
+    the same way.
+  - Name a `constructor` on `place.move` as R1017 did for `var.use move`,
+    respell it in `Specializer::name_lifecycle_calls`, and run it in both
+    backends.
+  - Found while landing R1017 (2026-10-16); the cause was named while
+    landing R1044.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1048 Returning a named `out` result runs its move initializer,

@@ -208,6 +208,7 @@ pub fn inline_parametric(
     }
     if changed {
         name_constructors(function, declarations);
+        super::name_destructors(function, declarations);
     }
     changed
 }
