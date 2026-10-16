@@ -78,29 +78,23 @@ pub const DISPATCHED_MEMBERS: [&str; 10] = [
     "__call__",
 ];
 
+/// The constructors a backend runs from a type with no call naming them.
+///
+/// Those are a keyword collector's empty one and a slice bound's `Optional`
+/// ones. A constructor a call reaches is the instance the call names, never
+/// a table entry.
+pub const CONSTRUCTED_MEMBERS: [&str; 1] = ["__init__"];
+
 /// The member a struct's member table records the method `method` under
-/// (its spelling before any `$` qualifier), when it is a lifecycle or
-/// dispatched member.
+/// (its spelling before any `$` qualifier), when it is a lifecycle,
+/// dispatched, or constructed member.
 pub fn table_member(method: &str) -> Option<&'static str> {
     let base = method.split('$').next().unwrap_or(method);
     LIFECYCLE_MEMBERS
         .into_iter()
         .chain(DISPATCHED_MEMBERS)
+        .chain(CONSTRUCTED_MEMBERS)
         .find(|member| *member == base)
-}
-
-/// Whether the backends find the struct method `method` by composing its
-/// symbol from a value's type, not from the instance a call names.
-///
-/// That is only the constructor a construction runs (`__init__`), which
-/// keeps one instance per struct instance, named after it, whatever
-/// parameters it removed. Every other member a backend reaches from a
-/// value's type ([`LIFECYCLE_MEMBERS`], [`DISPATCHED_MEMBERS`]) is found
-/// through the struct declaration's member table instead.
-pub fn composed_member(method: &str) -> bool {
-    mojito_symbol::symbol::split_method_symbol(method)
-        .map(|(_, member)| member.split('$').next().unwrap_or(member))
-        .is_some_and(|member| member == "__init__")
 }
 
 /// [`struct_layout_reads`] and the member reads of one walk's struct types,

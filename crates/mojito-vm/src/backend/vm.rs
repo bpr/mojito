@@ -673,15 +673,35 @@ impl Prog {
     /// The struct a lifecycle constructor `symbol` builds and the lifecycle
     /// name it runs, when the program declares that struct and the symbol's
     /// declaration takes a receiver: a `def` nested in a constructor is
-    /// lifted under the constructor's name but builds nothing.
-    fn lifecycle_constructor<'s>(&self, symbol: &'s str) -> Option<(&'s str, &'s str)> {
-        mojito_symbol::symbol::lifecycle_constructor(symbol).filter(|(struct_name, _)| {
-            self.structs.contains_key(*struct_name)
-                && self
-                    .sigs
-                    .get(symbol)
-                    .is_none_or(|signature| signature.has_receiver)
-        })
+    /// lifted under the constructor's name but builds nothing. An `__init__`
+    /// builds its call's result type, `constructed`, when that is a declared
+    /// struct: an owner-less instance (`Box.__init__$mono`) names no struct
+    /// the program declares, so the symbol's own struct is only the fallback.
+    fn lifecycle_constructor<'s>(
+        &self,
+        symbol: &'s str,
+        constructed: Option<&'s str>,
+    ) -> Option<(&'s str, &'s str)> {
+        let (parsed, member) = mojito_symbol::symbol::lifecycle_constructor(symbol)?;
+        let struct_name = constructed
+            .filter(|name| member == "__init__" && self.structs.contains_key(*name))
+            .unwrap_or(parsed);
+        (self.structs.contains_key(struct_name)
+            && self
+                .sigs
+                .get(symbol)
+                .is_none_or(|signature| signature.has_receiver))
+        .then_some((struct_name, member))
+    }
+
+    /// The declared struct a value of type `ty` is, through references.
+    fn declared_struct<'t>(&self, ty: Option<&'t mojito_types::types::Ty>) -> Option<&'t str> {
+        match peel_references(ty?).kind() {
+            mojito_types::types::TyKind::Struct(name, _) if self.structs.contains_key(name) => {
+                Some(name.as_str())
+            }
+            _ => None,
+        }
     }
 
     /// The `hasher`'s `_update_with_simd` a scalar `__hash__` leaf of type

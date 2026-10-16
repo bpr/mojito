@@ -402,14 +402,13 @@ impl<'a> Specializer<'a> {
             // generator lists them before its own: it names no owner
             // instance, and its kept owner arguments lead its own: a
             // lifecycle or dispatched member too, which each struct
-            // instance's member table names. A constructor, which the
-            // backends find by its struct instance's name, keeps that name.
+            // instance's member table names, and a constructor, which each
+            // construction names.
             Some((owner_template, _))
-                if !mojito_mir::mir::composed_member(template)
-                    && self
-                        .removed_params(template, bindings.reduced)
-                        .iter()
-                        .any(|id| *id.owner == **owner_template) =>
+                if self
+                    .removed_params(template, bindings.reduced)
+                    .iter()
+                    .any(|id| *id.owner == **owner_template) =>
             {
                 let removed = self.removed_params(template, bindings.reduced);
                 let decls = self
@@ -2179,9 +2178,10 @@ impl<'a> Specializer<'a> {
     }
 
     /// A `**kwargs: element` parameter binds a `StringDict[element]` the
-    /// caller builds without a MIR call: the VM runs the instance's empty
-    /// constructor and one `__setitem__` per collected keyword, so enqueue
-    /// both for a callee that only ever reads the collector.
+    /// caller builds without a MIR call: the backends run the instance's
+    /// empty constructor and one `__setitem__` per collected keyword, so
+    /// enqueue both for a callee that only ever reads the collector, and
+    /// record both in the collector's member table.
     fn enqueue_keyword_collector(
         &mut self,
         owner: &str,
@@ -2200,7 +2200,19 @@ impl<'a> Specializer<'a> {
             ),
             vec![mojito_types::types::TyArg::Ty(element.clone())],
         ));
-        self.enqueue_nominal_method_instance(owner, &collector, "__init__", 0, &[])?;
+        let template = mojito_symbol::symbol::resolve_method_symbol(
+            &self.functions,
+            "StringDict",
+            "__init__",
+            None,
+            0,
+        );
+        if let Some(instance) =
+            self.nominal_method_instance(owner, &collector, "__init__", 0, &[], &[])?
+            && let TyKind::Struct(name, _) = collector.kind()
+        {
+            self.record_struct_member(constructed_member(name, &template).as_ref(), &instance);
+        }
         self.enqueue_nominal_method_instance(owner, &collector, "__setitem__", 2, &[])
     }
 
@@ -2539,10 +2551,13 @@ impl<'a> Specializer<'a> {
                                         function.reg_types.insert(dest.0, concrete.clone());
                                     }
                                     // An instance keyed by the call's element
-                                    // count, or by a generic constructor's own
-                                    // binders, has a symbol no by-name
-                                    // constructor lookup composes: the call
-                                    // names it.
+                                    // count, by a generic constructor's own
+                                    // binders, or by none of its struct's
+                                    // instance (one that removed a struct
+                                    // parameter, as upstream's direct call
+                                    // names the reduced constructor) has a
+                                    // symbol no by-name constructor lookup
+                                    // composes: the call names it.
                                     let arity_keyed = bindings.variadic_arity.is_some();
                                     let own_keyed = instantiated_args.len()
                                         > self
@@ -2550,7 +2565,13 @@ impl<'a> Specializer<'a> {
                                             .get(template.as_str())
                                             .map_or(0, |owner| owner.param_decls.len());
                                     let instance = self.enqueue(&target, bindings, arguments)?;
-                                    if arity_keyed || own_keyed {
+                                    let owner_less = matches!(
+                                        function.reg_types.get(&dest.0).map(Ty::kind),
+                                        Some(TyKind::Struct(concrete, _))
+                                            if mojito_symbol::symbol::split_method_symbol(&instance)
+                                                .is_some_and(|(owner, _)| owner != concrete)
+                                    );
+                                    if arity_keyed || own_keyed || owner_less {
                                         func.0 = instance;
                                         param_arg_regs.clear();
                                         instantiated_args.clear();
@@ -3533,11 +3554,13 @@ impl<'a> Specializer<'a> {
         method: &str,
     ) -> Result<(), MonoError> {
         self.enqueue_struct_overloads(template_name, bindings, method, &|_, _| true)
+            .map(drop)
     }
 
     /// Enqueue the constructors a slice descriptor's bound read builds its
     /// `Optional` result `bound` through, the VM's `slice_bound_optional`:
-    /// the nullary one and the positional one-argument one.
+    /// the nullary one and the positional one-argument one, which no call
+    /// names, so `bound`'s member table records them.
     fn enqueue_slice_bound_constructors(
         &mut self,
         owner: &str,
@@ -3549,7 +3572,7 @@ impl<'a> Specializer<'a> {
         let Some(bindings) = self.struct_bindings(owner, bound)? else {
             return Ok(());
         };
-        self.enqueue_struct_overloads(
+        let constructors = self.enqueue_struct_overloads(
             nominal_template(name),
             &bindings,
             "__init__",
@@ -3558,21 +3581,27 @@ impl<'a> Specializer<'a> {
                     && !candidate.contains("$kw$")
                     && !mojito_symbol::symbol::is_none_overload(candidate)
             },
-        )
+        )?;
+        for (template, instance) in constructors {
+            self.record_struct_member(constructed_member(name, &template).as_ref(), &instance);
+        }
+        Ok(())
     }
 
     /// Enqueue the overloads `{template_name}.{method}` of the struct
     /// instance `bindings` binds that `select` accepts, as
-    /// [`Self::enqueue_struct_members`] does.
+    /// [`Self::enqueue_struct_members`] does, and return each overload
+    /// with the instance it names.
     fn enqueue_struct_overloads(
         &mut self,
         template_name: &str,
         bindings: &Bindings,
         method: &str,
         select: &dyn Fn(&str, &MirFunctionDeclaration) -> bool,
-    ) -> Result<(), MonoError> {
+    ) -> Result<Vec<(String, String)>, MonoError> {
+        let mut enqueued = Vec::new();
         let Some(template) = self.structs.get(template_name) else {
-            return Ok(());
+            return Ok(enqueued);
         };
         let base = format!("{template_name}.{method}");
         for candidate in self.functions.family(&base) {
@@ -3607,9 +3636,10 @@ impl<'a> Specializer<'a> {
                 Availability::Undecided if method != "__init__" => {}
                 Availability::Disproven(_) | Availability::Undecided => continue,
             }
-            self.enqueue(&candidate, bindings.clone(), method_arguments)?;
+            let instance = self.enqueue(&candidate, bindings.clone(), method_arguments)?;
+            enqueued.push((candidate, instance));
         }
-        Ok(())
+        Ok(enqueued)
     }
 
     /// Whether a `!=` on `receiver` is served by `Equatable`'s default: its
@@ -4014,10 +4044,12 @@ fn elaboration_counts(
 /// dispatched member (`mir::table_member`). A lifecycle member's key is
 /// its bare name (`__deinit__`); a dispatched member's is the template's
 /// method spelling, overload qualifier included (`__eq__$ov$Self`). `None`
-/// for any other function.
+/// for any other function, and for a constructor, which only the sites
+/// that run one with no call naming it record ([`constructed_member`]).
 fn table_owner(template: &str, bindings: &Bindings) -> Option<(String, String)> {
     let (owner, method) = mojito_symbol::symbol::split_method_symbol(template)?;
-    let member = mojito_mir::mir::table_member(method)?;
+    let member = mojito_mir::mir::table_member(method)
+        .filter(|member| !mojito_mir::mir::CONSTRUCTED_MEMBERS.contains(member))?;
     let key = if mojito_mir::mir::LIFECYCLE_MEMBERS.contains(&member) {
         member
     } else {
@@ -4028,4 +4060,11 @@ fn table_owner(template: &str, bindings: &Bindings) -> Option<(String, String)> 
         _ => owner.to_string(),
     };
     Some((name, key.to_string()))
+}
+
+/// The member table key a constructor `template` of the struct `name` is
+/// recorded under: its template's method spelling (`__init__$ov$`).
+fn constructed_member(name: &str, template: &str) -> Option<(String, String)> {
+    let (_, method) = mojito_symbol::symbol::split_method_symbol(template)?;
+    Some((name.to_string(), method.to_string()))
 }

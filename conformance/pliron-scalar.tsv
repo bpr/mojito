@@ -152,6 +152,7 @@ assets/ok/conditional_member_trivial_value_clauses.mojo	-	ineligible	no-scalar-e
 assets/ok/conforms_to_library_types_unasked_traits.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/conforms_to_user_and_unasked_traits.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/constructor_read_temporary_drop_order.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/constructor_reads_no_struct_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/container_hashable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/contextual_member_static.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/copy_construction_last_use_moves.mojo	-	ineligible	no-scalar-entry-shape

@@ -200,7 +200,10 @@ impl VmBackend {
                     target,
                     vec![checked_const_value(arg)],
                     vec![],
-                    &CallTypes::default(),
+                    &CallTypes {
+                        constructed: prog.declared_struct(sig.param_types.get(i)),
+                        ..CallTypes::default()
+                    },
                 ),
                 Some(CheckedConst::Evaluate { function, .. }) => {
                     let index = prog.index_of(function).ok_or_else(|| {
@@ -232,7 +235,14 @@ impl VmBackend {
         collector: &str,
         entries: Vec<(String, Value)>,
     ) -> Result<Value, RuntimeError> {
-        let mut dict = self.construct_via_init(prog, collector, None, Vec::new(), Vec::new())?;
+        let init = prog
+            .struct_member(collector, "__init__", 0)
+            .ok_or_else(|| {
+                RuntimeError::Unsupported(format!("vm: kwargs {collector} has no __init__"))
+            })?;
+        let init = prog.mir.functions[init].0.clone();
+        let mut dict =
+            self.construct_via_init(prog, collector, Some(&init), Vec::new(), Vec::new())?;
         let fidx = prog
             .struct_member(collector, "__setitem__", 2)
             .ok_or_else(|| {

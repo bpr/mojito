@@ -495,7 +495,7 @@ impl FnLowering<'_> {
             return Err(self.unsupported_reg("keyword pack is not a StringDict".into(), dest));
         };
         let (Some(init), Some(setitem)) = (
-            self.constructor_init(struct_name, 0),
+            self.struct_member(struct_name, "__init__", 0),
             self.struct_member(struct_name, "__setitem__", 2),
         ) else {
             return Err(self.unsupported_reg(

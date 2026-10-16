@@ -5325,9 +5325,15 @@ point where a slot declared in a loop is uninitialized again.
   and the backends select among a member's entries with
   `symbol::MemberCandidates`, the overload rules of
   `resolve_callable_symbol`, so `WBox[1]` and `WBox[2]` share one
-  `WBox.write_to$mono`. Only a constructor, which the backends find by
-  composing `{struct}.__init__` (`mir::composed_member`), keeps its owner
-  instance and its name, removals and all (R1000). A static call's spelled receiver `S[n]` is a
+  `WBox.write_to$mono`. A constructor that removed one of its struct's
+  parameters is owner-less like any other method: the elaborator respells
+  each construction that reaches it to name it, as upstream's direct call
+  names the reduced constructor, and the VM builds the call's destination
+  type through it (`Prog::lifecycle_constructor`, `CallTypes::constructed`),
+  so `Box[1](1)` and `Box[2](2)` share one `Box.__init__$mono`. The two
+  constructors a backend runs with no call naming them, a keyword
+  collector's empty one and a slice bound's `Optional` ones, are member
+  table entries (`mir::CONSTRUCTED_MEMBERS`) their demand sites record. A static call's spelled receiver `S[n]` is a
   forward of `n` to the struct parameter the callee removed; in a body
   that removed `n` it is the erased `S[_REMOVED_ARG]`, which binds nothing
   and names the erased instance (`Specializer::bind_static_receiver`). A body lifted from a compile-time

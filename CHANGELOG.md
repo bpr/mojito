@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A constructor that reads no struct parameter is one instance for every
+  instance of its struct (R1000), as on the pin: `Box[1](1)` and
+  `Box[2](2)` share `Box.__init__$mono`. The elaborator keys such a
+  constructor off its struct template, like every other method that
+  removed a struct parameter, and respells each construction reaching it
+  (a direct one, an `@implicit` conversion, `T()` through `Defaultable`)
+  to name it; the VM builds a constructor call's destination type, a
+  converting default's parameter type, rather than the struct its symbol
+  names. A keyword collector's and a slice bound's constructors, which no
+  call names, join their struct's member table
+  (`mir::CONSTRUCTED_MEMBERS`), and `mir::composed_member` is gone
+  (`assets/ok/constructor_reads_no_struct_parameter.mojo`).
 - A display, repr, hash, equality, `__int__`, writer `write_string`, or
   `__call__` member that reads no struct parameter is one instance for
   every instance of its struct (R1003), as on the pin: `WBox[1]` and

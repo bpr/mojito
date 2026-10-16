@@ -926,19 +926,16 @@ fn reachable_set<'p>(
                     "StringDict",
                     &[mojito_symbol::symbol::InstanceArg::Ty(element.clone())],
                 );
-                let init = format!("{collector}.__init__");
-                let setitem = structs
+                let members = structs
                     .get(collector.as_str())
                     .into_iter()
-                    .flat_map(|declaration| declaration.members_of("__setitem__"))
-                    .filter_map(|entry| functions.get_key_value(entry.symbol.as_str()));
-                for (callee, _) in functions
-                    .iter()
-                    .filter(|(callee, _)| {
-                        **callee == init || mojito_symbol::symbol::is_overload_of(callee, &init)
+                    .flat_map(|declaration| {
+                        declaration
+                            .members_of("__init__")
+                            .chain(declaration.members_of("__setitem__"))
                     })
-                    .chain(setitem)
-                {
+                    .filter_map(|entry| functions.get_key_value(entry.symbol.as_str()));
+                for (callee, _) in members {
                     if reachable.insert(*callee) {
                         queue.push_back(*callee);
                     }

@@ -582,7 +582,13 @@ impl VmBackend {
         else {
             return Ok(None);
         };
-        if prog.lifecycle_constructor(&func.0).is_some() {
+        let constructed = prog.declared_struct(
+            prog.mir
+                .functions
+                .get(caller.function)
+                .and_then(|(_, function)| function.reg_types.get(&dest.0)),
+        );
+        if prog.lifecycle_constructor(&func.0, constructed).is_some() {
             return Ok(None);
         }
         let Some(index) = prog.index_of(&func.0) else {

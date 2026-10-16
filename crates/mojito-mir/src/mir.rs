@@ -70,7 +70,7 @@ pub use param_uses::{
 };
 mod struct_reads;
 pub use struct_reads::{
-    DISPATCHED_MEMBERS, LIFECYCLE_MEMBERS, LayoutReads, StructReads, composed_member,
+    CONSTRUCTED_MEMBERS, DISPATCHED_MEMBERS, LIFECYCLE_MEMBERS, LayoutReads, StructReads,
     struct_layout_reads, table_member,
 };
 mod symbols;

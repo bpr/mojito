@@ -623,25 +623,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1016.
   - Model: Fable, Not Planned.
 
-- [ ] **R1000 A constructor that reads no struct parameter keeps one
-  instance per struct instance**
-
-  `Box[1](1)` and `Box[2](2)` reach two `Box.__init__`, which only stores
-  `v`, where the pin keeps one.
-  - `remove-unused-params` removes `n`, but struct discovery demands every
-    constructor of every struct instance by composed name
-    (`Specializer::enqueue_struct_members`), so an owner-less instance
-    would sit beside them (R459).
-  - Respell the constructor call (`specializer.rs`, beside `arity_keyed`)
-    and the `@implicit` conversion path to the owner-less instance.
-  - Name the VM's constructed value by the call's destination type, not by
-    the symbol or the erased receiver (`Prog::lifecycle_constructor`,
-    `construct_via_init`).
-  - Then drop `__init__` from `mir::composed_member`.
-  - Found while landing R978 (2026-10-15).
-  - Depends on R459, R1001.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1002 A method call on a field reads the root struct's arguments
   whole**
 

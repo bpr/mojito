@@ -6,11 +6,13 @@ use super::*;
 use mojito_types::types::TyKind;
 
 /// The checked types a named call carries: the compile-time arguments a
-/// builtin reads (`external_call`'s callee) and its argument types.
+/// builtin reads (`external_call`'s callee), its argument types, and the
+/// struct its result declares, which a constructor call builds.
 #[derive(Default)]
 pub(super) struct CallTypes<'a> {
     pub(super) instantiated: &'a [mojito_types::types::TyArg],
     pub(super) arg_types: &'a [Option<mojito_types::types::Ty>],
+    pub(super) constructed: Option<&'a str>,
 }
 
 impl VmBackend {
@@ -213,15 +215,15 @@ impl VmBackend {
         // overload selection is ambiguous here. Select the unique positional
         // (non-`$kw$`) overload explicitly; a bound is an `Int`, never `None`,
         // so the `NoneType` overload is excluded too.
-        let init = format!("{name}.__init__");
         let expected_params = arguments.len() + 1;
-        let mut constructors = prog.mir.functions.iter().filter(|(fname, function)| {
-            mojito_symbol::symbol::is_overload_of(fname, &init)
-                && function.n_params == expected_params
-                && !fname.contains("$kw$")
-                && !mojito_symbol::symbol::is_none_overload(fname)
-        });
-        let target = constructors.next().map(|(fname, _)| fname.clone());
+        let mut constructors =
+            prog.struct_member_instances(&name, "__init__")
+                .filter(|&(index, fname)| {
+                    prog.mir.functions[index].1.n_params == expected_params
+                        && !fname.contains("$kw$")
+                        && !mojito_symbol::symbol::is_none_overload(fname)
+                });
+        let target = constructors.next().map(|(_, fname)| fname.to_string());
         if let Some(target) = target
             && constructors.next().is_none()
         {
@@ -261,6 +263,7 @@ impl VmBackend {
         let CallTypes {
             instantiated,
             arg_types,
+            constructed,
         } = *types;
         // Built-ins take positional arguments only, and user functions handle
         // keywords through their signatures below. Struct constructors get a
@@ -274,10 +277,10 @@ impl VmBackend {
                 "vm: keyword arguments to '{name}' are not supported"
             )));
         }
-        // A resolved constructor symbol — an overload, or a closed instance's
-        // own clone (`Box.__init__$y3:Int`) — constructs its struct through
-        // that exact body.
-        if let Some((struct_name, "__init__")) = prog.lifecycle_constructor(name) {
+        // A resolved constructor symbol — an overload, a closed instance's
+        // own clone (`Box.__init__$y3:Int`), or an owner-less instance —
+        // constructs the call's result struct through that exact body.
+        if let Some((struct_name, "__init__")) = prog.lifecycle_constructor(name, constructed) {
             return self.construct_via_init(prog, struct_name, Some(name), args, kwargs);
         }
         match name {

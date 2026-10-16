@@ -2255,19 +2255,7 @@ fn assert_one_member_instance(source: &str, owner: &str, member: &str, instance:
         mojito_mir::mir::verify::verify_concrete(&specialized.program),
         Vec::<String>::new()
     );
-    let instances: Vec<&str> = specialized
-        .program
-        .functions
-        .iter()
-        .map(|(name, _)| name.as_str())
-        .filter(|name| {
-            mojito_symbol::symbol::split_method_symbol(name).is_some_and(|(of, method)| {
-                (of == owner || of.starts_with(&format!("{owner}$mono$")))
-                    && method.split('$').next() == Some(member)
-            })
-        })
-        .collect();
-    assert_eq!(instances, [instance]);
+    assert_eq!(member_instances(&specialized, owner, member), [instance]);
     for argument in ["V1", "V2"] {
         let name = format!("{owner}$mono${argument}");
         let declaration = specialized
@@ -2284,6 +2272,98 @@ fn assert_one_member_instance(source: &str, owner: &str, member: &str, instance:
             "`{name}`'s member table"
         );
     }
+}
+
+/// The concrete instances of `owner`'s method `member`, owner-less or
+/// owned by one of `owner`'s instances.
+fn member_instances<'s>(
+    specialized: &'s SpecializedProgram,
+    owner: &str,
+    member: &str,
+) -> Vec<&'s str> {
+    specialized
+        .program
+        .functions
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .filter(|name| {
+            mojito_symbol::symbol::split_method_symbol(name).is_some_and(|(of, method)| {
+                (of == owner || of.starts_with(&format!("{owner}$mono$")))
+                    && method.split('$').next() == Some(member)
+            })
+        })
+        .collect()
+}
+
+/// The callees of `name`'s `call` instructions.
+fn callees<'s>(specialized: &'s SpecializedProgram, name: &str) -> Vec<&'s str> {
+    instructions(&function(specialized, name).blocks)
+        .into_iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::Call { func, .. } => Some(func.0.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A `Box[n]` whose constructor stores `v`, plus `n` when `reads_n`.
+fn constructed_box_source(reads_n: bool) -> String {
+    format!(
+        "struct Box[n: Int](Movable):\n\
+         \x20   var v: Int\n\
+         \x20   @no_inline\n\
+         \x20   def __init__(out self, v: Int):\n\
+         \x20       self.v = v{}\n\
+         def main():\n\
+         \x20   var a = Box[1](1)\n\
+         \x20   var b = Box[2](2)\n\
+         \x20   print(a.v, b.v)\n",
+        if reads_n { " + Self.n" } else { "" }
+    )
+}
+
+/// A constructor that reads no struct parameter is one instance for every
+/// struct instance, and each construction names it, as upstream's direct
+/// call names the reduced constructor.
+#[test]
+fn a_constructor_that_reads_no_struct_parameter_is_one_instance() {
+    let specialized =
+        specialized_with_removed(&constructed_box_source(false), &[]).expect("specialize");
+    assert_eq!(
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        member_instances(&specialized, "Box", "__init__"),
+        ["Box.__init__$mono"]
+    );
+    assert_eq!(
+        callees(&specialized, "main")
+            .into_iter()
+            .filter(|callee| callee.starts_with("Box"))
+            .collect::<Vec<_>>(),
+        ["Box.__init__$mono", "Box.__init__$mono"]
+    );
+}
+
+#[test]
+fn a_constructor_that_reads_its_struct_parameter_keeps_one_instance_per_struct_instance() {
+    let specialized =
+        specialized_with_removed(&constructed_box_source(true), &[]).expect("specialize");
+    assert_eq!(
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
+    );
+    let mut instances = member_instances(&specialized, "Box", "__init__");
+    instances.sort_unstable();
+    assert_eq!(instances, ["Box$mono$V1.__init__", "Box$mono$V2.__init__"]);
+    assert_eq!(
+        callees(&specialized, "main")
+            .into_iter()
+            .filter(|callee| callee.starts_with("Box"))
+            .collect::<Vec<_>>(),
+        ["Box$mono$V1", "Box$mono$V2"]
+    );
 }
 
 /// A direct call of a function whose argument its body never uses names
