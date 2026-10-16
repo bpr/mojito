@@ -618,6 +618,9 @@ struct Specializer<'a> {
     /// name, each with its key: [`Specializer::declare_output_struct`] puts
     /// them into its member table.
     pending_struct_members: HashMap<String, Vec<(String, String)>>,
+    /// The member table key each template answered [`Specializer::table_key`]
+    /// with, by the template.
+    table_keys: HashMap<String, Option<String>>,
     /// The field types a layout query reads: each output struct as it is
     /// declared, and each non-generic source struct a query reaches, when
     /// one first does. Every [`LayoutOracle`] shares it, so building one

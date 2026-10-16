@@ -62,6 +62,7 @@ impl<'a> Specializer<'a> {
             output_structs: Vec::new(),
             output_struct_positions: HashMap::new(),
             pending_struct_members: HashMap::new(),
+            table_keys: HashMap::new(),
             conformance_answers: RefCell::default(),
             layout_structs: Rc::default(),
             constant_values: HashMap::new(),
@@ -379,7 +380,7 @@ impl<'a> Specializer<'a> {
     ) -> Result<String, MonoError> {
         bindings.erase_origins();
         bindings.reduced = self.reduces(template, &bindings);
-        let member = table_owner(template, &bindings);
+        let member = self.table_owner(template, &bindings);
         if let Some(declaration) = self.declarations.get(template)
             && let Availability::Disproven(message) = self.availability(declaration, &bindings)
         {
@@ -549,6 +550,54 @@ impl<'a> Specializer<'a> {
         self.record_struct_member(member.as_ref(), &name);
         self.note_reference(&name);
         Ok(name)
+    }
+
+    /// The concrete struct whose member table records an instance of
+    /// `template` under `bindings`, with the key it records it under: its
+    /// owner instance, else its non-generic owner, when `template` is a
+    /// member a backend reaches from its struct's type
+    /// ([`Self::table_key`]). `None` for any other function.
+    fn table_owner(&mut self, template: &str, bindings: &Bindings) -> Option<(String, String)> {
+        let key = self.table_key(template)?;
+        let name = match bindings.self_instance.as_ref().map(|(_, ty)| ty.kind()) {
+            Some(TyKind::Struct(name, _)) => name.clone(),
+            _ => mojito_symbol::symbol::split_method_symbol(template)?
+                .0
+                .to_string(),
+        };
+        Some((name, key))
+    }
+
+    /// The key a struct's member table records an instance of the method
+    /// `template` under, when a backend reaches it from the struct's type:
+    /// a lifecycle member under its bare name (`__deinit__`); a dispatched
+    /// member (`mir::table_member`), another special method, or a
+    /// requirement of a trait the struct declares
+    /// (`MirDeclarations::reached_from_type`) under the template's method
+    /// spelling, overload qualifier included (`__eq__$ov$Self`), as
+    /// upstream's struct nests these members and its conformances' witness
+    /// tables name them. `None` for any other function, and for a
+    /// constructor, which only the sites that run one with no call naming
+    /// it record ([`constructed_member`]).
+    fn table_key(&mut self, template: &str) -> Option<String> {
+        if let Some(key) = self.table_keys.get(template) {
+            return key.clone();
+        }
+        let key =
+            mojito_symbol::symbol::split_method_symbol(template).and_then(|(owner, method)| {
+                let base = method.split('$').next().unwrap_or(method);
+                if mojito_mir::mir::CONSTRUCTED_MEMBERS.contains(&base) {
+                    return None;
+                }
+                if mojito_mir::mir::LIFECYCLE_MEMBERS.contains(&base) {
+                    return Some(base.to_string());
+                }
+                (mojito_mir::mir::table_member(method).is_some()
+                    || self.source.declarations.reached_from_type(owner, method))
+                .then(|| method.to_string())
+            });
+        self.table_keys.insert(template.to_string(), key.clone());
+        key
     }
 
     /// Record `instance` under the key `member` names in its struct's
@@ -4078,30 +4127,6 @@ fn elaboration_counts(
     };
     counts.recount(program);
     counts
-}
-
-/// The concrete struct whose member table records an instance of
-/// `template` under `bindings`, with the key it records it under: its owner
-/// instance, else its non-generic owner, when `template` is a lifecycle or
-/// dispatched member (`mir::table_member`). A lifecycle member's key is
-/// its bare name (`__deinit__`); a dispatched member's is the template's
-/// method spelling, overload qualifier included (`__eq__$ov$Self`). `None`
-/// for any other function, and for a constructor, which only the sites
-/// that run one with no call naming it record ([`constructed_member`]).
-fn table_owner(template: &str, bindings: &Bindings) -> Option<(String, String)> {
-    let (owner, method) = mojito_symbol::symbol::split_method_symbol(template)?;
-    let member = mojito_mir::mir::table_member(method)
-        .filter(|member| !mojito_mir::mir::CONSTRUCTED_MEMBERS.contains(member))?;
-    let key = if mojito_mir::mir::LIFECYCLE_MEMBERS.contains(&member) {
-        member
-    } else {
-        method
-    };
-    let name = match bindings.self_instance.as_ref().map(|(_, ty)| ty.kind()) {
-        Some(TyKind::Struct(name, _)) => name.clone(),
-        _ => owner.to_string(),
-    };
-    Some((name, key.to_string()))
 }
 
 /// The member table key a constructor `template` of the struct `name` is

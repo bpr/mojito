@@ -399,7 +399,9 @@ impl VmBackend {
             None if mojito_mir::mir::table_member(method).is_some() => {
                 prog.struct_member(sname, method, argc)
             }
-            None => prog.index_of(&prog.overload_name(&format!("{sname}.{method}"), argc)),
+            None => prog
+                .index_of(&prog.overload_name(&format!("{sname}.{method}"), argc))
+                .or_else(|| prog.struct_member(sname, method, argc)),
         };
         let Some(idx) = idx else {
             // `Equatable`'s default `!=`: a struct that declares `__eq__`
@@ -883,6 +885,9 @@ impl Prog {
     /// runtime type. Bounded generic calls carry an abstract checker symbol;
     /// retargeting its suffix preserves overload selection even when every
     /// overload has the same positional arity (for example `**kwargs` methods).
+    /// A member the receiver's type reaches that no such name defines, one
+    /// merged into an identical instance, is the one its struct's member
+    /// table names.
     fn runtime_method_name(
         &self,
         receiver_type: &str,
@@ -890,7 +895,18 @@ impl Prog {
         resolved: Option<&str>,
         argc: usize,
     ) -> String {
-        mojito_symbol::symbol::resolve_method_symbol(self, receiver_type, method, resolved, argc)
+        let name = mojito_symbol::symbol::resolve_method_symbol(
+            self,
+            receiver_type,
+            method,
+            resolved,
+            argc,
+        );
+        if self.index_of(&name).is_some() {
+            return name;
+        }
+        self.struct_member(receiver_type, method, argc)
+            .map_or(name, |index| self.mir.functions[index].0.clone())
     }
 }
 

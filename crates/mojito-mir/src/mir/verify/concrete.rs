@@ -94,9 +94,13 @@ pub(super) fn verify_concrete_program(program: &MirProgram, errors: &mut Vec<Str
         }
         for (position, entry) in declaration.members.iter().enumerate() {
             let lifecycle = crate::mir::LIFECYCLE_MEMBERS.contains(&entry.member.as_str());
-            if crate::mir::table_member(&entry.member).is_none() {
+            if crate::mir::table_member(&entry.member).is_none()
+                && !program
+                    .declarations
+                    .reached_from_type(&declaration.name, &entry.member)
+            {
                 errors.push(format!(
-                    "{head} names `{}` as its member `{}`, which is no lifecycle or dispatched member",
+                    "{head} names `{}` as its member `{}`, which no backend reaches from its type",
                     entry.symbol, entry.member
                 ));
             } else if lifecycle

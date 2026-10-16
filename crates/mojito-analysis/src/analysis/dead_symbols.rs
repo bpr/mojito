@@ -12,7 +12,7 @@ use super::pre_elaboration::ProgramPass;
 use mojito_common::timing;
 use mojito_mir::mir::{
     LIFECYCLE_MEMBERS, MirFunction, MirFunctionDeclaration, MirProgram, MirStructDeclaration,
-    SymbolTable, destroyed_structs, entry_roots, relocated_structs,
+    SymbolTable, destroyed_structs, entry_roots, relocated_structs, table_member,
 };
 use mojito_symbol::symbol::{OV_SEP, split_method_symbol};
 use mojito_types::types::TyKind;
@@ -135,10 +135,13 @@ impl<'p> Symbols<'p> {
         let mut methods: HashMap<_, Vec<_>> = HashMap::new();
         // A dispatched member a struct's table names is its method whatever
         // its spelling: an instance that removed the struct's parameters
-        // names no struct instance.
+        // names no struct instance. Another member the table names, an
+        // operator or a trait requirement, is live through the calls that
+        // name it.
         for declaration in &program.declarations.structs {
             for entry in &declaration.members {
                 if !LIFECYCLE_MEMBERS.contains(&entry.member.as_str())
+                    && table_member(&entry.member).is_some()
                     && let Some((&symbol, _)) = functions.get_key_value(entry.symbol.as_str())
                 {
                     methods

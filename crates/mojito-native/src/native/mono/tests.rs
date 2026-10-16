@@ -2406,6 +2406,24 @@ fn a_hash_member_that_hashes_a_field_is_one_instance() {
     );
 }
 
+#[test]
+fn a_trait_requirement_that_reads_no_struct_parameter_is_one_table_instance() {
+    let source = "trait Flier:\n\
+         \x20   def fly(self) -> Int:\n\
+         \x20       ...\n\
+         @fieldwise_init\n\
+         struct FBox[n: Int](Flier, ImplicitlyCopyable):\n\
+         \x20   var v: Int\n\
+         \x20   @no_inline\n\
+         \x20   def fly(self) -> Int:\n\
+         \x20       return self.v\n\
+         def soar[F: Flier](f: F) -> Int:\n\
+         \x20   return f.fly()\n\
+         def main():\n\
+         \x20   print(soar(FBox[1](1)), soar(FBox[2](2)))\n";
+    assert_one_member_instance(source, "FBox", "fly", "FBox.fly$mono");
+}
+
 /// `source`'s `owner[1]` and `owner[2]` share one owner-less `instance` of
 /// their `member`, which both member tables name.
 fn assert_one_member_instance(source: &str, owner: &str, member: &str, instance: &str) {

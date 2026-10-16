@@ -13,8 +13,9 @@
 use super::pre_elaboration::ProgramPass;
 use mojito_common::timing;
 use mojito_mir::mir::text::package::{FunctionIdentity, function_identity};
-use mojito_mir::mir::{MirFunction, MirProgram, SymbolTable, entry_roots, replace_symbol_uses};
-use mojito_symbol::symbol::split_method_symbol;
+use mojito_mir::mir::{
+    MirFunction, MirProgram, MirStructDeclaration, SymbolTable, entry_roots, replace_symbol_uses,
+};
 use std::collections::{HashMap, HashSet};
 
 /// The pass, under upstream's flag spelling.
@@ -26,14 +27,16 @@ pub const ELIMINATE_DUPLICATE_FUNCTIONS: ProgramPass = ProgramPass {
 /// Merge each set of `program`'s functions that are identical up to their
 /// names into its first member, keeping the rest in order.
 ///
+/// A struct's member table names the members the backends reach from its
+/// type (its special methods and its traits' requirements), as upstream's
+/// conformance witness tables do, so a merged member's entry names its
+/// survivor, as upstream's `replaceAllSymbolUses` redirects a witness.
+///
 /// A function stays, whatever its duplicates, when something reaches it by
-/// name other than a reference [`replace_symbol_uses`] rewrites: an entry
-/// root, one of `exports`, a struct's method the backends reach from its
-/// type (its special methods and its traits' requirements,
-/// [`mojito_mir::mir::MirDeclarations::reached_from_type`]), a body the
-/// instructions call implicitly, or a symbol a type, a compile-time value,
-/// or a declaration names. Such a function can still absorb its
-/// duplicates.
+/// name other than a reference [`replace_symbol_uses`] rewrites or a member
+/// table entry: an entry root, one of `exports`, a body the instructions
+/// call implicitly, or a symbol a type, a compile-time value, or a
+/// declaration names. Such a function can still absorb its duplicates.
 pub fn eliminate_duplicate_functions(program: &mut MirProgram, exports: &[String]) {
     let pinned = pinned(program, exports);
     let mut identities: HashMap<String, Option<FunctionIdentity>> = HashMap::new();
@@ -63,6 +66,9 @@ pub fn eliminate_duplicate_functions(program: &mut MirProgram, exports: &[String
             .declarations
             .functions
             .retain(|declaration| !replaced.contains_key(&declaration.lowered_name));
+        for declaration in &mut program.declarations.structs {
+            redirect_members(declaration, &replaced);
+        }
         for (name, function) in &mut program.functions {
             let mut changed = false;
             replace_symbol_uses(&mut function.blocks, &mut |symbol| {
@@ -119,19 +125,6 @@ fn pinned(program: &mut MirProgram, exports: &[String]) -> HashSet<String> {
             *uses.entry(name).or_default() += 1;
         }
     }
-    // A struct's member table names its lifecycle and dispatched members,
-    // which the backends run from a value's type.
-    let members: HashSet<&str> = declarations
-        .structs
-        .iter()
-        .flat_map(|declaration| &declaration.members)
-        .map(|entry| entry.symbol.as_str())
-        .collect();
-    let method = |name: &str| {
-        members.contains(name)
-            || split_method_symbol(name)
-                .is_some_and(|(owner, method)| declarations.reached_from_type(owner, method))
-    };
     let unreached = |name: &str| {
         uses.get(name).copied().unwrap_or_default()
             != rewritten.get(name).copied().unwrap_or_default()
@@ -144,7 +137,7 @@ fn pinned(program: &mut MirProgram, exports: &[String]) -> HashSet<String> {
                 .functions
                 .iter()
                 .map(|(name, _)| name.as_str())
-                .filter(|name| method(name) || unreached(name))
+                .filter(|name| unreached(name))
                 .map(str::to_string),
         )
         .collect()
@@ -190,6 +183,25 @@ fn identity(program: &MirProgram, name: &str, function: &MirFunction) -> Option<
     });
     let declaration = program.declarations.function(name);
     function_identity(&function, declaration)
+}
+
+/// Point each entry of `declaration`'s member table that names a function
+/// of `replaced` at the one standing for it, keeping the table sorted and
+/// each entry once.
+fn redirect_members(declaration: &mut MirStructDeclaration, replaced: &HashMap<String, String>) {
+    let mut changed = false;
+    for entry in &mut declaration.members {
+        if let Some(survivor) = replaced.get(&entry.symbol) {
+            entry.symbol.clone_from(survivor);
+            changed = true;
+        }
+    }
+    if changed {
+        declaration
+            .members
+            .sort_by(|a, b| (&a.member, &a.symbol).cmp(&(&b.member, &b.symbol)));
+        declaration.members.dedup();
+    }
 }
 
 /// How many references to each symbol [`replace_symbol_uses`] reaches in

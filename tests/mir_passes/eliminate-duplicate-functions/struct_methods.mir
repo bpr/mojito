@@ -1,4 +1,4 @@
-mojito-mir 1.63
+mojito-mir 1.65
 artifact {
   features: [],
   files: [
@@ -6,7 +6,7 @@ artifact {
   ],
   traits: [],
   structs: [
-    struct { name: Shelf, fields: [field { name: n, type: Int }], mut_self_methods: [], fieldwise_init: true, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [] }
+    struct { name: Shelf, fields: [field { name: n, type: Int }], mut_self_methods: [], fieldwise_init: true, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [], members: [member { name: __len__, symbol: "Shelf.__len__$mono$TInt" }, member { name: __len__, symbol: "Shelf.__len__$mono$TString" }] }
   ],
   decls: [
     decl { lowered_name: "Shelf.__len__$mono$TInt", param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },

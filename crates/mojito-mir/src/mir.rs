@@ -409,8 +409,8 @@ impl MirDeclarations {
     }
 
     /// Whether the struct `owner`'s method `method` (its symbol's part after
-    /// the receiver separator) is reached from `owner`'s type rather than
-    /// only through a symbol reference: a special method (lifecycle,
+    /// the receiver separator) is reached from `owner`'s type, so its
+    /// member table names its instances: a special method (lifecycle,
     /// operator, or protocol), or a requirement of a trait `owner` declares,
     /// directly or through a parent, as upstream nests these members under
     /// the struct's symbol and its conformances' witness tables. A

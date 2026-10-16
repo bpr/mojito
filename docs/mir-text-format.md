@@ -461,7 +461,9 @@ is its `__deinit__`, `__copyinit__`, or `__moveinit__`. A concrete struct's
 table also names each instance of a member a backend reaches from a
 value's type (`mir::DISPATCHED_MEMBERS`: `write_to`, `write_repr_to`,
 `write_string`, `__hash__`, `_update_with_simd`, `__eq__`, `__ne__`,
-`__int__`, `__setitem__`, `__call__`), keyed by the template's method
+`__int__`, `__setitem__`, `__call__`) and of every other special method
+or trait requirement its type reaches
+(`mir::MirDeclarations::reached_from_type`), keyed by the template's method
 spelling with any overload qualifier (`__eq__$ov$Self`), so a generic or
 overloaded member has several entries. A drop, copy, move, display, hash,
 or other such dispatch of a value runs the member the table names, never

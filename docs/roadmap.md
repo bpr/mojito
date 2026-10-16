@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1026**.
+Next free ID: **R1028**.
 
 ## Ordered Work
 
@@ -55,6 +55,21 @@ and Mojito does not yet. The entries below are that stage, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md),
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
+
+- [ ] **R1026 `Set[Int]`'s `s & t` fails elaboration since R999**
+
+  `s & t` over two `Set[Int]` values fails with "function instantiation of
+  `Set.intersection` failed: parameter `H` is read, but an instance that
+  removed it erased its struct argument (`_REMOVED_ARG`)". So does
+  `benchmarks/compile/collections_many.mojo`, whose
+  `benchmarks/instantiation.tsv` row keeps its count from before R999, so
+  `scripts/instantiation-report --check` reports it lost until this lands.
+  - c690e8d5 (R999: a drop, copy, or move reads only its lifecycle
+    member's kept parameters) introduced it; 44021712 and a443448f run it.
+  - Some drop, copy, or move in `Set.intersection` must still read the
+    hasher parameter `H` that the instance removed.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R951 A `nodebug` constructor of a struct with several
   `__init__`s is called, not inlined**
@@ -744,22 +759,19 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1006 Special methods and trait requirements are never merged as
-  duplicates**
+- [ ] **R1027 The VM composes a type-reached member's name before it
+  reads the struct's member table**
 
-  `eliminate-duplicate-functions` keeps a struct's special methods and its
-  traits' requirements under their own names, so two identical instances of
-  one (`Sparrow.fly` and `Sparrow.eat` in `assets/ok/trait_inheritance.mojo`)
-  stay apart.
-  - The VM and the Pliron backend reach these from the struct's type by a
-    name they derive (`call_dunder`, `has_lifecycle_method`, `write_to`
-    printing), which no symbol reference records
-    (`MirDeclarations::reached_from_type` pins them).
-  - Upstream's calls and conformance witness tables name each such member
-    by symbol, so its `replaceAllSymbolUses` redirects them.
-  - The fix records each struct's type-reached members as symbol
-    references in its declaration, which the backends look up and the pass
-    rewrites.
+  The VM still finds an operator, protocol method, or trait requirement it
+  dispatches with no selected symbol by composing `{struct}.{method}`, and
+  reads the member table only when that name defines nothing.
+  - Since R1006 the table names every instance of such a member, and
+    `eliminate-duplicate-functions` redirects its entries.
+  - Upstream reaches these members only through a symbol: a call's callee
+    or a conformance's witness table.
+  - The fix reads the table first in `call_resolved_dunder` and
+    `runtime_method_name` (`crates/mojito-vm/src/backend/vm.rs`), then
+    drops the composed fallback for members the table covers.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -70,10 +70,14 @@ pub struct StructDeclaration {
     /// member functions: in a template, the lifecycle members it declares
     /// (its destructor, copy, and move constructors); in a concrete struct,
     /// every instance of a lifecycle or dispatched member
-    /// (`mojito_mir::mir::DISPATCHED_MEMBERS`) the elaborator made for it.
-    /// A drop, copy, move, display, hash, or other type-reached dispatch of
-    /// a value finds the member it runs here, never by composing a name
-    /// from the value's type.
+    /// (`mojito_mir::mir::DISPATCHED_MEMBERS`), other special method, or
+    /// trait requirement (`MirDeclarations::reached_from_type`) the
+    /// elaborator made for it, as upstream's witness tables name a
+    /// conformance's members. A drop, copy, move, display, hash, or other
+    /// type-reached dispatch of a value finds the member it runs here,
+    /// never by composing a name from the value's type, and
+    /// `eliminate-duplicate-functions` points an entry at the instance a
+    /// merged member became.
     pub members: Vec<StructMember>,
 }
 

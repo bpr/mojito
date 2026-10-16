@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `eliminate-duplicate-functions` merges a struct's special methods and
+  trait requirements too (R1006). The elaborator records every instance
+  of a member the struct's type reaches in its member table, as upstream's
+  conformance witness tables name them. The pass points an entry naming a
+  merged member at its survivor instead of keeping the member under its
+  own name, and the VM reads the table where a composed name defines
+  nothing. `Sparrow.fly` and `Sparrow.eat` of
+  `assets/ok/trait_inheritance.mojo` are now one function.
 - A parameter only a free function's evaluated default reads is removed
   (R1005), as on the pin: each direct call omitting the default evaluates
   it at the call site, so the callee's signature naming it reads nothing

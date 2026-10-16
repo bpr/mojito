@@ -5354,7 +5354,13 @@ point where a slot declared in a loop is uninitialized again.
   and the backends select among a member's entries with
   `symbol::MemberCandidates`, the overload rules of
   `resolve_callable_symbol`, so `WBox[1]` and `WBox[2]` share one
-  `WBox.write_to$mono`. A constructor that removed one of its struct's
+  `WBox.write_to$mono`. It also names every other instance of a member the
+  struct's type reaches, as upstream's conformance witness tables do: a
+  special method or a requirement of a trait the struct declares
+  (`mir::MirDeclarations::reached_from_type`, `Specializer::table_key`,
+  R1006). Those stay live through the calls that name them, and the VM
+  reads the table where a composed `{struct}.{method}` name defines
+  nothing. A constructor that removed one of its struct's
   parameters is owner-less like any other method: the elaborator respells
   each construction that reaches it to name it, as upstream's direct call
   names the reduced constructor, and the VM builds the call's destination
@@ -5618,15 +5624,13 @@ concrete verifier rejects a reference slot read as its handle.
   references an instruction holds itself; that can make callers
   identical, so the pass repeats until no set merges. A function stays
   under its own name when anything else reaches it: an entry root, an
-  export, a struct's method the backends reach from its type
-  (`mir::MirDeclarations::reached_from_type`, R992: a special method, or
-  a requirement of a trait the struct declares, directly or through a
-  parent; any method of a struct conforming to a trait no declaration
-  answers for), or a use
-  `mir::SymbolTable` finds that the rewrite does not reach, such as an
-  implicit callee or a symbol a type names, found by counting one against
-  the other. Upstream's call carries a compile-time argument as an
-  attribute, so an instance holds no register for it; the elaborator
+  export, or a use `mir::SymbolTable` finds that the rewrite does not
+  reach, such as an implicit callee or a symbol a type names, found by
+  counting one against the other. A struct's member table entry is no
+  such use: as upstream's `replaceAllSymbolUses` redirects a witness
+  table, the pass points an entry naming a merged member at its survivor
+  (R1006), so `Sparrow.fly` and `Sparrow.eat`, both `pass`, merge.
+  Upstream's call carries a compile-time argument as an attribute, so an instance holds no register for it; the elaborator
   matches that by erasing, with each parameter argument slot it drops,
   the constant the slot's register was read into once nothing else reads
   it (`erase_dropped_argument_reads` in `native/mono/specializer.rs`,
