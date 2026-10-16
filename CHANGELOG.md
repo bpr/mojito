@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A runtime argument a free function's body never uses leaves the
+  generator its direct calls name (R997), as upstream's
+  `RemoveUnusedParams` removes it first and then the parameters only its
+  type named: `remove-unused-params` records it as
+  `MirFunction::removed_args` (MIR text 1.64), a drop that runs no code
+  counting as no use, and the elaborator instantiates the reduced
+  generator (`fa$REMOVED$ARG$mono`, upstream's `_REMOVED_ARG` clone) for
+  each direct call, which passes no argument for it, and the full one for
+  a function value. So `fa[n](a: Arr[n])` and `fav[n](var a: Arr[n])` have
+  one instance for every `n`, as on the pin
+  (`assets/ok/unused_argument_instances.mojo`), and a call omitting such
+  an argument no longer evaluates its default, so `fside()` whose default
+  prints now runs, printing nothing for it, as on the pin. No corpus
+  fixture's output or instance count changes.
 - A struct's copy and move constructors are instantiated only where a
   body copies or moves a value of the struct (R994), as upstream's copy and
   move insertion calls them at each site, rather than with every struct a

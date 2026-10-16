@@ -206,7 +206,13 @@ folds the operators over it (R840);
    grows removable as the cleanup passes erase reads, so the last round's
    run decides (R869). Upstream also
    rewrites the generator's signature and its callers' arguments; Mojito
-   keeps both and binds the argument the body never reads. The pass walks
+   keeps both and binds the argument the body never reads. A runtime
+   argument a free function never uses but to drop a value whose drop runs
+   no code goes first, as upstream's `identifyUnusedArguments` does
+   (`MirFunction::removed_args`, R997): the parameters only its type named
+   are then unread, and the elaborator instantiates the reduced generator,
+   upstream's `_REMOVED_ARG` clone, for each direct call, which passes no
+   argument for it, and the full one for any other use. The pass walks
    the call graph callees first, as upstream's does, so a parameter only
    forwarded to a removed callee parameter is removed too (R907); a
    forward around a cycle stays a read, as on the pin. A nested body

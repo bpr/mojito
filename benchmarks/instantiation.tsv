@@ -977,6 +977,7 @@ assets/ok/unread_callable_parameter_instances.mojo	elaborated	20	180	9	11	42	45	
 assets/ok/unsafe_pointer.mojo	elaborated	7	112	2	2	16	14	18	5	5
 assets/ok/unspelled_loan_carrying_type_argument.mojo	elaborated	23	309	14	16	149	153	57	37	42
 assets/ok/untracked_pointer_ref_params.mojo	elaborated	9	103	2	2	16	14	20	5	5
+assets/ok/unused_argument_instances.mojo	elaborated	35	887	13	16	34	40	219	16	19
 assets/ok/unused_parameter_instances.mojo	elaborated	15	117	8	10	20	21	23	8	10
 assets/ok/user_iterator.mojo	elaborated	7	95	0	0	0	0	21	0	0
 assets/ok/value_argument_from_caller_parameter.mojo	elaborated	23	121	9	18	50	36	31	9	18
@@ -1043,4 +1044,4 @@ benchmarks/compile/stdlib_heavy.mojo	elaborated	122	1700	46	106	654	1377	313	118
 benchmarks/compile/trait_defaults.mojo	elaborated	163	1476	21	115	215	1063	202	37	134
 benchmarks/compile/tstring.mojo	elaborated	22	219	8	12	44	79	39	17	15
 benchmarks/compile/tuple.mojo	elaborated	28	238	8	16	37	68	45	11	19
-total	1044	28325	387437	9914	16450	112121	170921	71219	24029	35843
+total	1045	28360	388324	9927	16466	112155	170961	71438	24045	35862

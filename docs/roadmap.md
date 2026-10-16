@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1011**.
+Next free ID: **R1016**.
 
 ## Ordered Work
 
@@ -534,20 +534,63 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R909.
   - Model: Fable, Not Planned.
 
-- [ ] **R997 An argument a body never uses keeps the parameters its type
+- [ ] **R1011 A method's unused argument keeps the parameters its type
   names**
 
-  `fa[n](a: Arr[n])` and `fav[n](var a: Arr[n])` return `3` and keep one
-  instance per `n`, where the pin keeps one.
-  - Upstream's `RemoveUnusedParams` first removes each runtime argument
-    with no non-debug user (`identifyUnusedArguments`), from the generator
-    and from every call, and then the parameters only its type named.
-  - `Arr[n]` holds a `SIMD[int64, n]`, so its layout reads `n` and
-    `mir::unread_parameters` rightly keeps `n` while the argument stays.
-  - Mojito keeps every signature and call (`unused_params.rs`), so it has
-    no way to drop an argument from an instance and its calls.
-  - Found while landing R977 (2026-10-15).
+  `Holder.m[n](self, a: Arr[n])` returning `self.k` keeps one instance per
+  `n`, where the pin's `_REMOVED_ARG` clone takes only `self`.
+  - `mir::unused_arguments` gives no method candidates, since only the
+    `Call` arms of `rewrite_blocks` drop a reduced generator's arguments
+    (`Specializer::drop_removed_arguments`).
+  - The resolved `MethodCall` arms that call `infer_call` would drop the
+    argument too, mapping declaration position `i` past the receiver to
+    the call's `args[i - 1]`.
+  - A `mir::composed_member` stays out: the backends reach it by name, not
+    through a call (R1001).
+  - Found while landing R997 (2026-10-15).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1012 A method's unused receiver stays its argument**
+
+  `Holder.k3(self)` returning `3` takes `self`, where the pin's
+  `k3(q::Holder)_REMOVED_ARG()` takes nothing.
+  - Removing the receiver turns the resolved `MethodCall` into a `Call`
+    with no receiver, and the reduced declaration loses `has_receiver`.
+  - Found while landing R997 (2026-10-15).
+  - Depends on R1011.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1013 Forwarding an argument to a removed argument is a use**
+
+  `fwd[n](a: Arr[n])` returning `fa(a) + 1`, where `fa` removes `a`, keeps
+  `a` and one instance per `n`, where the pin's `fwd[…]_REMOVED_ARG()`
+  takes nothing.
+  - `mir::without_removed_forwards` drops a removed parameter's argument
+    from a call, but not a removed runtime argument's operand and the
+    `var.use` or load that fed it.
+  - The callee's `removed_args` would join `callee_removed_params`'
+    snapshot for the verifier, a MIR text bump.
+  - `has_own_parameters` must follow every callee with an argument, so the
+    callee runs first.
+  - Found while landing R997 (2026-10-15).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1014 A nested, lifted, or variadic function keeps an unused
+  argument**
+
+  A nested `def` that ignores its argument, or a function whose `*args`
+  it never reads, keeps the argument and the parameters its type names,
+  where the pin removes them.
+  - `mir::unused_arguments` gives no candidates to a body with
+    `enclosing`, a lifted `$comptime$`/`$default$` body, or a variadic
+    declaration.
+  - Closures and `call.indirect` reach a nested body, so its direct calls
+    alone could take the reduced generator, and a pack argument is spread
+    by `expand_pack_spreads` before the call binds.
+  - Found while landing R997 (2026-10-15).
+  - Depends on R1011.
   - Model: Fable, Not Planned.
 
 - [ ] **R1001 A destructor or copy or move constructor that reads no
@@ -4299,6 +4342,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (2026-10-06).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1015 A runtime default that prints is rejected**
+
+  `fd2(x: Int = side())` returning `x`, where `side` prints, fails
+  elaboration with "is not safe for VM-backed compile-time execution: it
+  reaches `print`", where the pin prints `side` when `fd2()` runs.
+  - The default is lifted to `$default$fd2$x`, which the elaborator runs
+    at compile time (`effectful_callee`, `mono/specializer.rs`), while
+    upstream evaluates a runtime default at the call site when the call
+    runs.
+  - A call omitting a removed argument's default no longer evaluates it
+    (R997), so only a used argument fails.
+  - Found while landing R997 (2026-10-15).
+  - Depends on R1004.
+  - Model: Opus, Not Planned.
 
 - [ ] **R388 A type over a lifted application is spelled by its function's
   name in a diagnostic**

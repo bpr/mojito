@@ -1471,6 +1471,7 @@ mod tests {
                 reg_types: HashMap::new(),
                 removed_params: Vec::new(),
                 callee_removed_params: Vec::new(),
+                removed_args: Vec::new(),
             }
         }
 

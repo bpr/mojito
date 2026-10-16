@@ -380,6 +380,11 @@ struct InstanceKey {
     /// here rather than in `arguments`, which hold only the method's own
     /// generic parameters.
     owner: Option<String>,
+    /// Whether the instance is of the generator a direct call names, with
+    /// its template's unused arguments ([`MirFunction::removed_args`])
+    /// removed: upstream's `_REMOVED_ARG` clone. Every other use of such a
+    /// template instantiates the full generator, keyed by every parameter.
+    reduced: bool,
 }
 
 #[derive(Clone, Default)]
@@ -436,6 +441,10 @@ struct Bindings {
     /// generator spells it, so one instance takes every struct agreeing on
     /// the kept arguments.
     removed: Vec<ParamRef>,
+    /// Whether a direct call demands the instance, which takes the reduced
+    /// generator when its template removed an argument
+    /// ([`InstanceKey::reduced`]).
+    reduced: bool,
 }
 
 impl Bindings {

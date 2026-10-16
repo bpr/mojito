@@ -3,6 +3,17 @@
 //! instances differing only in a parameter the generator never reads are
 //! one.
 //!
+//! It first records the runtime arguments the body never uses but to drop
+//! a value whose drop runs no code ([`mojito_mir::mir::unused_arguments`],
+//! upstream's `identifyUnusedArguments`), and reads the rest of the body
+//! with them gone ([`mojito_mir::mir::without_removed_arguments`]), so a
+//! parameter only an unused argument's type named is unread too. Upstream
+//! clones the generator without them (`_REMOVED_ARG`) for every direct
+//! call and keeps the original for any other use; the elaborator does the
+//! same, instantiating the reduced generator for a direct call, which
+//! passes no argument for them, and the full one, keeping every parameter,
+//! for a function value or any other demand.
+//!
 //! The pass records on the body the function's own compile-time parameters,
 //! and a method's struct's, that nothing in its body or signature reads
 //! ([`mojito_mir::mir::unread_parameters`]), and the elaborator leaves
@@ -44,7 +55,7 @@ use super::pre_elaboration::{CallGraphPass, Callees};
 use mojito_mir::mir::{
     Const, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
     instruction_regions, instruction_subscript_call, method_owner_params, named_lifted_bodies,
-    unread_parameters, without_removed_forwards,
+    unread_parameters_of, unused_arguments, without_removed_arguments, without_removed_forwards,
 };
 use mojito_types::param_expr::ParamId;
 use std::collections::{BTreeMap, BTreeSet};
@@ -55,8 +66,11 @@ pub const REMOVE_UNUSED_PARAMS: CallGraphPass = CallGraphPass {
     run: remove_unused_params,
 };
 
-/// Record `function`'s unread parameters as its `removed_params`; returns
+/// Record `function`'s unused arguments and unread parameters; returns
 /// whether they or its `callee_removed_params` changed.
+///
+/// The unused arguments are its `removed_args`, and the parameters the
+/// body reads none of without them its `removed_params`.
 ///
 /// A forward to a callee's removed parameter is no read, and the callees
 /// whose removals discounted one become its `callee_removed_params`, as do
@@ -68,8 +82,18 @@ pub fn remove_unused_params(
     declarations: &MirDeclarations,
     callees: &Callees<'_>,
 ) -> bool {
+    let removed_args = unused_arguments(name, function, declarations);
+    let reduced = declarations
+        .function(name)
+        .filter(|_| !removed_args.is_empty())
+        .map(|declaration| without_removed_arguments(function, declaration, &removed_args));
+    let declaration = reduced
+        .as_ref()
+        .map(|(_, declaration)| declaration)
+        .or_else(|| declarations.function(name));
+    let body = reduced.as_ref().map_or(&*function, |(view, _)| view);
     let mut targets = BTreeSet::new();
-    call_targets(&function.blocks, &mut targets);
+    call_targets(&body.blocks, &mut targets);
     let removals: BTreeMap<&str, &[ParamId]> = targets
         .iter()
         .filter_map(|&target| {
@@ -80,8 +104,8 @@ pub fn remove_unused_params(
         })
         .collect();
     let mut nested_targets = BTreeSet::new();
-    nested_bodies(&function.blocks, declarations, &mut nested_targets);
-    let lifted_targets = named_lifted_bodies(name, function, declarations);
+    nested_bodies(&body.blocks, declarations, &mut nested_targets);
+    let lifted_targets = named_lifted_bodies(name, body, declarations);
     let nested: BTreeMap<&str, &[ParamId]> = nested_targets
         .into_iter()
         .chain(lifted_targets.iter().map(String::as_str))
@@ -92,21 +116,25 @@ pub fn remove_unused_params(
         })
         .collect();
     let nested_removals = |body: &str| nested.get(body).copied();
-    let view = without_removed_forwards(name, function, declarations, &|callee| {
+    let view = without_removed_forwards(name, body, declarations, &|callee| {
         removals.get(callee).copied()
     });
+    let unread = |body: &MirFunction| {
+        declaration
+            .map(|declaration| {
+                unread_parameters_of(name, body, declaration, declarations, &nested_removals)
+            })
+            .unwrap_or_default()
+    };
     let (removed, mut discounted) = match &view {
         Some((view, discounted)) => (
-            unread_parameters(name, view, declarations, &nested_removals),
+            unread(view),
             discounted
                 .iter()
                 .map(|callee| (callee.clone(), removals[callee.as_str()].to_vec()))
                 .collect(),
         ),
-        None => (
-            unread_parameters(name, function, declarations, &nested_removals),
-            Vec::new(),
-        ),
+        None => (unread(body), Vec::new()),
     };
     let discounted = if removed.is_empty() {
         Vec::new()
@@ -121,11 +149,15 @@ pub fn remove_unused_params(
         discounted.sort();
         discounted
     };
-    if removed == function.removed_params && discounted == function.callee_removed_params {
+    if removed == function.removed_params
+        && discounted == function.callee_removed_params
+        && removed_args == function.removed_args
+    {
         return false;
     }
     function.removed_params = removed;
     function.callee_removed_params = discounted;
+    function.removed_args = removed_args;
     true
 }
 

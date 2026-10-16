@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.63
+# Mojito Textual MIR Format, Version 1.64
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.63 is implemented end to end for inspection and loading: canonical
+Version 1.64 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.63
+mojito-mir 1.64
 ```
 
-The writer emits 1.63. The reader accepts 1.0 through 1.63; *Schema 1.0*
+The writer emits 1.64. The reader accepts 1.0 through 1.64; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -566,6 +566,18 @@ the instructions that only computed them, dropped
 what its listed removals keep, before it checks `removed_params`. The
 writer omits the field when it is empty, the reader takes an absent field as
 empty, and a package does not encode it.
+
+Such a body may also carry `removed_args: [$v0, ...]` right after
+`callee_removed_params` (schema 1.64): the parameter slots its body uses
+only to drop a value whose drop runs no code, ascending, which
+`remove-unused-params` found unused (upstream's `identifyUnusedArguments`).
+Its `removed_params` are those the body reads with these arguments gone
+(`mir::without_removed_arguments`), and the elaborator instantiates that
+reduced body for a direct call, which passes no argument for them, and the
+full body, keeping every parameter, for any other use. The verifier reports
+a listed slot the body uses otherwise. The writer omits the field when it is
+empty, the reader takes an absent field as empty, and a package does not
+encode it.
 
 ## Values, Types, and Semantic Records
 

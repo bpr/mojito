@@ -154,7 +154,14 @@ impl Specializer<'_> {
                 format!("callee `{target}` lacks declaration facts"),
             )
         })?;
-        let mut bindings = self.base_bindings();
+        // A direct call names the generator with its template's unused
+        // arguments removed; the caller drops their arguments
+        // ([`Self::drop_removed_arguments`]).
+        let mut bindings = Bindings {
+            reduced: true,
+            ..self.base_bindings()
+        };
+        bindings.reduced = self.reduces(target, &bindings);
         let receiver_pattern_for_instance = receiver.and_then(|_| {
             self.functions
                 .get(target)
@@ -215,7 +222,7 @@ impl Specializer<'_> {
         )?;
         bind_explicit_value_arguments(
             &declaration.param_decls,
-            self.removed_params(target),
+            self.removed_params(target, bindings.reduced),
             param_args,
             &self.constant_values,
             &mut bindings,

@@ -74,9 +74,23 @@ pub fn unread_parameters(
     declarations: &MirDeclarations,
     nested: &NestedRemovals<'_>,
 ) -> Vec<ParamId> {
-    let Some(declaration) = declarations.function(name) else {
-        return Vec::new();
-    };
+    declarations
+        .function(name)
+        .map(|declaration| unread_parameters_of(name, function, declaration, declarations, nested))
+        .unwrap_or_default()
+}
+
+/// [`unread_parameters`] of `name` so declared.
+///
+/// The signature read is `declaration`'s, as the generator with its unused
+/// arguments removed declares it ([`crate::mir::without_removed_arguments`]).
+pub fn unread_parameters_of(
+    name: &str,
+    function: &MirFunction,
+    declaration: &MirFunctionDeclaration,
+    declarations: &MirDeclarations,
+    nested: &NestedRemovals<'_>,
+) -> Vec<ParamId> {
     if name == "__toplevel__" || !declaration.region_binders.is_empty() {
         return Vec::new();
     }

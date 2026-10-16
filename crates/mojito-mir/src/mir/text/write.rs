@@ -594,6 +594,10 @@ fn write_function(
         });
         writeln!(output, "{pad}    callee_removed_params: {},", list(callees)).unwrap();
     }
+    if !function.removed_args.is_empty() {
+        let removed = function.removed_args.iter().copied().map(var_value);
+        writeln!(output, "{pad}    removed_args: {},", list(removed)).unwrap();
+    }
     writeln!(output, "{pad}    blocks: [").unwrap();
     write_blocks(output, &function.blocks, indent + 3);
     writeln!(output, "{pad}    ]").unwrap();

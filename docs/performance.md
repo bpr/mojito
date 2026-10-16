@@ -1892,3 +1892,34 @@ pin keeps one. Over the corpus, `benchmarks/instantiation.tsv`'s shared
 bundled methods such as `List.__len__` merge too. Two fixtures that failed
 at the parent commit elaborate again (a static call's erased receiver,
 `static_method_unread_owner_instances.mojo`, `static_call_through_self.mojo`).
+
+## Unused arguments leave the generator a direct call names (2026-10-15, R997)
+
+`remove-unused-params` now removes first the runtime arguments a free
+function's body never uses but to drop a value whose drop runs no code,
+upstream's `identifyUnusedArguments`, and reads the rest of the body without
+them; the elaborator instantiates that reduced generator for each direct
+call and the full one for a function value (`docs/architecture.md`
+§Pre-Elaboration Pipeline). The stage fixture,
+`assets/ok/unused_argument_instances.mojo` without its `fside` call,
+which the parent commit rejects, debug binary, before (the parent commit)
+and after:
+
+| | before | after | change |
+|---|---:|---:|---:|
+| `concrete_functions` | 37 | 34 | −3 |
+| `generator_instances` | 17 | 15 | −2 |
+| `generator_instance_instructions` | 43 | 39 | −4 |
+
+`fa`, `fav`, `fmut`, `fkw`, and `fbor` each fall to one instance, as on the
+pin; `fown`, whose `NBox` destructor prints, keeps one per argument, as on
+the pin. The non-generic `g` and `fdef` gain a `$REMOVED$ARG` clone, and a
+function value of `g` keeps `g` itself. `fside()`, whose omitted default
+prints, now runs without evaluating it, as on the pin, where the parent
+commit refused to run the default at compile time (a used argument's such
+default still fails, R1015). No other fixture under `assets/ok/`
+reaches a reduced generator or changes its output, so
+`benchmarks/instantiation.tsv` gains only the fixture's row. A method's
+argument (R1011) and receiver (R1012), a forward of an argument to a
+removed one (R1013), and nested, lifted, and variadic functions (R1014)
+keep their arguments where the pin removes them.

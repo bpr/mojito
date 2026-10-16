@@ -31,6 +31,41 @@ pub(super) fn verify_scope(
     declarations: &MirDeclarations,
     errors: &mut Vec<String>,
 ) {
+    let head = format!("MIR function '{name}'");
+    // A removed argument no longer exists: the body reads as the generator
+    // a direct call names, with the argument gone, and uses its slot only
+    // to drop a value whose drop runs no code.
+    let declaration = declarations.function(name);
+    let reduced = match declaration {
+        Some(declaration) if !function.removed_args.is_empty() => {
+            let used = crate::mir::used_slots(function, declarations);
+            let reported = errors.len();
+            for &slot in &function.removed_args {
+                if slot as usize >= function.n_params {
+                    errors.push(format!(
+                        "{head} removes argument slot {slot}, which is no parameter"
+                    ));
+                } else if used.contains(&slot) {
+                    errors.push(format!(
+                        "{head} removes argument slot {slot}, which it uses"
+                    ));
+                }
+            }
+            if errors.len() > reported {
+                return;
+            }
+            Some(crate::mir::without_removed_arguments(
+                function,
+                declaration,
+                &function.removed_args,
+            ))
+        }
+        _ => None,
+    };
+    let (function, declaration) = match &reduced {
+        Some((view, declaration)) => (view, Some(declaration)),
+        None => (function, declaration),
+    };
     // A forward to a callee's removed parameter is no read: upstream's
     // `RemoveUnusedParams` rewrote the call without it. The body reads as
     // that rewrite leaves it, for the callees its snapshot names, and a
@@ -48,13 +83,22 @@ pub(super) fn verify_scope(
     let function = view.as_ref().map_or(function, |(view, _)| view);
     let mut scope = Scope::of_function(name, declarations);
     scope.declare_loop_binders(&function.blocks);
-    let head = format!("MIR function '{name}'");
     // A removed parameter no longer exists: a reference to it is out of
     // scope but inside a struct argument, which an instance erases
     // (`_REMOVED_ARG`) as upstream's generator spells it, and its slot is
     // read by nothing.
     if !function.removed_params.is_empty() {
-        let unread = crate::mir::unread_parameters(name, function, declarations, &snapshot);
+        let unread = declaration
+            .map(|declaration| {
+                crate::mir::unread_parameters_of(
+                    name,
+                    function,
+                    declaration,
+                    declarations,
+                    &snapshot,
+                )
+            })
+            .unwrap_or_default();
         for id in &function.removed_params {
             if let Some(kind) = scope.kinds.remove(id) {
                 scope.erased.insert(id.clone(), kind);
@@ -867,6 +911,7 @@ mod tests {
                 .collect(),
             removed_params: Vec::new(),
             callee_removed_params: Vec::new(),
+            removed_args: Vec::new(),
         }
     }
 
@@ -1092,6 +1137,49 @@ mod tests {
 
     /// A pack element over a declared variadic binder and its loop index is
     /// in scope, and a contract binder is bound by its contract.
+    /// A removed argument is used by nothing but a drop that runs no code:
+    /// its drop is no use, and any other instruction naming it is.
+    #[test]
+    fn scope_rejects_a_removed_argument_the_body_uses() {
+        let mut declarations = declarations("f", Vec::new());
+        let declaration = &mut declarations.functions[0];
+        declaration.param_names = vec!["a".to_string()];
+        declaration.param_types = vec![Ty::int()];
+        declaration.defaults = vec![None];
+        declaration.required = vec![true];
+        declaration.param_conventions = vec![None];
+        declaration.ref_params = vec![false];
+        declaration.param_writes = vec![false];
+        let with = |instrs: Vec<MirInstr>| MirFunction {
+            blocks: vec![MirBlock {
+                instrs,
+                term: MirTerm::Return(None),
+            }],
+            n_regs: 1,
+            n_vars: 1,
+            var_names: vec!["a".to_string()],
+            n_params: 1,
+            param_types: vec![Ty::int()],
+            owned_params: vec![true],
+            deinit_params: vec![false],
+            ref_params: vec![false],
+            var_tys: HashMap::from([(0, Ty::int())]),
+            removed_args: vec![0],
+            ..function_with(vec![Ty::int()])
+        };
+        let dropped = with(vec![MirInstr::DropVar { var: 0 }]);
+        assert_eq!(findings(&dropped, &declarations), Vec::<String>::new());
+        let read = with(vec![MirInstr::UseVar {
+            dest: Reg(0),
+            var: 0,
+            mode: crate::mir::UseMode::Copy,
+        }]);
+        assert_eq!(
+            findings(&read, &declarations),
+            vec!["MIR function 'f' removes argument slot 0, which it uses".to_string()]
+        );
+    }
+
     #[test]
     fn scope_accepts_pack_elements_and_contract_binders() {
         let context = ParamContext::detached();

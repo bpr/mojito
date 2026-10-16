@@ -61,6 +61,12 @@ impl Decoder {
             .ok()
             .map(|value| self.callee_params(value))
             .unwrap_or_default();
+        let removed_args = self
+            .field(fields, "removed_args")
+            .ok()
+            .and_then(|value| self.list(value).ok())
+            .map(|values| values.iter().filter_map(|value| self.var(value)).collect())
+            .unwrap_or_default();
         if var_names.len() != n_vars {
             self.error(
                 value.span,
@@ -102,6 +108,7 @@ impl Decoder {
                 "blocks",
                 "removed_params",
                 "callee_removed_params",
+                "removed_args",
             ],
         );
         Some((
@@ -128,6 +135,7 @@ impl Decoder {
                 reg_types,
                 removed_params,
                 callee_removed_params,
+                removed_args,
             },
         ))
     }

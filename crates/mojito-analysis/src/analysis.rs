@@ -314,6 +314,7 @@ mod constant_tuple_place_tests {
             reg_types: HashMap::new(),
             removed_params: Vec::new(),
             callee_removed_params: Vec::new(),
+            removed_args: Vec::new(),
         };
 
         assert!(!is_droppable_root(&function, 1));
@@ -341,6 +342,7 @@ mod constant_tuple_place_tests {
             reg_types: HashMap::new(),
             removed_params: Vec::new(),
             callee_removed_params: Vec::new(),
+            removed_args: Vec::new(),
         };
         assert!(is_droppable_root(&function, 0));
         assert!(!is_droppable_root(&function, 1));
@@ -445,6 +447,7 @@ mod interior_origin_tests {
             reg_types: HashMap::new(),
             removed_params: Vec::new(),
             callee_removed_params: Vec::new(),
+            removed_args: Vec::new(),
         }
     }
 

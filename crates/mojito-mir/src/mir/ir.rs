@@ -815,23 +815,47 @@ pub fn retire_slots(function: &mut MirFunction, retired: &BTreeSet<VarId>) {
             .all(|&slot| slot as usize >= function.n_params),
         "a parameter slot is never retired"
     );
-    let addressed = std::cell::Cell::new(false);
-    let renumber = |var: VarId| {
-        addressed.set(addressed.get() || retired.contains(&var));
-        var - retired.range(..var).count() as VarId
-    };
-    renumber_slots(function, &renumber);
-    debug_assert!(!addressed.get(), "a retired slot is still addressed");
+    retire(function, retired);
+}
+
+/// Remove the parameter slots `retired`, none still addressed, from
+/// `function`, as [`retire_slots`] removes a local.
+///
+/// The parameter tables lose their entries, a span naming one names no
+/// slot, and every slot above one moves down past it.
+///
+/// # Panics
+///
+/// In debug builds, when a retired slot is no parameter or still addressed.
+pub fn retire_parameters(function: &mut MirFunction, retired: &BTreeSet<VarId>) {
+    debug_assert!(
+        retired
+            .iter()
+            .all(|&slot| (slot as usize) < function.n_params),
+        "only a parameter slot is retired"
+    );
     for &slot in retired.iter().rev() {
-        function.var_names.remove(slot as usize);
+        let slot = slot as usize;
+        for table in [
+            &mut function.owned_params,
+            &mut function.deinit_params,
+            &mut function.ref_params,
+        ] {
+            if slot < table.len() {
+                table.remove(slot);
+            }
+        }
+        if slot < function.param_types.len() {
+            function.param_types.remove(slot);
+        }
     }
-    function.var_tys = function
-        .var_tys
-        .iter()
-        .filter(|(var, _)| !retired.contains(var))
-        .map(|(var, ty)| (renumber(*var), ty.clone()))
-        .collect();
-    function.n_vars -= retired.len();
+    function.n_params -= retired.len();
+    for (_, origin) in function.spans.0.values_mut() {
+        if origin.is_some_and(|var| retired.contains(&var)) {
+            *origin = None;
+        }
+    }
+    retire(function, retired);
 }
 
 /// The slots `blocks` address, the regions they hold included.
@@ -907,6 +931,27 @@ pub fn comptime_for_body(
                 && dominators[block].contains(&body)
         })
         .collect()
+}
+
+/// The renumbering [`retire_slots`] and [`retire_parameters`] share.
+fn retire(function: &mut MirFunction, retired: &BTreeSet<VarId>) {
+    let addressed = std::cell::Cell::new(false);
+    let renumber = |var: VarId| {
+        addressed.set(addressed.get() || retired.contains(&var));
+        var - retired.range(..var).count() as VarId
+    };
+    renumber_slots(function, &renumber);
+    debug_assert!(!addressed.get(), "a retired slot is still addressed");
+    for &slot in retired.iter().rev() {
+        function.var_names.remove(slot as usize);
+    }
+    function.var_tys = function
+        .var_tys
+        .iter()
+        .filter(|(var, _)| !retired.contains(var))
+        .map(|(var, ty)| (renumber(*var), ty.clone()))
+        .collect();
+    function.n_vars -= retired.len();
 }
 
 /// Every slot one block names: its instructions', its regions' and their
@@ -2835,6 +2880,16 @@ pub struct MirFunction {
     /// `removed_params`. Empty on a concrete instance.
     #[serde(skip)]
     pub callee_removed_params: Vec<(String, Vec<mojito_types::param_expr::ParamId>)>,
+    /// The parameter slots nothing in its body uses but a drop that runs no
+    /// code, ascending: upstream's `identifyUnusedArguments`, which
+    /// `RemoveUnusedParams` drops from the generator a direct call names.
+    /// `removed_params` is read with them gone
+    /// ([`super::without_removed_arguments`]); the elaborator instantiates
+    /// that reduced generator for a direct call and the full one for every
+    /// other use. Not encoded, as `removed_params`. Empty on a concrete
+    /// instance.
+    #[serde(skip)]
+    pub removed_args: Vec<VarId>,
 }
 
 impl MirFunction {
@@ -2935,6 +2990,7 @@ mod tests {
             reg_types: HashMap::new(),
             removed_params: Vec::new(),
             callee_removed_params: Vec::new(),
+            removed_args: Vec::new(),
         }
     }
 

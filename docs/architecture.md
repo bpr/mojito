@@ -5354,6 +5354,33 @@ point where a slot declared in a loop is uninitialized again.
   instance clears the field. The verifier takes a removed binder out of the
   body's scope but inside a struct argument, which an instance erases
   (R996), and reports a removed parameter the body reads.
+  Before the parameters, the pass removes the runtime arguments the body
+  never uses (R997), upstream's `identifyUnusedArguments`: it records as
+  `MirFunction::removed_args` each parameter slot that no instruction,
+  handler binding, or cleanup list names but to drop a value whose drop
+  runs no code (`mir::used_slots`, `MirDeclarations::drop_runs_no_code`,
+  upstream's `IsTriviallyDeinitable`), and reads the body and declaration
+  with them gone (`mir::without_removed_arguments`,
+  `mir::retire_parameters`, `mir::unread_parameters_of`), so a parameter
+  only an unused argument's type named is unread too: `fa[n](a: Arr[n])`
+  and `fav[n](var a: Arr[n])` remove `a` and then `n`. Only a top-level free
+  function, neither variadic nor tying an origin or a returned reference
+  to a parameter, has candidates (`mir::unused_arguments`), and never a
+  `deinit` or callable parameter. As upstream calls a `_REMOVED_ARG` clone
+  of the generator from every direct call and keeps the original for any
+  other use, the elaborator instantiates the reduced generator
+  (`InstanceKey::reduced`, named by `symbol::removed_argument_symbol`,
+  `fa$REMOVED$ARG$mono`, `g$REMOVED$ARG`) for a call `infer_call` binds,
+  dropping the call's argument for each removed slot by the call's own
+  binding against the full declaration
+  (`Specializer::drop_removed_arguments`; an omitted argument's default is
+  never evaluated), and the full generator, whose `removed_params` it
+  ignores (`Specializer::removed_params`), for a function value, an
+  export, an entry, or any other demand. Upstream makes the clone and
+  rewrites the calls in the parametric program; Mojito's elaborator makes
+  it per demand, since the parametric program keeps every signature and
+  call (R912). The verifier reports a removed argument the body uses and
+  reads the body through the same view.
   The pass is a `CallGraphPass` (R907), as upstream's walks its call graph
   callees first and rewrites each call of a generator it pruned before
   reaching the caller: a caller reads its body as that rewrite leaves it

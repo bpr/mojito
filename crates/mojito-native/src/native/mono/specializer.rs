@@ -192,17 +192,104 @@ impl<'a> Specializer<'a> {
 
     /// The own parameters of `template` its body never reads, which the
     /// pre-elaboration pipeline removed: no instance's identity holds them.
-    pub(super) fn removed_params(&self, template: &str) -> &'a [mojito_types::param_expr::ParamId] {
+    /// A template that also removed an argument removed them from the
+    /// generator a direct call names, so they are those of a `reduced`
+    /// demand alone; any other keeps every parameter.
+    pub(super) fn removed_params(
+        &self,
+        template: &str,
+        reduced: bool,
+    ) -> &'a [mojito_types::param_expr::ParamId] {
         self.functions
             .get(template)
+            .filter(|function| reduced || function.removed_args.is_empty())
             .map_or(&[], |function| function.removed_params.as_slice())
+    }
+
+    /// Whether a demand of `template` that `bindings` carry takes the
+    /// generator with its unused arguments removed ([`InstanceKey::reduced`]).
+    pub(super) fn reduces(&self, template: &str, bindings: &Bindings) -> bool {
+        bindings.reduced
+            && self
+                .functions
+                .get(template)
+                .is_some_and(|function| !function.removed_args.is_empty())
+    }
+
+    /// Drop from a direct call of `target`'s reduced generator the
+    /// arguments that bind the parameters it removed, as upstream rewrites
+    /// each call of a generator it removed an argument from: the call binds
+    /// against `target`'s full declaration, and a positional or keyword
+    /// argument leaves with its place, while an omitted one, whose default
+    /// is never evaluated, leaves nothing.
+    pub(super) fn drop_removed_arguments(
+        &self,
+        owner: &str,
+        target: &str,
+        args: &mut Vec<Reg>,
+        arg_places: &mut Vec<Option<MirPlace>>,
+        kwargs: &mut Vec<(String, Reg)>,
+        kwarg_places: &mut Vec<Option<MirPlace>>,
+    ) -> Result<(), MonoError> {
+        let (Some(declaration), Some(function)) =
+            (self.declarations.get(target), self.functions.get(target))
+        else {
+            return Ok(());
+        };
+        let slots = match_call_slots(
+            &declaration.param_names,
+            &declaration.required,
+            declaration.positional_only,
+            declaration.keyword_only,
+            args.len(),
+            &kwargs
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            CallVariadics {
+                positional: declaration.variadic.is_some(),
+                keyword: declaration.kw_variadic.is_some(),
+            },
+        )
+        .map_err(|e| {
+            self.error(
+                Some(owner),
+                format!("binding call to `{target}` during argument removal: {e:?}"),
+            )
+        })?;
+        let mut positional = BTreeSet::new();
+        let mut keyword = BTreeSet::new();
+        for &slot in &function.removed_args {
+            match slots.slots.get(slot as usize) {
+                Some(ArgSlot::Positional(index)) => {
+                    positional.insert(*index);
+                }
+                Some(ArgSlot::Keyword(index)) => {
+                    keyword.insert(*index);
+                }
+                Some(ArgSlot::Default) | None => {}
+            }
+        }
+        for &index in positional.iter().rev() {
+            args.remove(index);
+            if index < arg_places.len() {
+                arg_places.remove(index);
+            }
+        }
+        for &index in keyword.iter().rev() {
+            kwargs.remove(index);
+            if index < kwarg_places.len() {
+                kwarg_places.remove(index);
+            }
+        }
+        Ok(())
     }
 
     /// [`Self::removed_params`] of `template` as binders, each with the
     /// spelling its declaration gives it: its own, an enclosing body's, or
     /// its struct's.
-    fn removed_binders(&self, template: &str) -> Vec<ParamRef> {
-        let removed = self.removed_params(template);
+    fn removed_binders(&self, template: &str, reduced: bool) -> Vec<ParamRef> {
+        let removed = self.removed_params(template, reduced);
         if removed.is_empty() {
             return Vec::new();
         }
@@ -271,7 +358,7 @@ impl<'a> Specializer<'a> {
         target: &str,
         owner_covered: usize,
     ) -> Result<Vec<InstanceArg>, MonoError> {
-        let removed = self.removed_params(target);
+        let removed = self.removed_params(target, bindings.reduced);
         decls
             .iter()
             .skip(owner_covered)
@@ -290,6 +377,7 @@ impl<'a> Specializer<'a> {
         arguments: Vec<InstanceArg>,
     ) -> Result<String, MonoError> {
         bindings.erase_origins();
+        bindings.reduced = self.reduces(template, &bindings);
         if let Some(declaration) = self.declarations.get(template)
             && let Availability::Disproven(message) = self.availability(declaration, &bindings)
         {
@@ -316,11 +404,11 @@ impl<'a> Specializer<'a> {
             Some((owner_template, _))
                 if !mojito_mir::mir::composed_member(template)
                     && self
-                        .removed_params(template)
+                        .removed_params(template, bindings.reduced)
                         .iter()
                         .any(|id| *id.owner == **owner_template) =>
             {
-                let removed = self.removed_params(template);
+                let removed = self.removed_params(template, bindings.reduced);
                 let decls = self
                     .structs
                     .get(owner_template.as_str())
@@ -353,6 +441,7 @@ impl<'a> Specializer<'a> {
                 })
                 .collect(),
             owner,
+            reduced: bindings.reduced,
         };
         if let Some(&index) = self.instance_index.get(&key) {
             let name = self.instances[index].1.clone();
@@ -374,9 +463,18 @@ impl<'a> Specializer<'a> {
         // instance (`f$mono`), never the template itself.
         let spelled = !key.arguments.is_empty()
             || self
-                .removed_params(template)
+                .removed_params(template, key.reduced)
                 .iter()
                 .any(|id| key.owner.is_none() || !self.structs.contains_key(&id.owner));
+        // The generator a direct call names with the unused arguments
+        // removed is a clone of its own, as upstream's `_REMOVED_ARG`.
+        let reduced_template;
+        let template_spelling = if key.reduced {
+            reduced_template = mojito_symbol::symbol::removed_argument_symbol(template);
+            reduced_template.as_str()
+        } else {
+            template
+        };
         let name = if let Some(owner) = &key.owner {
             let base = mojito_symbol::symbol::retarget_method_symbol(template, owner).ok_or_else(
                 || {
@@ -392,9 +490,9 @@ impl<'a> Specializer<'a> {
                 base
             }
         } else if spelled {
-            mojito_symbol::symbol::instance_symbol(template, &key.arguments)
+            mojito_symbol::symbol::instance_symbol(template_spelling, &key.arguments)
         } else {
-            template.to_string()
+            template_spelling.to_string()
         };
         // Two clones of one method whose owner instance and arguments agree
         // differ only in pointer provenance (a clone origin binder with and
@@ -598,7 +696,7 @@ impl<'a> Specializer<'a> {
         let Some(declaration) = self.declarations.get(target) else {
             return Ok(trailing);
         };
-        let removed = self.removed_params(target);
+        let removed = self.removed_params(target, bindings.reduced);
         for (decl, reg, _) in
             mojito_mir::mir::matched_parameter_arguments(&declaration.param_decls, param_args)
         {
@@ -730,10 +828,24 @@ impl<'a> Specializer<'a> {
                 construct: findings.join("; "),
             });
         }
+        // The generator a direct call names has its unused arguments
+        // removed, from its body and its declaration alike.
+        let reduced = key
+            .reduced
+            .then(|| self.declarations.get(key.template.as_str()))
+            .flatten()
+            .map(|declaration| {
+                mojito_mir::mir::without_removed_arguments(
+                    template,
+                    declaration,
+                    &template.removed_args,
+                )
+            });
+        let template = reduced.as_ref().map_or(template, |(view, _)| view);
         let scope = &self.binder_scope(&key.template);
         let mut removed = bindings.removed.clone();
         removed.extend(
-            self.removed_binders(&key.template)
+            self.removed_binders(&key.template, key.reduced)
                 .into_iter()
                 .filter(|binder| {
                     key.owner.is_none() || !self.structs.contains_key(&binder.id.owner)
@@ -764,6 +876,7 @@ impl<'a> Specializer<'a> {
         let unreached_failures = std::mem::take(&mut self.unreached_failures);
         function.removed_params.clear();
         function.callee_removed_params.clear();
+        function.removed_args.clear();
         expand_pack_spreads(&key.template, &mut function)?;
         self.select_comptime_branches(&key.template, &mut function, bindings)?;
         self.discharge_instantiation_failures(&key.template, &function)?;
@@ -851,8 +964,11 @@ impl<'a> Specializer<'a> {
         retire_forwarded_packs(&mut function);
         erase_specialized_generic_callable_storage(&mut function);
 
-        if let Some(declaration) = self.declarations.get(key.template.as_str()) {
-            let mut declaration = declaration.clone();
+        if let Some(declaration) = reduced
+            .map(|(_, declaration)| declaration)
+            .or_else(|| self.declarations.get(key.template.as_str()).cloned())
+        {
+            let mut declaration = declaration;
             substitute_declaration(&mut declaration, bindings)?;
             erase_generic_callable_parameters(&mut declaration.param_types);
             declaration.lowered_name.clone_from(&name);
@@ -1158,7 +1274,7 @@ impl<'a> Specializer<'a> {
                 .map_err(|error| self.error(Some(template), error))?;
             instance_bindings.self_instance = Some((nominal_template(name).to_string(), ty));
         }
-        let removed = self.removed_params(function);
+        let removed = self.removed_params(function, false);
         let mut arguments = Vec::new();
         for (decl, arg) in declaration.param_decls.iter().zip(args) {
             let keyed = !removed.contains(decl.id());
@@ -1926,7 +2042,7 @@ impl<'a> Specializer<'a> {
             .get(target)
             .map_or(0, |declaration| declaration.param_decls.len());
         scope.truncate(scope.len().saturating_sub(own));
-        let removed = self.removed_params(target);
+        let removed = self.removed_params(target, false);
         let arguments = scope
             .iter()
             .filter(|decl| !removed.contains(decl.id()))
@@ -1986,7 +2102,7 @@ impl<'a> Specializer<'a> {
             applied_bindings = own;
             &applied_bindings
         };
-        let removed = self.removed_params(function);
+        let removed = self.removed_params(function, false);
         for decl in scope {
             let keyed = !removed.contains(decl.id());
             let binder = decl.binder();
@@ -2295,6 +2411,7 @@ impl<'a> Specializer<'a> {
                         args,
                         kwargs,
                         arg_places,
+                        kwarg_places,
                         param_arg_regs,
                         receiver: static_receiver,
                         instantiated_args,
@@ -2445,7 +2562,18 @@ impl<'a> Specializer<'a> {
                             param_arg_regs,
                             &mut bindings,
                         )?;
+                        let reduced = bindings.reduced;
                         func.0 = self.enqueue(&target, bindings, arguments)?;
+                        if reduced {
+                            self.drop_removed_arguments(
+                                owner,
+                                &target,
+                                args,
+                                arg_places,
+                                kwargs,
+                                kwarg_places,
+                            )?;
+                        }
                         param_arg_regs.clear();
                         instantiated_args.clear();
                         pass_capturing_arguments(capturing, index, args, arg_places, &mut preludes);
@@ -2710,7 +2838,18 @@ impl<'a> Specializer<'a> {
                                     param_arg_regs,
                                     &mut bindings,
                                 )?;
+                                let reduced = bindings.reduced;
                                 let concrete = self.enqueue(&target, bindings, arguments)?;
+                                if reduced {
+                                    self.drop_removed_arguments(
+                                        owner,
+                                        &target,
+                                        args,
+                                        arg_places,
+                                        kwargs,
+                                        kwarg_places,
+                                    )?;
+                                }
                                 pass_capturing_arguments(
                                     capturing,
                                     index,

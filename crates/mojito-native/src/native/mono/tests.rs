@@ -1640,6 +1640,7 @@ fn method_call_spread_expands_into_the_bound_pack_elements() {
         reg_types: HashMap::from([(0, pack), (2, Ty::int())]),
         removed_params: Vec::new(),
         callee_removed_params: Vec::new(),
+        removed_args: Vec::new(),
     };
     expand_pack_spreads("fwd", &mut function).expect("expand the method-call spread");
     let instrs = &function.blocks[0].instrs;
@@ -2207,4 +2208,36 @@ fn a_destructor_that_reads_no_struct_parameter_keeps_its_instance_name() {
         ],
         [["DBox$mono$V1.__deinit__"], ["DBox$mono$V2.__deinit__"]]
     );
+}
+
+/// A direct call of a function whose argument its body never uses names
+/// the generator with that argument removed, and passes nothing for it; a
+/// function value of it names the full generator, as upstream keeps the
+/// original beside its `_REMOVED_ARG` clone.
+#[test]
+fn a_direct_call_names_the_generator_without_its_unused_argument() {
+    let source = "@no_inline\n\
+     def g(x: Int) -> Int:\n\
+     \x20   return 8\n\
+     def h(x: Int) -> Int:\n\
+     \x20   return x\n\
+     def main() raises:\n\
+     \x20   var f = g\n\
+     \x20   if Int(String(\"1\")) > 5:\n\
+     \x20       f = h\n\
+     \x20   print(f(1), g(2))\n";
+    let specialized = specialized_with_removed(source, &[]).expect("specialize");
+    assert_eq!(
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
+    );
+    assert_eq!(function(&specialized, "g").n_params, 1);
+    assert_eq!(function(&specialized, "g$REMOVED$ARG").n_params, 0);
+    let direct = instructions(&function(&specialized, "main").blocks)
+        .into_iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::Call { func, args, .. } if func.0 == "g$REMOVED$ARG" => Some(args.len()),
+            _ => None,
+        });
+    assert_eq!(direct, Some(0), "the direct call passes no argument");
 }

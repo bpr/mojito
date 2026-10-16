@@ -66,7 +66,7 @@ mod node;
 mod param_uses;
 pub use param_uses::{
     NestedRemovals, has_no_destructor, method_owner_params, named_lifted_bodies, unread_parameters,
-    without_removed_forwards,
+    unread_parameters_of, without_removed_forwards,
 };
 mod struct_reads;
 pub use struct_reads::{
@@ -74,6 +74,8 @@ pub use struct_reads::{
 };
 mod symbols;
 pub use symbols::{SymbolTable, implicit_callees, replace_symbol_uses};
+mod unused_args;
+pub use unused_args::{unused_arguments, used_slots, without_removed_arguments};
 
 /// Lower a whole HIR control-flow graph (one function body) into a
 /// `MirFunction`.
@@ -318,6 +320,51 @@ impl MirDeclarations {
                     !mojito_types::types::is_symbolic(field) && self.copy_is_identity(field)
                 })
         })
+    }
+
+    /// Whether dropping a value of `ty` runs no code, as upstream's
+    /// `IsTriviallyDeinitable` answers: a compiler-known scalar
+    /// ([`has_no_destructor`]), a pointer, a tuple or pack of such types,
+    /// or a struct with no destructor and no explicit-destroy obligation
+    /// whose every field answers so. A type parameter, an associated type,
+    /// and anything unknown answer no.
+    pub fn drop_runs_no_code(&self, ty: &Ty) -> bool {
+        self.drop_runs_no_code_within(ty, &mut Vec::new())
+    }
+
+    /// [`Self::drop_runs_no_code`], `visiting` the structs under way: a
+    /// recursive struct answers no.
+    fn drop_runs_no_code_within(&self, ty: &Ty, visiting: &mut Vec<String>) -> bool {
+        if has_no_destructor(ty) {
+            return true;
+        }
+        match ty.kind() {
+            TyKind::Pointer { .. } => true,
+            TyKind::Tuple(items) | TyKind::RuntimePack(items) => items
+                .iter()
+                .all(|item| self.drop_runs_no_code_within(item, visiting)),
+            TyKind::Struct(name, _) if !visiting.contains(name) => {
+                let Some(declaration) = self.structure(name) else {
+                    return false;
+                };
+                if declaration.explicit_destroy.is_some()
+                    || !declaration.explicit_destructors.is_empty()
+                    || ["__del__", "__deinit__"]
+                        .iter()
+                        .any(|member| self.function(&format!("{name}.{member}")).is_some())
+                {
+                    return false;
+                }
+                visiting.push(name.clone());
+                let trivial = declaration
+                    .fields
+                    .iter()
+                    .all(|(_, field)| self.drop_runs_no_code_within(field, visiting));
+                visiting.pop();
+                trivial
+            }
+            _ => false,
+        }
     }
 
     /// The requirement a call through `bounds` selects by its `dispatch`
@@ -3762,6 +3809,7 @@ fn lower_cfg_body(
         reg_types: HashMap::new(),
         removed_params: Vec::new(),
         callee_removed_params: Vec::new(),
+        removed_args: Vec::new(),
     };
 
     {

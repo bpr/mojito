@@ -1,0 +1,117 @@
+  functions: [
+      fn {
+        name: fa,
+        registers: 2,
+        vars: 1,
+        var_names: [a],
+        params: 1,
+        param_types: [struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fa", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fa", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 149, end: 150, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 149, end: 150, origin: absent }) }],
+        removed_params: [param_id { owner: "fa", slot: 0 }],
+        removed_args: [$v0],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(3) },
+              literal.materialize { dest: %r1, value: %r0, target: Int }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: fav,
+        registers: 2,
+        vars: 1,
+        var_names: [a],
+        params: 1,
+        param_types: [struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fav", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [true],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fav", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 213, end: 214, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 213, end: 214, origin: absent }) }],
+        removed_params: [param_id { owner: "fav", slot: 0 }],
+        removed_args: [$v0],
+        blocks: [
+          bb0 {
+            instructions: [
+              drop.var { var: $v0 },
+              const { dest: %r0, value: int_literal(3) },
+              literal.materialize { dest: %r1, value: %r0, target: Int }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: fs,
+        registers: 4,
+        vars: 1,
+        var_names: [a],
+        params: 1,
+        param_types: [struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fs", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fs", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "fs", slot: 0, name: n, type: meta_value(Int) }) } }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: simd { dtype: int64, width: 1 } }, reg_type { reg: %r3, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 276, end: 279, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 280, end: 281, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 276, end: 282, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 272, end: 283, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fs", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "fs", slot: 0, name: n, type: meta_value(Int) }) } }], type: present(simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "fs", slot: 0, name: n, type: meta_value(Int) }) }), through: absent } },
+              const { dest: %r1, value: int_literal(0) },
+              index.get { dest: %r2, base: %r0, index: %r1, base_place: present(place { root: $v0, root_type: present(struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fs", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "fs", slot: 0, name: n, type: meta_value(Int) }) } }], type: present(simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "fs", slot: 0, name: n, type: meta_value(Int) }) }), through: absent }), index_place: absent, call: absent, intrinsic: present(simd) },
+              call { dest: %r3, func: Int, raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r3) }
+          }
+        ]
+      },
+      fn {
+        name: g,
+        registers: 1,
+        vars: 2,
+        var_names: [x, y],
+        params: 2,
+        param_types: [Int, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 337, end: 338, origin: present($v1) }) }],
+        removed_args: [$v0],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v1, mode: copy }
+            ],
+            terminator: return { value: present(%r0) }
+          }
+        ]
+      }
+  ]

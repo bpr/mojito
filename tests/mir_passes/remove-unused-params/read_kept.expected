@@ -16,6 +16,8 @@
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 65, end: 66, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 65, end: 66, origin: absent }) }],
+        removed_params: [param_id { owner: "sig_only", slot: 0 }],
+        removed_args: [$v0],
         blocks: [
           bb0 {
             instructions: [

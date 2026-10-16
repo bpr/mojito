@@ -247,6 +247,13 @@ pub fn instance_symbol(template: &str, arguments: &[InstanceArg]) -> String {
     format!("{template}$mono{spelling}")
 }
 
+/// The generator `template` names with its unused arguments removed, the
+/// clone a direct call instantiates: upstream's `_REMOVED_ARG` suffix,
+/// sanitized as an instance spelling is.
+pub fn removed_argument_symbol(template: &str) -> String {
+    format!("{template}$REMOVED$ARG")
+}
+
 /// The canonical mangled spelling of one parameter type. Only this module can
 /// construct one, so every signature part obeys the same sanitization rules.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
