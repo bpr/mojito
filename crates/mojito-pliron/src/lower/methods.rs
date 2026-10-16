@@ -167,7 +167,7 @@ impl FnLowering<'_> {
             && kwargs.is_empty()
             && matches!(
                 self.func.reg_types.get(&recv.0).map(Ty::kind),
-                Some(TyKind::Tuple(_) | TyKind::RuntimePack(_))
+                Some(TyKind::Tuple(_) | TyKind::RuntimePack(_) | TyKind::VariadicPack(_))
             )
         {
             return self.lower_len_builtin(ctx, dest, &[recv], &[]);

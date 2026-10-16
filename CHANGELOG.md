@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A function with a homogeneous collector (`*args: T`) has one instance
+  for every call arity (R1040), as at the pin, where each arity had its
+  own: the elaborator no longer keys the instance by the overflow count,
+  and the pack stays a run-time `VariadicPack`. Natively it is the pin's
+  `VariadicList` layout, `{ elements, len }` over the caller's element
+  slots, read behind a bounds trap against its run-time length; an owned
+  pack and a consuming iterator's rest are destroyed last to first, on the
+  VM too. The corpus has 27 fewer concrete functions. Spreading such a
+  collector (R1071) and writing it (R1072) are still rejected
+  (assets/ok/unused_argument_nested_variadic_instances.mojo).
 - A slice descriptor's bound read names the `Optional` constructors it
   runs (R1030), as an upstream call names the constructor it runs:
   `field.get` carries them in concrete MIR (MIR text 1.69), and the VM

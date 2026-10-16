@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1071**.
+Next free ID: **R1074**.
 
 ## Ordered Work
 
@@ -643,20 +643,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Found while landing R1014 (2026-10-16).
   - Depends on R974.
   - Model: Opus, Not Planned.
-
-- [ ] **R1040 A homogeneous variadic instance is keyed by its call's
-  arity**
-
-  `fused(*args: Int)` called with two and with three arguments has two
-  instances, `fused$mono$V2` and `fused$mono$V3`, where the pin's takes a
-  runtime `VariadicList` and has one.
-  - `infer_call` pushes the overflow count into the instance identity
-    (`Bindings::variadic_arity`), which sizes the pack slot's tuple type.
-  - Removing an unread borrowed pack (R1014) only hides it for packs the
-    body never reads.
-  - Found while landing R1014 (2026-10-16).
-  - Depends on nothing.
-  - Model: Fable, Planned.
 
 - [ ] **R1041 A struct with droppable fields and no `__deinit__` has no
   destructor function; the backends drop its fields by type**
@@ -5904,6 +5890,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1071 Spreading a homogeneous collector into another call is
+  rejected**
+
+  Problem: `def outer(*xs: Int): return inner(*xs)` stops in the checker
+  with "call spread outside a specialized type pack", where the pin passes
+  the collector on and prints `3` for `outer(1, 2, 3)`.
+  - The checker accepts a spread only of a type pack
+    (`checker/inference.rs`).
+  - Upstream forwards the caller's `VariadicList` whole; since R1040 the
+    pack is one run-time value on both backends, so the forward can pass the
+    caller's pack, natively its descriptor, unchanged.
+  - Found while landing R1040 (2026-10-16).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R436 A struct's `comptime` value member read through the type name
   is rejected**
 
@@ -7544,6 +7545,35 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R734 (2026-10-13).
   - Depends on nothing.
   - Model: Fable, Planned.
+
+- [ ] **R1072 Writing a homogeneous collector is rejected**
+
+  Problem: `print(xs)` over `*xs: Int` reports that "an element of
+  'values' with type '$variadic[Int]' does not conform to trait
+  'Writable'", where the pin prints `(1, 2, 3)`.
+  - Upstream's `VariadicList` is `Writable` when its element is, through
+    its `write_to` and `write_repr_to`.
+  - Once R743 makes the collector the nominal `VariadicList`, this is
+    declaring those two methods on it.
+  - Found while planning R1040 (2026-10-16).
+  - Depends on R743.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1073 A run-time pack's element reads and destruction are native
+  backend code**
+
+  The native backend reads a `VariadicPack` through its `{ elements, len }`
+  descriptor and destroys an owned one in a backend-emitted loop, where
+  upstream runs `VariadicList.__len__`, `__getitem__`, and `__deinit__`.
+  - The code lives in `crates/mojito-pliron/src/lower/iter.rs`
+    (`pack_length`, `pack_element_address`, `advance_variadic_list`) and
+    `lower/drops.rs` (`emit_variadic_list_drop`); the VM's
+    `drop_owned_pack` is its counterpart.
+  - Once R743 declares the nominal `VariadicList` over the same layout,
+    these become calls of its library methods and the backend arms go.
+  - Found while landing R1040 (2026-10-16).
+  - Depends on R743.
+  - Model: Opus, Not Planned.
 
 - [ ] **R662 A value binder read is a frame slot, not a parameter
   reference**

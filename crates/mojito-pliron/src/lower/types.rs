@@ -157,6 +157,7 @@ pub fn lower_ty(
         | TyKind::Struct(..)
         | TyKind::Tuple(_)
         | TyKind::RuntimePack(_)
+        | TyKind::VariadicPack(_)
         | TyKind::Variant(_)
         | TyKind::Simd { .. }
         | TyKind::StringLiteral

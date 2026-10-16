@@ -321,13 +321,6 @@ pub(super) fn substitute_declaration(
     }
     if let Some(ty) = &mut decl.variadic {
         *ty = substitute_ty(ty, bindings)?;
-        // An arity-specialized instance's pack reifies as the concrete
-        // tuple shape the call site collected.
-        if let Some(arity) = bindings.variadic_arity
-            && !matches!(ty.kind(), TyKind::RuntimePack(_) | TyKind::Tuple(_))
-        {
-            *ty = TyKind::RuntimePack(vec![ty.clone(); arity]).into();
-        }
     }
     if let Some(ty) = &mut decl.kw_variadic {
         *ty = substitute_ty(ty, bindings)?;
@@ -549,17 +542,7 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
         {
             TyKind::Tuple(sub_types(elements, bindings)?).into()
         }
-        TyKind::VariadicPack(v) => {
-            let element = substitute_ty(v, bindings)?;
-            match bindings.variadic_arity {
-                // An unspecialized variadic callee instantiates at its
-                // call-site arity: the pack becomes the concrete tuple shape
-                // the body sees once the arguments are matched. The runtime
-                // pack stays the declaration's variadic ABI root alone.
-                Some(arity) => TyKind::Tuple(vec![element; arity]).into(),
-                None => TyKind::VariadicPack(element).into(),
-            }
-        }
+        TyKind::VariadicPack(v) => TyKind::VariadicPack(substitute_ty(v, bindings)?).into(),
         TyKind::Pointer { element, origin } => TyKind::Pointer {
             element: substitute_ty(element, bindings)?,
             origin: origin.clone(),

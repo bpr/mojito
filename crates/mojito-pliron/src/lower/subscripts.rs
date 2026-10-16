@@ -255,6 +255,13 @@ impl FnLowering<'_> {
         }
         let elements = match self.func.reg_types.get(&base.0).map(Ty::kind) {
             Some(TyKind::Tuple(elements) | TyKind::RuntimePack(elements)) => elements.clone(),
+            Some(TyKind::VariadicPack(element)) => {
+                let element = element.clone();
+                let descriptor = self.reg_ptr(ctx, base)?;
+                let position = self.reg_value(ctx, index, ScalarTy::Int)?;
+                let address = self.pack_element_address(ctx, descriptor, position, dest)?;
+                return self.load_from(ctx, address, &element, dest);
+            }
             other => {
                 return Err(self.unsupported_reg(
                     format!(
@@ -323,6 +330,18 @@ impl FnLowering<'_> {
     ) -> Result<(), PlironError> {
         let value = self.reg_value(ctx, index, ScalarTy::Int)?;
         let limit = self.int_constant(ctx, width as i64);
+        self.emit_bound_guard(ctx, value, limit, dest)
+    }
+
+    /// Trap unless `0 <= index < limit` (one unsigned compare): the VM's
+    /// `bounds_check`.
+    pub(super) fn emit_bound_guard(
+        &mut self,
+        ctx: &mut Context,
+        value: Value,
+        limit: Value,
+        dest: Reg,
+    ) -> Result<(), PlironError> {
         let invalid = ICmpOp::new(ctx, ICmpPredicateAttr::UGE, value, limit);
         self.append(ctx, invalid.get_operation(), Some(dest));
         self.emit_trap_guard(

@@ -60,6 +60,12 @@ impl FnLowering<'_> {
                 self.reg_values.insert(dest.0, length);
                 Ok(())
             }
+            Some(TyKind::VariadicPack(_)) => {
+                let descriptor = self.reg_ptr(ctx, arg)?;
+                let length = self.pack_length(ctx, descriptor, dest);
+                self.reg_values.insert(dest.0, length);
+                Ok(())
+            }
             Some(ty @ (TyKind::Float64 | TyKind::Simd { .. }))
                 if let Some((_, width)) = mojito_types::types::simd_shape(ty) =>
             {

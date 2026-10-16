@@ -303,48 +303,39 @@ impl FnLowering<'_> {
                         dest,
                     ));
                 };
-                let elements = match pack_ty.kind() {
-                    TyKind::RuntimePack(elements) | TyKind::Tuple(elements) => elements.clone(),
-                    other => {
-                        return Err(self.unsupported_reg(
-                            format!("variadic call to `{name}` over unspecialized `{other}`"),
+                let storage = match pack_ty.kind() {
+                    TyKind::RuntimePack(elements) | TyKind::Tuple(elements) => {
+                        if matched.positional_overflow.len() != elements.len() {
+                            return Err(self.unsupported_reg(
+                                format!(
+                                    "variadic call to `{name}`: {} overflow arguments against \
+                                     a {}-element pack",
+                                    matched.positional_overflow.len(),
+                                    elements.len()
+                                ),
+                                dest,
+                            ));
+                        }
+                        let elements = elements.clone();
+                        self.collect_pack_elements(
+                            ctx,
+                            &elements,
+                            &matched.positional_overflow,
+                            args,
                             dest,
-                        ));
+                        )?
+                        .0
                     }
-                };
-                if matched.positional_overflow.len() != elements.len() {
-                    return Err(self.unsupported_reg(
-                        format!(
-                            "variadic call to `{name}`: {} overflow arguments against a \
-                             {}-element pack",
-                            matched.positional_overflow.len(),
-                            elements.len()
-                        ),
+                    // An unspecialized homogeneous collector is a run-time
+                    // pack of any arity: the pin's `VariadicList`.
+                    _ => self.build_variadic_list(
+                        ctx,
+                        &pack_ty,
+                        &matched.positional_overflow,
+                        args,
                         dest,
-                    ));
-                }
-                let composed = self.struct_layout_of(&elements, dest)?;
-                let storage = self.entry_alloca(
-                    ctx,
-                    composed.layout.size.max(1),
-                    composed.layout.align.max(1),
-                );
-                for ((arg, element), offset) in matched
-                    .positional_overflow
-                    .iter()
-                    .zip(&elements)
-                    .zip(&composed.offsets)
-                {
-                    let address = if *offset == 0 {
-                        storage
-                    } else {
-                        self.gep_byte(ctx, storage, *offset, dest)
-                    };
-                    // Overflow arguments relocate into the pack (the VM's
-                    // `Tuple(*args)`): `store_to` transfers owned temporaries
-                    // and stores the rest as the MIR left them.
-                    self.store_to(ctx, address, element, args[*arg])?;
-                }
+                    )?,
+                };
                 Some((index, storage))
             }
         };
@@ -965,6 +956,78 @@ impl FnLowering<'_> {
             }
         }
         Ok(())
+    }
+
+    /// Relocate the overflow arguments `overflow` into fresh pack storage
+    /// laid out as `elements` (the VM's `Tuple(*args)`): `store_to`
+    /// transfers owned temporaries and stores the rest as the MIR left them.
+    /// Returns the storage and each element's address.
+    fn collect_pack_elements(
+        &mut self,
+        ctx: &mut Context,
+        elements: &[Ty],
+        overflow: &[usize],
+        args: &[Reg],
+        dest: Reg,
+    ) -> Result<(Value, Vec<Value>), PlironError> {
+        let composed = self.struct_layout_of(elements, dest)?;
+        let storage = self.entry_alloca(
+            ctx,
+            composed.layout.size.max(1),
+            composed.layout.align.max(1),
+        );
+        let mut addresses = Vec::with_capacity(elements.len());
+        for ((arg, element), offset) in overflow.iter().zip(elements).zip(&composed.offsets) {
+            let address = if *offset == 0 {
+                storage
+            } else {
+                self.gep_byte(ctx, storage, *offset, dest)
+            };
+            self.store_to(ctx, address, element, args[*arg])?;
+            addresses.push(address);
+        }
+        Ok((storage, addresses))
+    }
+
+    /// The run-time pack descriptor `{ elements, len }` over the overflow
+    /// arguments, as the pin passes a `VariadicList`: each element in its
+    /// own caller slot, an array of their addresses, and the descriptor
+    /// pointing at it. An empty pack's array is a non-null dangling slot.
+    fn build_variadic_list(
+        &mut self,
+        ctx: &mut Context,
+        element: &Ty,
+        overflow: &[usize],
+        args: &[Reg],
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        let elements = vec![element.clone(); overflow.len()];
+        let (_, addresses) = self.collect_pack_elements(ctx, &elements, overflow, args, dest)?;
+        let pointer_size = self.layout.target.triple.pointer_size();
+        let pointer_align = self.layout.target.triple.pointer_align();
+        let array = self.entry_alloca(
+            ctx,
+            pointer_size * (addresses.len() as u64).max(1),
+            pointer_align,
+        );
+        for (position, address) in addresses.into_iter().enumerate() {
+            let slot = self.offset_address(ctx, array, pointer_size * position as u64);
+            let store = StoreOp::new(ctx, address, slot);
+            self.append(ctx, store.get_operation(), Some(dest));
+        }
+        let descriptor_layout = self.layout.variadic_pack_layout();
+        let descriptor = self.entry_alloca(
+            ctx,
+            descriptor_layout.layout.size,
+            descriptor_layout.layout.align,
+        );
+        let store = StoreOp::new(ctx, array, descriptor);
+        self.append(ctx, store.get_operation(), Some(dest));
+        let length = self.int_constant(ctx, overflow.len() as i64);
+        let length_slot = self.offset_address(ctx, descriptor, descriptor_layout.offsets[1]);
+        let store = StoreOp::new(ctx, length, length_slot);
+        self.append(ctx, store.get_operation(), Some(dest));
+        Ok(descriptor)
     }
 }
 

@@ -1357,7 +1357,9 @@ fn collect_struct_types<'p>(
                 collect_struct_types(element, structs, seen, discovered);
             }
         }
-        TyKind::Pointer { element, .. } => collect_struct_types(element, structs, seen, discovered),
+        TyKind::Pointer { element, .. } | TyKind::VariadicPack(element) => {
+            collect_struct_types(element, structs, seen, discovered);
+        }
         TyKind::Ref(ref_ty) => collect_struct_types(&ref_ty.referent, structs, seen, discovered),
         _ => {}
     }

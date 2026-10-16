@@ -7,7 +7,8 @@
 # its call names. `fv[n](k, *args: Arr[n])` has one instance for every `n`,
 # `fw` one for every arity, and `fpre` loses `a` but keeps the pack it
 # reads. An owned pack's drop runs code, so `fo` keeps one instance per
-# `n`, and `fused` reads its pack.
+# `n`. `fused` reads its pack, and has one instance for every arity, as
+# every homogeneous collector does.
 
 
 @fieldwise_init

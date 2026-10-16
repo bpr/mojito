@@ -605,6 +605,10 @@ impl<'a> FnLowering<'a> {
                 }
                 Ok(())
             }
+            TyKind::VariadicPack(element) => {
+                let element = element.clone();
+                self.emit_variadic_list_drop(ctx, ptr, &element)
+            }
             _ => Ok(()),
         }
     }
@@ -645,6 +649,7 @@ impl<'a> FnLowering<'a> {
             TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => {
                 elements.iter().any(|element| self.needs_drop(element))
             }
+            TyKind::VariadicPack(element) => self.needs_drop(element),
             TyKind::Variant(alternatives) => alternatives
                 .iter()
                 .any(|alternative| self.needs_drop(alternative)),
@@ -671,10 +676,60 @@ impl<'a> FnLowering<'a> {
             TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => elements
                 .iter()
                 .any(|element| self.has_nested_lifecycle(element, method)),
+            TyKind::VariadicPack(element) => self.has_nested_lifecycle(element, method),
             TyKind::Variant(alternatives) => alternatives
                 .iter()
                 .any(|alternative| self.has_nested_lifecycle(alternative, method)),
             _ => false,
         }
+    }
+
+    /// Destroy the elements a run-time pack descriptor at `ptr` still spans,
+    /// last to first: the pin's `VariadicList.__deinit__` over an owned pack.
+    fn emit_variadic_list_drop(
+        &mut self,
+        ctx: &mut Context,
+        ptr: Value,
+        element: &Ty,
+    ) -> Result<(), PlironError> {
+        if !self.needs_drop(element) {
+            return Ok(());
+        }
+        let span = Reg(u32::MAX);
+        let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+        let cursor = self.entry_typed_alloca(ctx, i64_handle);
+        let length = self.pack_length(ctx, ptr, span);
+        let store = StoreOp::new(ctx, length, cursor);
+        self.append(ctx, store.get_operation(), None);
+        let region = self.region.expect("lowering is inside a function");
+        let header = BasicBlock::new(ctx, None, vec![]);
+        header.insert_at_back(region, ctx);
+        let body = BasicBlock::new(ctx, None, vec![]);
+        body.insert_at_back(region, ctx);
+        let exit = BasicBlock::new(ctx, None, vec![]);
+        exit.insert_at_back(region, ctx);
+        let jump = BrOp::new(ctx, header, vec![]);
+        self.append(ctx, jump.get_operation(), None);
+        self.current = Some(header);
+        let remaining = LoadOp::new(ctx, cursor, i64_handle);
+        self.append(ctx, remaining.get_operation(), None);
+        let zero = self.int_constant(ctx, 0);
+        let more = ICmpOp::new(ctx, ICmpPredicateAttr::SGT, remaining.get_result(ctx), zero);
+        self.append(ctx, more.get_operation(), None);
+        let branch = CondBrOp::new(ctx, more.get_result(ctx), body, vec![], exit, vec![]);
+        self.append(ctx, branch.get_operation(), None);
+        self.current = Some(body);
+        let one = self.int_constant(ctx, 1);
+        let last =
+            SubOp::new_with_overflow_flag(ctx, remaining.get_result(ctx), one, no_overflow_flags());
+        self.append(ctx, last.get_operation(), None);
+        let store = StoreOp::new(ctx, last.get_result(ctx), cursor);
+        self.append(ctx, store.get_operation(), None);
+        let address = self.pack_element_pointer(ctx, ptr, last.get_result(ctx), span);
+        self.emit_drop_value(ctx, address, element)?;
+        let back = BrOp::new(ctx, header, vec![]);
+        self.append(ctx, back.get_operation(), None);
+        self.current = Some(exit);
+        Ok(())
     }
 }

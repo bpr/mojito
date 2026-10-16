@@ -3,7 +3,6 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_mir::mir::SlotParameter;
 use mojito_types::types::TyKind;
 
 impl Specializer<'_> {
@@ -324,22 +323,14 @@ impl Specializer<'_> {
                 }
             }
         }
-        // An unspecialized variadic callee instantiates at its call-site
-        // arity: each overflow positional unifies against the pack element
-        // and the arity joins the instance identity. Checker-specialized
-        // packs (a concrete `RuntimePack`) keep their identity.
-        // The reduced generator of a callee that removed its collector has
-        // no pack: the overflow still binds the parameters its elements
-        // spell, but no arity keys the instance.
-        let removed_pack = bindings.reduced
-            && self.functions.get(target).is_some_and(|function| {
-                function.removed_args.iter().any(|&slot| {
-                    declaration.slot_parameter(slot as usize) == SlotParameter::Variadic
-                })
-            });
-        let variadic_arity = match &declaration.variadic {
-            // A type pack binds to the overflow's element types whole, one
-            // per position, unless the call's recorded solution bound it.
+        // A type pack binds to the overflow's element types whole, one per
+        // position, unless the call's recorded solution bound it. An
+        // unspecialized homogeneous collector is a run-time value, as the
+        // pin's `VariadicList`: its overflow binds only the element type, so
+        // there is one instance for every element type, never one per arity.
+        // A concrete `RuntimePack`/`Tuple` spelling means the checker
+        // already specialized the pack.
+        match &declaration.variadic {
             Some(element)
                 if let Some(TyKind::Param { binder, .. }) =
                     (mojito_types::types::pack_spread(std::slice::from_ref(element)))
@@ -355,11 +346,7 @@ impl Specializer<'_> {
                         .collect::<Result<Vec<Ty>, _>>()?;
                     bind_pack(binder, elements, &mut bindings);
                 }
-                None
             }
-            // The declaration records the pack ELEMENT type; a concrete
-            // `RuntimePack`/`Tuple` spelling means the checker already
-            // specialized the pack.
             Some(element)
                 if !matches!(element.kind(), TyKind::RuntimePack(_) | TyKind::Tuple(_)) =>
             {
@@ -369,15 +356,9 @@ impl Specializer<'_> {
                         self.error(Some(owner), format!("monomorphizing `{target}` pack: {e}"))
                     })?;
                 }
-                if removed_pack {
-                    None
-                } else {
-                    bindings.variadic_arity = Some(slots.positional_overflow.len());
-                    Some(slots.positional_overflow.len())
-                }
             }
-            _ => None,
-        };
+            _ => {}
+        }
         // Each collected keyword unifies against the `**kwargs` element; a
         // forwarded collector (`**options^`) contributes its own element.
         if let Some(element) = declaration.kw_variadic.as_ref()
@@ -446,9 +427,6 @@ impl Specializer<'_> {
         // identity; keep only the method's own parameters.
         let mut arguments =
             self.own_arguments(&declaration.param_decls, &bindings, target, owner_covered)?;
-        if let Some(arity) = variadic_arity {
-            arguments.push(InstanceArg::Value(CtValue::Int(arity as i64)));
-        }
         arguments.extend(callable_arguments);
         push_sugar_arguments(declaration, &bindings, &mut arguments);
         Ok((target.to_string(), bindings, arguments))

@@ -150,6 +150,14 @@ Rules:
   pointers are aligned sentinels, never null.
 - `Tuple`/`RuntimePack`/nominal structs are ordinary aggregates of their
   element/field types.
+- A homogeneous run-time collector (`VariadicPack(T)`) is upstream's
+  `VariadicList`: `{ elements: ptr to [len x ptr], len: Int }` (16/8),
+  passed as an aggregate parameter. Each element lives in its own caller
+  slot; `elements` points at an array of their addresses, a non-null
+  dangling slot when `len == 0`. An index traps outside `0..len`. An owned
+  pack's callee owns the elements: a consuming iterator narrows its copy of
+  the descriptor past each element it moves out, and a drop destroys the
+  elements the descriptor still spans, last to first.
 - `Variant[T1..Tn]` is a `u32` tag at offset 0 (the alternative's index in
   the type — the ordering is part of the type) with every payload overlaid at
   the first offset aligned to the widest alternative; size pads to
@@ -170,8 +178,8 @@ Rules:
   each call through one into a direct call to its instance, passing a
   by-reference environment's places as the lifted body's leading reference
   arguments. A by-value environment has nowhere to live and rejects.
-- Types with no defined native representation (unspecialized packs and
-  unmaterialized literal types) reject with a contextual diagnostic —
+- Types with no defined native representation (type packs still
+  parametric and unmaterialized literal types) reject with a contextual diagnostic —
   backends never guess.
 
 ### Strings and the constant pool

@@ -2679,6 +2679,14 @@ The oracle reuses the authoritative conformance rules and records trait
 refinement, nominal/conditional conformances, field types, and lifecycle-method
 presence without checking method bodies early. Full conformance verification
 still runs on the elaborated program.
+A homogeneous collector (`*args: T`) is never specialized by arity: the
+elaborator unifies each overflow argument against the element type only, so
+one instance per element type takes every call's pack at run time as
+`VariadicPack(T)`, as the pin's `VariadicList` does. The VM carries it as a
+private `Value::Tuple`; native code passes upstream's element-pointer
+descriptor (`docs/native-abi.md`). A run-time pack held by its owned
+parameter or by a consuming iterator over its rest destroys its elements
+last to first, as `VariadicList.__deinit__` does.
 Each unrolled static index substitutes its concrete element type while retaining
 the declared common bound for operations that are not specialized to one index.
 Pack expansion necessarily runs before checked `OwnerId`s exist, so it owns a
@@ -2880,7 +2888,8 @@ references, as upstream's `VariadicListMem.__iter__` does
 (`IterationProtocol::indexes_pack`): the pack is borrowed whole through
 `BorrowIter`, and MIR inlines upstream's `_VariadicListMemIter` as a
 `PackCursor` — the iterator slot holds the pack's handle and loans, an `Int`
-index slot counts the yielded elements, `has_next` compares it with `len`,
+index slot counts the yielded elements, `has_next` compares it with the
+pack's run-time `len`,
 and `next` is a `MakeRef` of the pack element at the index. No element is
 copied or moved out.
 For a concrete borrowed List, Set, or Dict place, the preheader carries its

@@ -413,9 +413,6 @@ struct Bindings {
     /// once `C` is bound to an instance, where no signature spelled the
     /// member for unification, and a reflection query reads the fields.
     structs: Rc<StructCatalog>,
-    /// The call-site arity of an unspecialized variadic callee: substitution
-    /// rewrites `VariadicPack(T)` into the concrete `RuntimePack([T'; n])`.
-    variadic_arity: Option<usize>,
     /// Callable parameters whose bound argument is a closure with captures.
     /// The environment survives no name, so the instance takes the closure as
     /// a runtime parameter and its body keeps the indirect call, instead of

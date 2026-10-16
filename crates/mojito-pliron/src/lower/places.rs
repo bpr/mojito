@@ -132,6 +132,22 @@ impl FnLowering<'_> {
                     offset += field_offset;
                     ty = field_ty;
                 }
+                // A run-time pack addresses its element through the
+                // descriptor's element pointers.
+                Proj::Index(index) if let TyKind::VariadicPack(element) = ty.kind() => {
+                    let element = element.clone();
+                    let position = self.reg_value(ctx, *index, ScalarTy::Int)?;
+                    let descriptor = self.flush_offset(ctx, address, &mut offset, dest);
+                    address = self.pack_element_address(ctx, descriptor, position, dest)?;
+                    ty = element;
+                }
+                Proj::ConstIndex(index) if let TyKind::VariadicPack(element) = ty.kind() => {
+                    let element = element.clone();
+                    let position = self.int_constant(ctx, *index as i64);
+                    let descriptor = self.flush_offset(ctx, address, &mut offset, dest);
+                    address = self.pack_element_address(ctx, descriptor, position, dest)?;
+                    ty = element;
+                }
                 Proj::ConstIndex(index) => {
                     let (TyKind::Tuple(elements) | TyKind::RuntimePack(elements)) = ty.kind()
                     else {
@@ -528,6 +544,22 @@ impl FnLowering<'_> {
         }
         self.reg_values.insert(dest.0, storage);
         Ok(())
+    }
+
+    /// `address + offset`, resetting the pending `offset` to zero.
+    fn flush_offset(
+        &mut self,
+        ctx: &mut Context,
+        address: Value,
+        offset: &mut u64,
+        dest: Reg,
+    ) -> Value {
+        if *offset == 0 {
+            return address;
+        }
+        let flushed = self.gep_byte(ctx, address, *offset, dest);
+        *offset = 0;
+        flushed
     }
 }
 

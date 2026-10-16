@@ -636,36 +636,49 @@ fn binding_solutions_ignore_reference_origins() {
 }
 
 #[test]
-fn variadic_arity_joins_the_instance_identity_and_reifies_the_pack() {
+fn a_homogeneous_variadic_has_one_instance_for_every_arity() {
     let source = "def total(*values: Int) -> Int:\n\
                   \x20   var acc: Int = 0\n\
                   \x20   for value in values:\n\
                   \x20       acc = acc + value\n\
                   \x20   return acc\n\
                   \n\
+                  def count[T: Copyable](*values: T) -> Int:\n\
+                  \x20   return len(values)\n\
+                  \n\
                   def main():\n\
-                  \x20   print(total(), total(7), total(1, 2, 3))\n";
+                  \x20   print(total(), total(7), total(1, 2, 3))\n\
+                  \x20   print(count(1), count(1, 2), count(True), count(True, False, True))\n";
     let specialized = specialized_main(source);
-    let arities: Vec<&str> = specialized
-        .program
-        .functions
-        .iter()
-        .filter(|(name, _)| name.starts_with("total$mono$"))
-        .map(|(name, _)| name.as_str())
-        .collect();
-    for expected in ["total$mono$V0", "total$mono$V1", "total$mono$V3"] {
-        assert!(
-            arities.contains(&expected),
-            "each call-site arity gets its own instance: {arities:?}"
-        );
-    }
-    let one = function(&specialized, "total$mono$V1");
+    assert_eq!(
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
+    );
+    let instances = |prefix: &str| {
+        specialized
+            .program
+            .functions
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .filter(|name| name.starts_with(prefix))
+            .collect::<Vec<_>>()
+    };
+    let totals = instances("total");
+    assert_eq!(
+        totals.len(),
+        1,
+        "one instance takes every arity: {totals:?}"
+    );
+    let counts = instances("count");
+    assert_eq!(counts.len(), 2, "one instance per element type: {counts:?}");
+    let total = function(&specialized, totals[0]);
     assert!(
-        one.var_tys
+        total
+            .var_tys
             .values()
-            .any(|ty| matches!(ty.kind(), TyKind::Tuple(elements) if elements == &[TyKind::Int])),
-        "the pack parameter reifies to a one-element tuple: {:?}",
-        one.var_tys
+            .any(|ty| matches!(ty.kind(), TyKind::VariadicPack(element) if element == &Ty::int())),
+        "the pack stays a run-time collector: {:?}",
+        total.var_tys
     );
 }
 
