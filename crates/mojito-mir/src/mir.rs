@@ -783,6 +783,14 @@ pub fn lower_unit(
             let _other = timing::span("other");
             lower_function(root, checked, functions, declarations, invariant_errors);
         }
+        LoweringUnit::Destructor { root } => {
+            let _struct = timing::span("struct");
+            if let Some(node) = checked.tables().statement(root)
+                && let CheckedStmtOp::Struct(declaration) = &node.op
+            {
+                lower_synthesized_destructor(&declaration.name, functions, declarations);
+            }
+        }
         // A module `comptime` declaration has no runtime form, as
         // upstream's `lit.alias.decl` has none: a body's read of it is the
         // parameter value the check recorded, and an application it makes
@@ -989,6 +997,71 @@ fn record_lifecycle_members(declarations: &mut MirDeclarations) {
     for (position, member, symbol) in found {
         declarations.structs[position].record_member(member, &symbol);
     }
+}
+
+/// Lower the destructor the compiler synthesizes for the struct `name`
+/// ([`CheckedProgram::synthesizes_destructor`]): `{name}.__deinit__(deinit
+/// self)` with an empty body, marked `nodebug` and synthesized, as
+/// upstream synthesizes a `__del__` for a struct that declares none. Drop
+/// elaboration then destroys each field of the receiver at entry, naming
+/// the field's own destructor, so a drop of the struct names this one and
+/// reaches its fields' through it.
+fn lower_synthesized_destructor(
+    name: &str,
+    functions: &mut Vec<(String, MirFunction)>,
+    declarations: &mut MirDeclarations,
+) {
+    let symbol = format!("{name}.__deinit__");
+    let receiver: Ty = TyKind::Struct(name.to_string(), Vec::new()).into();
+    declarations.functions.push(MirFunctionDeclaration {
+        lowered_name: symbol.clone(),
+        param_names: Vec::new(),
+        param_types: Vec::new(),
+        defaults: Vec::new(),
+        required: Vec::new(),
+        variadic: None,
+        variadic_convention: None,
+        variadic_index: None,
+        kw_variadic: None,
+        kw_variadic_convention: None,
+        kw_variadic_index: None,
+        positional_only: None,
+        keyword_only: None,
+        param_decls: Vec::new(),
+        has_receiver: true,
+        receiver_convention: Some(ArgConvention::Deinit),
+        param_conventions: Vec::new(),
+        ret_ty: Ty::none(),
+        returns_reference: false,
+        raises: false,
+        error_ty: None,
+        ref_params: Vec::new(),
+        param_writes: Vec::new(),
+        availability: Vec::new(),
+        enclosing: None,
+        region_binders: Vec::new(),
+        inline: mojito_checked::declaration::InlineLevel::NoDebug,
+        provenance: mojito_checked::declaration::FunctionProvenance::Synthesized,
+    });
+    functions.push((
+        symbol,
+        MirFunction {
+            blocks: vec![MirBlock {
+                instrs: Vec::new(),
+                term: MirTerm::Return(None),
+            }],
+            n_vars: 1,
+            var_names: vec!["self".to_string()],
+            n_params: 1,
+            param_types: vec![receiver.clone()],
+            owned_params: vec![false],
+            deinit_params: vec![true],
+            ref_params: vec![false],
+            var_tys: HashMap::from([(0, receiver)]),
+            ret_ty: Some(Ty::none()),
+            ..MirFunction::default()
+        },
+    ));
 }
 
 /// The MIR declaration of the struct the statement node `root` declares, if
@@ -1307,6 +1380,7 @@ fn lower_function(
         enclosing: None,
         region_binders: Vec::new(),
         inline: *inline,
+        provenance: mojito_checked::declaration::FunctionProvenance::Source,
     });
     lower_fn_nested(
         FunctionLowering {
@@ -1523,6 +1597,7 @@ fn lower_struct_member<P: DeclaredParam>(
         enclosing: None,
         region_binders: Vec::new(),
         inline: m.inline,
+        provenance: mojito_checked::declaration::FunctionProvenance::Source,
     });
     // A method's receiver `self` is the implicit first parameter,
     // followed by the declared params.
@@ -1804,6 +1879,7 @@ fn lower_expression_thunk(
         enclosing: None,
         region_binders: Vec::new(),
         inline: mojito_checked::declaration::InlineLevel::Automatic,
+        provenance: mojito_checked::declaration::FunctionProvenance::Source,
     });
 }
 

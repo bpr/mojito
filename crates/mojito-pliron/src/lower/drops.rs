@@ -130,12 +130,21 @@ impl<'a> FnLowering<'a> {
         }
     }
 
+    /// Whether the body being lowered is one the compiler synthesized (a
+    /// struct's fieldwise `__deinit__`), whose lifecycle events the trace
+    /// leaves out, as the VM's does.
+    pub(super) fn synthesized_body(&self) -> bool {
+        self.declarations
+            .get(self.name)
+            .is_some_and(mojito_mir::mir::MirFunctionDeclaration::is_synthesized)
+    }
+
     /// `ConsumeVar`: skip the whole-value destructor but destroy residual
     /// fields — a no-op unless fields carry their own destructor work. The
     /// consumed slot is empty afterwards either way. `synthesized` marks the
     /// frame-exit residual release of a `deinit` parameter, which has no MIR
     /// instruction and therefore no VM lifecycle event — only a real
-    /// `MirInstr::ConsumeVar` reports a consume trace.
+    /// `MirInstr::ConsumeVar` of a source body reports a consume trace.
     pub(super) fn lower_consume_var(
         &mut self,
         ctx: &mut Context,
@@ -152,6 +161,7 @@ impl<'a> FnLowering<'a> {
                     .map(|flag| self.begin_flag_guard(ctx, flag));
                 if !synthesized
                     && self.trace_lifecycle
+                    && !self.synthesized_body()
                     && let TyKind::Struct(name, _) = &ty.kind()
                 {
                     let name = name.clone();
@@ -548,7 +558,12 @@ impl<'a> FnLowering<'a> {
                             self.unsupported(format!("raising destructor `{deinit}`"), None)
                         );
                     }
-                    if self.trace_lifecycle {
+                    if self.trace_lifecycle
+                        && !self
+                            .declarations
+                            .get(deinit)
+                            .is_some_and(mojito_mir::mir::MirFunctionDeclaration::is_synthesized)
+                    {
                         let name = name.clone();
                         self.emit_trace_text(ctx, mojito_native::native::rt_abi::TRACE_DROP, &name);
                     }

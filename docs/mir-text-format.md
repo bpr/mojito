@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.69
+# Mojito Textual MIR Format, Version 1.70
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.69 is implemented end to end for inspection and loading: canonical
+Version 1.70 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.69
+mojito-mir 1.70
 ```
 
-The writer emits 1.69. The reader accepts 1.0 through 1.69; *Schema 1.0*
+The writer emits 1.70. The reader accepts 1.0 through 1.70; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -524,6 +524,15 @@ writer omits the field for `automatic`, the level of an undecorated
 function, and the reader takes an absent field as `automatic`; any other
 spelling is an error. A package record carries the level beside the rest of
 the declaration (package format 65).
+
+A declaration may end with `synthesized: true` after `inline` (schema
+1.70): the compiler synthesized the function for a struct that declares
+none, as upstream synthesizes a `__del__` for a struct without one
+(`S.__deinit__(deinit self)` with an empty body, `nodebug`). The writer
+omits the field for a function the source declares, and the reader takes an
+absent field as false. A package record carries the flag beside the rest of
+the declaration, and a package unit may be a struct's synthesized destructor
+(package format 67).
 
 Abstract dispatch requirements (`__trait_dispatch.*`, `__iterator_dispatch.*`) have no concrete declaration record;
 a `__trait_dispatch.*` method's parameter contract is its trait requirement's (minor version 48).
@@ -1040,10 +1049,10 @@ lowering unit, one record per library declaration, and one module table
 holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 55`.
+MLIR bytecode throughout. The format line is `mojito-package 67`.
 
 ```text
-mojito-package 55
+mojito-package 67
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode, then the type section>

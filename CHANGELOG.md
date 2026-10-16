@@ -8,6 +8,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct with droppable fields and no `__deinit__` now has a synthesized
+  destructor (R1041), as upstream synthesizes a `__del__` for every struct
+  that declares none: the check lists a `Destructor` lowering unit for
+  each struct whose `IsTriviallyDeinitable` conformance is not
+  unconditional, MIR lowers it to `S.__deinit__(deinit self)` with an
+  empty body, marked `nodebug` and `synthesized`, recorded in the struct's
+  member table and packaged as any unit, and drop elaboration's field
+  refinement destroys each field at entry by its own named `drop.place`
+  (a field dying at the receiver's consume is now dropped just before it,
+  named, in every `deinit` body). A drop of such a struct names that
+  destructor, which the pre-elaboration inliner inlines at the drop into
+  the field drops, so `destroyed_structs` closes over no named drop's
+  fields and the backends recurse into no struct by type at a drop.
+  Neither backend traces a synthesized destructor's drop or consume. The
+  MIR text format is 1.70 (a declaration may end with `synthesized: true`)
+  and the package format 67.
 - Every omitted argument is filled at the call, for every call shape
   (R1077, R1060), as upstream's call binding writes the callee's default
   into the call: the lowering of each checked call records its callee, and

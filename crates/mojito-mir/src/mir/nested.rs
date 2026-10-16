@@ -599,6 +599,7 @@ fn lower_nested_node(
         enclosing: Some(enclosing.name.to_string()),
         region_binders: node.region_binders(),
         inline: def.inline,
+        provenance: mojito_checked::declaration::FunctionProvenance::Source,
     });
     let immutable_captures: HashSet<String> = captures
         .iter()

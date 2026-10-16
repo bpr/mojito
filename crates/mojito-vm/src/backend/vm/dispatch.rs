@@ -92,7 +92,8 @@ impl VmBackend {
     /// names, on the whole value, else by dropping its fields. A partial
     /// aggregate drops only its residual fields, as [`Self::drop_value`].
     /// A field, and what a cleanup list or any other teardown ends, still
-    /// finds its destructor in its struct's member table.
+    /// finds its destructor in its struct's member table. A destructor the
+    /// compiler synthesized runs untraced: the source declares none.
     pub(super) fn drop_named(
         &mut self,
         prog: &Prog,
@@ -121,7 +122,9 @@ impl VmBackend {
                         "vm: the destructor `{destructor}` a drop names is not defined"
                     ))
                 })?;
-                self.record_lifecycle(format!("drop {name}"));
+                if !prog.synthesized(destructor) {
+                    self.record_lifecycle(format!("drop {name}"));
+                }
                 self.call_function(prog, index, vec![Value::Struct { name, fields }])?;
                 Ok(())
             }

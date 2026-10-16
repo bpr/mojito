@@ -3370,6 +3370,7 @@ mod tests {
             enclosing: None,
             region_binders: Vec::new(),
             inline: Default::default(),
+            provenance: Default::default(),
         });
         let answers = |name: &str| declarations.copy_is_identity(&struct_ty(name));
         assert!(answers("P"));

@@ -433,6 +433,11 @@ fn write_declarations(output: &mut String, declarations: &[MirFunctionDeclaratio
                 (declaration.inline != InlineLevel::Automatic)
                     .then(|| ("inline", declaration.inline.spelling().to_string())),
             )
+            .chain(
+                declaration
+                    .is_synthesized()
+                    .then(|| ("synthesized", "true".to_string())),
+            )
             .collect::<Vec<_>>(),
         );
         write!(output, "    {value}").unwrap();

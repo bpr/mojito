@@ -351,9 +351,18 @@ pub struct FunctionDeclaration {
     pub region_binders: Vec<ParamDecl>,
     /// The level its inline decorator names.
     pub inline: InlineLevel,
+    /// Whether the source declares the function or the compiler
+    /// synthesized it.
+    pub provenance: FunctionProvenance,
 }
 
 impl FunctionDeclaration {
+    /// Whether the compiler synthesized the function for a struct that
+    /// declares none ([`FunctionProvenance::Synthesized`]).
+    pub fn is_synthesized(&self) -> bool {
+        self.provenance == FunctionProvenance::Synthesized
+    }
+
     /// How many parameters the function's source spells, its receiver
     /// aside: the runtime ones and each variadic collector.
     pub fn source_arity(&self) -> usize {
@@ -403,13 +412,28 @@ impl FunctionDeclaration {
 
     /// The overload set the function belongs to, beside its source arity;
     /// `None` for a nested or lifted function, which no lookup by name
-    /// finds.
+    /// finds, and for a synthesized one, which the check declared in none.
     pub fn overload_member(&self) -> Option<(OverloadFamily<'_>, usize)> {
-        if self.enclosing.is_some() {
+        if self.enclosing.is_some() || self.is_synthesized() {
             return None;
         }
         overload_family(&self.lowered_name).map(|family| (family, self.source_arity()))
     }
+}
+
+/// Where a function declaration comes from.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub enum FunctionProvenance {
+    /// Written in source.
+    #[default]
+    Source,
+    /// Synthesized by the compiler for a struct that declares none, as
+    /// upstream synthesizes a `__del__` destroying the fields of a struct
+    /// without one: it has no source body, no overload set holds it, and a
+    /// backend traces no lifecycle event of it.
+    Synthesized,
 }
 
 /// The parameter a body slot binds ([`FunctionDeclaration::slot_parameter`]).

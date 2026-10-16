@@ -152,7 +152,10 @@ import (every compilation that links the bundled library):
   parser wrote it and its checks validated it, structured control flow
   included. A lowering unit (`CheckedProgram::lowering_units`) is a module
   `def`, one struct method (with its struct's name and the symbol it
-  lowers to), an inherited default's wrapper, a trait default, or a
+  lowers to), an inherited default's wrapper, a struct's synthesized
+  destructor (`CheckedProgram::synthesizes_destructor`: a struct declaring
+  no `__deinit__` whose `IsTriviallyDeinitable` conformance is not
+  unconditional), a trait default, or a
   module constant's lifted applications; its record holds its checked
   tables (`CheckedProgram::units`, which copies each unit's nodes out of
   the whole program's checked tables, as upstream's unit is an op of its
@@ -4448,16 +4451,26 @@ member table (`MirDeclarations::destructor`), as upstream's destructor
 insertion leaves a call naming the `__del__` at each death, so a symbol
 walk, the elaborator, and `eliminate-dead-symbols` follow the destructor as
 they follow a call's callee, and neither backend looks it up from the
-type. A drop of a type with no destructor of its own, or of a symbolic type,
-names none; the elaborator names the instance's (`Specializer::name_lifecycle_calls`),
-and the verifier reports a drop that names another symbol than its
-struct's `__deinit__`, or none where the struct has one. The instruction stays
-a drop rather than a call: its runtime partial-aggregate rule, Pliron's drop
-and leaf flags, and an owned pack's reverse order need drop states upstream's
-lifetime checker makes definite. A cleanup list's slots, a consumed residue,
-a storage destroy, a variant store, an owned capture, and a field a drop of a
-struct naming no destructor recurses into still find their destructor from
-the type (`mir::destroyed_structs`).
+type. Every struct whose destruction may run code has one: a struct
+declaring no `__deinit__` over droppable fields gets a synthesized
+`S.__deinit__(deinit self)` with an empty body, marked `nodebug` and
+`synthesized` (`mir::lower_unit` for `LoweringUnit::Destructor`), as
+upstream synthesizes a `__del__` for every struct that declares none;
+`refine_deinit_fields` then destroys each field at entry by its own named
+`drop.place`, so a drop of the struct names the destructor and reaches its
+fields' through its body, and the pre-elaboration inliner inlines it at the
+drop. A drop of a type whose destruction runs no code, or of a symbolic
+type, names none; the elaborator names the instance's
+(`Specializer::name_lifecycle_calls`), and the verifier reports a drop that
+names another symbol than its struct's `__deinit__`, or none where the
+struct has one. Neither backend traces a synthesized destructor's drop or
+consume. The instruction stays a drop rather than a call: its runtime
+partial-aggregate rule, Pliron's drop and leaf flags, and an owned pack's
+reverse order need drop states upstream's lifetime checker makes definite.
+A cleanup list's slots, a consumed residue, a storage destroy, a variant
+store, and an owned capture still find their destructor from the type
+(`mir::destroyed_structs`); a named drop's fields are its destructor's to
+name.
 
 Copies and moves name their constructor the same way, from MIR lowering on:
 `mir::name_constructors` (`mir/constructor_calls.rs`) sets each copying or

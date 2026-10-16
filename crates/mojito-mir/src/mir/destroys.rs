@@ -3,12 +3,13 @@
 //! Upstream's destructor insertion leaves a call to the destructor at each
 //! point a value dies, so a symbol walk reaches it. A `drop.var` or
 //! `drop.place` names the destructor it runs on the whole value, which a
-//! symbol walk follows; the rest of what a body tears down names none, and
-//! the VM and the native backend find the struct's `__deinit__` from the
-//! value's type. This module answers which structs those are: the types a
-//! cleanup list, a consumed residue, a storage destroy, a variant store, an
-//! owned capture, or a drop naming no destructor tears down whole, and
-//! every field type any drop may tear down field by field.
+//! symbol walk follows, and that destructor's body names its fields'; the
+//! rest of what a body tears down names none, and the VM and the native
+//! backend find the struct's `__deinit__` from the value's type. This
+//! module answers which structs those are: the types a cleanup list, a
+//! consumed residue, a storage destroy, a variant store, an owned capture,
+//! or a drop naming no destructor tears down whole, and every field type
+//! such a teardown may reach field by field.
 
 use crate::mir::{MirBlock, MirFunction, MirInstr, MirPlace, MirTerm, instruction_regions};
 use mojito_hir::hir::VarId;
@@ -32,10 +33,11 @@ pub struct Destroyed {
 /// What the body `function` destroys without naming a destructor.
 ///
 /// That is a whole value its cleanup lists and its drops naming no
-/// destructor tear down, the fields of a value it consumes or drops, and,
-/// through `fields`, every field of a struct those reach, since a struct
-/// without a destructor, or a partly moved one, drops its fields one by
-/// one. [`Destroyed::named`] holds the drops naming theirs.
+/// destructor tear down, the fields of a value it consumes, and, through
+/// `fields`, every field of a struct those reach, since a struct without a
+/// destructor, or a partly moved one, drops its fields one by one.
+/// [`Destroyed::named`] holds the drops naming theirs, whose fields the
+/// named destructor's own body reaches.
 pub fn destroyed_structs(function: &MirFunction, fields: &StructFields<'_>) -> Destroyed {
     let mut walk = Walk {
         var_tys: &function.var_tys,
@@ -125,22 +127,22 @@ impl Walk<'_> {
 
     fn instruction(&mut self, instruction: &MirInstr) {
         match instruction {
-            // A drop naming its destructor reaches it by symbol; a partly
-            // moved value still drops its fields by their types.
-            MirInstr::DropVar { var, destructor } => {
-                self.var(*var, destructor.is_none());
-                self.named(self.var_tys.get(var), destructor.as_deref());
-            }
+            // A drop naming its destructor reaches it by symbol, and its
+            // fields through that destructor's body.
+            MirInstr::DropVar { var, destructor } => match destructor {
+                Some(destructor) => self.named(self.var_tys.get(var), Some(destructor)),
+                None => self.var(*var, true),
+            },
             MirInstr::ConsumeVar { var } => self.var(*var, false),
             MirInstr::Try { cleanup, .. } => {
                 for &var in cleanup {
                     self.var(var, true);
                 }
             }
-            MirInstr::DropPlace { place, destructor } => {
-                self.place(place, destructor.is_none());
-                self.named(place.ty.as_ref(), destructor.as_deref());
-            }
+            MirInstr::DropPlace { place, destructor } => match destructor {
+                Some(destructor) => self.named(place.ty.as_ref(), Some(destructor)),
+                None => self.place(place, true),
+            },
             MirInstr::VariantSet { place, .. } | MirInstr::VariantSetInitWith { place, .. } => {
                 self.place(place, true);
             }

@@ -8,13 +8,13 @@
 
 use crate::checked::{
     AnnotationSite, CheckedDefaultWrapper, CheckedProgram, CheckedStmtId, CheckedStmtOp,
-    CheckedTables, CheckedTraitMember, DeclarationEffect, GenericSite, InstalledSites, StructShell,
-    WalkResult, Walked,
+    CheckedStruct, CheckedTables, CheckedTraitMember, DeclarationEffect, GenericSite,
+    InstalledSites, StructShell, WalkResult, Walked,
 };
 use crate::package::{LibraryRoot, ProgramConstants, ProgramOverloads};
 use mojito_common::token::SyntaxId;
 use mojito_types::origin::encoding_packaged_owners;
-use mojito_types::types::{ParamDecl, Ty};
+use mojito_types::types::{GenericConstraint, ParamDecl, Ty};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -47,6 +47,10 @@ pub enum LoweringUnit<'a> {
     },
     /// A module `comptime` constant, and its statement node.
     Constant { root: CheckedStmtId },
+    /// The destructor the compiler synthesizes for the struct whose
+    /// statement node is `root`, which declares none over fields whose
+    /// destruction may run code ([`CheckedProgram::synthesizes_destructor`]).
+    Destructor { root: CheckedStmtId },
 }
 
 impl LoweringUnit<'_> {
@@ -71,9 +75,33 @@ impl LoweringUnit<'_> {
 }
 
 impl CheckedProgram {
+    /// Whether the compiler synthesizes `declaration`'s destructor, as
+    /// upstream synthesizes a `__del__` for every struct that declares
+    /// none: the struct declares no `__deinit__`, and its synthesized
+    /// `IsTriviallyDeinitable` conformance is not unconditional, so
+    /// destroying a value of it may run a field's destructor. A struct
+    /// whose every field's destruction runs no code gets none, as nothing
+    /// would call it.
+    pub fn synthesizes_destructor(&self, declaration: &CheckedStruct) -> bool {
+        !declaration
+            .methods
+            .iter()
+            .any(|method| method.registered == "__deinit__")
+            && self
+                .conformances()
+                .structs
+                .get(&declaration.name)
+                .and_then(|rows| {
+                    rows.iter()
+                        .find(|row| row.trait_name == "IsTriviallyDeinitable")
+                })
+                .is_some_and(|row| row.conditions != [GenericConstraint::Bool(true)])
+    }
+
     /// Every lowering unit of the program, in the order it lowers them: its
     /// statements' declarations in order, each struct's methods before its
-    /// wrappers, and every module constant last.
+    /// wrappers and its synthesized destructor, and every module constant
+    /// last.
     pub fn lowering_units(&self) -> Vec<LoweringUnit<'_>> {
         let mut units = Vec::new();
         let mut constants = Vec::new();
@@ -106,6 +134,9 @@ impl CheckedProgram {
                                 index,
                             }),
                     );
+                    if self.synthesizes_destructor(declaration) {
+                        units.push(LoweringUnit::Destructor { root });
+                    }
                 }
                 CheckedStmtOp::Trait(declaration) => units.extend(
                     self.trait_members()
@@ -214,6 +245,8 @@ pub enum UnitKind {
     Wrapper,
     TraitMember,
     Constant,
+    /// A struct's synthesized destructor.
+    Destructor,
 }
 
 /// One lowering unit's checked nodes and the facts of its declaration
@@ -253,12 +286,14 @@ impl CheckedUnit {
             generic_parameters: self.sites.generic_parameters.into_iter().collect(),
             declaration_effects: self.sites.declaration_effects.into_iter().collect(),
         };
-        if matches!(self.kind, UnitKind::Method { .. } | UnitKind::Wrapper)
-            && let Some(structure) = self
-                .tables
-                .roots()
-                .first()
-                .and_then(|root| self.tables.statement(*root))
+        if matches!(
+            self.kind,
+            UnitKind::Method { .. } | UnitKind::Wrapper | UnitKind::Destructor
+        ) && let Some(structure) = self
+            .tables
+            .roots()
+            .first()
+            .and_then(|root| self.tables.statement(*root))
             && let CheckedStmtOp::Struct(declaration) = &structure.op
         {
             let site = GenericSite::Struct {
@@ -357,6 +392,12 @@ impl CheckedUnit {
                 trait_member = Some((*member).clone());
                 (UnitKind::TraitMember, *root, None, &[][..])
             }
+            LoweringUnit::Destructor { root } => (
+                UnitKind::Destructor,
+                *root,
+                Some(StructShell::Destructor),
+                &[][..],
+            ),
         };
         Self {
             kind,
@@ -408,6 +449,7 @@ impl UnitProgram {
                 wrapper: self.program.default_wrappers().first()?,
                 index: 0,
             },
+            UnitKind::Destructor => LoweringUnit::Destructor { root },
         })
     }
 }

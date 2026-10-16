@@ -1883,7 +1883,11 @@ impl VmBackend {
                     Some(ty) => dispatch::erased_instance_value(prog, value, ty),
                     None => value,
                 };
-                if let Value::Struct { name, .. } = &value {
+                // A synthesized destructor's consume of its receiver is no
+                // event of the source program.
+                if let Value::Struct { name, .. } = &value
+                    && !prog.synthesized(&prog.mir.functions[function].0)
+                {
                     self.record_lifecycle(format!("consume {name}"));
                 }
                 if let Value::Struct { fields, .. } = value {

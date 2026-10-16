@@ -3897,6 +3897,8 @@ pub(crate) enum StructShell {
     Method(usize),
     /// An inherited default's wrapper, whose body the unit holds beside.
     Wrapper,
+    /// The struct's synthesized destructor, which has no body.
+    Destructor,
 }
 
 /// What a node operand is replaced by when an op is copied
@@ -4060,7 +4062,7 @@ impl Extraction<'_> {
                 .map(|method| method.map_operands(self))
                 .into_iter()
                 .collect(),
-            StructShell::Wrapper => Vec::new(),
+            StructShell::Wrapper | StructShell::Destructor => Vec::new(),
         };
         self.push(CheckedStmt {
             op: CheckedStmtOp::Struct(Box::new(CheckedStruct {

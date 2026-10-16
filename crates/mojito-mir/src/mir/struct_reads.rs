@@ -502,6 +502,7 @@ mod tests {
             enclosing: None,
             region_binders: Vec::new(),
             inline: mojito_checked::declaration::InlineLevel::default(),
+            provenance: Default::default(),
         }
     }
 

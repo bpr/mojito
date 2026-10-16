@@ -1581,6 +1581,7 @@ fn declaration_metadata_reprints_byte_identically() {
         enclosing: None,
         region_binders: Vec::new(),
         inline: mojito_checked::declaration::InlineLevel::Always,
+        provenance: Default::default(),
     };
     let other = MirFunctionDeclaration {
         lowered_name: "aaa_first".into(),
@@ -1640,6 +1641,7 @@ fn declaration_metadata_reprints_byte_identically() {
             constraints: Vec::new(),
         }],
         inline: mojito_checked::declaration::InlineLevel::NoDebug,
+        provenance: Default::default(),
     };
     let mut program = program_with(vec![("main".into(), function_with(Vec::new(), Vec::new()))]);
     // Deliberately unsorted: the canonical writer sorts by name, so the

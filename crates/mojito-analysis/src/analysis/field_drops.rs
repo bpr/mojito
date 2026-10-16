@@ -227,17 +227,18 @@ fn refine_region(
             rebuilt.push(instr);
             i += 1;
             // Keep the variable pass's trailing drop group together; a
-            // `ConsumeVar` of the receiver in it already destroys these
-            // fields at this point.
-            let mut consumed = false;
+            // `ConsumeVar` of the receiver in it destroys these fields at
+            // this point, each by its own named drop just before it.
+            let group = rebuilt.len();
             while i < n && is_drop_instr(&instrs[i]) {
-                consumed |= matches!(&instrs[i], MirInstr::ConsumeVar { var } if *var == root.var);
                 rebuilt.push(instrs[i].clone());
                 i += 1;
             }
-            if !consumed {
-                append_field_drops(&mut rebuilt, root, dying);
-            }
+            let consume = rebuilt[group..]
+                .iter()
+                .position(|instr| matches!(instr, MirInstr::ConsumeVar { var } if *var == root.var))
+                .map_or(rebuilt.len(), |offset| group + offset);
+            insert_field_drops(&mut rebuilt, consume, root, dying);
         }
         blocks[b].instrs = rebuilt;
     }
@@ -765,35 +766,38 @@ const fn is_drop_instr(instr: &MirInstr) -> bool {
 }
 
 /// Append `DropPlace`s in declaration order.
-fn append_field_drops(instrs: &mut Vec<MirInstr>, root: &DeinitRoot, mut positions: Vec<usize>) {
-    positions.sort_unstable();
-    positions.dedup();
-    for position in positions {
-        instrs.push(MirInstr::DropPlace {
-            place: root.place(position),
-            destructor: None,
-        });
-    }
+fn append_field_drops(instrs: &mut Vec<MirInstr>, root: &DeinitRoot, positions: Vec<usize>) {
+    let end = instrs.len();
+    insert_field_drops(instrs, end, root, positions);
 }
 
 /// Prepend `DropPlace`s (declaration order) after any leading drop group,
-/// unless that group already consumes the receiver.
-fn prepend_field_drops(instrs: &mut Vec<MirInstr>, root: &DeinitRoot, mut positions: Vec<usize>) {
-    positions.sort_unstable();
-    positions.dedup();
+/// or just before the `ConsumeVar` of the receiver in that group, which
+/// destroys the fields at that point: each then dies by its own named drop.
+fn prepend_field_drops(instrs: &mut Vec<MirInstr>, root: &DeinitRoot, positions: Vec<usize>) {
     let lead = instrs
         .iter()
         .take_while(|instr| is_drop_instr(instr))
         .count();
-    if instrs[..lead]
+    let at = instrs[..lead]
         .iter()
-        .any(|instr| matches!(instr, MirInstr::ConsumeVar { var } if *var == root.var))
-    {
-        return;
-    }
+        .position(|instr| matches!(instr, MirInstr::ConsumeVar { var } if *var == root.var))
+        .unwrap_or(lead);
+    insert_field_drops(instrs, at, root, positions);
+}
+
+/// Insert `DropPlace`s in declaration order at `at`.
+fn insert_field_drops(
+    instrs: &mut Vec<MirInstr>,
+    at: usize,
+    root: &DeinitRoot,
+    mut positions: Vec<usize>,
+) {
+    positions.sort_unstable();
+    positions.dedup();
     for (offset, position) in positions.into_iter().enumerate() {
         instrs.insert(
-            lead + offset,
+            at + offset,
             MirInstr::DropPlace {
                 place: root.place(position),
                 destructor: None,

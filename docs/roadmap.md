@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1085**.
+Next free ID: **R1086**.
 
 ## Ordered Work
 
@@ -77,26 +77,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1041 A struct with droppable fields and no `__deinit__` has no
-  destructor function; the backends drop its fields by type**
-
-  A drop of such a struct names no destructor, so the VM's `drop_named`
-  and Pliron's `emit_drop` recurse into its fields and find each field's
-  `__deinit__` in the member table, where upstream synthesizes a `__del__`
-  for the struct and calls it at the drop.
-  - Synthesize `S.__deinit__(deinit self)` with an empty body in MIR
-    lowering, recorded in the member table and marked `nodebug`;
-    `refine_deinit_fields` then gives it a named `drop.place` per field.
-  - The VM must not trace a synthesized destructor (no `drop S` line).
-  - Then drop `destroyed_structs`' field closure for named drops.
-  - Storage destroys, `VariantSet` payloads, owned captures, and tuple,
-    pack, and variant elements stay type-directed; upstream's are library
-    code calling `__del__`.
-  - R968 then reduces to inlining that destructor.
-  - Found while landing R1016 (2026-10-16).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1044 A struct with copyable or movable fields and no
   constructor of its own has none; the backends copy its fields by type**
 
@@ -125,6 +105,27 @@ which names the upstream pass each one follows. Each is measured by the
     `value.copy`, and respell it in `Specializer::name_lifecycle_calls`.
   - `T(copy=x)` is R1020/R1029's, and Pliron's clone-out reads are R1010's.
   - Found while landing R1017 (2026-10-16).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1085 A teardown a compiler primitive performs names no
+  destructor; the backends find it from the type**
+
+  `storage.destroy`, `variant.set`/`variant.replace`'s replaced payload,
+  an owned capture released at a closure's drop, and a tuple or pack
+  element find each struct's `__deinit__` in the member table
+  (`mir::destroyed_structs`), where upstream's are library bodies
+  (`unsafe_deinit_pointee`, `Variant.__deinit__`, `Tuple.__deinit__`) in
+  which destructor insertion names the `__del__`.
+  - Probe: `Pointer.unsafe_deinit_pointee()` over a struct holding a
+    `String`; `v.set[Int](1)` over a `Variant[String, Int]` holding the
+    `String`; a closure capturing a `String` by value, dropped; a
+    `Tuple[String, Int]` dropped.
+  - Name a `destructor` on each primitive, as `drop.place` does since
+    R1016, and respell it in `Specializer::name_lifecycle_calls`; a
+    cleanup list is R1042's and a consumed residue R1043's.
+  - Then `destroyed_structs` answers only what no instruction names.
+  - Found while landing R1041 (2026-10-16).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -252,10 +253,14 @@ which names the upstream pass each one follows. Each is measured by the
 
   A `deinit` parameter (`x^.finish()`), a drop inside a region of a slot
   stored before it (`var t = String("x")` dropped in a later `try`), and
-  the drop of a struct with no destructor of its own keep their `nodebug`
-  destructors as calls, where the pin inlines all three.
-  - Once every struct has a destructor (R1041) and a drop is a call of it
-    (R1043), each is an ordinary call R1078's substitution inlines.
+  the `drop.place` of a field inside an inlined destructor keep their
+  `nodebug` destructors as calls, where the pin inlines all three.
+  - Since R1041 a struct with droppable fields has a synthesized `nodebug`
+    destructor, which inlines at a `drop.var` into a `drop.place` per
+    field naming the field's destructor; `destructor()` reads `drop.var`
+    only, so a `nodebug` field destructor stays a call there.
+  - Once a drop is a call of its destructor (R1043), each is an ordinary
+    call R1078's substitution inlines.
   - Bind a `deinit` parameter to a fresh slot the argument moves into,
     keeping the callee's consumption of it.
   - Seed a region body's entry state from the enclosing state at the region

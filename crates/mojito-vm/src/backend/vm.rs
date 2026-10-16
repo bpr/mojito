@@ -667,6 +667,15 @@ impl Prog {
         self.mir.functions.iter().position(|(n, _)| n == name)
     }
 
+    /// Whether the function `name` is one the compiler synthesized, whose
+    /// lifecycle events the trace leaves out.
+    fn synthesized(&self, name: &str) -> bool {
+        self.mir
+            .declarations
+            .function(name)
+            .is_some_and(mojito_mir::mir::MirFunctionDeclaration::is_synthesized)
+    }
+
     /// The struct a lifecycle constructor `symbol` builds and the lifecycle
     /// name it runs, when the program declares that struct and the symbol's
     /// declaration takes a receiver: a `def` nested in a constructor is

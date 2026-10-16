@@ -454,6 +454,17 @@ impl Decoder {
             .ok()
             .and_then(|value| self.inline_level(value))
             .unwrap_or_default();
+        // Schema 1.70 marks a function the compiler synthesized.
+        let provenance = if self
+            .field(fields, "synthesized")
+            .ok()
+            .and_then(|value| self.boolean(value))
+            .unwrap_or_default()
+        {
+            mojito_checked::declaration::FunctionProvenance::Synthesized
+        } else {
+            mojito_checked::declaration::FunctionProvenance::Source
+        };
         for (label, length) in [
             ("param_types", param_types.len()),
             ("defaults", defaults.len()),
@@ -503,6 +514,7 @@ impl Decoder {
                 "enclosing",
                 "region_binders",
                 "inline",
+                "synthesized",
             ],
         );
         Some(MirFunctionDeclaration {
@@ -533,6 +545,7 @@ impl Decoder {
             enclosing,
             region_binders,
             inline,
+            provenance,
         })
     }
 
