@@ -13,6 +13,7 @@ impl FnLowering<'_> {
         &mut self,
         ctx: &mut Context,
         dest: Reg,
+        constructor: Option<&str>,
     ) -> Result<(), PlironError> {
         let Some(result) = self.func.reg_types.get(&dest.0).cloned() else {
             return Err(self.unsupported_reg("untyped reference result".into(), dest));
@@ -24,7 +25,9 @@ impl FnLowering<'_> {
                 let load = LoadOp::new(ctx, place, handle);
                 self.define(ctx, dest, load.get_operation(), load.get_result(ctx))
             }
-            LowerTy::Aggregate { ty, layout } => self.copy_aggregate(ctx, dest, &ty, layout, place),
+            LowerTy::Aggregate { ty, layout } => {
+                self.copy_named_aggregate(ctx, dest, &ty, layout, place, constructor)
+            }
             LowerTy::ZeroSized => {
                 self.erased.insert(dest.0);
                 Ok(())

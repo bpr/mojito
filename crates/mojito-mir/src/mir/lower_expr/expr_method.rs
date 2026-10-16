@@ -817,7 +817,8 @@ impl<'a> Flatten<'a> {
             .map(Box::new),
             result_adapter: call
                 .call_contract()
-                .and_then(|contract| contract.result_adapter),
+                .and_then(|contract| contract.result_adapter)
+                .map(MirResultAdapter::new),
             args: regs,
             kwargs: kw,
             // An explicit-destructor call keeps its receiver place:

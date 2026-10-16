@@ -77,20 +77,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1045 An owned capture, a variant payload, or a reference-read
-  method result copies without naming a constructor**
-
-  The VM's `clone_value` and Pliron's `fork_value_into` find
-  `__copyinit__` in the member table for `closure.make` captures,
-  `variant.make`/`variant.set`/`variant.replace` payloads, and
-  `result_adapter` reads, where upstream's copy insertion names it.
-  - Name a `constructor` on each, as R1017 did for `var.use` and
-    `value.copy`, and respell it in `Specializer::name_lifecycle_calls`.
-  - `T(copy=x)` is R1020/R1029's, and Pliron's clone-out reads are R1010's.
-  - Found while landing R1017 (2026-10-16).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1085 A teardown a compiler primitive performs names no
   destructor; the backends find it from the type**
 
@@ -1222,8 +1208,9 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   Problem: `Variant[CBox[n], Int](b.copy())`, over a `CBox` whose copy
   constructor adds 100, reads back `201`, where the pin reads `101`.
   - The pin's `Variant.__init__` takes `var value: T` and moves it in;
-    the VM's `variant.make` (`clone_value`) and Pliron's
-    (`copy_aggregate` in `variants.rs`) copy the payload again.
+    the VM's `variant.make` (`copy_named`) and Pliron's
+    (`copy_named_aggregate` through `copy_reg_into` in `variants.rs`) copy
+    the payload again, by the constructor the store names since R1045.
   - Make `variant.make` take its operand, after checking MIR lowering
     copies a borrowed argument first; `variant.set` and
     `variant.replace` may share the fix.

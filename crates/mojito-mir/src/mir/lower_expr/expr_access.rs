@@ -271,7 +271,7 @@ impl<'a> Flatten<'a> {
                 resolved: Some(contract.target),
                 raises: e.raises(),
                 reference_result: contract.reference_result.map(Box::new),
-                result_adapter: contract.result_adapter,
+                result_adapter: contract.result_adapter.map(MirResultAdapter::new),
                 args: Vec::new(),
                 kwargs: Vec::new(),
                 recv_place: recv_place.map(Box::new),

@@ -451,6 +451,7 @@ impl FnLowering<'_> {
         yielded: Reg,
         iter: u32,
         call: &mojito_checked::checked::CheckedIteratorCall,
+        adapter_constructor: Option<&str>,
     ) -> Result<(), PlironError> {
         let signature = self.iterator_next_signature(&call.target, dest)?;
         let Some(outcome) = signature.outcome.clone() else {
@@ -466,7 +467,15 @@ impl FnLowering<'_> {
             let mangled = signature.mangled.clone();
             let func_ty = signature.func_ty;
             return self.lower_try_next_reference(
-                ctx, dest, yielded, iter, call, &outcome, &mangled, func_ty,
+                ctx,
+                dest,
+                yielded,
+                iter,
+                call,
+                adapter_constructor,
+                &outcome,
+                &mangled,
+                func_ty,
             );
         }
         let callee: Identifier = signature
@@ -552,7 +561,8 @@ impl FnLowering<'_> {
     /// `TryNext` over a reference-yielding raising `__next__`: the ok payload
     /// is a place pointer into the iterator's element storage. The ok edge
     /// reads through it and copies the element out (the VM's
-    /// `CopyIteratorReference` adapter); the exhausted edge releases the
+    /// `CopyIteratorReference` adapter) by `adapter_constructor`, the
+    /// `__copyinit__` the adapter names; the exhausted edge releases the
     /// caught error and leaves zeroed element bytes, like the value form.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn lower_try_next_reference(
@@ -562,6 +572,7 @@ impl FnLowering<'_> {
         yielded: Reg,
         iter: u32,
         call: &mojito_checked::checked::CheckedIteratorCall,
+        adapter_constructor: Option<&str>,
         outcome: &OutcomeAbi,
         mangled: &str,
         func_ty: TypedHandle<FuncType>,
@@ -640,7 +651,15 @@ impl FnLowering<'_> {
                     self.append(ctx, store.get_operation(), Some(dest));
                 }
                 LowerTy::Aggregate { ty, layout } => {
-                    self.fork_value_into(ctx, temp, ty, *layout, place.get_result(ctx), dest)?;
+                    self.fork_named_into(
+                        ctx,
+                        temp,
+                        ty,
+                        *layout,
+                        place.get_result(ctx),
+                        adapter_constructor,
+                        dest,
+                    )?;
                 }
                 LowerTy::ZeroSized => {}
             }

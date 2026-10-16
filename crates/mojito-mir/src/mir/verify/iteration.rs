@@ -90,7 +90,16 @@ pub(super) fn verify_iteration_instruction(
             iter,
             call,
             exhaustion,
+            adapter_constructor,
         } => {
+            super::instr::verify_lifecycle_symbol(
+                cx,
+                "iterator result adapter",
+                cx.reg_ty(*dest),
+                call.result_adapter.is_some().then_some("__copyinit__"),
+                adapter_constructor.as_deref(),
+                errors,
+            );
             if *iter as usize >= cx.function.n_vars {
                 errors.push(format!(
                     "{prefix}: TryNext uses invalid iterator slot {iter}"

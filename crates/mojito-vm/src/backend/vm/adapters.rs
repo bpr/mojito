@@ -13,7 +13,7 @@ impl VmBackend {
         &mut self,
         prog: &Prog,
         value: Value,
-        adapter: Option<mojito_checked::checked::CheckedResultAdapter>,
+        adapter: Option<ResultAdapter<'_>>,
         concrete_returns_reference: bool,
         frames: ResultAdapterFrames<'_>,
     ) -> Result<Value, RuntimeError> {
@@ -24,12 +24,14 @@ impl VmBackend {
         } = frames;
         match adapter {
             None => Ok(value),
-            Some(mojito_checked::checked::CheckedResultAdapter::CopyIteratorReference)
-                if !concrete_returns_reference =>
-            {
-                Ok(value)
-            }
-            Some(mojito_checked::checked::CheckedResultAdapter::CopyIteratorReference) => {
+            Some(ResultAdapter {
+                kind: mojito_checked::checked::CheckedResultAdapter::CopyIteratorReference,
+                ..
+            }) if !concrete_returns_reference => Ok(value),
+            Some(ResultAdapter {
+                kind: mojito_checked::checked::CheckedResultAdapter::CopyIteratorReference,
+                constructor,
+            }) => {
                 let value = match self.read_reference(&value, current, current_variables) {
                     Ok(value) => value,
                     Err(error) => {
@@ -67,6 +69,7 @@ impl VmBackend {
                     self.clone_value_with_reachable_frames(
                         prog,
                         &value,
+                        constructor,
                         current,
                         current_variables,
                         returned,

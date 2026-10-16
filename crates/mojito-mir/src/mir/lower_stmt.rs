@@ -213,6 +213,7 @@ impl<'a> Flatten<'a> {
                     iter: *iter,
                     call: Box::new(call.clone()),
                     exhaustion: exhaustion.clone(),
+                    adapter_constructor: None,
                 });
                 self.emit(MirInstr::DefVar {
                     var: *raw,
@@ -840,7 +841,7 @@ impl<'a> Flatten<'a> {
             resolved: Some(contract.target.clone()),
             raises: contract.raises.clone(),
             reference_result: contract.reference_result.clone().map(Box::new),
-            result_adapter: contract.result_adapter,
+            result_adapter: contract.result_adapter.map(MirResultAdapter::new),
             args: vec![rhs],
             kwargs: Vec::new(),
             recv_place: Some(Box::new(MirPlace::root(tmp, Some(operand_ty.clone())))),
@@ -902,7 +903,7 @@ impl<'a> Flatten<'a> {
             resolved: Some(contract.target.clone()),
             raises: contract.raises.clone(),
             reference_result: contract.reference_result.clone().map(Box::new),
-            result_adapter: contract.result_adapter,
+            result_adapter: contract.result_adapter.map(MirResultAdapter::new),
             args,
             kwargs: Vec::new(),
             recv_place: recv_place.map(Box::new),

@@ -339,6 +339,7 @@ impl<'a> Flatten<'a> {
                 alternatives,
                 index,
                 value,
+                constructor: None,
             });
             return Some(dest);
         }
@@ -389,6 +390,7 @@ impl<'a> Flatten<'a> {
                 alternatives,
                 index,
                 value: payload,
+                constructor: None,
             });
             self.emit_nested_closure_argument_keepalives(args, kwargs);
             return Some(dest);
@@ -721,6 +723,7 @@ impl<'a> Flatten<'a> {
                     place,
                     index,
                     value,
+                    constructor: None,
                 });
                 dest
             }
@@ -812,6 +815,7 @@ impl<'a> Flatten<'a> {
                     output_index,
                     value,
                     checked,
+                    constructor: None,
                 });
                 dest
             }
@@ -923,7 +927,8 @@ impl<'a> Flatten<'a> {
             .map(Box::new),
             result_adapter: call
                 .call_contract()
-                .and_then(|contract| contract.result_adapter),
+                .and_then(|contract| contract.result_adapter)
+                .map(MirResultAdapter::new),
             args: argument_regs,
             kwargs: keyword_regs,
             recv_place: if implicitly_copied_receiver {

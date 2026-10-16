@@ -171,6 +171,8 @@ impl FnLowering<'_> {
         })
     }
 
+    /// `variant.make`: the payload is a copy of `value` by `constructor`,
+    /// the `__copyinit__` the store names.
     pub(super) fn lower_make_variant(
         &mut self,
         ctx: &mut Context,
@@ -178,6 +180,7 @@ impl FnLowering<'_> {
         alternatives: &[Ty],
         index: usize,
         value: Reg,
+        constructor: Option<&str>,
     ) -> Result<(), PlironError> {
         let Some(selected) = alternatives.get(index) else {
             return Err(self.unsupported_reg("Variant construction tag".into(), dest));
@@ -191,7 +194,7 @@ impl FnLowering<'_> {
         let store = StoreOp::new(ctx, tag, storage);
         self.append(ctx, store.get_operation(), Some(dest));
         let payload = self.offset_address(ctx, storage, variant.payload_offset);
-        self.copy_reg_into(ctx, payload, selected, value, dest)?;
+        self.copy_reg_into(ctx, payload, selected, value, dest, constructor)?;
         self.reg_values.insert(dest.0, storage);
         if self.needs_drop(selected) {
             self.mark_owned_temp(dest, TyKind::Variant(alternatives.to_vec()).into())?;
@@ -199,6 +202,9 @@ impl FnLowering<'_> {
         Ok(())
     }
 
+    /// Store a copy of the `ty` value in `src` at `address`: an aggregate
+    /// copies by `constructor`, the `__copyinit__` the site names, as
+    /// [`Self::copy_named_aggregate`].
     pub(super) fn copy_reg_into(
         &mut self,
         ctx: &mut Context,
@@ -206,6 +212,7 @@ impl FnLowering<'_> {
         ty: &Ty,
         src: Reg,
         anchor: Reg,
+        constructor: Option<&str>,
     ) -> Result<(), PlironError> {
         match lower_ty(self.name, ty, &self.layout, self.reg_span(anchor))? {
             LowerTy::Scalar(scalar) => {
@@ -229,7 +236,7 @@ impl FnLowering<'_> {
             }
             LowerTy::Aggregate { layout, .. } => {
                 let source = self.reg_ptr(ctx, src)?;
-                self.copy_aggregate(ctx, anchor, ty, layout, source)?;
+                self.copy_named_aggregate(ctx, anchor, ty, layout, source, constructor)?;
                 let copy = self.reg_ptr(ctx, anchor)?;
                 self.mem_copy(ctx, address, copy, layout.size, anchor);
                 self.owned_temps.remove(&anchor.0);
@@ -356,6 +363,8 @@ impl FnLowering<'_> {
         )
     }
 
+    /// `variant.set`: the previous payload drops and the new one is a copy
+    /// of `value` by `constructor`, the `__copyinit__` the store names.
     pub(super) fn lower_variant_set(
         &mut self,
         ctx: &mut Context,
@@ -363,6 +372,7 @@ impl FnLowering<'_> {
         place: &MirPlace,
         index: usize,
         value: Reg,
+        constructor: Option<&str>,
     ) -> Result<(), PlironError> {
         let (address, ty) = self.place_address(ctx, place, dest)?;
         let TyKind::Variant(alternatives) = ty.kind() else {
@@ -380,11 +390,14 @@ impl FnLowering<'_> {
         let store = StoreOp::new(ctx, tag, address);
         self.append(ctx, store.get_operation(), Some(dest));
         let payload = self.offset_address(ctx, address, layout.payload_offset);
-        self.copy_reg_into(ctx, payload, selected, value, dest)?;
+        self.copy_reg_into(ctx, payload, selected, value, dest, constructor)?;
         self.erased.insert(dest.0);
         Ok(())
     }
 
+    /// `variant.replace`: the previous payload moves out to `dest` and the
+    /// new one is a copy of `value` by `constructor`, the `__copyinit__` the
+    /// store names.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn lower_variant_replace(
         &mut self,
@@ -395,6 +408,7 @@ impl FnLowering<'_> {
         output_index: usize,
         value: Reg,
         checked: bool,
+        constructor: Option<&str>,
     ) -> Result<(), PlironError> {
         let (address, ty) = self.place_address(ctx, place, dest)?;
         let TyKind::Variant(alternatives) = ty.kind() else {
@@ -435,7 +449,7 @@ impl FnLowering<'_> {
         let tag = self.tag_constant(ctx, input_index as u32);
         let store = StoreOp::new(ctx, tag, address);
         self.append(ctx, store.get_operation(), Some(dest));
-        self.copy_reg_into(ctx, payload, &input, value, Reg(u32::MAX - 3))
+        self.copy_reg_into(ctx, payload, &input, value, Reg(u32::MAX - 3), constructor)
     }
 
     pub(super) fn lower_variant_set_init_with(
@@ -448,7 +462,9 @@ impl FnLowering<'_> {
     ) -> Result<(), PlironError> {
         let produced = Reg(u32::MAX - 1);
         self.lower_call_indirect(ctx, produced, factory, &[], &[], &[], &[], None)?;
-        self.lower_variant_set(ctx, dest, place, index, produced)
+        // The factory's result is a fresh temporary; its store names no
+        // constructor.
+        self.lower_variant_set(ctx, dest, place, index, produced, None)
     }
 
     pub(super) fn lower_variant_deinit_with(

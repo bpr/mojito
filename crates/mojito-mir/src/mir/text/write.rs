@@ -753,18 +753,22 @@ fn instruction_value(instruction: &MirInstr) -> String {
                     list(captures.iter().map(|capture| {
                         record(
                             "closure_capture",
-                            &[
-                                ("place", place_value(&capture.place)),
-                                (
-                                    "mode",
-                                    match capture.mode {
-                                        MirCaptureMode::Reference => "reference",
-                                        MirCaptureMode::Copy => "copy",
-                                        MirCaptureMode::Move => "move",
-                                    }
-                                    .into(),
-                                ),
-                            ],
+                            &with_symbol(
+                                vec![
+                                    ("place", place_value(&capture.place)),
+                                    (
+                                        "mode",
+                                        match capture.mode {
+                                            MirCaptureMode::Reference => "reference",
+                                            MirCaptureMode::Copy => "copy",
+                                            MirCaptureMode::Move => "move",
+                                        }
+                                        .into(),
+                                    ),
+                                ],
+                                "constructor",
+                                capture.constructor.as_deref(),
+                            ),
                         )
                     })),
                 ),
@@ -995,41 +999,51 @@ fn instruction_value(instruction: &MirInstr) -> String {
             spread,
         } => record(
             tag,
-            &[
-                ("dest", reg_value(*dest)),
-                ("recv", reg_value(*recv)),
-                ("method", symbol(method)),
-                ("resolved", option(resolved.as_ref().map(|v| symbol(v)))),
-                ("raises", option(raises.as_ref().map(ty_value))),
-                (
-                    "reference_result",
-                    option(reference_result.as_deref().map(ref_ty)),
-                ),
-                (
-                    "result_adapter",
-                    option(result_adapter.map(result_adapter_value)),
-                ),
-                ("args", regs(args)),
-                ("kwargs", kwargs_value(kwargs)),
-                ("recv_place", option(recv_place.as_deref().map(place_value))),
-                ("recv_writes", recv_writes.to_string()),
-                ("arg_places", places_option(arg_places)),
-                ("kwarg_places", places_option(kwarg_places)),
-                (
-                    "capture_accesses",
-                    list(capture_accesses.iter().map(capture_access)),
-                ),
-                ("param_arg_regs", list(param_arg_regs.iter().map(param_arg))),
-                ("param_decls", list(param_decls.iter().map(param_decl))),
-                (
-                    "instantiated_args",
-                    list(instantiated_args.iter().map(ty_arg)),
-                ),
-                (
-                    "spread",
-                    option(spread.map(|position| position.to_string())),
-                ),
-            ],
+            &with_symbol(
+                vec![
+                    ("dest", reg_value(*dest)),
+                    ("recv", reg_value(*recv)),
+                    ("method", symbol(method)),
+                    ("resolved", option(resolved.as_ref().map(|v| symbol(v)))),
+                    ("raises", option(raises.as_ref().map(ty_value))),
+                    (
+                        "reference_result",
+                        option(reference_result.as_deref().map(ref_ty)),
+                    ),
+                    (
+                        "result_adapter",
+                        option(
+                            result_adapter
+                                .as_deref()
+                                .map(|adapter| result_adapter_value(adapter.kind)),
+                        ),
+                    ),
+                    ("args", regs(args)),
+                    ("kwargs", kwargs_value(kwargs)),
+                    ("recv_place", option(recv_place.as_deref().map(place_value))),
+                    ("recv_writes", recv_writes.to_string()),
+                    ("arg_places", places_option(arg_places)),
+                    ("kwarg_places", places_option(kwarg_places)),
+                    (
+                        "capture_accesses",
+                        list(capture_accesses.iter().map(capture_access)),
+                    ),
+                    ("param_arg_regs", list(param_arg_regs.iter().map(param_arg))),
+                    ("param_decls", list(param_decls.iter().map(param_decl))),
+                    (
+                        "instantiated_args",
+                        list(instantiated_args.iter().map(ty_arg)),
+                    ),
+                    (
+                        "spread",
+                        option(spread.map(|position| position.to_string())),
+                    ),
+                ],
+                "adapter_constructor",
+                result_adapter
+                    .as_deref()
+                    .and_then(|adapter| adapter.constructor.as_deref()),
+            ),
         ),
         MirInstr::PointerStorageTake {
             dest,
@@ -1248,14 +1262,19 @@ fn instruction_value(instruction: &MirInstr) -> String {
             alternatives,
             index,
             value,
+            constructor,
         } => record(
             tag,
-            &[
-                ("dest", reg_value(*dest)),
-                ("alternatives", list(alternatives.iter().map(ty_value))),
-                ("index", variant_index(index)),
-                ("value", reg_value(*value)),
-            ],
+            &with_symbol(
+                vec![
+                    ("dest", reg_value(*dest)),
+                    ("alternatives", list(alternatives.iter().map(ty_value))),
+                    ("index", variant_index(index)),
+                    ("value", reg_value(*value)),
+                ],
+                "constructor",
+                constructor.as_deref(),
+            ),
         ),
         MirInstr::VariantIs {
             dest,
@@ -1279,14 +1298,19 @@ fn instruction_value(instruction: &MirInstr) -> String {
             place,
             index,
             value,
+            constructor,
         } => record(
             tag,
-            &[
-                ("dest", reg_value(*dest)),
-                ("place", place_value(place)),
-                ("index", variant_index(index)),
-                ("value", reg_value(*value)),
-            ],
+            &with_symbol(
+                vec![
+                    ("dest", reg_value(*dest)),
+                    ("place", place_value(place)),
+                    ("index", variant_index(index)),
+                    ("value", reg_value(*value)),
+                ],
+                "constructor",
+                constructor.as_deref(),
+            ),
         ),
         MirInstr::VariantTake {
             dest,
@@ -1337,16 +1361,21 @@ fn instruction_value(instruction: &MirInstr) -> String {
             output_index,
             value,
             checked,
+            constructor,
         } => record(
             tag,
-            &[
-                ("dest", reg_value(*dest)),
-                ("place", place_value(place)),
-                ("input_index", variant_index(input_index)),
-                ("output_index", variant_index(output_index)),
-                ("value", reg_value(*value)),
-                ("checked", checked.to_string()),
-            ],
+            &with_symbol(
+                vec![
+                    ("dest", reg_value(*dest)),
+                    ("place", place_value(place)),
+                    ("input_index", variant_index(input_index)),
+                    ("output_index", variant_index(output_index)),
+                    ("value", reg_value(*value)),
+                    ("checked", checked.to_string()),
+                ],
+                "constructor",
+                constructor.as_deref(),
+            ),
         ),
         MirInstr::MakeSimd {
             dest,
@@ -1548,15 +1577,20 @@ fn instruction_value(instruction: &MirInstr) -> String {
             iter,
             call,
             exhaustion,
+            adapter_constructor,
         } => record(
             tag,
-            &[
-                ("dest", reg_value(*dest)),
-                ("yielded", reg_value(*yielded)),
-                ("iter", var_value(*iter)),
-                ("call", iterator_call(call)),
-                ("exhaustion", ty_value(exhaustion)),
-            ],
+            &with_symbol(
+                vec![
+                    ("dest", reg_value(*dest)),
+                    ("yielded", reg_value(*yielded)),
+                    ("iter", var_value(*iter)),
+                    ("call", iterator_call(call)),
+                    ("exhaustion", ty_value(exhaustion)),
+                ],
+                "adapter_constructor",
+                adapter_constructor.as_deref(),
+            ),
         ),
     }
 }
@@ -1641,7 +1675,8 @@ fn sequence_fields(source: &ComptimeSequence) -> Vec<(&'static str, String)> {
 }
 
 /// A lifecycle site's fields: its operands, then the `destructor` a drop or
-/// the `constructor` a copy or move names, omitted when it names none.
+/// the `constructor` (a result adapter's `adapter_constructor`) a copy or
+/// move names, omitted when it names none.
 fn with_symbol<'a>(
     mut fields: Vec<(&'a str, String)>,
     key: &'a str,

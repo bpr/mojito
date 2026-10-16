@@ -3,7 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use crate::mir::{LoopLabel, MirElif};
+use crate::mir::{LoopLabel, MirElif, MirResultAdapter};
 use mojito_hir::hir::VarId;
 use mojito_types::types::TyKind;
 
@@ -499,9 +499,16 @@ impl Decoder {
                     Some(d.option_value(Some(v)).and_then(|v| d.ref_ty(v)))
                 })?)
                 .map(Box::new),
-                result_adapter: self.req(value, fields, "result_adapter", |d, v| {
-                    Some(d.option_value(Some(v)).and_then(|v| d.result_adapter(v)))
-                })?,
+                result_adapter: self
+                    .req(value, fields, "result_adapter", |d, v| {
+                        Some(d.option_value(Some(v)).and_then(|v| d.result_adapter(v)))
+                    })?
+                    .map(|kind| {
+                        Box::new(MirResultAdapter {
+                            kind,
+                            constructor: self.lifecycle_symbol(fields, "adapter_constructor"),
+                        })
+                    }),
                 args: self.req(value, fields, "args", |d, v| Some(d.regs(v)))?,
                 kwargs: self.req(value, fields, "kwargs", |d, v| Some(d.kwargs(v)))?,
                 recv_place: (self
@@ -693,6 +700,7 @@ impl Decoder {
                 alternatives: self.req(value, fields, "alternatives", |d, v| Some(d.types(v)))?,
                 index: self.req(value, fields, "index", Self::variant_index)?,
                 value: self.req(value, fields, "value", Self::reg)?,
+                constructor: self.lifecycle_symbol(fields, "constructor"),
             }),
             "variant.is" | "variant.get" => {
                 let dest = self.req(value, fields, "dest", Self::reg)?;
@@ -717,6 +725,7 @@ impl Decoder {
                 place: self.req(value, fields, "place", Self::place)?,
                 index: self.req(value, fields, "index", Self::variant_index)?,
                 value: self.req(value, fields, "value", Self::reg)?,
+                constructor: self.lifecycle_symbol(fields, "constructor"),
             }),
             "variant.take" => Some(MirInstr::VariantTake {
                 dest: self.req(value, fields, "dest", Self::reg)?,
@@ -743,6 +752,7 @@ impl Decoder {
                 output_index: self.req(value, fields, "output_index", Self::variant_index)?,
                 value: self.req(value, fields, "value", Self::reg)?,
                 checked: self.req(value, fields, "checked", Self::boolean)?,
+                constructor: self.lifecycle_symbol(fields, "constructor"),
             }),
             "simd.make" => Some(MirInstr::MakeSimd {
                 dest: self.req(value, fields, "dest", Self::reg)?,
@@ -889,6 +899,7 @@ impl Decoder {
                 iter: self.req(value, fields, "iter", Self::var)?,
                 call: Box::new(self.req(value, fields, "call", Self::iterator_call)?),
                 exhaustion: self.req(value, fields, "exhaustion", Self::ty)?,
+                adapter_constructor: self.lifecycle_symbol(fields, "adapter_constructor"),
             }),
             other => {
                 self.error(value.span, format!("unknown instruction `{other}`"));

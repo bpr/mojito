@@ -50,17 +50,19 @@ impl FnLowering<'_> {
                     else {
                         return Err(self.unsupported_reg("untyped closure capture".into(), dest));
                     };
-                    // The VM's owned capture runs the user's copy/move
-                    // constructor; the native record relocates or forks
-                    // bytes, so a user-observable constructor rejects. The
-                    // nominal String's bridged constructors are exactly the
-                    // native fork/relocation semantics.
+                    // An owned capture naming its constructor runs it, as
+                    // the VM does. One naming none relocates or forks bytes,
+                    // so a user-observable constructor reached that way
+                    // rejects; the nominal String's bridged constructors are
+                    // exactly the native fork/relocation semantics.
                     let ctor = if capture.mode == MirCaptureMode::Copy {
                         "__copyinit__"
                     } else {
                         "__moveinit__"
                     };
-                    if self.chain_runs_user_lifecycle(&ty, ctor) {
+                    if self.named_capture_constructor(capture, &ty).is_none()
+                        && self.chain_runs_user_lifecycle(&ty, ctor)
+                    {
                         return Err(self.unsupported_reg(
                             format!("owned closure capture of `{ty}` with a user `{ctor}`"),
                             dest,
@@ -139,7 +141,12 @@ impl FnLowering<'_> {
                 let layout = self.layout.layout_of(ty).map_err(|error| {
                     self.unsupported_reg(format!("closure capture layout ({error})"), dest)
                 })?;
-                if *mode == 'c' && self.owns_heap(ty) {
+                let named = self.named_capture_constructor(capture, ty);
+                if let Some(constructor) = named {
+                    // The capture runs the constructor it names, `(out
+                    // self, source)`, into its slot.
+                    self.emit_constructor_call(ctx, constructor, slot, source, dest)?;
+                } else if *mode == 'c' && self.owns_heap(ty) {
                     // A copy capture of a borrowed heap owner forks; a byte
                     // copy would alias buffers both owners release.
                     self.fork_value_into(ctx, slot, ty, layout, source, dest)?;
@@ -152,7 +159,8 @@ impl FnLowering<'_> {
                     // teardown reports one consume event; the byte
                     // relocation above is that constructor's exact
                     // semantics, so mirror the event.
-                    if self.trace_lifecycle
+                    if named.is_none()
+                        && self.trace_lifecycle
                         && let TyKind::Struct(name, _) = ty.kind()
                         && self.lifecycle_symbol(name, "__moveinit__").is_some()
                     {
@@ -466,5 +474,19 @@ impl FnLowering<'_> {
                 dest,
             )),
         }
+    }
+
+    /// The compiled constructor an owned `capture` of a `ty` value names,
+    /// none for a capture naming none or for the nominal String, whose
+    /// constructors are bridged natively.
+    fn named_capture_constructor<'c>(
+        &self,
+        capture: &'c MirClosureCapture,
+        ty: &Ty,
+    ) -> Option<&'c str> {
+        capture.constructor.as_deref().filter(|_| {
+            !matches!(ty.kind(), TyKind::Struct(name, _)
+                if mojito_symbol::symbol::is_stdlib_string_struct(name))
+        })
     }
 }

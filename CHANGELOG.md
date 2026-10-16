@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An owned closure capture, a variant payload store (`variant.make`,
+  `variant.set`, `variant.replace`), and the copy a method or iterator
+  result adapter makes of a reference-returning `__next__`'s referent name
+  the constructor they run (R1045), as upstream's copy/move insertion
+  leaves a call naming the `__copyinit__` or `__moveinit__` at each site:
+  `name_constructors` names the template member, the elaborator respells it
+  to the instance, the symbol walk and `eliminate-dead-symbols` follow it,
+  and the VM and Pliron call it rather than finding it in the struct's
+  member table. A method call's adapter and its constructor are one boxed
+  `MirResultAdapter`. Pliron runs a named capture constructor into the
+  closure record instead of rejecting a capture whose copy or move is
+  user-observable. The verifier holds every such site to the copy's rule.
+  MIR text 1.71 adds the `constructor` and `adapter_constructor` fields.
+  No program's output changes.
 - A struct with copyable or movable fields and no copy or move constructor
   of its own now has a synthesized one (R1044), as upstream synthesizes a
   fieldwise `__copyinit__` and `__moveinit__` for every struct that

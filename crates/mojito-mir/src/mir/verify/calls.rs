@@ -136,7 +136,7 @@ pub(super) fn verify_call_instruction(
                 && reference_result.is_none()
                 && declared(cx.declarations, callee)
                     .is_some_and(|declaration| declaration.returns_reference);
-            match result_adapter {
+            match result_adapter.as_deref().map(|adapter| adapter.kind) {
                 Some(mojito_checked::checked::CheckedResultAdapter::CopyIteratorReference) => {
                     if !abstract_value_next && !adapted_reference_next {
                         errors.push(format!(

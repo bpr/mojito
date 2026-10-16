@@ -284,16 +284,33 @@ impl FnLowering<'_> {
         src_ptr: Value,
         constructor: Option<&str>,
     ) -> Result<(), PlironError> {
-        let Some(copyinit) = constructor.filter(|_| {
-            !matches!(ty.kind(), TyKind::Struct(name, _)
-                if mojito_symbol::symbol::is_stdlib_string_struct(name))
-        }) else {
+        let Some(copyinit) = constructor.filter(|_| !is_stdlib_string(ty)) else {
             return self.copy_aggregate(ctx, dest, ty, layout, src_ptr);
         };
         let storage = self.value_storage(ctx, ty, layout);
-        self.emit_copy_constructor_call(ctx, copyinit, storage, src_ptr, dest)?;
+        self.emit_constructor_call(ctx, copyinit, storage, src_ptr, dest)?;
         self.reg_values.insert(dest.0, storage);
         self.mark_owned_temp(dest, ty.clone())
+    }
+
+    /// Clone the value at `src_ptr` into `dst`, which the caller owns, by
+    /// running `constructor`, the copy constructor the copy names; a copy
+    /// naming none, and the nominal String's, whose copy is bridged
+    /// natively, clone as [`Self::fork_value_into`].
+    pub(super) fn fork_named_into(
+        &mut self,
+        ctx: &mut Context,
+        dst: Value,
+        ty: &Ty,
+        layout: Layout,
+        src_ptr: Value,
+        constructor: Option<&str>,
+        span: Reg,
+    ) -> Result<(), PlironError> {
+        match constructor.filter(|_| !is_stdlib_string(ty)) {
+            Some(copyinit) => self.emit_constructor_call(ctx, copyinit, dst, src_ptr, span),
+            None => self.fork_value_into(ctx, dst, ty, layout, src_ptr, span),
+        }
     }
 
     /// Clone the value at `src_ptr` into `dst` — the VM's `clone_value`: a
@@ -440,26 +457,29 @@ impl FnLowering<'_> {
                 span,
             ));
         };
-        self.emit_copy_constructor_call(ctx, copyinit, dst, src, span)
+        self.emit_constructor_call(ctx, copyinit, dst, src, span)
     }
 
-    /// Run the compiled copy constructor `copyinit` a copy names from `src`
-    /// into `dst`.
-    pub(super) fn emit_copy_constructor_call(
+    /// Run the compiled copy or move constructor `constructor` a copy or
+    /// move names, `(out self, source)`, from `src` into `dst`.
+    pub(super) fn emit_constructor_call(
         &mut self,
         ctx: &mut Context,
-        copyinit: &str,
+        constructor: &str,
         dst: Value,
         src: Value,
         span: Reg,
     ) -> Result<(), PlironError> {
-        let Some(signature) = self.signatures.get(copyinit) else {
-            return Err(self.unsupported_reg(format!("copy via uncompiled `{copyinit}`"), span));
+        let Some(signature) = self.signatures.get(constructor) else {
+            return Err(
+                self.unsupported_reg(format!("copy or move via uncompiled `{constructor}`"), span)
+            );
         };
         if signature.outcome.is_some() {
-            return Err(
-                self.unsupported_reg(format!("raising copy constructor `{copyinit}`"), span)
-            );
+            return Err(self.unsupported_reg(
+                format!("raising copy or move constructor `{constructor}`"),
+                span,
+            ));
         }
         let callee: Identifier = signature
             .mangled
@@ -481,4 +501,11 @@ impl FnLowering<'_> {
     pub(super) fn clone_needs_work(&self, ty: &Ty) -> bool {
         self.owns_heap(ty) || self.has_nested_lifecycle(ty, "__copyinit__")
     }
+}
+
+/// Whether `ty` is the nominal String, whose copy and move constructors are
+/// bridged natively rather than compiled.
+fn is_stdlib_string(ty: &Ty) -> bool {
+    matches!(ty.kind(), TyKind::Struct(name, _)
+        if mojito_symbol::symbol::is_stdlib_string_struct(name))
 }

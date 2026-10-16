@@ -474,10 +474,15 @@ impl Decoder {
                 let fields = self.record(entry, "closure_capture").ok()?;
                 let place = self.req(entry, fields, "place", Self::place);
                 let mode = self.req(entry, fields, "mode", Self::capture_mode);
-                self.unknown(fields, &["place", "mode"]);
+                let constructor = self
+                    .field(fields, "constructor")
+                    .ok()
+                    .and_then(|value| self.symbol(value));
+                self.unknown(fields, &["place", "mode", "constructor"]);
                 Some(MirClosureCapture {
                     place: place?,
                     mode: mode?,
+                    constructor,
                 })
             })
             .collect()

@@ -58,7 +58,9 @@ mod callable_values;
 pub use callable_values::{callable_targets, nested_instructions};
 mod calls;
 mod constructor_calls;
-pub use constructor_calls::{name_constructors, use_constructor_member};
+pub use constructor_calls::{
+    name_constructors, use_constructor_member, variant_payload_ty, variant_place_payload_ty,
+};
 mod copies;
 pub use copies::{Relocated, StructDeclarations, relocated_structs};
 mod destroys;

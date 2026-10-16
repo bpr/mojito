@@ -630,6 +630,7 @@ mod tests {
                             alternatives: vec![int()],
                             index: VariantIndex::Known(0),
                             value: Reg(0),
+                            constructor: None,
                         },
                         MirInstr::SimdShuffle {
                             dest: Reg(2),

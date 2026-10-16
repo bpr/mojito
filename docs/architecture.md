@@ -4477,10 +4477,12 @@ name.
 
 Copies and moves name their constructor the same way, from MIR lowering on:
 `mir::name_constructors` (`mir/constructor_calls.rs`) sets each copying or
-moving `UseVar` and each `CopyValue`'s `constructor` to the `__copyinit__` or
-`__moveinit__` the value's struct records (`MirDeclarations::struct_member`),
-as upstream's copy/move insertion leaves a call naming the constructor at
-each site. Lowering runs it on every body once the member tables exist (the
+moving `UseVar`, each `CopyValue`, each owned `MakeClosure` capture, each
+`MakeVariant`/`VariantSet`/`VariantReplace` payload store, and each
+`MethodCall` or `TryNext` result adapter's `constructor` to the
+`__copyinit__` or `__moveinit__` the value's struct records
+(`MirDeclarations::struct_member`), as upstream's copy/move insertion leaves
+a call naming the constructor at each site. Lowering runs it on every body once the member tables exist (the
 `close_register_types` loops of `lower_program` and `lower_package_unit`),
 and each later producer of a copy or move reruns it: drop elaboration after
 copy elision, `inline-parametric` after a splice substitutes a callee's

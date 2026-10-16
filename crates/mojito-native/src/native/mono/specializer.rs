@@ -1032,6 +1032,7 @@ impl<'a> Specializer<'a> {
                         ..MirPlace::root(slot, function.var_tys.get(&slot).cloned())
                     },
                     mode: MirCaptureMode::Reference,
+                    constructor: None,
                 })
                 .collect();
             self.closure_captures.insert(target.clone(), captures);
@@ -3277,7 +3278,12 @@ impl<'a> Specializer<'a> {
                     // An untyped iterator slot passes through: it belongs to
                     // a compiler-private pack loop the backend rejects at its
                     // own boundary.
-                    MirInstr::TryNext { iter, call, .. } => {
+                    MirInstr::TryNext {
+                        iter,
+                        call,
+                        adapter_constructor,
+                        ..
+                    } => {
                         if let Some(receiver) = function.var_tys.get(iter).cloned() {
                             // The adapter copies the element out of a
                             // reference the step returns: a step that
@@ -3288,6 +3294,7 @@ impl<'a> Specializer<'a> {
                                 Some(&call.target),
                             ) {
                                 call.result_adapter = None;
+                                *adapter_constructor = None;
                             }
                             let (target, _) = self.resolve_iterator_step(
                                 owner,
@@ -4304,6 +4311,53 @@ fn for_each_lifecycle_site_mut(
             } => reg_types
                 .get(&dest.0)
                 .map(|ty| (ty, "__copyinit__", constructor)),
+            MirInstr::MakeClosure { captures, .. } => {
+                for capture in captures {
+                    if let Some((ty, member)) = capture
+                        .place
+                        .storage_ty(var_tys)
+                        .zip(capture.constructor_member())
+                    {
+                        name(ty, member, &mut capture.constructor)?;
+                    }
+                }
+                None
+            }
+            MirInstr::MakeVariant {
+                alternatives,
+                index,
+                constructor,
+                ..
+            } => mojito_mir::mir::variant_payload_ty(alternatives, index)
+                .map(|ty| (ty, "__copyinit__", constructor)),
+            MirInstr::VariantSet {
+                place,
+                index,
+                constructor,
+                ..
+            }
+            | MirInstr::VariantReplace {
+                place,
+                input_index: index,
+                constructor,
+                ..
+            } => mojito_mir::mir::variant_place_payload_ty(place, index, var_tys)
+                .map(|ty| (ty, "__copyinit__", constructor)),
+            MirInstr::MethodCall {
+                dest,
+                result_adapter: Some(adapter),
+                ..
+            } => reg_types
+                .get(&dest.0)
+                .map(|ty| (ty, "__copyinit__", &mut adapter.constructor)),
+            MirInstr::TryNext {
+                dest,
+                call,
+                adapter_constructor,
+                ..
+            } if call.result_adapter.is_some() => reg_types
+                .get(&dest.0)
+                .map(|ty| (ty, "__copyinit__", adapter_constructor)),
             _ => None,
         };
         if let Some((ty, member, symbol)) = site {

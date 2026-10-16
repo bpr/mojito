@@ -571,6 +571,7 @@ impl<'a> Flatten<'a> {
                                     .expect("raising iterator has checked __next__ contract"),
                             ),
                             exhaustion,
+                            adapter_constructor: None,
                         });
                     } else {
                         this.emit_has_next(has_next, iterator_object);

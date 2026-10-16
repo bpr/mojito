@@ -1504,6 +1504,24 @@ impl MirPlace {
         self.root_ty.is_some() && self.ty.is_some() && self.proj.len() == self.projection_tys.len()
     }
 
+    /// The type of the storage this place designates: its own, else its
+    /// last projection's, else its root's (the place's or `var_tys`') when
+    /// it projects nothing.
+    pub fn storage_ty<'a, S: std::hash::BuildHasher>(
+        &'a self,
+        var_tys: &'a HashMap<VarId, Ty, S>,
+    ) -> Option<&'a Ty> {
+        self.ty
+            .as_ref()
+            .or_else(|| self.projection_tys.last())
+            .or_else(|| {
+                self.proj
+                    .is_empty()
+                    .then(|| self.root_ty.as_ref().or_else(|| var_tys.get(&self.root)))
+                    .flatten()
+            })
+    }
+
     /// The storage this place designates: every [`Proj::Rebind`] step and
     /// its type removed, the terminal type kept. Borrowed when the place has
     /// no such step, as every concrete place.
@@ -1655,7 +1673,8 @@ pub enum MirInstr {
     },
     /// Build a non-escaping closure value from a lifted function and its explicit
     /// environment. The capture mode fixes whether declaration evaluation stores
-    /// a reference handle, an owned snapshot, or a transferred value.
+    /// a reference handle, an owned snapshot, or a transferred value; an owned
+    /// capture names the constructor it runs ([`MirClosureCapture::constructor`]).
     MakeClosure {
         dest: Reg,
         #[serde(serialize_with = "mojito_types::symbol_ref::serialize")]
@@ -1936,8 +1955,9 @@ pub enum MirInstr {
         /// `reg_types[dest]`.
         reference_result: Option<Box<mojito_types::origin::RefTy>>,
         /// Checker-proven adaptation from a concrete implementation ABI to the
-        /// abstract result promised at this call site.
-        result_adapter: Option<mojito_checked::checked::CheckedResultAdapter>,
+        /// abstract result promised at this call site, with the constructor
+        /// its copy names.
+        result_adapter: Option<Box<MirResultAdapter>>,
         args: Vec<Reg>,
         kwargs: Vec<(String, Reg)>,
         recv_place: Option<Box<MirPlace>>,
@@ -2116,11 +2136,15 @@ pub enum MirInstr {
         element_types: Option<Vec<Ty>>,
     },
     /// Construct a tagged union. Alternative order determines the runtime tag.
+    /// The payload is a copy of `value`; `constructor` names the
+    /// `__copyinit__` it runs, as on [`MirInstr::CopyValue`].
     MakeVariant {
         dest: Reg,
         alternatives: Vec<Ty>,
         index: mojito_types::types::VariantIndex,
         value: Reg,
+        #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
+        constructor: Option<String>,
     },
     /// Test a tag selected during semantic checking.
     VariantIs {
@@ -2134,12 +2158,16 @@ pub enum MirInstr {
         variant: Reg,
         index: mojito_types::types::VariantIndex,
     },
-    /// Replace a writable variant and destroy its previous payload.
+    /// Replace a writable variant and destroy its previous payload. The new
+    /// payload is a copy of `value` naming its `__copyinit__` as
+    /// [`MirInstr::MakeVariant`] does.
     VariantSet {
         dest: Reg,
         place: MirPlace,
         index: mojito_types::types::VariantIndex,
         value: Reg,
+        #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
+        constructor: Option<String>,
     },
     /// Move a payload out of an already-consumed variant value.
     VariantTake {
@@ -2168,7 +2196,8 @@ pub enum MirInstr {
         index: mojito_types::types::VariantIndex,
     },
     /// Replace the active payload without destroying it, returning ownership of
-    /// that previous payload to the caller.
+    /// that previous payload to the caller. The new payload is a copy of
+    /// `value` naming its `__copyinit__` as [`MirInstr::MakeVariant`] does.
     VariantReplace {
         dest: Reg,
         place: MirPlace,
@@ -2176,6 +2205,8 @@ pub enum MirInstr {
         output_index: mojito_types::types::VariantIndex,
         value: Reg,
         checked: bool,
+        #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
+        constructor: Option<String>,
     },
     /// SIMD construction `SIMD[DType.<dt>, width](elems)` (or a scalar-alias like
     /// `Int32(x)`). The element `dtype`/`width` are the construction type's
@@ -2393,13 +2424,18 @@ pub enum MirInstr {
         /// Exact selected target, reference/value ABI, and raising effect.
         call: Box<mojito_checked::checked::CheckedIteratorCall>,
         exhaustion: Ty,
+        /// The `__copyinit__` the call's result adapter runs copying the
+        /// element out of the reference the step returns, as on
+        /// [`MirInstr::MethodCall`]; none without an adapter.
+        #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
+        adapter_constructor: Option<String>,
     },
 }
 
 /// An instruction is sized for its common variants: the places and subscript
 /// calls only a few call variants carry sit behind boxes, and a type is one
 /// handle. The call variants' argument lists set this bound.
-const _: () = assert!(std::mem::size_of::<MirInstr>() <= 296);
+const _: () = assert!(std::mem::size_of::<MirInstr>() <= 304);
 
 impl MirInstr {
     /// The checked error type a call instruction raises, if it raises.
@@ -2717,10 +2753,50 @@ pub enum MirCaptureMode {
     Move,
 }
 
+/// The adaptation a [`MirInstr::MethodCall`] applies to its concrete result.
+///
+/// `kind` is the checked adaptation and `constructor` the `__copyinit__` the
+/// copy it performs runs, as on [`MirInstr::CopyValue`]: none while the
+/// result's type records no such member.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MirResultAdapter {
+    pub kind: mojito_checked::checked::CheckedResultAdapter,
+    #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
+    pub constructor: Option<String>,
+}
+
+impl MirResultAdapter {
+    /// The adapter the checked contract `kind` selects, its constructor not
+    /// yet named.
+    pub fn new(kind: mojito_checked::checked::CheckedResultAdapter) -> Box<Self> {
+        Box::new(Self {
+            kind,
+            constructor: None,
+        })
+    }
+}
+
+/// One captured place of a [`MirInstr::MakeClosure`]: a reference to it, or
+/// a copy or move of its value naming the `__copyinit__` or `__moveinit__`
+/// it runs, as a [`MirInstr::UseVar`] does.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MirClosureCapture {
     pub place: MirPlace,
     pub mode: MirCaptureMode,
+    #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
+    pub constructor: Option<String>,
+}
+
+impl MirClosureCapture {
+    /// The lifecycle member the capture runs: `__copyinit__` for a copy,
+    /// `__moveinit__` for a move, none for a reference.
+    pub const fn constructor_member(&self) -> Option<&'static str> {
+        match self.mode {
+            MirCaptureMode::Copy => Some("__copyinit__"),
+            MirCaptureMode::Move => Some("__moveinit__"),
+            MirCaptureMode::Reference => None,
+        }
+    }
 }
 
 /// A static access to owner storage performed by a callable environment while

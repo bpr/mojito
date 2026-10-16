@@ -1447,7 +1447,7 @@ fn abstract_next_calls_retain_the_copyable_reference_adapter() {
     );
     assert!(direct.1.is_none(), "abstract contract has a value ABI");
     assert_eq!(
-        *direct.2,
+        direct.2.as_deref().map(|adapter| adapter.kind),
         Some(mojito::checked::CheckedResultAdapter::CopyIteratorReference)
     );
 

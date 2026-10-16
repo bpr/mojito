@@ -964,6 +964,14 @@ struct ResultAdapterFrames<'a> {
     returned: Option<(FrameId, &'a mut Vec<Value>)>,
 }
 
+/// The adaptation a method or iterator call applies to its result: the
+/// checked kind, and the `__copyinit__` the adapter's copy names.
+#[derive(Clone, Copy)]
+struct ResultAdapter<'a> {
+    kind: mojito_checked::checked::CheckedResultAdapter,
+    constructor: Option<&'a str>,
+}
+
 /// Take the single argument of a one-arg built-in (the checker guarantees arity;
 /// a mismatch is a defensive clean error, never a panic).
 fn arg1(name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
@@ -1180,7 +1188,7 @@ struct MethodInvocation<'a> {
     receiver: Value,
     method: &'a str,
     resolved_name: Option<&'a str>,
-    result_adapter: Option<mojito_checked::checked::CheckedResultAdapter>,
+    result_adapter: Option<ResultAdapter<'a>>,
     arguments: Vec<Value>,
     keyword_arguments: Vec<(String, Value)>,
     receiver_place: Option<&'a MirPlace>,

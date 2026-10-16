@@ -680,7 +680,8 @@ impl VmBackend {
         }
     }
 
-    /// Run lifecycle copying while reference handles embedded in the value can
+    /// Run lifecycle copying, by the `constructor` the copy names as
+    /// [`Self::copy_named`], while reference handles embedded in the value can
     /// still resolve against the executing caller and (for iterator results)
     /// the just-completed callee. The VM normally pops the executing frame while
     /// interpreting one instruction; moving its real slots into temporary frame
@@ -690,6 +691,7 @@ impl VmBackend {
         &mut self,
         prog: &Prog,
         value: &Value,
+        constructor: Option<&str>,
         current: FrameId,
         current_variables: &mut Vec<Value>,
         returned_frame: Option<(FrameId, &mut Vec<Value>)>,
@@ -721,7 +723,7 @@ impl VmBackend {
             variables
         });
 
-        let result = self.clone_value(prog, value);
+        let result = self.copy_named(prog, value, None, constructor);
         if let Some(variables) = returned_variables.as_mut() {
             let frame = self
                 .frames

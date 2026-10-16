@@ -1,21 +1,24 @@
 //! Constructor naming: upstream's copy/move insertion naming the
 //! `__copyinit__` or `__moveinit__` at each copy or move site.
 //!
-//! Each `var.use copy`, `var.use move`, and `value.copy` names the
-//! constructor its value's struct records as its `constructor` operand, so
-//! the symbol walk, the elaborator's respell, and `eliminate-dead-symbols`
-//! follow it as they follow a call's callee, and no backend looks the
-//! constructor up from the value's type again. A site whose type the member
-//! table names no such member for, a symbolic one included, keeps `None`:
-//! the elaborator names an instance's constructor once its type is
-//! concrete. Naming is a function of the site's type alone, so a pass that
-//! makes or retypes a copy or move names it again by rerunning this walk.
+//! Each `var.use copy`, `var.use move`, `value.copy`, owned closure capture,
+//! variant payload store (`variant.make`, `variant.set`, `variant.replace`),
+//! and reference-read method or iterator result (`result_adapter`) names
+//! the constructor its value's struct records as its `constructor`
+//! operand, so the symbol walk, the elaborator's respell, and
+//! `eliminate-dead-symbols` follow it as they follow a call's callee, and no
+//! backend looks the constructor up from the value's type again. A site
+//! whose type the member table names no such member for, a symbolic one
+//! included, keeps `None`: the elaborator names an instance's constructor
+//! once its type is concrete. Naming is a function of the site's type
+//! alone, so a pass that makes or retypes a copy or move names it again by
+//! rerunning this walk.
 
 use crate::mir::{
-    MirBlock, MirDeclarations, MirFunction, MirInstr, UseMode, instruction_regions_mut,
+    MirBlock, MirDeclarations, MirFunction, MirInstr, MirPlace, UseMode, instruction_regions_mut,
 };
 use mojito_hir::hir::VarId;
-use mojito_types::types::Ty;
+use mojito_types::types::{Ty, TyKind, VariantIndex};
 use std::collections::HashMap;
 
 /// Name the constructor of every copy and move in `function`, regions
@@ -39,6 +42,25 @@ pub const fn use_constructor_member(mode: UseMode) -> Option<&'static str> {
     }
 }
 
+/// The type of the payload a variant store selects by `index` among
+/// `alternatives`; none for an index only an instantiation resolves.
+pub fn variant_payload_ty<'a>(alternatives: &'a [Ty], index: &VariantIndex) -> Option<&'a Ty> {
+    alternatives.get(index.known()?)
+}
+
+/// The type of the payload a store into the variant at `place` selects by
+/// `index`, read from the place's storage type.
+pub fn variant_place_payload_ty<'a, S: std::hash::BuildHasher>(
+    place: &'a MirPlace,
+    index: &VariantIndex,
+    var_tys: &'a HashMap<VarId, Ty, S>,
+) -> Option<&'a Ty> {
+    match place.storage_ty(var_tys)?.kind() {
+        TyKind::Variant(alternatives) => variant_payload_ty(alternatives, index),
+        _ => None,
+    }
+}
+
 fn name_in_blocks(
     blocks: &mut [MirBlock],
     var_tys: &HashMap<VarId, Ty>,
@@ -50,6 +72,7 @@ fn name_in_blocks(
             .and_then(|(ty, member)| declarations.struct_member(ty, member))
             .map(str::to_owned)
     };
+    let copied = |ty: Option<&Ty>| named(ty, Some("__copyinit__"));
     for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
         match instruction {
             MirInstr::UseVar {
@@ -60,7 +83,50 @@ fn name_in_blocks(
             } => *constructor = named(var_tys.get(var), use_constructor_member(*mode)),
             MirInstr::CopyValue {
                 dest, constructor, ..
-            } => *constructor = named(reg_types.get(&dest.0), Some("__copyinit__")),
+            } => *constructor = copied(reg_types.get(&dest.0)),
+            MirInstr::MakeClosure { captures, .. } => {
+                for capture in captures {
+                    capture.constructor = named(
+                        capture.place.storage_ty(var_tys),
+                        capture.constructor_member(),
+                    );
+                }
+            }
+            MirInstr::MakeVariant {
+                alternatives,
+                index,
+                constructor,
+                ..
+            } => *constructor = copied(variant_payload_ty(alternatives, index)),
+            MirInstr::VariantSet {
+                place,
+                index,
+                constructor,
+                ..
+            }
+            | MirInstr::VariantReplace {
+                place,
+                input_index: index,
+                constructor,
+                ..
+            } => *constructor = copied(variant_place_payload_ty(place, index, var_tys)),
+            MirInstr::MethodCall {
+                dest,
+                result_adapter: Some(adapter),
+                ..
+            } => adapter.constructor = copied(reg_types.get(&dest.0)),
+            MirInstr::TryNext {
+                dest,
+                call,
+                adapter_constructor,
+                ..
+            } => {
+                *adapter_constructor = copied(
+                    reg_types
+                        .get(&dest.0)
+                        .filter(|_| call.result_adapter.is_some()),
+                );
+            }
             _ => {}
         }
         for region in instruction_regions_mut(instruction) {

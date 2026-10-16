@@ -1609,6 +1609,7 @@ fn verifier_rejects_a_mismatched_iterator_exhaustion_contract() {
                     result_adapter: None,
                 }),
                 exhaustion: other_error,
+                adapter_constructor: None,
             }],
             MirTerm::Return(None),
         )],
@@ -1678,6 +1679,7 @@ fn verifier_rejects_an_iterator_reference_result_abi_mismatch() {
                     result_adapter: None,
                 }),
                 exhaustion: stop_iteration.clone(),
+                adapter_constructor: None,
             }],
             MirTerm::Return(None),
         )],
@@ -1855,7 +1857,9 @@ fn verifier_distinguishes_method_result_abi_from_a_reference_shaped_value() {
     // still needs the adapter because ABI is not inferred from the value type.
     let value_abi = program(abstract_next(
         None,
-        Some(mojito::checked::CheckedResultAdapter::CopyIteratorReference),
+        Some(mojito::mir::MirResultAdapter::new(
+            mojito::checked::CheckedResultAdapter::CopyIteratorReference,
+        )),
     ));
     assert_eq!(verify(&value_abi), Vec::<String>::new());
 

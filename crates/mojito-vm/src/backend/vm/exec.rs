@@ -121,19 +121,25 @@ impl VmBackend {
             }
             MirInstr::MakeClosure {
                 dest,
-                function,
+                function: target,
                 captures,
             } => {
                 let mut environment = Vec::with_capacity(captures.len());
                 for capture in captures {
                     let reference =
                         Self::reference_to_place_parts(frame_id, regs, vars, &capture.place)?;
+                    // An owned capture copies or moves by the constructor it
+                    // names, as a `var.use` does.
+                    let ty = capture
+                        .place
+                        .storage_ty(&prog.mir.functions[function].1.var_tys);
+                    let constructor = capture.constructor.as_deref();
                     let value = match capture.mode {
                         MirCaptureMode::Reference => reference,
                         MirCaptureMode::Copy => {
                             let value = self.read_reference(&reference, frame_id, vars)?;
                             if self.has_copyinit {
-                                self.clone_value(prog, &value)?
+                                self.copy_named(prog, &value, ty, constructor)?
                             } else {
                                 value
                             }
@@ -142,7 +148,7 @@ impl VmBackend {
                             let value = self.read_reference(&reference, frame_id, vars)?;
                             self.write_reference(&reference, frame_id, vars, Value::Moved)?;
                             if self.has_moveinit {
-                                self.move_typed_value(prog, value)?
+                                self.move_named(prog, value, ty, constructor)?
                             } else {
                                 value
                             }
@@ -159,7 +165,7 @@ impl VmBackend {
                     });
                 }
                 regs[dest.0 as usize] = Value::Closure {
-                    function: function.clone(),
+                    function: target.clone(),
                     captures: environment,
                 };
             }
@@ -728,7 +734,12 @@ impl VmBackend {
                             receiver: recv_val,
                             method,
                             resolved_name: resolved.as_deref(),
-                            result_adapter: *result_adapter,
+                            result_adapter: result_adapter.as_deref().map(|adapter| {
+                                ResultAdapter {
+                                    kind: adapter.kind,
+                                    constructor: adapter.constructor.as_deref(),
+                                }
+                            }),
                             arguments: argv,
                             keyword_arguments: kw,
                             receiver_place: recv_place.as_deref(),
@@ -1198,17 +1209,20 @@ impl VmBackend {
                 alternatives,
                 index,
                 value,
+                constructor,
             } => {
                 let index = &known_variant_index(index)?;
                 let selected = alternatives.get(*index).ok_or_else(|| {
                     RuntimeError::TypeError("Variant construction has an invalid tag".to_string())
                 })?;
-                // The variant owns an independent payload: a lifecycle
-                // struct (a nominal String) deep-copies so the argument
-                // temporary's drop cannot free the stored buffer.
-                let payload = self.clone_value(
+                // The variant owns an independent payload: a copy by the
+                // constructor the store names, so the argument temporary's
+                // drop cannot free the stored buffer.
+                let payload = self.copy_named(
                     prog,
                     &crate::runtime::coerce_checked(regs[value.0 as usize].clone(), selected),
+                    Some(selected),
+                    constructor.as_deref(),
                 )?;
                 regs[dest.0 as usize] = Value::Variant {
                     alternatives: alternatives.clone(),
@@ -1376,6 +1390,7 @@ impl VmBackend {
                 place,
                 index,
                 value,
+                constructor,
             } => {
                 let index = &known_variant_index(index)?;
                 let old = self.load_place_through_reference(place, regs, vars, frame_id)?;
@@ -1388,9 +1403,11 @@ impl VmBackend {
                 let selected = alternatives.get(*index).ok_or_else(|| {
                     RuntimeError::TypeError("Variant.set has an invalid checked tag".to_string())
                 })?;
-                let payload = self.clone_value(
+                let payload = self.copy_named(
                     prog,
                     &crate::runtime::coerce_checked(regs[value.0 as usize].clone(), selected),
+                    Some(selected),
+                    constructor.as_deref(),
                 )?;
                 let replacement = Value::Variant {
                     alternatives: alternatives.clone(),
@@ -1408,6 +1425,7 @@ impl VmBackend {
                 output_index,
                 value,
                 checked,
+                constructor,
             } => {
                 let input_index = &known_variant_index(input_index)?;
                 let output_index = &known_variant_index(output_index)?;
@@ -1437,9 +1455,11 @@ impl VmBackend {
                         "Variant holds '{found}', not '{output}'"
                     )));
                 }
-                let payload = self.clone_value(
+                let payload = self.copy_named(
                     prog,
                     &crate::runtime::coerce_checked(regs[value.0 as usize].clone(), &input),
+                    Some(&input),
+                    constructor.as_deref(),
                 )?;
                 let replacement = Value::Variant {
                     alternatives,
@@ -1780,6 +1800,7 @@ impl VmBackend {
                 iter,
                 call,
                 exhaustion,
+                adapter_constructor,
             } => {
                 let slot = *iter as usize;
                 let Value::Struct { name, .. } = &vars[slot] else {
@@ -1811,7 +1832,10 @@ impl VmBackend {
                         let adapted = self.apply_checked_result_adapter(
                             prog,
                             element,
-                            call.result_adapter,
+                            call.result_adapter.map(|kind| ResultAdapter {
+                                kind,
+                                constructor: adapter_constructor.as_deref(),
+                            }),
                             concrete_returns_reference,
                             ResultAdapterFrames {
                                 current: frame_id,

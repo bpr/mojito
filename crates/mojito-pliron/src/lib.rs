@@ -1075,8 +1075,10 @@ fn visit_call_edges<'p>(
                 // Pointer-receiver methods dispatch to runtime
                 // intrinsics, never to compiled stdlib bodies.
                 MirInstr::MethodCall {
+                    dest,
                     recv,
                     resolved: Some(resolved),
+                    result_adapter,
                     ..
                 } => {
                     if !matches!(
@@ -1084,6 +1086,18 @@ fn visit_call_edges<'p>(
                         Some(TyKind::Pointer { .. })
                     ) {
                         push_named(&mut targets, resolved);
+                    }
+                    // Its result adapter copies the element out by the
+                    // constructor it names.
+                    if let Some(constructor) = result_adapter
+                        .as_deref()
+                        .and_then(|adapter| adapter.constructor.as_deref())
+                        && !function
+                            .reg_types
+                            .get(&dest.0)
+                            .is_some_and(is_stdlib_string_type)
+                    {
+                        push_named(&mut targets, constructor);
                     }
                 }
                 // The VM-synthesized `Writer.write` dispatch lowers to
@@ -1203,7 +1217,24 @@ fn visit_call_edges<'p>(
                         push_named(&mut targets, step);
                     }
                 }
-                MirInstr::TryNext { call, .. } => push_named(&mut targets, &call.target),
+                // Its result adapter copies the element out by the
+                // constructor it names.
+                MirInstr::TryNext {
+                    dest,
+                    call,
+                    adapter_constructor,
+                    ..
+                } => {
+                    push_named(&mut targets, &call.target);
+                    if let Some(constructor) = adapter_constructor
+                        && !function
+                            .reg_types
+                            .get(&dest.0)
+                            .is_some_and(is_stdlib_string_type)
+                    {
+                        push_named(&mut targets, constructor);
+                    }
+                }
                 // Subscript instructions carry their checker-selected (and
                 // mono-retargeted) targets on the instruction.
                 MirInstr::Index {
@@ -1220,8 +1251,25 @@ fn visit_call_edges<'p>(
                 // instruction; the per-target thunk calls it, so the body
                 // must be declared and compiled even when every invocation
                 // is indirect.
-                MirInstr::MakeClosure { function, .. } => {
-                    push_named(&mut targets, function);
+                // Its owned captures run the constructors they name, a
+                // String's copy excepted.
+                MirInstr::MakeClosure {
+                    function: target,
+                    captures,
+                    ..
+                } => {
+                    push_named(&mut targets, target);
+                    for capture in captures {
+                        if let Some(constructor) = &capture.constructor
+                            && !(capture.mode == mojito_mir::mir::MirCaptureMode::Copy
+                                && capture
+                                    .place
+                                    .storage_ty(&function.var_tys)
+                                    .is_some_and(is_stdlib_string_type))
+                        {
+                            push_named(&mut targets, constructor);
+                        }
+                    }
                 }
                 MirInstr::Const {
                     k: mojito_mir::mir::Const::Function(function),
@@ -1265,6 +1313,37 @@ fn visit_call_edges<'p>(
                     .reg_types
                     .get(&dest.0)
                     .is_some_and(is_stdlib_string_type) =>
+                {
+                    push_named(&mut targets, constructor);
+                }
+                // A variant payload store copies by the constructor it names.
+                MirInstr::MakeVariant {
+                    alternatives,
+                    index,
+                    constructor: Some(constructor),
+                    ..
+                } if !mojito_mir::mir::variant_payload_ty(alternatives, index)
+                    .is_some_and(is_stdlib_string_type) =>
+                {
+                    push_named(&mut targets, constructor);
+                }
+                MirInstr::VariantSet {
+                    place,
+                    index,
+                    constructor: Some(constructor),
+                    ..
+                }
+                | MirInstr::VariantReplace {
+                    place,
+                    input_index: index,
+                    constructor: Some(constructor),
+                    ..
+                } if !mojito_mir::mir::variant_place_payload_ty(
+                    place,
+                    index,
+                    &function.var_tys,
+                )
+                .is_some_and(is_stdlib_string_type) =>
                 {
                     push_named(&mut targets, constructor);
                 }

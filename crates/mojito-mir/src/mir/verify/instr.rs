@@ -101,9 +101,25 @@ pub(super) fn verify_instruction(
         | MirInstr::UninitStorageDestroy { .. } => {
             verify_storage_instruction(&cx, instruction, errors);
         }
-        MirInstr::Call { .. } | MirInstr::MethodCall { .. } | MirInstr::CallIndirect { .. } => {
+        MirInstr::Call { .. } | MirInstr::CallIndirect { .. } => {
             verify_call_instruction(&cx, instruction, errors);
         }
+        MirInstr::MethodCall {
+            dest,
+            result_adapter: Some(adapter),
+            ..
+        } => {
+            verify_call_instruction(&cx, instruction, errors);
+            verify_lifecycle_symbol(
+                &cx,
+                "method result adapter",
+                cx.reg_ty(*dest),
+                Some("__copyinit__"),
+                adapter.constructor.as_deref(),
+                errors,
+            );
+        }
+        MirInstr::MethodCall { .. } => verify_call_instruction(&cx, instruction, errors),
         // A slice bound's read names only declared constructors.
         MirInstr::GetField { constructors, .. } => {
             for constructor in constructors {
@@ -141,6 +157,25 @@ pub(super) fn verify_instruction(
             "use",
             function.var_tys.get(var),
             crate::mir::use_constructor_member(*mode),
+            constructor.as_deref(),
+            errors,
+        ),
+        MirInstr::VariantSet {
+            place,
+            index,
+            constructor,
+            ..
+        }
+        | MirInstr::VariantReplace {
+            place,
+            input_index: index,
+            constructor,
+            ..
+        } => verify_lifecycle_symbol(
+            &cx,
+            "variant payload copy",
+            crate::mir::variant_place_payload_ty(place, index, &function.var_tys),
+            Some("__copyinit__"),
             constructor.as_deref(),
             errors,
         ),
@@ -213,7 +248,7 @@ fn verify_effect_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
 /// that makes a drop, a copy, or a move names it, as upstream's destructor
 /// and copy/move insertion name the member at each site. `member` is the
 /// lifecycle member the site runs, `None` for a use that runs none.
-fn verify_lifecycle_symbol(
+pub(super) fn verify_lifecycle_symbol(
     cx: &InstrCx<'_>,
     site: &str,
     ty: Option<&Ty>,
@@ -615,8 +650,17 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
             alternatives,
             index,
             value,
+            constructor,
             ..
         } => {
+            verify_lifecycle_symbol(
+                cx,
+                "variant payload copy",
+                crate::mir::variant_payload_ty(alternatives, index),
+                Some("__copyinit__"),
+                constructor.as_deref(),
+                errors,
+            );
             if let Some(index) = index.known() {
                 if index >= alternatives.len() {
                     errors.push(format!(
@@ -638,6 +682,16 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
             function: target,
             captures,
         } => {
+            for capture in captures {
+                verify_lifecycle_symbol(
+                    cx,
+                    "closure capture",
+                    capture.place.storage_ty(&cx.function.var_tys),
+                    capture.constructor_member(),
+                    capture.constructor.as_deref(),
+                    errors,
+                );
+            }
             match declared(cx.declarations, target) {
                 None => errors.push(format!(
                     "{prefix}: closure refers to undeclared lifted function '{target}'"

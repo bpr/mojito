@@ -379,7 +379,9 @@ impl FnLowering<'_> {
                 // parameter positions (borrowed read arguments pass their
                 // value copy).
                 let _ = capture_accesses;
-                let adapter = result_adapter.is_some();
+                let adapter = result_adapter
+                    .as_deref()
+                    .map(|adapter| adapter.constructor.as_deref());
                 self.lower_method_call(
                     ctx,
                     *dest,
@@ -399,13 +401,13 @@ impl FnLowering<'_> {
                 // `CopyIteratorReference` adapter, which
                 // `lower_try_next_reference` already performs for a `for`
                 // loop's own advance.
-                if adapter
+                if let Some(constructor) = adapter
                     && resolved
                         .as_deref()
                         .and_then(|callee| self.signatures.get(callee))
                         .is_some_and(|signature| signature.result_form == ResultForm::Reference)
                 {
-                    return self.copy_reference_result(ctx, *dest);
+                    return self.copy_reference_result(ctx, *dest, constructor);
                 }
                 Ok(())
             }
@@ -522,7 +524,15 @@ impl FnLowering<'_> {
                 iter,
                 call,
                 exhaustion: _,
-            } => self.lower_try_next(ctx, *dest, *yielded, *iter, call),
+                adapter_constructor,
+            } => self.lower_try_next(
+                ctx,
+                *dest,
+                *yielded,
+                *iter,
+                call,
+                adapter_constructor.as_deref(),
+            ),
             MirInstr::PointerStorageTake {
                 dest,
                 pointer,
@@ -729,9 +739,17 @@ impl FnLowering<'_> {
                 alternatives,
                 index,
                 value,
+                constructor,
             } => {
                 let index = self.known_variant_index(index)?;
-                self.lower_make_variant(ctx, *dest, alternatives, index, *value)
+                self.lower_make_variant(
+                    ctx,
+                    *dest,
+                    alternatives,
+                    index,
+                    *value,
+                    constructor.as_deref(),
+                )
             }
             MirInstr::VariantIs {
                 dest,
@@ -765,6 +783,7 @@ impl FnLowering<'_> {
                 output_index,
                 value,
                 checked,
+                constructor,
             } => {
                 let input_index = self.known_variant_index(input_index)?;
                 let output_index = self.known_variant_index(output_index)?;
@@ -776,6 +795,7 @@ impl FnLowering<'_> {
                     output_index,
                     *value,
                     *checked,
+                    constructor.as_deref(),
                 )
             }
             MirInstr::Index { dest, .. }
@@ -858,9 +878,10 @@ impl FnLowering<'_> {
                 place,
                 index,
                 value,
+                constructor,
             } => {
                 let index = self.known_variant_index(index)?;
-                self.lower_variant_set(ctx, *dest, place, index, *value)
+                self.lower_variant_set(ctx, *dest, place, index, *value, constructor.as_deref())
             }
             MirInstr::VariantSetInitWith {
                 dest,

@@ -1,5 +1,6 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use crate::mir::MirResultAdapter;
 use crate::mir::text::write;
 use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy, LaneMask, VariantIndex};
@@ -799,14 +800,17 @@ fn instruction_families_reprint_byte_identically() {
                 MirClosureCapture {
                     place: place(0),
                     mode: MirCaptureMode::Reference,
+                    constructor: None,
                 },
                 MirClosureCapture {
                     place: place(1),
                     mode: MirCaptureMode::Copy,
+                    constructor: None,
                 },
                 MirClosureCapture {
                     place: place(2),
                     mode: MirCaptureMode::Move,
+                    constructor: None,
                 },
             ],
         },
@@ -925,7 +929,9 @@ fn instruction_families_reprint_byte_identically() {
                 origin: Origin::Static,
                 mutability: Mutability::Param(OriginParamId(0)),
             })),
-            result_adapter: Some(CheckedResultAdapter::CopyIteratorReference),
+            result_adapter: Some(MirResultAdapter::new(
+                CheckedResultAdapter::CopyIteratorReference,
+            )),
             args: vec![Reg(4)],
             kwargs: vec![("count".into(), Reg(5))],
             recv_place: Some(Box::new(place(0))),
@@ -1059,6 +1065,7 @@ fn instruction_families_reprint_byte_identically() {
             alternatives: vec![Ty::int(), Ty::none()],
             index: VariantIndex::Known(1),
             value: Reg(1),
+            constructor: None,
         },
         MirInstr::VariantIs {
             dest: Reg(28),
@@ -1075,6 +1082,7 @@ fn instruction_families_reprint_byte_identically() {
             place: place(0),
             index: VariantIndex::Known(0),
             value: Reg(1),
+            constructor: None,
         },
         MirInstr::VariantTake {
             dest: Reg(31),
@@ -1101,6 +1109,7 @@ fn instruction_families_reprint_byte_identically() {
             output_index: VariantIndex::Known(1),
             value: Reg(1),
             checked: false,
+            constructor: None,
         },
         MirInstr::MakeSimd {
             dest: Reg(35),
@@ -1204,6 +1213,7 @@ fn instruction_families_reprint_byte_identically() {
             iter: 1,
             call: Box::new(sample_iterator_call()),
             exhaustion: TyKind::Struct("StopIteration".into(), Vec::new()).into(),
+            adapter_constructor: None,
         },
     ];
     let mut function = function_with(vec![Ty::int(); 43], instrs);

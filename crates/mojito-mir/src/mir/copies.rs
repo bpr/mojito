@@ -2,14 +2,13 @@
 //!
 //! Upstream's parser and its move/copy insertion leave a call to
 //! `__copyinit__` or `__moveinit__` at each point a value is copied or
-//! moved, so a symbol walk reaches it. A `var.use copy`, `var.use move`, or
-//! `value.copy` names the constructor it runs, which a symbol walk
-//! follows; the rest of what a body copies or moves (a site naming none, a
-//! capture, a payload) names none, and the VM and
-//! the native backend find the struct's member from the value's type. This
-//! module answers which structs those are: the types copied and moved
-//! without a name, and every field type a copy or a move of a struct
-//! without the member may reach.
+//! moved, so a symbol walk reaches it. Every copy and move site names the
+//! constructor it runs, which a symbol walk follows; a site naming none (a
+//! type recording no such member, a `Type(copy=value)` construction) runs
+//! none by name, and the VM and the native backend find the struct's member
+//! from the value's type. This module answers which structs those are: the
+//! types copied and moved without a name, and every field type a copy or a
+//! move of a struct without the member may reach.
 
 use crate::mir::{
     MirBlock, MirCaptureMode, MirFunction, MirInstr, MirPlace, MirStructDeclaration, Reg, UseMode,
@@ -143,6 +142,43 @@ impl Walk<'_> {
                 constructor: Some(constructor),
                 ..
             } => self.named(self.function.reg_types.get(&dest.0), constructor),
+            MirInstr::MakeVariant {
+                alternatives,
+                index,
+                constructor: Some(constructor),
+                ..
+            } => self.named(
+                crate::mir::variant_payload_ty(alternatives, index),
+                constructor,
+            ),
+            MirInstr::VariantSet {
+                place,
+                index,
+                constructor: Some(constructor),
+                ..
+            }
+            | MirInstr::VariantReplace {
+                place,
+                input_index: index,
+                constructor: Some(constructor),
+                ..
+            } => self.named(
+                crate::mir::variant_place_payload_ty(place, index, &self.function.var_tys),
+                constructor,
+            ),
+            MirInstr::MethodCall {
+                dest,
+                result_adapter: Some(adapter),
+                ..
+            } if adapter.constructor.is_some() => self.named(
+                self.function.reg_types.get(&dest.0),
+                adapter.constructor.as_deref().unwrap_or_default(),
+            ),
+            MirInstr::TryNext {
+                dest,
+                adapter_constructor: Some(constructor),
+                ..
+            } => self.named(self.function.reg_types.get(&dest.0), constructor),
             MirInstr::UseVar { var, mode, .. } => match mode {
                 UseMode::Copy => self.var(*var, false),
                 UseMode::Move => self.var(*var, true),
@@ -151,9 +187,21 @@ impl Walk<'_> {
             // A closure value copies its owned captures with itself.
             MirInstr::MakeClosure { captures, .. } => {
                 for capture in captures {
-                    if capture.mode != MirCaptureMode::Reference {
-                        self.place(&capture.place, false);
-                        self.place(&capture.place, true);
+                    // A copy or move of the closure itself relocates the
+                    // capture the other way, finding the member by type.
+                    match (&capture.constructor, capture.mode) {
+                        (_, MirCaptureMode::Reference) => {}
+                        (Some(constructor), mode) => {
+                            self.named(
+                                capture.place.storage_ty(&self.function.var_tys),
+                                constructor,
+                            );
+                            self.place(&capture.place, mode == MirCaptureMode::Copy);
+                        }
+                        (None, _) => {
+                            self.place(&capture.place, false);
+                            self.place(&capture.place, true);
+                        }
                     }
                 }
             }

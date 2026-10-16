@@ -589,6 +589,7 @@ impl<'a> Flatten<'a> {
                         | mojito_ast::ast::CaptureKind::Ref => MirCaptureMode::Reference,
                     }
                 },
+                constructor: None,
             })
             .collect();
         let dest = match &info.callable_ty {

@@ -1023,18 +1023,7 @@ fn lifecycle_site<'f>(
 
 /// The type of the storage `place` designates.
 fn place_ty<'f>(function: &'f MirFunction, place: &'f MirPlace) -> Option<&'f Ty> {
-    place
-        .ty
-        .as_ref()
-        .or_else(|| place.projection_tys.last())
-        .or_else(|| place.root_ty.as_ref().filter(|_| place.proj.is_empty()))
-        .or_else(|| {
-            place
-                .proj
-                .is_empty()
-                .then(|| function.var_tys.get(&place.root))
-                .flatten()
-        })
+    place.storage_ty(&function.var_tys)
 }
 
 struct SlotReads<'a> {

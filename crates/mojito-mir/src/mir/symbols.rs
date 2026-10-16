@@ -189,9 +189,10 @@ pub fn implicit_callees<S: BuildHasher>(
 /// `blocks`, in its regions too, holds itself.
 ///
 /// Those are a call's callee, a selected method, operator, subscript, or
-/// iterator target, a closure's function, a function constant, a loop's
-/// preparation calls, a lifecycle site's member, and a slice bound read's
-/// constructors: MLIR's `SymbolTable::replaceAllSymbolUses`
+/// iterator target, a closure's function and its captures' constructors, a
+/// function constant, a loop's preparation calls, a lifecycle site's member
+/// (a variant payload's and a result adapter's included), and a slice
+/// bound read's constructors: MLIR's `SymbolTable::replaceAllSymbolUses`
 /// over the references an operation holds directly. One inside a
 /// type, a compile-time value, or a declaration is not visited, so a
 /// client that must reach every use of a symbol counts the references this
@@ -201,8 +202,16 @@ pub fn replace_symbol_uses(blocks: &mut [MirBlock], replace: &mut dyn FnMut(&mut
         for instruction in &mut block.instrs {
             match instruction {
                 MirInstr::Call { func, .. } => replace(&mut func.0),
-                MirInstr::MakeClosure { function, .. }
-                | MirInstr::Const {
+                MirInstr::MakeClosure {
+                    function, captures, ..
+                } => {
+                    replace(function);
+                    captures
+                        .iter_mut()
+                        .filter_map(|capture| capture.constructor.as_mut())
+                        .for_each(&mut *replace);
+                }
+                MirInstr::Const {
                     k: Const::Function(function),
                     ..
                 }
@@ -217,11 +226,18 @@ pub fn replace_symbol_uses(blocks: &mut [MirBlock], replace: &mut dyn FnMut(&mut
                 | MirInstr::CallIndirect {
                     resolved: Some(target),
                     ..
-                }
-                | MirInstr::MethodCall {
-                    resolved: Some(target),
-                    ..
                 } => replace(target),
+                MirInstr::MethodCall {
+                    resolved,
+                    result_adapter,
+                    ..
+                } => {
+                    resolved.iter_mut().for_each(&mut *replace);
+                    result_adapter
+                        .iter_mut()
+                        .filter_map(|adapter| adapter.constructor.as_mut())
+                        .for_each(&mut *replace);
+                }
                 MirInstr::Index {
                     call: Some(call), ..
                 }
@@ -232,7 +248,14 @@ pub fn replace_symbol_uses(blocks: &mut [MirBlock], replace: &mut dyn FnMut(&mut
                     call: Some(call), ..
                 }
                 | MirInstr::MultiSet { call, .. } => replace(&mut call.target),
-                MirInstr::TryNext { call, .. } => replace(&mut call.target),
+                MirInstr::TryNext {
+                    call,
+                    adapter_constructor,
+                    ..
+                } => {
+                    replace(&mut call.target);
+                    adapter_constructor.iter_mut().for_each(&mut *replace);
+                }
                 MirInstr::GetIter {
                     prepare: symbols, ..
                 }
@@ -253,6 +276,18 @@ pub fn replace_symbol_uses(blocks: &mut [MirBlock], replace: &mut dyn FnMut(&mut
                     ..
                 }
                 | MirInstr::CopyValue {
+                    constructor: Some(target),
+                    ..
+                }
+                | MirInstr::MakeVariant {
+                    constructor: Some(target),
+                    ..
+                }
+                | MirInstr::VariantSet {
+                    constructor: Some(target),
+                    ..
+                }
+                | MirInstr::VariantReplace {
                     constructor: Some(target),
                     ..
                 } => replace(target),
