@@ -96,7 +96,7 @@ assets/ok/comptime_for_iterable_struct.mojo	elaborated	5	68	0	0	0	0	13	0	0
 assets/ok/comptime_for_iteration_scope.mojo	elaborated	8	100	1	2	5	4	16	4	2
 assets/ok/comptime_for_iterator_aggregate_elements.mojo	elaborated	17	216	2	4	13	17	39	5	7
 assets/ok/comptime_for_named_collection.mojo	elaborated	15	140	7	8	47	52	23	51	8
-assets/ok/comptime_for_nested_unread_instances.mojo	elaborated	31	226	20	26	133	123	39	59	26
+assets/ok/comptime_for_nested_unread_instances.mojo	elaborated	30	219	20	25	133	116	38	59	25
 assets/ok/comptime_for_string_aggregates.mojo	elaborated	30	1015	4	4	203	388	112	50	18
 assets/ok/comptime_for_struct_elements.mojo	elaborated	6	71	1	1	7	6	14	7	1
 assets/ok/comptime_for_template_served.mojo	elaborated	25	303	6	12	73	118	45	31	15
@@ -378,6 +378,7 @@ assets/ok/nested_def_reads_enclosing_parameter.mojo	elaborated	25	136	14	18	54	4
 assets/ok/nested_def_value_argument.mojo	elaborated	10	77	3	5	12	11	18	3	5
 assets/ok/nested_generic_unread_own_instances.mojo	elaborated	37	225	24	31	108	105	51	27	34
 assets/ok/nested_index_store.mojo	elaborated	19	285	8	14	113	197	55	21	40
+assets/ok/nested_method_unread_owner_instances.mojo	elaborated	22	179	13	17	50	53	30	17	17
 assets/ok/nested_origin_binder_not_captured.mojo	elaborated	21	337	9	15	114	197	61	24	43
 assets/ok/nested_origins_read_only_decorator.mojo	elaborated	25	384	14	20	140	221	67	31	50
 assets/ok/nested_recursive_call.mojo	elaborated	8	78	0	0	0	0	18	0	0
@@ -838,10 +839,10 @@ assets/ok/template_method_hash_leaf.mojo	elaborated	35	611	14	25	354	382	86	40	5
 assets/ok/template_method_immutable_sibling_view.mojo	elaborated	36	388	14	28	126	246	76	27	57
 assets/ok/template_method_inplace_place.mojo	elaborated	45	479	17	31	93	171	55	17	31
 assets/ok/template_method_moves.mojo	elaborated	34	430	11	23	65	128	61	19	36
-assets/ok/template_method_nested_def.mojo	elaborated	42	514	22	34	217	356	96	44	77
+assets/ok/template_method_nested_def.mojo	elaborated	40	476	22	32	217	318	89	44	70
 assets/ok/template_method_nested_def_conventions.mojo	elaborated	58	646	28	46	230	382	114	48	85
 assets/ok/template_method_nested_def_defaults.mojo	elaborated	46	581	23	34	233	338	102	43	70
-assets/ok/template_method_nested_def_forms.mojo	elaborated	75	760	37	63	286	483	127	53	98
+assets/ok/template_method_nested_def_forms.mojo	elaborated	72	744	37	60	286	467	124	53	95
 assets/ok/template_method_operator_dispatch.mojo	elaborated	36	481	12	23	69	146	84	22	44
 assets/ok/template_method_operator_operands.mojo	elaborated	32	411	19	22	116	126	56	22	25
 assets/ok/template_method_origin_parameter.mojo	elaborated	22	273	6	11	28	44	42	9	14
@@ -1061,4 +1062,4 @@ benchmarks/compile/stdlib_heavy.mojo	elaborated	103	1691	42	90	769	1360	302	124	
 benchmarks/compile/trait_defaults.mojo	elaborated	159	1432	24	117	195	1031	192	37	133
 benchmarks/compile/tstring.mojo	elaborated	17	242	6	7	33	54	31	15	10
 benchmarks/compile/tuple.mojo	elaborated	24	252	7	13	40	71	41	10	16
-total	1062	24817	402081	8722	13757	120597	167894	68863	25529	34902
+total	1063	24833	402199	8735	13768	120647	167886	68882	25546	34908

@@ -385,28 +385,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R975 A `def` nested in a parametric struct's method splits its
-  instances by the owner's parameters**
-
-  `Counter[1](1).get()` and `Counter[2](2).get()` reach two instances of
-  `get` and of its nested `bump`, which read no owner parameter, where the
-  pin keeps one of each.
-  - A nested body's instance takes `InstanceKey::owner` and the owner's
-    method-symbol prefix from the enclosing method's `self_instance`, so
-    removing the struct's binders from its arguments still leaves the
-    owner in its key.
-  - It is the same owner identity R909 drops for a static method, and for
-    `get` itself.
-  - Probe: a static `Counter.st()` whose nested generic `bump[m]` reads
-    only `m` has two instances of `st` for `Counter[1]` and `Counter[2]`,
-    and four of `bump`, where the pin keeps one of `st` and two of `bump`.
-  - Probe: `Counter[k].get` whose `comptime for` body declares a `bump`
-    reading no binder has two instances of `get` and of `bump` for
-    `Counter[1]` and `Counter[2]`, where the pin keeps one of each
-    (`assets/ok/comptime_for_nested_unread_instances.mojo`).
-  - Depends on R909.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1032 A static method's unused argument keeps the parameters its
   type names**
 

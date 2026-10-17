@@ -387,6 +387,7 @@ assets/ok/nested_def_reads_enclosing_parameter.mojo	-	ineligible	no-scalar-entry
 assets/ok/nested_def_value_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_generic_unread_own_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_index_store.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/nested_method_unread_owner_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_origin_binder_not_captured.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_origins_read_only_decorator.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_recursive_call.mojo	-	ineligible	no-scalar-entry-shape

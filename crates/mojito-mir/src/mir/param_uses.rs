@@ -69,8 +69,9 @@ use std::fmt;
 /// For a top-level function they are its own compile-time parameters and,
 /// for a method, its struct's, as upstream's method generator lists them
 /// before its own; for a nested one the parameters of the declarations it is
-/// nested in and the binders of the `comptime for` regions each is declared
-/// in beside its own; for a lifted one (`$comptime$f$…`,
+/// nested in, the binders of the `comptime for` regions each is declared
+/// in, and the struct's when the outermost is a method, beside its own, as
+/// upstream's lifted closure inherits them; for a lifted one (`$comptime$f$…`,
 /// `$default$f$…`) every binder it declares; each that nothing in its body
 /// `function` or its declaration's signature reads, sorted by owner and
 /// slot. A nested body `function` names reads the candidates its own
@@ -499,10 +500,13 @@ fn candidate_parameters<'d>(
                 .iter()
                 .filter(|decl| &*decl.id().owner == name),
         );
-        for decl in method_owner_params(name, declarations) {
-            if !candidates.iter().any(|seen| seen.id() == decl.id()) {
-                candidates.push(decl);
-            }
+    }
+    // A method's struct parameters, and those of the struct whose method a
+    // nested body is declared in: upstream's method generator lists them
+    // before its own, and the lifted closure's generator inherits them.
+    for decl in method_owner_params(name, declarations) {
+        if !candidates.iter().any(|seen| seen.id() == decl.id()) {
+            candidates.push(decl);
         }
     }
     let mut link = declaration

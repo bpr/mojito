@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `def` nested in a parametric struct's method is now a generator over
+  the struct's parameters beside its enclosing scope's, and removes those
+  it never reads, so `Counter[1](1).get()` and `Counter[2](2).get()` share
+  one instance of `get` and of its nested `bump`, a static method's nested
+  `bump[m]` one per `m`, and a `comptime for`'s `bump` one, as on the pin.
+  Fixture `assets/ok/nested_method_unread_owner_instances.mojo`; pass case
+  `remove-unused-params/nested_owner`. This closes R975.
 - A `def` declared in a `comptime for` is now a generator over the loop's
   binder beside its enclosing scope's, and removes those it never reads,
   as upstream's `RemoveUnusedParams` treats the lifted function: `inner`
