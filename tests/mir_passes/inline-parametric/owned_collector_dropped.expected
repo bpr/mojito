@@ -1,0 +1,131 @@
+  functions: [
+      fn {
+        name: "Token.__init__",
+        registers: 1,
+        vars: 2,
+        var_names: [self, id],
+        params: 2,
+        param_types: [struct_type { name: Token, arguments: [] }, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Token, arguments: [] } }, var_type { var: $v1, type: Int }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 86, end: 88, origin: present($v1) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v1, mode: copy },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: Token, arguments: [] }), projections: [projection { op: field(id), type: Int }], type: present(Int), through: absent }, src: %r0 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: "Token.__deinit__",
+        registers: 0,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: Token, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [true],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Token, arguments: [] } }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [],
+        locations: [],
+        blocks: [
+          bb0 {
+            instructions: [
+              consume.var { var: $v0 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: owned,
+        registers: 2,
+        vars: 1,
+        var_names: [xs],
+        params: 1,
+        param_types: [variadic_pack(struct_type { name: Token, arguments: [] })],
+        owned_params: [true],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: variadic_pack(struct_type { name: Token, arguments: [] }) }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: variadic_pack(struct_type { name: Token, arguments: [] }) }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 212, end: 214, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 208, end: 215, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(variadic_pack(struct_type { name: Token, arguments: [] })), projections: [], type: present(variadic_pack(struct_type { name: Token, arguments: [] })), through: absent } },
+              call { dest: %r1, func: len, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              drop.var { var: $v0 }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: two,
+        registers: 10,
+        vars: 5,
+        var_names: [a, b, "$fwd_arg_r1", "$fwd_arg_r4", "xs$inline4"],
+        params: 2,
+        param_types: [Int, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: struct_type { name: Token, arguments: [] } }, var_type { var: $v3, type: struct_type { name: Token, arguments: [] } }, var_type { var: $v4, type: variadic_pack(struct_type { name: Token, arguments: [] }) }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: Token, arguments: [] } }, reg_type { reg: %r2, type: struct_type { name: Token, arguments: [] } }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: struct_type { name: Token, arguments: [] } }, reg_type { reg: %r5, type: struct_type { name: Token, arguments: [] } }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: variadic_pack(struct_type { name: Token, arguments: [] }) }, reg_type { reg: %r9, type: variadic_pack(struct_type { name: Token, arguments: [] }) }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 272, end: 273, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 266, end: 274, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 266, end: 274, origin: present($v2) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 282, end: 283, origin: present($v1) }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 276, end: 284, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 276, end: 284, origin: present($v3) }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 260, end: 285, origin: absent }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 260, end: 285, origin: absent }) }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 260, end: 285, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              call { dest: %r1, func: "Token.__init__", raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              var.store { var: $v2, src: %r1, binding_type: present(struct_type { name: Token, arguments: [] }), in_place: true },
+              var.use { dest: %r3, var: $v1, mode: copy },
+              call { dest: %r4, func: "Token.__init__", raises: absent, args: [%r3], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              var.store { var: $v3, src: %r4, binding_type: present(struct_type { name: Token, arguments: [] }), in_place: true },
+              var.use { dest: %r2, var: $v2, mode: forward },
+              var.use { dest: %r5, var: $v3, mode: forward },
+              tuple.make { dest: %r9, elems: [%r2, %r5], element_types: present([struct_type { name: Token, arguments: [] }, struct_type { name: Token, arguments: [] }]) },
+              var.store { var: $v4, src: %r9, binding_type: present(variadic_pack(struct_type { name: Token, arguments: [] })), in_place: false }
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb1 {
+            instructions: [
+              place.load { dest: %r7, place: place { root: $v4, root_type: present(variadic_pack(struct_type { name: Token, arguments: [] })), projections: [], type: present(variadic_pack(struct_type { name: Token, arguments: [] })), through: absent } },
+              call { dest: %r6, func: len, raises: absent, args: [%r7], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              drop.var { var: $v4 }
+            ],
+            terminator: jump { target: bb2 }
+          },
+          bb2 {
+            instructions: [
+            ],
+            terminator: return { value: present(%r6) }
+          }
+        ]
+      }
+  ]

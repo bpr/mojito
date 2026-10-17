@@ -1,0 +1,67 @@
+  functions: [
+      fn {
+        name: show,
+        registers: 2,
+        vars: 1,
+        var_names: [args],
+        params: 1,
+        param_types: [variadic_pack(param { owner: "show", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: variadic_pack(param { owner: "show", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }) }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: variadic_pack(param { owner: "show", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }) }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 84, end: 88, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 80, end: 89, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(variadic_pack(param { owner: "show", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), projections: [], type: present(variadic_pack(param { owner: "show", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), through: absent } },
+              call { dest: %r1, func: len, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: outer,
+        registers: 4,
+        vars: 2,
+        var_names: [args, "args$inline1"],
+        params: 1,
+        param_types: [variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }) }, var_type { var: $v1, type: variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }) }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }) }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }) }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 152, end: 156, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 146, end: 157, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 146, end: 157, origin: absent }) }, reg_loc { reg: %r3, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), projections: [], type: present(variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), through: absent } }
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb1 {
+            instructions: [
+              place.load { dest: %r2, place: place { root: $v0, root_type: present(variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), projections: [], type: present(variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), through: absent } },
+              call { dest: %r1, func: len, raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: jump { target: bb2 }
+          },
+          bb2 {
+            instructions: [
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      }
+  ]

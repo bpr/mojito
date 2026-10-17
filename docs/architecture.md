@@ -1066,7 +1066,9 @@ moved, at the position `MirInstr::Call::spread` names; the ownership
 analysis sees the whole collector lent or moved, and the elaborator
 (`expand_pack_spreads`) replaces the argument with one place read or move
 per element of the bound pack before it binds the callee, so concrete MIR
-carries no spread. A method call carries the same position
+carries no spread; a spread `inline-parametric` leaves in an inlined body,
+its collector already bound to its elements' tuple, is expanded the same
+way (R1103). A method call carries the same position
 (`MirInstr::MethodCall::spread`, schema 1.24), which the elaborator
 expands. The checker types the spread against the
 callee it selects, a `def`, method, or constructor whose collector is a
@@ -5336,12 +5338,17 @@ point where a slot declared in a loop is uninitialized again.
   bindings (`ComptimeSequence::try_map_exprs`), its loop binder staying the
   body's own for the elaborator to unroll in the caller. The binding keeps
   the call for a value only the elaborator folds (a deferred or marker
-  value), a compile-time application over a bound type pack
-  (`Tuple.reverse`, the private `applies_pack`, R1079), a type still
+  value), a type still
   naming a bound binder after substitution (`types::names_binder`, which
   counts a pack query), a `T()` or `T(copy=x)` at a concrete `T` (R1097),
   a conformance test of a concrete binding (R1096), or a value binder's
-  slot used other than as a read. A method of a parametric struct binds
+  slot used other than as a read. A compile-time application over a bound
+  type pack (`Tuple.reverse`'s `comptime for` bound, a thunk applied to
+  the owner's `Ts`) is applied to the bound element list, which
+  `Specializer::demand_application` binds to the thunk's variadic binder
+  as the pack's runtime type (R1079), and a non-variadic type binder's
+  `DeclRef` in such an application binds to its argument as a type shape.
+  A method of a parametric struct binds
   the struct's binders to its receiver type's arguments, and a call naming
   a struct whose one `__init__` is followed binds them to the constructed
   type's, past the binders the initializer restates; the member's bare
@@ -5366,14 +5373,36 @@ point where a slot declared in a loop is uninitialized again.
   call-graph walk follows a `closure.make` as an edge, so the nested body
   is finished first and a nested `def` that makes its own closure lies on
   a cycle. The callee must have no region binders, a struct receiver if
-  it has one, and no variadic or keyword collector, be called with no
-  spread (and, unless through a closure, no capture accesses), capture
+  it has one, be called with no keywords collected afresh into
+  `**kwargs` (the dictionary the call builds, R1070) and, unless through
+  a closure, no capture accesses, capture
   nothing by copy or move, return a value rather than a reference, and
   hold plain control flow with no `try`, region op, or closure; any other
   call stays a call. The call's positional and keyword arguments bind to the
-  callee's regular parameters through `mojito_ast::call::match_call_slots`,
-  the matcher the VM's `bind_args` applies; a call it does not bind (a
-  forwarded `**kwargs` among them) stays a call. Each omitted argument
+  callee's regular parameters and collectors through
+  `mojito_ast::call::match_call_slots`, the matcher the VM's `bind_args`
+  applies, the bindings laid out by `FunctionDeclaration::slot_parameter`
+  as the VM lays out the frame; a call it does not bind stays a call. A
+  positional collector (`*xs: Int`, `*args: *Ts`) is a fresh slot of the
+  collector's instantiated type that the call's block initializes from a
+  `tuple.make` of the overflow registers (`Binding::Collector`), typed
+  `$variadic[T]` for a homogeneous collector and the elements' tuple for a
+  heterogeneous one bound to a list (`types::replace_parameters` turns
+  `VariadicPack(*Ts)` into `Tuple(elements)` as `expand_packs` does in an
+  instance), which the VM runs as the `Value::Tuple` its binding would
+  build and Pliron lowers to the pack descriptor (`lower_make_tuple`); a
+  `read` collector's slot is never dropped, its elements being the
+  caller's, and an owned one's drop is the body's own, so Pliron's
+  frame-exit backstop skips pack-storage slots (R1102). A spread
+  (`show(*args)`, `take(*args^)`) binds the collector as the one argument
+  `mojito_ast::call::bind_spread` checks it is: the caller's place for a
+  `read` collector, the moved register for an owned one; a spread the
+  inlined body itself keeps, now typed the bound elements' tuple, is left
+  for `expand_pack_spreads` (`verify_pack_spread` admits it, R1103). A
+  forwarded `**kwargs^` (the `**` keyword, `FORWARDED_KWARGS_NAME`) binds
+  the keyword collector's slot whole as an owned argument, the matcher
+  never seeing it, as the pin binds a forward to another `**kwargs`
+  alone; keywords collected afresh keep the call (R1070). Each omitted argument
   binds a fresh slot that the call's block initializes from its default
   (the declaration's `CheckedConst`), materialized as upstream's parser
   materializes it in the caller: a literal as a `const`, crossing the
@@ -5401,8 +5430,13 @@ point where a slot declared in a loop is uninitialized again.
   the slot renumbered to the caller's, the forwarding `var.use` removed
   by the splice), so the body's `consume.var` ends it as the forward did,
   and the struct's binders bind to the slot type's arguments as a
-  method's bind to its receiver's; a `deinit` parameter taking anything
-  but a forwarded slot keeps its call (R1081). A `drop.var` the lowering
+  method's bind to its receiver's. A `deinit` parameter passed a
+  whole-slot `place.load` (an explicit destructor's receiver,
+  `t^.reverse()`) binds that slot too, the splice removing the caller's
+  `consume.var` of its residue after the call, which the body's own
+  consume now is, and one passed any other register (a copied receiver's
+  `__moveinit__` result, `pair.reverse()`) is a fresh slot the register
+  initializes for the body to consume (R1079). A `drop.var` the lowering
   kept, whose slot some path leaves partial or empty, is no call and is
   never expanded. A callee on a cycle of followed calls is never inlined: at
   the program seam the cycles are the strongly connected components of the

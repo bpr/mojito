@@ -1,0 +1,138 @@
+mojito-mir 1.73
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: absent, module: absent },
+    file { id: file1, path: present("homogeneous_collector.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: sum_three, param_names: [a, b, c], param_types: [Int, Int, Int], defaults: [absent, absent, absent], required: [true, true, true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent, absent, absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false, false, false], param_writes: [false, false, false], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: total, param_names: [], param_types: [], defaults: [], required: [], variadic: present(Int), variadic_convention: absent, variadic_index: present(0), kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: present(0), param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [], inline: nodebug }
+  ],
+  functions: [
+      fn {
+        name: total,
+        registers: 23,
+        vars: 8,
+        var_names: [xs, s, "$iter2", "$iterobj3", x, "$yield5", "$hasnext6", "$packindex7"],
+        params: 1,
+        param_types: [variadic_pack(Int)],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: variadic_pack(Int) }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: ref { referent: variadic_pack(Int), origin: origin_place { root: $v126, path: [] }, mutability: immutable } }, var_type { var: $v3, type: ref { referent: variadic_pack(Int), origin: origin_place { root: $v126, path: [] }, mutability: immutable } }, var_type { var: $v4, type: ref { referent: Int, origin: origin_place { root: $v126, path: [] }, mutability: immutable } }, var_type { var: $v5, type: ref { referent: Int, origin: origin_place { root: $v126, path: [] }, mutability: immutable } }, var_type { var: $v6, type: Bool }, var_type { var: $v7, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: ref { referent: variadic_pack(Int), origin: origin_place { root: $v126, path: [] }, mutability: immutable } }, reg_type { reg: %r3, type: None }, reg_type { reg: %r4, type: ref { referent: variadic_pack(Int), origin: origin_place { root: $v126, path: [] }, mutability: immutable } }, reg_type { reg: %r5, type: None }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Bool }, reg_type { reg: %r8, type: variadic_pack(Int) }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r10, type: Int }, reg_type { reg: %r11, type: Bool }, reg_type { reg: %r12, type: ref { referent: Int, origin: origin_place { root: $v126, path: [] }, mutability: immutable } }, reg_type { reg: %r13, type: Int }, reg_type { reg: %r14, type: Int }, reg_type { reg: %r15, type: Int }, reg_type { reg: %r16, type: ref { referent: Int, origin: origin_place { root: $v126, path: [] }, mutability: immutable } }, reg_type { reg: %r17, type: Int }, reg_type { reg: %r18, type: Int }, reg_type { reg: %r19, type: ref { referent: Int, origin: origin_place { root: $v126, path: [] }, mutability: immutable } }, reg_type { reg: %r20, type: Int }, reg_type { reg: %r22, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file1, start: 66, end: 67, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file1, start: 66, end: 67, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file1, start: 81, end: 83, origin: present($v0) }) }, reg_loc { reg: %r3, location: present(loc { file: file1, start: 81, end: 83, origin: present($v0) }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 0, end: 0, origin: present($v2) }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 0, end: 0, origin: present($v0) }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 0, end: 0, origin: absent }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 0, end: 0, origin: absent }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 0, end: 0, origin: present($v0) }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 0, end: 0, origin: absent }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 0, end: 0, origin: present($v7) }) }, reg_loc { reg: %r11, location: present(loc { file: file0, start: 0, end: 0, origin: present($v6) }) }, reg_loc { reg: %r12, location: present(loc { file: file0, start: 0, end: 0, origin: present($v3) }) }, reg_loc { reg: %r13, location: present(loc { file: file0, start: 0, end: 0, origin: present($v7) }) }, reg_loc { reg: %r14, location: present(loc { file: file0, start: 0, end: 0, origin: absent }) }, reg_loc { reg: %r15, location: present(loc { file: file0, start: 0, end: 0, origin: present($v7) }) }, reg_loc { reg: %r16, location: present(loc { file: file0, start: 0, end: 0, origin: present($v5) }) }, reg_loc { reg: %r17, location: present(loc { file: file1, start: 93, end: 94, origin: present($v1) }) }, reg_loc { reg: %r18, location: present(loc { file: file1, start: 98, end: 99, origin: present($v4) }) }, reg_loc { reg: %r19, location: present(loc { file: file1, start: 98, end: 99, origin: present($v4) }) }, reg_loc { reg: %r20, location: present(loc { file: file1, start: 93, end: 94, origin: absent }) }, reg_loc { reg: %r21, location: absent }, reg_loc { reg: %r22, location: present(loc { file: file1, start: 111, end: 112, origin: present($v1) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(0) },
+              literal.materialize { dest: %r1, value: %r0, target: Int },
+              var.store { var: $v1, src: %r1, binding_type: present(Int), in_place: false },
+              ref.make { dest: %r2, place: place { root: $v0, root_type: present(variadic_pack(Int)), projections: [], type: present(variadic_pack(Int)), through: absent } },
+              var.store { var: $v2, src: %r2, binding_type: present(ref { referent: variadic_pack(Int), origin: origin_place { root: $v126, path: [] }, mutability: immutable }), in_place: false },
+              loans.establish { reference: $v2, loans: [loan { place: place { root: $v0, root_type: present(variadic_pack(Int)), projections: [], type: present(variadic_pack(Int)), through: absent }, mutable: false, interior: absent, shared: false, setup: false }], marker: %r3, dest_interior: absent },
+              ref.make { dest: %r4, place: place { root: $v2, root_type: present(ref { referent: variadic_pack(Int), origin: origin_place { root: $v126, path: [] }, mutability: immutable }), projections: [], type: present(ref { referent: variadic_pack(Int), origin: origin_place { root: $v126, path: [] }, mutability: immutable }), through: absent } },
+              var.store { var: $v3, src: %r4, binding_type: present(ref { referent: variadic_pack(Int), origin: origin_place { root: $v126, path: [] }, mutability: immutable }), in_place: false },
+              drop.var { var: $v2 },
+              loans.establish { reference: $v3, loans: [loan { place: place { root: $v0, root_type: present(variadic_pack(Int)), projections: [], type: present(variadic_pack(Int)), through: absent }, mutable: false, interior: absent, shared: false, setup: false }], marker: %r5, dest_interior: absent },
+              const { dest: %r6, value: int(0) },
+              var.store { var: $v7, src: %r6, binding_type: present(Int), in_place: false }
+            ],
+            terminator: jump { target: bb2 }
+          },
+          bb1 {
+            instructions: [
+              var.use { dest: %r22, var: $v1, mode: copy },
+              drop.var { var: $v1 }
+            ],
+            terminator: return { value: present(%r22) }
+          },
+          bb2 {
+            instructions: [
+              place.load { dest: %r8, place: place { root: $v0, root_type: present(variadic_pack(Int)), projections: [], type: present(variadic_pack(Int)), through: present($v3) } },
+              call { dest: %r9, func: len, raises: absent, args: [%r8], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              var.use { dest: %r10, var: $v7, mode: copy },
+              binary { op: lt, dest: %r7, a: %r10, b: %r9, resolved: absent, raises: absent },
+              var.store { var: $v6, src: %r7, binding_type: absent, in_place: false },
+              var.use { dest: %r11, var: $v6, mode: copy },
+              drop.var { var: $v6 }
+            ],
+            terminator: branch { condition: %r11, then: bb4, else: bb5 }
+          },
+          bb3 {
+            instructions: [
+              var.use { dest: %r13, var: $v7, mode: copy },
+              drop.var { var: $v7 },
+              ref.make { dest: %r12, place: place { root: $v0, root_type: present(variadic_pack(Int)), projections: [projection { op: index(%r13), type: Int }], type: present(Int), through: present($v3) } },
+              const { dest: %r14, value: int(1) },
+              binary { op: add, dest: %r15, a: %r13, b: %r14, resolved: absent, raises: absent },
+              var.store { var: $v7, src: %r15, binding_type: absent, in_place: false },
+              var.store { var: $v5, src: %r12, binding_type: present(ref { referent: Int, origin: origin_place { root: $v126, path: [] }, mutability: immutable }), in_place: false },
+              ref.make { dest: %r16, place: place { root: $v5, root_type: present(ref { referent: Int, origin: origin_place { root: $v126, path: [] }, mutability: immutable }), projections: [], type: present(ref { referent: Int, origin: origin_place { root: $v126, path: [] }, mutability: immutable }), through: absent } },
+              var.store { var: $v4, src: %r16, binding_type: present(ref { referent: Int, origin: origin_place { root: $v126, path: [] }, mutability: immutable }), in_place: false },
+              drop.var { var: $v5 },
+              var.use { dest: %r17, var: $v1, mode: copy },
+              drop.var { var: $v1 },
+              ref.make { dest: %r19, place: place { root: $v4, root_type: present(ref { referent: Int, origin: origin_place { root: $v126, path: [] }, mutability: immutable }), projections: [], type: present(ref { referent: Int, origin: origin_place { root: $v126, path: [] }, mutability: immutable }), through: present($v4) } },
+              ref.read { dest: %r18, reference: %r19 },
+              binary { op: add, dest: %r20, a: %r17, b: %r18, resolved: absent, raises: absent },
+              var.store { var: $v1, src: %r20, binding_type: absent, in_place: false },
+              drop.var { var: $v4 }
+            ],
+            terminator: jump { target: bb2 }
+          },
+          bb4 {
+            instructions: [
+            ],
+            terminator: jump { target: bb3 }
+          },
+          bb5 {
+            instructions: [
+              drop.var { var: $v7 },
+              drop.var { var: $v3 }
+            ],
+            terminator: jump { target: bb1 }
+          }
+        ]
+      },
+      fn {
+        name: sum_three,
+        registers: 6,
+        vars: 3,
+        var_names: [a, b, c],
+        params: 3,
+        param_types: [Int, Int, Int],
+        owned_params: [false, false, false],
+        deinit_params: [false, false, false],
+        ref_params: [false, false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file1, start: 177, end: 178, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file1, start: 180, end: 181, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file1, start: 183, end: 184, origin: present($v2) }) }, reg_loc { reg: %r3, location: present(loc { file: file1, start: 171, end: 185, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file1, start: 188, end: 195, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file1, start: 171, end: 195, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              var.use { dest: %r1, var: $v1, mode: copy },
+              var.use { dest: %r2, var: $v2, mode: copy },
+              call { dest: %r3, func: total, raises: absent, args: [%r0, %r1, %r2], kwargs: [], arg_places: [absent, absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r4, func: total, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              binary { op: add, dest: %r5, a: %r3, b: %r4, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r5) }
+          }
+        ]
+      }
+  ]
+}

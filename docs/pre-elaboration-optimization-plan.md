@@ -279,8 +279,8 @@ folds the operators over it (R840);
    clauses and conditional availability dropped as judged at the call. A
    `read` argument binds the caller's place the call retained or loaded,
    through a reference the block made included, or a fresh slot for an
-   owned, scalar, or trivially copied one. What still keeps a call: a
-   compile-time application over a bound pack and every collector (R1079),
+   owned, scalar, or trivially copied one. What still keeps a call: keywords
+   collected afresh into `**kwargs` (R1070),
    a closure the caller does not show (R1080), a destructor a drop does
    not spell as a call (R1081), `conforms_to` over a concrete binding
    (R1096), `T()` at a concrete `T` (R1097), and an argument with no place

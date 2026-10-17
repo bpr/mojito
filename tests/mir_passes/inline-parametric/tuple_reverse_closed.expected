@@ -1,0 +1,503 @@
+  functions: [
+      fn {
+        name: swapped,
+        registers: 57,
+        vars: 25,
+        var_names: [a, b, pair, reversed, "self$inline4", "args$inline4", "self$inline6", "copy$inline6", "self$inline8", "result$inline8", "$call_ref_r8$inline8", "$call_ref_r15$inline8", "self$inline4$inline8", "index$inline4$inline8", "$inline8$result", "self$inline15", "existing$inline15", "self$inline17", "existing$inline17", "self$inline19", "index$inline19", "self$inline21", "self$inline22", "index$inline22", "self$inline24"],
+        params: 2,
+        param_types: [Int, Bool],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Bool }, var_type { var: $v2, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] } }, var_type { var: $v3, type: struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] } }, var_type { var: $v4, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] } }, var_type { var: $v5, type: tuple([Int, Bool]) }, var_type { var: $v6, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] } }, var_type { var: $v7, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] } }, var_type { var: $v8, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] } }, var_type { var: $v9, type: struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] } }, var_type { var: $v10, type: ref { referent: dependent_parameter(param_select { elements: [Int, Bool], index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(1))] } }), origin: origin_place { root: $v1796, path: [] }, mutability: mutable } }, var_type { var: $v11, type: ref { referent: dependent_parameter(param_select { elements: [Int, Bool], index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(1))] } }), origin: origin_place { root: $v1797, path: [] }, mutability: mutable } }, var_type { var: $v12, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] } }, var_type { var: $v13, type: Int }, var_type { var: $v14, type: struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] } }, var_type { var: $v15, type: struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] } }, var_type { var: $v16, type: struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] } }, var_type { var: $v17, type: struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] } }, var_type { var: $v18, type: struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] } }, var_type { var: $v19, type: struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] } }, var_type { var: $v20, type: Int }, var_type { var: $v21, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] } }, var_type { var: $v22, type: struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] } }, var_type { var: $v23, type: Int }, var_type { var: $v24, type: struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] } }],
+        return_type: present(Bool),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Bool }, reg_type { reg: %r2, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] } }, reg_type { reg: %r3, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] } }, reg_type { reg: %r4, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] } }, reg_type { reg: %r5, type: struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] } }, reg_type { reg: %r6, type: struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] } }, reg_type { reg: %r7, type: IntLiteral }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r9, type: ref { referent: Bool, origin: origin_place { root: $v129, path: [] }, mutability: mutable } }, reg_type { reg: %r10, type: Bool }, reg_type { reg: %r11, type: Bool }, reg_type { reg: %r12, type: struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] } }, reg_type { reg: %r13, type: None }, reg_type { reg: %r14, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] } }, reg_type { reg: %r15, type: None }, reg_type { reg: %r16, type: tuple([Int, Bool]) }, reg_type { reg: %r17, type: tuple([Int, Bool]) }, reg_type { reg: %r18, type: tuple([Int, Bool]) }, reg_type { reg: %r19, type: tuple([Int, Bool]) }, reg_type { reg: %r20, type: None }, reg_type { reg: %r21, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] } }, reg_type { reg: %r22, type: Int }, reg_type { reg: %r23, type: IntLiteral }, reg_type { reg: %r24, type: Int }, reg_type { reg: %r25, type: Int }, reg_type { reg: %r26, type: Int }, reg_type { reg: %r27, type: Int }, reg_type { reg: %r28, type: ref { referent: dependent_parameter(param_select { elements: [Int, Bool], index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(1))] } }), origin: origin_place { root: $v1796, path: [] }, mutability: mutable } }, reg_type { reg: %r29, type: None }, reg_type { reg: %r30, type: pointer { element: dependent_parameter(param_select { elements: [Int, Bool], index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(1))] } }), origin: pointer_place { place: origin_place { root: $v1796, path: [any_index] }, mutable: true } } }, reg_type { reg: %r31, type: Int }, reg_type { reg: %r32, type: dependent_parameter(param_select { elements: [Int, Bool], index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(1))] } }) }, reg_type { reg: %r33, type: struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] } }, reg_type { reg: %r34, type: Int }, reg_type { reg: %r35, type: ref { referent: dependent_parameter(param_select { elements: [Int, Bool], index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(1))] } }), origin: origin_place { root: $v1797, path: [] }, mutability: mutable } }, reg_type { reg: %r36, type: None }, reg_type { reg: %r37, type: pointer { element: dependent_parameter(param_select { elements: [Int, Bool], index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(1))] } }), origin: pointer_place { place: origin_place { root: $v1797, path: [any_index] }, mutable: true } } }, reg_type { reg: %r38, type: None }, reg_type { reg: %r39, type: None }, reg_type { reg: %r40, type: struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] } }, reg_type { reg: %r41, type: struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] } }, reg_type { reg: %r42, type: struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] } }, reg_type { reg: %r43, type: struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] } }, reg_type { reg: %r44, type: Int }, reg_type { reg: %r46, type: tuple([Bool, Int]) }, reg_type { reg: %r47, type: tuple([Bool, Int]) }, reg_type { reg: %r48, type: Int }, reg_type { reg: %r50, type: Int }, reg_type { reg: %r52, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] } }, reg_type { reg: %r53, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] } }, reg_type { reg: %r54, type: struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] } }, reg_type { reg: %r55, type: struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] } }, reg_type { reg: %r56, type: struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file1, start: 59, end: 60, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file1, start: 62, end: 63, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file1, start: 53, end: 64, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file1, start: 84, end: 88, origin: present($v2) }) }, reg_loc { reg: %r4, location: present(loc { file: file1, start: 84, end: 88, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file1, start: 110, end: 118, origin: present($v3) }) }, reg_loc { reg: %r7, location: present(loc { file: file1, start: 119, end: 120, origin: absent }) }, reg_loc { reg: %r8, location: present(loc { file: file1, start: 119, end: 120, origin: absent }) }, reg_loc { reg: %r9, location: present(loc { file: file1, start: 110, end: 121, origin: absent }) }, reg_loc { reg: %r10, location: present(loc { file: file1, start: 110, end: 121, origin: absent }) }, reg_loc { reg: %r11, location: present(loc { file: file1, start: 110, end: 121, origin: absent }) }, reg_loc { reg: %r12, location: present(loc { file: file1, start: 110, end: 118, origin: absent }) }, reg_loc { reg: %r13, location: present(loc { file: file1, start: 110, end: 118, origin: absent }) }, reg_loc { reg: %r14, location: present(loc { file: file1, start: 84, end: 88, origin: absent }) }, reg_loc { reg: %r15, location: present(loc { file: file1, start: 84, end: 88, origin: absent }) }, reg_loc { reg: %r16, location: present(loc { file: file1, start: 53, end: 64, origin: absent }) }, reg_loc { reg: %r17, location: present(loc { file: file1, start: 53, end: 64, origin: absent }) }, reg_loc { reg: %r18, location: present(loc { file: file1, start: 84, end: 88, origin: absent }) }, reg_loc { reg: %r19, location: present(loc { file: file1, start: 84, end: 88, origin: absent }) }, reg_loc { reg: %r20, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r21, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r22, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r23, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r24, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r25, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r26, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r27, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r28, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r29, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r30, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r31, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r32, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r33, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r34, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r35, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r36, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r37, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r38, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r39, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r40, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r41, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r42, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r43, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r44, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r45, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r46, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r47, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r48, location: present(loc { file: file1, start: 84, end: 98, origin: absent }) }, reg_loc { reg: %r49, location: absent }, reg_loc { reg: %r50, location: present(loc { file: file1, start: 110, end: 121, origin: absent }) }, reg_loc { reg: %r51, location: absent }, reg_loc { reg: %r52, location: present(loc { file: file1, start: 53, end: 64, origin: present($v4) }) }, reg_loc { reg: %r53, location: present(loc { file: file1, start: 84, end: 88, origin: present($v6) }) }, reg_loc { reg: %r54, location: present(loc { file: file1, start: 84, end: 98, origin: present($v14) }) }, reg_loc { reg: %r55, location: present(loc { file: file1, start: 84, end: 98, origin: present($v15) }) }, reg_loc { reg: %r56, location: present(loc { file: file1, start: 84, end: 98, origin: present($v17) }) }],
+        callee_removed_params: [callee_params { callee: "Tuple.__moveinit__", params: [] }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              var.use { dest: %r1, var: $v1, mode: copy },
+              ownership.mark_initialized { place: place { root: $v4, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), through: absent } },
+              tuple.make { dest: %r17, elems: [%r0, %r1], element_types: present([Int, Bool]) },
+              var.store { var: $v5, src: %r17, binding_type: present(tuple([Int, Bool])), in_place: false }
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb1 {
+            instructions: [
+              var.use { dest: %r16, var: $v5, mode: move },
+              place.store { place: place { root: $v4, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), projections: [projection { op: field(storage), type: tuple([Int, Bool]) }], type: present(tuple([Int, Bool])), through: absent }, src: %r16 }
+            ],
+            terminator: jump { target: bb2 }
+          },
+          bb2 {
+            instructions: [
+              var.use { dest: %r52, var: $v4, mode: forward },
+              call { dest: %r2, func: "Tuple.__moveinit__", raises: absent, args: [%r52], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              var.store { var: $v2, src: %r2, binding_type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), in_place: false },
+              place.load { dest: %r3, place: place { root: $v2, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), through: absent } },
+              ownership.mark_initialized { place: place { root: $v6, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), through: absent } }
+            ],
+            terminator: jump { target: bb3 }
+          },
+          bb3 {
+            instructions: [
+              place.load { dest: %r18, place: place { root: $v2, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), projections: [projection { op: field(storage), type: tuple([Int, Bool]) }], type: present(tuple([Int, Bool])), through: absent } },
+              value.copy { dest: %r19, value: %r18 },
+              place.store { place: place { root: $v6, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), projections: [projection { op: field(storage), type: tuple([Int, Bool]) }], type: present(tuple([Int, Bool])), through: absent }, src: %r19 }
+            ],
+            terminator: jump { target: bb4 }
+          },
+          bb4 {
+            instructions: [
+              var.use { dest: %r53, var: $v6, mode: forward },
+              call { dest: %r4, func: "Tuple.__moveinit__", raises: absent, args: [%r53], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              var.store { var: $v8, src: %r4, binding_type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), in_place: false }
+            ],
+            terminator: jump { target: bb5 }
+          },
+          bb5 {
+            instructions: [
+              ownership.mark_initialized { place: place { root: $v9, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] }), through: absent } },
+              const { dest: %r20, value: none }
+            ],
+            terminator: jump { target: bb7 }
+          },
+          bb6 {
+            instructions: [
+              ownership.mark_destroyed { place: place { root: $v8, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), projections: [projection { op: field(storage), type: tuple([Int, Bool]) }], type: present(tuple([Int, Bool])), through: absent } },
+              consume.var { var: $v8 },
+              const { dest: %r39, value: none },
+              ownership.mark_initialized { place: place { root: $v15, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] }), through: absent } }
+            ],
+            terminator: jump { target: bb15 }
+          },
+          bb7 {
+            instructions: [
+            ],
+            terminator: comptime_for.iterator { binder: binder { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter" }, initial: param_apply { function: "$comptime$Tuple.reverse$0", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), args: [param_constant(ct_tuple([ct_type(Int), ct_type(Bool)]))] }, has_next: param_apply { function: "__module$std$builtin$$stubs$paramfor_has_next", type: meta_value(Bool), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }, next_iter: param_apply { function: "__module$std$builtin$$stubs$paramfor_next_iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }, next_value: param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }, body: bb8, exit: bb6 }
+          },
+          bb8 {
+            instructions: [
+            ],
+            terminator: comptime_branch { condition: eq { left: operand_expr(param_apply { function: "__module$std$builtin$$stubs$paramfor_has_next", type: meta_value(Bool), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }), right: operand_value(ct_bool(true)) }, then: bb10, else: bb11 }
+          },
+          bb9 {
+            instructions: [
+              ownership.mark_initialized { place: place { root: $v17, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] }), through: absent } }
+            ],
+            terminator: jump { target: bb17 }
+          },
+          bb10 {
+            instructions: [
+              place.load { dest: %r21, place: place { root: $v8, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), through: absent } },
+              const { dest: %r22, value: int(2) },
+              const { dest: %r23, value: int_literal(1) },
+              literal.materialize { dest: %r24, value: %r23, target: Int },
+              binary { op: sub, dest: %r25, a: %r22, b: %r24, resolved: absent, raises: absent },
+              const { dest: %r26, value: param(param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }) },
+              binary { op: sub, dest: %r27, a: %r25, b: %r26, resolved: absent, raises: absent }
+            ],
+            terminator: jump { target: bb12 }
+          },
+          bb11 {
+            instructions: [
+            ],
+            terminator: jump { target: bb6 }
+          },
+          bb12 {
+            instructions: [
+              const { dest: %r44, value: param(param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(1))] }) },
+              ref.make { dest: %r28, place: place { root: $v8, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), projections: [projection { op: field(storage), type: tuple([Int, Bool]) }, projection { op: index(%r44), type: dependent_parameter(param_select { elements: [Int, Bool], index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(1))] } }) }], type: present(dependent_parameter(param_select { elements: [Int, Bool], index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(1))] } })), through: absent } }
+            ],
+            terminator: jump { target: bb13 }
+          },
+          bb13 {
+            instructions: [
+              var.store { var: $v10, src: %r28, binding_type: present(ref { referent: dependent_parameter(param_select { elements: [Int, Bool], index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(1))] } }), origin: origin_place { root: $v1796, path: [] }, mutability: mutable }), in_place: false },
+              loans.establish { reference: $v10, loans: [loan { place: place { root: $v8, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), through: absent }, mutable: true, interior: absent, shared: false, setup: false }], marker: %r29, dest_interior: absent },
+              ref.make { dest: %r30, place: place { root: $v10, root_type: present(ref { referent: dependent_parameter(param_select { elements: [Int, Bool], index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(1))] } }), origin: origin_place { root: $v1796, path: [] }, mutability: mutable }), projections: [], type: present(dependent_parameter(param_select { elements: [Int, Bool], index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(1))] } })), through: present($v10) } },
+              const { dest: %r31, value: int(0) },
+              pointer.take { dest: %r32, pointer: %r30, index: %r31, element: dependent_parameter(param_select { elements: [Int, Bool], index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(1))] } }) },
+              place.load { dest: %r33, place: place { root: $v9, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] }), through: absent } },
+              const { dest: %r34, value: param(param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }) }
+            ],
+            terminator: jump { target: bb19 }
+          },
+          bb14 {
+            instructions: [
+              var.use { dest: %r54, var: $v14, mode: forward },
+              call { dest: %r5, func: "Tuple.__moveinit__", raises: absent, args: [%r54], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              var.store { var: $v3, src: %r5, binding_type: present(struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] }), in_place: false }
+            ],
+            terminator: jump { target: bb21 }
+          },
+          bb15 {
+            instructions: [
+              place.move { dest: %r46, place: place { root: $v9, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] }), projections: [projection { op: field(storage), type: tuple([Bool, Int]) }], type: present(tuple([Bool, Int])), through: absent } },
+              consume.var { var: $v9 },
+              place.store { place: place { root: $v15, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] }), projections: [projection { op: field(storage), type: tuple([Bool, Int]) }], type: present(tuple([Bool, Int])), through: absent }, src: %r46 }
+            ],
+            terminator: jump { target: bb16 }
+          },
+          bb16 {
+            instructions: [
+              var.use { dest: %r55, var: $v15, mode: forward },
+              call { dest: %r40, func: "Tuple.__moveinit__", raises: absent, args: [%r55], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              var.store { var: $v14, src: %r40, binding_type: present(struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] }), in_place: false }
+            ],
+            terminator: jump { target: bb14 }
+          },
+          bb17 {
+            instructions: [
+              place.move { dest: %r47, place: place { root: $v9, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] }), projections: [projection { op: field(storage), type: tuple([Bool, Int]) }], type: present(tuple([Bool, Int])), through: absent } },
+              consume.var { var: $v9 },
+              place.store { place: place { root: $v17, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] }), projections: [projection { op: field(storage), type: tuple([Bool, Int]) }], type: present(tuple([Bool, Int])), through: absent }, src: %r47 }
+            ],
+            terminator: jump { target: bb18 }
+          },
+          bb18 {
+            instructions: [
+              var.use { dest: %r56, var: $v17, mode: forward },
+              call { dest: %r41, func: "Tuple.__moveinit__", raises: absent, args: [%r56], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              var.store { var: $v14, src: %r41, binding_type: present(struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] }), in_place: false }
+            ],
+            terminator: jump { target: bb14 }
+          },
+          bb19 {
+            instructions: [
+              const { dest: %r48, value: param(param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }) },
+              ref.make { dest: %r35, place: place { root: $v9, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] }), projections: [projection { op: field(storage), type: tuple([Bool, Int]) }, projection { op: index(%r48), type: dependent_parameter(param_select { elements: [Bool, Int], index: param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] } }) }], type: present(dependent_parameter(param_select { elements: [Bool, Int], index: param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] } })), through: absent } }
+            ],
+            terminator: jump { target: bb20 }
+          },
+          bb20 {
+            instructions: [
+              var.store { var: $v11, src: %r35, binding_type: present(ref { referent: dependent_parameter(param_select { elements: [Int, Bool], index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(1))] } }), origin: origin_place { root: $v1797, path: [] }, mutability: mutable }), in_place: false },
+              loans.establish { reference: $v11, loans: [loan { place: place { root: $v9, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] }), through: absent }, mutable: true, interior: absent, shared: false, setup: false }], marker: %r36, dest_interior: absent },
+              ref.make { dest: %r37, place: place { root: $v11, root_type: present(ref { referent: dependent_parameter(param_select { elements: [Int, Bool], index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(1))] } }), origin: origin_place { root: $v1797, path: [] }, mutability: mutable }), projections: [], type: present(dependent_parameter(param_select { elements: [Int, Bool], index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(1))] } })), through: present($v11) } },
+              ref.write { reference: %r37, value: %r32 },
+              drop.var { var: $v11 },
+              drop.var { var: $v10 },
+              const { dest: %r38, value: none }
+            ],
+            terminator: jump { target: bb7 }
+          },
+          bb21 {
+            instructions: [
+              drop.place { place: place { root: $v2, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), projections: [projection { op: field(storage), type: tuple([Int, Bool]) }], type: present(tuple([Int, Bool])), through: absent } },
+              consume.var { var: $v2 }
+            ],
+            terminator: jump { target: bb22 }
+          },
+          bb22 {
+            instructions: [
+              const { dest: %r15, value: none },
+              place.load { dest: %r6, place: place { root: $v3, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] }), through: absent } },
+              const { dest: %r7, value: int_literal(0) },
+              literal.materialize { dest: %r8, value: %r7, target: Int }
+            ],
+            terminator: jump { target: bb23 }
+          },
+          bb23 {
+            instructions: [
+              const { dest: %r50, value: int(0) },
+              ref.make { dest: %r9, place: place { root: $v3, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] }), projections: [projection { op: field(storage), type: tuple([Bool, Int]) }, projection { op: index(%r50), type: Bool }], type: present(Bool), through: absent } }
+            ],
+            terminator: jump { target: bb24 }
+          },
+          bb24 {
+            instructions: [
+              ref.read { dest: %r10, reference: %r9 },
+              value.copy { dest: %r11, value: %r10 }
+            ],
+            terminator: jump { target: bb25 }
+          },
+          bb25 {
+            instructions: [
+              drop.place { place: place { root: $v3, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] }), projections: [projection { op: field(storage), type: tuple([Bool, Int]) }], type: present(tuple([Bool, Int])), through: absent } },
+              consume.var { var: $v3 }
+            ],
+            terminator: jump { target: bb26 }
+          },
+          bb26 {
+            instructions: [
+              const { dest: %r13, value: none }
+            ],
+            terminator: return { value: present(%r11) }
+          }
+        ]
+      },
+      fn {
+        name: "Tuple.__init__$ov$$u2A$Ts$Movable",
+        registers: 1,
+        vars: 2,
+        var_names: [self, args],
+        params: 2,
+        param_types: [struct_type { name: Tuple, arguments: [] }, variadic_pack(param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })],
+        owned_params: [false, true],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Tuple, arguments: [] } }, var_type { var: $v1, type: variadic_pack(param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }) }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }]) }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 1313, end: 1318, origin: present($v1) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v1, mode: move },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [] }), projections: [projection { op: field(storage), type: tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }]) }], type: present(tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }])), through: absent }, src: %r0 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: "Tuple.__getitem_param__",
+        registers: 2,
+        vars: 2,
+        var_names: [self, index],
+        params: 1,
+        param_types: [struct_type { name: Tuple, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [true],
+        returns_reference: true,
+        var_types: [var_type { var: $v0, type: struct_type { name: Tuple, arguments: [] } }, var_type { var: $v1, type: Int }],
+        return_type: present(dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_decl_ref { owner: "Tuple.__getitem_param__", slot: 0, name: index, type: meta_value(Int) } })),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: ref { referent: dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_decl_ref { owner: "Tuple.__getitem_param__", slot: 0, name: index, type: meta_value(Int) } }), origin: origin_untracked { mutable: true }, mutability: mutable } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 1824, end: 1829, origin: present($v1) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 1811, end: 1830, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v1, mode: copy },
+              drop.var { var: $v1 },
+              ref.make { dest: %r1, place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [] }), projections: [projection { op: field(storage), type: tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }]) }, projection { op: index(%r0), type: dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_decl_ref { owner: "Tuple.__getitem_param__", slot: 0, name: index, type: meta_value(Int) } }) }], type: present(dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_decl_ref { owner: "Tuple.__getitem_param__", slot: 0, name: index, type: meta_value(Int) } })), through: absent } }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: "$comptime$Tuple.reverse$0",
+        registers: 3,
+        vars: 1,
+        var_names: ["$tmp_recv_r1"],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] } }],
+        return_type: present(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] } }, reg_type { reg: %r2, type: struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 5847, end: 5861, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 5841, end: 5862, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 5841, end: 5862, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: param(param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }) },
+              call { dest: %r1, func: "range$ov$Int", raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              var.store { var: $v0, src: %r1, binding_type: present(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), in_place: false },
+              call.method { dest: %r2, recv: %r1, method: __iter__, resolved: present("__module$std$range$_ZeroStartingRange.__iter__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v0, root_type: present(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), projections: [], type: present(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), through: absent }), recv_writes: false, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              drop.var { var: $v0 }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      },
+      fn {
+        name: "Tuple.reverse",
+        registers: 26,
+        vars: 6,
+        var_names: [self, result, "$call_ref_r8", "$call_ref_r15", "self$inline4", "index$inline4"],
+        params: 1,
+        param_types: [struct_type { name: Tuple, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [true],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Tuple, arguments: [] } }, var_type { var: $v1, type: struct_type { name: Tuple, arguments: [type_arg(dependent_parameter(param_list_tabulate { count: param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, element: param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_index_ref { depth: 0, index: 0, type: meta_value(Int) }] }, param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_constant(ct_int(-1))] } } }))] } }, var_type { var: $v2, type: ref { referent: dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(-1))] } }), origin: origin_place { root: $v1796, path: [] }, mutability: mutable } }, var_type { var: $v3, type: ref { referent: dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(-1))] } }), origin: origin_place { root: $v1797, path: [] }, mutability: mutable } }, var_type { var: $v4, type: struct_type { name: Tuple, arguments: [] } }, var_type { var: $v5, type: Int }],
+        return_type: present(struct_type { name: Tuple, arguments: [type_arg(dependent_parameter(param_list_tabulate { count: param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, element: param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_index_ref { depth: 0, index: 0, type: meta_value(Int) }] }, param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_constant(ct_int(-1))] } } }))] }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: None }, reg_type { reg: %r1, type: struct_type { name: Tuple, arguments: [] } }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: ref { referent: dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(-1))] } }), origin: origin_place { root: $v1796, path: [] }, mutability: mutable } }, reg_type { reg: %r9, type: None }, reg_type { reg: %r10, type: pointer { element: dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(-1))] } }), origin: pointer_place { place: origin_place { root: $v1796, path: [any_index] }, mutable: true } } }, reg_type { reg: %r11, type: Int }, reg_type { reg: %r12, type: dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(-1))] } }) }, reg_type { reg: %r13, type: struct_type { name: Tuple, arguments: [type_arg(dependent_parameter(param_list_tabulate { count: param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, element: param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_index_ref { depth: 0, index: 0, type: meta_value(Int) }] }, param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_constant(ct_int(-1))] } } }))] } }, reg_type { reg: %r14, type: Int }, reg_type { reg: %r15, type: ref { referent: dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(-1))] } }), origin: origin_place { root: $v1797, path: [] }, mutability: mutable } }, reg_type { reg: %r16, type: None }, reg_type { reg: %r17, type: pointer { element: dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(-1))] } }), origin: pointer_place { place: origin_place { root: $v1797, path: [any_index] }, mutable: true } } }, reg_type { reg: %r18, type: None }, reg_type { reg: %r19, type: None }, reg_type { reg: %r20, type: struct_type { name: Tuple, arguments: [type_arg(dependent_parameter(param_list_tabulate { count: param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, element: param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_index_ref { depth: 0, index: 0, type: meta_value(Int) }] }, param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_constant(ct_int(-1))] } } }))] } }, reg_type { reg: %r21, type: struct_type { name: Tuple, arguments: [type_arg(dependent_parameter(param_list_tabulate { count: param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, element: param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_index_ref { depth: 0, index: 0, type: meta_value(Int) }] }, param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_constant(ct_int(-1))] } } }))] } }, reg_type { reg: %r22, type: struct_type { name: Tuple, arguments: [type_arg(dependent_parameter(param_list_tabulate { count: param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, element: param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_index_ref { depth: 0, index: 0, type: meta_value(Int) }] }, param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_constant(ct_int(-1))] } } }))] } }, reg_type { reg: %r23, type: struct_type { name: Tuple, arguments: [type_arg(dependent_parameter(param_list_tabulate { count: param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, element: param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_index_ref { depth: 0, index: 0, type: meta_value(Int) }] }, param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_constant(ct_int(-1))] } } }))] } }, reg_type { reg: %r24, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 5740, end: 5814, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 5939, end: 5943, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 5944, end: 5958, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 5961, end: 5962, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 5961, end: 5962, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 5944, end: 5962, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 5965, end: 5966, origin: absent }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 5944, end: 5966, origin: absent }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 5939, end: 5967, origin: absent }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 5939, end: 5967, origin: present($v0) }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 5928, end: 5968, origin: present($v2) }) }, reg_loc { reg: %r11, location: present(loc { file: file0, start: 5928, end: 5990, origin: absent }) }, reg_loc { reg: %r12, location: present(loc { file: file0, start: 5928, end: 5990, origin: absent }) }, reg_loc { reg: %r13, location: present(loc { file: file0, start: 5887, end: 5893, origin: present($v1) }) }, reg_loc { reg: %r14, location: present(loc { file: file0, start: 5894, end: 5895, origin: absent }) }, reg_loc { reg: %r15, location: present(loc { file: file0, start: 5887, end: 5896, origin: absent }) }, reg_loc { reg: %r16, location: present(loc { file: file0, start: 5887, end: 5896, origin: present($v1) }) }, reg_loc { reg: %r17, location: present(loc { file: file0, start: 5876, end: 5897, origin: present($v3) }) }, reg_loc { reg: %r18, location: present(loc { file: file0, start: 5876, end: 6004, origin: absent }) }, reg_loc { reg: %r19, location: present(loc { file: file0, start: 6013, end: 6113, origin: absent }) }, reg_loc { reg: %r20, location: absent }, reg_loc { reg: %r21, location: absent }, reg_loc { reg: %r22, location: absent }, reg_loc { reg: %r23, location: absent }, reg_loc { reg: %r24, location: present(loc { file: file0, start: 5939, end: 5967, origin: absent }) }, reg_loc { reg: %r25, location: absent }],
+        callee_removed_params: [callee_params { callee: "Tuple.__moveinit__", params: [] }],
+        blocks: [
+          bb0 {
+            instructions: [
+              ownership.mark_initialized { place: place { root: $v1, root_type: present(struct_type { name: Tuple, arguments: [type_arg(dependent_parameter(param_list_tabulate { count: param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, element: param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_index_ref { depth: 0, index: 0, type: meta_value(Int) }] }, param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_constant(ct_int(-1))] } } }))] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(dependent_parameter(param_list_tabulate { count: param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, element: param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_index_ref { depth: 0, index: 0, type: meta_value(Int) }] }, param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_constant(ct_int(-1))] } } }))] }), through: absent } },
+              const { dest: %r0, value: none }
+            ],
+            terminator: jump { target: bb2 }
+          },
+          bb1 {
+            instructions: [
+              ownership.mark_destroyed { place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [] }), projections: [projection { op: field(storage), type: tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }]) }], type: present(tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }])), through: absent } },
+              consume.var { var: $v0 },
+              const { dest: %r19, value: none },
+              var.use { dest: %r22, var: $v1, mode: forward },
+              call { dest: %r20, func: "Tuple.__moveinit__", raises: absent, args: [%r22], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r20) }
+          },
+          bb2 {
+            instructions: [
+            ],
+            terminator: comptime_for.iterator { binder: binder { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter" }, initial: param_apply { function: "$comptime$Tuple.reverse$0", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), args: [param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }] }, has_next: param_apply { function: "__module$std$builtin$$stubs$paramfor_has_next", type: meta_value(Bool), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }, next_iter: param_apply { function: "__module$std$builtin$$stubs$paramfor_next_iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }, next_value: param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }, body: bb3, exit: bb1 }
+          },
+          bb3 {
+            instructions: [
+            ],
+            terminator: comptime_branch { condition: eq { left: operand_expr(param_apply { function: "__module$std$builtin$$stubs$paramfor_has_next", type: meta_value(Bool), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }), right: operand_value(ct_bool(true)) }, then: bb5, else: bb6 }
+          },
+          bb4 {
+            instructions: [
+              var.use { dest: %r23, var: $v1, mode: forward },
+              call { dest: %r21, func: "Tuple.__moveinit__", raises: absent, args: [%r23], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r21) }
+          },
+          bb5 {
+            instructions: [
+              place.load { dest: %r1, place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [] }), projections: [], type: present(struct_type { name: Tuple, arguments: [] }), through: absent } },
+              const { dest: %r2, value: param(param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }) },
+              const { dest: %r3, value: int_literal(1) },
+              literal.materialize { dest: %r4, value: %r3, target: Int },
+              binary { op: sub, dest: %r5, a: %r2, b: %r4, resolved: absent, raises: absent },
+              const { dest: %r6, value: param(param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }) },
+              binary { op: sub, dest: %r7, a: %r5, b: %r6, resolved: absent, raises: absent }
+            ],
+            terminator: jump { target: bb7 }
+          },
+          bb6 {
+            instructions: [
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb7 {
+            instructions: [
+              const { dest: %r24, value: param(param_expr { op: add, type: meta_value(Int), operands: [param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(-1))] }) },
+              ref.make { dest: %r8, place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [] }), projections: [projection { op: field(storage), type: tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }]) }, projection { op: index(%r24), type: dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(-1))] } }) }], type: present(dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(-1))] } })), through: absent } }
+            ],
+            terminator: jump { target: bb8 }
+          },
+          bb8 {
+            instructions: [
+              var.store { var: $v2, src: %r8, binding_type: present(ref { referent: dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(-1))] } }), origin: origin_place { root: $v1796, path: [] }, mutability: mutable }), in_place: false },
+              loans.establish { reference: $v2, loans: [loan { place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [] }), projections: [], type: present(struct_type { name: Tuple, arguments: [] }), through: absent }, mutable: true, interior: absent, shared: false, setup: false }], marker: %r9, dest_interior: absent },
+              ref.make { dest: %r10, place: place { root: $v2, root_type: present(ref { referent: dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(-1))] } }), origin: origin_place { root: $v1796, path: [] }, mutability: mutable }), projections: [], type: present(dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(-1))] } })), through: present($v2) } },
+              const { dest: %r11, value: int(0) },
+              pointer.take { dest: %r12, pointer: %r10, index: %r11, element: dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(-1))] } }) },
+              place.load { dest: %r13, place: place { root: $v1, root_type: present(struct_type { name: Tuple, arguments: [type_arg(dependent_parameter(param_list_tabulate { count: param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, element: param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_index_ref { depth: 0, index: 0, type: meta_value(Int) }] }, param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_constant(ct_int(-1))] } } }))] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(dependent_parameter(param_list_tabulate { count: param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, element: param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_index_ref { depth: 0, index: 0, type: meta_value(Int) }] }, param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_constant(ct_int(-1))] } } }))] }), through: absent } },
+              const { dest: %r14, value: param(param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }) },
+              index.get { dest: %r15, base: %r13, index: %r14, base_place: present(place { root: $v1, root_type: present(struct_type { name: Tuple, arguments: [type_arg(dependent_parameter(param_list_tabulate { count: param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, element: param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_index_ref { depth: 0, index: 0, type: meta_value(Int) }] }, param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_constant(ct_int(-1))] } } }))] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(dependent_parameter(param_list_tabulate { count: param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, element: param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_index_ref { depth: 0, index: 0, type: meta_value(Int) }] }, param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_constant(ct_int(-1))] } } }))] }), through: absent }), index_place: absent, call: present(subscript_call { target: "Tuple.__getitem_param__", raises: absent, result_type: ref { referent: dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(-1))] } }), origin: origin_place { root: $v1797, path: [] }, mutability: mutable }, receiver_requires_place: true, receiver_convention: present(ref), arguments: [], capture_accesses: [], reference_result: present(ref { referent: dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(-1))] } }), origin: origin_place { root: $v1797, path: [] }, mutability: mutable }), param_arg_regs: [param_arg { name: absent, value: present(%r14), expr: present(param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }) }], param_decls: [value_param { owner: "Tuple.__getitem_param__", slot: 0, name: index, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }] }), intrinsic: absent },
+              var.store { var: $v3, src: %r15, binding_type: present(ref { referent: dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(-1))] } }), origin: origin_place { root: $v1797, path: [] }, mutability: mutable }), in_place: false },
+              loans.establish { reference: $v3, loans: [loan { place: place { root: $v1, root_type: present(struct_type { name: Tuple, arguments: [type_arg(dependent_parameter(param_list_tabulate { count: param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, element: param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_index_ref { depth: 0, index: 0, type: meta_value(Int) }] }, param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_constant(ct_int(-1))] } } }))] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(dependent_parameter(param_list_tabulate { count: param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, element: param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_index_ref { depth: 0, index: 0, type: meta_value(Int) }] }, param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_constant(ct_int(-1))] } } }))] }), through: absent }, mutable: true, interior: absent, shared: false, setup: false }], marker: %r16, dest_interior: absent },
+              ref.make { dest: %r17, place: place { root: $v3, root_type: present(ref { referent: dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(-1))] } }), origin: origin_place { root: $v1797, path: [] }, mutability: mutable }), projections: [], type: present(dependent_parameter(param_list_get { list: param_decl_ref { owner: "Tuple", slot: 0, name: Ts, type: meta_param_list(meta_type) }, index: param_expr { op: add, type: meta_value(Int), operands: [param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }, param_expr { op: mul, type: meta_value(Int), operands: [param_constant(ct_int(-1)), param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@std/builtin/tuple.mojo:5841..5862", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }] }, param_constant(ct_int(-1))] } })), through: present($v3) } },
+              ref.write { reference: %r17, value: %r12 },
+              drop.var { var: $v3 },
+              drop.var { var: $v2 },
+              const { dest: %r18, value: none }
+            ],
+            terminator: jump { target: bb2 }
+          }
+        ]
+      },
+      fn {
+        name: "Tuple.__copyinit__",
+        registers: 2,
+        vars: 2,
+        var_names: [self, copy],
+        params: 2,
+        param_types: [struct_type { name: Tuple, arguments: [] }, struct_type { name: Tuple, arguments: [] }],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Tuple, arguments: [] } }, var_type { var: $v1, type: struct_type { name: Tuple, arguments: [] } }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }]) }, reg_type { reg: %r1, type: tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }]) }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v1, root_type: present(struct_type { name: Tuple, arguments: [] }), projections: [projection { op: field(storage), type: tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }]) }], type: present(tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }])), through: absent } },
+              value.copy { dest: %r1, value: %r0 },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [] }), projections: [projection { op: field(storage), type: tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }]) }], type: present(tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }])), through: absent }, src: %r1 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: "Tuple.__moveinit__",
+        registers: 1,
+        vars: 2,
+        var_names: [self, existing],
+        params: 2,
+        param_types: [struct_type { name: Tuple, arguments: [] }, struct_type { name: Tuple, arguments: [] }],
+        owned_params: [false, false],
+        deinit_params: [false, true],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Tuple, arguments: [] } }, var_type { var: $v1, type: struct_type { name: Tuple, arguments: [] } }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }]) }],
+        locations: [reg_loc { reg: %r0, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.move { dest: %r0, place: place { root: $v1, root_type: present(struct_type { name: Tuple, arguments: [] }), projections: [projection { op: field(storage), type: tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }]) }], type: present(tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }])), through: absent } },
+              consume.var { var: $v1 },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [] }), projections: [projection { op: field(storage), type: tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }]) }], type: present(tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }])), through: absent }, src: %r0 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: "Tuple.__deinit__",
+        registers: 0,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: Tuple, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [true],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Tuple, arguments: [] } }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [],
+        locations: [],
+        blocks: [
+          bb0 {
+            instructions: [
+              drop.place { place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [] }), projections: [projection { op: field(storage), type: tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }]) }], type: present(tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }])), through: absent } },
+              consume.var { var: $v0 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      }
+  ]

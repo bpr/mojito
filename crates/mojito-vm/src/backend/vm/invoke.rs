@@ -162,23 +162,26 @@ impl VmBackend {
         argv: &[Value],
         kwargs: Vec<(String, Value)>,
     ) -> Result<(Vec<Value>, Vec<ArgSlot>), RuntimeError> {
-        let mut expanded = Vec::new();
-        let mut forwarded = false;
+        // A forwarded `**kwargs^` is the callee's keyword collector's
+        // whole argument: its entries never fill a named parameter, as the
+        // pin binds a forward (`kwargs unpack can only satisfy another
+        // kwargs argument`).
+        let mut named = Vec::new();
+        let mut forwarded = None;
         for (name, value) in kwargs {
             if name == mojito_ast::ast::FORWARDED_KWARGS_NAME {
-                if forwarded {
+                if forwarded.is_some() {
                     return Err(RuntimeError::TypeError(
                         "a call may forward only one StringDict".to_string(),
                     ));
                 }
-                forwarded = true;
-                expanded.extend(self.take_forwarded_kwargs(value)?);
+                forwarded = Some(self.take_forwarded_kwargs(value)?);
             } else {
-                expanded.push((name, value));
+                named.push((name, value));
             }
         }
-        let kwargs = expanded;
-        let collected: Vec<(String, Value)> = if sig.kw_variadic.is_some() {
+        let kwargs = named;
+        let mut collected: Vec<(String, Value)> = if sig.kw_variadic.is_some() {
             kwargs
                 .iter()
                 .filter(|(key, _)| !sig.param_names.contains(key))
@@ -187,6 +190,7 @@ impl VmBackend {
         } else {
             Vec::new()
         };
+        collected.extend(forwarded.into_iter().flatten());
         // Materialize omitted defaults. A `Construct` default runs its
         // converting constructor (e.g. the empty `Optional[T]` for a `None`
         // default) through the same path an explicit `f(arg=None)` takes;

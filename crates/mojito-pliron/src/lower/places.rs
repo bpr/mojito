@@ -527,6 +527,15 @@ impl FnLowering<'_> {
             element_types,
         ) {
             (Some(TyKind::Tuple(es) | TyKind::RuntimePack(es)), _) => es.clone(),
+            // The homogeneous collector a call builds for an inlined callee
+            // is the run-time pack descriptor the call would have passed.
+            (Some(TyKind::VariadicPack(element)), _) => {
+                let element = element.clone();
+                let overflow: Vec<usize> = (0..elems.len()).collect();
+                let descriptor = self.build_variadic_list(ctx, &element, &overflow, elems, dest)?;
+                self.reg_values.insert(dest.0, descriptor);
+                return Ok(());
+            }
             (_, Some(es)) => es.to_vec(),
             _ => {
                 return Err(self.unsupported_reg("untyped tuple construction".into(), dest));

@@ -1,0 +1,71 @@
+mojito-mir 1.73
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("heterogeneous_collector.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: count, param_names: [], param_types: [], defaults: [], required: [], variadic: present(param { owner: "count", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }), variadic_convention: absent, variadic_index: present(0), kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: present(0), param_decls: [type_param { owner: "count", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent, default: absent, infer_only: false, variadic: true, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [], inline: nodebug },
+    decl { lowered_name: two, param_names: [a, b], param_types: [Int, Bool], defaults: [absent, absent], required: [true, true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent, absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false, false], param_writes: [false, false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: count,
+        registers: 2,
+        vars: 1,
+        var_names: [args],
+        params: 1,
+        param_types: [variadic_pack(param { owner: "count", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: variadic_pack(param { owner: "count", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }) }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: variadic_pack(param { owner: "count", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }) }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 85, end: 89, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 81, end: 90, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(variadic_pack(param { owner: "count", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), projections: [], type: present(variadic_pack(param { owner: "count", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), through: absent } },
+              call { dest: %r1, func: len, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: two,
+        registers: 3,
+        vars: 2,
+        var_names: [a, b],
+        params: 2,
+        param_types: [Int, Bool],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Bool }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Bool }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 142, end: 143, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 145, end: 146, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 136, end: 147, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              var.use { dest: %r1, var: $v1, mode: copy },
+              call { dest: %r2, func: count, raises: absent, args: [%r0, %r1], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [value_arg(ct_tuple([ct_type(Int), ct_type(Bool)]))], spread: absent }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      }
+  ]
+}

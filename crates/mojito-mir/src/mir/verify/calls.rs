@@ -216,8 +216,10 @@ pub(super) fn verify_call_instruction(
 /// A whole pack spread into the callee's collector (`show(*args)`,
 /// `Sink().take(*args)`): the position names an argument whose register
 /// holds a `VariadicPack` over a pack still a parameter, which only a
-/// template holds, and a declared callee collects a positional pack.
-/// `print` is undeclared and collects.
+/// template holds, or the tuple of a bound pack's elements, which
+/// `inline-parametric` leaves for the elaborator's expansion, and a
+/// declared callee collects a positional pack. `print` is undeclared and
+/// collects.
 fn verify_pack_spread(
     prefix: &str,
     function: &MirFunction,
@@ -233,9 +235,13 @@ fn verify_pack_spread(
         ));
         return;
     };
+    // A collector bound to its element list, in a body inlined into a
+    // caller that bound the pack, is the tuple of them, which the
+    // elaborator expands into the call's arguments as it expands a pack.
     match function.reg_types.get(&argument.0).map(Ty::kind) {
         Some(TyKind::VariadicPack(element))
             if mojito_types::types::pack_spread(std::slice::from_ref(element)).is_some() => {}
+        Some(TyKind::Tuple(_)) => {}
         Some(found) => errors.push(format!(
             "{prefix}: spread argument {position} has type {found}, not a pack collector"
         )),

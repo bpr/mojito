@@ -1734,8 +1734,9 @@ dispatch, so they stay, and each inlined copy in `main` adds a block split.
 No `generator_instances` count moves. The shared corpus total of
 `scripts/instantiation-report` falls by 8 concrete instructions, and
 `benchmarks/instantiation.tsv` is regenerated with this change. The
-bundled library's own wrappers are variadic `write` forwards, which the
-inliner keeps until variadic calls inline (R1079).
+bundled library's own `write` wrappers are variadic forwards, which the
+inliner can bind since collectors inline (R1079), though neither
+`Writer.write` nor `String.write` carries an inline marking (R1101).
 
 ## Mem2Reg promotes trivially register-passable slots (2026-10-14, R787)
 
@@ -2060,3 +2061,15 @@ run (`pack_inferred_through_tuple.mojo`, `tuple_template_served.mojo`,
 R1093). The instantiation counters are the nightly report's to record;
 expect `generator_instances` to fall by the iterator and span members the
 bundled library no longer instantiates per element type.
+
+## Collectors and spreads inline (2026-10-16, R1079)
+
+A call collecting into `*xs`, spreading the caller's pack, or forwarding
+`**kwargs^` into a `nodebug` callee inlines, the call's block building the
+collector as a `tuple.make`, and the consuming `Tuple` members inline on a
+forwarded, loaded, or copied receiver, their `comptime for` bound applied
+to the bound element list. The in-session gate measured no counts; the
+nightly `scripts/instantiation-report` refreshes `benchmarks/instantiation.tsv`,
+and `generator_instances` should fall by the `Tuple.reverse`,
+`Tuple.concat`, and collector-taking `nodebug` instances the corpus no
+longer names.

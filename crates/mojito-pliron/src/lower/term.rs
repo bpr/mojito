@@ -162,9 +162,16 @@ impl FnLowering<'_> {
         // nested List index is the canonical case). MIR therefore has no
         // source-level `DropVar`, but native allocations still need recursive
         // frame cleanup. Explicit drops and moves have already cleared the
-        // same flags, so this closes only still-live local slots.
+        // same flags, so this closes only still-live local slots. A
+        // collector slot an inlined callee's call built, typed the pack
+        // storage, is left out: a `read` collector's elements are the
+        // caller's, and an owned one's drop is the body's own.
         for var in (self.func.n_params..self.func.n_vars).rev() {
-            if self.drop_flags.contains_key(&(var as u32)) {
+            let collector = matches!(
+                self.func.var_tys.get(&(var as u32)).map(Ty::kind),
+                Some(TyKind::VariadicPack(_) | TyKind::Tuple(_) | TyKind::RuntimePack(_))
+            );
+            if !collector && self.drop_flags.contains_key(&(var as u32)) {
                 let destructor = self
                     .func
                     .var_tys

@@ -1,0 +1,70 @@
+  functions: [
+      fn {
+        name: count,
+        registers: 2,
+        vars: 1,
+        var_names: [args],
+        params: 1,
+        param_types: [variadic_pack(param { owner: "count", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: variadic_pack(param { owner: "count", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }) }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: variadic_pack(param { owner: "count", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }) }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 85, end: 89, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 81, end: 90, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(variadic_pack(param { owner: "count", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), projections: [], type: present(variadic_pack(param { owner: "count", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), through: absent } },
+              call { dest: %r1, func: len, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: two,
+        registers: 6,
+        vars: 3,
+        var_names: [a, b, "args$inline2"],
+        params: 2,
+        param_types: [Int, Bool],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Bool }, var_type { var: $v2, type: tuple([Int, Bool]) }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Bool }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: tuple([Int, Bool]) }, reg_type { reg: %r5, type: tuple([Int, Bool]) }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 142, end: 143, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 145, end: 146, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 136, end: 147, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 136, end: 147, origin: absent }) }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 136, end: 147, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              var.use { dest: %r1, var: $v1, mode: copy },
+              tuple.make { dest: %r5, elems: [%r0, %r1], element_types: present([Int, Bool]) },
+              var.store { var: $v2, src: %r5, binding_type: present(tuple([Int, Bool])), in_place: false }
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb1 {
+            instructions: [
+              place.load { dest: %r3, place: place { root: $v2, root_type: present(tuple([Int, Bool])), projections: [], type: present(tuple([Int, Bool])), through: absent } },
+              call { dest: %r2, func: len, raises: absent, args: [%r3], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: jump { target: bb2 }
+          },
+          bb2 {
+            instructions: [
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      }
+  ]

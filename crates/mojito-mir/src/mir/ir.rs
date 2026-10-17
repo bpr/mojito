@@ -2148,6 +2148,12 @@ pub enum MirInstr {
     /// Construct the compiler-private heterogeneous pack-storage primitive.
     /// Source Tuple/List/Set/Dict values are nominal structs and therefore use
     /// ordinary `Call`/`MethodCall` instructions instead of aggregate opcodes.
+    /// One whose register is typed `VariadicPack(T)` is the homogeneous
+    /// collector an inlined call builds for its callee's `*xs: T`,
+    /// upstream's `pop.variadic.create` beside the pack's
+    /// `kgen.pack.create`; one typed the elements' tuple is a
+    /// heterogeneous collector bound to a list, or a typed
+    /// `Tuple[T, ...]` construction.
     MakeTuple {
         dest: Reg,
         elems: Vec<Reg>,

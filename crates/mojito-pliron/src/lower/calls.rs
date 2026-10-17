@@ -943,7 +943,7 @@ impl FnLowering<'_> {
     /// arguments, as the pin passes a `VariadicList`: each element in its
     /// own caller slot, an array of their addresses, and the descriptor
     /// pointing at it. An empty pack's array is a non-null dangling slot.
-    fn build_variadic_list(
+    pub(super) fn build_variadic_list(
         &mut self,
         ctx: &mut Context,
         element: &Ty,

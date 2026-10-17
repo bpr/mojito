@@ -1,0 +1,70 @@
+mojito-mir 1.73
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("spread_read_collector.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: outer, param_names: [], param_types: [], defaults: [], required: [], variadic: present(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }), variadic_convention: absent, variadic_index: present(0), kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: present(0), param_decls: [type_param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent, default: absent, infer_only: false, variadic: true, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: show, param_names: [], param_types: [], defaults: [], required: [], variadic: present(param { owner: "show", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }), variadic_convention: absent, variadic_index: present(0), kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: present(0), param_decls: [type_param { owner: "show", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent, default: absent, infer_only: false, variadic: true, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [], inline: nodebug }
+  ],
+  functions: [
+      fn {
+        name: show,
+        registers: 2,
+        vars: 1,
+        var_names: [args],
+        params: 1,
+        param_types: [variadic_pack(param { owner: "show", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: variadic_pack(param { owner: "show", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }) }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: variadic_pack(param { owner: "show", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }) }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 84, end: 88, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 80, end: 89, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(variadic_pack(param { owner: "show", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), projections: [], type: present(variadic_pack(param { owner: "show", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), through: absent } },
+              call { dest: %r1, func: len, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: outer,
+        registers: 2,
+        vars: 1,
+        var_names: [args],
+        params: 1,
+        param_types: [variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }) }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }) }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 152, end: 156, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 146, end: 157, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), projections: [], type: present(variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), through: absent } },
+              call { dest: %r1, func: show, raises: absent, args: [%r0], kwargs: [], arg_places: [present(place { root: $v0, root_type: present(variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), projections: [], type: present(variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), through: absent })], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [type_arg(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })], spread: present(0) }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      }
+  ]
+}

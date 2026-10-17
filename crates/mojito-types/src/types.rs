@@ -4202,6 +4202,22 @@ impl Replacer<'_> {
 }
 
 impl TyRewrite for Replacer<'_> {
+    /// A collector over a pack bound to its element list is the tuple of
+    /// the elements, as [`expand_packs`] spells it in an instance.
+    fn whole(&mut self, ty: &Ty) -> Option<Ty> {
+        let TyKind::VariadicPack(element) = ty.kind() else {
+            return None;
+        };
+        let TyKind::Param { binder, .. } = pack_spread(std::slice::from_ref(element))?.kind()
+        else {
+            return None;
+        };
+        match self.bindings().types().get(&binder.id).map(Ty::kind) {
+            Some(TyKind::RuntimePack(elements)) => Some(TyKind::Tuple(elements.clone()).into()),
+            _ => None,
+        }
+    }
+
     fn param(&mut self, binder: &ParamRef) -> Option<Ty> {
         self.bindings().types().get(&binder.id).cloned()
     }

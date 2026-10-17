@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `inline-parametric` now inlines every call that collects or spreads
+  arguments into a `nodebug`, `builtin`, or small `@always_inline` callee,
+  as the pin inlines them (R1079): the call's block builds a positional
+  collector as a `tuple.make` typed the collector's slot, a spread binds
+  the caller's collector whole, a forwarded `**kwargs^` binds the keyword
+  collector's slot, and the consuming `Tuple` members inline on a
+  forwarded, loaded, or copied `deinit` receiver, their compile-time
+  application over the owner's pack applied to the bound element list.
+  The VM gives a forwarded `**kwargs^` to the callee's collector alone,
+  never to a named parameter, as the pin binds a forward. Keywords
+  collected afresh into `**kwargs` still keep the call (R1070).
 - `inline-parametric` now binds every kind of compile-time parameter a
   `nodebug`, `builtin`, or small `@always_inline` callee declares, as the
   pin's inliner substitutes every parameter alike (R1078): a callable

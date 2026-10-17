@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1102**.
+Next free ID: **R1104**.
 
 ## Ordered Work
 
@@ -95,36 +95,50 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1079 `inline-parametric` keeps every call that collects or
-  spreads arguments**
+- [ ] **R1102 Each backend builds a positional collector at binding, where
+  upstream's call builds it**
 
-  A callee with a homogeneous collector (`def total(*xs: Int)`), a spread
-  call (`show(*args)`), a keyword collector or forward (`**kwargs`,
-  `**kwargs^`), and a `Tuple` member over a computed pack list
-  (`Tuple.reverse`, `Tuple.concat`) keep their calls, where the pin inlines
-  all four.
-  - The VM builds each collector at binding: a pack for `*xs`, a
-    `StringDict` for `**kwargs`.
-  - The lever: the caller builds the collector, so the collector parameter
-    is an ordinary argument R1078's substitution binds.
-  - That argument is the pack descriptor R1040 made for `*xs`, the
-    dictionary for `**kwargs`, the caller's own collector for a spread, and
-    the list expression for a computed pack.
-  - The bundled library's `write` wrappers are variadic forwards, so this
-    is what lets `print`'s wrappers inline.
-  - Probe: `pair.reverse()` and `pair.concat(suffix)` keep their calls
-    because their bodies hold a compile-time application over the owner's
-    pack (`$comptime$Tuple.reverse$0` over `Ts`), which `inline-parametric`
-    refuses to substitute: the elaborator evaluates it against the pack's
-    element list, where the substitution would hand it the pack's runtime
-    type and it stops with "reads an unresolved type `(Int)`".
-  - Probe: `Tuple().reverse()` binds the empty pack and keeps the call for
-    the same application.
-  - Done when each form inlines in a pass test and `pair.concat(suffix)`
-    in `assets/ok/tuple_reverse_concat.mojo` holds no `__getitem_param__`
-    call, with a clean differential.
-  - Depends on R1078.
-  - Model: Fable, Planned.
+  A call to a `*xs: T` callee passes its overflow registers as plain
+  arguments, and the VM's `bind_args` packs them into a `Value::Tuple`
+  while Pliron's `build_variadic_list` builds the `VariadicList`
+  descriptor at the call, so MIR holds no collector before the callee's
+  slot, where upstream's call builds the pack and passes one value.
+  - `inline-parametric` therefore builds the collector itself at an
+    inlined call (`Binding::Collector`, a `tuple.make` typed the
+    collector's slot, R1079).
+  - Probe: a `read` collector's slot holds copies of the caller's
+    elements, so Pliron's frame-exit backstop (`lower_return`) skips
+    pack-storage slots (`VariadicPack`, `Tuple`, `RuntimePack`) rather
+    than free them twice; a collector that is a pack of references, as
+    upstream's `VariadicPack[is_owned=False]` is, would need no exclusion.
+  - Fix by having MIR lowering emit the `tuple.make` per positional
+    collector and pass it as one operand, so `bind_args` stops
+    collecting and `build_variadic_list` becomes the `tuple.make`
+    lowering alone.
+  - Done when `total(1, 2, 3)` over `def total(*xs: Int)` lowers to a
+    `tuple.make` and a one-operand call, with a clean differential on
+    both backends.
+  - Found while landing R1079 (2026-10-16).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1103 A whole-pack spread is a call position the elaborator
+  expands, where upstream passes the pack**
+
+  `show(*args)` keeps `MirInstr::Call::spread` naming the collector's
+  position until `expand_pack_spreads` replaces it with one element read
+  per bound element, where upstream's call passes the pack value whole.
+  - Probe: `verify_pack_spread` admits a `Tuple`-typed spread argument
+    only because `inline-parametric` leaves one in an inlined body, its
+    collector bound to its elements' tuple, for the elaborator to expand.
+  - Probe: R1071's `inner(*xs)` over a homogeneous collector is rejected
+    because the checker accepts a spread of a type pack alone.
+  - Once the call builds the collector (R1102), a spread is a plain
+    operand: delete `spread` from the three call instructions,
+    `expand_pack_spreads`, and `verify_pack_spread`.
+  - Found while landing R1079 (2026-10-16).
+  - Depends on R1102.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1080 `inline-parametric` keeps a call of a nested `def` whose
   closure the caller does not show**
@@ -305,6 +319,10 @@ which names the upstream pass each one follows. Each is measured by the
     `mir::CONSTRUCTED_MEMBERS`.
   - Done when a program whose only `**kwargs` callee is dead keeps no
     `StringDict` constructor and the HEAD differential is clean.
+  - Probe: `named(a=1, b=2)` over `@always_inline("nodebug") def
+    named(var **kwargs: Int)` keeps its call inlined, where the pin
+    inlines it: `inline-parametric` binds a forwarded `**kwargs^` whole
+    (R1079) but will not build the dictionary the call builds here.
   - Found while landing R1030 (2026-10-16), whose slice-bound half landed.
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -881,6 +899,10 @@ change that needs a new `MJRT_ABI_VERSION`.
     (`assets/ok/nominal_string_codepoint_from_u32.mojo`) since R1046: the
     forwarded `Optional` temporary's consumer follows the inlined body of
     the copy constructor the `fallback` copy now calls.
+  - Probe: `describe`'s `text += " " + options["color"]` in
+    `assets/ok/kwargs_keyed_read.mojo`, an `exe-differential` row: the
+    `String` temporary's consumer follows the inlined subscript's blocks
+    (its concrete MIR is the same before and after R1079).
   - Pliron's `release.rs` tracks a heap-carrying temporary within one
     block; release it on every edge from its definition to its consumer,
     as an SSA value is live across blocks upstream.
@@ -8766,6 +8788,10 @@ residue found inside a task moves to the task that owns its fix.
   - R786 imported the pin's markings in the pin's spelling; this one was
     missed, and any other `@always_inline("nodebug")` spelling the import
     skipped should be checked the same way.
+  - Probe: `Writer.write[*Ts]` (`std/format/__init__.mojo`) and
+    `String.write[*Ts]` (`std/string.mojo`) carry no marking; if the pin
+    marks them, `print`'s variadic wrappers inline now that collectors do
+    (R1079).
   - Done when the marking is on, `assets/ok/always_inline_nodebug_calls.mojo`
     prints as before, and `String("hi")` in `main` holds no `__init__`
     call.

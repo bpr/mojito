@@ -1461,7 +1461,7 @@ impl<'a> Specializer<'a> {
             let binder = decl.binder();
             let unresolved = |what: &str| unresolved(what, arg);
             match decl {
-                ParamDecl::Type { .. } => {
+                ParamDecl::Type { variadic, .. } => {
                     let ty = match arg.kind() {
                         ParamKind::DeclRef(reference) => bindings.types.get(reference).cloned(),
                         // A closed type names its generic structs by their
@@ -1469,6 +1469,17 @@ impl<'a> Specializer<'a> {
                         ParamKind::TypeShape(ty) | ParamKind::Constant(CtValue::Type(ty)) => {
                             substitute_ty(ty, bindings).ok()
                         }
+                        // A pack bound to its element list by a caller the
+                        // thunk's body was inlined into is applied to that
+                        // list, as its runtime pack.
+                        ParamKind::Constant(CtValue::Tuple(elements)) if *variadic => elements
+                            .iter()
+                            .map(|element| match element {
+                                CtValue::Type(ty) => substitute_ty(ty, bindings).ok(),
+                                _ => None,
+                            })
+                            .collect::<Option<Vec<_>>>()
+                            .map(|elements| TyKind::RuntimePack(elements).into()),
                         _ => None,
                     }
                     .ok_or_else(|| unresolved("an unresolved type"))?;
