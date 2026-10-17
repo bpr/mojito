@@ -4494,19 +4494,32 @@ run by `name_destructors` and again by the elaborator once
 the slot, which ends it and hands its storage to the callee as Mojo's
 owned-argument convention does, and a `MethodCall` of the destructor on
 it as the `deinit self` receiver, the shape an explicit `x^.finish()`
-lowers to, which both backends run as any such call. The test is a
+lowers to, which both backends run as any such call. A named `drop.place`
+of an owned part (fields and tuple elements, no reference on the way)
+whose slot holds that part whole on every path to it is the call too, on
+the part's storage, as upstream calls `__del__` on a field's address: a
+`LoadPlace` of the part, the `MethodCall` with the part as its receiver's
+place, and a `ConsumePlace` ending it, the shape `x.f^.finish()` lowers
+to. This covers a synthesized or written destructor's field ends, a
+`deinit self`'s remaining fields, and a store's overwritten field, through
+a `mut self` too. An owned, `deinit`, `mut`, or `ref` parameter enters
+whole. A destructor available only under a `where` clause stays a drop
+before elaboration, for the elaborator to name per instance (R302). The
+test is a
 definite-initialization state per slot (`Held`: whole, whole but for
 missing owned parts, empty, or partial), joined over a list's blocks and
 followed through a `try` as upstream's `CheckLifetimes` walks its regions:
-the body entered as the op is, the handler as the body may raise (through
-the raise edge's cleanup, its error slot bound whole), the `else` as the
+the body entered as the op is, the handler in the states the body's raise
+points leave (through the raise edge's cleanup, its error slot bound
+whole), a region op raising in any state inside it, the `else` as the
 body completes, the `finally` on every way out of them, and the op
 completing as its `else` (or body) and handler do. A `var.store`, a
 whole-slot `mark_initialized`, or a `for` loop's iterator fills the slot;
 a declaration, a drop, a consume, a moving use, or an owned `iter.init`
 consuming it into an iterator slot of its own empties it; a move,
-drop, or consume of a field or tuple-element path marks that part missing
-and a store into it fills it again; reads, borrows, calls, iterator
+drop, or consume of a field or tuple-element path marks that part missing,
+a consume subsuming the parts inside it already missing, and a store into
+it fills it again; reads, borrows, calls, iterator
 advances, and lifetime markers keep it; compiler-private iterator storage
 normalized in place leaves it partial. A `for` loop binds what
 `iter.try_next` yields only past its exhaustion test, in the body, so its

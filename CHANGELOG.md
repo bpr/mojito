@@ -8,6 +8,26 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A field's drop is now the call of its destructor on the field, as
+  upstream calls `__del__` on a field's address (R1081). Where its owner
+  holds the field whole, a named `drop.place` lowers to a load of the
+  field, the destructor's call with the field as its receiver's place, and
+  a consume of the field, the shape `x.f^.finish()` lowers to: a
+  synthesized destructor's fields, a `deinit self`'s remaining fields, and
+  a field a store overwrites, through a `mut self` too. `inline-parametric`
+  binds such a call's `deinit self`, and an explicit field destroy's, to
+  the field's place, so a `nodebug` field destructor inlines where the
+  field dies. A `try`'s `except` handler is now entered in the states its
+  body's raise points leave, so a variable whole there drops through its
+  inlined destructor in the handler. A destructor available only under a
+  `where` clause keeps its drop until the elaborator names the instance's.
+  The VM now runs an explicit field destroy through a `mut self`
+  (`self.d^.finish()` then `self.d = D(v)`), which trapped with "field
+  access on non-struct ref", and Pliron's `consume.place` clears the
+  field's presence, which fixes a second destruction of a field an
+  explicit destroy ended in a `deinit self`. Fixture
+  `assets/ok/always_inline_nodebug_destructor.mojo` gains these shapes;
+  residue R1106.
 - `inline-parametric` now inlines a call of a nested `def` whose closure
   the caller did not show, as the pin does (R1080). A body with a copied
   or moved capture that is only called by name holds each such capture in

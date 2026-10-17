@@ -19,9 +19,14 @@
 //! compile-time parameters the call binds in full; it takes its arguments
 //! into `read`, owned, `mut`, or `ref` parameters, or into a `deinit`
 //! one, which takes the slot the argument forwards or loads whole in
-//! place, as a destructor takes the slot a drop of it forwards, or a
-//! fresh slot a copied receiver's move initializes, and returns a value or
-//! a reference. A positional collector is a fresh slot the call's block
+//! place, as a destructor takes the slot a drop of it forwards, or the
+//! owned part an explicit destroy or a field's lowered drop loads and then
+//! consumes, as upstream passes the field's address, or a fresh slot a
+//! copied receiver's move or another argument initializes, and returns a
+//! value or a reference. A part-bound body's places compose with the
+//! part, and the caller's consume of it after the call is the body's end
+//! of its receiver; a raising callee, whose raise edge would skip that
+//! consume, takes a fresh slot instead (R1106). A positional collector is a fresh slot the call's block
 //! initializes from a `tuple.make` of the overflow arguments, as
 //! upstream's call builds the pack it passes; a spread binds the caller's
 //! collector whole; a forwarded `**kwargs^` binds the keyword collector's
@@ -117,11 +122,14 @@
 //! A drop of a slot whose struct's `__deinit__` is such a function holds the
 //! destructor's body, as upstream inserts the destructor's call at the death
 //! point and inlines it as any call: its `deinit self` is the dropped slot
-//! itself, which the body's own consumption ends. Only a drop of a slot
-//! holding a whole value on every path to it, stored and not since moved
-//! from, is so expanded, since a drop of any other tests at run time what
-//! the slot still holds; a slot of a region's body counts as empty where the
-//! region is entered.
+//! itself, which the body's own consumption ends. A drop of a field holds
+//! it too, its `deinit self` the field's place, which the caller's consume
+//! after it ends: a synthesized destructor's fields, a `deinit self`'s
+//! remaining ones, and a field a store overwrites, through a `mut self`
+//! too. Only a drop whose slot holds the value whole on every path to it,
+//! an `except` handler's entered from the body's raise points, is so
+//! expanded (`mir::lower_whole_drops`), since a drop of any other tests at
+//! run time what the slot still holds.
 
 use super::pre_elaboration::{CallGraphPass, Callees};
 use mojito_ast::ast::{ArgConvention, Dtype, FORWARDED_KWARGS_NAME};
@@ -384,6 +392,11 @@ enum Binding {
     /// destructor's `deinit self` at a drop of the slot, which upstream
     /// passes by address. The body ends the slot as the forward did.
     Slot(VarId),
+    /// The caller's owned part an explicit destroy, or a field's drop,
+    /// loads into a `deinit` parameter and consumes after the call, which
+    /// upstream passes by address: the body's places compose with it, and
+    /// the caller's consumption of it is the body's end of the parameter.
+    Part { place: MirPlace, argument: Reg },
     /// A constructor's `out self`: a fresh slot the body initializes and
     /// the call's result moves out of.
     Out,
@@ -777,7 +790,7 @@ impl<'c> Inliner<'_, 'c> {
                 if let Some(Inlinable {
                     dest,
                     mut callee,
-                    bindings,
+                    mut bindings,
                     dropped,
                     closures,
                     region_binders,
@@ -788,7 +801,13 @@ impl<'c> Inliner<'_, 'c> {
                             .iter()
                             .all(|binder| enclosing.contains(binder))
                     })
-                    && let Some(blocks) = self.inlined_blocks(callee.to_mut(), &bindings, dest)
+                    && let Some(blocks) = self
+                        .inlined_blocks(callee.to_mut(), &bindings, dest)
+                        .or_else(|| {
+                            demote_parts(&mut bindings)
+                                .then(|| self.inlined_blocks(callee.to_mut(), &bindings, dest))
+                                .flatten()
+                        })
                 {
                     self.dropped_operands |= dropped;
                     let site = CallSite { block, index, dest };
@@ -1460,13 +1479,25 @@ impl<'c> Inliner<'_, 'c> {
             _ => var + base,
         });
         let bound = |var: VarId| match bindings.get(var.checked_sub(base)? as usize)? {
-            Binding::Place(place) => Some(place),
+            Binding::Place(place) | Binding::Part { place, .. } => Some(place),
             Binding::Value(_)
             | Binding::Default { .. }
             | Binding::Out
             | Binding::Slot(_)
             | Binding::Collector { .. } => None,
         };
+        // The caller's consumption of a part-bound parameter's place after
+        // the call is the body's end of it.
+        let part_bound = |var: VarId| {
+            var.checked_sub(base)
+                .and_then(|param| bindings.get(param as usize))
+                .is_some_and(|binding| matches!(binding, Binding::Part { .. }))
+        };
+        for block in &mut blocks {
+            block
+                .instrs
+                .retain(|instruction| !matches!(instruction, MirInstr::ConsumeVar { var } if part_bound(*var)));
+        }
         copy_bound_parameters(&mut blocks, callee, &bound);
         let registers = Registers::new(self.function, callee, bindings, dest);
         for block in &mut blocks {
@@ -1631,6 +1662,16 @@ impl<'c> Inliner<'_, 'c> {
             }
         }
         function.n_regs += callee.n_regs;
+        // A part the body takes in place ends at the caller's consume of it
+        // after the call, whose marker the call's receiver load no longer
+        // feeds.
+        if bindings
+            .iter()
+            .any(|binding| matches!(binding, Binding::Part { .. }))
+            && let Some(MirInstr::ConsumePlace { marker, .. }) = after.first_mut()
+        {
+            *marker = fresh_register(function, Ty::none(), call_span.as_ref());
+        }
         for (var, name) in callee.var_names.iter().enumerate() {
             function.var_names.push(format!("{name}$inline{var_base}"));
             if let Some(ty) = callee.var_tys.get(&(var as VarId)) {
@@ -1732,7 +1773,7 @@ impl<'c> Inliner<'_, 'c> {
                 Binding::Out => caller.instrs.push(MirInstr::MarkInitialized {
                     place: MirPlace::root(var + var_base, ty),
                 }),
-                Binding::Place(_) | Binding::Slot(_) => {}
+                Binding::Place(_) | Binding::Slot(_) | Binding::Part { .. } => {}
             }
         }
         // A callable bound to a caller's closure holds it, at the closure's
@@ -1915,12 +1956,25 @@ fn argument_binding(
         return Some(Binding::Place(place.clone()));
     }
     if deinit && place.is_none() {
-        let slot = forwarded_slot(block, index, argument).or_else(|| {
-            loaded_place(block, index, argument)
-                .filter(|place| place.is_whole_root() && place.through.is_none())
-                .map(|place| place.root)
+        if let Some(slot) = forwarded_slot(block, index, argument) {
+            return Some(Binding::Slot(slot));
+        }
+        let loaded = loaded_place(block, index, argument).filter(|place| place.through.is_none());
+        return Some(match loaded {
+            Some(place) if place.is_whole_root() => Binding::Slot(place.root),
+            Some(place)
+                if !callee.raises
+                    && is_owned_part(&place)
+                    && matches!(
+                        block.instrs.get(index + 1),
+                        Some(MirInstr::ConsumePlace { place: consumed, marker })
+                            if *marker == argument && same_part(consumed, &place)
+                    ) =>
+            {
+                Binding::Part { place, argument }
+            }
+            _ => Binding::Value(argument),
         });
-        return Some(slot.map_or(Binding::Value(argument), Binding::Slot));
     }
     if reference {
         return None;
@@ -1976,6 +2030,44 @@ fn default_binding(
     let dropped =
         !callee.owned_params.get(param).copied().unwrap_or(false) && !has_no_destructor(ty);
     Some(Binding::Default { value, dropped })
+}
+
+/// Turn every part-bound parameter of `bindings` into a fresh slot its
+/// argument initializes, for a body that names the parameter other than as
+/// a place's root; returns whether one was.
+fn demote_parts(bindings: &mut [Binding]) -> bool {
+    let mut demoted = false;
+    for binding in bindings.iter_mut() {
+        if let Binding::Part { argument, .. } = *binding {
+            *binding = Binding::Value(argument);
+            demoted = true;
+        }
+    }
+    demoted
+}
+
+/// Whether the owned parts `left` and `right` are the same part of the
+/// same slot.
+fn same_part(left: &MirPlace, right: &MirPlace) -> bool {
+    left.root == right.root
+        && left.through == right.through
+        && left.proj.len() == right.proj.len()
+        && left.proj.iter().zip(&right.proj).all(|steps| match steps {
+            (Proj::Field(left), Proj::Field(right)) => left == right,
+            (Proj::ConstIndex(left), Proj::ConstIndex(right)) => left == right,
+            _ => false,
+        })
+}
+
+/// Whether `place` names an owned part of its root slot directly: fields
+/// and tuple elements, at least one, and no reference on the way.
+fn is_owned_part(place: &MirPlace) -> bool {
+    place.through.is_none()
+        && !place.proj.is_empty()
+        && place
+            .proj
+            .iter()
+            .all(|step| matches!(step, Proj::Field(_) | Proj::ConstIndex(_)))
 }
 
 /// The slot the register `argument` forwards in `block` before the call at
@@ -2107,7 +2199,7 @@ fn raise_held(
     let fresh = |param: usize, binding: &Binding| match binding {
         Binding::Value(_) | Binding::Default { .. } => true,
         Binding::Collector { .. } => owned(param),
-        Binding::Place(_) | Binding::Slot(_) | Binding::Out => false,
+        Binding::Place(_) | Binding::Slot(_) | Binding::Part { .. } | Binding::Out => false,
     };
     let mut entry = vec![false; callee.n_vars];
     for (param, binding) in bindings.iter().enumerate() {

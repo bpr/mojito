@@ -2005,7 +2005,7 @@ impl VmBackend {
                 *nav_mut(vars, regs, place)? = Value::Moved;
             }
             MirInstr::ConsumePlace { place, .. } => {
-                let value = std::mem::replace(nav_mut(vars, regs, place)?, Value::Moved);
+                let value = self.take_place(frame_id, place, regs, vars)?;
                 let value = match &place.ty {
                     Some(ty) => dispatch::erased_instance_value(prog, value, ty),
                     None => value,
@@ -2036,14 +2036,7 @@ impl VmBackend {
                 }
             }
             MirInstr::DropPlace { place, destructor } => {
-                let reference = self.place_handle(frame_id, place, regs, vars)?;
-                let value = if let Some(reference) = reference {
-                    let old = self.read_reference(&reference, frame_id, vars)?;
-                    self.write_reference(&reference, frame_id, vars, Value::Moved)?;
-                    old
-                } else {
-                    std::mem::replace(nav_mut(vars, regs, place)?, Value::Moved)
-                };
+                let value = self.take_place(frame_id, place, regs, vars)?;
                 self.drop_named(prog, value, place.ty.as_ref(), destructor.as_deref())?;
             }
             MirInstr::Unsupported(what) => {

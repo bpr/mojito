@@ -457,16 +457,18 @@ impl FnLowering<'_> {
             // The marked place holds no value from here: its presence flag
             // clears, as a move out of it would clear it.
             MirInstr::MarkDestroyed { place } => {
-                self.clear_presence(ctx, place);
+                self.end_presence(ctx, place);
                 Ok(())
             }
-            MirInstr::ConsumePlace { marker, .. } => {
+            MirInstr::ConsumePlace { place, marker } => {
                 // Consumption skips the whole-value destructor and destroys
-                // only residual fields. MIR emits it only after a named
-                // destructor call on the same place, whose aggregate receiver
-                // passes by address: the callee's `deinit self` exit consume
-                // already destroyed the residual fields in place, and the
-                // call cleared the caller's presence flag for the place.
+                // only residual fields. MIR emits it after a named
+                // destructor's call on the same place, whose aggregate
+                // receiver passes by address, or after the body of one
+                // inlined there: the `deinit self` exit consume already
+                // destroyed the residual fields in place, so the place holds
+                // no value from here and its presence flag clears.
+                self.end_presence(ctx, place);
                 self.erased.insert(marker.0);
                 Ok(())
             }

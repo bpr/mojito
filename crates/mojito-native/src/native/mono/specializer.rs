@@ -1103,7 +1103,8 @@ impl<'a> Specializer<'a> {
         }
         self.discover_structs(&key.template, &function)?;
         self.name_lifecycle_calls(&key.template, &mut function)?;
-        mojito_mir::mir::lower_whole_drops(&mut function);
+        // An instance's destructor names only a member available in it.
+        mojito_mir::mir::lower_whole_drops(&mut function, &|_| true);
         mojito_mir::mir::lower_copies_and_moves(&key.template, &mut function, &|instance| {
             self.template_declaration(instance)
         });

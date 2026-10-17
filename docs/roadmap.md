@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1106**.
+Next free ID: **R1107**.
 
 ## Ordered Work
 
@@ -163,28 +163,22 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1081 `inline-parametric` keeps destructor calls that a drop
-  does not spell as a call**
+- [ ] **R1106 `inline-parametric` copies a field into a fresh slot for a
+  raising `deinit` callee, where upstream passes the field's address**
 
-  A `deinit` parameter (`x^.finish()`), a drop inside a region of a slot
-  stored before it (`var t = String("x")` dropped in a later `try`), and
-  the `drop.place` of a field inside an inlined destructor keep their
-  `nodebug` destructors as calls, where the pin inlines all three.
-  - Since R1041 a struct with droppable fields has a synthesized `nodebug`
-    destructor, whose call at a whole slot's drop inlines into a
-    `drop.place` per field naming the field's destructor; the inliner
-    binds a `deinit` parameter only to a slot the argument forwards
-    (`forwarded_slot`), so a `nodebug` field destructor stays a call at a
-    `drop.place`, and an explicit `x^.finish()`, whose receiver is a
-    loaded place consumed after the call, keeps its call too.
-  - Bind a `deinit` parameter to a fresh slot a non-forwarded argument
-    moves into, keeping the callee's consumption of it, and bind one to
-    the place an explicit destroy call loads and consumes.
-  - Lower a named `drop.place` of a whole field to the call of its
-    destructor, as `mir::lower_whole_drops` lowers a `drop.var`.
-  - Done when each probe inlines, `S[k]` holding a `D[k]` field drops
-    through `D`'s inlined destructor, and the differential is clean.
-  - Depends on R1041, R1078.
+  An explicit `self.d^.finish()` whose `nodebug` `finish` raises inlines
+  with `self.d` copied into a fresh `self$inline` slot, where a
+  non-raising one binds `self.d` itself (`Binding::Part`).
+  - The caller's `consume.place` after the call ends a part-bound body's
+    receiver, and a raise edge skips it.
+  - A raise-edge cleanup list names only whole slots (`CleanupDrop` has a
+    `var`, no place), so it cannot end the part the body left on that edge.
+  - Probe: `S.close(deinit self) raises` calling `self.d^.finish()` over
+    `D.finish(deinit self) raises`, `@always_inline("nodebug")`; it prints
+    `finish 4`, `done` on the pin and the VM, and `S.close` holds a
+    `var.store` of the loaded `self.d`.
+  - Found while landing R1081 (2026-10-17).
+  - Depends on nothing.
   - Model: Opus, Planned.
 
 - [ ] **R1096 `conforms_to(T, Trait)` over a concrete binding keeps its

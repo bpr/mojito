@@ -760,6 +760,29 @@ impl VmBackend {
         }
         Self::reference_to_place_parts(frame_id, registers, variables, place).map(Some)
     }
+
+    /// Take the value `place` holds, leaving it moved: through the handle
+    /// the place designates ([`Self::place_handle`]), a `mut` receiver's
+    /// or parameter's field included, or in frame storage.
+    pub(super) fn take_place(
+        &mut self,
+        frame_id: FrameId,
+        place: &MirPlace,
+        registers: &[Value],
+        variables: &mut [Value],
+    ) -> Result<Value, RuntimeError> {
+        match self.place_handle(frame_id, place, registers, variables)? {
+            Some(reference) => {
+                let old = self.read_reference(&reference, frame_id, variables)?;
+                self.write_reference(&reference, frame_id, variables, Value::Moved)?;
+                Ok(old)
+            }
+            None => Ok(std::mem::replace(
+                nav_mut(variables, registers, place)?,
+                Value::Moved,
+            )),
+        }
+    }
 }
 
 /// The element a place rooted at a slot holding the heap pointer `pointer`

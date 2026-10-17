@@ -263,6 +263,7 @@ pub fn lower_body(
         erased: HashSet::new(),
         print_sink: None,
         partially_moved: HashSet::new(),
+        ended_inside: HashSet::new(),
         leaf_flags: HashMap::new(),
         aliased_load_regs: collect_aliased_load_regs(func, env.declarations, env.mir_declarations),
         loaded_places: collect_loaded_places(&func.blocks),
@@ -472,6 +473,12 @@ struct FnLowering<'a> {
     /// variable must skip the moved parts (the VM tombstones them); when the
     /// drop would emit destructor work, lowering rejects instead of guessing.
     partially_moved: HashSet<u32>,
+    /// Flagged top-level leaves a part inside of which an end (a
+    /// `ConsumePlace` or `MarkDestroyed`) left missing, until the leaf
+    /// itself ends: an inlined destructor's body ending its receiver's
+    /// fields in the caller's place, before the caller consumes the place.
+    /// A variable with one is partially moved.
+    ended_inside: HashSet<(u32, usize)>,
     /// Per-variable `i1` presence flags for top-level leaves (struct fields
     /// or pack elements) that a depth-1 `MovePlace` moves out somewhere in
     /// the body — the VM's `Value::Moved` tombstones. Drops and consumption

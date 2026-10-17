@@ -108,7 +108,9 @@ pub fn collect_projected_move_places<'m>(
         for instr in &block.instrs {
             match instr {
                 MirInstr::MovePlace { place, .. } if !place.proj.is_empty() => out.push(place),
-                MirInstr::DropPlace { place, .. } | MirInstr::MarkDestroyed { place } => {
+                MirInstr::DropPlace { place, .. }
+                | MirInstr::ConsumePlace { place, .. }
+                | MirInstr::MarkDestroyed { place } => {
                     out.push(place);
                 }
                 MirInstr::MethodCall {

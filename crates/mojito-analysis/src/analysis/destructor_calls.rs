@@ -12,9 +12,10 @@
 //! of a type the member table names no `__deinit__` for, a symbolic one
 //! included, keeps `None`: the elaborator names an instance's destructor
 //! once its type is concrete. A named drop whose slot holds a whole value
-//! on every path to it then becomes the call upstream leaves
-//! (`mir::lower_whole_drops`), the elaborator doing the same once it has
-//! named an instance's.
+//! on every path to it, or a named field drop whose slot holds the field
+//! whole, then becomes the call upstream leaves (`mir::lower_whole_drops`),
+//! the elaborator doing the same once it has named an instance's; one whose
+//! destructor is available only under a `where` clause waits for that.
 
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
@@ -30,7 +31,11 @@ use std::collections::HashMap;
 pub fn name_destructors(function: &mut MirFunction, declarations: &MirDeclarations) {
     name_in_blocks(&mut function.blocks, &function.var_tys, declarations);
     name_teardown_destructors(function, declarations);
-    lower_whole_drops(function);
+    lower_whole_drops(function, &|destructor| {
+        declarations
+            .function(destructor)
+            .is_none_or(|declaration| declaration.availability.is_empty())
+    });
 }
 
 fn name_in_blocks(

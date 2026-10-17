@@ -26,7 +26,7 @@ the shapes stop being entries at all.
 | A call of a nested `def` is `closure.make` + `call.indirect`, and passes recover the direct call by dataflow | Direct call of the lifted generator, captures passed as arguments | R1037 | R1036 |
 | Evaluated defaults are filled late, in MIR, per call shape (`mir::evaluate_omitted_defaults`), and every other shape is left to the callee | Call binding writes every omitted argument into the call | landed 2026-10-16 (R1077, R1060; residues R1083, R1084) | R1053–R1059, R1061–R1063, R960, R961 |
 | Drops and copies are their own instructions, and the backends recurse into fields by type | A synthesized `__del__`/copy constructor, called by a plain call | R1041, R1044, R1045, R1042, R1043, R1046 (existing chain) | — |
-| `inline-parametric` substitutes some binder kinds and refuses the rest, one entry per refusal | One substitution over every parameter kind | R1078, R1079, R1080, R1081 | R945, R947–R949, R951, R952, R954, R955, R957–R959, R962–R968, R1067, R1068 |
+| `inline-parametric` substitutes some binder kinds and refuses the rest, one entry per refusal | One substitution over every parameter kind | landed 2026-10-17 (R1078, R1079, R1080, R1081; residues R1096–R1106) | R945, R947–R949, R951, R952, R954, R955, R957–R959, R962–R968, R1067, R1068 |
 
 The first three are prerequisites of the fourth. With nested calls direct,
 defaults explicit at the call, and drops and copies as calls, most of the

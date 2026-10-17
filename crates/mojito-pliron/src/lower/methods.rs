@@ -294,17 +294,8 @@ impl FnLowering<'_> {
             let place = recv_place.expect("aliased deinit receiver has a place");
             if place.proj.is_empty() {
                 self.set_drop_flag(ctx, place.root, false);
-            } else if let Some(flag) = self.leaf_position(place).and_then(|position| {
-                self.leaf_flags
-                    .get(&place.root)
-                    .and_then(|leaves| leaves.get(&position))
-                    .copied()
-            }) {
-                let absent = self.bool_constant(ctx, false);
-                let store = StoreOp::new(ctx, absent, flag);
-                self.append(ctx, store.get_operation(), None);
             } else {
-                self.partially_moved.insert(place.root);
+                self.end_presence(ctx, place);
             }
         }
         self.emit_bound_call(ctx, dest, resolved, lowered)?;

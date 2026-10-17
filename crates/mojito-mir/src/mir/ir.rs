@@ -2385,7 +2385,9 @@ pub enum MirInstr {
         var: VarId,
     },
     /// Consume one projected subobject after its named explicit destructor
-    /// succeeds, leaving the rest of the aggregate available.
+    /// succeeds, or after that destructor's body inlined on the place,
+    /// leaving the rest of the aggregate available. `marker` is a result
+    /// of no value.
     ConsumePlace {
         place: MirPlace,
         marker: Reg,
@@ -2413,6 +2415,9 @@ pub enum MirInstr {
     /// before a `Store` that overwrites an initialized droppable sub-place,
     /// so the replaced value is destroyed at the assignment. `destructor`
     /// names the place value's own `__deinit__`, as on [`MirInstr::DropVar`].
+    /// One whose root holds the place whole on every path to it is lowered
+    /// to the call of its destructor on the place (`lower_whole_drops`), so
+    /// a `drop.place` stays only where that state is not definite.
     DropPlace {
         place: MirPlace,
         #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]

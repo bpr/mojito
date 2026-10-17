@@ -78,7 +78,7 @@ impl<'a> FnLowering<'a> {
                 if !self.needs_named_drop(&ty, destructor) {
                     return Ok(());
                 }
-                if self.partially_moved.contains(&var) {
+                if self.is_partially_moved(var) {
                     return Err(self.unsupported(
                         format!(
                             "drop of partially-moved variable `{}`",
@@ -185,7 +185,7 @@ impl<'a> FnLowering<'a> {
                         &ty.kind(),
                         TyKind::Struct(..) | TyKind::Tuple(..) | TyKind::RuntimePack(..)
                     ) || (matches!(&ty.kind(), TyKind::Struct(..))
-                        && self.partially_moved.contains(&var))
+                        && self.is_partially_moved(var))
                     {
                         return Err(self.unsupported(
                             "variable consumption with droppable fields".into(),
@@ -464,10 +464,11 @@ impl<'a> FnLowering<'a> {
             self.leaf_flags
                 .get(&place.root)
                 .and_then(|leaves| leaves.get(&position))
-                .copied()
+                .map(|&flag| (position, flag))
         });
         match flagged {
-            Some(flag) => {
+            Some((position, flag)) => {
+                self.ended_inside.remove(&(place.root, position));
                 let absent = self.bool_constant(ctx, false);
                 let store = StoreOp::new(ctx, absent, flag);
                 self.append(ctx, store.get_operation(), None);
@@ -476,6 +477,40 @@ impl<'a> FnLowering<'a> {
                 self.partially_moved.insert(place.root);
             }
         }
+    }
+
+    /// Record that the end `place`, a `ConsumePlace` or `MarkDestroyed`,
+    /// leaves its part missing: a part inside a flagged top-level leaf is
+    /// missing until that leaf ends, which subsumes it; any other clears
+    /// presence as a move out does.
+    pub(super) fn end_presence(&mut self, ctx: &mut Context, place: &MirPlace) {
+        let leaf = MirPlace {
+            proj: place.proj.iter().take(1).cloned().collect(),
+            projection_tys: place.projection_tys.iter().take(1).cloned().collect(),
+            ty: place.projection_tys.first().cloned(),
+            ..place.clone()
+        };
+        let flagged = (place.proj.len() > 1)
+            .then(|| self.leaf_position(&leaf))
+            .flatten()
+            .filter(|position| {
+                self.leaf_flags
+                    .get(&place.root)
+                    .is_some_and(|leaves| leaves.contains_key(position))
+            });
+        match flagged {
+            Some(position) => {
+                self.ended_inside.insert((place.root, position));
+            }
+            None => self.clear_presence(ctx, place),
+        }
+    }
+
+    /// Whether some part of the variable `var` is missing in a way its
+    /// presence flags do not track.
+    pub(super) fn is_partially_moved(&self, var: u32) -> bool {
+        self.partially_moved.contains(&var)
+            || self.ended_inside.iter().any(|(root, _)| *root == var)
     }
 
     /// Emit the VM's `drop_value` over storage no instruction names a

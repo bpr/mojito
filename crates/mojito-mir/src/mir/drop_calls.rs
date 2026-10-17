@@ -1,19 +1,25 @@
 //! Drops lowered to calls of their destructor.
 //!
 //! Upstream's destructor insertion leaves, at each point a value dies, a
-//! plain call of its type's `__del__` consuming the storage. A `drop.var`
-//! names that destructor but stays a drop, which both backends run under a
-//! runtime test of the slot's state: drop elaboration places a drop by
-//! liveness, so on some path to it the slot may be empty or partly moved.
-//! A definite-initialization state per slot, which follows a `try`'s
-//! regions as upstream's `CheckLifetimes` walks them, decides where the
-//! state is definite. Where the slot holds a whole value on every path to
-//! the drop, the drop is the call: a forwarding use of the slot, which ends
-//! it and hands its storage to the callee as Mojo's owned argument
+//! plain call of its type's `__del__` consuming the storage, a field's
+//! included, which it calls on the field's address. A `drop.var` or
+//! `drop.place` names that destructor but stays a drop, which both
+//! backends run under a runtime test of the slot's state: drop elaboration
+//! places a drop by liveness, so on some path to it the slot may be empty
+//! or partly moved. A definite-initialization state per slot, which
+//! follows a `try`'s regions as upstream's `CheckLifetimes` walks them, its
+//! handler entered from the body's raise points, decides where the state
+//! is definite. Where the slot holds a whole value on every path to a
+//! `drop.var`, the drop is the call: a forwarding use of the slot, which
+//! ends it and hands its storage to the callee as Mojo's owned argument
 //! convention does, and a call of the named destructor on it as the
 //! `deinit self` receiver, which is what an explicit `x^.finish()` lowers
-//! to. Where it holds no value on every path, nothing dies there and the
-//! drop goes. Every other drop stays a drop.
+//! to. Where it holds the owned part a `drop.place` names whole, the drop
+//! is a load of the part, the call on it with the part as its receiver's
+//! place, and a consume of the part, which is what an explicit
+//! `x.f^.finish()` lowers to. Where the slot holds no value on every path
+//! to a `drop.var`, nothing dies there and the drop goes. Every other drop
+//! stays a drop.
 
 use super::{
     MirBlock, MirFunction, MirInstr, MirPlace, MirTerm, Proj, UseMode, VarId, cleanup_drops,
@@ -24,24 +30,41 @@ use mojito_common::token::SourceSpan;
 use mojito_types::types::TyKind;
 use std::collections::HashMap;
 
-/// Lower every named `drop.var` of `function` whose slot holds a whole
-/// value on every path to it to a call of the destructor, and erase every
-/// one whose slot holds no value on every path to it.
+/// Lower every named drop of `function` whose slot holds the dying value
+/// whole on every path to it to a call of the destructor.
 ///
-/// A lowered drop becomes a forwarding use of the slot and a call of the
-/// named destructor on it, in the function's regions too. An owned
-/// parameter holds a whole value as the function is entered; every other
-/// slot holds one once a whole store fills it, or a store fills the last
-/// part a partial move or destruction left missing.
-pub fn lower_whole_drops(function: &mut MirFunction) {
+/// That is a `drop.var` whose slot holds a whole value, or a `drop.place`
+/// of an owned part its slot holds whole; a `drop.var` whose slot holds no
+/// value on every path to it is erased. A destructor `unconditional` does
+/// not hold of, one available only where a `where` clause holds, stays a
+/// drop for the elaborator to name per instance.
+///
+/// A lowered drop of a slot becomes a forwarding use of the slot and a
+/// call of the named destructor on it; one of a part, a load of the part,
+/// the call on it with the part as its receiver's place, and a consume of
+/// the part, which is what an explicit `x.f^.finish()` lowers to; in the
+/// function's regions too. An owned, `deinit`, `mut`, or `ref` parameter
+/// holds a whole value as the function is entered, a reference's referent
+/// being whole whenever the callee runs; every other slot holds one once a
+/// whole store fills it, or a store fills the last part a partial move or
+/// destruction left missing.
+pub fn lower_whole_drops(function: &mut MirFunction, unconditional: &dyn Fn(&str) -> bool) {
     let mut blocks = std::mem::take(&mut function.blocks);
     let owned: Vec<bool> = (0..function.n_vars)
         .map(|var| {
-            var < function.n_params && function.owned_params.get(var).copied().unwrap_or(false)
+            var < function.n_params
+                && [
+                    &function.owned_params,
+                    &function.deinit_params,
+                    &function.ref_params,
+                ]
+                .iter()
+                .any(|params| params.get(var).copied().unwrap_or(false))
         })
         .collect();
     lower_list(
         &mut blocks,
+        unconditional,
         &|var| {
             Some(if owned.get(var as usize).copied().unwrap_or(false) {
                 Held::Whole
@@ -56,17 +79,19 @@ pub fn lower_whole_drops(function: &mut MirFunction) {
 
 /// Lower the whole drops of the block list `list`, whose slots hold what
 /// `entry` says as `list` is entered, and of its regions.
-fn lower_list(list: &mut [MirBlock], entry: &dyn Fn(VarId) -> State, function: &mut MirFunction) {
+fn lower_list(
+    list: &mut [MirBlock],
+    unconditional: &dyn Fn(&str) -> bool,
+    entry: &dyn Fn(VarId) -> State,
+    function: &mut MirFunction,
+) {
     let blocks: &[MirBlock] = list;
     let mut slots: Vec<VarId> = blocks
         .iter()
         .flat_map(|block| &block.instrs)
-        .flat_map(|instruction| match instruction {
-            MirInstr::DropVar {
-                var,
-                destructor: Some(_),
-            } => vec![*var],
-            _ => named_drop_slots(instruction),
+        .flat_map(|instruction| match named_drop_root(instruction) {
+            Some(var) => vec![var],
+            None => named_drop_slots(instruction),
         })
         .collect();
     slots.sort_unstable();
@@ -95,20 +120,37 @@ fn lower_list(list: &mut [MirBlock], entry: &dyn Fn(VarId) -> State, function: &
                     MirInstr::DropVar {
                         var,
                         destructor: Some(destructor),
-                    } => Some((block, index, *var, destructor.clone())),
+                    } => Some((block, index, *var, None, destructor.clone())),
+                    MirInstr::DropPlace {
+                        place,
+                        destructor: Some(destructor),
+                    } => owned_part(place).map(|path| {
+                        (
+                            block,
+                            index,
+                            place.root,
+                            Some((place.clone(), path)),
+                            destructor.clone(),
+                        )
+                    }),
                     _ => None,
                 })
         })
-        .filter_map(|(block, index, var, destructor)| {
-            held_before(block, index, var)
-                .filter(|held| matches!(held, Held::Whole | Held::Empty))
-                .map(|held| DropSite {
-                    block,
-                    index,
-                    var,
-                    destructor,
-                    held,
-                })
+        .filter(|(.., destructor)| unconditional(destructor))
+        .filter_map(|(block, index, var, part, destructor)| {
+            let held = held_before(block, index, var)?;
+            let definite = match &part {
+                None => matches!(held, Held::Whole | Held::Empty),
+                Some((_, path)) => holds_part(&held, path),
+            };
+            definite.then(|| DropSite {
+                block,
+                index,
+                var,
+                place: part.map(|(place, _)| place),
+                destructor,
+                held,
+            })
         })
         .collect();
     let mut region_entries = Vec::new();
@@ -133,7 +175,12 @@ fn lower_list(list: &mut [MirBlock], entry: &dyn Fn(VarId) -> State, function: &
             .into_iter()
             .zip(entries)
         {
-            lower_list(region, &|var| entry.get(&var).cloned().flatten(), function);
+            lower_list(
+                region,
+                unconditional,
+                &|var| entry.get(&var).cloned().flatten(),
+                function,
+            );
         }
     }
     for site in sites.iter().rev() {
@@ -141,50 +188,67 @@ fn lower_list(list: &mut [MirBlock], entry: &dyn Fn(VarId) -> State, function: &
             block,
             index,
             var,
+            ref place,
             ref destructor,
             ref held,
         } = *site;
-        if *held == Held::Empty {
+        if place.is_none() && *held == Held::Empty {
             list[block].instrs.remove(index);
             continue;
         }
         let span = death_span(function, var);
-        let Some(ty) = function.var_tys.get(&var).cloned() else {
+        let ty = match place {
+            Some(place) => place.ty.clone(),
+            None => function.var_tys.get(&var).cloned(),
+        };
+        let Some(ty) = ty else {
             continue;
         };
         let recv = fresh_register(function, ty, span.as_ref());
         let dest = fresh_register(function, TyKind::None.into(), span.as_ref());
-        list[block].instrs.splice(
-            index..=index,
-            [
+        let call = MirInstr::MethodCall {
+            dest,
+            recv,
+            method: "__deinit__".to_string(),
+            resolved: Some(destructor.clone()),
+            raises: None,
+            reference_result: None,
+            result_adapter: None,
+            args: Vec::new(),
+            kwargs: Vec::new(),
+            recv_place: place.clone().map(Box::new),
+            recv_writes: true,
+            arg_places: Vec::new(),
+            kwarg_places: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs: Vec::new(),
+            param_decls: Vec::new(),
+            instantiated_args: Vec::new(),
+            spread: None,
+        };
+        let lowered = match place {
+            Some(place) => vec![
+                MirInstr::LoadPlace {
+                    dest: recv,
+                    place: place.clone(),
+                },
+                call,
+                MirInstr::ConsumePlace {
+                    place: place.clone(),
+                    marker: recv,
+                },
+            ],
+            None => vec![
                 MirInstr::UseVar {
                     dest: recv,
                     var,
                     mode: UseMode::Forward,
                     constructor: None,
                 },
-                MirInstr::MethodCall {
-                    dest,
-                    recv,
-                    method: "__deinit__".to_string(),
-                    resolved: Some(destructor.clone()),
-                    raises: None,
-                    reference_result: None,
-                    result_adapter: None,
-                    args: Vec::new(),
-                    kwargs: Vec::new(),
-                    recv_place: None,
-                    recv_writes: true,
-                    arg_places: Vec::new(),
-                    kwarg_places: Vec::new(),
-                    capture_accesses: Vec::new(),
-                    param_arg_regs: Vec::new(),
-                    param_decls: Vec::new(),
-                    instantiated_args: Vec::new(),
-                    spread: None,
-                },
+                call,
             ],
-        );
+        };
+        list[block].instrs.splice(index..=index, lowered);
     }
 }
 
@@ -214,22 +278,26 @@ enum Part {
     Element(usize),
 }
 
-/// A named `drop.var` of a block list whose slot's state is definite: the
-/// instruction `index` of `block`, ending `var` through `destructor`.
+/// A named drop of a block list whose slot's state is definite: the
+/// instruction `index` of `block`, ending `var`, or the owned part `place`
+/// of it, through `destructor`.
 struct DropSite {
     block: usize,
     index: usize,
     var: VarId,
+    place: Option<MirPlace>,
     destructor: String,
     held: Held,
 }
 
 /// The states one block list leaves a slot in: before each instruction of
 /// each block and after its last, at the points the list completes (a
-/// region's `yield`), and joined over every point, its regions included.
+/// region's `yield`), at the points it raises from, and joined over every
+/// point, its regions included.
 struct Flow {
     before: Vec<Vec<State>>,
     yielded: State,
+    raised: State,
     anywhere: State,
 }
 
@@ -252,7 +320,8 @@ fn names_slot(instruction: &MirInstr, var: VarId) -> bool {
             .any(|instruction| names_slot(instruction, var))
 }
 
-/// The slots the named drops inside `instruction`'s regions end.
+/// The slots the named drops inside `instruction`'s regions end, whole or
+/// in an owned part.
 fn named_drop_slots(instruction: &MirInstr) -> Vec<VarId> {
     let mut slots = Vec::new();
     for instruction in instruction_regions(instruction)
@@ -260,18 +329,39 @@ fn named_drop_slots(instruction: &MirInstr) -> Vec<VarId> {
         .flatten()
         .flat_map(|block| &block.instrs)
     {
-        if let MirInstr::DropVar {
-            var,
-            destructor: Some(_),
-        } = instruction
-        {
-            slots.push(*var);
-        }
+        slots.extend(named_drop_root(instruction));
         slots.extend(named_drop_slots(instruction));
     }
     slots.sort_unstable();
     slots.dedup();
     slots
+}
+
+/// The slot a named drop ends whole, or in the owned part it names.
+fn named_drop_root(instruction: &MirInstr) -> Option<VarId> {
+    match instruction {
+        MirInstr::DropVar {
+            var,
+            destructor: Some(_),
+        } => Some(*var),
+        MirInstr::DropPlace {
+            place,
+            destructor: Some(_),
+        } if owned_part(place).is_some() => Some(place.root),
+        _ => None,
+    }
+}
+
+/// Whether a slot in `held` holds the owned part at `path` whole: the slot
+/// is whole, or no missing part overlaps it.
+fn holds_part(held: &Held, path: &[Part]) -> bool {
+    match held {
+        Held::Whole => true,
+        Held::Missing(paths) => !paths
+            .iter()
+            .any(|missing| missing.starts_with(path) || path.starts_with(missing)),
+        Held::Empty | Held::Partial => false,
+    }
 }
 
 /// Where the slot `var` dies: the location of its last read, which a drop
@@ -295,6 +385,7 @@ fn flow(list: &[MirBlock], entry: State, var: VarId) -> Flow {
         return Flow {
             before: Vec::new(),
             yielded: entry.clone(),
+            raised: None,
             anywhere: entry,
         };
     };
@@ -304,7 +395,7 @@ fn flow(list: &[MirBlock], entry: State, var: VarId) -> Flow {
         if inputs[current].is_none() {
             continue;
         }
-        let (states, _) = through(&list[current], inputs[current].clone(), var);
+        let (states, ..) = through(&list[current], inputs[current].clone(), var);
         let out = states.last().cloned().flatten();
         let escapes = list[current]
             .instrs
@@ -326,9 +417,11 @@ fn flow(list: &[MirBlock], entry: State, var: VarId) -> Flow {
     }
     let mut before = Vec::with_capacity(list.len());
     let mut yielded = None;
+    let mut raised = None;
     let mut anywhere = None;
     for (block, input) in list.iter().zip(inputs) {
-        let (states, inside) = through(block, input, var);
+        let (states, raising, inside) = through(block, input, var);
+        raised = join(raised, raising);
         if matches!(
             block.term,
             MirTerm::TryYield | MirTerm::Yield(_) | MirTerm::ComptimeYield(_)
@@ -341,15 +434,22 @@ fn flow(list: &[MirBlock], entry: State, var: VarId) -> Flow {
     Flow {
         before,
         yielded,
+        raised,
         anywhere,
     }
 }
 
 /// The state of the slot `var` before each instruction of `block` and
-/// after its last, entered in `input`, and joined over every point of the
-/// block, its regions included.
-fn through(block: &MirBlock, input: State, var: VarId) -> (Vec<State>, State) {
+/// after its last, entered in `input`; joined over the points the block
+/// raises from; and joined over every point of the block, its regions
+/// included.
+///
+/// A raise point raises in the state before it, as the raise edge leaves
+/// it before the point's own effects. A region op raises in any state
+/// inside it once a raise point lies anywhere in it.
+fn through(block: &MirBlock, input: State, var: VarId) -> (Vec<State>, State, State) {
     let mut anywhere = input.clone();
+    let mut raised = None;
     let mut states = vec![input];
     for instruction in &block.instrs {
         let state = states.last().cloned().flatten();
@@ -357,21 +457,37 @@ fn through(block: &MirBlock, input: State, var: VarId) -> (Vec<State>, State) {
             None => (None, None),
             Some(_) if !instruction_regions(instruction).is_empty() => {
                 let region = region_flow(instruction, state, var);
+                if raises_inside(instruction) {
+                    raised = join(raised, region.anywhere.clone());
+                }
                 (region.after, region.anywhere)
+            }
+            Some(_) if instruction.is_raise_point() => {
+                raised = join(raised, state.clone());
+                (state.map(|held| held_after(held, instruction, var)), None)
             }
             Some(held) => (Some(held_after(held, instruction, var)), None),
         };
         anywhere = join(join(anywhere, inside), after.clone());
         states.push(after);
     }
-    (states, anywhere)
+    (states, raised, anywhere)
+}
+
+/// Whether a raise point lies anywhere in the regions of `instruction`.
+fn raises_inside(instruction: &MirInstr) -> bool {
+    instruction_regions(instruction)
+        .into_iter()
+        .flatten()
+        .flat_map(|block| &block.instrs)
+        .any(|instruction| instruction.is_raise_point() || raises_inside(instruction))
 }
 
 /// The state of the slot `var` through the region op `instruction`,
 /// entered in `state`.
 ///
-/// A `try`'s body is entered as the op is; its handler as the body may
-/// raise, through the raise edge's cleanup; its `else` as the body
+/// A `try`'s body is entered as the op is; its handler as the body's raise
+/// points leave it, through the raise edge's cleanup; its `else` as the body
 /// completes; its `finally` on every way out of the others. The op
 /// completes as its `else`, or its body without one, and its handler
 /// complete, through the `finally`. Every other region op is lowered to
@@ -402,9 +518,9 @@ fn region_flow(instruction: &MirInstr, state: State, var: VarId) -> RegionFlow {
     };
     let body = flow(body, state.clone(), var);
     let raised = if cleanup_drops(cleanup, var) {
-        body.anywhere.as_ref().map(|_| Held::Partial)
+        body.raised.as_ref().map(|_| Held::Partial)
     } else {
-        body.anywhere.clone()
+        body.raised.clone()
     };
     let mut entries = vec![state];
     let mut anywhere = join(body.anywhere.clone(), raised.clone());
@@ -453,7 +569,8 @@ fn region_flow(instruction: &MirInstr, state: State, var: VarId) -> RegionFlow {
 /// drop, an end, a move of the whole, a consuming `__iter__`, or a mark of
 /// it destroyed empties it;
 /// a move out of an owned part, a destruction of one, or an end of one
-/// marks that part missing, and a store into it, or a mark of it
+/// marks that part missing, an end of one subsuming the parts inside it
+/// already missing, and a store into it, or a mark of it
 /// initialized, fills it again; a read, a borrow, a store into a part
 /// present, or an advance of the iterator keeps the state; anything else
 /// naming the slot, or naming it empty, leaves it partial; a lifetime
@@ -503,13 +620,15 @@ fn held_after(held: Held, instruction: &MirInstr, var: VarId) -> Held {
                 Held::Partial
             }
         }
-        MirInstr::MovePlace { place, .. }
-        | MirInstr::DropPlace { place, .. }
-        | MirInstr::ConsumePlace { place, .. }
-        | MirInstr::MarkDestroyed { place }
+        MirInstr::MovePlace { place, .. } | MirInstr::DropPlace { place, .. }
             if place.root == var =>
         {
             owned_part(place).map_or(Held::Partial, |path| without(held, path))
+        }
+        MirInstr::ConsumePlace { place, .. } | MirInstr::MarkDestroyed { place }
+            if place.root == var =>
+        {
+            owned_part(place).map_or(Held::Partial, |path| ended(held, path))
         }
         MirInstr::MarkInitialized { place } | MirInstr::Store { place, .. }
             if place.root == var =>
@@ -585,6 +704,19 @@ fn without(held: Held, path: Vec<Part>) -> Held {
             Held::Missing(paths)
         }
         _ => Held::Partial,
+    }
+}
+
+/// `held` with the part at `path` ended without being destroyed: a part
+/// inside it already missing is subsumed, since ending the part destroys
+/// nothing.
+fn ended(held: Held, path: Vec<Part>) -> Held {
+    match held {
+        Held::Missing(mut paths) => {
+            paths.retain(|missing| !missing.starts_with(&path));
+            without(Held::Missing(paths), path)
+        }
+        held => without(held, path),
     }
 }
 
