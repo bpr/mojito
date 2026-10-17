@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1107**.
+Next free ID: **R1108**.
 
 ## Ordered Work
 
@@ -5820,6 +5820,21 @@ for it, and an entry that waits on another names it. Five divergences are
 retained on purpose and re-probed rather than fixed; they are listed in
 [`docs/non-goals.md`](non-goals.md).
 
+- [ ] **R1107 A temporary arm of a conditional expression is built in the
+  result, where the pin moves it in**
+
+  `take(M(10) if c else M(11))` prints `take 10` in Mojito, where the pin
+  prints `take 1010`: upstream initializes the arm's temporary and then runs
+  its `__moveinit__` into the conditional's owned result.
+  - A `^` arm and a place arm's copy already match the pin.
+  - Every temporary arm differs the same way: a constructor call, a
+    `.copy()`, and a method receiver (`(M(20) if c else M(21)).eat()`).
+  - Pinned by `assets/ok/conditional_expression_transfer.mojo`, ledgered in
+    `conformance/assets-mojo-output-diffs.tsv`.
+  - Found in the 2026-10-17 overnight-gate triage.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1100 A free function with an origin binder over `Span[T, o]`
   is rejected at its call**
 
@@ -7008,6 +7023,8 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Following the pin changes every caller that keeps the slice past a
     mutation of the list.
   - Probe: `conformance/probes/list_slice_borrows_the_list.mojo`.
+  - Probe: `m = ls[0:1]` over a `List[S]` whose copy constructor prints;
+    `m[0].v` copies nothing on the pin, where Mojito runs the copy.
   - Found while landing R774 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.

@@ -801,16 +801,19 @@ fn instruction_families_reprint_byte_identically() {
                     place: place(0),
                     mode: MirCaptureMode::Reference,
                     constructor: None,
+                    destructor: None,
                 },
                 MirClosureCapture {
                     place: place(1),
                     mode: MirCaptureMode::Copy,
                     constructor: None,
+                    destructor: None,
                 },
                 MirClosureCapture {
                     place: place(2),
                     mode: MirCaptureMode::Move,
                     constructor: None,
+                    destructor: None,
                 },
             ],
         },
@@ -955,6 +958,7 @@ fn instruction_families_reprint_byte_identically() {
             pointer: Reg(1),
             index: Reg(2),
             element: Ty::int(),
+            destructor: None,
         },
         MirInstr::UninitStorage {
             dest: Reg(15),
@@ -973,6 +977,7 @@ fn instruction_families_reprint_byte_identically() {
             dest: Reg(18),
             storage: Reg(15),
             element: Ty::int(),
+            destructor: None,
         },
         MirInstr::GetField {
             dest: Reg(19),
@@ -1083,6 +1088,7 @@ fn instruction_families_reprint_byte_identically() {
             index: VariantIndex::Known(0),
             value: Reg(1),
             constructor: None,
+            destructors: Vec::new(),
         },
         MirInstr::VariantTake {
             dest: Reg(31),
@@ -1095,6 +1101,7 @@ fn instruction_families_reprint_byte_identically() {
             place: place(0),
             index: VariantIndex::Known(0),
             factory: Reg(5),
+            destructors: Vec::new(),
         },
         MirInstr::VariantDeinitWith {
             dest: Reg(33),
@@ -1281,7 +1288,8 @@ fn comptime_for_iterator_terminator_reprints() {
     };
     let iterator = context.decl_ref(binder.id.clone(), "$iter", MetaTy::int());
     let initial = context.constant(CtValue::Int(3)).expect("a constant");
-    let step = |function: &str, meta| context.apply(function, &[iterator.clone()], meta);
+    let step =
+        |function: &str, meta| context.apply(function, std::slice::from_ref(&iterator), meta);
     let mut function = function_with(vec![Ty::int()], Vec::new());
     function.n_vars = 1;
     function.var_names = vec!["x".to_string()];
@@ -1591,7 +1599,7 @@ fn declaration_metadata_reprints_byte_identically() {
         enclosing: None,
         region_binders: Vec::new(),
         inline: mojito_checked::declaration::InlineLevel::Always,
-        provenance: Default::default(),
+        provenance: mojito_checked::declaration::FunctionProvenance::default(),
     };
     let other = MirFunctionDeclaration {
         lowered_name: "aaa_first".into(),
@@ -1651,7 +1659,7 @@ fn declaration_metadata_reprints_byte_identically() {
             constraints: Vec::new(),
         }],
         inline: mojito_checked::declaration::InlineLevel::NoDebug,
-        provenance: Default::default(),
+        provenance: mojito_checked::declaration::FunctionProvenance::default(),
     };
     let mut program = program_with(vec![("main".into(), function_with(Vec::new(), Vec::new()))]);
     // Deliberately unsorted: the canonical writer sorts by name, so the

@@ -899,11 +899,13 @@ fn evaluate_constant(
             let literal_ty = literal_type(arg);
             let argument = evaluate_constant(function, arg, &literal_ty, location, prelude);
             let value = fresh_register(function, ty.clone(), location);
-            // The spelled instance names the struct the constructor builds,
-            // as a static call's receiver does.
-            let receiver =
-                matches!(ty.kind(), TyKind::Struct(_, arguments) if !arguments.is_empty())
-                    .then(|| ty.clone());
+            // The constructor is owner-less: the call binds the struct's
+            // parameters to the arguments of the type it builds, as a
+            // written conversion's call does.
+            let instantiated_args = match ty.kind() {
+                TyKind::Struct(_, arguments) => arguments.clone(),
+                _ => Vec::new(),
+            };
             prelude.push(MirInstr::Call {
                 dest: value,
                 func: FuncRef::named(target),
@@ -914,8 +916,8 @@ fn evaluate_constant(
                 kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
                 param_arg_regs: Vec::new(),
-                receiver,
-                instantiated_args: Vec::new(),
+                receiver: None,
+                instantiated_args,
                 spread: None,
             });
             value

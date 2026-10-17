@@ -650,7 +650,7 @@ def main() raises:
 #[test]
 fn dead_nested_def_is_not_lowered() {
     let mir = driver_mir(
-        r#"
+        r"
 def f(c: Bool) -> Int:
     var a = 1
     if c:
@@ -662,7 +662,7 @@ def f(c: Bool) -> Int:
 
 def main():
     print(f(True))
-"#,
+",
     );
     assert!(!mir.functions.iter().any(|(name, _)| name.contains("f$g")));
     assert!(
@@ -1652,7 +1652,7 @@ fn control_flow_block_count_matches_hir() {
 
 #[test]
 fn structured_loops_build_labelled_region_ops() {
-    let source = r#"
+    let source = r"
 def main():
     var n = 0
     while n < 3:
@@ -1667,7 +1667,7 @@ def main():
         elif i == 1:
             pass
         print(i)
-"#;
+";
     let (_, mir) = checked_main_with(source, lower_cfg_structured);
     assert_eq!(mir.blocks.len(), 1, "run-time control flow adds no block");
     let mut labels = Vec::new();
@@ -2315,6 +2315,7 @@ fn default_wrapper_declaration_is_nodebug() {
 
 #[test]
 fn trait_default_declaration_takes_its_inline_level() {
+    use mojito::declaration::InlineLevel;
     let program = parse(
         "trait Tr:\n    @always_inline\n    def m(self) -> Int:\n        return 7\n\
          \n    @no_inline\n    def n(self) -> Int:\n        return 8\n\
@@ -2332,7 +2333,6 @@ fn trait_default_declaration_takes_its_inline_level() {
             .unwrap_or_else(|| panic!("declaration {name}"))
             .inline
     };
-    use mojito::declaration::InlineLevel;
     assert_eq!(inline("Tr.m"), InlineLevel::Always);
     assert_eq!(inline("Tr.n"), InlineLevel::Never);
     assert_eq!(inline("S.m"), InlineLevel::NoDebug);
@@ -2340,6 +2340,7 @@ fn trait_default_declaration_takes_its_inline_level() {
 
 #[test]
 fn inline_decorator_level_reaches_declaration() {
+    use mojito::declaration::InlineLevel;
     let program = parse(
         "@inline(.always)\ndef a() -> Int:\n    return 1\n\
          @inline(.nodebug)\ndef b() -> Int:\n    return 2\n\
@@ -2359,7 +2360,6 @@ fn inline_decorator_level_reaches_declaration() {
             .unwrap_or_else(|| panic!("declaration {name}"))
             .inline
     };
-    use mojito::declaration::InlineLevel;
     assert_eq!(inline("a"), InlineLevel::Always);
     assert_eq!(inline("b"), InlineLevel::NoDebug);
     assert_eq!(inline("c"), InlineLevel::Never);

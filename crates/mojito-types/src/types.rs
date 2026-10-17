@@ -1601,7 +1601,7 @@ pub enum ParamDecl {
 /// stores a closure payload.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum CallableDefault {
-    Symbol(String),
+    Symbol(#[serde(serialize_with = "crate::symbol_ref::serialize")] String),
     /// An earlier callable parameter of the same declaration.
     Parameter(ParamRef),
     If {

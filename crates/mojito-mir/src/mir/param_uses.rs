@@ -844,7 +844,14 @@ fn drop_arguments(
     {
         match decl {
             ParamDecl::Type { default, .. } => defaulted.visit(default),
-            ParamDecl::Value { default, .. } => defaulted.visit(default),
+            ParamDecl::Value {
+                default,
+                callable_default,
+                ..
+            } => {
+                defaulted.visit(default);
+                defaulted.visit(callable_default);
+            }
         }
     }
     let dropped: Vec<usize> = decls

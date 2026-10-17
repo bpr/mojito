@@ -108,7 +108,4 @@ def main():
     print("z", z.v)
     print("a", a.v)
 
-    print("slice")
-    var m = ls[0:1]
-    print("m", m[0].v)
     print("lists", len(ls), len(lc))

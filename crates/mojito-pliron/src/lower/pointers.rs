@@ -295,26 +295,6 @@ impl FnLowering<'_> {
         self.mark_owned_temp(dest, ty.clone())
     }
 
-    /// Clone the value at `src_ptr` into `dst`, which the caller owns, by
-    /// running `constructor`, the copy constructor the copy names; a copy
-    /// naming none, and the nominal String's, whose copy is bridged
-    /// natively, clone as [`Self::fork_value_into`].
-    pub(super) fn fork_named_into(
-        &mut self,
-        ctx: &mut Context,
-        dst: Value,
-        ty: &Ty,
-        layout: Layout,
-        src_ptr: Value,
-        constructor: Option<&str>,
-        span: Reg,
-    ) -> Result<(), PlironError> {
-        match constructor.filter(|_| !is_stdlib_string(ty)) {
-            Some(copyinit) => self.emit_constructor_call(ctx, copyinit, dst, src_ptr, span),
-            None => self.fork_value_into(ctx, dst, ty, layout, src_ptr, span),
-        }
-    }
-
     /// Clone the value at `src_ptr` into `dst` — the VM's `clone_value`: a
     /// struct with a compiled `__copyinit__` runs it, the nominal String and
     /// the built-in error duplicate their buffers, and any other aggregate is
@@ -507,7 +487,7 @@ impl FnLowering<'_> {
 
 /// Whether `ty` is the nominal String, whose copy and move constructors are
 /// bridged natively rather than compiled.
-fn is_stdlib_string(ty: &Ty) -> bool {
+pub(super) fn is_stdlib_string(ty: &Ty) -> bool {
     matches!(ty.kind(), TyKind::Struct(name, _)
         if mojito_symbol::symbol::is_stdlib_string_struct(name))
 }

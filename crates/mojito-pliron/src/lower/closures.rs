@@ -80,7 +80,7 @@ impl FnLowering<'_> {
                     } else {
                         "__moveinit__"
                     };
-                    if self.named_capture_constructor(capture, &ty).is_none()
+                    if named_capture_constructor(capture, &ty).is_none()
                         && self.chain_runs_user_lifecycle(&ty, ctor)
                     {
                         return Err(self.unsupported_reg(
@@ -166,7 +166,7 @@ impl FnLowering<'_> {
                 let layout = self.layout.layout_of(ty).map_err(|error| {
                     self.unsupported_reg(format!("closure capture layout ({error})"), dest)
                 })?;
-                let named = self.named_capture_constructor(capture, ty);
+                let named = named_capture_constructor(capture, ty);
                 if let Some(constructor) = named {
                     // The capture runs the constructor it names, `(out
                     // self, source)`, into its slot.
@@ -500,18 +500,14 @@ impl FnLowering<'_> {
             )),
         }
     }
+}
 
-    /// The compiled constructor an owned `capture` of a `ty` value names,
-    /// none for a capture naming none or for the nominal String, whose
-    /// constructors are bridged natively.
-    fn named_capture_constructor<'c>(
-        &self,
-        capture: &'c MirClosureCapture,
-        ty: &Ty,
-    ) -> Option<&'c str> {
-        capture.constructor.as_deref().filter(|_| {
-            !matches!(ty.kind(), TyKind::Struct(name, _)
-                if mojito_symbol::symbol::is_stdlib_string_struct(name))
-        })
-    }
+/// The compiled constructor an owned `capture` of a `ty` value names, none
+/// for a capture naming none or for the nominal String, whose constructors
+/// are bridged natively.
+fn named_capture_constructor<'c>(capture: &'c MirClosureCapture, ty: &Ty) -> Option<&'c str> {
+    capture.constructor.as_deref().filter(|_| {
+        !matches!(ty.kind(), TyKind::Struct(name, _)
+            if mojito_symbol::symbol::is_stdlib_string_struct(name))
+    })
 }

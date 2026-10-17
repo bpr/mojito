@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A place arm of a conditional expression that is `Copyable` but not
+  `ImplicitlyCopyable` is now rejected, as the pin rejects its implicit
+  copy into the conditional's result (`var t = r if c else M(3)`).
+- The 2026-10-17 overnight gate's failures are fixed. A native subscript
+  through a pointer field of an instance that erases an argument strides by
+  the pointee the place records, not the field's erased `None` pointee, so
+  a second `Dict` key is found again natively. An omitted converting
+  default (`t: Tag[3] = 5`) calls its owner-less constructor with the
+  struct's arguments, a function named only by a callable parameter's
+  default stays in the program, and a removed parameter that an omitted
+  callable default reads (`fallback = callback`) keeps its argument. The
+  VM's reference to a `ref`-typed place is again the field's own, and a
+  synthesized copy or move of a `ref` field reads the handle through it,
+  so `box.value += 2` on a `ref` field runs again.
+
 - A field's drop is now the call of its destructor on the field, as
   upstream calls `__del__` on a field's address (R1081). Where its owner
   holds the field whole, a named `drop.place` lowers to a load of the

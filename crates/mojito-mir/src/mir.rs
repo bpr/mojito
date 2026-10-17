@@ -1099,13 +1099,25 @@ fn lower_synthesized_member(
     };
     for (field, ty) in fields {
         // A `ref` field holds a reference: its copy and its move both store
-        // the handle the source field holds, as a reference parameter's
-        // store does, since a load of the field reads through it.
-        if matches!(ty.kind(), TyKind::Ref(_)) && !matches!(member, SynthesizedMember::Destroy) {
-            let handle = register(ty, &mut reg_types);
+        // the handle the source field holds, read through a reference to
+        // the field, since a load of the field reads through the handle.
+        if let TyKind::Ref(reference) = ty.kind()
+            && !matches!(member, SynthesizedMember::Destroy)
+        {
+            let field_ref: Ty = TyKind::Ref(mojito_types::origin::RefTy {
+                referent: ty.clone(),
+                ..reference.clone()
+            })
+            .into();
+            let field_ref = register(&field_ref, &mut reg_types);
             instrs.push(MirInstr::MakeRef {
-                dest: handle,
+                dest: field_ref,
                 place: field_place(1, field, ty),
+            });
+            let handle = register(ty, &mut reg_types);
+            instrs.push(MirInstr::ReadRef {
+                dest: handle,
+                reference: field_ref,
             });
             instrs.push(MirInstr::StoreRef {
                 place: field_place(0, field, ty),

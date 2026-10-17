@@ -957,7 +957,6 @@ fn reachable_set<'p>(
 /// Collect the call edges under `blocks` into the reachability worklist,
 /// recursing into `try` sub-regions (call sites inside a body, handler,
 /// `else`, or `finally` execute like any other).
-#[allow(clippy::cognitive_complexity, reason = "TODO: split this pass")]
 fn visit_call_edges<'p>(
     blocks: &'p [mojito_mir::mir::MirBlock],
     function: &'p MirFunction,
@@ -976,420 +975,454 @@ fn visit_call_edges<'p>(
                 ..
             } = instr
             {
-                visit_call_edges(body, function, functions, structs, reachable, queue);
-                if let Some((_, handler_blocks)) = handler {
-                    visit_call_edges(
-                        handler_blocks,
-                        function,
-                        functions,
-                        structs,
-                        reachable,
-                        queue,
-                    );
-                }
-                if let Some(orelse_blocks) = orelse {
-                    visit_call_edges(
-                        orelse_blocks,
-                        function,
-                        functions,
-                        structs,
-                        reachable,
-                        queue,
-                    );
-                }
-                if let Some(final_blocks) = finalbody {
-                    visit_call_edges(final_blocks, function, functions, structs, reachable, queue);
+                let regions = std::iter::once(body)
+                    .chain(handler.iter().map(|(_, blocks)| blocks))
+                    .chain(orelse)
+                    .chain(finalbody);
+                for region in regions {
+                    visit_call_edges(region, function, functions, structs, reachable, queue);
                 }
                 continue;
             }
-            let mut targets: Vec<&'p str> = Vec::new();
-            let push_named = |targets: &mut Vec<&'p str>, name: &str| {
-                if let Some((callee, _)) = functions.get_key_value(name) {
-                    targets.push(*callee);
-                }
-            };
-            // A member the lowered expansion reaches from a value's type is
-            // each instance the struct's member table names.
-            let push_members = |targets: &mut Vec<&'p str>, name: &str, method: &str| {
-                for entry in structs
-                    .get(name)
-                    .into_iter()
-                    .flat_map(|declaration| declaration.members_of(method))
-                {
-                    if let Some((callee, _)) = functions.get_key_value(entry.symbol.as_str()) {
-                        targets.push(*callee);
-                    }
-                }
+            let mut edges = CallEdges {
+                function,
+                functions,
+                structs,
+                targets: Vec::new(),
             };
             // `**` on integers and every scalar display call bundled bodies
             // without naming them in an instruction. `format_scalar`
             // rejects a display whose digit bodies were not declared, so a
             // formatting shape missing from the rule fails loudly.
             for callee in mojito_mir::mir::implicit_callees(instr, &function.reg_types) {
-                push_named(&mut targets, callee);
+                edges.push_named(callee);
             }
-            match instr {
-                // Intercepted allocation entry points lower as runtime
-                // intrinsics; their element-erased stdlib bodies must not
-                // be declared.
-                MirInstr::Call { func, .. } if lower::intercepted_call(&func.0) => {}
-                // `print` or `String(...)` of a nominal struct calls its
-                // `write_to` instance in the lowered expansion. The nominal
-                // String displays through its own bytes instead: its
-                // `write_to` is there for the VM, never an edge here.
-                MirInstr::Call { func, args, .. }
-                    if matches!(func.0.as_str(), "print" | "String") =>
-                {
-                    for arg in args {
-                        if let Some(TyKind::Struct(name, _)) =
-                            function.reg_types.get(&arg.0).map(Ty::kind)
-                            && !mojito_symbol::symbol::is_stdlib_string_struct(name)
-                        {
-                            push_members(&mut targets, name, "write_to");
-                        }
-                    }
-                }
-                // `repr` of a nominal struct calls its `write_repr_to`
-                // instance in the lowered expansion.
-                MirInstr::Call { func, args, .. } if func.0 == "repr" => {
-                    for arg in args {
-                        if let Some(TyKind::Struct(name, _)) =
-                            function.reg_types.get(&arg.0).map(Ty::kind)
-                        {
-                            push_members(&mut targets, name, "write_repr_to");
-                        }
-                    }
-                }
-                MirInstr::Call {
-                    func, args, kwargs, ..
-                } => match functions.get_key_value(func.0.as_str()) {
-                    Some((callee, _)) => targets.push(*callee),
-                    None => {
-                        if let Some(callee) =
-                            constructor_init_target(functions, structs, &func.0, args.len(), kwargs)
-                        {
-                            targets.push(callee);
-                        }
-                    }
-                },
-                // Pointer-receiver methods dispatch to runtime
-                // intrinsics, never to compiled stdlib bodies.
-                MirInstr::MethodCall {
-                    dest,
-                    recv,
-                    resolved: Some(resolved),
-                    result_adapter,
-                    ..
-                } => {
-                    if !matches!(
-                        function.reg_types.get(&recv.0).map(Ty::kind),
-                        Some(TyKind::Pointer { .. })
-                    ) {
-                        push_named(&mut targets, resolved);
-                    }
-                    // Its result adapter copies the element out by the
-                    // constructor it names.
-                    if let Some(constructor) = result_adapter
-                        .as_deref()
-                        .and_then(|adapter| adapter.constructor.as_deref())
-                        && !function
-                            .reg_types
-                            .get(&dest.0)
-                            .is_some_and(is_stdlib_string_type)
-                    {
-                        push_named(&mut targets, constructor);
-                    }
-                }
-                // The VM-synthesized `Writer.write` dispatch lowers to
-                // `write_string` calls that exist only in the expansion; the
-                // builtin-string writer displays nominal arguments through
-                // their `write_to` instances.
-                MirInstr::MethodCall {
-                    recv,
-                    method,
-                    resolved: None,
-                    args,
-                    ..
-                } if matches!(
-                    method.as_str(),
-                    "write" | mojito_symbol::symbol::WRITE_FORMATTED
-                ) =>
-                {
-                    if let Some(TyKind::Struct(name, _)) =
-                        function.reg_types.get(&recv.0).map(Ty::kind)
-                    {
-                        push_members(&mut targets, name, "write_string");
-                    }
-                    if matches!(
-                        function.reg_types.get(&recv.0).map(Ty::kind),
-                        Some(TyKind::StringLiteral)
-                    ) {
-                        for arg in args {
-                            if let Some(TyKind::Struct(name, _)) =
-                                function.reg_types.get(&arg.0).map(Ty::kind)
-                            {
-                                push_members(&mut targets, name, "write_to");
-                            }
-                        }
-                    }
-                }
-                // A scalar/literal Hashable leaf lowers to the hasher's
-                // compiled `_update_with_simd` (a string literal through the
-                // nominal String's `__hash__` instance bound to that hasher).
-                MirInstr::MethodCall {
-                    recv,
-                    method,
-                    resolved: None,
-                    args,
-                    ..
-                } if method == "__hash__" && args.len() == 1 => {
-                    let hasher = function
-                        .reg_types
-                        .get(&args[0].0)
-                        .map(|ty| match ty.kind() {
-                            TyKind::Ref(reference) => &reference.referent,
-                            _ => ty,
-                        });
-                    if let Some(TyKind::Struct(hasher, _)) = hasher.map(Ty::kind) {
-                        push_members(&mut targets, hasher, "_update_with_simd");
-                        let receiver = function.reg_types.get(&recv.0).map(|ty| match ty.kind() {
-                            TyKind::Ref(reference) => &reference.referent,
-                            _ => ty,
-                        });
-                        // A Variant leaf dispatches the active alternative's
-                        // `__hash__` under a tag switch: every nominal
-                        // alternative's instances are edges.
-                        let mut nominal_alternatives: Vec<&str> = Vec::new();
-                        let mut string_leaf =
-                            matches!(receiver.map(Ty::kind), Some(TyKind::StringLiteral));
-                        if let Some(TyKind::Variant(alternatives)) = receiver.map(Ty::kind) {
-                            for alternative in alternatives {
-                                if let TyKind::Struct(name, _) = alternative.kind() {
-                                    if mojito_symbol::symbol::is_stdlib_string_struct(name) {
-                                        string_leaf = true;
-                                    } else {
-                                        nominal_alternatives.push(name.as_str());
-                                    }
-                                }
-                            }
-                        }
-                        if string_leaf {
-                            for string in string_structs(structs) {
-                                push_members(&mut targets, string, "__hash__");
-                            }
-                        }
-                        for alternative in nominal_alternatives {
-                            push_members(&mut targets, alternative, "__hash__");
-                        }
-                    }
-                }
-                // Variant equality dispatches each nominal alternative's
-                // `__eq__` under a tag switch: those instances are edges.
-                MirInstr::BinOp {
-                    op: mojito_ast::ast::InfixOp::Eq | mojito_ast::ast::InfixOp::Ne,
-                    a,
-                    ..
-                } => {
-                    let operand = function.reg_types.get(&a.0).map(|ty| match ty.kind() {
-                        TyKind::Ref(reference) => &reference.referent,
-                        _ => ty,
-                    });
-                    if let Some(TyKind::Variant(alternatives)) = operand.map(Ty::kind) {
-                        for alternative in alternatives {
-                            let TyKind::Struct(name, _) = alternative.kind() else {
-                                continue;
-                            };
-                            if mojito_symbol::symbol::is_stdlib_string_struct(name) {
-                                for string in string_structs(structs) {
-                                    push_members(&mut targets, string, "__eq__");
-                                }
-                            } else {
-                                push_members(&mut targets, name, "__eq__");
-                            }
-                        }
-                    }
-                }
-                // Iterator instructions carry their targets as symbols rather
-                // than call edges; monomorphization has already retargeted
-                // them to concrete instances.
-                MirInstr::GetIter { prepare, .. } => {
-                    for step in prepare {
-                        push_named(&mut targets, step);
-                    }
-                }
-                // Its result adapter copies the element out by the
-                // constructor it names.
-                MirInstr::TryNext {
-                    dest,
-                    call,
-                    adapter_constructor,
-                    ..
-                } => {
-                    push_named(&mut targets, &call.target);
-                    if let Some(constructor) = adapter_constructor
-                        && !function
-                            .reg_types
-                            .get(&dest.0)
-                            .is_some_and(is_stdlib_string_type)
-                    {
-                        push_named(&mut targets, constructor);
-                    }
-                }
-                // Subscript instructions carry their checker-selected (and
-                // mono-retargeted) targets on the instruction.
-                MirInstr::Index {
-                    call: Some(call), ..
-                }
-                | MirInstr::Slice {
-                    call: Some(call), ..
-                }
-                | MirInstr::MultiIndex {
-                    call: Some(call), ..
-                } => push_named(&mut targets, &call.target),
-                MirInstr::MultiSet { call, .. } => push_named(&mut targets, &call.target),
-                // A retained callable names its lifted body on the
-                // instruction; the per-target thunk calls it, so the body
-                // must be declared and compiled even when every invocation
-                // is indirect.
-                // Its owned captures run the constructors they name, a
-                // String's copy excepted, and the destructors they name at
-                // the closure's death.
-                MirInstr::MakeClosure {
-                    function: target,
-                    captures,
-                    ..
-                } => {
-                    push_named(&mut targets, target);
-                    for capture in captures {
-                        if let Some(constructor) = &capture.constructor
-                            && !(capture.mode == mojito_mir::mir::MirCaptureMode::Copy
-                                && capture
-                                    .place
-                                    .storage_ty(&function.var_tys)
-                                    .is_some_and(is_stdlib_string_type))
-                        {
-                            push_named(&mut targets, constructor);
-                        }
-                        if let Some(destructor) = &capture.destructor {
-                            push_named(&mut targets, destructor);
-                        }
-                    }
-                }
-                // A storage destroy runs the destructor it names.
-                MirInstr::PointerStorageDestroy {
-                    destructor: Some(destructor),
-                    ..
-                }
-                | MirInstr::UninitStorageDestroy {
-                    destructor: Some(destructor),
-                    ..
-                } => push_named(&mut targets, destructor),
-                MirInstr::Const {
-                    k: mojito_mir::mir::Const::Function(function),
-                    ..
-                } => {
-                    push_named(&mut targets, function);
-                }
-                // Scalar/SIMD construction over a concrete Intable struct
-                // invokes its checker-selected `__int__` in the lowered
-                // expansion, so retain that implicit edge.
-                MirInstr::MakeSimd { elems, .. } => {
-                    for elem in elems {
-                        if let Some(TyKind::Struct(name, _)) =
-                            function.reg_types.get(&elem.0).map(Ty::kind)
-                        {
-                            push_members(&mut targets, name, "__int__");
-                        }
-                    }
-                }
-                // A copy or a `^` transfer runs the constructor it names,
-                // except the nominal String's copy constructor, which is
-                // bridged natively.
-                MirInstr::UseVar {
-                    mode: mojito_mir::mir::UseMode::Move,
-                    constructor: Some(constructor),
-                    ..
-                } => push_named(&mut targets, constructor),
-                MirInstr::UseVar {
-                    var,
-                    mode: mojito_mir::mir::UseMode::Copy,
-                    constructor: Some(constructor),
-                    ..
-                } if !function.var_tys.get(var).is_some_and(is_stdlib_string_type) => {
-                    push_named(&mut targets, constructor);
-                }
-                MirInstr::CopyValue {
-                    dest,
-                    constructor: Some(constructor),
-                    ..
-                } if !function
-                    .reg_types
-                    .get(&dest.0)
-                    .is_some_and(is_stdlib_string_type) =>
-                {
-                    push_named(&mut targets, constructor);
-                }
-                // A variant payload store copies by the constructor it names.
-                MirInstr::MakeVariant {
-                    alternatives,
-                    index,
-                    constructor: Some(constructor),
-                    ..
-                } if !mojito_mir::mir::variant_payload_ty(alternatives, index)
-                    .is_some_and(is_stdlib_string_type) =>
-                {
-                    push_named(&mut targets, constructor);
-                }
-                // A variant store copies by the constructor it names and
-                // drops the replaced payload by the destructor it names for
-                // the active alternative.
-                MirInstr::VariantSet {
-                    place,
-                    index,
-                    constructor,
-                    destructors,
-                    ..
-                } => {
-                    if let Some(constructor) = constructor
-                        && !mojito_mir::mir::variant_place_payload_ty(
-                            place,
-                            index,
-                            &function.var_tys,
-                        )
-                        .is_some_and(is_stdlib_string_type)
-                    {
-                        push_named(&mut targets, constructor);
-                    }
-                    for destructor in destructors.iter().flatten() {
-                        push_named(&mut targets, destructor);
-                    }
-                }
-                MirInstr::VariantSetInitWith { destructors, .. } => {
-                    for destructor in destructors.iter().flatten() {
-                        push_named(&mut targets, destructor);
-                    }
-                }
-                MirInstr::VariantReplace {
-                    place,
-                    input_index: index,
-                    constructor: Some(constructor),
-                    ..
-                } if !mojito_mir::mir::variant_place_payload_ty(
-                    place,
-                    index,
-                    &function.var_tys,
-                )
-                .is_some_and(is_stdlib_string_type) =>
-                {
-                    push_named(&mut targets, constructor);
-                }
-                _ => {}
-            }
-            for callee in targets {
+            edges.dispatch_edges(instr);
+            edges.lifecycle_edges(instr);
+            for callee in edges.targets {
                 if reachable.insert(callee) {
                     queue.push_back(callee);
                 }
             }
+        }
+    }
+}
+
+/// The callees one instruction of `function` reaches, gathered by
+/// [`visit_call_edges`].
+struct CallEdges<'p, 'a> {
+    function: &'p MirFunction,
+    functions: &'a HashMap<&'p str, &'p MirFunction>,
+    structs: &'a HashMap<&'a str, &'a MirStructDeclaration>,
+    targets: Vec<&'p str>,
+}
+
+impl<'p> CallEdges<'p, '_> {
+    fn push_named(&mut self, name: &str) {
+        if let Some((callee, _)) = self.functions.get_key_value(name) {
+            self.targets.push(*callee);
+        }
+    }
+
+    /// A member the lowered expansion reaches from a value's type is each
+    /// instance the struct's member table names.
+    fn push_members(&mut self, name: &str, method: &str) {
+        let members = self
+            .structs
+            .get(name)
+            .into_iter()
+            .flat_map(|declaration| declaration.members_of(method));
+        for entry in members {
+            if let Some((callee, _)) = self.functions.get_key_value(entry.symbol.as_str()) {
+                self.targets.push(*callee);
+            }
+        }
+    }
+
+    /// The edges of a call, a method call, or an operator: the callee it
+    /// names, and the members its lowered expansion dispatches to.
+    fn dispatch_edges(&mut self, instr: &'p MirInstr) {
+        match instr {
+            // Intercepted allocation entry points lower as runtime
+            // intrinsics; their element-erased stdlib bodies must not
+            // be declared.
+            MirInstr::Call { func, .. } if lower::intercepted_call(&func.0) => {}
+            // `print` or `String(...)` of a nominal struct calls its
+            // `write_to` instance in the lowered expansion. The nominal
+            // String displays through its own bytes instead: its
+            // `write_to` is there for the VM, never an edge here.
+            MirInstr::Call { func, args, .. } if matches!(func.0.as_str(), "print" | "String") => {
+                for arg in args {
+                    if let Some(TyKind::Struct(name, _)) =
+                        self.function.reg_types.get(&arg.0).map(Ty::kind)
+                        && !mojito_symbol::symbol::is_stdlib_string_struct(name)
+                    {
+                        self.push_members(name, "write_to");
+                    }
+                }
+            }
+            // `repr` of a nominal struct calls its `write_repr_to`
+            // instance in the lowered expansion.
+            MirInstr::Call { func, args, .. } if func.0 == "repr" => {
+                for arg in args {
+                    if let Some(TyKind::Struct(name, _)) =
+                        self.function.reg_types.get(&arg.0).map(Ty::kind)
+                    {
+                        self.push_members(name, "write_repr_to");
+                    }
+                }
+            }
+            MirInstr::Call {
+                func, args, kwargs, ..
+            } => match self.functions.get_key_value(func.0.as_str()) {
+                Some((callee, _)) => self.targets.push(*callee),
+                None => {
+                    if let Some(callee) = constructor_init_target(
+                        self.functions,
+                        self.structs,
+                        &func.0,
+                        args.len(),
+                        kwargs,
+                    ) {
+                        self.targets.push(callee);
+                    }
+                }
+            },
+            // Pointer-receiver methods dispatch to runtime
+            // intrinsics, never to compiled stdlib bodies.
+            MirInstr::MethodCall {
+                dest,
+                recv,
+                resolved: Some(resolved),
+                result_adapter,
+                ..
+            } => {
+                if !matches!(
+                    self.function.reg_types.get(&recv.0).map(Ty::kind),
+                    Some(TyKind::Pointer { .. })
+                ) {
+                    self.push_named(resolved);
+                }
+                // Its result adapter copies the element out by the
+                // constructor it names.
+                if let Some(constructor) = result_adapter
+                    .as_deref()
+                    .and_then(|adapter| adapter.constructor.as_deref())
+                    && !self
+                        .function
+                        .reg_types
+                        .get(&dest.0)
+                        .is_some_and(is_stdlib_string_type)
+                {
+                    self.push_named(constructor);
+                }
+            }
+            // The VM-synthesized `Writer.write` dispatch lowers to
+            // `write_string` calls that exist only in the expansion; the
+            // builtin-string writer displays nominal arguments through
+            // their `write_to` instances.
+            MirInstr::MethodCall {
+                recv,
+                method,
+                resolved: None,
+                args,
+                ..
+            } if matches!(
+                method.as_str(),
+                "write" | mojito_symbol::symbol::WRITE_FORMATTED
+            ) =>
+            {
+                if let Some(TyKind::Struct(name, _)) =
+                    self.function.reg_types.get(&recv.0).map(Ty::kind)
+                {
+                    self.push_members(name, "write_string");
+                }
+                if matches!(
+                    self.function.reg_types.get(&recv.0).map(Ty::kind),
+                    Some(TyKind::StringLiteral)
+                ) {
+                    for arg in args {
+                        if let Some(TyKind::Struct(name, _)) =
+                            self.function.reg_types.get(&arg.0).map(Ty::kind)
+                        {
+                            self.push_members(name, "write_to");
+                        }
+                    }
+                }
+            }
+            // A scalar/literal Hashable leaf lowers to the hasher's
+            // compiled `_update_with_simd` (a string literal through the
+            // nominal String's `__hash__` instance bound to that hasher).
+            MirInstr::MethodCall {
+                recv,
+                method,
+                resolved: None,
+                args,
+                ..
+            } if method == "__hash__" && args.len() == 1 => {
+                let hasher = self
+                    .function
+                    .reg_types
+                    .get(&args[0].0)
+                    .map(|ty| match ty.kind() {
+                        TyKind::Ref(reference) => &reference.referent,
+                        _ => ty,
+                    });
+                if let Some(TyKind::Struct(hasher, _)) = hasher.map(Ty::kind) {
+                    self.push_members(hasher, "_update_with_simd");
+                    let receiver = self
+                        .function
+                        .reg_types
+                        .get(&recv.0)
+                        .map(|ty| match ty.kind() {
+                            TyKind::Ref(reference) => &reference.referent,
+                            _ => ty,
+                        });
+                    // A Variant leaf dispatches the active alternative's
+                    // `__hash__` under a tag switch: every nominal
+                    // alternative's instances are edges.
+                    let mut nominal_alternatives: Vec<&str> = Vec::new();
+                    let mut string_leaf =
+                        matches!(receiver.map(Ty::kind), Some(TyKind::StringLiteral));
+                    if let Some(TyKind::Variant(alternatives)) = receiver.map(Ty::kind) {
+                        for alternative in alternatives {
+                            if let TyKind::Struct(name, _) = alternative.kind() {
+                                if mojito_symbol::symbol::is_stdlib_string_struct(name) {
+                                    string_leaf = true;
+                                } else {
+                                    nominal_alternatives.push(name.as_str());
+                                }
+                            }
+                        }
+                    }
+                    if string_leaf {
+                        for string in string_structs(self.structs) {
+                            self.push_members(string, "__hash__");
+                        }
+                    }
+                    for alternative in nominal_alternatives {
+                        self.push_members(alternative, "__hash__");
+                    }
+                }
+            }
+            // Variant equality dispatches each nominal alternative's
+            // `__eq__` under a tag switch: those instances are edges.
+            MirInstr::BinOp {
+                op: mojito_ast::ast::InfixOp::Eq | mojito_ast::ast::InfixOp::Ne,
+                a,
+                ..
+            } => {
+                let operand = self.function.reg_types.get(&a.0).map(|ty| match ty.kind() {
+                    TyKind::Ref(reference) => &reference.referent,
+                    _ => ty,
+                });
+                if let Some(TyKind::Variant(alternatives)) = operand.map(Ty::kind) {
+                    for alternative in alternatives {
+                        let TyKind::Struct(name, _) = alternative.kind() else {
+                            continue;
+                        };
+                        if mojito_symbol::symbol::is_stdlib_string_struct(name) {
+                            for string in string_structs(self.structs) {
+                                self.push_members(string, "__eq__");
+                            }
+                        } else {
+                            self.push_members(name, "__eq__");
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The edges of an instruction that names its targets as symbols: an
+    /// iterator step, a subscript, a closure, a constant function, and the
+    /// constructors and destructors a copy, a move, a store, or a destroy
+    /// names.
+    fn lifecycle_edges(&mut self, instr: &'p MirInstr) {
+        match instr {
+            // Iterator instructions carry their targets as symbols rather
+            // than call edges; monomorphization has already retargeted
+            // them to concrete instances.
+            MirInstr::GetIter { prepare, .. } => {
+                for step in prepare {
+                    self.push_named(step);
+                }
+            }
+            // Its result adapter copies the element out by the
+            // constructor it names.
+            MirInstr::TryNext {
+                dest,
+                call,
+                adapter_constructor,
+                ..
+            } => {
+                self.push_named(&call.target);
+                if let Some(constructor) = adapter_constructor
+                    && !self
+                        .function
+                        .reg_types
+                        .get(&dest.0)
+                        .is_some_and(is_stdlib_string_type)
+                {
+                    self.push_named(constructor);
+                }
+            }
+            // Subscript instructions carry their checker-selected (and
+            // mono-retargeted) targets on the instruction.
+            MirInstr::Index {
+                call: Some(call), ..
+            }
+            | MirInstr::Slice {
+                call: Some(call), ..
+            }
+            | MirInstr::MultiIndex {
+                call: Some(call), ..
+            } => self.push_named(&call.target),
+            MirInstr::MultiSet { call, .. } => self.push_named(&call.target),
+            // A retained callable names its lifted body on the
+            // instruction; the per-target thunk calls it, so the body
+            // must be declared and compiled even when every invocation
+            // is indirect.
+            // Its owned captures run the constructors they name, a
+            // String's copy excepted, and the destructors they name at
+            // the closure's death.
+            MirInstr::MakeClosure {
+                function: target,
+                captures,
+                ..
+            } => {
+                self.push_named(target);
+                for capture in captures {
+                    if let Some(constructor) = &capture.constructor
+                        && !(capture.mode == mojito_mir::mir::MirCaptureMode::Copy
+                            && capture
+                                .place
+                                .storage_ty(&self.function.var_tys)
+                                .is_some_and(is_stdlib_string_type))
+                    {
+                        self.push_named(constructor);
+                    }
+                    if let Some(destructor) = &capture.destructor {
+                        self.push_named(destructor);
+                    }
+                }
+            }
+            // A storage destroy runs the destructor it names.
+            MirInstr::PointerStorageDestroy {
+                destructor: Some(destructor),
+                ..
+            }
+            | MirInstr::UninitStorageDestroy {
+                destructor: Some(destructor),
+                ..
+            } => self.push_named(destructor),
+            MirInstr::Const {
+                k: mojito_mir::mir::Const::Function(function),
+                ..
+            } => {
+                self.push_named(function);
+            }
+            // Scalar/SIMD construction over a concrete Intable struct
+            // invokes its checker-selected `__int__` in the lowered
+            // expansion, so retain that implicit edge.
+            MirInstr::MakeSimd { elems, .. } => {
+                for elem in elems {
+                    if let Some(TyKind::Struct(name, _)) =
+                        self.function.reg_types.get(&elem.0).map(Ty::kind)
+                    {
+                        self.push_members(name, "__int__");
+                    }
+                }
+            }
+            // A copy or a `^` transfer runs the constructor it names,
+            // except the nominal String's copy constructor, which is
+            // bridged natively.
+            MirInstr::UseVar {
+                mode: mojito_mir::mir::UseMode::Move,
+                constructor: Some(constructor),
+                ..
+            } => self.push_named(constructor),
+            MirInstr::UseVar {
+                var,
+                mode: mojito_mir::mir::UseMode::Copy,
+                constructor: Some(constructor),
+                ..
+            } if !self
+                .function
+                .var_tys
+                .get(var)
+                .is_some_and(is_stdlib_string_type) =>
+            {
+                self.push_named(constructor);
+            }
+            MirInstr::CopyValue {
+                dest,
+                constructor: Some(constructor),
+                ..
+            } if !self
+                .function
+                .reg_types
+                .get(&dest.0)
+                .is_some_and(is_stdlib_string_type) =>
+            {
+                self.push_named(constructor);
+            }
+            // A variant payload store copies by the constructor it names.
+            MirInstr::MakeVariant {
+                alternatives,
+                index,
+                constructor: Some(constructor),
+                ..
+            } if !mojito_mir::mir::variant_payload_ty(alternatives, index)
+                .is_some_and(is_stdlib_string_type) =>
+            {
+                self.push_named(constructor);
+            }
+            // A variant store copies by the constructor it names and
+            // drops the replaced payload by the destructor it names for
+            // the active alternative.
+            MirInstr::VariantSet {
+                place,
+                index,
+                constructor,
+                destructors,
+                ..
+            } => {
+                if let Some(constructor) = constructor
+                    && !mojito_mir::mir::variant_place_payload_ty(
+                        place,
+                        index,
+                        &self.function.var_tys,
+                    )
+                    .is_some_and(is_stdlib_string_type)
+                {
+                    self.push_named(constructor);
+                }
+                for destructor in destructors.iter().flatten() {
+                    self.push_named(destructor);
+                }
+            }
+            MirInstr::VariantSetInitWith { destructors, .. } => {
+                for destructor in destructors.iter().flatten() {
+                    self.push_named(destructor);
+                }
+            }
+            MirInstr::VariantReplace {
+                place,
+                input_index: index,
+                constructor: Some(constructor),
+                ..
+            } if !mojito_mir::mir::variant_place_payload_ty(
+                place,
+                index,
+                &self.function.var_tys,
+            )
+            .is_some_and(is_stdlib_string_type) =>
+            {
+                self.push_named(constructor);
+            }
+            _ => {}
         }
     }
 }

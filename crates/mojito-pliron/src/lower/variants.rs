@@ -9,6 +9,7 @@ use mojito_types::types::VariantIndex;
 /// The lifecycle members a variant store names: the `__copyinit__` of the
 /// payload it copies in, and, per alternative, the `__deinit__` of the
 /// payload it replaces.
+#[derive(Clone, Copy)]
 pub(super) struct VariantStoreMembers<'m> {
     pub constructor: Option<&'m str>,
     pub destructors: &'m [Option<String>],

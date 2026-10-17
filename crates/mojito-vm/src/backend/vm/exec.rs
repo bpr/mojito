@@ -95,20 +95,11 @@ impl VmBackend {
                     _ => (frame_id.0, place.root as usize, Vec::new()),
                 };
                 projection.extend(super::references::place_projection_segments(place, regs)?);
-                let mut handle = Value::Ref {
+                let handle = Value::Ref {
                     frame,
                     slot,
                     projection,
                 };
-                // A `ref`-typed place designates what the handle its storage
-                // holds does: the reference is that handle, as the native
-                // backend's address of such a place is the stored pointer's.
-                if matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
-                    && let Ok(stored @ Value::Ref { .. }) =
-                        self.read_reference(&handle, frame_id, vars)
-                {
-                    handle = stored;
-                }
                 // A static-origin reference to an element reached through a
                 // pointer the place holds (`span._data[i]` of a `Span[T,
                 // ImmStaticOrigin]`) is the element's heap address, as such

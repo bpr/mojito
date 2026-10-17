@@ -1330,9 +1330,18 @@ impl Checker {
                     self.infer(then_branch)?
                 };
                 let et = self.infer(else_branch)?;
-                // A place arm is copied into the conditional's owned result.
+                // A place arm is copied into the conditional's owned result,
+                // which only an implicitly copyable value allows.
                 for (arm, ty) in [(then_branch, &tt), (else_branch, &et)] {
                     if self.designates_place(arm) && self.is_copyable(ty) {
+                        if !self.is_implicitly_copyable(ty) {
+                            return Err(TypeError::ImplicitCopy {
+                                ty: ty.to_string(),
+                                context: "conditional-expression arm".to_string(),
+                                transferable: true,
+                                copyable: true,
+                            });
+                        }
                         self.record_at(arm.source_span()).copy_place_value_use = true;
                     }
                 }

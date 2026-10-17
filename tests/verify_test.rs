@@ -1264,8 +1264,8 @@ fn verifier_rejects_mismatched_declared_call_arguments() {
         availability: Vec::new(),
         enclosing: None,
         region_binders: Vec::new(),
-        inline: Default::default(),
-        provenance: Default::default(),
+        inline: mojito_checked::declaration::InlineLevel::default(),
+        provenance: mojito_checked::declaration::FunctionProvenance::default(),
     });
     expect_finding(
         &prog,
@@ -1332,8 +1332,8 @@ fn verifier_rejects_malformed_direct_compile_time_arguments() {
         availability: Vec::new(),
         enclosing: None,
         region_binders: Vec::new(),
-        inline: Default::default(),
-        provenance: Default::default(),
+        inline: mojito_checked::declaration::InlineLevel::default(),
+        provenance: mojito_checked::declaration::FunctionProvenance::default(),
     });
     expect_finding(&prog, "register type StringLiteral, declared Int");
 
@@ -1648,8 +1648,8 @@ fn verifier_rejects_a_mismatched_iterator_exhaustion_contract() {
         availability: Vec::new(),
         enclosing: None,
         region_binders: Vec::new(),
-        inline: Default::default(),
-        provenance: Default::default(),
+        inline: mojito_checked::declaration::InlineLevel::default(),
+        provenance: mojito_checked::declaration::FunctionProvenance::default(),
     });
 
     expect_finding(&prog, "TryNext catches non-StopIteration type OtherError");
@@ -1720,8 +1720,8 @@ fn verifier_rejects_an_iterator_reference_result_abi_mismatch() {
         availability: Vec::new(),
         enclosing: None,
         region_binders: Vec::new(),
-        inline: Default::default(),
-        provenance: Default::default(),
+        inline: mojito_checked::declaration::InlineLevel::default(),
+        provenance: mojito_checked::declaration::FunctionProvenance::default(),
     });
 
     expect_finding(&prog, "TryNext result contract does not match");

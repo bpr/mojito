@@ -1,6 +1,7 @@
 //! Iterator lowering: `GetIter`, pack iteration, `HasNext`/`Next` and
 //! their raising/reference variants.
 
+use super::pointers::is_stdlib_string;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::TyKind;
@@ -647,15 +648,13 @@ impl FnLowering<'_> {
                     self.append(ctx, store.get_operation(), Some(dest));
                 }
                 LowerTy::Aggregate { ty, layout } => {
-                    self.fork_named_into(
-                        ctx,
-                        temp,
-                        ty,
-                        *layout,
-                        place.get_result(ctx),
-                        adapter_constructor,
-                        dest,
-                    )?;
+                    let source = place.get_result(ctx);
+                    match adapter_constructor.filter(|_| !is_stdlib_string(ty)) {
+                        Some(copyinit) => {
+                            self.emit_constructor_call(ctx, copyinit, temp, source, dest)?;
+                        }
+                        None => self.fork_value_into(ctx, temp, ty, *layout, source, dest)?,
+                    }
                 }
                 LowerTy::ZeroSized => {}
             }

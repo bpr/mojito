@@ -3557,8 +3557,8 @@ mod tests {
             availability: Vec::new(),
             enclosing: None,
             region_binders: Vec::new(),
-            inline: Default::default(),
-            provenance: Default::default(),
+            inline: mojito_checked::declaration::InlineLevel::default(),
+            provenance: mojito_checked::declaration::FunctionProvenance::default(),
         });
         let answers = |name: &str| declarations.copy_is_identity(&struct_ty(name));
         assert!(answers("P"));
@@ -3578,30 +3578,45 @@ mod tests {
         assert!(!declarations.copy_is_identity(&param()));
     }
 
+    fn fold_binary(
+        op: InfixOp,
+        a: Const,
+        b: Const,
+        operand: TyKind,
+        dest: TyKind,
+    ) -> Option<Const> {
+        let reg_types = HashMap::from([
+            (0, Ty::new(operand.clone())),
+            (1, Ty::new(operand)),
+            (2, Ty::new(dest)),
+        ]);
+        let operands = [a, b];
+        MirInstr::BinOp {
+            op,
+            dest: Reg(2),
+            a: Reg(0),
+            b: Reg(1),
+            resolved: None,
+            raises: None,
+        }
+        .folded_constant(
+            |reg| operands.get(reg.0 as usize).cloned(),
+            &reg_types,
+            &MirDeclarations::default(),
+        )
+    }
+
+    fn int_literal(value: i64) -> Const {
+        Const::IntLiteral(mojito_common::literal::IntLiteral::from(value))
+    }
+
     #[test]
     fn folded_constant_folds_only_what_the_vm_computes_alike() {
         use mojito_common::literal::IntLiteral;
-        use mojito_types::ct::CtLane;
         let none = MirDeclarations::default();
         let ty = |kind| Ty::new(kind);
-        let binary = |op, a: Const, b: Const, operand: TyKind, dest: TyKind| {
-            let reg_types =
-                HashMap::from([(0, ty(operand.clone())), (1, ty(operand)), (2, ty(dest))]);
-            MirInstr::BinOp {
-                op,
-                dest: Reg(2),
-                a: Reg(0),
-                b: Reg(1),
-                resolved: None,
-                raises: None,
-            }
-            .folded_constant(
-                |reg| [a.clone(), b.clone()].get(reg.0 as usize).cloned(),
-                &reg_types,
-                &none,
-            )
-        };
-        let literal = |value: i64| Const::IntLiteral(IntLiteral::from(value));
+        let binary = fold_binary;
+        let literal = int_literal;
         assert!(matches!(
             binary(InfixOp::Add, literal(2), literal(3), TyKind::IntLiteral, TyKind::IntLiteral),
             Some(Const::IntLiteral(value)) if value == IntLiteral::from(5i64)
@@ -3686,7 +3701,16 @@ mod tests {
             raises: None,
         };
         assert!(dunder.folded_constant(ones, &reg_types, &none).is_none());
+    }
 
+    #[test]
+    fn folded_constant_materializes_only_what_the_vm_computes_alike() {
+        use mojito_common::literal::IntLiteral;
+        use mojito_types::ct::CtLane;
+        let none = MirDeclarations::default();
+        let ty = |kind| Ty::new(kind);
+        let binary = fold_binary;
+        let literal = int_literal;
         let materialize = |target: TyKind| {
             let reg_types = HashMap::from([(0, ty(TyKind::IntLiteral)), (1, ty(target.clone()))]);
             MirInstr::MaterializeLiteral {

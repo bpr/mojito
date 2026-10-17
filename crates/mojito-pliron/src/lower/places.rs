@@ -130,7 +130,17 @@ impl FnLowering<'_> {
                 Proj::Field(field) => {
                     let (field_offset, field_ty) = self.field_offset(&ty, field, dest)?;
                     offset += field_offset;
-                    ty = field_ty;
+                    // An instance erasing an argument declares a pointer
+                    // field's pointee as `None`; the place records the
+                    // pointee a subscript through the field strides by.
+                    ty = match (field_ty.kind(), place.projection_tys.get(step)) {
+                        (TyKind::Pointer { .. }, Some(recorded))
+                            if matches!(recorded.kind(), TyKind::Pointer { .. }) =>
+                        {
+                            recorded.clone()
+                        }
+                        _ => field_ty,
+                    };
                 }
                 // A run-time pack addresses its element through the
                 // descriptor's element pointers.

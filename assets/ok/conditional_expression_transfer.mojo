@@ -29,7 +29,7 @@ def pick(var a: M, var b: M, c: Bool) -> M:
     return a^ if c else b^
 
 def bind_ref(ref r: M, c: Bool):
-    var t = r if c else M(3)
+    var t = r.copy() if c else M(3)
     print("t", t.v)
 
 def main():

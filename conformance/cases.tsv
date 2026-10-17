@@ -179,7 +179,7 @@ index-implicit-conversion	run	conformance/fixtures/index_implicit_conversion.moj
 slice-implicit-conversion-rejected	reject	conformance/fixtures/slice_implicit_conversion_rejected.mojo
 subscript-mutable-aliasing	reject	conformance/fixtures/subscript_mutable_aliasing.mojo
 subscript-late-argument-invalidation	reject	conformance/fixtures/subscript_late_argument_invalidation.mojo
-dict-projected-value-refresh	mojo-only	conformance/fixtures/dict_projected_value_refresh.mojo
+dict-projected-value-refresh	run	conformance/fixtures/dict_projected_value_refresh.mojo
 operator-completion	run	conformance/fixtures/operator_completion.mojo
 current-inplace-dunders	run	conformance/fixtures/current_inplace_dunders.mojo
 inplace-subscript-dunders	run	conformance/fixtures/inplace_subscript_dunders.mojo
