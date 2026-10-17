@@ -724,6 +724,7 @@ impl<'a> Flatten<'a> {
                     index,
                     value,
                     constructor: None,
+                    destructors: Vec::new(),
                 });
                 dest
             }
@@ -744,6 +745,7 @@ impl<'a> Flatten<'a> {
                     place,
                     index,
                     factory,
+                    destructors: Vec::new(),
                 });
                 self.emit_nested_closure_argument_keepalives(args, kwargs);
                 dest

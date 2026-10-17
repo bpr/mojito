@@ -162,6 +162,7 @@ impl VmBackend {
                     environment.push(ClosureCapture {
                         value,
                         owned: !matches!(capture.mode, MirCaptureMode::Reference),
+                        destructor: capture.destructor.clone(),
                     });
                 }
                 regs[dest.0 as usize] = Value::Closure {
@@ -787,11 +788,19 @@ impl VmBackend {
                 pointer,
                 index,
                 element,
+                destructor,
             } => {
                 let index = value_as_index(&regs[index.0 as usize])?;
                 match regs[pointer.0 as usize] {
                     Value::Pointer { allocation, offset } => {
-                        self.heap_destroy(prog, allocation, offset, index, Some(element))?;
+                        self.heap_destroy(
+                            prog,
+                            allocation,
+                            offset,
+                            index,
+                            Some(element),
+                            destructor.as_deref(),
+                        )?;
                     }
                     // A place pointer's element is trivially destructible
                     // (checker-proved): destroying it has no effect.
@@ -818,10 +827,11 @@ impl VmBackend {
                 dest,
                 storage,
                 element,
+                destructor,
             } => {
                 let storage = std::mem::replace(&mut regs[storage.0 as usize], Value::Moved);
                 let payload = Self::uninit_storage_payload(storage, "destroy")?;
-                self.drop_value_as(prog, payload, Some(element))?;
+                self.drop_named(prog, payload, Some(element), destructor.as_deref())?;
                 regs[dest.0 as usize] = Value::None;
             }
             MirInstr::GetField {
@@ -1324,6 +1334,7 @@ impl VmBackend {
                 place,
                 index,
                 factory,
+                destructors,
             } => {
                 let index = &known_variant_index(index)?;
                 let old = self.load_place_through_reference(place, regs, vars, frame_id)?;
@@ -1350,7 +1361,7 @@ impl VmBackend {
                     value: Box::new(payload),
                 };
                 self.store_at_call_place(prog, frame_id, place, replacement, regs, vars)?;
-                self.drop_value(prog, old)?;
+                self.drop_variant_payload(prog, old, destructors)?;
                 regs[dest.0 as usize] = Value::None;
             }
             MirInstr::VariantDeinitWith {
@@ -1391,6 +1402,7 @@ impl VmBackend {
                 index,
                 value,
                 constructor,
+                destructors,
             } => {
                 let index = &known_variant_index(index)?;
                 let old = self.load_place_through_reference(place, regs, vars, frame_id)?;
@@ -1415,7 +1427,7 @@ impl VmBackend {
                     value: Box::new(payload),
                 };
                 self.store_at_call_place(prog, frame_id, place, replacement, regs, vars)?;
-                self.drop_value(prog, old)?;
+                self.drop_variant_payload(prog, old, destructors)?;
                 regs[dest.0 as usize] = Value::None;
             }
             MirInstr::VariantReplace {

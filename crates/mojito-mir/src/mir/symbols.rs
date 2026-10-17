@@ -190,10 +190,11 @@ pub fn implicit_callees<S: BuildHasher>(
 /// `blocks`, in its regions too, holds itself.
 ///
 /// Those are a call's callee, a selected method, operator, subscript, or
-/// iterator target, a closure's function and its captures' constructors, a
-/// function constant, a loop's preparation calls, a lifecycle site's member
-/// (a variant payload's and a result adapter's included), and a slice
-/// bound read's constructors: MLIR's `SymbolTable::replaceAllSymbolUses`
+/// iterator target, a closure's function and its captures' constructors
+/// and destructors, a function constant, a loop's preparation calls, a
+/// lifecycle site's member (a variant payload's, a storage destroy's, and
+/// a result adapter's included), and a slice bound read's constructors:
+/// MLIR's `SymbolTable::replaceAllSymbolUses`
 /// over the references an operation holds directly. One inside a
 /// type, a compile-time value, or a declaration is not visited, so a
 /// client that must reach every use of a symbol counts the references this
@@ -209,7 +210,13 @@ pub fn replace_symbol_uses(blocks: &mut [MirBlock], replace: &mut dyn FnMut(&mut
                     replace(function);
                     captures
                         .iter_mut()
-                        .filter_map(|capture| capture.constructor.as_mut())
+                        .flat_map(|capture| {
+                            capture
+                                .constructor
+                                .as_mut()
+                                .into_iter()
+                                .chain(capture.destructor.as_mut())
+                        })
                         .for_each(&mut *replace);
                 }
                 MirInstr::Const {
@@ -284,14 +291,31 @@ pub fn replace_symbol_uses(blocks: &mut [MirBlock], replace: &mut dyn FnMut(&mut
                     constructor: Some(target),
                     ..
                 }
-                | MirInstr::VariantSet {
-                    constructor: Some(target),
-                    ..
-                }
                 | MirInstr::VariantReplace {
                     constructor: Some(target),
                     ..
+                }
+                | MirInstr::PointerStorageDestroy {
+                    destructor: Some(target),
+                    ..
+                }
+                | MirInstr::UninitStorageDestroy {
+                    destructor: Some(target),
+                    ..
                 } => replace(target),
+                MirInstr::VariantSet {
+                    constructor,
+                    destructors,
+                    ..
+                } => {
+                    constructor
+                        .iter_mut()
+                        .chain(destructors.iter_mut().flatten())
+                        .for_each(&mut *replace);
+                }
+                MirInstr::VariantSetInitWith { destructors, .. } => {
+                    destructors.iter_mut().flatten().for_each(&mut *replace);
+                }
                 MirInstr::Try { cleanup, .. } => replace_cleanup_destructors(cleanup, replace),
                 _ => {}
             }

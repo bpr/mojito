@@ -1,18 +1,20 @@
 //! The destructors a body runs without naming them.
 //!
 //! Upstream's destructor insertion leaves a call to the destructor at each
-//! point a value dies, so a symbol walk reaches it. A `drop.var` or
-//! `drop.place` names the destructor it runs on the whole value, which a
-//! symbol walk follows, and that destructor's body names its fields'; the
-//! rest of what a body tears down names none, and the VM and the native
-//! backend find the struct's `__deinit__` from the value's type. This
-//! module answers which structs those are: the types a cleanup list, a
-//! consumed residue, a storage destroy, a variant store, an owned capture,
-//! or a drop naming no destructor tears down whole, and every field type
-//! such a teardown may reach field by field.
+//! point a value dies, so a symbol walk reaches it. A `drop.var`, a
+//! `drop.place`, a cleanup-list drop, a storage destroy, a variant store
+//! (per alternative), and an owned closure capture name the destructor
+//! they run on the whole value, which a symbol walk follows, and that
+//! destructor's body names its fields'; the rest of what a body tears down
+//! names none, and the VM and the native backend find the struct's
+//! `__deinit__` from the value's type. This module answers which structs
+//! those are: the types a consumed residue or a teardown naming no
+//! destructor tears down whole, and every field type such a teardown may
+//! reach field by field.
 
 use crate::mir::{
     CleanupDrop, MirBlock, MirFunction, MirInstr, MirPlace, MirTerm, instruction_regions,
+    variant_place_alternatives,
 };
 use mojito_hir::hir::VarId;
 use mojito_types::types::{Ty, TyKind};
@@ -139,19 +141,51 @@ impl Walk<'_> {
                 Some(destructor) => self.named(place.ty.as_ref(), Some(destructor)),
                 None => self.place(place, true),
             },
-            MirInstr::VariantSet { place, .. } | MirInstr::VariantSetInitWith { place, .. } => {
-                self.place(place, true);
+            // A variant store names, per alternative, the destructor the
+            // replaced payload runs under that tag; an alternative naming
+            // none, or a store naming none yet, tears down by type.
+            MirInstr::VariantSet {
+                place, destructors, ..
             }
+            | MirInstr::VariantSetInitWith {
+                place, destructors, ..
+            } => match variant_place_alternatives(place, self.var_tys) {
+                Some(alternatives) => {
+                    for (position, alternative) in alternatives.iter().enumerate() {
+                        match destructors.get(position).and_then(Option::as_deref) {
+                            Some(destructor) => self.named(Some(alternative), Some(destructor)),
+                            None => self.pending.push((alternative.clone(), true)),
+                        }
+                    }
+                }
+                None => self.place(place, true),
+            },
             MirInstr::ConsumePlace { place, .. } => self.place(place, false),
-            MirInstr::PointerStorageDestroy { element, .. }
-            | MirInstr::UninitStorageDestroy { element, .. } => {
-                self.pending.push((element.clone(), true));
+            MirInstr::PointerStorageDestroy {
+                element,
+                destructor,
+                ..
             }
-            // An owned capture dies with the closure value.
+            | MirInstr::UninitStorageDestroy {
+                element,
+                destructor,
+                ..
+            } => match destructor {
+                Some(destructor) => self.named(Some(element), Some(destructor)),
+                None => self.pending.push((element.clone(), true)),
+            },
+            // An owned capture dies with the closure value, by the
+            // destructor the capture names.
             MirInstr::MakeClosure { captures, .. } => {
                 for capture in captures {
-                    if !matches!(capture.mode, crate::mir::MirCaptureMode::Reference) {
-                        self.place(&capture.place, true);
+                    if capture.destructor_member().is_none() {
+                        continue;
+                    }
+                    match &capture.destructor {
+                        Some(destructor) => {
+                            self.named(capture.place.storage_ty(self.var_tys), Some(destructor));
+                        }
+                        None => self.place(&capture.place, true),
                     }
                 }
             }

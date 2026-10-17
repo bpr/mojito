@@ -754,20 +754,24 @@ fn instruction_value(instruction: &MirInstr) -> String {
                         record(
                             "closure_capture",
                             &with_symbol(
-                                vec![
-                                    ("place", place_value(&capture.place)),
-                                    (
-                                        "mode",
-                                        match capture.mode {
-                                            MirCaptureMode::Reference => "reference",
-                                            MirCaptureMode::Copy => "copy",
-                                            MirCaptureMode::Move => "move",
-                                        }
-                                        .into(),
-                                    ),
-                                ],
-                                "constructor",
-                                capture.constructor.as_deref(),
+                                with_symbol(
+                                    vec![
+                                        ("place", place_value(&capture.place)),
+                                        (
+                                            "mode",
+                                            match capture.mode {
+                                                MirCaptureMode::Reference => "reference",
+                                                MirCaptureMode::Copy => "copy",
+                                                MirCaptureMode::Move => "move",
+                                            }
+                                            .into(),
+                                        ),
+                                    ],
+                                    "constructor",
+                                    capture.constructor.as_deref(),
+                                ),
+                                "destructor",
+                                capture.destructor.as_deref(),
                             ),
                         )
                     })),
@@ -1050,12 +1054,6 @@ fn instruction_value(instruction: &MirInstr) -> String {
             pointer,
             index,
             element,
-        }
-        | MirInstr::PointerStorageDestroy {
-            dest,
-            pointer,
-            index,
-            element,
         } => record(
             tag,
             &[
@@ -1064,6 +1062,25 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("index", reg_value(*index)),
                 ("element", ty_value(element)),
             ],
+        ),
+        MirInstr::PointerStorageDestroy {
+            dest,
+            pointer,
+            index,
+            element,
+            destructor,
+        } => record(
+            tag,
+            &with_symbol(
+                vec![
+                    ("dest", reg_value(*dest)),
+                    ("pointer", reg_value(*pointer)),
+                    ("index", reg_value(*index)),
+                    ("element", ty_value(element)),
+                ],
+                "destructor",
+                destructor.as_deref(),
+            ),
         ),
         MirInstr::UninitStorage { dest, init } => record(
             tag,
@@ -1076,11 +1093,6 @@ fn instruction_value(instruction: &MirInstr) -> String {
             dest,
             storage,
             element,
-        }
-        | MirInstr::UninitStorageDestroy {
-            dest,
-            storage,
-            element,
         } => record(
             tag,
             &[
@@ -1088,6 +1100,23 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("storage", reg_value(*storage)),
                 ("element", ty_value(element)),
             ],
+        ),
+        MirInstr::UninitStorageDestroy {
+            dest,
+            storage,
+            element,
+            destructor,
+        } => record(
+            tag,
+            &with_symbol(
+                vec![
+                    ("dest", reg_value(*dest)),
+                    ("storage", reg_value(*storage)),
+                    ("element", ty_value(element)),
+                ],
+                "destructor",
+                destructor.as_deref(),
+            ),
         ),
         MirInstr::GetField {
             dest,
@@ -1299,17 +1328,22 @@ fn instruction_value(instruction: &MirInstr) -> String {
             index,
             value,
             constructor,
+            destructors,
         } => record(
             tag,
-            &with_symbol(
-                vec![
-                    ("dest", reg_value(*dest)),
-                    ("place", place_value(place)),
-                    ("index", variant_index(index)),
-                    ("value", reg_value(*value)),
-                ],
-                "constructor",
-                constructor.as_deref(),
+            &with_symbols(
+                with_symbol(
+                    vec![
+                        ("dest", reg_value(*dest)),
+                        ("place", place_value(place)),
+                        ("index", variant_index(index)),
+                        ("value", reg_value(*value)),
+                    ],
+                    "constructor",
+                    constructor.as_deref(),
+                ),
+                "destructors",
+                destructors,
             ),
         ),
         MirInstr::VariantTake {
@@ -1331,14 +1365,19 @@ fn instruction_value(instruction: &MirInstr) -> String {
             place,
             index,
             factory,
+            destructors,
         } => record(
             tag,
-            &[
-                ("dest", reg_value(*dest)),
-                ("place", place_value(place)),
-                ("index", variant_index(index)),
-                ("factory", reg_value(*factory)),
-            ],
+            &with_symbols(
+                vec![
+                    ("dest", reg_value(*dest)),
+                    ("place", place_value(place)),
+                    ("index", variant_index(index)),
+                    ("factory", reg_value(*factory)),
+                ],
+                "destructors",
+                destructors,
+            ),
         ),
         MirInstr::VariantDeinitWith {
             dest,
@@ -1698,6 +1737,26 @@ fn with_symbol<'a>(
     member: Option<&str>,
 ) -> Vec<(&'a str, String)> {
     fields.extend(member.map(|member| (key, symbol(member))));
+    fields
+}
+
+/// A variant store's fields, then the per-alternative `destructors` it
+/// names, each present or absent, omitted while it names none.
+fn with_symbols<'a>(
+    mut fields: Vec<(&'a str, String)>,
+    key: &'a str,
+    members: &[Option<String>],
+) -> Vec<(&'a str, String)> {
+    if !members.is_empty() {
+        fields.push((
+            key,
+            list(
+                members
+                    .iter()
+                    .map(|member| option(member.as_deref().map(symbol))),
+            ),
+        ));
+    }
     fields
 }
 

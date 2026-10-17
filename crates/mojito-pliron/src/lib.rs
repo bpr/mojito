@@ -1252,7 +1252,8 @@ fn visit_call_edges<'p>(
                 // must be declared and compiled even when every invocation
                 // is indirect.
                 // Its owned captures run the constructors they name, a
-                // String's copy excepted.
+                // String's copy excepted, and the destructors they name at
+                // the closure's death.
                 MirInstr::MakeClosure {
                     function: target,
                     captures,
@@ -1269,8 +1270,20 @@ fn visit_call_edges<'p>(
                         {
                             push_named(&mut targets, constructor);
                         }
+                        if let Some(destructor) = &capture.destructor {
+                            push_named(&mut targets, destructor);
+                        }
                     }
                 }
+                // A storage destroy runs the destructor it names.
+                MirInstr::PointerStorageDestroy {
+                    destructor: Some(destructor),
+                    ..
+                }
+                | MirInstr::UninitStorageDestroy {
+                    destructor: Some(destructor),
+                    ..
+                } => push_named(&mut targets, destructor),
                 MirInstr::Const {
                     k: mojito_mir::mir::Const::Function(function),
                     ..
@@ -1327,13 +1340,36 @@ fn visit_call_edges<'p>(
                 {
                     push_named(&mut targets, constructor);
                 }
+                // A variant store copies by the constructor it names and
+                // drops the replaced payload by the destructor it names for
+                // the active alternative.
                 MirInstr::VariantSet {
                     place,
                     index,
-                    constructor: Some(constructor),
+                    constructor,
+                    destructors,
                     ..
+                } => {
+                    if let Some(constructor) = constructor
+                        && !mojito_mir::mir::variant_place_payload_ty(
+                            place,
+                            index,
+                            &function.var_tys,
+                        )
+                        .is_some_and(is_stdlib_string_type)
+                    {
+                        push_named(&mut targets, constructor);
+                    }
+                    for destructor in destructors.iter().flatten() {
+                        push_named(&mut targets, destructor);
+                    }
                 }
-                | MirInstr::VariantReplace {
+                MirInstr::VariantSetInitWith { destructors, .. } => {
+                    for destructor in destructors.iter().flatten() {
+                        push_named(&mut targets, destructor);
+                    }
+                }
+                MirInstr::VariantReplace {
                     place,
                     input_index: index,
                     constructor: Some(constructor),

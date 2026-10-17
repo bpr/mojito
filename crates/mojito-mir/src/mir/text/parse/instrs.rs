@@ -561,6 +561,7 @@ impl Decoder {
                         pointer,
                         index,
                         element,
+                        destructor: self.lifecycle_symbol(fields, "destructor"),
                     }
                 })
             }
@@ -583,6 +584,7 @@ impl Decoder {
                         dest,
                         storage,
                         element,
+                        destructor: self.lifecycle_symbol(fields, "destructor"),
                     }
                 })
             }
@@ -726,6 +728,7 @@ impl Decoder {
                 index: self.req(value, fields, "index", Self::variant_index)?,
                 value: self.req(value, fields, "value", Self::reg)?,
                 constructor: self.lifecycle_symbol(fields, "constructor"),
+                destructors: self.lifecycle_symbols(fields, "destructors"),
             }),
             "variant.take" => Some(MirInstr::VariantTake {
                 dest: self.req(value, fields, "dest", Self::reg)?,
@@ -738,6 +741,7 @@ impl Decoder {
                 place: self.req(value, fields, "place", Self::place)?,
                 index: self.req(value, fields, "index", Self::variant_index)?,
                 factory: self.req(value, fields, "factory", Self::reg)?,
+                destructors: self.lifecycle_symbols(fields, "destructors"),
             }),
             "variant.deinit_with" => Some(MirInstr::VariantDeinitWith {
                 dest: self.req(value, fields, "dest", Self::reg)?,
@@ -1011,6 +1015,22 @@ impl Decoder {
         self.field(fields, key)
             .ok()
             .and_then(|value| self.symbol(value))
+    }
+
+    /// The per-alternative destructors a variant store names
+    /// (`destructors`, schema 1.73), each present or absent; empty when the
+    /// field is absent, as before 1.73.
+    fn lifecycle_symbols(&mut self, fields: &[Field], key: &str) -> Vec<Option<String>> {
+        let Ok(value) = self.field(fields, key) else {
+            return Vec::new();
+        };
+        let Ok(values) = self.list(value) else {
+            return Vec::new();
+        };
+        values
+            .iter()
+            .map(|value| self.option_symbol(value))
+            .collect()
     }
 
     /// The `elif` arms of an `if`: each a condition region and the arm it

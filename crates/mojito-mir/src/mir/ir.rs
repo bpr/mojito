@@ -2018,12 +2018,17 @@ pub enum MirInstr {
         element: Ty,
     },
     /// Destroy an initialized element in compiler-private `UnsafePointer`
-    /// collection storage and mark its slot uninitialized.
+    /// collection storage and mark its slot uninitialized. `destructor`
+    /// names the element's `__deinit__`, as on [`MirInstr::DropVar`]:
+    /// upstream's `destroy_pointee` is a library body in which destructor
+    /// insertion names the `__del__`.
     PointerStorageDestroy {
         dest: Reg,
         pointer: Reg,
         index: Reg,
         element: Ty,
+        #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
+        destructor: Option<String>,
     },
     /// Construct compiler-private inline possibly-uninitialized storage
     /// (`MaybeUninit`'s field): uninitialized when `init` is absent,
@@ -2039,12 +2044,15 @@ pub enum MirInstr {
         storage: Reg,
         element: Ty,
     },
-    /// Destroy the payload of consumed inline uninit storage (runs the
-    /// element's destructor). Traps if the storage is uninitialized.
+    /// Destroy the payload of consumed inline uninit storage by
+    /// `destructor`, the element's `__deinit__` named as on
+    /// [`MirInstr::DropVar`]. Traps if the storage is uninitialized.
     UninitStorageDestroy {
         dest: Reg,
         storage: Reg,
         element: Ty,
+        #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
+        destructor: Option<String>,
     },
     /// Struct/field *read* `base.field` inside an rvalue (name-based; the backend
     /// resolves layout). Field/index *writes* go through `Store`/a `MirPlace`.
@@ -2172,7 +2180,11 @@ pub enum MirInstr {
     },
     /// Replace a writable variant and destroy its previous payload. The new
     /// payload is a copy of `value` naming its `__copyinit__` as
-    /// [`MirInstr::MakeVariant`] does.
+    /// [`MirInstr::MakeVariant`] does; `destructors` names, per
+    /// alternative, the `__deinit__` the previous payload runs when the tag
+    /// selects it, as upstream's `Variant.__del__` names each alternative's
+    /// `__del__` under its tag test. Empty until drop elaboration names
+    /// them; one entry per alternative after.
     VariantSet {
         dest: Reg,
         place: MirPlace,
@@ -2180,6 +2192,8 @@ pub enum MirInstr {
         value: Reg,
         #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
         constructor: Option<String>,
+        #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option_seq")]
+        destructors: Vec<Option<String>>,
     },
     /// Move a payload out of an already-consumed variant value.
     VariantTake {
@@ -2190,12 +2204,15 @@ pub enum MirInstr {
     },
     /// In-place placement replacement (`set(init_with=…)`): invoke the
     /// zero-parameter `factory` callable value, store its result as the
-    /// payload selected by `index`, and destroy the previous payload.
+    /// payload selected by `index`, and destroy the previous payload by the
+    /// per-alternative `destructors` a [`MirInstr::VariantSet`] names.
     VariantSetInitWith {
         dest: Reg,
         place: MirPlace,
         index: mojito_types::types::VariantIndex,
         factory: Reg,
+        #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option_seq")]
+        destructors: Vec<Option<String>>,
     },
     /// Consuming teardown (`deinit_with`): destructure the moved variant
     /// value and invoke the single-parameter consuming `handler` callable
@@ -2789,15 +2806,20 @@ impl MirResultAdapter {
     }
 }
 
-/// One captured place of a [`MirInstr::MakeClosure`]: a reference to it, or
-/// a copy or move of its value naming the `__copyinit__` or `__moveinit__`
-/// it runs, as a [`MirInstr::UseVar`] does.
+/// One captured place of a [`MirInstr::MakeClosure`].
+///
+/// A reference to the place, or a copy or move of its value naming the
+/// `__copyinit__` or `__moveinit__` it runs, as a [`MirInstr::UseVar`]
+/// does, and the `__deinit__` the owned value runs when the closure value
+/// dies, as a [`MirInstr::DropVar`] names its slot's.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MirClosureCapture {
     pub place: MirPlace,
     pub mode: MirCaptureMode,
     #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
     pub constructor: Option<String>,
+    #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
+    pub destructor: Option<String>,
 }
 
 impl MirClosureCapture {
@@ -2807,6 +2829,15 @@ impl MirClosureCapture {
         match self.mode {
             MirCaptureMode::Copy => Some("__copyinit__"),
             MirCaptureMode::Move => Some("__moveinit__"),
+            MirCaptureMode::Reference => None,
+        }
+    }
+
+    /// The lifecycle member the capture's value runs when the closure value
+    /// dies: `__deinit__` for an owned capture, none for a reference.
+    pub const fn destructor_member(&self) -> Option<&'static str> {
+        match self.mode {
+            MirCaptureMode::Copy | MirCaptureMode::Move => Some("__deinit__"),
             MirCaptureMode::Reference => None,
         }
     }

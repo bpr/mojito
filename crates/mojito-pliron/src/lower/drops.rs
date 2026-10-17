@@ -487,10 +487,10 @@ impl<'a> FnLowering<'a> {
         }
     }
 
-    /// Emit the VM's `drop_value` over storage no drop instruction names a
-    /// destructor for (a field, a storage destroy, a variant payload, a
-    /// capture, a frame-exit release): [`Self::emit_drop`] with the
-    /// `__deinit__` the member table of `ty`'s struct records.
+    /// Emit the VM's `drop_value` over storage no instruction names a
+    /// destructor for (a field of a struct without one, a frame-exit
+    /// release): [`Self::emit_drop`] with the `__deinit__` the member table
+    /// of `ty`'s struct records.
     pub(super) fn emit_drop_value(
         &mut self,
         ctx: &mut Context,
@@ -504,7 +504,7 @@ impl<'a> FnLowering<'a> {
     /// `destructor`, a struct's compiled `__deinit__` (its own body consumes
     /// the receiver's residual fields), else recurse into fields in
     /// declaration order.
-    fn emit_drop(
+    pub(super) fn emit_drop(
         &mut self,
         ctx: &mut Context,
         ptr: Value,
@@ -655,7 +655,7 @@ impl<'a> FnLowering<'a> {
     }
 
     /// [`Self::needs_drop`] for a drop naming `destructor` as `ty`'s own.
-    fn needs_named_drop(&self, ty: &Ty, destructor: Option<&str>) -> bool {
+    pub(super) fn needs_named_drop(&self, ty: &Ty, destructor: Option<&str>) -> bool {
         destructor.is_some()
             || matches!(ty.kind(), TyKind::Error | TyKind::Func(_))
             || self.fields_need_drop(ty)

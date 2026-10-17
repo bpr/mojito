@@ -667,6 +667,7 @@ impl VmBackend {
                             capture.value.clone()
                         },
                         owned: capture.owned,
+                        destructor: capture.destructor.clone(),
                     });
                 }
                 Ok(Value::Closure {

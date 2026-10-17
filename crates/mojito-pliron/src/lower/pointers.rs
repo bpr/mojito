@@ -144,10 +144,10 @@ impl FnLowering<'_> {
         self.mark_owned_temp(dest, element.clone())
     }
 
-    /// `PointerStorageDestroy`: run the element destructor in place at the
-    /// element address — the VM's `heap_destroy` (`heap_take` +
-    /// `drop_value`). `emit_drop_value` supplies the compiled-`__deinit__`
-    /// dispatch, rejection of raising/droppable-field destructors, and the
+    /// `PointerStorageDestroy`: run `destructor`, the element's `__deinit__`
+    /// the destroy names, in place at the element address — the VM's
+    /// `heap_destroy` (`heap_take` + `drop_named`). `emit_drop` supplies the
+    /// compiled-`__deinit__` call, rejection of raising destructors, and the
     /// lifecycle-trace event.
     pub(super) fn lower_pointer_storage_destroy(
         &mut self,
@@ -156,10 +156,11 @@ impl FnLowering<'_> {
         pointer: Reg,
         index: Reg,
         element: &Ty,
+        destructor: Option<&str>,
     ) -> Result<(), PlironError> {
         let ptr = self.reg_value(ctx, pointer, ScalarTy::Ptr)?;
         let address = self.pointer_element_address(ctx, ptr, index, element, dest)?;
-        self.emit_drop_value(ctx, address, element)?;
+        self.emit_drop(ctx, address, element, destructor)?;
         self.erased.insert(dest.0);
         Ok(())
     }
@@ -228,14 +229,15 @@ impl FnLowering<'_> {
         self.mark_owned_temp(dest, element.clone())
     }
 
-    /// `UninitStorageDestroy`: run the payload destructor in place — the
-    /// VM's take-then-`drop_value`.
+    /// `UninitStorageDestroy`: run `destructor`, the payload's `__deinit__`
+    /// the destroy names, in place — the VM's take-then-`drop_named`.
     pub(super) fn lower_uninit_storage_destroy(
         &mut self,
         ctx: &mut Context,
         dest: Reg,
         storage: Reg,
         element: &Ty,
+        destructor: Option<&str>,
     ) -> Result<(), PlironError> {
         let ptr = self.reg_ptr(ctx, storage)?;
         self.guard_uninit_present(ctx, ptr, TrapCategory::UninitDestroy, dest)?;
@@ -244,7 +246,7 @@ impl FnLowering<'_> {
             .struct_layout(&[Ty::bool(), element.clone()])
             .map_err(|error| self.unsupported_reg(format!("uninit storage ({error})"), dest))?;
         let payload = self.offset_address(ctx, ptr, fields.offsets[1]);
-        self.emit_drop_value(ctx, payload, element)?;
+        self.emit_drop(ctx, payload, element, destructor)?;
         self.erased.insert(dest.0);
         Ok(())
     }

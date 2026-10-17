@@ -590,6 +590,7 @@ impl<'a> Flatten<'a> {
                     }
                 },
                 constructor: None,
+                destructor: None,
             })
             .collect();
         let dest = match &info.callable_ty {

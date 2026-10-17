@@ -1038,6 +1038,7 @@ impl<'a> Specializer<'a> {
                     },
                     mode: MirCaptureMode::Reference,
                     constructor: None,
+                    destructor: None,
                 })
                 .collect();
             self.closure_captures.insert(target.clone(), captures);
@@ -4285,10 +4286,29 @@ fn constructed_member(name: &str, template: &str) -> Option<(String, String)> {
 type LifecycleNamer<'n> =
     dyn FnMut(&Ty, &'static str, &mut Option<String>) -> Result<(), MonoError> + 'n;
 
+/// Name, through `name`, the destructor each alternative of the variant at
+/// `place` runs when a store replaces it: one `destructors` entry per
+/// alternative.
+fn name_variant_destructors(
+    place: &MirPlace,
+    destructors: &mut Vec<Option<String>>,
+    var_tys: &HashMap<mojito_hir::hir::VarId, Ty>,
+    name: &mut LifecycleNamer<'_>,
+) -> Result<(), MonoError> {
+    let alternatives =
+        mojito_mir::mir::variant_place_alternatives(place, var_tys).unwrap_or_default();
+    destructors.resize(alternatives.len(), None);
+    alternatives
+        .iter()
+        .zip(destructors.iter_mut())
+        .try_for_each(|(alternative, destructor)| name(alternative, "__deinit__", destructor))
+}
+
 /// Call `name` on each `drop.var`, `drop.place`, cleanup-list drop,
-/// copying or moving `var.use`, and `value.copy` of `blocks`, regions
-/// included, with the value's type, the member the site runs, and its
-/// `destructor` or `constructor`.
+/// storage destroy, variant store (per alternative), owned closure capture
+/// (its constructor and its destructor), copying or moving `var.use`, and
+/// `value.copy` of `blocks`, regions included, with the value's type, the
+/// member the site runs, and its `destructor` or `constructor`.
 fn for_each_lifecycle_site_mut(
     blocks: &mut [MirBlock],
     var_tys: &HashMap<mojito_hir::hir::VarId, Ty>,
@@ -4332,16 +4352,28 @@ fn for_each_lifecycle_site_mut(
                     .map(|ty| (ty, "__copyinit__", constructor)),
                 MirInstr::MakeClosure { captures, .. } => {
                     for capture in captures {
-                        if let Some((ty, member)) = capture
-                            .place
-                            .storage_ty(var_tys)
-                            .zip(capture.constructor_member())
-                        {
+                        let Some(ty) = capture.place.storage_ty(var_tys) else {
+                            continue;
+                        };
+                        if let Some(member) = capture.constructor_member() {
                             name(ty, member, &mut capture.constructor)?;
+                        }
+                        if let Some(member) = capture.destructor_member() {
+                            name(ty, member, &mut capture.destructor)?;
                         }
                     }
                     None
                 }
+                MirInstr::PointerStorageDestroy {
+                    element,
+                    destructor,
+                    ..
+                }
+                | MirInstr::UninitStorageDestroy {
+                    element,
+                    destructor,
+                    ..
+                } => Some((&*element, "__deinit__", destructor)),
                 MirInstr::Try { cleanup, .. } => {
                     name_cleanup(cleanup, name)?;
                     None
@@ -4357,9 +4389,24 @@ fn for_each_lifecycle_site_mut(
                     place,
                     index,
                     constructor,
+                    destructors,
                     ..
+                } => {
+                    if let Some(ty) =
+                        mojito_mir::mir::variant_place_payload_ty(place, index, var_tys)
+                    {
+                        name(ty, "__copyinit__", constructor)?;
+                    }
+                    name_variant_destructors(place, destructors, var_tys, name)?;
+                    None
                 }
-                | MirInstr::VariantReplace {
+                MirInstr::VariantSetInitWith {
+                    place, destructors, ..
+                } => {
+                    name_variant_destructors(place, destructors, var_tys, name)?;
+                    None
+                }
+                MirInstr::VariantReplace {
                     place,
                     input_index: index,
                     constructor,

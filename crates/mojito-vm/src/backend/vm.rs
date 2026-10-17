@@ -324,8 +324,9 @@ impl VmBackend {
         }
     }
 
-    /// Destroy one slot of `element` values in place; a never-written slot
-    /// has nothing to destroy.
+    /// Destroy one slot of `element` values in place by `destructor`, the
+    /// `__deinit__` the storage destroy names ([`Self::drop_named`]); a
+    /// never-written slot has nothing to destroy.
     fn heap_destroy(
         &mut self,
         prog: &Prog,
@@ -333,13 +334,14 @@ impl VmBackend {
         base: i64,
         offset: i64,
         element: Option<&Ty>,
+        destructor: Option<&str>,
     ) -> Result<(), RuntimeError> {
         let (region, slot) = self.heap_index(allocation, base, offset)?;
         if std::mem::replace(&mut self.heap[region].never_written[slot], false) {
             return Ok(());
         }
         let value = self.heap_take(allocation, base, offset)?;
-        self.drop_value_as(prog, value, element)
+        self.drop_named(prog, value, element, destructor)
     }
 
     /// Move the payload out of a consumed inline uninit-storage value
@@ -1753,7 +1755,7 @@ mod pointer_storage_tests {
             slot,
             Value::Tuple(vec![Value::Int(1), Value::Int(2)]),
         );
-        vm.heap_destroy(&empty_program(), allocation, offset, 0, None)
+        vm.heap_destroy(&empty_program(), allocation, offset, 0, None, None)
             .expect("initialized destroy");
         assert!(vm.heap_read(allocation, offset, 0).is_err());
     }
@@ -1767,10 +1769,10 @@ mod pointer_storage_tests {
         // Never written: a read traps, a destroy is a no-op, a take yields the
         // tombstone once and leaves a taken slot that traps thereafter.
         assert!(vm.heap_read(allocation, offset, 0).is_err());
-        vm.heap_destroy(&empty_program(), allocation, offset, 0, None)
+        vm.heap_destroy(&empty_program(), allocation, offset, 0, None, None)
             .expect("destroying a never-written slot is a no-op");
         assert!(
-            vm.heap_destroy(&empty_program(), allocation, offset, 0, None)
+            vm.heap_destroy(&empty_program(), allocation, offset, 0, None, None)
                 .is_err()
         );
         assert!(matches!(
@@ -1782,7 +1784,7 @@ mod pointer_storage_tests {
         // Storing the tombstone re-marks the slot; storing a value clears it.
         let (region, slot) = vm.heap_index(allocation, offset, 1).expect("slot");
         vm.heap_store(region, slot, Value::Moved);
-        vm.heap_destroy(&empty_program(), allocation, offset, 1, None)
+        vm.heap_destroy(&empty_program(), allocation, offset, 1, None, None)
             .expect("a forwarded never-written slot destroys as a no-op");
         vm.heap_store(region, slot, Value::Int(3));
         assert_eq!(

@@ -128,6 +128,10 @@ pub enum RefProjection {
 pub struct ClosureCapture {
     pub value: Value,
     pub owned: bool,
+    /// The `__deinit__` an owned capture's value runs when the closure
+    /// value dies, as the `closure.make` capture names it; `None` for a
+    /// reference, or for a value whose type names none.
+    pub destructor: Option<String>,
 }
 
 /// The lanes of a SIMD value, one representation per element-type kind.

@@ -55,8 +55,18 @@ pub fn variant_place_payload_ty<'a, S: std::hash::BuildHasher>(
     index: &VariantIndex,
     var_tys: &'a HashMap<VarId, Ty, S>,
 ) -> Option<&'a Ty> {
+    variant_place_alternatives(place, var_tys)
+        .and_then(|alternatives| variant_payload_ty(alternatives, index))
+}
+
+/// The alternatives of the variant at `place`, read from the place's
+/// storage type; `None` where that type is not a known variant.
+pub fn variant_place_alternatives<'a, S: std::hash::BuildHasher>(
+    place: &'a MirPlace,
+    var_tys: &'a HashMap<VarId, Ty, S>,
+) -> Option<&'a [Ty]> {
     match place.storage_ty(var_tys)?.kind() {
-        TyKind::Variant(alternatives) => variant_payload_ty(alternatives, index),
+        TyKind::Variant(alternatives) => Some(alternatives.as_slice()),
         _ => None,
     }
 }

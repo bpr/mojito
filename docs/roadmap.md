@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1090**.
+Next free ID: **R1091**.
 
 ## Ordered Work
 
@@ -56,27 +56,26 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R1085 A teardown a compiler primitive performs names no
-  destructor; the backends find it from the type**
+- [ ] **R1090 A drop of a tuple's storage names no destructor per element;
+  the backends find each element's from the type**
 
-  `storage.destroy`, `variant.set`/`variant.replace`'s replaced payload,
-  an owned capture released at a closure's drop, and a tuple or pack
-  element find each struct's `__deinit__` in the member table
-  (`mir::destroyed_structs`), where upstream's are library bodies
-  (`unsafe_deinit_pointee`, `Variant.__deinit__`, `Tuple.__deinit__`) in
-  which destructor insertion names the `__del__`.
-  - Probe: `Pointer.unsafe_deinit_pointee()` over a struct holding a
-    `String`; `v.set[Int](1)` over a `Variant[String, Int]` holding the
-    `String`; a closure capturing a `String` by value, dropped; a
-    `Tuple[String, Int]` dropped.
-  - Name a `destructor` on each primitive, as `drop.place` does since
-    R1016 and a cleanup list's entry since R1042, and respell it in
-    `Specializer::name_lifecycle_calls`; a consumed residue still finds
-    its fields' destructors from the type.
-  - Then `destroyed_structs` answers only what no instruction names.
-  - Found while landing R1041 (2026-10-16).
+  A `drop.place` or `drop.var` of a pack aggregate (`TyKind::Tuple`,
+  `RuntimePack`) names no destructor, since the type has none of its own,
+  and the VM's `drop_value` and Pliron's `emit_drop` tear its elements
+  down by type (`mir::destroyed_structs`), where upstream's
+  `Tuple.__del__` is a `@parameter for` of `destroy_pointee` in which
+  destructor insertion names each element's `__del__`.
+  - Probe: a `Tuple[String, Int]` dropped (its synthesized destructor's
+    `drop.place` of `storage`); a heterogeneous `*args: *Ts` runtime pack
+    dropped at the callee.
+  - Refine the drop of a pack-typed place into one named `drop.place` per
+    element, as `refine_deinit_fields` refines a `deinit` receiver's
+    fields, so each element's `__deinit__` is named and respelled as a
+    field's is since R1041.
+  - An owned `VariadicPack`'s destruction is R1073's.
+  - Found while landing R1085 (2026-10-16).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1087 A drop stays a drop where the whole-slot test cannot prove
   its slot whole**

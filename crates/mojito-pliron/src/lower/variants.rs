@@ -6,6 +6,14 @@ use super::*;
 use mojito_types::types::TyKind;
 use mojito_types::types::VariantIndex;
 
+/// The lifecycle members a variant store names: the `__copyinit__` of the
+/// payload it copies in, and, per alternative, the `__deinit__` of the
+/// payload it replaces.
+pub(super) struct VariantStoreMembers<'m> {
+    pub constructor: Option<&'m str>,
+    pub destructors: &'m [Option<String>],
+}
+
 impl FnLowering<'_> {
     /// `Int(x)` / `UInt(x)` / `Float64(x)` / `Bool(x)` over a scalar operand,
     /// mirroring `runtime::builtin_convert`: float-to-integer saturates (NaN
@@ -363,8 +371,9 @@ impl FnLowering<'_> {
         )
     }
 
-    /// `variant.set`: the previous payload drops and the new one is a copy
-    /// of `value` by `constructor`, the `__copyinit__` the store names.
+    /// `variant.set`: the previous payload drops by the destructor
+    /// `members` names for its alternative, and the new one is a copy of
+    /// `value` by the `__copyinit__` the store names.
     pub(super) fn lower_variant_set(
         &mut self,
         ctx: &mut Context,
@@ -372,7 +381,7 @@ impl FnLowering<'_> {
         place: &MirPlace,
         index: usize,
         value: Reg,
-        constructor: Option<&str>,
+        members: VariantStoreMembers<'_>,
     ) -> Result<(), PlironError> {
         let (address, ty) = self.place_address(ctx, place, dest)?;
         let TyKind::Variant(alternatives) = ty.kind() else {
@@ -385,12 +394,18 @@ impl FnLowering<'_> {
             .layout
             .variant_layout(alternatives)
             .map_err(|error| self.unsupported_reg(format!("Variant layout ({error})"), dest))?;
-        self.emit_drop_variant_payload(ctx, address, alternatives, layout.payload_offset)?;
+        self.emit_drop_variant_payload(
+            ctx,
+            address,
+            alternatives,
+            layout.payload_offset,
+            members.destructors,
+        )?;
         let tag = self.tag_constant(ctx, index as u32);
         let store = StoreOp::new(ctx, tag, address);
         self.append(ctx, store.get_operation(), Some(dest));
         let payload = self.offset_address(ctx, address, layout.payload_offset);
-        self.copy_reg_into(ctx, payload, selected, value, dest, constructor)?;
+        self.copy_reg_into(ctx, payload, selected, value, dest, members.constructor)?;
         self.erased.insert(dest.0);
         Ok(())
     }
@@ -459,12 +474,17 @@ impl FnLowering<'_> {
         place: &MirPlace,
         index: usize,
         factory: Reg,
+        destructors: &[Option<String>],
     ) -> Result<(), PlironError> {
         let produced = Reg(u32::MAX - 1);
         self.lower_call_indirect(ctx, produced, factory, &[], &[], &[], &[], None)?;
         // The factory's result is a fresh temporary; its store names no
         // constructor.
-        self.lower_variant_set(ctx, dest, place, index, produced, None)
+        let members = VariantStoreMembers {
+            constructor: None,
+            destructors,
+        };
+        self.lower_variant_set(ctx, dest, place, index, produced, members)
     }
 
     pub(super) fn lower_variant_deinit_with(
@@ -504,14 +524,31 @@ impl FnLowering<'_> {
         Ok(())
     }
 
+    /// Drop the active payload of the variant at `ptr` under a tag switch,
+    /// each alternative by the destructor `destructors` names for it, as
+    /// upstream's `Variant.__del__` calls each alternative's `__del__` under
+    /// its tag test; a teardown naming none (a frame-exit release) finds
+    /// each alternative's from its type.
     pub(super) fn emit_drop_variant_payload(
         &mut self,
         ctx: &mut Context,
         ptr: Value,
         alternatives: &[Ty],
         payload_offset: u64,
+        destructors: &[Option<String>],
     ) -> Result<(), PlironError> {
-        if !alternatives.iter().any(|ty| self.needs_drop(ty)) {
+        let destructor = |lowering: &Self, position: usize, alternative: &Ty| {
+            if destructors.is_empty() {
+                lowering.type_destructor(alternative)
+            } else {
+                destructors.get(position).and_then(Option::as_deref)
+            }
+        };
+        if !alternatives
+            .iter()
+            .enumerate()
+            .any(|(position, ty)| self.needs_named_drop(ty, destructor(self, position, ty)))
+        {
             return Ok(());
         }
         let tag_handle: TypeHandle = IntegerType::get(ctx, 32, Signedness::Signless).into();
@@ -523,7 +560,8 @@ impl FnLowering<'_> {
         continuation.insert_at_back(region, ctx);
         let mut next = self.current.expect("Variant drop has a current block");
         for (index, alternative) in alternatives.iter().enumerate() {
-            if !self.needs_drop(alternative) {
+            let named = destructor(self, index, alternative);
+            if !self.needs_named_drop(alternative, named) {
                 continue;
             }
             self.current = Some(next);
@@ -544,7 +582,7 @@ impl FnLowering<'_> {
             );
             self.append(ctx, branch.get_operation(), None);
             self.current = Some(drop_block);
-            self.emit_drop_value(ctx, payload, alternative)?;
+            self.emit_drop(ctx, payload, alternative, named)?;
             let jump = BrOp::new(ctx, continuation, vec![]);
             self.append(ctx, jump.get_operation(), None);
             next = rest;

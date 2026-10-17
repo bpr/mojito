@@ -478,11 +478,16 @@ impl Decoder {
                     .field(fields, "constructor")
                     .ok()
                     .and_then(|value| self.symbol(value));
-                self.unknown(fields, &["place", "mode", "constructor"]);
+                let destructor = self
+                    .field(fields, "destructor")
+                    .ok()
+                    .and_then(|value| self.symbol(value));
+                self.unknown(fields, &["place", "mode", "constructor", "destructor"]);
                 Some(MirClosureCapture {
                     place: place?,
                     mode: mode?,
                     constructor,
+                    destructor,
                 })
             })
             .collect()

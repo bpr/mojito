@@ -5,6 +5,25 @@
 use super::*;
 use mojito_types::types::TyKind;
 
+/// One slot of a capture record: its mode (`r` a reference, `c` a copy,
+/// `m` a move), the captured type, its byte offset in the record, and the
+/// `__deinit__` the owned value runs when the closure dies, as the
+/// `closure.make` capture names it.
+pub(super) struct CaptureSlot {
+    pub mode: char,
+    pub ty: Ty,
+    pub offset: u64,
+    pub destructor: Option<String>,
+}
+
+impl CaptureSlot {
+    /// Whether the closure's teardown does work on the slot: an owned value
+    /// whose named destructor, or whose fields, perform a drop.
+    fn releases(&self, lowering: &FnLowering<'_>) -> bool {
+        self.mode != 'r' && lowering.needs_named_drop(&self.ty, self.destructor.as_deref())
+    }
+}
+
 impl FnLowering<'_> {
     /// Build the two-word `{ invoke, env }` value of a retained callable:
     /// intern the target's `invoke` thunk and store its address next to the
@@ -38,6 +57,7 @@ impl FnLowering<'_> {
         });
         let mut modes = String::with_capacity(captures.len());
         let mut slot_tys = vec![pointer_slot.clone()];
+        let mut destructors = Vec::with_capacity(captures.len());
         for capture in captures {
             let (mode, slot_ty) = match capture.mode {
                 MirCaptureMode::Reference => ('r', pointer_slot.clone()),
@@ -88,6 +108,7 @@ impl FnLowering<'_> {
             };
             modes.push(mode);
             slot_tys.push(slot_ty);
+            destructors.push(capture.destructor.clone());
         }
         let (env, capture_offsets) = if captures.is_empty() {
             let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
@@ -100,16 +121,19 @@ impl FnLowering<'_> {
             // Header: the per-site drop thunk when some owned slot needs
             // drop work, else null. Re-stored on every execution — a loop
             // re-creating a dropped closure revives the tombstoned header.
-            let droppable: Vec<(char, Ty, u64)> = modes
+            let droppable: Vec<CaptureSlot> = modes
                 .chars()
                 .zip(&slot_tys[1..])
                 .zip(&composed.offsets[1..])
-                .map(|((mode, ty), offset)| (mode, ty.clone(), *offset))
+                .zip(destructors)
+                .map(|(((mode, ty), offset), destructor)| CaptureSlot {
+                    mode,
+                    ty: ty.clone(),
+                    offset: *offset,
+                    destructor,
+                })
                 .collect();
-            let header = if droppable
-                .iter()
-                .any(|(mode, ty, _)| *mode != 'r' && self.needs_drop(ty))
-            {
+            let header = if droppable.iter().any(|slot| slot.releases(self)) {
                 let thunk = self.ensure_capture_drop_thunk(ctx, function, &modes, &droppable)?;
                 let address = AddressOfOp::new(ctx, thunk, 0);
                 self.append(ctx, address.get_operation(), Some(dest));
@@ -122,10 +146,11 @@ impl FnLowering<'_> {
             };
             let store_header = StoreOp::new(ctx, header, record);
             self.append(ctx, store_header.get_operation(), Some(dest));
-            for (capture, ((mode, ty, _), offset)) in captures
+            for (capture, (slot, offset)) in captures
                 .iter()
                 .zip(droppable.iter().zip(&composed.offsets[1..]))
             {
+                let (mode, ty) = (&slot.mode, &slot.ty);
                 let slot = if *offset == 0 {
                     record
                 } else {
@@ -196,15 +221,15 @@ impl FnLowering<'_> {
 
     /// Emit (once per `(target, modes)`) the teardown thunk a capture
     /// record's header names: destroy the owned droppable slots in reverse
-    /// capture order (the VM's closure-drop order), then null the header —
-    /// drops are idempotent per record, which is what keeps aliasing
-    /// two-word copies sound.
+    /// capture order (the VM's closure-drop order), each by the destructor
+    /// its capture names, then null the header — drops are idempotent per
+    /// record, which is what keeps aliasing two-word copies sound.
     pub(super) fn ensure_capture_drop_thunk(
         &mut self,
         ctx: &mut Context,
         function: &str,
         modes: &str,
-        slots: &[(char, Ty, u64)],
+        slots: &[CaptureSlot],
     ) -> Result<Identifier, PlironError> {
         let key = (function.to_string(), modes.to_string());
         if let Some(name) = self.shared.drop_thunks.get(&key) {
@@ -236,16 +261,16 @@ impl FnLowering<'_> {
         self.region = Some(region);
         let emit = |lowering: &mut Self, ctx: &mut Context| -> Result<(), PlironError> {
             let env = entry.deref(ctx).get_argument(0);
-            for (mode, ty, offset) in slots.iter().rev() {
-                if *mode == 'r' || !lowering.needs_drop(ty) {
+            for slot in slots.iter().rev() {
+                if !slot.releases(lowering) {
                     continue;
                 }
-                let address = if *offset == 0 {
+                let address = if slot.offset == 0 {
                     env
                 } else {
-                    lowering.gep_byte_unspanned(ctx, env, *offset)
+                    lowering.gep_byte_unspanned(ctx, env, slot.offset)
                 };
-                lowering.emit_drop_value(ctx, address, ty)?;
+                lowering.emit_drop(ctx, address, &slot.ty, slot.destructor.as_deref())?;
             }
             let null = ZeroOp::new(ctx, ptr_ty);
             lowering.append(ctx, null.get_operation(), None);

@@ -40,3 +40,11 @@ pub fn serialize_option<S: Serializer>(
 pub fn serialize_seq<S: Serializer>(names: &[String], serializer: S) -> Result<S::Ok, S::Error> {
     serializer.collect_seq(names.iter().map(|name| SymbolRef(name)))
 }
+
+/// Encode a list of optional symbol names as references.
+pub fn serialize_option_seq<S: Serializer>(
+    names: &[Option<String>],
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.collect_seq(names.iter().map(|name| name.as_deref().map(SymbolRef)))
+}

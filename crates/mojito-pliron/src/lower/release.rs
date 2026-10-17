@@ -263,7 +263,7 @@ impl FnLowering<'_> {
                 let layout = self.layout.variant_layout(alternatives).map_err(|error| {
                     self.unsupported(format!("Variant drop layout ({error})"), None)
                 })?;
-                self.emit_drop_variant_payload(ctx, ptr, alternatives, layout.payload_offset)
+                self.emit_drop_variant_payload(ctx, ptr, alternatives, layout.payload_offset, &[])
             }
             _ => Ok(()),
         }

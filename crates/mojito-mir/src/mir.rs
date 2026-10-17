@@ -59,10 +59,13 @@ pub use callable_values::{callable_targets, nested_instructions};
 mod calls;
 mod constructor_calls;
 pub use constructor_calls::{
-    name_constructors, use_constructor_member, variant_payload_ty, variant_place_payload_ty,
+    name_constructors, use_constructor_member, variant_payload_ty, variant_place_alternatives,
+    variant_place_payload_ty,
 };
 mod copies;
 pub use copies::{Relocated, StructDeclarations, relocated_structs};
+mod teardown_calls;
+pub use teardown_calls::name_teardown_destructors;
 mod destroys;
 pub use destroys::{Destroyed, StructFields, destroyed_structs};
 mod drop_calls;
@@ -863,6 +866,7 @@ pub fn lower_package_unit(
     for (name, function) in &mut functions {
         close_register_types(name, function, declarations, &mut invariant_errors);
         name_constructors(function, declarations);
+        name_teardown_destructors(function, declarations);
         let registers = function.n_regs;
         function.spans.0.retain(|reg, _| *reg < registers);
         for (span, _) in function.spans.0.values_mut() {
@@ -979,6 +983,7 @@ fn lower_program(
         for (name, function) in &mut functions {
             close_register_types(name, function, &declarations, &mut invariant_errors);
             name_constructors(function, &declarations);
+            name_teardown_destructors(function, &declarations);
         }
     }
     let mut result = MirProgram {

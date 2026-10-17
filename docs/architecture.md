@@ -4497,9 +4497,17 @@ makes definite (R1087, R1088).
 A cleanup list's entries name their destructor as a `DropVar` does
 (`CleanupDrop`), named by the same `name_destructors` and respelled by the
 same `name_lifecycle_calls`, so the VM's `run_cleanup` and Pliron's
-`lower_cleanup_drops` call it; a consumed residue, a storage destroy, a
-variant store, and an owned capture still find their destructor from the
-type (`mir::destroyed_structs`), as does Pliron's frame-exit sweep of
+`lower_cleanup_drops` call it. A storage destroy, a variant store (one
+`destructors` entry per alternative, the `__deinit__` the replaced payload
+runs under that tag, as upstream's `Variant.__del__` names each under its
+tag test), and an owned closure capture (released at the closure's death)
+name theirs the same way, from MIR lowering on
+(`mir::name_teardown_destructors`, `mir/teardown_calls.rs`, rerun by
+`name_destructors` and by a pass that retypes one), respelled by the same
+`name_lifecycle_calls`, so the VM's `drop_named` and Pliron's `emit_drop`
+call them; a consumed residue's fields and a drop of a pack aggregate's
+elements (R1090) still find their destructor from the type
+(`mir::destroyed_structs`), as does Pliron's frame-exit sweep of
 still-flagged slots (R832); a named drop's fields are its destructor's to
 name.
 
@@ -5687,8 +5695,9 @@ point where a slot declared in a loop is uninitialized again.
   is the drops' to demand: the elaborator names, at each `drop.var` and
   `drop.place`, the `__deinit__` instance `enqueue` makes for the dropped
   type (`Specializer::name_lifecycle_calls`), which the struct's concrete
-  member table records, and demands by type only what no drop names
-  (`destroyed_structs`), and names each copy's and move's constructor
+  member table records, names the destructor a storage destroy, a variant
+  store, and an owned capture run the same way, and demands by type only
+  what no instruction names (`destroyed_structs`), and names each copy's and move's constructor
   instance the same way, by type only what no copy or move names
   (`relocated_structs`); and, as for every struct, a constructor the
   calls' (R993), a `__call__` the calls' (R1009), and a copy or move

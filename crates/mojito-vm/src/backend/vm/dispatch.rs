@@ -181,22 +181,6 @@ impl VmBackend {
         }
     }
 
-    /// Destroy `value` held in a slot of the static type `ty`: as
-    /// [`Self::drop_value`], through `ty`'s members where it is an erased
-    /// struct instance ([`erased_instance_value`]).
-    pub(super) fn drop_value_as(
-        &mut self,
-        prog: &Prog,
-        value: Value,
-        ty: Option<&Ty>,
-    ) -> Result<(), RuntimeError> {
-        let value = match ty {
-            Some(ty) => erased_instance_value(prog, value, ty),
-            None => value,
-        };
-        self.drop_value(prog, value)
-    }
-
     /// Copy `value` held in a slot or register of the static type `ty`: as
     /// [`Self::clone_value`], through `ty`'s members where it is an erased
     /// struct instance ([`erased_instance_value`]). The copy keeps `value`'s
@@ -290,16 +274,44 @@ impl VmBackend {
                 }
             }
             Value::Variant { value, .. } => self.drop_value(prog, *value)?,
+            // An owned capture runs the destructor its `closure.make`
+            // capture named, as a drop runs the one it names.
             Value::Closure { captures, .. } => {
                 for capture in captures.into_iter().rev() {
                     if capture.owned && !matches!(capture.value, Value::Moved) {
-                        self.drop_value(prog, capture.value)?;
+                        self.drop_named(prog, capture.value, None, capture.destructor.as_deref())?;
                     }
                 }
             }
             _ => {}
         }
         Ok(())
+    }
+
+    /// Destroy the payload of the variant value `old` a store replaces, by
+    /// the destructor `destructors` names for its active alternative, as
+    /// upstream's `Variant.__del__` calls the alternative's `__del__` under
+    /// its tag test; a store naming none for it drops by type.
+    pub(super) fn drop_variant_payload(
+        &mut self,
+        prog: &Prog,
+        old: Value,
+        destructors: &[Option<String>],
+    ) -> Result<(), RuntimeError> {
+        let Value::Variant {
+            alternatives,
+            index,
+            value,
+        } = old
+        else {
+            return self.drop_value(prog, old);
+        };
+        self.drop_named(
+            prog,
+            *value,
+            alternatives.get(index),
+            destructors.get(index).and_then(Option::as_deref),
+        )
     }
 
     /// Materialize one intrinsic Slice bound through the bundled

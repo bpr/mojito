@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A storage destroy (`unsafe_deinit_pointee`, `MaybeUninit.unsafe_deinit`),
+  a variant store's replaced payload (`Variant.set`, with or without
+  `init_with=`), and an owned closure capture released at the closure's
+  death now name the `__deinit__` they run (R1085), as a `drop.var` does
+  since R1016 and as upstream's destructor insertion names the `__del__`
+  inside `destroy_pointee`, `Variant.__del__`, and a closure's teardown:
+  `mir::name_teardown_destructors` names each at MIR lowering (a variant
+  store names one per alternative, selected by the tag at run time), the
+  elaborator respells it to the instance, the symbol walks and the
+  verifier follow it, and the VM and the native backend call it instead of
+  finding it from the value's type. MIR text schema 1.73 carries the
+  `destructor` (`pointer.destroy`, `uninit.destroy`, an owned
+  `closure_capture`) and `destructors` (`variant.set`,
+  `variant.set_init_with`) fields. `mir::destroyed_structs` now answers
+  only a consumed residue's fields and a pack aggregate's elements (R1090).
 - A call omitting an argument its callee never uses no longer evaluates
   that argument's default (R1083), as upstream's `RemoveUnusedParams`
   rewrites the call to pass nothing for it: the view of a caller the

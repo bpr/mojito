@@ -1,5 +1,6 @@
 //! The per-function driver: block walk plus the [`MirInstr`] dispatch.
 
+use super::variants::VariantStoreMembers;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::TyKind;
@@ -544,7 +545,15 @@ impl FnLowering<'_> {
                 pointer,
                 index,
                 element,
-            } => self.lower_pointer_storage_destroy(ctx, *dest, *pointer, *index, element),
+                destructor,
+            } => self.lower_pointer_storage_destroy(
+                ctx,
+                *dest,
+                *pointer,
+                *index,
+                element,
+                destructor.as_deref(),
+            ),
             MirInstr::UninitStorage { dest, init } => self.lower_uninit_storage(ctx, *dest, *init),
             MirInstr::UninitStorageTake {
                 dest,
@@ -555,7 +564,14 @@ impl FnLowering<'_> {
                 dest,
                 storage,
                 element,
-            } => self.lower_uninit_storage_destroy(ctx, *dest, *storage, element),
+                destructor,
+            } => self.lower_uninit_storage_destroy(
+                ctx,
+                *dest,
+                *storage,
+                element,
+                destructor.as_deref(),
+            ),
             MirInstr::Index {
                 dest,
                 base,
@@ -879,18 +895,24 @@ impl FnLowering<'_> {
                 index,
                 value,
                 constructor,
+                destructors,
             } => {
                 let index = self.known_variant_index(index)?;
-                self.lower_variant_set(ctx, *dest, place, index, *value, constructor.as_deref())
+                let members = VariantStoreMembers {
+                    constructor: constructor.as_deref(),
+                    destructors,
+                };
+                self.lower_variant_set(ctx, *dest, place, index, *value, members)
             }
             MirInstr::VariantSetInitWith {
                 dest,
                 place,
                 index,
                 factory,
+                destructors,
             } => {
                 let index = self.known_variant_index(index)?;
-                self.lower_variant_set_init_with(ctx, *dest, place, index, *factory)
+                self.lower_variant_set_init_with(ctx, *dest, place, index, *factory, destructors)
             }
             MirInstr::VariantDeinitWith {
                 dest,

@@ -165,9 +165,23 @@ pub(super) fn verify_instruction(
             place,
             index,
             constructor,
+            destructors,
             ..
+        } => {
+            verify_lifecycle_symbol(
+                &cx,
+                "variant payload copy",
+                crate::mir::variant_place_payload_ty(place, index, &function.var_tys),
+                Some("__copyinit__"),
+                constructor.as_deref(),
+                errors,
+            );
+            verify_variant_destructors(&cx, place, destructors, errors);
         }
-        | MirInstr::VariantReplace {
+        MirInstr::VariantSetInitWith {
+            place, destructors, ..
+        } => verify_variant_destructors(&cx, place, destructors, errors),
+        MirInstr::VariantReplace {
             place,
             input_index: index,
             constructor,
@@ -257,6 +271,40 @@ pub(super) fn verify_cleanup_drops(
             cx.function.var_tys.get(&drop.var),
             Some("__deinit__"),
             drop.destructor.as_deref(),
+            errors,
+        );
+    }
+}
+
+/// A variant store names, per alternative, the destructor the previous
+/// payload runs under that tag ([`verify_lifecycle_symbol`]); a list that
+/// is not one entry per alternative is an error.
+fn verify_variant_destructors(
+    cx: &InstrCx<'_>,
+    place: &MirPlace,
+    destructors: &[Option<String>],
+    errors: &mut Vec<String>,
+) {
+    let Some(alternatives) = crate::mir::variant_place_alternatives(place, &cx.function.var_tys)
+    else {
+        return;
+    };
+    if !destructors.is_empty() && destructors.len() != alternatives.len() {
+        errors.push(format!(
+            "{}: variant store names {} destructors for {} alternatives",
+            cx.prefix,
+            destructors.len(),
+            alternatives.len()
+        ));
+        return;
+    }
+    for (position, alternative) in alternatives.iter().enumerate() {
+        verify_lifecycle_symbol(
+            cx,
+            "variant payload drop",
+            Some(alternative),
+            Some("__deinit__"),
+            destructors.get(position).and_then(Option::as_deref),
             errors,
         );
     }
@@ -703,12 +751,21 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
             captures,
         } => {
             for capture in captures {
+                let ty = capture.place.storage_ty(&cx.function.var_tys);
                 verify_lifecycle_symbol(
                     cx,
                     "closure capture",
-                    capture.place.storage_ty(&cx.function.var_tys),
+                    ty,
                     capture.constructor_member(),
                     capture.constructor.as_deref(),
+                    errors,
+                );
+                verify_lifecycle_symbol(
+                    cx,
+                    "closure capture release",
+                    ty,
+                    capture.destructor_member(),
+                    capture.destructor.as_deref(),
                     errors,
                 );
             }
@@ -763,7 +820,18 @@ fn verify_storage_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: 
             pointer,
             index,
             element,
+            ..
         } => {
+            if let MirInstr::PointerStorageDestroy { destructor, .. } = instruction {
+                verify_lifecycle_symbol(
+                    cx,
+                    "storage destroy",
+                    Some(element),
+                    Some("__deinit__"),
+                    destructor.as_deref(),
+                    errors,
+                );
+            }
             match cx.reg_ty(*pointer).map(Ty::kind) {
                 Some(TyKind::Pointer {
                     element: actual,
@@ -826,7 +894,18 @@ fn verify_storage_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: 
             dest,
             storage,
             element,
+            ..
         } => {
+            if let MirInstr::UninitStorageDestroy { destructor, .. } = instruction {
+                verify_lifecycle_symbol(
+                    cx,
+                    "storage destroy",
+                    Some(element),
+                    Some("__deinit__"),
+                    destructor.as_deref(),
+                    errors,
+                );
+            }
             if let Some(found) = cx.reg_ty(*storage)
                 && !mojito_types::types::uninit_storage_element(found)
                     .is_some_and(|actual| types_compatible(actual, element))

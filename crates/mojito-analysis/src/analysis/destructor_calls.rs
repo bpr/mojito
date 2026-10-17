@@ -4,7 +4,9 @@
 //! Upstream leaves, at each death, a call naming the `__del__` of the dead
 //! value's type, in the unwind blocks too. Each `drop.var`, `drop.place`,
 //! and cleanup-list drop here names that destructor as its `destructor`
-//! operand, so the symbol walk, the elaborator's respell, and
+//! operand, and the teardown primitives a library body runs name theirs
+//! again (`mir::name_teardown_destructors`, which a pass that retypes one
+//! reruns), so the symbol walk, the elaborator's respell, and
 //! `eliminate-dead-symbols` follow it as they follow a call's callee, and
 //! no consumer looks the destructor up from the value's type again. A drop
 //! of a type the member table names no `__deinit__` for, a symbolic one
@@ -17,7 +19,7 @@
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
     CleanupDrop, MirBlock, MirDeclarations, MirFunction, MirInstr, MirTerm,
-    instruction_regions_mut, lower_whole_drops,
+    instruction_regions_mut, lower_whole_drops, name_teardown_destructors,
 };
 use mojito_types::types::Ty;
 use std::collections::HashMap;
@@ -27,6 +29,7 @@ use std::collections::HashMap;
 /// of its destructor.
 pub fn name_destructors(function: &mut MirFunction, declarations: &MirDeclarations) {
     name_in_blocks(&mut function.blocks, &function.var_tys, declarations);
+    name_teardown_destructors(function, declarations);
     lower_whole_drops(function);
 }
 
