@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `def` declared in a `comptime for` is now a generator over the loop's
+  binder beside its enclosing scope's, and removes those it never reads,
+  as upstream's `RemoveUnusedParams` treats the lifted function: `inner`
+  reading neither `n` nor the loop index has one instance for `looped[1]`
+  and `looped[2]` where it had four, and one reading the index one per
+  index. `looped` itself has one instance too, since an application of a
+  lifted body, such as the loop bound's, no longer reads the binders that
+  body removed. A struct instance's method whose loop declares a `def` now
+  calls that `def`'s instance instead of failing elaboration as a
+  construction of the struct (R974,
+  `assets/ok/comptime_for_nested_unread_instances.mojo`).
 - A nested generic `def` now removes its own compile-time parameters its
   body never reads, beside its enclosing scope's, as upstream's
   `RemoveUnusedParams` treats the lifted function: `inner[1]` and

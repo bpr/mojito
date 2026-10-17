@@ -4208,6 +4208,48 @@ fn nested_generic_own_parameters_leave_the_instance_key() {
 }
 
 #[test]
+fn comptime_for_nested_unread_binders_leave_the_instance_key() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/comptime_for_nested_unread_instances.mojo");
+    let program = Compiler::default()
+        .compile_path(&path)
+        .expect("compile the fixture");
+    // The elaborator's own instances, before `eliminate-duplicate-functions`
+    // merges identical ones.
+    let mir = program.elaborated_mir();
+    let concrete = mojito::native::mono::specialize_importing(
+        mir,
+        program.imported_package().map(|package| &package.bodies),
+        &mojito::mir::entry_roots(mir),
+        None,
+    )
+    .expect("elaborate");
+    let instances = |template: &str| {
+        concrete
+            .counts
+            .generators
+            .iter()
+            .find(|row| row.template == template)
+            .map_or(0, |row| row.instances)
+    };
+    for (template, count) in [
+        ("ignores", 1),
+        ("ignores$inner", 1),
+        ("reads_index$inner", 2),
+        ("reads_outer", 2),
+        ("reads_outer$inner", 2),
+        ("generic_ignores$inner", 1),
+        ("generic_reads_own$inner", 2),
+        ("two_loops$inner", 2),
+        ("valued$inner", 1),
+        ("outer_loop$middle", 1),
+        ("outer_loop$middle$leaf", 1),
+    ] {
+        assert_eq!(instances(template), count, "instances of `{template}`");
+    }
+}
+
+#[test]
 fn forwarded_parameters_leave_the_instance_key() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/forwarded_parameter_instances.mojo");

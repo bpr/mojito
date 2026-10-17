@@ -385,23 +385,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R974 A nested `def` in a `comptime for` splits its instances by
-  binders it never reads**
-
-  `looped[n]` whose `comptime for` body declares a `def` reading neither
-  `n` nor the loop index has four instances of it for `looped[1]` and
-  `looped[2]`, and two of `looped`, where the pin keeps one of each.
-  - `mir::unread_parameters` gives a function with `region_binders` no
-    candidates, so such a body removes nothing and its enclosing function
-    reads every parameter through it.
-  - The region binders would become candidates too, and
-    `Specializer::nested_bindings`, which both `instantiate_nested_bodies`
-    and the unroller (`mono/unroll.rs`) call, already drops removed ones.
-  - The unroller's generic case names a generator by the arguments, so it
-    must agree.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R975 A `def` nested in a parametric struct's method splits its
   instances by the owner's parameters**
 
@@ -417,6 +400,10 @@ which names the upstream pass each one follows. Each is measured by the
   - Probe: a static `Counter.st()` whose nested generic `bump[m]` reads
     only `m` has two instances of `st` for `Counter[1]` and `Counter[2]`,
     and four of `bump`, where the pin keeps one of `st` and two of `bump`.
+  - Probe: `Counter[k].get` whose `comptime for` body declares a `bump`
+    reading no binder has two instances of `get` and of `bump` for
+    `Counter[1]` and `Counter[2]`, where the pin keeps one of each
+    (`assets/ok/comptime_for_nested_unread_instances.mojo`).
   - Depends on R909.
   - Model: Fable, Not Planned.
 

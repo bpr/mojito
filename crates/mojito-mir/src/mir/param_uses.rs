@@ -39,8 +39,12 @@
 //! generator after removing its unused parameters. A body lifted from the
 //! function (named `$comptime$f$…`, `$default$f$…`) reads the binders it
 //! declares that its own analysis kept, as upstream's lifted function is an
-//! ordinary generator. A nested or lifted body whose analysis is not at hand
-//! reads every parameter.
+//! ordinary generator, and an application of it reads nothing in its
+//! arguments for the binders it removed, as upstream rewrote the
+//! application without them. A nested or lifted body whose analysis is not
+//! at hand reads every parameter. A body nested in a `comptime for` is a
+//! generator over the loop's binder as well, which it removes when it
+//! never reads it.
 
 use crate::mir::struct_reads::{LayoutReads, StructReads};
 use crate::mir::verify::{instruction_operand_regs, instruction_places, instruction_result_regs};
@@ -65,7 +69,8 @@ use std::fmt;
 /// For a top-level function they are its own compile-time parameters and,
 /// for a method, its struct's, as upstream's method generator lists them
 /// before its own; for a nested one the parameters of the declarations it is
-/// nested in beside its own; for a lifted one (`$comptime$f$…`,
+/// nested in and the binders of the `comptime for` regions each is declared
+/// in beside its own; for a lifted one (`$comptime$f$…`,
 /// `$default$f$…`) every binder it declares; each that nothing in its body
 /// `function` or its declaration's signature reads, sorted by owner and
 /// slot. A nested body `function` names reads the candidates its own
@@ -74,8 +79,8 @@ use std::fmt;
 ///
 /// A runtime default is not a read, since every call omitting it evaluates
 /// it at the call ([`crate::mir::fill_omitted_arguments`]), as upstream's
-/// callee names none. A function inside a `comptime for`, `__toplevel__`,
-/// and a function without a declaration have no candidates. A callable value
+/// callee names none. `__toplevel__` and a function without a declaration
+/// have no candidates. A callable value
 /// parameter is a candidate like any other: a call through it reads it, and
 /// the elaborator binds no runtime closure or environment for one it
 /// removed.
@@ -111,7 +116,7 @@ pub fn unread_parameters_of<'a>(
     nested: &Removals<'a>,
     callees: &Removals<'a>,
 ) -> UnreadParameters {
-    if name == "__toplevel__" || !declaration.region_binders.is_empty() {
+    if name == "__toplevel__" {
         return UnreadParameters::default();
     }
     let candidates = candidate_parameters(name, declaration, declarations);
@@ -471,7 +476,8 @@ pub fn register_reads(function: &mut MirFunction) -> Vec<u32> {
 /// The parameters `unread_parameters` may remove from `name`: its own
 /// compile-time parameters and, for a method, its struct's, or for a nested
 /// function, whose own parameters' owner is its source name, those and its
-/// enclosing declarations' parameters, each once. A lifted function binds
+/// enclosing declarations' parameters, with the binders of the `comptime for`
+/// regions each is declared in, each once. A lifted function binds
 /// every binder it declares by its own arguments, whoever owns it, as
 /// upstream's lifted function is an ordinary generator.
 fn candidate_parameters<'d>(
@@ -485,6 +491,7 @@ fn candidate_parameters<'d>(
     let mut candidates: Vec<&ParamDecl> = Vec::new();
     if declaration.enclosing.is_some() {
         candidates.extend(&declaration.param_decls);
+        candidates.extend(&declaration.region_binders);
     } else {
         candidates.extend(
             declaration
@@ -503,7 +510,11 @@ fn candidate_parameters<'d>(
         .as_deref()
         .and_then(|enclosing| declarations.function(enclosing));
     while let Some(enclosing) = link {
-        for decl in &enclosing.param_decls {
+        for decl in enclosing
+            .param_decls
+            .iter()
+            .chain(&enclosing.region_binders)
+        {
             if !candidates.iter().any(|seen| seen.id() == decl.id()) {
                 candidates.push(decl);
             }
@@ -1160,8 +1171,11 @@ struct Walker<'o, 'a, 'n> {
     /// whatever a layout reads: a value argument, a dependent type, a
     /// projection.
     nominal: usize,
-    /// Each struct variant the walk is inside, and whether it is nominal.
-    struct_variants: Vec<bool>,
+    /// The name of each struct variant the walk is inside.
+    struct_variants: Vec<&'static str>,
+    /// Which arguments the application whose function the walk last visited
+    /// passes for binders that lifted body kept, when it is one an owner's.
+    lifted_arguments: Option<LayoutReads>,
     /// The removals of the nested bodies a walked value names.
     nested: &'n Removals<'a>,
     /// The removals of the members a call the walk reads names.
@@ -1232,6 +1246,7 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
             unread: 0,
             nominal: 0,
             struct_variants: Vec::new(),
+            lifted_arguments: None,
             nested,
             callees: None,
             member_callees: BTreeSet::new(),
@@ -1787,6 +1802,7 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
             Some(lifted) => {
                 if owned(lifted) {
                     self.lifted_reads(value);
+                    self.lifted_arguments = self.lifted_kept_positions(value);
                 }
                 self.lifted.insert(value.to_string());
             }
@@ -1823,6 +1839,25 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
                 self.slots.insert((owner, id.slot));
             }
         }
+    }
+
+    /// The positions of the binders the lifted body `name` declares that its
+    /// removals keep, when they are at hand: an application of it passes
+    /// its binders' arguments in declaration order, and one for a removed
+    /// binder is no read, as upstream's `RemoveUnusedParams` rewrote the
+    /// application without it.
+    fn lifted_kept_positions(&self, name: &str) -> Option<LayoutReads> {
+        let removed = (self.nested)(name)?;
+        let declaration = self.declarations?.function(name)?;
+        Some(LayoutReads::Positions(
+            declaration
+                .param_decls
+                .iter()
+                .enumerate()
+                .filter(|(_, decl)| !removed.contains(decl.id()))
+                .map(|(position, _)| position)
+                .collect(),
+        ))
     }
 
     fn element<T: Serialize + ?Sized>(&mut self, value: &T) {
@@ -2082,9 +2117,8 @@ impl ser::Serializer for &mut Walker<'_, '_, '_> {
         _: usize,
     ) -> Result<Self, Unwalkable> {
         // A projection off a type names its binders whole.
-        let nominal = variant == "Assoc";
-        self.nominal += usize::from(nominal);
-        self.struct_variants.push(nominal);
+        self.nominal += usize::from(variant == "Assoc");
+        self.struct_variants.push(variant);
         Ok(self.compound())
     }
 }
@@ -2217,15 +2251,24 @@ impl ser::SerializeStructVariant for &mut Walker<'_, '_, '_> {
 
     fn serialize_field<T: Serialize + ?Sized>(
         &mut self,
-        _: &'static str,
+        key: &'static str,
         value: &T,
     ) -> Result<(), Unwalkable> {
+        // An application's arguments for binders the lifted body it applies
+        // removed are no read.
+        if self.struct_variants.last() == Some(&"Apply") {
+            match key {
+                "function" => self.lifted_arguments = None,
+                "args" => self.struct_arguments = self.lifted_arguments.take(),
+                _ => {}
+            }
+        }
         self.visit(value);
         Ok(())
     }
 
     fn end(self) -> Result<(), Unwalkable> {
-        if self.struct_variants.pop() == Some(true) {
+        if self.struct_variants.pop() == Some("Assoc") {
             self.nominal -= 1;
         }
         self.leaf = Leaf::Other;

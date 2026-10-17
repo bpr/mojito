@@ -96,6 +96,7 @@ assets/ok/comptime_for_iterable_struct.mojo	elaborated	5	68	0	0	0	0	13	0	0
 assets/ok/comptime_for_iteration_scope.mojo	elaborated	8	100	1	2	5	4	16	4	2
 assets/ok/comptime_for_iterator_aggregate_elements.mojo	elaborated	17	216	2	4	13	17	39	5	7
 assets/ok/comptime_for_named_collection.mojo	elaborated	15	140	7	8	47	52	23	51	8
+assets/ok/comptime_for_nested_unread_instances.mojo	elaborated	31	226	20	26	133	123	39	59	26
 assets/ok/comptime_for_string_aggregates.mojo	elaborated	30	1015	4	4	203	388	112	50	18
 assets/ok/comptime_for_struct_elements.mojo	elaborated	6	71	1	1	7	6	14	7	1
 assets/ok/comptime_for_template_served.mojo	elaborated	25	303	6	12	73	118	45	31	15
@@ -1060,4 +1061,4 @@ benchmarks/compile/stdlib_heavy.mojo	elaborated	103	1691	42	90	769	1360	302	124	
 benchmarks/compile/trait_defaults.mojo	elaborated	159	1432	24	117	195	1031	192	37	133
 benchmarks/compile/tstring.mojo	elaborated	17	242	6	7	33	54	31	15	10
 benchmarks/compile/tuple.mojo	elaborated	24	252	7	13	40	71	41	10	16
-total	1061	24786	401855	8702	13731	120464	167771	68824	25470	34876
+total	1062	24817	402081	8722	13757	120597	167894	68863	25529	34902

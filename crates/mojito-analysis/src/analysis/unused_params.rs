@@ -41,8 +41,9 @@
 //! member it runs ([`mojito_mir::mir::lifecycle_callees`]) joins the
 //! snapshot as well.
 //!
-//! A nested body is a generator over the binders of its enclosing scope
-//! beside its own, as upstream lifts a closure to one: the pass removes
+//! A nested body is a generator over the binders of its enclosing scope,
+//! those of the `comptime for` regions it is declared in included, beside
+//! its own, as upstream lifts a closure to one: the pass removes
 //! those it never reads, the elaborator keys its instances on the rest, and
 //! the enclosing function reads through a nested body it names only the
 //! binders that body kept. Those removals join the snapshot the verifier

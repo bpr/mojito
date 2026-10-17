@@ -133,7 +133,8 @@ pub(super) fn verify_scope(
         declarations,
         head: &head,
         errors,
-        struct_arguments: 0,
+        erasable: 0,
+        callee_removed_params: &function.callee_removed_params,
     };
     let signature = function
         .param_types
@@ -377,8 +378,14 @@ struct ScopeCx<'a> {
     declarations: &'a MirDeclarations,
     head: &'a str,
     errors: &'a mut Vec<String>,
-    /// How many struct arguments the walk is inside.
-    struct_arguments: usize,
+    /// How many places the walk is inside that may still spell a binder
+    /// the body's generator removed: a struct argument, which an instance
+    /// erases, or an application's argument for a binder the lifted body it
+    /// applies removed, which upstream's `RemoveUnusedParams` rewrote the
+    /// application without.
+    erasable: usize,
+    /// The body's snapshot of the removals of the callees it reads through.
+    callee_removed_params: &'a [(String, Vec<ParamId>)],
 }
 
 impl ScopeCx<'_> {
@@ -595,9 +602,9 @@ impl ScopeCx<'_> {
                     .declarations
                     .structure(name)
                     .map(|declaration| &declaration.param_decls[..]);
-                self.struct_arguments += 1;
+                self.erasable += 1;
                 self.arguments(role, declared, args, nested);
-                self.struct_arguments -= 1;
+                self.erasable -= 1;
             }
             TyKind::GenericFunc(generic) => {
                 let GenericFuncTy {
@@ -832,12 +839,51 @@ impl ScopeCx<'_> {
         for finding in findings {
             self.errors.push(format!("{} {role} {finding}", self.head));
         }
+        let mut removed = self.removed_application_references(expr);
         for (id, name, meta) in references {
+            let erasable = removed
+                .get_mut(&id)
+                .filter(|count| **count > 0)
+                .map(|count| *count -= 1)
+                .is_some();
+            self.erasable += usize::from(erasable);
             self.reference(role, &id, &name, meta.as_ref(), nested);
+            self.erasable -= usize::from(erasable);
         }
         for ty in embedded {
             self.walk_in(role, &ty, nested);
         }
+    }
+
+    /// How many times `expr` spells each binder inside an application's
+    /// argument for a binder the lifted body it applies removed, by the
+    /// body's snapshot of that body's removals.
+    fn removed_application_references(&self, expr: &ParamExpr) -> HashMap<ParamId, usize> {
+        let mut counts = HashMap::new();
+        expr.visit(&mut |node| {
+            let ParamKind::Apply { function, args } = node.kind() else {
+                return;
+            };
+            let Some((removed, declaration)) = self
+                .callee_removed_params
+                .iter()
+                .find(|(callee, _)| callee == function)
+                .filter(|_| mojito_symbol::symbol::lifted_owner(function).is_some())
+                .zip(self.declarations.function(function))
+            else {
+                return;
+            };
+            for (arg, decl) in args.iter().zip(&declaration.param_decls) {
+                if removed.1.contains(decl.id()) {
+                    arg.visit(&mut |inner| {
+                        if let ParamKind::DeclRef(reference) = inner.kind() {
+                            *counts.entry(reference.id.clone()).or_default() += 1;
+                        }
+                    });
+                }
+            }
+        });
+        counts
     }
 
     /// One reference to the binder `id`, spelled `name`, of kind `meta` when
@@ -860,7 +906,7 @@ impl ScopeCx<'_> {
             .map(|(_, kind)| kind)
             .or_else(|| self.scope.kinds.get(id))
             .or_else(|| {
-                (self.struct_arguments > 0)
+                (self.erasable > 0)
                     .then(|| self.scope.erased.get(id))
                     .flatten()
             });
@@ -1148,6 +1194,44 @@ mod tests {
         ]);
         read.removed_params = vec![ParamId::new("f", 0)];
         let found = findings(&read, &declarations);
+        assert!(
+            found
+                .iter()
+                .any(|finding| finding.contains("no enclosing declaration binds")),
+            "{found:?}"
+        );
+    }
+
+    /// A parameter the generator removed stays in scope as an application's
+    /// argument for a binder the lifted body it applies removed too, by the
+    /// body's snapshot of that body's removals, and nowhere else.
+    #[test]
+    fn scope_keeps_a_removed_parameter_in_a_removed_application_argument() {
+        let context = ParamContext::detached();
+        let n = context.decl_ref(ParamId::new("f", 0), "n", MetaTy::int());
+        let lifted = "$comptime$f$0";
+        let mut declarations = declarations("f", vec![value_decl("f", 0, "n", Ty::int())]);
+        let mut thunk = declarations.functions[0].clone();
+        thunk.lowered_name = lifted.into();
+        declarations.functions.push(thunk);
+        let width = |argument: &ParamExpr| {
+            TyKind::Simd {
+                dtype: SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
+                width: SimdWidth::Expr(context.apply(
+                    lifted,
+                    std::slice::from_ref(argument),
+                    MetaTy::int(),
+                )),
+            }
+            .into()
+        };
+        let mut erased = function_with(vec![width(&n)]);
+        erased.removed_params = vec![ParamId::new("f", 0)];
+        erased.callee_removed_params = vec![(lifted.into(), vec![ParamId::new("f", 0)])];
+        assert_eq!(findings(&erased, &declarations), Vec::<String>::new());
+        let mut kept = erased;
+        kept.callee_removed_params = vec![(lifted.into(), Vec::new())];
+        let found = findings(&kept, &declarations);
         assert!(
             found
                 .iter()

@@ -2598,9 +2598,15 @@ impl<'a> Specializer<'a> {
                             }
                             // A call naming an instance (`Box$mono$TInt`,
                             // a type parameter's substitution) constructs
-                            // through its template's members.
+                            // through its template's members; an instance
+                            // already minted (a body nested in an unrolled
+                            // region of a struct instance's method,
+                            // `Box$mono$V1.get$f`) is called as it is.
                             let template = nominal_template(&func.0).to_string();
-                            if func.0 != "String" && self.structs.contains_key(template.as_str()) {
+                            if func.0 != "String"
+                                && self.structs.contains_key(template.as_str())
+                                && !self.instance_names.contains_key(func.0.as_str())
+                            {
                                 // `Type(copy=value)` runs `__copyinit__` (the
                                 // VM's `construct_via_copy`), which struct
                                 // discovery enqueues per instance — never an

@@ -5623,9 +5623,17 @@ point where a slot declared in a loop is uninitialized again.
   of a body nested in it (`f$…`), which reads the parameters that body's
   own run kept (R908). A nested body is
   a generator over its enclosing scope, as upstream lifts a closure to
-  one: its candidates are its enclosing declarations' parameters, which it
-  records as `removed_params` when it never reads them, and the elaborator
-  keys its instances on the rest (`Specializer::nested_bindings`). A
+  one: its candidates are its enclosing declarations' parameters and the
+  binders of the `comptime for` regions each is declared in
+  (`region_binders`, R974), which it records as `removed_params` when it
+  never reads them, and the elaborator keys its instances on the rest
+  (`Specializer::nested_bindings`, which the unroller's region copies
+  name their instances and generic generators by too). An application of
+  a lifted body (a `comptime for` bound's `$comptime$f$k`, applied to
+  every binder in scope) passes no read at a binder that body removed, as
+  upstream rewrote the application without it, and `verify/scope.rs`
+  keeps a removed binder in scope there, by the body's
+  `callee_removed_params` snapshot. A
   method is a generator over its struct's parameters as well, as
   upstream's method generator lists them before its own
   (`mir::method_owner_params`, R909): they join its candidates. The
@@ -5705,8 +5713,9 @@ point where a slot declared in a loop is uninitialized again.
   runtime default is no read, since every call omitting it evaluates it at
   the call (`mir::fill_omitted_arguments`), as upstream's callee names no
   default (R1005). A nested function's candidates are its own parameters
-  beside its enclosing declarations' (R973). A function in a
-  `comptime for` (R974) and `__toplevel__` have no candidates. A callable value parameter is one
+  beside its enclosing declarations' (R973), and the binders of the
+  `comptime for` regions it and each of them is declared in (R974).
+  `__toplevel__` has no candidates. A callable value parameter is one
   like any other (R910): the elaborator binds no runtime closure or
   environment for one the callee removed
   (`Specializer::bind_capturing_callables`), and a call site with no
