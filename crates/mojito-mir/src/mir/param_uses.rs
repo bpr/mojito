@@ -64,21 +64,21 @@ use std::fmt;
 ///
 /// For a top-level function they are its own compile-time parameters and,
 /// for a method, its struct's, as upstream's method generator lists them
-/// before its own; for a nested one the parameters of the declarations it
-/// is nested in; for a lifted one (`$comptime$f$…`, `$default$f$…`) every
-/// binder it declares; each that nothing in its body `function` or its
-/// declaration's signature reads, sorted by owner and slot. A nested body `function` names reads
-/// the candidates its own removals `nested` keep, and a lifted body the
-/// binders it declares that they keep; one `nested` does not answer reads
-/// them all.
+/// before its own; for a nested one the parameters of the declarations it is
+/// nested in beside its own; for a lifted one (`$comptime$f$…`,
+/// `$default$f$…`) every binder it declares; each that nothing in its body
+/// `function` or its declaration's signature reads, sorted by owner and
+/// slot. A nested body `function` names reads the candidates its own
+/// removals `nested` keep, and a lifted body the binders it declares that
+/// they keep; one `nested` does not answer reads them all.
 ///
 /// A runtime default is not a read, since every call omitting it evaluates
 /// it at the call ([`crate::mir::fill_omitted_arguments`]), as upstream's
-/// callee names none. A function inside a `comptime for`, `__toplevel__`, and a
-/// function without a declaration have no candidates, nor has a nested
-/// function's own parameter. A callable value parameter is a candidate like
-/// any other: a call through it reads it, and the elaborator binds no
-/// runtime closure or environment for one it removed.
+/// callee names none. A function inside a `comptime for`, `__toplevel__`,
+/// and a function without a declaration have no candidates. A callable value
+/// parameter is a candidate like any other: a call through it reads it, and
+/// the elaborator binds no runtime closure or environment for one it
+/// removed.
 ///
 /// A call of a member whose removals `callees` answers reads only the
 /// receiver's arguments at the struct parameters that member kept, as a
@@ -469,10 +469,11 @@ pub fn register_reads(function: &mut MirFunction) -> Vec<u32> {
 }
 
 /// The parameters `unread_parameters` may remove from `name`: its own
-/// compile-time parameters and, for a method, its struct's, or a nested
-/// function's enclosing declarations' parameters, each once. A lifted
-/// function binds every binder it declares by its own arguments, whoever
-/// owns it, as upstream's lifted function is an ordinary generator.
+/// compile-time parameters and, for a method, its struct's, or for a nested
+/// function, whose own parameters' owner is its source name, those and its
+/// enclosing declarations' parameters, each once. A lifted function binds
+/// every binder it declares by its own arguments, whoever owns it, as
+/// upstream's lifted function is an ordinary generator.
 fn candidate_parameters<'d>(
     name: &'d str,
     declaration: &'d MirFunctionDeclaration,
@@ -482,7 +483,9 @@ fn candidate_parameters<'d>(
         return declaration.param_decls.iter().collect();
     }
     let mut candidates: Vec<&ParamDecl> = Vec::new();
-    if declaration.enclosing.is_none() {
+    if declaration.enclosing.is_some() {
+        candidates.extend(&declaration.param_decls);
+    } else {
         candidates.extend(
             declaration
                 .param_decls

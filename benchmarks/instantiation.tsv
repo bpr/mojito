@@ -375,6 +375,7 @@ assets/ok/nested_def_inline_shapes.mojo	elaborated	16	180	0	0	0	0	27	0	0
 assets/ok/nested_def_reads_comptime_for_index.mojo	elaborated	44	191	24	39	72	105	52	65	39
 assets/ok/nested_def_reads_enclosing_parameter.mojo	elaborated	25	136	14	18	54	46	33	16	18
 assets/ok/nested_def_value_argument.mojo	elaborated	10	77	3	5	12	11	18	3	5
+assets/ok/nested_generic_unread_own_instances.mojo	elaborated	37	225	24	31	108	105	51	27	34
 assets/ok/nested_index_store.mojo	elaborated	19	285	8	14	113	197	55	21	40
 assets/ok/nested_origin_binder_not_captured.mojo	elaborated	21	337	9	15	114	197	61	24	43
 assets/ok/nested_origins_read_only_decorator.mojo	elaborated	25	384	14	20	140	221	67	31	50
@@ -1059,4 +1060,4 @@ benchmarks/compile/stdlib_heavy.mojo	elaborated	103	1691	42	90	769	1360	302	124	
 benchmarks/compile/trait_defaults.mojo	elaborated	159	1432	24	117	195	1031	192	37	133
 benchmarks/compile/tstring.mojo	elaborated	17	242	6	7	33	54	31	15	10
 benchmarks/compile/tuple.mojo	elaborated	24	252	7	13	40	71	41	10	16
-total	1060	24749	401630	8678	13700	120356	167666	68773	25443	34842
+total	1061	24786	401855	8702	13731	120464	167771	68824	25470	34876

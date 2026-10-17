@@ -4175,6 +4175,39 @@ fn unread_parameters_leave_the_instance_key() {
 }
 
 #[test]
+fn nested_generic_own_parameters_leave_the_instance_key() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/nested_generic_unread_own_instances.mojo");
+    let program = Compiler::default()
+        .compile_path(&path)
+        .expect("compile the fixture");
+    let concrete = program.concrete_mir().expect("elaborate");
+    let instances = |template: &str| {
+        concrete
+            .counts
+            .generators
+            .iter()
+            .find(|row| row.template == template)
+            .map_or(0, |row| row.instances)
+    };
+    for (template, count) in [
+        ("ignores$inner", 1),
+        ("reads$inner", 2),
+        ("forwards", 1),
+        ("forwards$inner", 1),
+        ("reads_outer$inner", 2),
+        ("through_leaf$inner", 1),
+        ("through_keeper$inner", 2),
+        ("deeper$inner", 2),
+        ("typed$inner", 1),
+        ("defaulted$inner", 1),
+        ("keyword$inner", 1),
+    ] {
+        assert_eq!(instances(template), count, "instances of `{template}`");
+    }
+}
+
+#[test]
 fn forwarded_parameters_leave_the_instance_key() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/forwarded_parameter_instances.mojo");

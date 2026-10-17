@@ -41,16 +41,17 @@
 //! member it runs ([`mojito_mir::mir::lifecycle_callees`]) joins the
 //! snapshot as well.
 //!
-//! A nested body is a generator over the binders of its enclosing scope,
-//! as upstream lifts a closure to one: the pass removes those it never
-//! reads, the elaborator keys its instances on the rest, and the enclosing
-//! function reads through a nested body it names only the binders that
-//! body kept. Those removals join the snapshot the verifier reads. A nested
-//! body loses its unused arguments, captures included, like any other: a
-//! call of it by name is a direct call, which names the reduced generator
-//! as any direct call does, and only a body a closure or function value
-//! names keeps its full generator too, whose every binder the enclosing
-//! function then reads; such a body joins the snapshot with no removals.
+//! A nested body is a generator over the binders of its enclosing scope
+//! beside its own, as upstream lifts a closure to one: the pass removes
+//! those it never reads, the elaborator keys its instances on the rest, and
+//! the enclosing function reads through a nested body it names only the
+//! binders that body kept. Those removals join the snapshot the verifier
+//! reads. A nested body loses its unused arguments, captures included, like
+//! any other: a call of it by name is a direct call, which names the reduced
+//! generator as any direct call does, and only a body a closure or function
+//! value names keeps its full generator too, whose every binder the
+//! enclosing function then reads; such a body joins the snapshot with no
+//! removals.
 //!
 //! A lifted compile-time function (`$comptime$f$…`, `$default$f$…`) is a
 //! generator over every binder it declares, whoever owns it: the

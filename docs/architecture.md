@@ -5704,9 +5704,9 @@ point where a slot declared in a loop is uninitialized again.
   even when empty; one whose run is not at hand reads every parameter. A
   runtime default is no read, since every call omitting it evaluates it at
   the call (`mir::fill_omitted_arguments`), as upstream's callee names no
-  default (R1005). A function in a
-  `comptime for` (R974), a nested function's own parameters (R973), and
-  `__toplevel__` have no candidates. A callable value parameter is one
+  default (R1005). A nested function's candidates are its own parameters
+  beside its enclosing declarations' (R973). A function in a
+  `comptime for` (R974) and `__toplevel__` have no candidates. A callable value parameter is one
   like any other (R910): the elaborator binds no runtime closure or
   environment for one the callee removed
   (`Specializer::bind_capturing_callables`), and a call site with no

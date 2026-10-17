@@ -178,7 +178,7 @@ a generic body is still copied about as often as before. Upstream's
    instances by a binder it never reads:
 
    ```sh
-   scripts/claude_loop.py --only R973 --only R974 --only R1039 --only R975 \
+   scripts/claude_loop.py --only R974 --only R1039 --only R975 \
        --only R1032 --only R1033 --only R1034 -n 0
    ```
 

@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A nested generic `def` now removes its own compile-time parameters its
+  body never reads, beside its enclosing scope's, as upstream's
+  `RemoveUnusedParams` treats the lifted function: `inner[1]` and
+  `inner[2]` share one instance when `inner[m]` ignores `m`, and an
+  enclosing function that only forwards its parameter to that `m` keeps one
+  instance too, as on the pin (R973,
+  `assets/ok/nested_generic_unread_own_instances.mojo`).
 - A converting default over a struct whose constructor reads its parameter
   now runs at a generic callee that removed the binder the parameter's type
   spells (`h[k](t: Tag[k] = 2)`): every call omitting it already builds the

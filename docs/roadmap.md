@@ -385,21 +385,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R973 A nested generic `def`'s own unread parameters split its
-  instances**
-
-  `gen_inner[m]` nested in `gen_outer` and never reading `m` has one
-  instance per `m`, where the pin keeps one.
-  - `mir::unread_parameters` (`mir/param_uses.rs`) offers a nested
-    function only its enclosing declarations' parameters as candidates,
-    never its own.
-  - The elaborator already leaves a removed own parameter out of the key
-    (`Specializer::own_arguments`); the spelled-application path in
-    `specializer.rs` that splices `nested_bindings` before the own
-    arguments needs checking with one removed.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R974 A nested `def` in a `comptime for` splits its instances by
   binders it never reads**
 
@@ -429,6 +414,9 @@ which names the upstream pass each one follows. Each is measured by the
     owner in its key.
   - It is the same owner identity R909 drops for a static method, and for
     `get` itself.
+  - Probe: a static `Counter.st()` whose nested generic `bump[m]` reads
+    only `m` has two instances of `st` for `Counter[1]` and `Counter[2]`,
+    and four of `bump`, where the pin keeps one of `st` and two of `bump`.
   - Depends on R909.
   - Model: Fable, Not Planned.
 
@@ -4862,6 +4850,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `var g = h[4]; g(1)` over `def h[k: Int](t: Int)` prints `5` on
     the pin, where Mojito reports "type 'def[k: Int](Int) thin -> None'
     cannot be indexed here" (found while landing R1094, 2026-10-17).
+  - Probe: `var f = inner[1]; f(x)` over a nested `def inner[m: Int]`
+    fails the same way, where the pin runs it.
   - Depends on nothing.
   - Model: Fable, Planned.
 
