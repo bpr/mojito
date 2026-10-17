@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A copy or move naming its constructor is now the call upstream's
+  copy/move insertion leaves (R1046): a `var.use copy` lowers to a
+  `place.load` of the slot and a call of the `__copyinit__`, a `var.use
+  move` to a forwarding use and a call of the `__moveinit__`, and a
+  `value.copy` to the call alone, at the end of drop elaboration, after an
+  `inline-parametric` splice, and per elaborated instance, which both
+  backends run as any constructor call. A synthesized copy or move of a
+  `ref` field stores the handle the source field holds, the parameter-use
+  analysis reads such a call as it read the use, and Pliron's signatures
+  count a `deinit` parameter as consuming. A copy of a struct held through
+  a reference alias (`copy(self)` on a `ref self` iterator) now runs its
+  copy constructor on the VM, where the use read through the alias. No
+  fixture's output changes on either backend.
+
 - A `for` loop over a nominal iterator now binds what `__next__` yields
   only past its exhaustion test, in the body, so its yield slot is never
   filled on the exhausted edge, and an owned `for x in a^` consumes `a`

@@ -40,8 +40,8 @@ use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
     CleanupDrop, MirBlock, MirCaptureMode, MirDeclarations, MirFunction, MirFunctionDeclaration,
     MirInstr, MirInteriorOrigin, MirIntrinsicSubscript, MirPlace, MirProgram, MirSubscriptArg,
-    MirTerm, Proj, Reg, binder_scope, cleanup_drops, cleanup_slots, materialized_parameter_slots,
-    terminator_targets,
+    MirTerm, Proj, Reg, binder_scope, cleanup_drops, cleanup_slots, lower_copies_and_moves,
+    materialized_parameter_slots, terminator_targets,
 };
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use moves::*;
@@ -206,6 +206,7 @@ pub fn elaborate_drops_program(prog: MirProgram) -> MirProgram {
                 let mut f = f;
                 elaborate_store_drops(&mut f, &name, &prog.declarations);
                 name_destructors(&mut f, &prog.declarations);
+                lower_copies_and_moves(&name, &mut f, &|name| prog.declarations.function(name));
                 f
             } else {
                 elaborate_drops_function(&name, f, &prog.declarations)
@@ -245,6 +246,7 @@ pub fn elaborate_drops_function(
     refine_deinit_fields(&mut elaborated, declarations);
     name_destructors(&mut elaborated, declarations);
     mojito_mir::mir::name_constructors(&mut elaborated, declarations);
+    lower_copies_and_moves(name, &mut elaborated, &|name| declarations.function(name));
     elaborated
 }
 

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1095**.
+Next free ID: **R1096**.
 
 ## Ordered Work
 
@@ -67,6 +67,12 @@ which names the upstream pass each one follows. Each is measured by the
   - Bisected to 8e39755f (R1041): splicing `Tuple`'s `nodebug`
     destructor into `main` leaves a place naming `Tuple`'s own `*Ts`
     unbound, an empty element list binding nothing.
+  - The same unbound `*Ts` comes from a slot a spliced synthesized member
+    leaves behind: `Tuple.__moveinit__`'s `existing` is typed by the bare
+    `Tuple` spelling of `Self` (`mir::lower_synthesized_member`), the
+    splice copies that type into the caller's slot, and the slot's drop
+    then inlines `Tuple.__deinit__` with no element list to bind
+    (`tuple_template_served.mojo`, found while landing R1046).
   - Bind the struct's pack to the dropped value's element list, the
     empty one included, as the inliner binds a method's since R986.
   - `benchmarks/instantiation.tsv` keeps both fixtures' rows from before,
@@ -113,20 +119,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Found while landing R1085 (2026-10-16).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R1046 A copy or move is a slot use, not a call of its
-  constructor**
-
-  `var.use copy` names its constructor but stays a slot use, where
-  upstream's copy/move insertion leaves a plain call.
-  - Pliron's drop flags, the VM's moved-slot tombstone, and the `String`
-    buffer bridges hang on the use, as they did on a drop before a whole
-    slot's drop became the call of its destructor.
-  - Once they do not, lower a named copy or move to a call of the
-    constructor into fresh storage.
-  - Found while landing R1017 (2026-10-16).
-  - Depends on R1044, R1045.
-  - Model: Fable, Not Planned.
 
 - [ ] **R1078 `inline-parametric` binds a callee's compile-time
   parameters case by case and refuses every other kind**
@@ -838,6 +830,10 @@ change that needs a new `MJRT_ABI_VERSION`.
     `assets/ok/container_hashable.mojo`,
     `assets/ownership_ok/shared_iterations_coexist.mojo`, and eleven more
     `exe-differential` rows).
+  - Probe: `Codepoint.from_u32(103).or_else(fallback)`
+    (`assets/ok/nominal_string_codepoint_from_u32.mojo`) since R1046: the
+    forwarded `Optional` temporary's consumer follows the inlined body of
+    the copy constructor the `fallback` copy now calls.
   - Pliron's `release.rs` tracks a heap-carrying temporary within one
     block; release it on every edge from its definition to its consumer,
     as an SSA value is live across blocks upstream.
@@ -1204,6 +1200,29 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - A field transfer an owned parameter takes (`take(self.a^)`) already
     matches the pin, which runs no move initializer there.
   - Found while landing R730 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1095 A copy or move of a compile-time value parameter's slot
+  runs no constructor**
+
+  `var r = q` over a struct value parameter `q: Q` whose `__init__(copy)`
+  prints runs no copy constructor, where the pin materializes `q` and
+  calls it.
+  - The slot of a value parameter holds no value: the elaborator replaces
+    each read of it with the parameter's constant
+    (`substitute_value_parameter_reads`), and materializes a constructed
+    value through its constructor, so `lower_copies_and_moves` keeps such
+    a `var.use copy` or `var.use move` a use (`materialized_parameter_slots`
+    names the slots), as a lowered call would read storage the slot does
+    not hold.
+  - Probe: `assets/ok/value_parameter_field_read.mojo` (`var r = q`),
+    `assets/ok/def_aggregate_value_binder_served.mojo` (`p[0]` over a
+    `Tuple[Int, Int]` binder).
+  - Materialize the parameter's value into storage once per read, as
+    upstream's `kgen.param.constant` is a value, and lower the copy or
+    move of it to the constructor call as any other.
+  - Found while landing R1046 (2026-10-16).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7290,6 +7309,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     pack in place (`iter.init` with no `prepare`), its slot holding a
     backend cursor, where every nominal `__iter__` now makes an iterator
     slot of its own type (R1088); the nominal `VariadicList` splits too.
+  - Probe: the read of a collector a call spreads (`show(*args)`) is a
+    `var.use copy` of the collector's slot, which `lower_copies_and_moves`
+    keeps a use for the elaborator to expand (`expand_pack_spreads`),
+    where upstream passes the `VariadicList` by reference and copies
+    nothing (found while landing R1046).
   - Found while landing R1040 (2026-10-16).
   - Depends on R743.
   - Model: Opus, Not Planned.

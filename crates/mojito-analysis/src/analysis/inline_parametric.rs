@@ -95,8 +95,8 @@ use mojito_mir::mir::{
     MirSubscriptCall, MirTerm, Proj, Reg, UseMode, block_successors, cleanup_slots,
     count_register_reads, erase_removed_operands, fresh_register, has_no_destructor,
     instruction_regions, instruction_regions_mut, instruction_regs_mut, instruction_slots,
-    name_constructors, removed_argument_operands, renumber_block_slots, terminator_regs_mut,
-    terminator_targets, terminator_targets_mut, without_removed_arguments,
+    lower_copies_and_moves, name_constructors, removed_argument_operands, renumber_block_slots,
+    terminator_regs_mut, terminator_targets, terminator_targets_mut, without_removed_arguments,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{
@@ -185,7 +185,7 @@ pub fn inline_cost(callee: &MirFunction) -> usize {
 /// this pass inlines, in its `try` regions too; returns whether it inlined
 /// one.
 pub fn inline_parametric(
-    _name: &str,
+    name: &str,
     function: &mut MirFunction,
     declarations: &MirDeclarations,
     callees: &Callees<'_>,
@@ -211,6 +211,8 @@ pub fn inline_parametric(
     if changed {
         name_constructors(function, declarations);
         super::name_destructors(function, declarations);
+        lower_copies_and_moves(name, function, &|name| declarations.function(name));
+        record_lowered_callees(function, callees);
     }
     changed
 }
@@ -1249,6 +1251,44 @@ impl<'c> Inliner<'_, 'c> {
             instrs: resumed,
             term,
         });
+    }
+}
+
+/// Add to `function`'s `callee_removed_params` each callee a call names
+/// that it has no entry for, by the removals of the callee's body: the
+/// copy or move constructor a copy or move of a spliced body's slot calls
+/// once named and lowered, which no inlined callee's snapshot listed, so
+/// the verifier reads the call at the constructor's kept parameters as the
+/// call-graph pass will.
+fn record_lowered_callees(function: &mut MirFunction, callees: &Callees<'_>) {
+    let mut named = Vec::new();
+    call_targets_in(&function.blocks, &mut named);
+    for callee in named {
+        if function
+            .callee_removed_params
+            .binary_search_by(|(name, _)| name.as_str().cmp(&callee))
+            .is_ok()
+        {
+            continue;
+        }
+        if let Some(body) = callees.unit_body(&callee) {
+            merge_callee_removals(
+                &mut function.callee_removed_params,
+                &[(callee, body.removed_params.clone())],
+            );
+        }
+    }
+}
+
+/// The callees the direct calls of `blocks` and their regions name.
+fn call_targets_in(blocks: &[MirBlock], out: &mut Vec<String>) {
+    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+        if let MirInstr::Call { func, .. } = instruction {
+            out.push(func.0.clone());
+        }
+        for region in instruction_regions(instruction) {
+            call_targets_in(region, out);
+        }
     }
 }
 

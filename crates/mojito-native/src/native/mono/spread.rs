@@ -76,22 +76,29 @@ fn expand_in_blocks(
     blocks: &mut [MirBlock],
     tables: &mut SpreadTables<'_>,
 ) -> Result<(), MonoError> {
-    for block in blocks {
-        expand_in_block(block, tables)?;
+    for at in 0..blocks.len() {
+        expand_in_block(blocks, at, tables)?;
     }
     Ok(())
 }
 
-fn expand_in_block(block: &mut MirBlock, tables: &mut SpreadTables<'_>) -> Result<(), MonoError> {
+/// Expand the spreads of the block `at` of `blocks`. A spread's collector
+/// is read once, in the block of the call or, once a pass has split that
+/// block, in one before it.
+fn expand_in_block(
+    blocks: &mut [MirBlock],
+    at: usize,
+    tables: &mut SpreadTables<'_>,
+) -> Result<(), MonoError> {
     let mut index = 0;
-    while index < block.instrs.len() {
+    while index < blocks[at].instrs.len() {
         if let MirInstr::Try {
             body,
             handler,
             orelse,
             finalbody,
             ..
-        } = &mut block.instrs[index]
+        } = &mut blocks[at].instrs[index]
         {
             for region in std::iter::once(body)
                 .chain(handler.iter_mut().map(|(_, blocks)| blocks))
@@ -103,14 +110,29 @@ fn expand_in_block(block: &mut MirBlock, tables: &mut SpreadTables<'_>) -> Resul
             index += 1;
             continue;
         }
-        let Some((position, pack)) = spread_operands(&mut block.instrs[index])
+        let Some((position, pack)) = spread_operands(&mut blocks[at].instrs[index])
             .and_then(|call| call.spread.map(|position| (position, call.args[position])))
         else {
             index += 1;
             continue;
         };
-        let collector = collector_read(&block.instrs[..index], pack, tables.var_tys)
+        let (read_block, read) = (0..=at)
+            .rev()
+            .find_map(|block| {
+                let end = if block == at {
+                    index
+                } else {
+                    blocks[block].instrs.len()
+                };
+                blocks[block].instrs[..end]
+                    .iter()
+                    .rposition(|instruction| defines(instruction, pack))
+                    .map(|read| (block, read))
+            })
             .ok_or_else(|| tables.error("a spread reads no collector"))?;
+        let collector = collector_read(&blocks[read_block].instrs[read], pack, tables.var_tys)
+            .ok_or_else(|| tables.error("a spread reads no collector"))?;
+        let block = &mut blocks[at];
         let elements = match tables.reg_types.get(&pack.0).map(Ty::kind) {
             Some(TyKind::Tuple(elements)) => elements.clone(),
             _ => return Err(tables.error("a spread's pack is still a parameter")),
@@ -144,14 +166,13 @@ fn expand_in_block(block: &mut MirBlock, tables: &mut SpreadTables<'_>) -> Resul
         let inserted = loads.len();
         block.instrs.splice(index..index, loads);
         // The collector's whole read is dead once the elements are read.
-        let read = block.instrs[..index]
-            .iter()
-            .rposition(|instruction| defines(instruction, pack))
-            .expect("the collector read was found above");
-        block.instrs.remove(read);
+        blocks[read_block].instrs.remove(read);
         tables.reg_types.remove(&pack.0);
         tables.spans.0.remove(&pack.0);
         index += inserted;
+        if read_block == at {
+            index -= 1;
+        }
     }
     Ok(())
 }
@@ -197,30 +218,27 @@ const fn spread_operands(instruction: &mut MirInstr) -> Option<SpreadOperands<'_
 /// before the call: a whole place load (a read pack), a whole move (a
 /// transferred pack), or a variable move.
 fn collector_read(
-    instructions: &[MirInstr],
+    instruction: &MirInstr,
     pack: Reg,
     var_tys: &HashMap<mojito_hir::hir::VarId, Ty>,
 ) -> Option<Collector> {
-    instructions
-        .iter()
-        .rev()
-        .find_map(|instruction| match instruction {
-            MirInstr::LoadPlace { dest, place } if *dest == pack => Some(Collector {
-                place: place.clone(),
-                moved: false,
-            }),
-            MirInstr::MovePlace { dest, place } if *dest == pack => Some(Collector {
-                place: place.clone(),
-                moved: true,
-            }),
-            MirInstr::UseVar {
-                dest, var, mode, ..
-            } if *dest == pack => Some(Collector {
-                place: MirPlace::root(*var, var_tys.get(var).cloned()),
-                moved: mode.moves(),
-            }),
-            _ => None,
-        })
+    match instruction {
+        MirInstr::LoadPlace { dest, place } if *dest == pack => Some(Collector {
+            place: place.clone(),
+            moved: false,
+        }),
+        MirInstr::MovePlace { dest, place } if *dest == pack => Some(Collector {
+            place: place.clone(),
+            moved: true,
+        }),
+        MirInstr::UseVar {
+            dest, var, mode, ..
+        } if *dest == pack => Some(Collector {
+            place: MirPlace::root(*var, var_tys.get(var).cloned()),
+            moved: mode.moves(),
+        }),
+        _ => None,
+    }
 }
 
 fn defines(instruction: &MirInstr, register: Reg) -> bool {

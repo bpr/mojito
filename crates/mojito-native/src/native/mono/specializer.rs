@@ -1104,6 +1104,9 @@ impl<'a> Specializer<'a> {
         self.discover_structs(&key.template, &function)?;
         self.name_lifecycle_calls(&key.template, &mut function)?;
         mojito_mir::mir::lower_whole_drops(&mut function);
+        mojito_mir::mir::lower_copies_and_moves(&key.template, &mut function, &|instance| {
+            self.template_declaration(instance)
+        });
         self.answer_layout_queries(&key.template, &mut function)?;
         ensure_concrete_function(&key.template, &name, &function)?;
         self.output_positions
@@ -3626,6 +3629,18 @@ impl<'a> Specializer<'a> {
             }
         }
         Ok(())
+    }
+
+    /// The declaration of the template the instance `instance` is of, or of
+    /// `instance` itself where it is a template's own name.
+    fn template_declaration(&self, instance: &str) -> Option<&'a MirFunctionDeclaration> {
+        let template = self
+            .instance_names
+            .get(instance)
+            .map(|&index| self.instances[index].0.template.as_str())
+            .or_else(|| mojito_symbol::symbol::specialization_template(instance))
+            .unwrap_or(instance);
+        self.declarations.get(template)
     }
 
     /// Name, at each drop of `function`, the `__deinit__` instance of the

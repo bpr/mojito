@@ -64,6 +64,8 @@ pub use constructor_calls::{
 };
 mod copies;
 pub use copies::{Relocated, StructDeclarations, relocated_structs};
+mod copy_calls;
+pub use copy_calls::{FunctionDeclarations, lower_copies_and_moves};
 mod teardown_calls;
 pub use teardown_calls::name_teardown_destructors;
 mod destroys;
@@ -1096,6 +1098,21 @@ fn lower_synthesized_member(
         reg
     };
     for (field, ty) in fields {
+        // A `ref` field holds a reference: its copy and its move both store
+        // the handle the source field holds, as a reference parameter's
+        // store does, since a load of the field reads through it.
+        if matches!(ty.kind(), TyKind::Ref(_)) && !matches!(member, SynthesizedMember::Destroy) {
+            let handle = register(ty, &mut reg_types);
+            instrs.push(MirInstr::MakeRef {
+                dest: handle,
+                place: field_place(1, field, ty),
+            });
+            instrs.push(MirInstr::StoreRef {
+                place: field_place(0, field, ty),
+                reference: handle,
+            });
+            continue;
+        }
         match member {
             SynthesizedMember::Copy => {
                 let read = register(ty, &mut reg_types);

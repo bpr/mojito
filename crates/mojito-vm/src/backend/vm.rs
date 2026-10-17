@@ -694,7 +694,8 @@ impl Prog {
         let (parsed, member) = mojito_symbol::symbol::lifecycle_constructor(symbol)?;
         let struct_name = constructed
             .filter(|name| {
-                matches!(member, "__init__" | "__copyinit__") && self.structs.contains_key(*name)
+                matches!(member, "__init__" | "__copyinit__" | "__moveinit__")
+                    && self.structs.contains_key(*name)
             })
             .unwrap_or(parsed);
         (self.structs.contains_key(struct_name)

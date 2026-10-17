@@ -1022,6 +1022,22 @@ fn lifecycle_site<'f>(
     }
 }
 
+/// Whether `callee` is the `__copyinit__` or `__moveinit__` the member
+/// table of the struct `constructed` records: the call a copy or move of
+/// that struct lowers to.
+fn is_lifecycle_constructor_call(
+    declarations: &MirDeclarations,
+    callee: &str,
+    constructed: Option<&Ty>,
+) -> bool {
+    let Some(TyKind::Struct(name, _)) = constructed.map(Ty::kind) else {
+        return false;
+    };
+    ["__copyinit__", "__moveinit__"]
+        .iter()
+        .any(|member| declarations.lifecycle_member(name, member) == Some(callee))
+}
+
 /// The type of the storage `place` designates.
 fn place_ty<'f>(function: &'f MirFunction, place: &'f MirPlace) -> Option<&'f Ty> {
     place.storage_ty(&function.var_tys)
@@ -1467,6 +1483,38 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
     ) -> bool {
         let register = |reg: &Reg| function.reg_types.get(&reg.0);
         match instruction {
+            // A call of the copy or move constructor the constructed type's
+            // member table records, which a copy or move lowers to, reads as
+            // the copy or move did: the constructed value's arguments at the
+            // struct parameters the constructor kept.
+            MirInstr::Call {
+                func,
+                dest,
+                raises,
+                param_arg_regs,
+                instantiated_args,
+                ..
+            } if is_lifecycle_constructor_call(declarations, &func.0, register(dest)) => {
+                let parts = (raises, param_arg_regs, instantiated_args);
+                if !self.member_call(declarations, &func.0, register(dest), &parts, |own| {
+                    own.is_empty() || instantiated_args.len() >= own.len()
+                }) {
+                    let member = if mojito_symbol::symbol::lifecycle_constructor(&func.0)
+                        .is_some_and(|(_, member)| member == "__moveinit__")
+                    {
+                        "__moveinit__"
+                    } else {
+                        "__copyinit__"
+                    };
+                    if let Some(reads) = register(dest)
+                        .and_then(|constructed| self.member_reads(constructed, member))
+                    {
+                        self.visit(&reads);
+                    }
+                    self.visit(&parts);
+                }
+                true
+            }
             MirInstr::MethodCall {
                 resolved: Some(callee),
                 recv,

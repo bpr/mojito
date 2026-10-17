@@ -4556,10 +4556,50 @@ over `Int` and pointer fields gets none), marked `nodebug` and
 through a `value.copy` naming the field's constructor or a `place.move`, as
 upstream synthesizes a fieldwise `__copyinit__` and `__moveinit__` for
 every struct that declares none; a copy or move of the struct names it and
-reaches its fields' constructors through its body. Captures, variant
+reaches its fields' constructors through its body. A `ref` field's copy and
+move both store the handle the source field holds (`ref.make` of the
+source field, `place.store_ref` into `self`'s), since a load of such a
+field reads through it; the VM's `MakeRef` of a `ref`-typed place is the
+handle that place's storage holds, as the native address of such a place
+is the stored pointer's. Captures, variant
 payloads, reference-read results, and `T(copy=x)` still find their
 constructor from the type (`mir::relocated_structs`, which closes over the
-fields only of a struct recording no such member). A read out of storage and a store copy
+fields only of a struct recording no such member).
+
+A named copy or move is then the call upstream's copy/move insertion
+leaves (`mir::lower_copies_and_moves`, `mir/copy_calls.rs`): a `var.use
+copy` becomes a `place.load` of the slot and a `Call` of the named
+`__copyinit__` passing it as the constructor's borrowed argument, the
+shape `S(copy=x)` lowers to; a `var.use move` becomes a forwarding
+`var.use` of the slot, which ends it and hands its storage to the callee
+as Mojo's owned-argument convention does, and a `Call` of the named
+`__moveinit__` passing it as the `deinit` argument; a `value.copy` becomes
+the call alone over its register. The constructor's declaration decides
+whether the one parameter after `out self` passes positionally or by
+keyword (`__init__(out self, *, copy: Self)`); a constructor taking
+anything else, or raising, keeps the use. It runs where `lower_whole_drops`
+runs: at the end of drop elaboration, after `name_constructors`; in
+`inline-parametric` after a splice names the copies it substitutes; and
+in the elaborator once `name_lifecycle_calls` has named an instance's
+(the template's declaration, found through the instance's key, answers
+the parameter), so a site whose type was symbolic in the template is
+lowered per instance. Both backends run the call as any constructor call:
+the VM constructs through `__moveinit__` as it did through `__init__` and
+`__copyinit__` (`lifecycle_constructor`), and Pliron's compiled signature
+counts a `deinit` parameter as consuming, so the forwarded temporary
+transfers instead of being released after the call. Three uses stay uses:
+one naming no constructor, which the backends copy or move by type; one of
+a compile-time value parameter's slot, which holds no value and which the
+elaborator materializes at each read; and the read of a variadic collector
+a call spreads, which the elaborator expands into the pack's element
+places (`expand_pack_spreads`, which finds the collector's read in an
+earlier block once a pass has split the call's). The parameter-use
+analysis reads a call of the constructed type's recorded `__copyinit__`
+or `__moveinit__` as it read the copy or move: the constructed value's
+arguments at the struct parameters the constructor kept
+(`member_instruction`), and `inline-parametric` records in the caller's
+removal snapshot each constructor a lowered call names that no spliced
+callee listed (`record_lowered_callees`), as the call-graph pass will. A read out of storage and a store copy
 nothing in either backend: Pliron's `FnLowering::load_from` takes a byte
 snapshot sharing its storage's buffers and `FnLowering::store_to` stores
 what the MIR hands it, as the VM does. The instruction

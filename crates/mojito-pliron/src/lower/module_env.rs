@@ -316,7 +316,15 @@ pub fn declare_function(
             ret,
             sret,
             outcome,
-            owned_params: func.owned_params.clone(),
+            // A `deinit` parameter consumes its argument as a `var` one does:
+            // the callee ends the value, so an owned temporary passed to it
+            // transfers.
+            owned_params: func
+                .owned_params
+                .iter()
+                .zip(func.deinit_params.iter().chain(std::iter::repeat(&false)))
+                .map(|(owned, deinit)| *owned || *deinit)
+                .collect(),
             ref_params: func.ref_params.clone(),
             deinit_receiver: func.deinit_params.first().copied().unwrap_or(false),
             empty_body: func.blocks.iter().all(|block| block.instrs.is_empty()),
