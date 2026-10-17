@@ -33,16 +33,16 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 /// elaborator reduces, have candidates: neither a constructor nor a table
 /// member ([`crate::mir::table_member`]) or protocol member
 /// ([`PROTOCOL_MEMBERS`]), which a backend reaches from a value's type
-/// with every argument, nor a body declared in a compile-time region, nor
-/// one whose signature ties an origin or a returned reference to a
-/// parameter. A nested body's calls by name are direct calls, and its
-/// captures are leading arguments like any other. A `deinit` parameter and
-/// a callable one are never candidates; a method's receiver is one like
-/// any other argument, and the call of a generator without it passes
-/// none, but a subscript accessor's ([`SUBSCRIPT_ACCESSORS`]), which every
-/// subscript passes. A collector is one too, whose elements the rewritten
-/// call passes none of, but an owned collector's drop runs code, so it is
-/// a use.
+/// with every argument, nor one whose signature ties an origin or a
+/// returned reference to a parameter. A nested body's calls by name are
+/// direct calls, one declared in a `comptime for` too, which each unrolled
+/// copy makes, and its captures are leading arguments like any other. A
+/// `deinit` parameter and a callable one are never candidates; a method's
+/// receiver is one like any other argument, and the call of a generator
+/// without it passes none, but a subscript accessor's
+/// ([`SUBSCRIPT_ACCESSORS`]), which every subscript passes. A collector is
+/// one too, whose elements the rewritten call passes none of, but an owned
+/// collector's drop runs code, so it is a use.
 pub fn unused_arguments(
     name: &str,
     function: &MirFunction,
@@ -334,7 +334,6 @@ fn reducible(name: &str, function: &MirFunction, declaration: &MirFunctionDeclar
             || mojito_symbol::symbol::split_method_symbol(name).is_none_or(|(_, method)| {
                 table_member(method).is_none() && !PROTOCOL_MEMBERS.contains(&member_base(method))
             }))
-        && declaration.region_binders.is_empty()
         && !declaration.returns_reference
         && usize::from(declaration.has_receiver)
             + declaration.param_names.len()

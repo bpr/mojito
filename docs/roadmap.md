@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1112**.
+Next free ID: **R1113**.
 
 ## Ordered Work
 
@@ -450,17 +450,24 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1039 A nested `def` declared in a `comptime for` keeps its
-  unused arguments**
+- [ ] **R1112 A `def` declared in a `comptime for` cannot call a sibling
+  whose argument is a struct over the loop binder**
 
-  A nested body with region binders has no candidates in
-  `mir::unused_arguments`, where the pin removes its unused arguments.
-  - Its calls reach it through `Specializer::region_generators`, which
-    names each unrolled copy's generator.
-  - A copy's call must name the reduced generator and drop the removed
-    operands, as the plain nested path does.
-  - Found while landing R1014 (2026-10-16).
-  - Depends on R974.
+  `forwards(x)` whose loop declares `leaf(a: Arr[i + 1], y)` and a `mid`
+  calling `leaf(a, y)` fails elaboration with "unresolved value parameter
+  `$iter`", where the pin runs it.
+  - The unrolled copy's own calls are pointed at their instances by
+    `instantiate_region_references`, but `mid`'s instance calls `leaf`
+    through the ordinary call arm, whose `infer_call` unifies `leaf`'s
+    `Arr[$iter + 1]` against the argument from empty bindings and only
+    then inherits the region's binders (`nested_bindings`).
+  - Inherit the enclosing and region binders before unifying, as the
+    generic region path does through `region_generators`.
+  - Probes: the shape above, with or without `leaf` reading `a`; the
+    vector analog `leaf(y: SIMD[DType.int64, i + 1])` and the plain nested
+    analog over `Arr[n]` already run.
+  - Found while landing R1039 (2026-10-17).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1049 A fieldwise construction calls its struct, not a
@@ -473,6 +480,12 @@ which names the upstream pass each one follows. Each is measured by the
     `mir::unread_parameters` reads whole.
   - Synthesize the fieldwise `__init__` in MIR lowering, as R1044 did for
     the copy and move constructors, and have the check name it.
+  - Probe: `looped[n]` and `keyword[n]` in
+    `assets/ok/comptime_for_nested_unused_argument_instances.mojo` keep one
+    instance per `n`, where the pin has one: the `Arr[n](…)` that built a
+    nested `inner`'s removed operand stays a call of `Arr` once the operand
+    goes, and its type reads `n`. The plain nested analog
+    (`inner(Arr[n](…), x)` outside a loop) keeps one per `n` the same way.
   - Found while landing R1020 (2026-10-16).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -607,6 +620,12 @@ which names the upstream pass each one follows. Each is measured by the
     needs one, which bumps the MIR text format.
   - Done when a pass test shows a field-accessed `TrivialRegisterPassable`
     struct slot split and promoted, and the corpus effect is recorded.
+  - Probe: `plain_nested[n]` passing `Arr[n](SIMD[DType.int64, n](1))` to a
+    nested `inner`'s removed argument, where `Arr`'s `@always_inline`
+    `__init__` stores `self.v`, keeps one instance per `n`, where the pin
+    has one: the inlined constructor leaves the `Arr[n]` slot's field store
+    and whole load, which `mem-2-reg` cannot promote, so the dead
+    construction's type still reads `n` (found while landing R1039).
   - Depends on nothing.
   - Model: Fable, Planned.
 

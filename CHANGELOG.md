@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `def` declared in a `comptime for` now loses a runtime argument its
+  body never uses, as upstream's `RemoveUnusedParams` treats the lifted
+  function like any generator: each unrolled copy's call names the reduced
+  generator and passes no operand for it, while a function value still
+  names the full one. So `looped[1]` and `looped[2]` share one
+  `inner(a: Arr[n], y)`, `inner(a: Arr[i + 1], y)` is one instance for both
+  loop indexes, and a generic `inner[m](a: Arr[m], y)` one for both `m`, as
+  on the pin. Fixture
+  `assets/ok/comptime_for_nested_unused_argument_instances.mojo`. This
+  closes R1039.
 - A runtime argument a function only passes back to itself, at its own
   position by every self-recursive call, now leaves the generator its calls
   name, as upstream's `RemoveUnusedParams` reads through a self-recursive

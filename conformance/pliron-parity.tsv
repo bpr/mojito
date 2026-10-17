@@ -105,6 +105,7 @@ assets/ok/comptime_for_iteration_scope.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_iterator_aggregate_elements.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_named_collection.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_nested_unread_instances.mojo	main	exe-differential	sanitized
+assets/ok/comptime_for_nested_unused_argument_instances.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_string_aggregates.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_struct_elements.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_template_served.mojo	main	exe-differential	sanitized

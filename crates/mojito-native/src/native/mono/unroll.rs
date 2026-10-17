@@ -316,7 +316,10 @@ impl Specializer<'_> {
     /// instance under the copy's `iteration`: the nested body is a
     /// generator over the region's binders, as over its enclosing
     /// declaration's, so each clone of the region declares its own. A
-    /// generic nested body names the copy's generator instead, whose calls
+    /// direct call names the generator with the body's unused arguments
+    /// removed and passes none for them, as a call outside the region does,
+    /// while a closure or function value names the full one. A generic
+    /// nested body names the copy's generator instead, whose calls
     /// instantiate it with their own arguments beside the copy's. One inside
     /// a loop nested in this copy was pointed at its instance when that
     /// loop's copies were.
@@ -327,41 +330,22 @@ impl Specializer<'_> {
         iteration: &Bindings,
     ) -> Result<(), MonoError> {
         for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
-            match instruction {
+            let (target, call) = match instruction {
                 MirInstr::MakeClosure {
                     function: target, ..
                 }
                 | MirInstr::Const {
                     k: Const::Function(target),
                     ..
-                }
-                | MirInstr::Call {
+                } => (target, None),
+                MirInstr::Call {
                     func: mojito_mir::mir::FuncRef(target),
+                    args,
+                    kwargs,
+                    arg_places,
+                    kwarg_places,
                     ..
-                } => {
-                    let Some(generic) = self
-                        .region_binders_up_to(target, template)
-                        .filter(|binders| {
-                            !binders.is_empty()
-                                && binders
-                                    .iter()
-                                    .all(|binder| iteration.values.contains_key(binder))
-                        })
-                        .and_then(|_| self.declarations.get(target.as_str()))
-                        .map(|declaration| !declaration.param_decls.is_empty())
-                    else {
-                        continue;
-                    };
-                    let (bindings, arguments) = self.nested_bindings(target, iteration, false)?;
-                    *target = if generic {
-                        let generator = mojito_symbol::symbol::instance_symbol(target, &arguments);
-                        self.region_generators
-                            .insert(generator.clone(), (target.clone(), bindings));
-                        generator
-                    } else {
-                        self.enqueue(target, bindings, arguments)?
-                    };
-                }
+                } => (target, Some((args, arg_places, kwargs, kwarg_places))),
                 MirInstr::Try {
                     body,
                     handler,
@@ -376,8 +360,48 @@ impl Specializer<'_> {
                     {
                         self.instantiate_region_references(template, blocks, iteration)?;
                     }
+                    continue;
                 }
-                _ => {}
+                _ => continue,
+            };
+            let Some(generic) = self
+                .region_binders_up_to(target, template)
+                .filter(|binders| {
+                    !binders.is_empty()
+                        && binders
+                            .iter()
+                            .all(|binder| iteration.values.contains_key(binder))
+                })
+                .and_then(|_| self.declarations.get(target.as_str()))
+                .map(|declaration| !declaration.param_decls.is_empty())
+            else {
+                continue;
+            };
+            if generic {
+                let (bindings, arguments) = self.nested_bindings(target, iteration, false)?;
+                let generator = mojito_symbol::symbol::instance_symbol(target, &arguments);
+                self.region_generators
+                    .insert(generator.clone(), (target.clone(), bindings));
+                *target = generator;
+                continue;
+            }
+            let reduced = call.is_some()
+                && self
+                    .functions
+                    .get(target.as_str())
+                    .is_some_and(|function| !function.removed_args.is_empty());
+            let (bindings, arguments) = self.nested_bindings(target, iteration, reduced)?;
+            let instance = self.enqueue(target, bindings, arguments)?;
+            let generator = std::mem::replace(target, instance);
+            if reduced && let Some((args, arg_places, kwargs, kwarg_places)) = call {
+                self.drop_removed_arguments(
+                    template,
+                    &generator,
+                    args,
+                    arg_places,
+                    kwargs,
+                    kwarg_places,
+                )?;
             }
         }
         Ok(())
