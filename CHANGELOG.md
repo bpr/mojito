@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A converting default over a struct whose constructor reads its parameter
+  now runs at a generic callee that removed the binder the parameter's type
+  spells (`h[k](t: Tag[k] = 2)`): every call omitting it already builds the
+  struct its own application spells, so the callee's instance names no
+  construction of the erased struct, as upstream's callee names no default.
+  `h[4]()` and `h[5](1)` failed elaboration before. This closes R1094, whose
+  `f()` over `t: Tag[3] = 5` the 2026-10-17 gate fix had already repaired
+  (`assets/ok/converting_default_reads_erased_struct_parameter.mojo`).
 - A place arm of a conditional expression that is `Copyable` but not
   `ImplicitlyCopyable` is now rejected, as the pin rejects its implicit
   copy into the conditional's result (`var t = r if c else M(3)`).

@@ -161,6 +161,7 @@ assets/ok/constructor_read_temporary_drop_order.mojo	main	exe-differential	sanit
 assets/ok/constructor_reads_no_struct_parameter.mojo	main	exe-differential	sanitized
 assets/ok/container_hashable.mojo	main	exe-differential	sanitized
 assets/ok/contextual_member_static.mojo	main	exe-differential	sanitized
+assets/ok/converting_default_reads_erased_struct_parameter.mojo	main	exe-differential	sanitized
 assets/ok/copy_construction_last_use_moves.mojo	main	exe-differential	sanitized
 assets/ok/copy_construction_owned_receiver_forwards.mojo	main	exe-differential	sanitized
 assets/ok/copy_construction_read_argument_lends.mojo	main	exe-differential	sanitized

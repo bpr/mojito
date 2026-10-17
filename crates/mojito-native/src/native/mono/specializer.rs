@@ -2138,6 +2138,20 @@ impl<'a> Specializer<'a> {
             }
             let (bindings, arguments, _) =
                 self.infer_receiver_call(owner, target, param_ty, None, &[], &[])?;
+            // An instance that erased a struct parameter its constructor
+            // reads names no construction for the default: each call leaving
+            // the slot out builds the struct its own application spells
+            // (`mir::fill_omitted_arguments`), as upstream's callee names no
+            // default.
+            let removed = self.removed_params(target, false);
+            if bindings
+                .removed
+                .iter()
+                .any(|binder| !removed.contains(&binder.id))
+            {
+                *default = None;
+                continue;
+            }
             let instance = self.enqueue(target, bindings, arguments)?;
             *target = instance;
         }

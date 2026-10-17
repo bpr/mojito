@@ -56,24 +56,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R1094 A converting default at a parametric struct's implicit
-  constructor fails MIR verification since omitted arguments are filled
-  at the call**
-
-  `assets/ok/constructor_reads_no_struct_parameter.mojo` stops on the VM
-  with "required compile-time value parameter 'n' is missing" in `main`,
-  where it ran before.
-  - Bisected to f55bbb08 (R1077): `f()` over `def f(t: Tag[3] = 5)` now
-    writes `Tag[3](5)` into the call, and the filled construction of an
-    owner-less constructor (R1000) does not carry `Tag`'s `n`.
-  - Fill a converting default with the constructor's application as the
-    parameter's checked type spells it, as the explicit `f(6)` lowers.
-  - `benchmarks/instantiation.tsv` keeps the fixture's row from before, so
-    the ratchet reports it lost until this lands.
-  - Found while landing R1088 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1090 A drop of a tuple's storage names no destructor per element;
   the backends find each element's from the type**
 
@@ -4877,6 +4859,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     the source wrote.
   - The plan must say which clone a bare reference names, and what the rejection
     says when none can be chosen.
+  - Probe: `var g = h[4]; g(1)` over `def h[k: Int](t: Int)` prints `5` on
+    the pin, where Mojito reports "type 'def[k: Int](Int) thin -> None'
+    cannot be indexed here" (found while landing R1094, 2026-10-17).
   - Depends on nothing.
   - Model: Fable, Planned.
 

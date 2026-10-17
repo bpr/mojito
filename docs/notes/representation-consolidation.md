@@ -174,13 +174,7 @@ from removing dead code and inlining. Instances per generator barely moved:
 a generic body is still copied about as often as before. Upstream's
 `RemoveUnusedParams` attacks exactly that ratio, so it is next.
 
-1. **R1094**, a MIR verification failure, so a correctness bug:
-
-   ```sh
-   scripts/claude_loop.py --only R1094 -n 0
-   ```
-
-2. **Fewer instances.** Each entry stops a body being split into separate
+1. **Fewer instances.** Each entry stops a body being split into separate
    instances by a binder it never reads:
 
    ```sh
@@ -188,7 +182,7 @@ a generic body is still copied about as often as before. Upstream's
        --only R1032 --only R1033 --only R1034 -n 0
    ```
 
-3. **Structured regions, then smaller generators.** R875–R880 move the
+2. **Structured regions, then smaller generators.** R875–R880 move the
    lifetime checks and drop elaboration onto `hlcf`-style regions, as
    upstream's pipeline is; R927 (`Mem2Reg` through region values) waits on
    them. R928 (`SROA`) and R926/R929/R930 (CSE) shrink each generator:
