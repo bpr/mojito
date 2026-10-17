@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1109**.
+Next free ID: **R1112**.
 
 ## Ordered Work
 
@@ -385,20 +385,50 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1033 A dunder or table member's unused argument keeps the
-  parameters its type names**
+- [ ] **R1109 A member a backend reaches from a value's type keeps its
+  unused arguments**
 
-  `Grid.__getitem__[n](self, i: Int, a: Arr[n])` or an `__add__` that
-  ignores its operand keeps one instance per `n`, where upstream's pass
-  clones the generator without the argument.
-  - `mir::unused_arguments` gives no candidate to a `__*__` method or a
-    `mir::table_member`: an operator, a subscript (`MirSubscriptCall`), an
-    iteration step, and the backends' member-table lookups reach them
-    without a `MethodCall` arm that drops the argument.
-  - Each such demand would take the reduced generator and drop its operand,
-    and a member-table entry would name the reduced instance.
-  - Found while landing R1011 (2026-10-15).
-  - Depends on R1032.
+  `E[n].__eq__(self, other: Self)` returning `True`, `W[n].write_to` that
+  ignores its `self`, or `Arr[n].__getitem__(self, i: Int)` returning `i`
+  keeps one instance per `n`, where upstream's pass clones the generator
+  without the argument.
+  - The backends run a table member (`mir::DISPATCHED_MEMBERS`: `__eq__`,
+    `__hash__`, `write_to`, `__int__`, `__call__`, `__setitem__`, …), an
+    iteration's `__iter__` and `__next__`, and the dunders the builtins
+    dispatch (`__len__`, `__abs__`, `__bool__`, `__round__`, `math`'s) from
+    the value's type with every argument, and every subscript passes its
+    accessor's receiver, so `mir::unused_arguments` gives them no candidate
+    (`PROTOCOL_MEMBERS`, `SUBSCRIPT_ACCESSORS` in `mir/unused_args.rs`).
+  - Upstream has no such dispatch: each is a call in generic library code
+    that `RemoveUnusedParams` rewrites. The fix either makes each reach a
+    call the elaborator rewrites, or has the backends' table dispatch drop
+    the operands the entry's instance removed, with the member table
+    recording the reduced instance.
+  - Probes: `__call__(self, x: Int)` ignoring `x` through a callable value
+    (the devirtualized `call.indirect` already drops, R1031 holds the rest);
+    `__setitem__(self, i: Int, v: Int)` ignoring `v`; `__iter__(self)`
+    returning an iterator built from nothing of `self`.
+  - Found while landing R1033 (2026-10-17).
+  - Depends on R1031.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1110 An argument a body passes only to an operator's or a
+  subscript's removed argument is a use**
+
+  `fwd[n](g: Grid, a: Arr[n])` returning `g + a` or `g[a]`, where the
+  dunder ignores its operand, keeps `a` and one instance per `n`, where
+  upstream's pass, which rewrote the dunder's call first, removes both.
+  - `mir::without_removed_argument_forwards` drops operands from a `call`
+    and a resolved `call.method` only (`calls_removing`,
+    `drop_removed_operands`): a `binop`/`unop` operand and a subscript
+    instruction's actual stay uses of the caller's slot, since the operator
+    is not a call until the elaborator rewrites it and the subscript's
+    operand is a field of the instruction.
+  - The view would treat an operator on a struct operand as the call of
+    its dunder and a subscript as the call of its accessor, erasing the
+    forward chain as for a call.
+  - Found while landing R1033 (2026-10-17).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R1034 A runtime argument a function only passes to itself is a
@@ -3107,6 +3137,23 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - `conformance/probes/method_pack_span_argument.mojo` pins it.
   - Found while judging variadic elements in argument exclusivity
     (2026-09-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1111 An overloaded `__getitem__` over a parameter-spelled type does
+  not lower**
+
+  `struct Cell[n: Int]` with `__getitem__(self, a: Arr[Self.n])` beside
+  `__getitem__(self, s: Slice)` checks, and then `c[a]` fails with
+  "subscript refers to undeclared method `Cell.__getitem__$ov$Arr$Vn`",
+  where the pin runs it.
+  - The subscript's selected target spells the overload key from the
+    parameter type `Arr[Self.n]` (`$ov$Arr$Vn`), while the method's
+    lowered symbol is keyed another way, so the checked program names a
+    method no declaration has.
+  - One `__getitem__` over `Arr[Self.n]` lowers and runs
+    (`assets/ok/dunder_unused_argument_instances.mojo`).
+  - Found while landing R1033 (2026-10-17).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

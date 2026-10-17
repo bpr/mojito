@@ -5742,15 +5742,30 @@ point where a slot declared in a loop is uninitialized again.
   `mir::retire_parameters`, `mir::unread_parameters_of`), so a parameter
   only an unused argument's type named is unread too: `fa[n](a: Arr[n])`
   and `fav[n](var a: Arr[n])` remove `a` and then `n`. Only a free
-  function, a nested one, and a method with a receiver that is neither a
-  dunder nor a `mir::table_member` (R1011), none declared in a
-  compile-time region nor tying an origin or a returned reference to a
-  parameter, has candidates (`mir::unused_arguments`), and never a
-  `deinit` or a callable parameter. A slot maps to its parameter by the
-  body-slot layout (`FunctionDeclaration::slot_parameter`): a removed
-  method slot past the receiver is the declaration's position one lower,
-  and the resolved `MethodCall` arm drops its argument as the `Call` arms
-  do. A borrowed collector is a candidate too (R1014): the reduced
+  function, a nested one, and a method (R1011, R1032) that is neither a
+  `mir::table_member` nor a protocol member a backend runs from a value's
+  type with every argument (`__iter__`, `__next__`, and the `__len__`,
+  `__abs__`, `__bool__`, and other dunders the builtins dispatch), none
+  declared in a compile-time region nor tying an origin or a returned
+  reference to a parameter, has candidates (`mir::unused_arguments`), and
+  never a `deinit` or a callable parameter, nor a subscript accessor's
+  receiver, which every subscript passes (R1109). A slot maps to its
+  parameter by the body-slot layout
+  (`FunctionDeclaration::slot_parameter`): a removed method slot past the
+  receiver is the declaration's position one lower, and the resolved
+  `MethodCall` arm drops its argument as the `Call` arms do. An operator
+  on a struct operand is a `MethodCall` of its dunder by then, so it drops
+  the operand too (R1033), and a subscript names its accessor's reduced
+  generator through `rewrite_subscript_call` (`ReceiverCall::reduced`):
+  its contract loses the arguments the removed slots bound, a
+  multi-subscript sheds the operands they named, and an `index.get` or a
+  slice whose one operand goes becomes a multi-subscript with none, which
+  both backends run as the same call over the contract. `inline-parametric`
+  reads an inlined callee's reduced generator through
+  `with_removed_argument_forwards_erased`, as `Specializer::materialize_body`
+  reads an instance: the callee's own forwards to its callees' removed
+  arguments are erased before its arguments go, and the operands stay for
+  the elaborator to drop at each call. A borrowed collector is a candidate too (R1014): the reduced
   declaration collects nothing, its call drops every overflow operand of
   that kind, and `infer_call` still binds the parameters the elements
   spell but keys no arity, while an owned `var *args` or `**kwargs` is

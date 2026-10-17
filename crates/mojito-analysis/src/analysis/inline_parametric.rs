@@ -151,7 +151,7 @@ use mojito_mir::mir::{
     has_no_destructor, instruction_regions, instruction_regions_mut, instruction_regs_mut,
     instruction_slots, lower_copies_and_moves, name_constructors, removed_argument_operands,
     renumber_block_slots, terminator_regs_mut, terminator_targets, terminator_targets_mut,
-    without_removed_arguments,
+    with_removed_argument_forwards_erased, without_removed_arguments,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{
@@ -932,6 +932,28 @@ impl<'c> Inliner<'_, 'c> {
         changed
     }
 
+    /// The generator of `full`, so declared, without its `removed`
+    /// arguments: the body a direct call inlines. Its own forwards to its
+    /// callees' removed arguments went before its arguments were judged, so
+    /// it is read through the view the elaborator reads an instance
+    /// through, the forwards erased and the operands kept for the
+    /// elaborator to drop at each call.
+    fn reduced_generator(
+        &self,
+        full: &MirFunction,
+        full_declaration: &MirFunctionDeclaration,
+        removed: &[VarId],
+    ) -> (MirFunction, MirFunctionDeclaration) {
+        let forwards = with_removed_argument_forwards_erased(full, self.declarations, &|callee| {
+            full.callee_removed_args
+                .iter()
+                .find(|(discounted, _)| discounted == callee)
+                .map(|(_, slots)| slots.as_slice())
+        });
+        let source = forwards.as_ref().map_or(full, |(view, _)| view);
+        without_removed_arguments(source, full_declaration, removed)
+    }
+
     /// The callee of the call at `index` of `block`, its compile-time
     /// parameters and its owner's bound to the call's, and the binding of
     /// each of its parameters, when the pass inlines the call.
@@ -1139,7 +1161,7 @@ impl<'c> Inliner<'_, 'c> {
             let (positional, keyword) =
                 removed_argument_operands(full_declaration, removed, call.args.len(), &keywords)
                     .ok()?;
-            let (body, declaration) = without_removed_arguments(full, full_declaration, removed);
+            let (body, declaration) = self.reduced_generator(full, full_declaration, removed);
             (Some(body), Cow::Owned(declaration), positional, keyword)
         };
         let callee = reduced.as_ref().unwrap_or(full);

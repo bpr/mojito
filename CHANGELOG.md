@@ -8,6 +8,25 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A dunder's runtime argument its body never uses now leaves the generator
+  an operator, a call, or a subscript names, as upstream's
+  `RemoveUnusedParams` removes it and then the parameters only its type
+  named: `Grid[n].__add__(self, o: Arr[n])` returning `self.k + 1` has one
+  instance, `Grid.__add__$REMOVED$ARG$mono`, for `g + a` and `g.__add__(a)`
+  at every `n`, and `Cell[n].__getitem__(self, a: Arr[n])` one for `c[a]`,
+  the subscript shedding the operand (an `index.get` or slice whose one
+  operand goes becomes a multi-subscript with none), as on the pin. A
+  member a backend reaches from a value's type (a table member, an
+  iteration step, a builtin's dunder) and a subscript accessor's receiver
+  still keep theirs (R1109). Fixture
+  `assets/ok/dunder_unused_argument_instances.mojo`. This closes R1033.
+- `inline-parametric` now reads an inlined callee's reduced generator
+  through the view the elaborator reads an instance through, its forwards
+  to its own callees' removed arguments erased, so a trait default's
+  wrapper whose receiver only forwards to a default that ignores it
+  (`assets/ok/trait_default_method.mojo` and five other `trait_default_*`
+  fixtures) compiles again where R1032 had left it asserting that a
+  retired slot was still addressed.
 - A static method's runtime argument its body never uses now leaves the
   generator its calls name, as upstream's `RemoveUnusedParams` removes it
   and then the parameters only its type named: `S.st[n](a: Arr[n])`

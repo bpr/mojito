@@ -412,7 +412,7 @@ impl Specializer<'_> {
             return Ok(());
         }
         let (bindings, arguments, _) =
-            self.infer_receiver_call(owner, &target, ty, None, &[], &[])?;
+            self.infer_receiver_call(owner, &target, ty, ReceiverCall::default())?;
         self.enqueue(&target, bindings, arguments)?;
         Ok(())
     }

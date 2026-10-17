@@ -2137,7 +2137,7 @@ impl<'a> Specializer<'a> {
                 continue;
             }
             let (bindings, arguments, _) =
-                self.infer_receiver_call(owner, target, param_ty, None, &[], &[])?;
+                self.infer_receiver_call(owner, target, param_ty, ReceiverCall::default())?;
             // An instance that erased a struct parameter its constructor
             // reads names no construction for the default: each call leaving
             // the slot out builds the struct its own application spells
@@ -2872,9 +2872,7 @@ impl<'a> Specializer<'a> {
                                         owner,
                                         &write_string,
                                         &receiver_ty,
-                                        None,
-                                        &[],
-                                        &[],
+                                        ReceiverCall::default(),
                                     )?;
                                     self.enqueue(&write_string, bindings, arguments)?;
                                     // Each argument is formatted through its
@@ -3274,48 +3272,134 @@ impl<'a> Specializer<'a> {
                     // their concrete instances exactly like method calls;
                     // intrinsic storage subscripts carry no nominal call and
                     // pass through.
+                    // An accessor's removed argument leaves the subscript
+                    // as upstream's rewritten call passes none for it: an
+                    // `index.get` or slice whose one operand goes becomes a
+                    // multi-subscript with none.
                     MirInstr::Index {
                         dest,
                         base,
                         index,
-                        call: Some(call),
+                        base_place,
+                        call: call @ Some(_),
                         ..
                     } => {
                         let (dest, base, index) = (*dest, *base, *index);
-                        self.rewrite_subscript_call(
+                        let Some(contract) = call.as_deref_mut() else {
+                            continue;
+                        };
+                        let dropped = self.rewrite_subscript_call(
                             owner,
                             function,
                             base,
-                            &[index],
+                            SubscriptOperands {
+                                registers: &[index],
+                                positional: 1,
+                                keywords: &[],
+                            },
                             Some(dest),
-                            call,
+                            contract,
                         )?;
+                        if dropped.is_some_and(|dropped| dropped.positional.contains(&0)) {
+                            let (call, object_place) = (call.take(), base_place.take());
+                            *instruction = MirInstr::MultiIndex {
+                                dest,
+                                object: base,
+                                args: Vec::new(),
+                                object_place,
+                                arg_places: Vec::new(),
+                                kwargs: Vec::new(),
+                                kwarg_places: Vec::new(),
+                                call,
+                            };
+                        }
                     }
                     MirInstr::Slice {
                         dest,
                         object,
-                        call: Some(call),
+                        object_place,
+                        call: call @ Some(_),
                         ..
+                    } => {
+                        let (dest, object) = (*dest, *object);
+                        let Some(contract) = call.as_deref_mut() else {
+                            continue;
+                        };
+                        let dropped = self.rewrite_subscript_call(
+                            owner,
+                            function,
+                            object,
+                            SubscriptOperands {
+                                registers: &[],
+                                positional: 1,
+                                keywords: &[],
+                            },
+                            Some(dest),
+                            contract,
+                        )?;
+                        if dropped.is_some_and(|dropped| dropped.positional.contains(&0)) {
+                            let (call, object_place) = (call.take(), object_place.take());
+                            *instruction = MirInstr::MultiIndex {
+                                dest,
+                                object,
+                                args: Vec::new(),
+                                object_place,
+                                arg_places: Vec::new(),
+                                kwargs: Vec::new(),
+                                kwarg_places: Vec::new(),
+                                call,
+                            };
+                        }
                     }
-                    | MirInstr::MultiIndex {
+                    MirInstr::MultiIndex {
                         dest,
                         object,
+                        args,
+                        arg_places,
+                        kwargs,
+                        kwarg_places,
                         call: Some(call),
                         ..
                     } => {
                         let (dest, object) = (*dest, *object);
-                        self.rewrite_subscript_call(
+                        let keywords: Vec<&str> =
+                            kwargs.iter().map(|(name, _)| name.as_str()).collect();
+                        let dropped = self.rewrite_subscript_call(
                             owner,
                             function,
                             object,
-                            &[],
+                            SubscriptOperands {
+                                registers: &[],
+                                positional: args.len(),
+                                keywords: &keywords,
+                            },
                             Some(dest),
                             call,
                         )?;
+                        if let Some(dropped) = dropped {
+                            drop_subscript_operands(args, arg_places, &dropped.positional);
+                            drop_subscript_operands(kwargs, kwarg_places, &dropped.keyword);
+                        }
                     }
-                    MirInstr::MultiSet { receiver, call, .. } => {
+                    MirInstr::MultiSet {
+                        receiver,
+                        args,
+                        call,
+                        ..
+                    } => {
                         let receiver = *receiver;
-                        self.rewrite_subscript_call(owner, function, receiver, &[], None, call)?;
+                        self.rewrite_subscript_call(
+                            owner,
+                            function,
+                            receiver,
+                            SubscriptOperands {
+                                registers: &[],
+                                positional: args.len(),
+                                keywords: &[],
+                            },
+                            None,
+                            call,
+                        )?;
                     }
                     // An untyped iterator slot passes through: it belongs to
                     // a compiler-private pack loop the backend rejects at its
@@ -4062,6 +4146,23 @@ fn pass_capturing_arguments(
         loads.push(MirInstr::LoadPlace { dest, place });
     }
     preludes.push((index, loads));
+}
+
+/// Remove from a multi-subscript's `operands`, and their `places`, the
+/// `dropped` indexes its accessor's removed arguments bound.
+fn drop_subscript_operands<T>(
+    operands: &mut Vec<T>,
+    places: &mut Vec<Option<MirPlace>>,
+    dropped: &BTreeSet<usize>,
+) {
+    for &index in dropped.iter().rev() {
+        if index < operands.len() {
+            operands.remove(index);
+        }
+        if index < places.len() {
+            places.remove(index);
+        }
+    }
 }
 
 /// Drops the compile-time argument slots `instruction` still carries: a

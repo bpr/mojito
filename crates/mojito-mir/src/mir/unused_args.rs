@@ -27,20 +27,22 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 /// uses ([`used_slots`]), ascending: the arguments upstream's
 /// `RemoveUnusedParams` removes from the generator a direct call names.
 ///
-/// Only a free function, a nested one, a method a resolved method call
-/// names, and a static method a call through its struct or an instance
-/// names, the callees whose every direct call the elaborator reduces, have
-/// candidates: neither a constructor nor a dunder or table member
-/// ([`crate::mir::table_member`]), which an operator, a subscript, or a
-/// backend reaches without a call naming it, nor a body
-/// declared in a compile-time region, nor one whose signature ties an
-/// origin or a returned reference to a parameter. A nested body's calls by
-/// name are direct calls, and its captures are leading arguments like any
-/// other. A `deinit` parameter and a callable one are
-/// never candidates; a method's receiver is one like any other argument,
-/// and the call of a generator without it passes none. A collector is one
-/// too, whose elements the rewritten call passes none of, but an owned
-/// collector's drop runs code, so it is a use.
+/// Only a free function, a nested one, a method a resolved method call,
+/// an operator, or a subscript names, and a static method a call through
+/// its struct or an instance names, the callees whose every demand the
+/// elaborator reduces, have candidates: neither a constructor nor a table
+/// member ([`crate::mir::table_member`]) or protocol member
+/// ([`PROTOCOL_MEMBERS`]), which a backend reaches from a value's type
+/// with every argument, nor a body declared in a compile-time region, nor
+/// one whose signature ties an origin or a returned reference to a
+/// parameter. A nested body's calls by name are direct calls, and its
+/// captures are leading arguments like any other. A `deinit` parameter and
+/// a callable one are never candidates; a method's receiver is one like
+/// any other argument, and the call of a generator without it passes
+/// none, but a subscript accessor's ([`SUBSCRIPT_ACCESSORS`]), which every
+/// subscript passes. A collector is one too, whose elements the rewritten
+/// call passes none of, but an owned collector's drop runs code, so it is
+/// a use.
 pub fn unused_arguments(
     name: &str,
     function: &MirFunction,
@@ -53,7 +55,11 @@ pub fn unused_arguments(
         return Vec::new();
     }
     let used = used_slots(function, declarations);
+    let keeps_receiver = declaration.has_receiver
+        && mojito_symbol::symbol::split_method_symbol(name)
+            .is_some_and(|(_, method)| SUBSCRIPT_ACCESSORS.contains(&member_base(method)));
     (0..function.n_params)
+        .filter(|&slot| !(keeps_receiver && slot == 0))
         .filter(|&slot| {
             !function.deinit_params.get(slot).copied().unwrap_or(true)
                 && !mentions(&function.param_types[slot], &|ty| {
@@ -293,13 +299,40 @@ pub fn erase_removed_operands(
     erase_forward_chains(function, declarations, &HashSet::new(), before);
 }
 
+/// The members a backend runs from a value's type with every argument its
+/// protocol passes, beside the member table's ([`table_member`]): an
+/// iteration's `__iter__` and `__next__`, and the conversions and
+/// arithmetic the builtins `len`, `abs`, `round`, `Bool`, `Float64`, and
+/// `math` dispatch. No call the elaborator rewrites names one, so none
+/// loses an argument.
+const PROTOCOL_MEMBERS: [&str; 14] = [
+    "__iter__",
+    "__next__",
+    "__len__",
+    "__abs__",
+    "__round__",
+    "__bool__",
+    "__float__",
+    "__trunc__",
+    "__floor__",
+    "__ceil__",
+    "__fma__",
+    "__ceildiv__",
+    "__contains__",
+    "__mlir_index__",
+];
+
+/// The accessors a subscript reaches, whose receiver every subscript
+/// instruction passes, so it is never removed.
+const SUBSCRIPT_ACCESSORS: [&str; 2] = ["__getitem__", "__getitem_param__"];
+
 /// Whether `name`, so declared, is a function whose arguments the pass may
 /// remove ([`unused_arguments`]).
 fn reducible(name: &str, function: &MirFunction, declaration: &MirFunctionDeclaration) -> bool {
     name != "__toplevel__"
         && (declaration.enclosing.is_some()
             || mojito_symbol::symbol::split_method_symbol(name).is_none_or(|(_, method)| {
-                !method.starts_with("__") && table_member(method).is_none()
+                table_member(method).is_none() && !PROTOCOL_MEMBERS.contains(&member_base(method))
             }))
         && declaration.region_binders.is_empty()
         && !declaration.returns_reference
@@ -313,6 +346,11 @@ fn reducible(name: &str, function: &MirFunction, declaration: &MirFunctionDeclar
             .iter()
             .chain(std::iter::once(&declaration.ret_ty))
             .any(names_a_place)
+}
+
+/// The method spelling `method` before any overload qualifier.
+fn member_base(method: &str) -> &str {
+    method.split('$').next().unwrap_or(method)
 }
 
 /// Whether `ty` holds an origin that names a place, which may be a

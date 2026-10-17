@@ -3,7 +3,46 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_checked::checked::CheckedCallArgumentSource;
+use mojito_hir::hir::VarId;
+use mojito_mir::mir::SlotParameter;
 use mojito_types::types::TyKind;
+
+/// The runtime operands one subscript instruction passes its accessor
+/// past the receiver.
+#[derive(Clone, Copy)]
+pub(super) struct SubscriptOperands<'a> {
+    /// The operands held in registers: an `index.get`'s index.
+    pub(super) registers: &'a [Reg],
+    /// How many positional operands the instruction passes, inline slice
+    /// descriptors included.
+    pub(super) positional: usize,
+    /// The names of its keyword operands, in order.
+    pub(super) keywords: &'a [&'a str],
+}
+
+/// The operand indexes a subscript instruction sheds for its accessor's
+/// removed arguments, as upstream's rewritten call passes none for them.
+pub(super) struct DroppedOperands {
+    pub(super) positional: BTreeSet<usize>,
+    pub(super) keyword: BTreeSet<usize>,
+}
+
+/// What a receiver call demands of its callee besides the receiver.
+#[derive(Clone, Copy, Default)]
+pub(super) struct ReceiverCall<'a> {
+    /// The checked result type anchoring the callee's return, if any.
+    pub(super) result: Option<&'a Ty>,
+    /// Explicit compile-time value arguments, by binder.
+    pub(super) explicit: &'a [(ParamRef, CtValue)],
+    /// The checked parameter types past the receiver, by declaration
+    /// position.
+    pub(super) parameters: &'a [&'a Ty],
+    /// Whether the demand is a call, which names the generator without the
+    /// callee's unused arguments ([`Bindings::reduced`]); a protocol or a
+    /// member table reaches the full one.
+    pub(super) reduced: bool,
+}
 
 impl Specializer<'_> {
     /// Retarget one checker-selected subscript invocation (the
@@ -11,22 +50,27 @@ impl Specializer<'_> {
     /// receiver binds the owner's parameters and the destination's checked
     /// type anchors the result, mirroring the nullary iterator-step
     /// inference; subscript actuals are `Int` indexes or slice descriptors
-    /// and never carry generic solutions of their own.
+    /// and never carry generic solutions of their own. A subscript is a
+    /// call of its accessor, so it names the generator without the
+    /// accessor's unused arguments, as upstream's rewritten call does, and
+    /// its contract loses the arguments that bound them: returns the
+    /// operand indexes the instruction sheds, or `None` when it keeps every
+    /// operand.
     pub(super) fn rewrite_subscript_call(
         &mut self,
         owner: &str,
         function: &MirFunction,
         receiver: Reg,
-        actuals: &[Reg],
+        operands: SubscriptOperands<'_>,
         dest: Option<Reg>,
         call: &mut mojito_mir::mir::MirSubscriptCall,
-    ) -> Result<(), MonoError> {
+    ) -> Result<Option<DroppedOperands>, MonoError> {
         let Some(receiver_ty) = function.reg_types.get(&receiver.0) else {
-            return Ok(());
+            return Ok(None);
         };
         let receiver_ty = peel_refs(receiver_ty).clone();
         let TyKind::Struct(receiver_name, _) = receiver_ty.kind() else {
-            return Ok(());
+            return Ok(None);
         };
         let method = if dest.is_some() {
             "__getitem__"
@@ -41,7 +85,7 @@ impl Specializer<'_> {
             call.arguments.len(),
         );
         if !self.functions.contains_key(target.as_str()) {
-            return Ok(());
+            return Ok(None);
         }
         // The checker-selected result fact is the authoritative anchor even
         // for a reference result. `unify_result` peels the handle layer, so a
@@ -94,7 +138,7 @@ impl Specializer<'_> {
                         .and_then(|expr| eval_ct(expr, &self.enclosing).ok())
                 });
             let Some(value) = value else {
-                return Ok(());
+                return Ok(None);
             };
             explicit.push((decl.binder(), value));
         }
@@ -105,23 +149,27 @@ impl Specializer<'_> {
                 &target,
                 Some(receiver),
                 dest.unwrap_or(receiver),
-                actuals,
+                operands.registers,
                 &[],
                 &call.param_arg_regs,
                 &[],
             )?
         } else {
+            let parameters: Vec<&Ty> = call
+                .arguments
+                .iter()
+                .map(|argument| &argument.parameter_ty)
+                .collect();
             let (bindings, arguments, _) = self.infer_receiver_call(
                 owner,
                 &target,
                 &receiver_ty,
-                result,
-                &explicit,
-                &call
-                    .arguments
-                    .iter()
-                    .map(|argument| &argument.parameter_ty)
-                    .collect::<Vec<_>>(),
+                ReceiverCall {
+                    result,
+                    explicit: &explicit,
+                    parameters: &parameters,
+                    reduced: true,
+                },
             )?;
             (target, bindings, arguments)
         };
@@ -135,10 +183,63 @@ impl Specializer<'_> {
                 arguments.push(InstanceArg::Value(value));
             }
         }
+        let reduced = bindings.reduced;
         call.target = self.enqueue(&target, bindings, arguments)?;
         call.param_arg_regs.clear();
         call.param_decls.clear();
-        Ok(())
+        if !reduced {
+            return Ok(None);
+        }
+        let (Some(declaration), Some(generator)) = (
+            self.declarations.get(target.as_str()),
+            self.functions.get(target.as_str()),
+        ) else {
+            return Ok(None);
+        };
+        let (positional, keyword) = mojito_mir::mir::removed_argument_operands(
+            declaration,
+            &generator.removed_args,
+            operands.positional,
+            operands.keywords,
+        )
+        .map_err(|e| {
+            self.error(
+                Some(owner),
+                format!("binding subscript call to `{target}` during argument removal: {e:?}"),
+            )
+        })?;
+        // The contract lists one argument per declared parameter past the
+        // receiver, by position; the kept ones name their operands by the
+        // indexes the instruction keeps.
+        let removed: BTreeSet<usize> = generator
+            .removed_args
+            .iter()
+            .filter_map(|&slot| match declaration.slot_parameter(slot as usize) {
+                SlotParameter::Position(position) => Some(position),
+                _ => None,
+            })
+            .collect();
+        let mut position = 0;
+        call.arguments.retain(|_| {
+            let kept = !removed.contains(&position);
+            position += 1;
+            kept
+        });
+        for argument in &mut call.arguments {
+            argument.source = match argument.source {
+                CheckedCallArgumentSource::Positional(index) => {
+                    CheckedCallArgumentSource::Positional(index - positional.range(..index).count())
+                }
+                CheckedCallArgumentSource::Keyword(index) => {
+                    CheckedCallArgumentSource::Keyword(index - keyword.range(..index).count())
+                }
+                CheckedCallArgumentSource::Default => CheckedCallArgumentSource::Default,
+            };
+        }
+        Ok(Some(DroppedOperands {
+            positional,
+            keyword,
+        }))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -622,8 +723,15 @@ impl Specializer<'_> {
                 format!("iterator method `{target}` is missing from the MIR program"),
             ));
         }
-        let (bindings, arguments, result) =
-            self.infer_receiver_call(owner, &target, receiver, result, &[], &[])?;
+        let (bindings, arguments, result) = self.infer_receiver_call(
+            owner,
+            &target,
+            receiver,
+            ReceiverCall {
+                result,
+                ..ReceiverCall::default()
+            },
+        )?;
         let concrete = self.enqueue(&target, bindings, arguments)?;
         Ok((concrete, result))
     }
@@ -665,16 +773,15 @@ impl Specializer<'_> {
     /// The receiver-typed sibling of [`Self::infer_call`] for method calls
     /// carried by iterator and subscript instructions, which name their
     /// receiver as a variable slot or carry no argument registers. A
-    /// subscript's checked `parameters` (its index and stored value, past the
-    /// receiver) bind the method's own parameters.
+    /// subscript's checked parameters (its index and stored value, past the
+    /// receiver) bind the method's own parameters, those of a reduced
+    /// demand's removed arguments excepted.
     pub(super) fn infer_receiver_call(
         &self,
         owner: &str,
         target: &str,
         receiver: &Ty,
-        result: Option<&Ty>,
-        explicit: &[(ParamRef, CtValue)],
-        parameters: &[&Ty],
+        demand: ReceiverCall<'_>,
     ) -> Result<(Bindings, Vec<InstanceArg>, Ty), MonoError> {
         let declaration = self.declarations.get(target).ok_or_else(|| {
             self.error(
@@ -683,7 +790,9 @@ impl Specializer<'_> {
             )
         })?;
         let mut bindings = self.base_bindings();
-        for (binder, value) in explicit {
+        bindings.reduced = demand.reduced;
+        bindings.reduced = self.reduces(target, &bindings);
+        for (binder, value) in demand.explicit {
             if declaration
                 .param_decls
                 .iter()
@@ -723,16 +832,37 @@ impl Specializer<'_> {
             })?;
         unify(receiver_pattern, receiver, &mut bindings)
             .map_err(|e| self.error(Some(owner), format!("monomorphizing `{target}`: {e}")))?;
+        let removed: &[VarId] = match self.functions.get(target) {
+            Some(function) if bindings.reduced => &function.removed_args,
+            _ => &[],
+        };
+        let kept = |slot: usize| !removed.contains(&(slot as VarId));
         let patterns: Vec<&Ty> = self
             .functions
             .get(target)
-            .map(|function| function.param_types.iter().skip(1).collect())
+            .map(|function| {
+                function
+                    .param_types
+                    .iter()
+                    .enumerate()
+                    .skip(1)
+                    .filter(|(slot, _)| kept(*slot))
+                    .map(|(_, ty)| ty)
+                    .collect()
+            })
             .unwrap_or_default();
-        for (pattern, parameter) in parameter_patterns(&patterns, parameters) {
+        let parameters: Vec<&Ty> = demand
+            .parameters
+            .iter()
+            .enumerate()
+            .filter(|(position, _)| kept(position + 1))
+            .map(|(_, ty)| *ty)
+            .collect();
+        for (pattern, parameter) in parameter_patterns(&patterns, &parameters) {
             unify(pattern, parameter, &mut bindings)
                 .map_err(|e| self.error(Some(owner), format!("monomorphizing `{target}`: {e}")))?;
         }
-        if let Some(result) = result {
+        if let Some(result) = demand.result {
             unify_result(&declaration.ret_ty, result, &mut bindings).map_err(|e| {
                 self.error(
                     Some(owner),

@@ -77,7 +77,6 @@
         register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 110, end: 111, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 114, end: 115, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 110, end: 115, origin: absent }) }],
         removed_params: [param_id { owner: "scaled", slot: 1 }],
-        callee_removed_params: [callee_params { callee: "$default$scaled$x", params: [param_id { owner: "scaled", slot: 0 }] }],
         blocks: [
           bb0 {
             instructions: [

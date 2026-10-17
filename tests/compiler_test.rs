@@ -4342,6 +4342,71 @@ fn static_method_unused_arguments_leave_the_instance_key() {
 }
 
 #[test]
+fn dunder_unused_arguments_leave_the_instance_key() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/dunder_unused_argument_instances.mojo");
+    let program = Compiler::default()
+        .compile_path(&path)
+        .expect("compile the fixture");
+    let concrete = program.concrete_mir().expect("elaborate");
+    let instances = |template: &str| {
+        concrete
+            .counts
+            .generators
+            .iter()
+            .find(|row| row.template == template)
+            .map_or(0, |row| row.instances)
+    };
+    for (template, count) in [
+        ("Grid.__add__", 1),
+        ("Grid.__getitem__", 1),
+        ("Cell.__getitem__", 1),
+        ("Row.__getitem__", 1),
+        ("Grid.__sub__", 2),
+    ] {
+        assert_eq!(instances(template), count, "instances of `{template}`");
+    }
+    let names: Vec<&str> = concrete
+        .program
+        .functions
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
+    for name in [
+        "Grid.__add__$REMOVED$ARG$mono",
+        "Grid.__getitem__$REMOVED$ARG$mono",
+        "Cell.__getitem__$REMOVED$ARG$mono",
+        "Row.__getitem__$REMOVED$ARG$mono",
+    ] {
+        assert!(names.contains(&name), "no concrete `{name}`: {names:?}");
+    }
+    // A subscript whose one operand bound the removed argument passes none.
+    let main = &concrete.program.functions[concrete
+        .program
+        .functions
+        .iter()
+        .position(|(name, _)| name == "main")
+        .expect("main")]
+    .1;
+    let index_gets = main
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .filter(|instruction| {
+            matches!(
+                instruction,
+                mojito::mir::MirInstr::Index { call: Some(_), .. }
+                    | mojito::mir::MirInstr::Slice { call: Some(_), .. }
+            )
+        })
+        .count();
+    assert_eq!(
+        index_gets, 0,
+        "subscripts of reduced accessors keep an operand"
+    );
+}
+
+#[test]
 fn forwarded_parameters_leave_the_instance_key() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/forwarded_parameter_instances.mojo");
