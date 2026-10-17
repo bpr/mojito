@@ -507,6 +507,21 @@ impl ComptimeSequence {
             &self.next_value,
         ]
     }
+
+    /// The sequence with each of its expressions mapped through `f`.
+    pub fn try_map_exprs<E>(
+        &self,
+        f: &mut impl FnMut(
+            &mojito_types::param_expr::ParamExpr,
+        ) -> Result<mojito_types::param_expr::ParamExpr, E>,
+    ) -> Result<Self, E> {
+        Ok(Self {
+            initial: f(&self.initial)?,
+            has_next: f(&self.has_next)?,
+            next_iter: f(&self.next_iter)?,
+            next_value: f(&self.next_value)?,
+        })
+    }
 }
 
 impl std::fmt::Display for ComptimeSequence {

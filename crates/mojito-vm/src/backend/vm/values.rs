@@ -181,6 +181,7 @@ impl VmBackend {
     pub(super) fn store_at_place(
         &mut self,
         prog: &Prog,
+        frame_id: FrameId,
         place: &MirPlace,
         value: Value,
         regs: &[Value],
@@ -205,7 +206,19 @@ impl VmBackend {
                 },
                 through: place.through,
             };
-            match nav_mut(vars, regs, &parent)? {
+            // A parent reached through a stored handle (`self.src.entries.data`
+            // through a `ref` field) is read through the reference walk, as
+            // a load of it is.
+            let crossing = references::place_crosses_reference(&parent)
+                .then(|| Self::reference_to_place_parts(frame_id, regs, vars, &parent))
+                .transpose()?
+                .map(|handle| self.read_reference(&handle, frame_id, vars))
+                .transpose()?;
+            let parent_value = match &crossing {
+                Some(value) => value,
+                None => nav_mut(vars, regs, &parent)?,
+            };
+            match parent_value {
                 Value::Pointer { allocation, offset } => {
                     Target::Pointer(*allocation, *offset, *index)
                 }
@@ -292,7 +305,7 @@ impl VmBackend {
             found
         };
         if !crosses_reference {
-            return self.store_at_place(prog, place, value, regs, vars);
+            return self.store_at_place(prog, frame_id, place, value, regs, vars);
         }
         self.write_reference(&handle, frame_id, vars, value)
     }

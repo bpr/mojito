@@ -269,16 +269,25 @@ folds the operators over it (R840);
      call, a callee holding a `try`, and a few `String`-literal shapes stay
      calls; a recursive `@always_inline` function is an error.
 
-   Mojito inlines the callees that name none of their own compile-time
-   parameters (a concrete function or a method of a non-parametric struct),
-   called positionally into `read` or owned parameters, that do not raise,
-   return a value rather than a reference, and hold no `try`. An owned
-   parameter, or a `read` one of a scalar type, is a fresh slot the argument
-   initializes; any other `read` parameter is the caller's place the
-   argument was loaded from. The remaining shapes are `pmir` entries R915
-   through R922, and a small plain `@always_inline` callee inlines too (R923); the pin's refusals Mojito lacks are R924 (shapes it keeps
-   as calls) and R925 (a recursive `@always_inline` function, an error on
-   the pin). The
+   Mojito inlines a callee whatever its compile-time parameters, binding
+   every binder kind the call's arguments reach through one map
+   (`ParamBindings`) and one substitution over the body, as upstream
+   substitutes every parameter alike (R1078): type and value binders,
+   callable binders bound to the function the call's register names,
+   packs, an owner's binders from the receiver's or constructed type's
+   arguments with its origin arguments binding nothing, and `where`
+   clauses and conditional availability dropped as judged at the call. A
+   `read` argument binds the caller's place the call retained or loaded,
+   through a reference the block made included, or a fresh slot for an
+   owned, scalar, or trivially copied one. What still keeps a call: a
+   compile-time application over a bound pack and every collector (R1079),
+   a closure the caller does not show (R1080), a destructor a drop does
+   not spell as a call (R1081), `conforms_to` over a concrete binding
+   (R1096), `T()` at a concrete `T` (R1097), and an argument with no place
+   or slot form (R1099); a small plain `@always_inline` callee inlines too
+   (R923); the pin's refusals Mojito lacks are R924 (shapes it keeps as
+   calls) and R925 (a recursive `@always_inline` function, an error on the
+   pin). The
    corpus holds no `nodebug` or `builtin` callee outside
    `assets/ok/always_inline_nodebug_calls.mojo`, so the stage's corpus
    effect waits on the bundled library's markings (stage 10), as

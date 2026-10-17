@@ -10,6 +10,7 @@
 assets/ok/abstract_dispatch_effect_free_conformers.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/add.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/allocation_tracked_unsafe_ptr.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/always_inline_nodebug_binders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_nodebug_calls.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_nodebug_destructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_nodebug_generic_calls.mojo	-	ineligible	no-scalar-entry-shape

@@ -87,11 +87,13 @@ impl VmBackend {
     /// variables are still live. A handle rooted at borrowed storage outside
     /// the frame is unchanged; one rooted here is re-rooted at the storage it
     /// projects through, exactly like a directly returned handle.
-    /// A call result bound to a static-origin reference register
-    /// (`ref[ImmStaticOrigin]`). When it was reached through a heap pointer
-    /// held in a slot — a temporary `Span` over static elements, which the
-    /// body drops before it returns — it designates the heap element, never
-    /// that slot, so it is forwarded as the element's pointer.
+    /// A call result, or a reference made in place, bound to a static-origin
+    /// reference register (`ref[ImmStaticOrigin]`). When it was reached
+    /// through a heap pointer held in a slot — a temporary `Span` over static
+    /// elements, which the body drops before it returns, or before the
+    /// caller it was inlined into reads the reference — it designates the
+    /// heap element, never that slot, so it is forwarded as the element's
+    /// pointer.
     pub(super) fn static_reference_result(
         &self,
         value: Value,
@@ -99,6 +101,12 @@ impl VmBackend {
         current: FrameId,
         current_variables: &[Value],
     ) -> Value {
+        if !matches!(
+            target.map(Ty::kind),
+            Some(TyKind::Ref(reference)) if reference.origin == mojito_types::origin::Origin::Static
+        ) {
+            return value;
+        }
         let Value::Ref {
             frame,
             slot,
@@ -107,12 +115,6 @@ impl VmBackend {
         else {
             return value;
         };
-        if !matches!(
-            target.map(Ty::kind),
-            Some(TyKind::Ref(reference)) if reference.origin == mojito_types::origin::Origin::Static
-        ) {
-            return value;
-        }
         let root = if *frame == current.0 {
             current_variables.get(*slot)
         } else {
@@ -760,6 +762,47 @@ impl VmBackend {
     }
 }
 
+/// The element a place rooted at a slot holding the heap pointer `pointer`
+/// projects (`q[i]._size`, a `Span` member's `self._size` inlined at the
+/// pointee place `q[i]`): the pointer offset by the leading element index
+/// or dereference, as `ref.make` of such a place forwards it, beside the
+/// segments that project the element. `None` when the place does not
+/// begin by selecting an element, or selects nothing within it.
+pub(super) fn pointer_element(
+    pointer: &Value,
+    place: &MirPlace,
+    registers: &[Value],
+) -> Result<Option<(Value, Vec<RefProjection>)>, RuntimeError> {
+    let Value::Pointer { allocation, offset } = pointer else {
+        return Ok(None);
+    };
+    if !matches!(
+        place.root_ty.as_ref().map(Ty::kind),
+        Some(TyKind::Pointer { .. })
+    ) {
+        return Ok(None);
+    }
+    let segments = place_projection_segments(place, registers)?;
+    let Some((first, suffix)) = segments.split_first() else {
+        return Ok(None);
+    };
+    let offset = match first {
+        RefProjection::Deref => *offset,
+        RefProjection::Index(index) => *offset + *index as i64,
+        _ => return Ok(None),
+    };
+    if suffix.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some((
+        Value::Pointer {
+            allocation: *allocation,
+            offset,
+        },
+        suffix.to_vec(),
+    )))
+}
+
 /// Whether a checked storage type is a single-pointee tracked pointer — a
 /// `to=place` pointer designating exactly one value (a place, or an origin
 /// parameter without a multi-element interior domain). Indexing such storage
@@ -772,13 +815,13 @@ pub(super) fn single_pointee_pointer(ty: Option<&Ty>) -> bool {
 }
 
 /// Whether a place reaches a stored handle *below* its root: a `ref`-typed
-/// field or a single-pointee pointer field along the way (`self.value.items`
-/// through a `ref` field, `p.src[].v` through a `Pointer[Box, o]` field).
-/// Such a place is not raw frame storage — the handle designates storage this
-/// frame may not own — so every access to it routes through the reference
-/// walk, which chases stored handles mid-projection. The final projection's
-/// type is excluded: it names the slot the access lands on, not a step
-/// through it.
+/// field or a pointer field along the way (`self.value.items` through a
+/// `ref` field, `p.src[].v` through a `Pointer[Box, o]` field,
+/// `self.data[i]._scalar` through a `List`'s element pointer). Such a place
+/// is not raw frame storage — the handle designates storage this frame may
+/// not own — so every access to it routes through the reference walk, which
+/// chases stored handles mid-projection. The final projection's type is
+/// excluded: it names the slot the access lands on, not a step through it.
 pub(super) fn place_crosses_reference(place: &MirPlace) -> bool {
     place
         .storage()
@@ -786,7 +829,7 @@ pub(super) fn place_crosses_reference(place: &MirPlace) -> bool {
         .iter()
         .rev()
         .skip(1)
-        .any(|ty| matches!(ty.kind(), TyKind::Ref(_)) || single_pointee_pointer(Some(ty)))
+        .any(|ty| matches!(ty.kind(), TyKind::Ref(_) | TyKind::Pointer { .. }))
 }
 
 /// Whether a place designates one element slot of multi-element raw pointer

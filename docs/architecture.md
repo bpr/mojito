@@ -5281,13 +5281,23 @@ point where a slot declared in a loop is uninitialized again.
   part's, with its registers and slots moved past the caller's
   (`mir::renumber_block_slots`); its slot names gain `$inline{n}`, so no
   binder name or `self` matches them. The call's block binds each owned
-  parameter, and each `read` parameter of a scalar type
-  (`mir::has_no_destructor`), with a `var.store` of the argument into the
-  parameter's fresh slot, and every other `read` parameter is the caller's
-  place the argument was `place.load`ed from, composed into each of the
-  callee's places rooted at it, as upstream substitutes the borrowed
-  address; a parameter bound so that the callee names other than as a
-  place's root keeps the call. The callee's one returned register becomes
+  parameter, each `read` parameter of a scalar type
+  (`mir::has_no_destructor`), and each `read` parameter passed a trivial
+  copy of a closed-type slot (a `var.use copy` naming no constructor), with
+  a `var.store` of the argument into the parameter's fresh slot, and every
+  other `read` parameter is the caller's place the call retained for it or
+  the argument was `place.load`ed from, directly or through a `ref.read`
+  of a `ref.make` the same block made (the private `loaded_place`),
+  composed into each of the callee's places rooted at it, as upstream
+  substitutes the borrowed address. A whole-slot copy of a place-bound
+  parameter becomes a `place.load` of the caller's place and a
+  `value.copy` of the loaded register (the private
+  `copy_bound_parameters`, taking a fresh callee register), which
+  `name_constructors` then names the instantiated type's `__copyinit__`
+  as it names any copy; an `iter.init` over one iterates the caller's
+  slot, and a loan's interior of one is an interior of that slot; a
+  parameter bound so that the callee names it otherwise as a slot keeps
+  the call (R1099). The callee's one returned register becomes
   the call's; several returns store to a `$inline{n}$result` slot the
   call's register moves from, and a `None` result is a constant. What
   followed the call moves to a new block every return jumps to, and an
@@ -5305,17 +5315,42 @@ point where a slot declared in a loop is uninitialized again.
   symbolic, for the elaborator to fold in each instance of the caller. A
   value binder's slot reads become its argument as a constant
   (`Const::of_parameter_value`, or `Const::Param` while symbolic), and the
-  slot's drops are deleted. The binding keeps the call for a callable or
-  variadic binder, a `where` clause or binder constraint, a `T()` or
-  `T(copy=x)` at a concrete `T`, a conformance test of a concrete binding,
-  or a value binder's slot used other than as a read. A method of a
-  parametric struct binds the struct's binders to its receiver type's
-  arguments, and a call naming a struct whose one `__init__` is followed
-  binds them to the constructed type's, past the binders the initializer
-  restates; the member's bare spelling of its owner becomes that type, and
-  a read of an owner value binder through `self` (`Self.k`, a member
-  load) becomes its argument as a constant. An origin argument, or a type
-  whose arguments do not align with the binders, keeps the call. The
+  slot's drops are deleted. A callable value binder
+  (`f: def(Int) thin -> Int`, a `value_param` of function type bound to a
+  deferred value) is a runtime slot of the body the VM reifies from the
+  call's `param_arg_regs` entry, aligned with `instantiated_args`; the
+  pass resolves that register through `mir::callable_targets` over the
+  caller, or the `const function` the block defines, and binds the slot to
+  the function as a constant (the private `SlotValue::Function`), deleting
+  its drops and clearing a `call.indirect`'s `callee_place` rooted at it; a
+  register naming a closure with captures, or nothing, keeps the call
+  (R1080). A callable-bound type binder binds as any type. An origin
+  argument binds no binder (the private `without_origins`): the MIR
+  declaration's binders are its type and value parameters, and the body's
+  origin parameters stay symbolic in the caller as in an instance. A
+  binder's constraints, the callee's `where` clauses, and its
+  `availability` bind nothing: the checker judged them at the call, as the
+  pin rejects a call it cannot prove with "lacking evidence to prove
+  correctness", so the inlined body carries none. A `comptime for`
+  terminator passes `is_closed`, and its `ComptimeSequence` closes over the
+  bindings (`ComptimeSequence::try_map_exprs`), its loop binder staying the
+  body's own for the elaborator to unroll in the caller. The binding keeps
+  the call for a value only the elaborator folds (a deferred or marker
+  value), a compile-time application over a bound type pack
+  (`Tuple.reverse`, the private `applies_pack`, R1079), a type still
+  naming a bound binder after substitution (`types::names_binder`, which
+  counts a pack query), a `T()` or `T(copy=x)` at a concrete `T` (R1097),
+  a conformance test of a concrete binding (R1096), or a value binder's
+  slot used other than as a read. A method of a parametric struct binds
+  the struct's binders to its receiver type's arguments, and a call naming
+  a struct whose one `__init__` is followed binds them to the constructed
+  type's, past the binders the initializer restates; the member's bare
+  spelling of its owner becomes that type, and a read of an owner value
+  binder through `self` (`Self.k`, a member load) becomes its argument as
+  a constant. A struct keyed on one pack applied to no element (`Tuple()`
+  outside `Tuple`'s own members, where the bare spelling denotes `Self`)
+  binds the pack to the empty list (R1093). A type whose arguments do not
+  align with the binders keeps the call. The
   initializer's `out self` is a fresh slot that an
   `ownership.mark_initialized` opens and the call's register moves from
   after the body. Callee registers are renumbered before a place-bound

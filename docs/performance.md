@@ -2040,3 +2040,23 @@ fixture, `assets/ok/forwarded_argument_instances.mojo`, has one instance
 of each of `fwd`, `fkw`, `fchain`, `fmove`, and `frecv` for `n = 1, 2`,
 and keeps two of `fcopy`, `fboth`, and `fwdk`, as on the pin. An argument
 a function passes only to itself (R1034) still keeps its instances.
+
+## Every binder kind inlines (2026-10-16, R1078)
+
+`inline-parametric` now binds a callee's callable binders, its owner's
+origin-carrying type, its constrained binders and `where` clauses, and a
+`comptime for` sequence, and binds a `read` argument passed from a place,
+read through a block-made reference, or trivially copied, where each kept
+the call before (`docs/architecture.md`, §Pre-Elaboration Pipeline). The
+whole-corpus refusal trace that planned the change ranked the owner's
+origin argument first (every `Span.__getitem__`, `Span.unsafe_ptr`,
+`_ListIter.__deinit__`, and iterator `__copyinit__` call), the
+conditional-member availability second, and the `ref.read`-of-a-made-
+reference argument (`_ZeroStartingRange.__copyinit__` in `__iter__`,
+`String.__copyinit__` in `copy`) third; all three now inline. No
+program's output changes over the 1,059 `assets/ok` and `ownership_ok`
+fixtures (HEAD worktree differential), and two that stopped at HEAD now
+run (`pack_inferred_through_tuple.mojo`, `tuple_template_served.mojo`,
+R1093). The instantiation counters are the nightly report's to record;
+expect `generator_instances` to fall by the iterator and span members the
+bundled library no longer instantiates per element type.

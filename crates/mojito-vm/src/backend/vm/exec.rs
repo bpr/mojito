@@ -45,6 +45,32 @@ impl VmBackend {
                 // single-pointee deref designates the pointee the pointer
                 // already addresses).
                 if let Value::Pointer { allocation, offset } = root {
+                    // A reference within the pointee (`q[i]._data[k]`, a
+                    // `Span` member's element reference inlined at the
+                    // pointee place `q[i]`) is the heap address the pointee's
+                    // own pointer gives it; one to any other part of a heap
+                    // element has no handle here.
+                    if let Some((element, suffix)) =
+                        super::references::pointer_element(&root, place, regs)?
+                    {
+                        let referent = self.read_reference(&element, frame_id, vars)?;
+                        let Some(ReferencePointerBoundary {
+                            allocation,
+                            offset,
+                            index,
+                            suffix: [],
+                        }) = self.reference_pointer_boundary(&referent, &suffix)?
+                        else {
+                            return Err(RuntimeError::Unsupported(
+                                "vm: a reference within a heap element".to_string(),
+                            ));
+                        };
+                        regs[dest.0 as usize] = Value::Pointer {
+                            allocation,
+                            offset: offset + index as i64,
+                        };
+                        return Ok(Flow::Normal);
+                    }
                     let mut offset = offset;
                     for segment in super::references::place_projection_segments(place, regs)? {
                         match segment {
@@ -83,7 +109,14 @@ impl VmBackend {
                 {
                     handle = stored;
                 }
-                regs[dest.0 as usize] = handle;
+                // A static-origin reference to an element reached through a
+                // pointer the place holds (`span._data[i]` of a `Span[T,
+                // ImmStaticOrigin]`) is the element's heap address, as such
+                // a call result is: it outlives the storage holding the
+                // pointer.
+                let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
+                regs[dest.0 as usize] =
+                    self.static_reference_result(handle, target, frame_id, vars);
             }
             MirInstr::ReadRef { dest, reference } => {
                 let handle = regs[reference.0 as usize].clone();
@@ -1555,6 +1588,15 @@ impl VmBackend {
             }
             MirInstr::Store { place, src } => {
                 let mut v = regs[src.0 as usize].clone();
+                // A place projected from a pointer slot writes within its
+                // pointee, as the load of one reads within it.
+                if let Some((Value::Pointer { allocation, offset }, suffix)) =
+                    super::references::pointer_element(&vars[place.root as usize], place, regs)?
+                {
+                    let (region, slot) = self.heap_index(allocation, offset, 0)?;
+                    self.write_heap_projection(region, slot, &suffix, v)?;
+                    return Ok(Flow::Normal);
+                }
                 // A handle at the root (a `mut`/`ref self` receiver) and one
                 // reached below it (`p.src[].v`, through a `ref`-typed or
                 // single-pointee pointer field) both designate storage this
@@ -1580,7 +1622,7 @@ impl VmBackend {
                     self.canonicalize_value_references(frame_id, vars, &mut v);
                     self.write_reference(&reference, frame_id, vars, v)?;
                 } else {
-                    self.store_at_place(prog, place, v, regs, vars)?;
+                    self.store_at_place(prog, frame_id, place, v, regs, vars)?;
                 }
             }
             MirInstr::StoreRef { place, reference } => {
@@ -1590,7 +1632,7 @@ impl VmBackend {
                         "vm: reference storage requires a reference handle".to_string(),
                     ));
                 }
-                self.store_at_place(prog, place, handle, regs, vars)?;
+                self.store_at_place(prog, frame_id, place, handle, regs, vars)?;
             }
             MirInstr::LoadPlace { dest, place } => {
                 // The read half of `c[i] += e` on a user struct goes through
@@ -1606,6 +1648,14 @@ impl VmBackend {
                     );
                 regs[dest.0 as usize] = if pointer_slot {
                     vars[place.root as usize].clone()
+                } else if let Some((element, suffix)) =
+                    super::references::pointer_element(&vars[place.root as usize], place, regs)?
+                {
+                    // A place projected from a pointer slot addresses its
+                    // pointee: the element the leading index selects, then
+                    // the rest of the projection within it.
+                    let referent = self.read_reference(&element, frame_id, vars)?;
+                    self.read_reference_projection(frame_id, vars, &referent, &suffix)?
                 } else if place.through == Some(place.root)
                     && let pointer @ Value::Pointer { .. } = &vars[place.root as usize]
                 {

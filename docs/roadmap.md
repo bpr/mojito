@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1096**.
+Next free ID: **R1102**.
 
 ## Ordered Work
 
@@ -55,31 +55,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md),
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
-
-- [ ] **R1093 Dropping an empty `Tuple()` fails MIR verification since
-  structs get a synthesized destructor**
-
-  `var t = Tuple()` then `print(len(t))` stops on the VM with "place names
-  parameter `*Ts` of `Tuple` that no enclosing declaration binds" after
-  `inline-parametric`, where it ran before.
-  - Probe: `assets/ok/pack_inferred_through_tuple.mojo`
-    (`count(Tuple())`) and `assets/ok/tuple_template_served.mojo`.
-  - Bisected to 8e39755f (R1041): splicing `Tuple`'s `nodebug`
-    destructor into `main` leaves a place naming `Tuple`'s own `*Ts`
-    unbound, an empty element list binding nothing.
-  - The same unbound `*Ts` comes from a slot a spliced synthesized member
-    leaves behind: `Tuple.__moveinit__`'s `existing` is typed by the bare
-    `Tuple` spelling of `Self` (`mir::lower_synthesized_member`), the
-    splice copies that type into the caller's slot, and the slot's drop
-    then inlines `Tuple.__deinit__` with no element list to bind
-    (`tuple_template_served.mojo`, found while landing R1046).
-  - Bind the struct's pack to the dropped value's element list, the
-    empty one included, as the inliner binds a method's since R986.
-  - `benchmarks/instantiation.tsv` keeps both fixtures' rows from before,
-    so the ratchet reports them lost until this lands.
-  - Found while landing R1088 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1094 A converting default at a parametric struct's implicit
   constructor fails MIR verification since omitted arguments are filled
@@ -120,39 +95,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1078 `inline-parametric` binds a callee's compile-time
-  parameters case by case and refuses every other kind**
-
-  The pass substitutes a call's type and value arguments into the callee
-  and keeps the call when the callee has any other binder or construct,
-  where the pin's inliner substitutes every parameter alike.
-  - Kept today: a callable binder (`apply[f: def(Int) thin -> Int]`), an
-    origin or infer-only binder (`Span.__len__`, `Span.unsafe_ptr`), and a
-    `where` clause or constrained binder.
-  - Kept today: `T()` or `T(copy=x)` at a concrete binding, a
-    `conforms_to(T, Trait)` test, a `comptime for` in a generic callee
-    (`weighted[1, 2, 3]()`), and an overloaded constructor (`String`'s).
-  - Kept today: a borrowed argument with no place to bind, and a
-    place-bound parameter used other than as a place's root.
-  - The lever: one binding map from every binder kind to the call's
-    argument, the elaborator's `ParamBindings`, applied by one substitution
-    over the body, so the pass and the elaborator close a body alike.
-  - `conforms_to` needs a type operand, since `GenericConstraint::Conforms`
-    names a binder.
-  - `T()` needs the elaborator's `construct_type_parameter` below
-    `mojito-native`.
-  - Probe the pin on `where` first: whether the clause is judged at the
-    call or per instance decides whether inlining may drop it.
-  - Spill a placeless borrowed temporary to a fresh slot the caller drops,
-    and read a whole-slot use of a place-bound parameter through the
-    caller's place.
-  - The only refusals left are R924's legality list and the size bound.
-  - Done when each probe above inlines in a pass test
-    (`tests/mir_passes/inline-parametric/generic_kept.mir` among them) and
-    the differential is clean.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R1079 `inline-parametric` keeps every call that collects or
   spreads arguments**
 
@@ -170,6 +112,14 @@ which names the upstream pass each one follows. Each is measured by the
     the list expression for a computed pack.
   - The bundled library's `write` wrappers are variadic forwards, so this
     is what lets `print`'s wrappers inline.
+  - Probe: `pair.reverse()` and `pair.concat(suffix)` keep their calls
+    because their bodies hold a compile-time application over the owner's
+    pack (`$comptime$Tuple.reverse$0` over `Ts`), which `inline-parametric`
+    refuses to substitute: the elaborator evaluates it against the pack's
+    element list, where the substitution would hand it the pack's runtime
+    type and it stops with "reads an unresolved type `(Int)`".
+  - Probe: `Tuple().reverse()` binds the empty pack and keeps the call for
+    the same application.
   - Done when each form inlines in a pass test and `pair.concat(suffix)`
     in `assets/ok/tuple_reverse_concat.mojo` holds no `__getitem_param__`
     call, with a clean differential.
@@ -221,6 +171,103 @@ which names the upstream pass each one follows. Each is measured by the
   - Done when each probe inlines, `S[k]` holding a `D[k]` field drops
     through `D`'s inlined destructor, and the differential is clean.
   - Depends on R1041, R1078.
+  - Model: Opus, Planned.
+
+- [ ] **R1096 `conforms_to(T, Trait)` over a concrete binding keeps its
+  call inlined**
+
+  `GenericConstraint::Conforms` names a binder, so a `comptime if
+  conforms_to(T, Copyable)` in a `nodebug` callee cannot be substituted at
+  a concrete `T` and `inline-parametric` keeps the call
+  (`tag[Int]()` over `def tag[T: AnyType]() -> Int: return 1 if
+  conforms_to(T, Copyable) else 2`).
+  - `ParamKind::Conforms { subject, trait_name }` already takes a type
+    expression and the elaborator answers it (`specializer.rs`); only the
+    constraint form lacks an operand, and `replace_constraint_parameters`
+    fails it with "a proposition over `T` at a binding that is no
+    parameter".
+  - The lever: `Conforms { operand: ConstraintOperand, trait_name }` and
+    `ConformsPack` likewise, mapped through `try_map`'s `leaf`, read by
+    `availability.rs`'s `constraint_holds` as a type when concrete; the
+    checker keeps folding a concrete test to `Bool`, so only the inliner
+    emits a type operand.
+  - Text format: `conforms { operand, trait }`, the reader accepting the
+    1.73 `param:` field as a `Param` operand, and a note in
+    `docs/mir-text-format.md`.
+  - Done when `tag[Int]()` inlines in a pass test
+    (`tests/mir_passes/inline-parametric/conforms_concrete.mir`) and
+    `assets/ok/conditional_expression_parameter_condition.mojo`,
+    `assets/ok/template_method_generic_witness.mojo`, and
+    `assets/ok/bool_alias_predicate_where.mojo` print as before.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R1097 `T()` and `T(copy=x)` at a concrete binding keep their call
+  inlined**
+
+  `type_param.construct` is rewritten only by the elaborator
+  (`mono/substitute.rs`: `default_construct_parameters`,
+  `construct_type_parameter`), private to `mojito-native`, so a `nodebug`
+  callee constructing its type binder (`make[Int]()` over `return T()`,
+  `dup(s)` over `return T(copy=x)`) keeps the call.
+  - Both rewrites need only the binder's bound type: the scalar zeros, the
+    `MakeSimd` splat, a struct's plain call of the struct, and
+    `builtin_copy_is_value_read` or a `copy=` call of the struct.
+  - The lever: `mir::construct_type_parameters(blocks, resolve)` in a new
+    `crates/mojito-mir/src/mir/type_construction.rs`, the elaborator's two
+    functions becoming wrappers that map its error into `MonoError`, and
+    `Instantiation::visit_param_ref` leaving a concrete binding in place
+    for `instantiated` to run the rewrite.
+  - Done when `make[Int]()` prints `0` and `dup(s)`, `dup(7)` print
+    `ab 7` with no `make` or `dup` call in `main`, pinned by pass tests
+    `construct_type_param.mir` and `copy_type_param.mir`, and
+    `assets/ok/always_inline_nodebug_generic_calls.mojo` prints as before.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R1098 `canonicalize` keeps a `call.indirect` whose callee is a
+  function constant**
+
+  An inlined `apply[double]` body holds `const function(double)` feeding
+  a `call.indirect` (`tests/mir_passes/inline-parametric/generic_kept.mir`),
+  where upstream's canonicalizer folds the known callee into a direct call
+  (MLIR's `SimplifyIndirectCallWithKnownCallee`) and Mojito's elaborator
+  does it only per instance, after which no inliner runs.
+  - The lever: in `analysis/canonicalize.rs`, a `CallIndirect` whose
+    callee register `mir::callable_targets` resolves to a capture-free
+    function becomes a `Call` of it, dropping `callee_place`,
+    `param_decls`, `instantiated_contract`, and the abstract `resolved`.
+  - A closure or a nominal callable struct keeps the indirect call.
+  - This is what lets the third round inline `double` when it is itself
+    `nodebug`.
+  - Done when `generic_kept.mir` shows `call { func: double }`, a sibling
+    case `callable_chain.mir` with a `nodebug` `double` shows no call, and
+    a `canonicalize` pass case `indirect_known_callee.mir` pins the fold.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R1099 `inline-parametric` keeps a call whose argument has no place
+  or slot form to bind**
+
+  A `read` parameter binds the caller's place or a fresh slot, and a
+  place-bound parameter stands only where the body names it as a place's
+  root, a whole-slot copy, a whole-root iteration, or a loan interior
+  (`inlined_blocks`), so a body using it otherwise keeps the call, where
+  upstream substitutes the argument's address for every use.
+  - Probe: `for x in self.items` in a `nodebug` method whose `self` is
+    bound through a projection iterates a projected place
+    (`iter.init { source }` takes a slot).
+  - Probe: a `read` argument read through a reference the block did not
+    make (a `ref` parameter's handle passed on) has no place
+    (`loaded_place` follows a `ref.make` of the same block only).
+  - Probe: `vals[1]` in a `*values: Int` callee keeps
+    `ParameterList.__getitem__`, whose returned reference is to a
+    temporary span of its own, not to a bound place
+    (`returns_bound_place`); on the pin the reference is static.
+  - The lever: a slot the caller's block stores the place's value into
+    for a borrowed use, as a `read` argument's temporary, and a returned
+    reference admitted when its register's origin is static.
+  - Depends on nothing.
   - Model: Opus, Planned.
 
 - [ ] **R1029 The backends still resolve a call naming a struct to an
@@ -1585,6 +1632,15 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     `ParameterList.__getitem__`.
   - The general fix is a reference handle that designates heap storage
     whenever its projection crosses a pointer.
+  - Since R1078 a `ref.make` into a static-origin register is forwarded
+    the same way, so an inlined `Span.__getitem__` over a temporary span
+    survives too, and a place projected from a pointer slot (`q[i]._size`,
+    a span member inlined at a pointee place) reads and writes the pointee
+    (`references::pointer_element`).
+  - Probe: a reference to a part of a heap element that is not itself a
+    pointer's element (`q[i].field` taken by `ref`, as `Optional.value`
+    inlined at a pointee place makes it) stops with "a reference within a
+    heap element", since a handle rooted in the heap has no form.
   - Found while landing R325 (2026-10-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5745,6 +5801,21 @@ for it, and an entry that waits on another names it. Five divergences are
 retained on purpose and re-probed rather than fixed; they are listed in
 [`docs/non-goals.md`](non-goals.md).
 
+- [ ] **R1100 A free function with an origin binder over `Span[T, o]`
+  is rejected at its call**
+
+  Problem: `def first[T: ImplicitlyCopyable & Movable, o: Origin](s:
+  Span[T, o]) -> T` called as `first(Span(l))` stops with "type mismatch
+  for argument to 'first': expected Span[Int], found Span[Int]", where the
+  pin prints the element.
+  - The two spellings differ only in their origin argument, the binder `o`
+    against the span's inferred origin, which the call should bind.
+  - Probe: `/tmp`-style program of the two lines above over
+    `var l = List[Int]()` with two elements, printing `first(Span(l))`.
+  - Found while planning R1078 (2026-10-16).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R606 A diagnostic names an entry declaration by its linked name**
 
   Problem: an error about the entry's own `struct List` says
@@ -8683,6 +8754,23 @@ I/O residues left behind the landed files, streams, paths, and tempfile stage.
 recorded limit, listed in impact order: soundness of the executable oracle
 first, then everyday spellings that reject today, then parity details. A
 residue found inside a task moves to the task that owns its fix.
+
+- [ ] **R1101 `String.__init__(literal)` carries no inline marking in the
+  bundled library**
+
+  The pin marks `String.__init__(out self, data: StringLiteral, /)`
+  `@always_inline("nodebug")`, and the bundled `stdlib/std/string.mojo`
+  leaves its twin unmarked where its neighbours carry `@inline(.nodebug)`,
+  so `String("hi")` keeps its call where every other `nodebug` constructor
+  inlines.
+  - R786 imported the pin's markings in the pin's spelling; this one was
+    missed, and any other `@always_inline("nodebug")` spelling the import
+    skipped should be checked the same way.
+  - Done when the marking is on, `assets/ok/always_inline_nodebug_calls.mojo`
+    prints as before, and `String("hi")` in `main` holds no `__init__`
+    call.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R197 Compile-time Dict/Set key identity ignores a user struct's
   non-fieldwise `__eq__`**

@@ -109,9 +109,11 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     }
     // A bare `Struct(name, [])` is the established erased spelling for a
     // receiver or synthesized construction of any instantiation of `name`.
-    // Otherwise the origin tail erases from the runtime ABI like a pointer
-    // origin: the checker owns origin identity, so two instantiations that
-    // differ only in their origin arguments are one type here.
+    // Otherwise the origin arguments erase from the runtime ABI like a
+    // pointer origin: the checker owns origin identity, so two
+    // instantiations that differ only in their origin arguments, or spell
+    // them on one side alone (an instance's own spelling holds none), are
+    // one type here.
     if let (TyKind::Struct(found_name, found_args), TyKind::Struct(expected_name, expected_args)) =
         (found.kind(), expected.kind())
         && found_name == expected_name
@@ -119,14 +121,21 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
         if found_args.is_empty() || expected_args.is_empty() {
             return true;
         }
+        let binding = |arguments: &'_ [TyArg]| {
+            arguments
+                .iter()
+                .filter(|argument| !matches!(argument, TyArg::Origin(_)))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let (found_args, expected_args) = (binding(found_args), binding(expected_args));
         if found_args.len() == expected_args.len()
             && found_args
                 .iter()
-                .zip(expected_args)
+                .zip(&expected_args)
                 .all(|(found, expected)| match (found, expected) {
                     (TyArg::Ty(found), TyArg::Ty(expected)) => types_compatible(found, expected),
                     (TyArg::Val(found), TyArg::Val(expected)) => found == expected,
-                    (TyArg::Origin(_), TyArg::Origin(_)) => true,
                     _ => false,
                 })
         {

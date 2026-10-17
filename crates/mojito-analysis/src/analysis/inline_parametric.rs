@@ -37,21 +37,48 @@
 //! owner's (`Self.k`) included, becomes its argument as a constant,
 //! upstream's `kgen.param.constant`. A variadic binder binds to its element
 //! list, a spread of a type pack (`Tuple[*Ts]`) to its elements, and a pack
-//! the call forwards (`f[*Us]()`) to the caller's own. A binder that is
-//! callable or an origin, a `where` clause, a `comptime for` sequence, or a
-//! binding the body's sites cannot hold (`T()` at a concrete `T`, a
-//! conformance test of a concrete binding) keeps the call.
+//! the call forwards (`f[*Us]()`) to the caller's own, and a struct keyed
+//! on one pack applied to no element (`Tuple()`) binds it to the empty
+//! list. A callable value binder (`f: def(Int) thin -> Int`) binds to the
+//! function the call's register names, as upstream substitutes the
+//! parameter value: the body's reads of its slot become that function as a
+//! constant and a call through the slot a call through the constant; one
+//! whose register names a closure with captures, or nothing, keeps the
+//! call. A callable-bound type binder (`F: def(Int) -> Int`) binds as any
+//! type. An origin argument binds nothing: the declaration's binders are
+//! its type and value parameters, and the body's origin parameters stay
+//! symbolic in the caller as in an instance. A binder's constraints, the
+//! callee's `where` clauses, and its availability as a conditional member
+//! bind nothing either: the checker judged them at the call, as the pin
+//! judges a clause there (a call from a generic caller without the evidence
+//! is rejected as "lacking evidence to prove correctness"), so the inlined
+//! body carries none. A `comptime for` sequence closes over the bindings
+//! as a lane mask does, its loop binder staying the body's own, which the
+//! elaborator unrolls in the caller. What still keeps the call: a value
+//! only the elaborator folds (a deferred or marker value), a compile-time
+//! application over a bound type pack (`Tuple.reverse`'s reversed list,
+//! R1079), a type that still names a bound pack after substitution (a
+//! pack queried under a loop binder), and a binding the body's sites
+//! cannot hold (`T()` at a concrete `T`, R1097; a conformance test of a
+//! concrete binding, R1096).
 //!
 //! An owned parameter, or a `read` one of a type no destructor tears down,
-//! is a fresh slot the argument initializes; a `mut` or `ref` parameter,
+//! is a fresh slot the argument initializes, and so is a `read` one passed
+//! a trivial copy of a slot of a closed type; a `mut` or `ref` parameter,
 //! a `mut self` included, is the caller's place the call passes, and any
-//! other `read` parameter the caller's place the argument was loaded from,
-//! as upstream's inliner substitutes the argument's address for the
-//! callee's. A callee returning a reference binds a `read` parameter to the
-//! place the call retains for it too, so the reference its body makes is to
-//! the caller's place; one returned to a fresh slot keeps the call. A
-//! place-bound parameter the callee names other than as a
-//! place's root keeps the call. A default is a fresh slot, dropped after
+//! other `read` parameter the caller's place the call retained for it or
+//! the argument was loaded from, directly or through a reference the same
+//! block made (`self.copy()` reading `self` through a `ref.make`), as
+//! upstream's inliner substitutes the argument's address for the callee's.
+//! A callee returning a reference binds a `read` parameter to the place the
+//! call retains for it too, so the reference its body makes is to the
+//! caller's place; one returned to a fresh slot keeps the call. A
+//! place-bound parameter the callee names as a place's root composes the
+//! caller's place; one it copies whole loads the caller's place and copies
+//! the value, naming the copy constructor its instantiated type has; one it
+//! iterates, or lends an interior of, is the caller's slot; one it names
+//! otherwise, or reads through a reference the block did not make, keeps
+//! the call (R1099). A default is a fresh slot, dropped after
 //! the body when the parameter only borrows it. An initializer's
 //! `out self` is a fresh slot the body initializes, and the call's result
 //! moves out of it. A nested `def`'s captures, its leading parameters, are
@@ -92,8 +119,8 @@ use mojito_mir::mir::visit::{
 use mojito_mir::mir::{
     CleanupDrop, Const, FuncRef, MirBlock, MirBlockId, MirCaptureMode, MirClosureCapture,
     MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg, MirPlace,
-    MirSubscriptCall, MirTerm, Proj, Reg, UseMode, block_successors, cleanup_slots,
-    count_register_reads, erase_removed_operands, fresh_register, has_no_destructor,
+    MirSubscriptCall, MirTerm, Proj, Reg, UseMode, block_successors, callable_targets,
+    cleanup_slots, count_register_reads, erase_removed_operands, fresh_register, has_no_destructor,
     instruction_regions, instruction_regions_mut, instruction_regs_mut, instruction_slots,
     lower_copies_and_moves, name_constructors, removed_argument_operands, renumber_block_slots,
     terminator_regs_mut, terminator_targets, terminator_targets_mut, without_removed_arguments,
@@ -104,9 +131,9 @@ use mojito_types::param_expr::{
 };
 use mojito_types::types::{
     GenericConstraint, LaneMask, ParamDecl, Ty, TyArg, TyKind, TyRewrite, VariantIndex,
-    default_literal, is_scalar_simd, list_spread_argument, pack_spread, pack_spread_argument,
-    replace_argument_parameters, replace_constraint_parameters, replace_parameters,
-    replace_value_parameters, rewrite_ty, scalar_simd_dtype,
+    default_literal, is_scalar_simd, list_spread_argument, names_binder, pack_spread,
+    pack_spread_argument, replace_argument_parameters, replace_constraint_parameters,
+    replace_parameters, replace_value_parameters, rewrite_ty, scalar_simd_dtype,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
@@ -192,6 +219,7 @@ pub fn inline_parametric(
 ) -> bool {
     let mut reads = vec![0; function.n_regs as usize];
     count_register_reads(&mut function.blocks, &mut reads);
+    let function_values = callable_targets(function);
     let mut blocks = std::mem::take(&mut function.blocks);
     let closures = Closures::of(&blocks);
     let mut inliner = Inliner {
@@ -199,6 +227,8 @@ pub fn inline_parametric(
         declarations,
         callees,
         closures,
+        function_values,
+        caller: name,
         raise_held: Vec::new(),
         dropped_operands: false,
     };
@@ -232,6 +262,12 @@ struct Inliner<'f, 'c> {
     callees: &'c Callees<'c>,
     /// The closures the caller makes, which a call through one calls.
     closures: Closures,
+    /// The function each register of the caller statically holds, beside
+    /// whether its value captures nothing: what a callable binder's
+    /// argument register names.
+    function_values: HashMap<u32, (String, bool)>,
+    /// The caller's name: a member's body spells its own struct bare.
+    caller: &'c str,
     /// The inlined slots a raise leaving the block list being inlined into
     /// may hold, for the nearest enclosing `try`'s raise-edge cleanup.
     raise_held: Vec<VarId>,
@@ -623,8 +659,9 @@ impl<'c> Inliner<'_, 'c> {
             let mut index = 0;
             while index < list[block].instrs.len() {
                 changed |= self.regions(&mut list[block].instrs[index]);
-                if let Some((dest, callee, bindings, dropped)) = self.inlinable(&list[block], index)
-                    && let Some(blocks) = self.inlined_blocks(&callee, &bindings, dest)
+                if let Some((dest, mut callee, bindings, dropped)) =
+                    self.inlinable(&list[block], index)
+                    && let Some(blocks) = self.inlined_blocks(callee.to_mut(), &bindings, dest)
                 {
                     self.dropped_operands |= dropped;
                     let site = CallSite { block, index, dest };
@@ -706,7 +743,7 @@ impl<'c> Inliner<'_, 'c> {
             MirInstr::Index { index_place, .. } => vec![index_place.as_deref().cloned()],
             _ => Vec::new(),
         };
-        let (dest, target, call, compile_time, receiver, receiver_place, captures) =
+        let (dest, target, call, compile_time, param_arg_regs, receiver, receiver_place, captures) =
             match &block.instrs[index] {
                 MirInstr::Call {
                     dest,
@@ -716,6 +753,7 @@ impl<'c> Inliner<'_, 'c> {
                     arg_places,
                     kwarg_places,
                     capture_accesses,
+                    param_arg_regs,
                     receiver: None,
                     instantiated_args,
                     spread: None,
@@ -740,6 +778,7 @@ impl<'c> Inliner<'_, 'c> {
                             kwarg_places,
                         },
                         Cow::Borrowed(instantiated_args.as_slice()),
+                        param_arg_regs.as_slice(),
                         receiver,
                         None,
                         &[][..],
@@ -756,6 +795,7 @@ impl<'c> Inliner<'_, 'c> {
                     arg_places,
                     kwarg_places,
                     capture_accesses,
+                    param_arg_regs,
                     instantiated_args,
                     spread: None,
                     ..
@@ -769,6 +809,7 @@ impl<'c> Inliner<'_, 'c> {
                         kwarg_places,
                     },
                     Cow::Borrowed(instantiated_args.as_slice()),
+                    param_arg_regs.as_slice(),
                     Some(Receiver::Argument(*recv)),
                     recv_place.as_deref(),
                     &[][..],
@@ -803,6 +844,7 @@ impl<'c> Inliner<'_, 'c> {
                             kwarg_places: &[],
                         },
                         Cow::Owned(subscript_parameter_arguments(block, index, subscript)?),
+                        &[][..],
                         Some(Receiver::Argument(*base)),
                         base_place.as_deref(),
                         &[][..],
@@ -816,6 +858,7 @@ impl<'c> Inliner<'_, 'c> {
                     callee_place,
                     arg_places,
                     kwarg_places,
+                    param_arg_regs,
                     instantiated_args,
                     spread: None,
                     ..
@@ -831,6 +874,7 @@ impl<'c> Inliner<'_, 'c> {
                             kwarg_places,
                         },
                         Cow::Borrowed(instantiated_args.as_slice()),
+                        param_arg_regs.as_slice(),
                         None,
                         None,
                         closure.captures.as_slice(),
@@ -924,11 +968,19 @@ impl<'c> Inliner<'_, 'c> {
             Some(Some(Owner::Unbound)) | None => None,
             Some(None) => return None,
         };
+        let callables: Vec<Option<String>> = param_arg_regs
+            .iter()
+            .map(|argument| self.callable_argument(block, index, argument.value?))
+            .collect();
+        let arguments = Arguments {
+            arguments: &compile_time,
+            callables: &callables,
+        };
         let mut callee = match &reduced {
             Some(body) => Cow::Owned(
-                instantiated(body, declaration, owner.as_ref(), &compile_time)?.into_owned(),
+                instantiated(body, declaration, owner.as_ref(), &arguments)?.into_owned(),
             ),
-            None => instantiated(full, declaration, owner.as_ref(), &compile_time)?,
+            None => instantiated(full, declaration, owner.as_ref(), &arguments)?,
         };
         if declaration.enclosing.is_some() {
             read_enclosing_binders(callee.to_mut(), declaration, self.declarations)?;
@@ -939,7 +991,15 @@ impl<'c> Inliner<'_, 'c> {
             Some(Receiver::Constructed) => bindings.push(Binding::Out),
             Some(Receiver::Argument(recv)) if receives => {
                 let place = receiver_place.filter(|_| is_reference_parameter(&callee, 0));
-                bindings.push(argument_binding(&callee, block, index, 0, recv, place)?);
+                bindings.push(argument_binding(
+                    self.function,
+                    &callee,
+                    block,
+                    index,
+                    0,
+                    recv,
+                    place,
+                )?);
             }
             Some(Receiver::Argument(_)) | None => {}
         }
@@ -965,6 +1025,7 @@ impl<'c> Inliner<'_, 'c> {
                 }
             };
             bindings.push(argument_binding(
+                self.function,
                 &callee,
                 block,
                 index,
@@ -991,6 +1052,22 @@ impl<'c> Inliner<'_, 'c> {
             .is_some_and(|declaration| declaration.enclosing.is_some())
     }
 
+    /// The capture-free function the register `argument`, a call's
+    /// compile-time argument passed at `index` of `block`, names: the one
+    /// the caller's dataflow resolves it to, or the constant the block
+    /// defines it as; `None` for a closure with captures or an unknown
+    /// value, whose call stays.
+    fn callable_argument(&self, block: &MirBlock, index: usize, argument: Reg) -> Option<String> {
+        match self.function_values.get(&argument.0) {
+            Some((function, true)) => Some(function.clone()),
+            Some((_, false)) => None,
+            None => match defined_constant(&block.instrs[..index], argument)? {
+                Const::Function(function) => Some(function.clone()),
+                _ => None,
+            },
+        }
+    }
+
     fn owner(&self, callee: &MirFunction, ty: &Ty) -> Option<Owner<'c>> {
         let TyKind::Struct(template, _) = callee.param_types.first()?.kind() else {
             return None;
@@ -1001,7 +1078,19 @@ impl<'c> Inliner<'_, 'c> {
             return Some(Owner::Unbound);
         }
         match ty.kind() {
-            TyKind::Struct(name, arguments) if name == template && arguments.is_empty() => {
+            // A bare spelling in a body of the struct's own member denotes
+            // its own type, whose binders are the callee's too; anywhere
+            // else it is the empty application of a struct keyed on one
+            // pack (`Tuple()`), whose pack binds to no element.
+            TyKind::Struct(name, arguments)
+                if name == template
+                    && arguments.is_empty()
+                    && (self.is_member_of(template)
+                        || !matches!(
+                            decls.as_slice(),
+                            [ParamDecl::Type { variadic: true, .. }]
+                        )) =>
+            {
                 Some(Owner::Unbound)
             }
             TyKind::Struct(name, _) if name == template => Some(Owner::Applied(OwnerInstance {
@@ -1014,14 +1103,23 @@ impl<'c> Inliner<'_, 'c> {
         }
     }
 
+    /// Whether the caller is `template` or one of its members.
+    fn is_member_of(&self, template: &str) -> bool {
+        self.caller == template
+            || mojito_symbol::symbol::split_method_symbol(self.caller)
+                .is_some_and(|(owner, _)| owner == template)
+    }
+
     /// The callee's blocks with its slots and registers moved past the
     /// caller's and each place-bound parameter replaced by the caller's
     /// place, or `None` when a place-bound parameter is named other than as
-    /// a place's root, or a place reached through a reference other than
-    /// the parameter's composes with a caller's place reached through one.
+    /// a place's root or as the whole value a copy or an iteration reads,
+    /// or a place reached through a reference other than the parameter's
+    /// composes with a caller's place reached through one. A copy of a
+    /// place-bound parameter takes a fresh register of `callee`.
     fn inlined_blocks(
         &self,
-        callee: &MirFunction,
+        callee: &mut MirFunction,
         bindings: &[Binding],
         dest: Reg,
     ) -> Option<Vec<MirBlock>> {
@@ -1031,6 +1129,11 @@ impl<'c> Inliner<'_, 'c> {
             Some(Binding::Slot(slot)) => *slot,
             _ => var + base,
         });
+        let bound = |var: VarId| match bindings.get(var.checked_sub(base)? as usize)? {
+            Binding::Place(place) => Some(place),
+            Binding::Value(_) | Binding::Default { .. } | Binding::Out | Binding::Slot(_) => None,
+        };
+        copy_bound_parameters(&mut blocks, callee, &bound);
         let registers = Registers::new(self.function, callee, bindings, dest);
         for block in &mut blocks {
             for instruction in &mut block.instrs {
@@ -1042,10 +1145,6 @@ impl<'c> Inliner<'_, 'c> {
                 *reg = registers.of(*reg);
             }
         }
-        let bound = |var: VarId| match bindings.get(var.checked_sub(base)? as usize)? {
-            Binding::Place(place) => Some(place),
-            Binding::Value(_) | Binding::Default { .. } | Binding::Out | Binding::Slot(_) => None,
-        };
         for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
             for place in instruction_places_mut(instruction) {
                 let through_other = place.through.filter(|&var| var != place.root);
@@ -1059,6 +1158,37 @@ impl<'c> Inliner<'_, 'c> {
                     }
                     None => {}
                 }
+            }
+            // An iteration over a place-bound parameter iterates the
+            // caller's slot, and a loan's interior of the parameter is an
+            // interior of that slot.
+            match instruction {
+                MirInstr::GetIter { source, .. }
+                    if let Some(outer) = bound(*source)
+                        && outer.is_whole_root()
+                        && outer.through.is_none() =>
+                {
+                    *source = outer.root;
+                }
+                MirInstr::EstablishLoans {
+                    loans,
+                    dest_interior,
+                    ..
+                } => {
+                    for interior in loans
+                        .iter_mut()
+                        .filter_map(|loan| loan.interior.as_mut())
+                        .chain(dest_interior.as_mut())
+                    {
+                        if let Some(outer) = bound(interior.root)
+                            && outer.is_whole_root()
+                            && outer.through.is_none()
+                        {
+                            interior.root = outer.root;
+                        }
+                    }
+                }
+                _ => {}
             }
             if instruction_slots(instruction)
                 .into_iter()
@@ -1120,6 +1250,7 @@ impl<'c> Inliner<'_, 'c> {
             for target in terminator_targets_mut(&mut inlined.term) {
                 *target += entry;
             }
+            let raised = matches!(inlined.instrs.last(), Some(MirInstr::Raise { .. }));
             inlined.term = match std::mem::replace(&mut inlined.term, MirTerm::Unreachable) {
                 MirTerm::Return(Some(value)) if result == Returned::Slot => {
                     inlined.instrs.push(MirInstr::DefVar {
@@ -1134,6 +1265,9 @@ impl<'c> Inliner<'_, 'c> {
                     MirTerm::Jump(continuation)
                 }
                 MirTerm::Return(Some(_)) => MirTerm::Jump(continuation),
+                // A value-less return after a raise is never taken: the
+                // raise leaves the body as it left the callee.
+                MirTerm::Return(None) if raised => MirTerm::Jump(continuation),
                 // A value-less return from a function returning a value is
                 // the checker's unreachable fall-off.
                 MirTerm::Return(None) => MirTerm::Unreachable,
@@ -1326,10 +1460,18 @@ fn parameter_constant(value: &ParamExpr, ty: Option<&Ty>) -> Const {
 /// that place, as the VM binds the parameter's slot to a reference to it,
 /// and so does a `read` one of a callee returning a reference, which may
 /// be to it; a `deinit` parameter binds the caller's slot the argument
-/// forwards, which the ownership check proved whole there; `None` when the
-/// call retains no place for a `mut` or `ref` one, a `deinit` one takes
-/// anything but a forwarded slot, or a `read` one the pass cannot bind.
+/// forwards, which the ownership check proved whole there; an owned
+/// parameter, or a `read` one of a type no destructor tears down, is a
+/// fresh slot the argument initializes, and so is a `read` one passed a
+/// trivial copy of a slot; any other `read` parameter binds the caller's
+/// place the call retained for it or the argument was loaded from, through
+/// a reference the block made included, as upstream substitutes the
+/// argument's address. `None` when the call retains no place for a `mut`
+/// or `ref` one, a `deinit` one takes anything but a forwarded slot, or a
+/// `read` one of a droppable type is read through a reference the block
+/// did not make.
 fn argument_binding(
+    caller: &MirFunction,
     callee: &MirFunction,
     block: &MirBlock,
     index: usize,
@@ -1348,13 +1490,38 @@ fn argument_binding(
     if deinit && place.is_none() {
         return forwarded_slot(block, index, argument).map(Binding::Slot);
     }
-    if reference || place.is_some() {
+    if reference {
         return None;
     }
-    if owned || callee.param_types.get(param).is_some_and(has_no_destructor) {
+    if owned
+        || callee.param_types.get(param).is_some_and(has_no_destructor)
+        || trivially_copied(caller, block, index, argument)
+    {
         return Some(Binding::Value(argument));
     }
-    loaded_place(block, index, argument).map(Binding::Place)
+    place
+        .cloned()
+        .or_else(|| loaded_place(block, index, argument))
+        .map(Binding::Place)
+}
+
+/// Whether the register `argument` is a copy of a slot of `caller` in
+/// `block` before the call at `index` that runs no copy constructor, the
+/// slot's type closed so that none is named later: an owned value of a
+/// type with nothing to destroy, which a `read` parameter borrows whole.
+fn trivially_copied(caller: &MirFunction, block: &MirBlock, index: usize, argument: Reg) -> bool {
+    block.instrs[..index].iter().rev().any(|instruction| {
+        matches!(
+            instruction,
+            MirInstr::UseVar {
+                dest,
+                var,
+                mode: UseMode::Copy,
+                constructor: None,
+            } if *dest == argument
+                && caller.var_tys.get(var).is_some_and(Ty::is_closed)
+        )
+    })
 }
 
 /// How the callee's parameter `param`, which the call omits, binds its
@@ -1466,6 +1633,7 @@ fn is_closed(callee: &MirFunction, declaration: &MirFunctionDeclaration) -> bool
                 MirTerm::Jump(_)
                     | MirTerm::Branch { .. }
                     | MirTerm::ComptimeBranch { .. }
+                    | MirTerm::ComptimeFor { .. }
                     | MirTerm::Return(_)
                     | MirTerm::Unreachable
             )
@@ -1585,18 +1753,32 @@ fn raise_held(
 }
 
 /// The place the register `argument` was loaded from in `block` before the
-/// call at `index`, when nothing between the load and the call names the
-/// place's root but another load.
+/// call at `index`, directly or through a reference the block made to it
+/// (`self.copy()` in `__iter__`, a `ref.make` of `self` read by the
+/// `copy=` argument), when nothing between the load, or the reference's
+/// making, and the call names the place's root but another load.
 fn loaded_place(block: &MirBlock, index: usize, argument: Reg) -> Option<MirPlace> {
-    let (load, place) =
+    let defining = |reg: Reg| {
         block.instrs[..index]
             .iter()
             .enumerate()
             .rev()
             .find_map(|(position, instruction)| match instruction {
-                MirInstr::LoadPlace { dest, place } if *dest == argument => Some((position, place)),
+                MirInstr::LoadPlace { dest, place } if *dest == reg => Some((position, place)),
+                MirInstr::ReadRef { dest, reference } if *dest == reg => {
+                    block.instrs[..position].iter().enumerate().rev().find_map(
+                        |(made, instruction)| match instruction {
+                            MirInstr::MakeRef { dest, place } if dest == reference => {
+                                Some((made, place))
+                            }
+                            _ => None,
+                        },
+                    )
+                }
                 _ => None,
-            })?;
+            })
+    };
+    let (load, place) = defining(argument)?;
     let roots = [Some(place.root), place.through];
     block.instrs[load + 1..index]
         .iter()
@@ -1625,6 +1807,51 @@ fn composed_place(outer: &MirPlace, inner: &MirPlace) -> MirPlace {
     place.ty.clone_from(&inner.ty);
     place.through = outer.through.or(through);
     place
+}
+
+/// Rewrite each copy of a parameter `bound` to a caller's place in
+/// `blocks`, `callee`'s body with its slots renumbered, into a load of
+/// that place and a copy of the loaded value, which names the copy
+/// constructor the parameter's instantiated type has once the splice
+/// names constructors, as a copy of a slot does: upstream's copy of a
+/// `read` argument reads it through its address.
+fn copy_bound_parameters<'b>(
+    blocks: &mut [MirBlock],
+    callee: &mut MirFunction,
+    bound: &dyn Fn(VarId) -> Option<&'b MirPlace>,
+) {
+    for block in blocks {
+        let mut rewritten = Vec::with_capacity(block.instrs.len());
+        for instruction in std::mem::take(&mut block.instrs) {
+            match instruction {
+                MirInstr::UseVar {
+                    dest,
+                    var,
+                    mode: UseMode::Copy,
+                    constructor,
+                } if let Some(outer) = bound(var) => {
+                    let ty = callee.reg_types.get(&dest.0).cloned();
+                    let span = callee.spans.0.get(&dest.0).map(|(span, _)| span.clone());
+                    let loaded = fresh_register(
+                        callee,
+                        ty.unwrap_or_else(|| outer.ty.clone().unwrap_or_else(Ty::none)),
+                        span.as_ref(),
+                    );
+                    rewritten.push(MirInstr::LoadPlace {
+                        dest: loaded,
+                        place: outer.clone(),
+                    });
+                    rewritten.push(MirInstr::CopyValue {
+                        dest,
+                        value: loaded,
+                        constructor,
+                    });
+                }
+                other => rewritten.push(other),
+            }
+        }
+        block.instrs = rewritten;
+    }
 }
 
 /// How many edges of `blocks` close a loop: the edges to a block still on
@@ -1690,10 +1917,13 @@ fn instantiated<'c>(
     callee: &'c MirFunction,
     declaration: &MirFunctionDeclaration,
     owner: Option<&OwnerInstance<'_>>,
-    arguments: &[TyArg],
+    arguments: &Arguments<'_>,
 ) -> Option<Cow<'c, MirFunction>> {
     if owner.is_none() && declaration.param_decls.is_empty() {
-        return arguments.is_empty().then_some(Cow::Borrowed(callee));
+        return arguments
+            .binding()
+            .is_empty()
+            .then_some(Cow::Borrowed(callee));
     }
     let mut instantiation = Instantiation::new(declaration, owner, arguments)?;
     let mut function = callee.clone();
@@ -1774,7 +2004,46 @@ fn owner_binder_arguments<'a>(
                 .collect::<Option<Vec<_>>>()?;
             Some(Cow::Owned(vec![TyArg::Val(CtValue::Tuple(elements))]))
         }
-        _ => (arguments.len() == decls.len()).then_some(Cow::Borrowed(arguments)),
+        _ => {
+            let binding: Vec<TyArg> = without_origins(arguments).cloned().collect();
+            (binding.len() == decls.len()).then_some(Cow::Owned(binding))
+        }
+    }
+}
+
+/// `arguments` without its origin arguments, which bind no binder: a
+/// declaration's binders are its type and value parameters, and its
+/// origin parameters stay symbolic in the body as in an instance of it.
+fn without_origins(arguments: &[TyArg]) -> impl Iterator<Item = &TyArg> {
+    arguments
+        .iter()
+        .filter(|argument| !matches!(argument, TyArg::Origin(_)))
+}
+
+/// A call's compile-time arguments, each beside the capture-free function
+/// its runtime register names when it has one: what a callable value
+/// binder (`f: def(Int) -> Int`) is bound to.
+struct Arguments<'a> {
+    arguments: &'a [TyArg],
+    /// Aligned with `arguments`; shorter when the call passes no registers.
+    callables: &'a [Option<String>],
+}
+
+impl Arguments<'_> {
+    /// The arguments that bind a binder, origins left out, each with its
+    /// function.
+    fn binding(&self) -> Vec<(&TyArg, Option<&str>)> {
+        self.arguments
+            .iter()
+            .enumerate()
+            .filter(|(_, argument)| !matches!(argument, TyArg::Origin(_)))
+            .map(|(index, argument)| {
+                (
+                    argument,
+                    self.callables.get(index).and_then(Option::as_deref),
+                )
+            })
+            .collect()
     }
 }
 
@@ -1826,7 +2095,7 @@ fn read_enclosing_binders(
             read_binder(
                 &mut callee.blocks,
                 (slot + callee.n_params) as VarId,
-                &value,
+                &SlotValue::Parameter(&value),
                 &callee.reg_types,
             )?;
         }
@@ -1840,6 +2109,8 @@ enum Bound {
     Type,
     /// A value binder's argument.
     Value(ParamExpr),
+    /// A callable value binder's argument: the function it names.
+    Callable(String),
 }
 
 /// A callee's compile-time parameters bound to a call's arguments, as an
@@ -1856,8 +2127,13 @@ struct Instantiation {
     /// Each owner value binder's spelling, which names the receiver's
     /// member a read of it loads, and its argument.
     members: Vec<(String, ParamExpr)>,
+    /// Each callable value binder's spelling, which names the slot the
+    /// body reads it from, and the function it is bound to.
+    callables: Vec<(String, String)>,
     /// The callee's type binders, which a site may name only to rename.
     types: Vec<ParamRef>,
+    /// The type packs among them, bound to element lists.
+    packs: Vec<ParamRef>,
 }
 
 impl Instantiation {
@@ -1865,21 +2141,25 @@ impl Instantiation {
     /// `declaration`'s own to `arguments`, one per binder in declaration
     /// order, which may restate the owner's first; `None` for a binder or
     /// argument this pass does not bind.
+    ///
+    /// A binder's constraints, the declaration's `where` clauses, and its
+    /// availability as a conditional member bind nothing: the checker
+    /// judged them at the call, as the pin judges a clause there (a call
+    /// from a generic caller without the evidence is rejected as "lacking
+    /// evidence to prove correctness"), so the inlined body carries none.
     fn new(
         declaration: &MirFunctionDeclaration,
         owner: Option<&OwnerInstance<'_>>,
-        arguments: &[TyArg],
+        arguments: &Arguments<'_>,
     ) -> Option<Self> {
-        if !declaration.availability.is_empty() {
-            return None;
-        }
         let decls = &declaration.param_decls;
         let covered = owner.map_or(0, |owner| restated_owner_binders(owner.decls, decls));
         let own = &decls[covered..];
+        let arguments = arguments.binding();
         let own_arguments = if arguments.len() == decls.len() {
             &arguments[covered..]
         } else if arguments.len() == own.len() {
-            arguments
+            arguments.as_slice()
         } else {
             return None;
         };
@@ -1888,7 +2168,9 @@ impl Instantiation {
             owner: owner.map(|owner| (owner.template.clone(), owner.ty.clone())),
             values: Vec::new(),
             members: Vec::new(),
+            callables: Vec::new(),
             types: Vec::new(),
+            packs: Vec::new(),
             context: ParamContext::detached(),
         };
         if let Some(owner) = owner {
@@ -1897,38 +2179,50 @@ impl Instantiation {
             };
             let owner_arguments = owner_binder_arguments(owner.decls, owner_arguments)?;
             for (decl, argument) in owner.decls.iter().zip(owner_arguments.iter()) {
-                if let Bound::Value(value) = instantiation.bind(decl, argument)?
-                    && !owner.fields.iter().any(|(field, _)| field == decl.name())
-                {
-                    instantiation.members.push((decl.name().to_string(), value));
+                match instantiation.bind(decl, argument, None)? {
+                    Bound::Value(value)
+                        if !owner.fields.iter().any(|(field, _)| field == decl.name()) =>
+                    {
+                        instantiation.members.push((decl.name().to_string(), value));
+                    }
+                    Bound::Callable(_) => return None,
+                    Bound::Value(_) | Bound::Type => {}
                 }
             }
         }
-        for (decl, argument) in own.iter().zip(own_arguments) {
-            if let Bound::Value(value) = instantiation.bind(decl, argument)? {
-                instantiation
-                    .values
-                    .push((decl.name().trim_start_matches('*').to_string(), value));
+        for (decl, (argument, callable)) in own.iter().zip(own_arguments) {
+            let name = decl.name().trim_start_matches('*').to_string();
+            match instantiation.bind(decl, argument, *callable)? {
+                Bound::Value(value) => instantiation.values.push((name, value)),
+                Bound::Callable(function) => instantiation.callables.push((name, function)),
+                Bound::Type => {}
             }
         }
         Some(instantiation)
     }
 
-    /// Bind the binder `decl` to `argument`; `None` for a binder or
-    /// argument this pass does not bind.
-    fn bind(&mut self, decl: &ParamDecl, argument: &TyArg) -> Option<Bound> {
+    /// Bind the binder `decl` to `argument`, a value binder of function
+    /// type to the function `callable` its register names; `None` for a
+    /// binder or argument this pass does not bind: a value only the
+    /// elaborator folds (a deferred or marker value), a callable the
+    /// caller's dataflow does not name, or an owner pack over a computed
+    /// list.
+    fn bind(
+        &mut self,
+        decl: &ParamDecl,
+        argument: &TyArg,
+        callable: Option<&str>,
+    ) -> Option<Bound> {
         match (decl, argument) {
             (
                 ParamDecl::Type {
                     id,
                     name,
-                    callable_bound: None,
                     variadic: false,
-                    constraints,
                     ..
                 },
                 TyArg::Ty(ty),
-            ) if constraints.is_empty() => {
+            ) => {
                 self.bindings.bind_type(id.clone(), ty.clone());
                 self.types.push(ParamRef {
                     id: id.clone(),
@@ -1944,13 +2238,11 @@ impl Instantiation {
                 ParamDecl::Type {
                     id,
                     name,
-                    callable_bound: None,
                     variadic: true,
-                    constraints,
                     ..
                 },
                 argument,
-            ) if constraints.is_empty() => {
+            ) => {
                 let (value, ty) = match argument {
                     TyArg::Val(CtValue::Tuple(elements)) => {
                         let elements = elements
@@ -1982,23 +2274,36 @@ impl Instantiation {
                 };
                 self.bindings.bind(id.clone(), value);
                 self.bindings.bind_type(id.clone(), ty);
-                self.types.push(ParamRef {
+                let binder = ParamRef {
                     id: id.clone(),
                     name: name.as_str().into(),
-                });
+                };
+                self.types.push(binder.clone());
+                self.packs.push(binder);
                 Some(Bound::Type)
+            }
+            // A callable value binder is a runtime slot of the body the VM
+            // reifies from the call's register; bound to the function that
+            // register names, as upstream substitutes the parameter value.
+            (
+                ParamDecl::Value {
+                    ty,
+                    callable_default: None,
+                    ..
+                },
+                TyArg::Val(CtValue::Deferred(_)),
+            ) if matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)) => {
+                callable.map(|function| Bound::Callable(function.to_string()))
             }
             (
                 ParamDecl::Value {
                     id,
                     ty,
                     callable_default: None,
-                    constraints,
                     ..
                 },
                 TyArg::Val(value),
-            ) if constraints.is_empty()
-                && !matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
+            ) if !matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
                 && !matches!(value, CtValue::Deferred(_) | CtValue::Marker(_)) =>
             {
                 let value = self.context.constant(value.clone()).ok()?;
@@ -2010,21 +2315,46 @@ impl Instantiation {
     }
 
     /// `ty` with the owner's bare spelling replaced by the owner's type,
-    /// then every bound binder by its argument.
+    /// then every bound binder by its argument; an error when a bound
+    /// binder survives the substitution (a pack queried under a loop
+    /// binder, which only the elaborator's unrolling closes).
     fn instantiate(&self, ty: &Ty) -> Result<Ty, ParamError> {
         let ty = match &self.owner {
             Some((template, owner)) => rewrite_ty(ty, &mut BareOwner { template, owner })?,
             None => ty.clone(),
         };
-        rewrite_ty(
+        let mut application = PackApplication {
+            packs: &self.packs,
+            found: false,
+        };
+        let _ = rewrite_ty(&ty, &mut application);
+        if application.found {
+            return Err(ParamError::Unsupported(format!(
+                "a compile-time application over a bound pack in `{ty}`"
+            )));
+        }
+        let ty = rewrite_ty(
             &replace_parameters(&self.context, &ty, &self.bindings, 0)?,
             &mut SelectedShapes,
-        )
+        )?;
+        if let Some(binder) = self.types.iter().find(|binder| names_binder(&ty, binder)) {
+            return Err(ParamError::Unsupported(format!(
+                "`{ty}` still names the bound binder `{}`",
+                binder.name
+            )));
+        }
+        Ok(ty)
+    }
+
+    /// Whether `expr` applies a compile-time function to a bound type pack.
+    fn applies_bound_pack(&self, expr: &ParamExpr) -> bool {
+        applies_pack(expr, &self.packs)
     }
 
     /// Rewrite each read of a value binder's slot in `function` into its
-    /// argument as a constant, and delete the slot's drops: the slot holds
-    /// nothing. `None` when a binder's slot is used otherwise.
+    /// argument as a constant, a callable's into the function it names,
+    /// and delete the slot's drops: the slot holds nothing. `None` when a
+    /// binder's slot is used otherwise.
     fn read_binders(&self, function: &mut MirFunction) -> Option<()> {
         for (name, value) in &self.values {
             let Some(slot) = function.var_names.iter().position(|var| var == name) else {
@@ -2033,7 +2363,21 @@ impl Instantiation {
             read_binder(
                 &mut function.blocks,
                 slot as VarId,
-                value,
+                &SlotValue::Parameter(value),
+                &function.reg_types,
+            )?;
+        }
+        for (name, callable) in &self.callables {
+            let slot = function
+                .var_names
+                .iter()
+                .skip(function.n_params)
+                .position(|var| var == name)?
+                + function.n_params;
+            read_binder(
+                &mut function.blocks,
+                slot as VarId,
+                &SlotValue::Function(callable),
                 &function.reg_types,
             )?;
         }
@@ -2111,8 +2455,17 @@ impl MutTypeVisitor for Instantiation {
         Ok(())
     }
 
+    /// A compile-time application over a bound type pack (`Tuple.reverse`'s
+    /// reversed element list) is the elaborator's to evaluate against the
+    /// pack's list (R1079); the substitution would hand it the pack's
+    /// runtime type.
     fn visit_constant(&mut self, constant: &mut Const) -> Result<(), ParamError> {
         match constant {
+            Const::Param(expr) if self.applies_bound_pack(expr) => {
+                return Err(ParamError::Unsupported(format!(
+                    "a compile-time application over a bound pack in `{expr}`"
+                )));
+            }
             Const::Param(expr) => *expr = self.context.replace(expr, &self.bindings)?,
             Const::Value(value) => {
                 *value = replace_value_parameters(&self.context, value, &self.bindings)?;
@@ -2145,21 +2498,54 @@ impl MutTypeVisitor for Instantiation {
         Ok(())
     }
 
-    fn visit_sequence(&mut self, _: &mut ComptimeSequence) -> Result<(), ParamError> {
-        Err(ParamError::Unsupported(
-            "a `comptime for` sequence".to_string(),
-        ))
+    /// A `comptime for` sequence closes over the bindings as a lane mask
+    /// does; its loop binder stays the body's own, which the elaborator
+    /// unrolls by identity in the caller as it would in the callee.
+    fn visit_sequence(&mut self, source: &mut ComptimeSequence) -> Result<(), ParamError> {
+        *source = source.try_map_exprs(&mut |expr| self.context.replace(expr, &self.bindings))?;
+        Ok(())
     }
 }
 
-/// Rewrite each read of the value binder slot `slot` in `blocks`, its
-/// regions included, into `value` as a constant typed by the read's
-/// register, and delete the slot's drops; `None` when the slot is used
-/// otherwise.
+/// What a read of a binder's slot becomes.
+enum SlotValue<'a> {
+    /// A value binder's argument, as a constant typed by the read.
+    Parameter(&'a ParamExpr),
+    /// A callable binder's argument: the function its register names, as
+    /// the constant upstream's substitution leaves; a call through the
+    /// slot becomes a call through that constant.
+    Function(&'a str),
+}
+
+impl SlotValue<'_> {
+    /// The constant a read of the slot typed `ty`, through `place` when it
+    /// loads one, becomes; `None` for a projection of a callable or of a
+    /// value not closed enough to project.
+    fn constant(&self, ty: Option<&Ty>, place: Option<&MirPlace>) -> Option<Const> {
+        match (self, place) {
+            (Self::Parameter(value), None) => Some(parameter_constant(value, ty)),
+            (Self::Parameter(value), Some(place)) if place.is_whole_root() => {
+                Some(parameter_constant(value, ty))
+            }
+            (Self::Parameter(value), Some(place)) => Const::of_projected_parameter_value(
+                value.as_constant()?,
+                &place.storage().proj,
+                place.ty.as_ref(),
+            ),
+            (Self::Function(function), place) => place
+                .is_none_or(MirPlace::is_whole_root)
+                .then(|| Const::Function((*function).to_string())),
+        }
+    }
+}
+
+/// Rewrite each read of the binder slot `slot` in `blocks`, its regions
+/// included, into `value` as a constant typed by the read's register, and
+/// delete the slot's drops; `None` when the slot is used otherwise.
 fn read_binder(
     blocks: &mut [MirBlock],
     slot: VarId,
-    value: &ParamExpr,
+    value: &SlotValue<'_>,
     reg_types: &std::collections::HashMap<u32, Ty>,
 ) -> Option<()> {
     for block in blocks {
@@ -2179,18 +2565,17 @@ fn read_binder(
                 _ => None,
             };
             if let Some((dest, place)) = read {
-                let ty = reg_types.get(&dest.0);
-                let k = match place {
-                    None => parameter_constant(value, ty),
-                    Some(place) if place.is_whole_root() => parameter_constant(value, ty),
-                    Some(place) => Const::of_projected_parameter_value(
-                        value.as_constant()?,
-                        &place.storage().proj,
-                        place.ty.as_ref(),
-                    )?,
-                };
+                let k = value.constant(reg_types.get(&dest.0), place)?;
                 kept.push(MirInstr::Const { dest, k });
                 continue;
+            }
+            if let (SlotValue::Function(_), MirInstr::CallIndirect { callee_place, .. }) =
+                (value, &mut instruction)
+                && callee_place
+                    .as_deref()
+                    .is_some_and(|place| place.root == slot && place.is_whole_root())
+            {
+                *callee_place = None;
             }
             if instruction_slots(&instruction).contains(&slot)
                 || instruction_places(&instruction)
@@ -2279,6 +2664,40 @@ impl TyRewrite for BareOwner<'_> {
 
     fn visits_closed(&self) -> bool {
         true
+    }
+}
+
+/// Whether `expr` applies a compile-time function to one of `packs`.
+fn applies_pack(expr: &ParamExpr, packs: &[ParamRef]) -> bool {
+    if packs.is_empty() {
+        return false;
+    }
+    let mut applies = false;
+    let mut names_pack = false;
+    expr.visit(&mut |node| match node.kind() {
+        ParamKind::Apply { .. } => applies = true,
+        ParamKind::DeclRef(reference) => names_pack |= packs.contains(reference),
+        ParamKind::PackQuery { pack, .. } => names_pack |= packs.contains(pack),
+        _ => {}
+    });
+    applies && names_pack
+}
+
+/// The search of a type for a compile-time application over one of
+/// `packs` ([`applies_pack`]); the rebuilt type is discarded.
+struct PackApplication<'a> {
+    packs: &'a [ParamRef],
+    found: bool,
+}
+
+impl TyRewrite for PackApplication<'_> {
+    fn whole(&mut self, _: &Ty) -> Option<Ty> {
+        None
+    }
+
+    fn expr(&mut self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        self.found |= applies_pack(expr, self.packs);
+        Ok(expr.clone())
     }
 }
 

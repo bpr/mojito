@@ -1,0 +1,74 @@
+  functions: [
+      fn {
+        name: "View.get",
+        registers: 3,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: View, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: View, arguments: [] } }],
+        return_type: present(param { owner: "View", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: pointer { element: param { owner: "View", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }, origin: pointer_param { id: 2, mutability: mutability_param(2), interior: [], subtree: false } } }, reg_type { reg: %r1, type: param { owner: "View", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent } }, reg_type { reg: %r2, type: param { owner: "View", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 234, end: 242, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 234, end: 244, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 234, end: 244, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: View, arguments: [] }), projections: [projection { op: field(src), type: pointer { element: param { owner: "View", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }, origin: pointer_param { id: 2, mutability: mutability_param(2), interior: [], subtree: false } } }], type: present(pointer { element: param { owner: "View", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }, origin: pointer_param { id: 2, mutability: mutability_param(2), interior: [], subtree: false } }), through: absent } },
+              ref.read { dest: %r1, reference: %r0 },
+              value.copy { dest: %r2, value: %r1 }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      },
+      fn {
+        name: owner_origin_argument,
+        registers: 8,
+        vars: 3,
+        var_names: [x, v, "self$inline2"],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: struct_type { name: View, arguments: [type_arg(Int), origin_arg(origin_place { root: $v128, path: [] })] } }, var_type { var: $v2, type: struct_type { name: View, arguments: [type_arg(Int), origin_arg(origin_place { root: $v128, path: [] })] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: pointer { element: Int, origin: pointer_place { place: origin_place { root: $v128, path: [] }, mutable: false } } }, reg_type { reg: %r1, type: struct_type { name: View, arguments: [type_arg(Int), origin_arg(origin_place { root: $v128, path: [] })] } }, reg_type { reg: %r2, type: None }, reg_type { reg: %r3, type: struct_type { name: View, arguments: [type_arg(Int), origin_arg(origin_place { root: $v128, path: [] })] } }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: pointer { element: Int, origin: pointer_param { id: 2, mutability: mutability_param(2), interior: [], subtree: false } } }, reg_type { reg: %r6, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 306, end: 319, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 301, end: 320, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 301, end: 320, origin: present($v0) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 332, end: 333, origin: present($v1) }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 332, end: 339, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 332, end: 339, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 332, end: 339, origin: absent }) }, reg_loc { reg: %r7, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              ref.make { dest: %r0, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } },
+              call { dest: %r1, func: View, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [type_arg(Int)], spread: absent },
+              var.store { var: $v1, src: %r1, binding_type: present(struct_type { name: View, arguments: [type_arg(Int), origin_arg(origin_place { root: $v128, path: [] })] }), in_place: true },
+              loans.establish { reference: $v1, loans: [loan { place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent }, mutable: false, interior: absent, shared: true, setup: false }], marker: %r2, dest_interior: absent },
+              place.load { dest: %r3, place: place { root: $v1, root_type: present(struct_type { name: View, arguments: [type_arg(Int), origin_arg(origin_place { root: $v128, path: [] })] }), projections: [], type: present(struct_type { name: View, arguments: [type_arg(Int), origin_arg(origin_place { root: $v128, path: [] })] }), through: absent } }
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb1 {
+            instructions: [
+              place.load { dest: %r5, place: place { root: $v1, root_type: present(struct_type { name: View, arguments: [type_arg(Int), origin_arg(origin_place { root: $v128, path: [] })] }), projections: [projection { op: field(src), type: pointer { element: Int, origin: pointer_param { id: 2, mutability: mutability_param(2), interior: [], subtree: false } } }], type: present(pointer { element: Int, origin: pointer_param { id: 2, mutability: mutability_param(2), interior: [], subtree: false } }), through: absent } },
+              ref.read { dest: %r6, reference: %r5 },
+              value.copy { dest: %r4, value: %r6 }
+            ],
+            terminator: jump { target: bb2 }
+          },
+          bb2 {
+            instructions: [
+              drop.var { var: $v1 }
+            ],
+            terminator: return { value: present(%r4) }
+          }
+        ]
+      }
+  ]

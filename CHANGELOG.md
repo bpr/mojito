@@ -8,6 +8,24 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `inline-parametric` now binds every kind of compile-time parameter a
+  `nodebug`, `builtin`, or small `@always_inline` callee declares, as the
+  pin's inliner substitutes every parameter alike (R1078): a callable
+  binder binds to the function the call's register names, an owner's
+  origin argument binds nothing, a binder's constraints, `where` clauses,
+  and conditional availability are dropped as judged at the call, and a
+  `comptime for` sequence closes over the bindings. A `read` argument
+  passed from a place, read through a reference the block made, or
+  trivially copied binds too, and a copied, iterated, or lent place-bound
+  parameter reads the caller's place. The VM forwards a static-origin
+  reference made in place through a pointer as the element's heap pointer,
+  reads and writes a place projected from a pointer slot through the
+  pointee, and follows a `ref` field when storing to an indexed place; the
+  concrete verifier compares struct applications without their origin
+  arguments. A struct keyed on one pack applied to no element binds the
+  pack to the empty list (R1093). New fixture
+  `assets/ok/always_inline_nodebug_binders.mojo`; residues R1096–R1101.
+
 - A copy or move naming its constructor is now the call upstream's
   copy/move insertion leaves (R1046): a `var.use copy` lowers to a
   `place.load` of the slot and a call of the `__copyinit__`, a `var.use

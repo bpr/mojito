@@ -4117,8 +4117,8 @@ pub fn has_free_parameters(ty: &Ty) -> bool {
 /// Whether `ty` names the declared parameter `binder`.
 ///
 /// It counts as a type parameter, or in a parameter expression of a value
-/// position — a SIMD width, a value argument, a pack element's index — or of
-/// a type embedded in one.
+/// position — a SIMD width, a value argument, a pack element's index, a
+/// query over the pack it is — or of a type embedded in one.
 pub fn names_binder(ty: &Ty, binder: &ParamRef) -> bool {
     struct Finder<'a> {
         binder: &'a ParamRef,
@@ -4133,6 +4133,7 @@ pub fn names_binder(ty: &Ty, binder: &ParamRef) -> bool {
         fn expr(&mut self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {
             expr.visit(&mut |node| {
                 self.found |= matches!(node.kind(), ParamKind::DeclRef(reference) if reference == self.binder)
+                    || matches!(node.kind(), ParamKind::PackQuery { pack, .. } if pack == self.binder)
                     || node
                         .embedded_types()
                         .into_iter()
