@@ -23,11 +23,12 @@ material-failure conditions triggered:
 - No required API needed any Pliron fork; every gap found is minor and
   locally bridgeable (details below).
 
-## Current Pins (updated 2026-09-08)
+## Current Pins (updated 2026-10-17)
 
-The Stage 0 pin record below is historical. The lane now pins Pliron by git
-revision `477e6b0edb18b29df4cf7b90f0f468dc8a872f22` (`pliron`/`pliron-llvm`,
-whose LLVM layer requires `llvm-sys 231`) against LLVM 23.1.0 installed from
+The Stage 0 pin record below is historical. The lane now pins Pliron to the
+crates.io release `0.20.0` (`pliron`/`pliron-llvm`, whose LLVM layer requires
+`llvm-sys 231`; a git revision is for testing an unreleased fix only, and
+returns to a release before the task ends) against LLVM 23.1.0 installed from
 the official release archive at `/opt/llvm-23` and discovered through
 `LLVM_SYS_231_PREFIX` (every lane script exports that default and prepends its
 `bin/` to `PATH`, so `clang-23`/`opt-23`/`llvm-dwarfdump-23` resolve). The

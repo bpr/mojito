@@ -8,6 +8,30 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The Pliron backend now depends on the crates.io releases `pliron` and
+  `pliron-llvm` `0.20.0` rather than a pinned git revision; the toolchain
+  is unchanged (`llvm-sys 231`, LLVM 23.1). The adapter follows the API:
+  `Located` is gone (`loc()` is inherent), `convert_module` takes a
+  `ToLLVMOptions`, and `erase_given_names` and `Locator::new` take a shared
+  `Context`. The capability table gains the `var.declare` row the
+  instruction inventory already had. Dependencies name released versions
+  from now on; a git pointer is for testing an unreleased fix only
+  (`AGENTS.md` §Working Practices).
+- Natively, an owned heap-carrying temporary whose final read sits in a
+  later block of its list is now released after that read, with the
+  buffers freed on every edge that leaves the path between the two, where
+  it was rejected with "owned heap-carrying temporary used across blocks".
+  So `(keys[i].copy(), values[i].copy())`, whose second subscript's inlined
+  bounds check branches between the first copy and the tuple's constructor,
+  runs natively: `Dict.__init__` from key and value lists
+  (`assets/ok/collection_display_default.mojo`,
+  `assets/ok/container_hashable.mojo`), `Codepoint.from_u32(103).or_else(
+  fallback)` (`assets/ok/nominal_string_codepoint_from_u32.mojo`), and
+  `text += " " + options["color"]` (`assets/ok/kwargs_keyed_read.mojo`)
+  match the VM. A read the release cannot follow — one the definition does
+  not dominate, a definition reached again before the read, a sibling arm
+  reading the register, or a read in another `try` region's block list —
+  still rejects (R1113). This closes R1091.
 - A `def` declared in a `comptime for` now loses a runtime argument its
   body never uses, as upstream's `RemoveUnusedParams` treats the lifted
   function like any generator: each unrolled copy's call names the reduced

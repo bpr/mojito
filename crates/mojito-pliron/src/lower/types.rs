@@ -6,7 +6,7 @@ use super::*;
 use mojito_types::types::TyKind;
 
 impl Locator {
-    pub(crate) fn new(ctx: &mut Context, sources: &[(String, String)]) -> Self {
+    pub(crate) fn new(ctx: &Context, sources: &[(String, String)]) -> Self {
         let sources = sources
             .iter()
             .map(|(name, text)| {

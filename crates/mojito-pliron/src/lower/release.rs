@@ -5,6 +5,18 @@
 use super::*;
 use mojito_types::types::TyKind;
 
+/// Where an owned temporary's final read sits relative to its definition.
+pub(super) enum TempExtent {
+    /// In the defining block: the release follows that read.
+    Local,
+    /// In a later block of the same list, which the temporary lives through
+    /// to.
+    Crossing(CrossingTemp),
+    /// Where a release cannot follow: another list, or a block the
+    /// definition does not dominate.
+    Untracked,
+}
+
 impl FnLowering<'_> {
     /// Whether the invisible-release rule can free every heap buffer a value
     /// of `ty` owns without running user code: the nominal String (one
@@ -62,9 +74,86 @@ impl FnLowering<'_> {
     }
 
     /// Record `dest` as an owned heap-carrying temporary, released after its
-    /// final use in this block. A temporary whose final use sits in another
-    /// block would need liveness analysis — reject instead of leaking.
+    /// final read: in this block, or in a later block of the same list it
+    /// lives through to ([`TempExtent::Crossing`], released on every edge
+    /// leaving that path). A read the release cannot follow rejects instead
+    /// of leaking.
     pub(super) fn mark_owned_temp(&mut self, dest: Reg, ty: Ty) -> Result<(), PlironError> {
+        self.mark_temp(dest, ty, true)
+    }
+
+    /// [`Self::mark_owned_temp`] for a constructed value whose consumer may
+    /// share its bytes: a temporary the release cannot follow stays unmarked
+    /// instead of rejecting.
+    pub(super) fn mark_tracked_owned_temp(&mut self, dest: Reg, ty: Ty) -> Result<(), PlironError> {
+        self.mark_temp(dest, ty, false)
+    }
+
+    /// How far `dest`, defined by the instruction being lowered, lives.
+    pub(super) fn temp_extent(&self, dest: Reg) -> TempExtent {
+        let def = self.position.0;
+        let Some(&(last, _)) = self.last_uses.get(&dest.0) else {
+            return TempExtent::Local;
+        };
+        if last == def {
+            return TempExtent::Local;
+        }
+        let Some(list) = self
+            .position_lists
+            .iter()
+            .position(|list| list.contains(def) && list.contains(last))
+        else {
+            return TempExtent::Untracked;
+        };
+        self.position_lists[list]
+            .crossing_span(def, last, dest)
+            .map_or(TempExtent::Untracked, |live| {
+                TempExtent::Crossing(CrossingTemp { list, live, last })
+            })
+    }
+
+    /// The block the current terminator hands control to for `target`: the
+    /// target itself, or, when crossing temporaries end on that edge, a
+    /// fresh block that releases them and jumps on.
+    pub(super) fn edge_to(
+        &mut self,
+        ctx: &mut Context,
+        target: MirBlockId,
+    ) -> Result<Ptr<BasicBlock>, PlironError> {
+        let block = self.block(target)?;
+        let list_start = self
+            .position_lists
+            .iter()
+            .find(|list| list.contains(self.position.0))
+            .map_or(0, |list| list.start);
+        let due = self.leaving_temps(Some(list_start + target));
+        if due.is_empty() {
+            return Ok(block);
+        }
+        let region = self.region.expect("lowering is inside a function");
+        let edge = BasicBlock::new(ctx, None, vec![]);
+        edge.insert_at_back(region, ctx);
+        let saved = self.current.replace(edge);
+        for (reg, ty) in due {
+            self.emit_release_reg(ctx, reg, &ty)?;
+        }
+        let jump = BrOp::new(ctx, block, vec![]);
+        self.append(ctx, jump.get_operation(), None);
+        self.current = saved;
+        Ok(edge)
+    }
+
+    /// Release the crossing temporaries live at the current block before a
+    /// terminator that leaves its list: a return, an escape, or a region's
+    /// yield.
+    pub(super) fn release_leaving_temps(&mut self, ctx: &mut Context) -> Result<(), PlironError> {
+        for (reg, ty) in self.leaving_temps(None) {
+            self.emit_release_reg(ctx, reg, &ty)?;
+        }
+        Ok(())
+    }
+
+    fn mark_temp(&mut self, dest: Reg, ty: Ty, reject_untracked: bool) -> Result<(), PlironError> {
         if !self.owns_heap(&ty)
             && !matches!(ty.kind(), TyKind::StringLiteral)
             && !self.stdlib_deinit_temp(&ty)
@@ -72,19 +161,46 @@ impl FnLowering<'_> {
         {
             return Ok(());
         }
-        if let Some((block, _)) = self.last_uses.get(&dest.0)
-            && *block != self.position.0
-        {
-            return Err(self.unsupported_reg(
-                "owned heap-carrying temporary used across blocks".into(),
-                dest,
-            ));
+        match self.temp_extent(dest) {
+            TempExtent::Local => {}
+            TempExtent::Crossing(crossing) => {
+                self.crossing_temps.insert(dest.0, crossing);
+            }
+            TempExtent::Untracked if reject_untracked => {
+                return Err(self.unsupported_reg(
+                    "owned heap-carrying temporary used across blocks".into(),
+                    dest,
+                ));
+            }
+            TempExtent::Untracked => return Ok(()),
         }
         if std::env::var_os("MOJITO_PLIRON_DBG_TEMPS").is_some() {
             eprintln!("TEMP-DBG {} mark %r{} {ty}", self.name, dest.0);
         }
         self.owned_temps.insert(dest.0, ty);
         Ok(())
+    }
+
+    /// The crossing temporaries still owned at the current block whose path
+    /// to their final read does not continue into `target` (a position-space
+    /// id; `None` for a terminator leaving the list), lowest register first.
+    fn leaving_temps(&self, target: Option<usize>) -> Vec<(u32, Ty)> {
+        let current = self.position.0;
+        let mut due: Vec<(u32, Ty)> = self
+            .crossing_temps
+            .iter()
+            .filter(|(reg, crossing)| {
+                let list = &self.position_lists[crossing.list];
+                let live = |id: usize| list.contains(id) && crossing.live[id - list.start];
+                self.owned_temps.contains_key(reg)
+                    && live(current)
+                    && current != crossing.last
+                    && !target.is_some_and(live)
+            })
+            .map(|(reg, _)| (*reg, self.owned_temps[reg].clone()))
+            .collect();
+        due.sort_by_key(|(reg, _)| *reg);
+        due
     }
 
     /// Release every owned temporary whose final use was the instruction just

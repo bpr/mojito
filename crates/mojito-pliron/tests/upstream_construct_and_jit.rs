@@ -17,7 +17,9 @@ fn builds_verifies_and_jit_executes_main_returning_42() {
 
     initialize_native().expect("native target initialization");
     let llvm_ctx = LLVMContext::default();
-    let llvm_module = to_llvm_ir::convert_module(ctx, &llvm_ctx, module).expect_ok(ctx);
+    let llvm_module =
+        to_llvm_ir::convert_module(ctx, &llvm_ctx, module, to_llvm_ir::ToLLVMOptions::default())
+            .expect_ok(ctx);
     llvm_module.verify().expect("LLVM module verifies");
 
     let jit = LLVMLLJIT::new_with_default_builder().expect("LLJIT builder");

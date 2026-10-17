@@ -101,6 +101,10 @@ it (2026-09-27):
 - `llvm-sys = 231`, requiring LLVM 23.1 (locally 23.1.0);
 - Rust 1.96.1.
 
+Since 2026-10-17 the dependency is the crates.io release `pliron`/`pliron-llvm`
+`0.20.0` (same `llvm-sys 231`); a git pin is for testing an unreleased fix
+only.
+
 The 2026-08-18 Stage 0 audit records 609 upstream commits, active maintenance,
 frequent breaking 0.x releases, a strong single-maintainer concentration, no
 changelog, and incomplete generated documentation for `pliron-llvm`. Before the

@@ -163,6 +163,10 @@ the root `backend-pliron` feature) may, and `scripts/check` excludes it.
   above, the rule that only `mojito-pliron` may pull in LLVM, and
   `crates/mojito-runtime`'s ban on depending on the `mojito` crate or a native
   toolchain.
+- Dependencies name released versions (`pliron = "0.20.0"`), never a git
+  URL, revision, or branch. A direct pointer to a repository is for testing
+  an unreleased fix only, and it goes back to a numbered release before the
+  test's task is reported complete.
 - Add positive and negative tests at the phase that owns the rule.
 - Parser support is not semantic support. Keep those states distinct in code,
   diagnostics, and `docs/features.md`.

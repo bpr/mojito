@@ -26,7 +26,7 @@ use pliron::builtin::ops::ModuleOp;
 use pliron::builtin::types::{FP16Type, FP32Type, FP64Type, IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::identifier::Identifier;
-use pliron::location::{Located, Location};
+use pliron::location::Location;
 use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::r#type::{TypeHandle, Typed, TypedHandle};
@@ -259,6 +259,8 @@ pub fn lower_body(
         str_runtime: HashMap::new(),
         owned_temps: HashMap::new(),
         last_uses: HashMap::new(),
+        position_lists: Vec::new(),
+        crossing_temps: HashMap::new(),
         position: (0, 0),
         erased: HashSet::new(),
         print_sink: None,
@@ -424,6 +426,18 @@ enum ExitAction {
     Escape { target: usize },
 }
 
+/// An owned temporary whose final read sits in a later block of its list
+/// ([`PositionList::crossing_span`]).
+struct CrossingTemp {
+    /// The index of its list in `position_lists`.
+    list: usize,
+    /// The list's blocks on a path from the definition to the final read,
+    /// by local index.
+    live: Vec<bool>,
+    /// The position-space id of the block holding the final read.
+    last: usize,
+}
+
 struct FnLowering<'a> {
     name: &'a str,
     func: &'a MirFunction,
@@ -460,6 +474,12 @@ struct FnLowering<'a> {
     /// `(block, instruction)` of each register's final operand appearance;
     /// terminator uses record `usize::MAX`.
     last_uses: HashMap<u32, (usize, usize)>,
+    /// The block lists in `last_uses`' position space: the function's own,
+    /// then each `try` region's as `record_last_uses` reaches it.
+    position_lists: Vec<PositionList<'a>>,
+    /// The owned temporaries whose final read sits in a later block of
+    /// their list, released on every edge leaving their path to it.
+    crossing_temps: HashMap<u32, CrossingTemp>,
     /// The `(block, instruction)` currently being lowered.
     position: (usize, usize),
     /// Registers written by semantically erased instructions (analysis

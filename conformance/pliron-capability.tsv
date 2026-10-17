@@ -23,6 +23,7 @@ instruction	type.name	unsupported	the elaborator spells every type name as a con
 instruction	type.construct	unsupported	monomorphization leaves no type parameter to construct; one that survives rejects
 instruction	literal.materialize	partial	scalar and width-1 SIMD targets (wrapping, VM-exact) plus exact literal-typed storage; a constant exceeding i64/f64 storage rejects
 instruction	var.use	supported	copy/move/borrow
+instruction	var.declare	supported	a declaration marker; the slot is allocated at entry and it lowers to nothing
 instruction	place.move	partial	marks the root partially initialized; later whole-variable drops of it reject
 instruction	var.store	supported	sets the initialization flag
 instruction	unary	partial	checked scalar operand types

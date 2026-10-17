@@ -151,6 +151,11 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     ),
     ("var.use", CapabilityStatus::Supported, "copy/move/borrow"),
     (
+        "var.declare",
+        CapabilityStatus::Supported,
+        "a declaration marker; the slot is allocated at entry and it lowers to nothing",
+    ),
+    (
         "place.move",
         CapabilityStatus::Partial,
         "marks the root partially initialized; later whole-variable drops of it reject",

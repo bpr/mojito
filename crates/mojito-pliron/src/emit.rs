@@ -18,7 +18,7 @@ use pliron::builtin::ops::ModuleOp;
 use pliron::context::Context;
 use pliron::printable::Printable;
 use pliron_llvm::llvm_sys::core::{LLVMContext, LLVMMemoryBuffer, LLVMModule};
-use pliron_llvm::to_llvm_ir;
+use pliron_llvm::to_llvm_ir::{self, ToLLVMOptions};
 
 use mojito_native::native::target::NativeTarget;
 
@@ -64,8 +64,10 @@ fn to_stamped_ir(
 ) -> Result<String, PlironError> {
     timing("llvm-convert", || {
         let llvm_ctx = LLVMContext::default();
-        let llvm_module = to_llvm_ir::convert_module(ctx, &llvm_ctx, module)
-            .map_err(|error| emit_error(format!("LLVM conversion failed: {}", error.disp(ctx))))?;
+        let llvm_module =
+            to_llvm_ir::convert_module(ctx, &llvm_ctx, module, ToLLVMOptions::default()).map_err(
+                |error| emit_error(format!("LLVM conversion failed: {}", error.disp(ctx))),
+            )?;
         llvm_module
             .verify()
             .map_err(|error| emit_error(format!("LLVM module verification failed: {error}")))?;

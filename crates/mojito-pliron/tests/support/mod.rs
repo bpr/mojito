@@ -37,7 +37,7 @@ pub fn print_ir(ctx: &Context, op: Ptr<Operation>) -> String {
 /// block label as a given name and the printer re-suffixes it with the
 /// internal id, so block labels grow on every round trip. Erasing given names
 /// first makes the printed text byte-stable.
-pub fn canonical_text(ctx: &mut Context, op: Ptr<Operation>) -> String {
+pub fn canonical_text(ctx: &Context, op: Ptr<Operation>) -> String {
     pliron::builtin::given_names::erase_given_names(ctx, op);
     op.disp(ctx).to_string()
 }

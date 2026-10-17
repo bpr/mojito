@@ -31,7 +31,9 @@ fn textual_ll_bitcode_and_native_executable_exit_42() {
     let module = build_main_returns_42(ctx).expect_ok(ctx);
 
     let llvm_ctx = LLVMContext::default();
-    let llvm_module = to_llvm_ir::convert_module(ctx, &llvm_ctx, module).expect_ok(ctx);
+    let llvm_module =
+        to_llvm_ir::convert_module(ctx, &llvm_ctx, module, to_llvm_ir::ToLLVMOptions::default())
+            .expect_ok(ctx);
     llvm_module.verify().expect("LLVM module verifies");
 
     expect![[r#"

@@ -27,7 +27,7 @@ use pliron::builtin::op_interfaces::SymbolOpInterface;
 use pliron::builtin::ops::ModuleOp;
 use pliron::context::Context;
 use pliron::linked_list::ContainsLinkedList;
-use pliron::location::{Located, Location};
+use pliron::location::Location;
 use pliron::op::Op;
 use pliron::operation::Operation;
 
@@ -74,7 +74,7 @@ impl DebugTable {
             .collect();
         let locate = |op: &Operation| -> Option<(usize, u32, u32)> {
             match op.loc() {
-                Location::SrcPos { src, pos } => source_ids.get(&src).map(|&file| {
+                Location::SrcPos { src, pos } => source_ids.get(src).map(|&file| {
                     (
                         file,
                         u32::try_from(pos.line).unwrap_or(0),

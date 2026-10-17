@@ -13,7 +13,8 @@ impl FnLowering<'_> {
     ) -> Result<(), PlironError> {
         match term {
             MirTerm::Jump(target) => {
-                let jump = BrOp::new(ctx, self.block(*target)?, vec![]);
+                let target = self.edge_to(ctx, *target)?;
+                let jump = BrOp::new(ctx, target, vec![]);
                 self.append(ctx, jump.get_operation(), None);
                 Ok(())
             }
@@ -23,8 +24,8 @@ impl FnLowering<'_> {
                 else_b,
             } => {
                 let condition = self.reg_value(ctx, *cond, ScalarTy::Bool)?;
-                let then_block = self.block(*then_b)?;
-                let else_block = self.block(*else_b)?;
+                let then_block = self.edge_to(ctx, *then_b)?;
+                let else_block = self.edge_to(ctx, *else_b)?;
                 let branch = CondBrOp::new(ctx, condition, then_block, vec![], else_block, vec![]);
                 self.append(ctx, branch.get_operation(), Some(*cond));
                 Ok(())
@@ -39,19 +40,25 @@ impl FnLowering<'_> {
                 format!("a compile-time loop over `{binder}` reached native lowering"),
                 None,
             )),
-            MirTerm::Return(value) => self.lower_return_edge(ctx, value.as_ref().copied(), &[]),
+            MirTerm::Return(value) => {
+                self.release_leaving_temps(ctx)?;
+                self.lower_return_edge(ctx, value.as_ref().copied(), &[])
+            }
             MirTerm::ReturnWithCleanup { value, cleanup } => {
+                self.release_leaving_temps(ctx)?;
                 self.lower_return_edge(ctx, value.as_ref().copied(), cleanup)
             }
             MirTerm::TryYield => {
                 let Some(target) = self.try_yield_target else {
                     return Err(self.unsupported("`TryYield` outside a try region".into(), None));
                 };
+                self.release_leaving_temps(ctx)?;
                 let jump = BrOp::new(ctx, target, vec![]);
                 self.append(ctx, jump.get_operation(), None);
                 Ok(())
             }
             MirTerm::EscapeJump { target, cleanup } => {
+                self.release_leaving_temps(ctx)?;
                 self.lower_escape_edge(ctx, *target, cleanup)
             }
             // Concrete MIR carries none: `lower-control-flow` runs first.

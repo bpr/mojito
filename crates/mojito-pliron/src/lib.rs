@@ -91,7 +91,7 @@ pub fn compile(
     let reachable = reachable_set(program, &concrete_entries)?;
 
     let mut context = Context::new();
-    let locator = lower::Locator::new(&mut context, &options.sources);
+    let locator = lower::Locator::new(&context, &options.sources);
     let module = ModuleOp::new(&mut context, "mojito".try_into().expect("valid identifier"));
     let mut shared = lower::ModuleShared::new(module);
     let declarations: HashMap<String, mojito_mir::mir::MirFunctionDeclaration> = program
@@ -169,7 +169,7 @@ pub fn compile(
     })?;
     verify_module(&context, module)?;
 
-    pliron::builtin::given_names::erase_given_names(&mut context, module.get_operation());
+    pliron::builtin::given_names::erase_given_names(&context, module.get_operation());
     let canonical_text = module.get_operation().disp(&context).to_string();
     // Collected after the cleanup pipeline: passes may delete calls and
     // unreachable blocks, and correlation must see the final IR.

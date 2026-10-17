@@ -105,16 +105,11 @@ impl FnLowering<'_> {
             // The constructed value owns its heap: consumers relocate it
             // (`DefVar`, stores) and a discarded result releases invisibly.
             // Without the mark, a store forks the value and the original's
-            // buffers lose their releasing owner. A cross-block lifetime
-            // keeps the pre-existing shared-bytes behavior instead of
+            // buffers lose their releasing owner. A lifetime the release
+            // cannot follow keeps the shared-bytes behavior instead of
             // rejecting.
-            if self.owns_heap(&ty)
-                && self
-                    .last_uses
-                    .get(&dest.0)
-                    .is_none_or(|(block, _)| *block == self.position.0)
-            {
-                self.mark_owned_temp(dest, ty.clone())?;
+            if self.owns_heap(&ty) {
+                self.mark_tracked_owned_temp(dest, ty.clone())?;
             }
             return Ok(());
         }

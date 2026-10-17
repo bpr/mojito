@@ -184,13 +184,8 @@ impl FnLowering<'_> {
             // store) and a discarded result releases invisibly. Without the
             // mark a consuming argument forks the value and both copies
             // release the same buffers.
-            if self.owns_heap(&ty)
-                && self
-                    .last_uses
-                    .get(&dest.0)
-                    .is_none_or(|(block, _)| *block == self.position.0)
-            {
-                self.mark_owned_temp(dest, ty)?;
+            if self.owns_heap(&ty) {
+                self.mark_tracked_owned_temp(dest, ty)?;
             }
             return Ok(());
         }

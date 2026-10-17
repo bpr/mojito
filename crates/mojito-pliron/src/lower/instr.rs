@@ -187,6 +187,7 @@ impl FnLowering<'_> {
         let mut next_id = self.func.blocks.len();
         record_last_uses(
             &mut self.last_uses,
+            &mut self.position_lists,
             self.func.blocks.as_slice(),
             &function_ids,
             &mut next_id,
