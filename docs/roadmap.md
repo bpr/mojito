@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1091**.
+Next free ID: **R1093**.
 
 ## Ordered Work
 
@@ -74,31 +74,6 @@ which names the upstream pass each one follows. Each is measured by the
     field's is since R1041.
   - An owned `VariadicPack`'s destruction is R1073's.
   - Found while landing R1085 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1087 A drop stays a drop where the whole-slot test cannot prove
-  its slot whole**
-
-  `mir::lower_whole_drops` lowers a named `drop.var` to the call of its
-  destructor only where a per-list must-analysis proves the slot whole on
-  every path, and keeps the drop, with Pliron's drop and leaf flags and the
-  VM's partial-aggregate rule, where it cannot; upstream's `CheckLifetimes`
-  walks the regions and makes every death definite.
-  - Probe: a field moved out and stored again (`take(p.a^)` then `p.a =
-    ...`; `assets/ok/partial_move_reinit_sibling_use.mojo`); a field
-    replaced by a `drop.place` and a `place.store`
-    (`assets/ok/field_store_overwrite_drop.mojo`); a slot declared before
-    a `try` and defined inside it (`assets/ok/late_initialized_local.mojo`,
-    `in_try`); a slot a `try` body stores that a later drop ends outside
-    it (`assets/ok/template_method_with_statement.mojo`).
-  - The analysis folds `whole_after` per instruction and summarizes a
-    region by whether it keeps the slot whole, so a definition inside a
-    region, or a re-initialization after a partial move, never reaches a
-    later drop.
-  - The lever is a region-aware definite-initialization state, R875's,
-    which the lowering then reads instead of its own fold.
-  - Found while landing R1043 (2026-10-16).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -814,6 +789,47 @@ Track: `native`.
 
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
+
+- [ ] **R1092 Natively, a `Dict` or `Set` lookup misses a key it holds
+  since small `@always_inline` callees inline**
+
+  `Dict[Int, Int]` with `d[1] = 1` then `print(d[1])` prints `1` on the
+  VM and raises `missing key` natively; `"a" in d` answers `False`.
+  - Bisected to 68634057 (R923): the native build of 1625dacb runs it.
+  - Probe: `assets/ok/dict_methods_growth.mojo`,
+    `assets/ok/pliron_dict_set.mojo`, `assets/ok/self_hosted_dict.mojo`,
+    `assets/ok/tuple_hashable_dict_key.mojo`,
+    `assets/ok/ctfe_module_display_constant_requests.mojo` (`"a" in d`),
+    and twelve more `exe-differential` rows that hash a key.
+  - The VM runs the same concrete MIR correctly, so some inlined hasher
+    or probe body lowers wrongly natively; diff the native result of the
+    `AHasher` and `Dict._find_index` instances with the inliner off.
+  - `assets/ok/nested_copy_lifecycle.mojo`, R1086's probe, fails the same
+    way: check R1086 against it once this lands.
+  - Found while landing R1087 (2026-10-16).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1091 Natively, an owned temporary is rejected when an inlined
+  callee's blocks fall between it and its use**
+
+  `(keys[i].copy(), values[i].copy())` fails natively with "unsupported
+  owned heap-carrying temporary used across blocks": the second
+  subscript's inlined bounds check branches after the first operand's
+  `String` copy, which the tuple's constructor consumes blocks later.
+  - Bisected to 68634057 (R923), which inlines `List.__getitem__`'s
+    small callees; the VM is unaffected.
+  - Probe: `Dict.__init__` from key and value lists
+    (`assets/ok/collection_display_default.mojo`,
+    `assets/ok/container_hashable.mojo`,
+    `assets/ownership_ok/shared_iterations_coexist.mojo`, and eleven more
+    `exe-differential` rows).
+  - Pliron's `release.rs` tracks a heap-carrying temporary within one
+    block; release it on every edge from its definition to its consumer,
+    as an SSA value is live across blocks upstream.
+  - Found while landing R1087 (2026-10-16).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1086 Natively, copying a `Dict` with `Optional` keys loses its
   keys**
@@ -8327,6 +8343,9 @@ follow-ups the landed producer stages filed come last.
   - The state at a `Break`/`Continue` flows to its labelled loop.
   - After it lands, `lower-control-flow` still runs before the borrow
     checks.
+  - `mir::lower_whole_drops` keeps a definite-initialization fold of its
+    own (whole, missing parts, empty) that follows `try` regions; once
+    this lands it reads this state instead.
   - The entry's planning session may split it by analysis if one session
     cannot land it, filing the rest as chained entries.
   - Depends on R873, R874.

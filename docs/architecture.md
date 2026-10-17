@@ -4482,18 +4482,26 @@ run by `name_destructors` and again by the elaborator once
 the slot, which ends it and hands its storage to the callee as Mojo's
 owned-argument convention does, and a `MethodCall` of the destructor on
 it as the `deinit self` receiver, the shape an explicit `x^.finish()`
-lowers to, which both backends run as any such call. The whole-slot test
-is a per-list must-analysis (`is_whole_at`: a `var.store` or a `for`
-loop's iterator fills the slot; reads, borrows, calls, stores into it,
-and lifetime markers keep it; a moving use, a partial move, a drop, a
-consume, a `try`'s raise-edge cleanup, an in-place owned `iter.init`, or
-a store of a `try_next` result on its exhausted edge leaves it possibly
-partial or empty), entered with an owned parameter whole, and a region
-entered with the state at its instruction less what the regions before
-it may have ended. Every other named drop stays a `drop.var`, whose
-runtime partial-aggregate rule, Pliron's drop and leaf flags, and an
-owned pack's reverse order carry the states upstream's lifetime checker
-makes definite (R1087, R1088).
+lowers to, which both backends run as any such call. The test is a
+definite-initialization state per slot (`Held`: whole, whole but for
+missing owned parts, empty, or partial), joined over a list's blocks and
+followed through a `try` as upstream's `CheckLifetimes` walks its regions:
+the body entered as the op is, the handler as the body may raise (through
+the raise edge's cleanup, its error slot bound whole), the `else` as the
+body completes, the `finally` on every way out of them, and the op
+completing as its `else` (or body) and handler do. A `var.store`, a
+whole-slot `mark_initialized`, or a `for` loop's iterator fills the slot;
+a declaration, a drop, a consume, or a moving use empties it; a move,
+drop, or consume of a field or tuple-element path marks that part missing
+and a store into it fills it again; reads, borrows, calls, and lifetime
+markers keep it; an in-place owned `iter.init` or a store of a `try_next`
+result on its exhausted edge leaves it partial. A named drop of a slot
+empty on every path to it is erased, since nothing dies there. Every other
+named drop stays a `drop.var`, whose runtime partial-aggregate rule,
+Pliron's drop and leaf flags, and an owned pack's reverse order carry
+the states upstream's lifetime checker makes definite (R1088); once the
+move and initialization checks walk regions (R875) the lowering reads
+their state instead of its own.
 A cleanup list's entries name their destructor as a `DropVar` does
 (`CleanupDrop`), named by the same `name_destructors` and respelled by the
 same `name_lifecycle_calls`, so the VM's `run_cleanup` and Pliron's

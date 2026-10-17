@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The test deciding where a `drop.var` becomes the call of its destructor
+  is now a definite-initialization state that follows a `try`'s regions,
+  as upstream's `CheckLifetimes` walks them, and tracks moved-out parts
+  (R1087): `mir::lower_whole_drops` knows a slot whole after a field moved
+  out or destroyed is stored again, after a `try` body defines it, and
+  across a `try` that only reads it, and erases a named drop of a slot
+  empty on every path to it, which drop elaboration leaves before a `try`
+  whose body defines the slot. No fixture's output changes on either
+  backend. Natively, `Dict` lookups and owned operand temporaries have
+  failed since R923; filed as R1092 and R1091.
+
 - A storage destroy (`unsafe_deinit_pointee`, `MaybeUninit.unsafe_deinit`),
   a variant store's replaced payload (`Variant.set`, with or without
   `init_with=`), and an owned closure capture released at the closure's
