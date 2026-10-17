@@ -888,7 +888,14 @@ impl FnLowering<'_> {
                 dest,
                 mode: _,
                 prepare,
-            } => self.lower_get_iter(ctx, *source, *dest, prepare),
+            } => {
+                self.lower_get_iter(ctx, *source, *dest, prepare)?;
+                // An owned `__iter__` consumed the source's storage.
+                if instr.consumed_iteration_source().is_some() {
+                    self.set_drop_flag(ctx, *source, false);
+                }
+                Ok(())
+            }
             MirInstr::VariantSet {
                 dest,
                 place,

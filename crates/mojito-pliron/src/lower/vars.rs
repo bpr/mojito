@@ -133,11 +133,7 @@ impl FnLowering<'_> {
                 self.copy_value(ctx, slot, ptr, &ty, layout, src);
                 // The variable owns the value now; the temporary transfers.
                 self.owned_temps.remove(&src.0);
-                if let Some(condition) = self.conditional_values.get(&src.0).copied() {
-                    self.set_drop_flag_value(ctx, var, condition);
-                } else {
-                    self.set_drop_flag(ctx, var, true);
-                }
+                self.set_drop_flag(ctx, var, true);
                 Ok(())
             }
             LowerTy::ZeroSized => Ok(()),

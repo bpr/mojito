@@ -663,27 +663,23 @@ fn checked_hir_raising_iterator_has_explicit_exhaustion_result() {
         .node_weights()
         .flat_map(|block| &block.instrs)
         .collect();
-    let (element_ty, call) = operations
+    let call = operations
         .iter()
         .copied()
         .find_map(|instruction| match instruction {
             mojito::hir::HirInstr::TryNext {
-                exhaustion,
-                element_ty,
-                call,
-                ..
+                exhaustion, call, ..
             } if matches!(
                 exhaustion.kind(),
                 mojito::TyKind::Struct(name, arguments)
                     if name == "StopIteration" && arguments.is_empty()
             ) =>
             {
-                Some((element_ty, call))
+                Some(call)
             }
             _ => None,
         })
         .expect("typed TryNext");
-    assert_eq!(element_ty, &Ty::int());
     assert_eq!(&call.result_ty, &Ty::int());
     assert!(call.reference_result.is_none());
     assert!(!operations.iter().any(|instruction| matches!(
@@ -696,19 +692,27 @@ fn checked_hir_raising_iterator_has_explicit_exhaustion_result() {
 fn checked_hir_reference_yielding_try_next_retains_a_reference_result() {
     let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct RefIter[o: Origin[mut=False]]:\n    var source: ref[o] Int\n    var done: Bool\n    def __next__(mut self) raises StopIteration -> ref[Self.o] Int:\n        if self.done:\n            raise StopIteration(0)\n        self.done = True\n        return self.source\n\n@fieldwise_init\nstruct RefSource:\n    var value: Int\n    def __iter__(ref self) -> RefIter[origin_of(self.value)]:\n        ref value = self.value\n        return RefIter(value, False)\n\ndef main():\n    var source = RefSource(42)\n    for item in source:\n        print(item)\n";
     let cfg = checked_function_cfg(source, "main");
-    let (element_ty, call) = cfg
+    let instructions: Vec<_> = cfg
         .g
         .node_weights()
         .flat_map(|block| &block.instrs)
+        .collect();
+    let call = instructions
+        .iter()
         .find_map(|instruction| match instruction {
-            mojito::hir::HirInstr::TryNext {
-                element_ty, call, ..
-            } => Some((element_ty, call)),
+            mojito::hir::HirInstr::TryNext { call, .. } => Some(call),
             _ => None,
         })
         .expect("reference-yielding TryNext");
+    let plan = instructions
+        .iter()
+        .find_map(|instruction| match instruction {
+            mojito::hir::HirInstr::BindIteration { plan, .. } => Some(plan),
+            _ => None,
+        })
+        .expect("iteration binding");
     assert!(matches!(
-        element_ty.kind(),
+        plan.yielded_ty.kind(),
         mojito::TyKind::Ref(reference) if reference.referent == mojito::TyKind::Int
     ));
     assert!(matches!(

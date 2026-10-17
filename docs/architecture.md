@@ -3237,9 +3237,13 @@ checker's `substitute_assoc` shares) and its type arguments as binders,
 then substitutes under the instance. Elaborated MIR carries no associated
 types.
 
-A borrowed loop or comprehension that splits its source from its iterator
-types the iterator slot (`$iterobj<N>`, `$compiterobj<N>`) at the `GetIter`
-that declares it, with `IterationProtocol::iterator_ty`: the checked
+A loop or comprehension whose iterable has an `__iter__` step, borrowed or
+owned, splits its source from its iterator, as upstream's iterator is a
+value of its own type: it declares the iterator slot (`$iterobj<N>`,
+`$compiterobj<N>`) at the `GetIter` that declares it, and an owned
+`__iter__(var self)` consumes the source slot
+(`MirInstr::consumed_iteration_source`), which no drop names again. The
+slot is typed with `IterationProtocol::iterator_ty`: the checked
 `__iter__` result, its `origin_of(self)` resolved to the named source
 (`Checker::resolve_iterator_origin`), symbolic in a generic body
 (`C.IteratorType[origin_of(xs)]`, read off the bound's own `__iter__`).
@@ -4491,15 +4495,18 @@ the raise edge's cleanup, its error slot bound whole), the `else` as the
 body completes, the `finally` on every way out of them, and the op
 completing as its `else` (or body) and handler do. A `var.store`, a
 whole-slot `mark_initialized`, or a `for` loop's iterator fills the slot;
-a declaration, a drop, a consume, or a moving use empties it; a move,
+a declaration, a drop, a consume, a moving use, or an owned `iter.init`
+consuming it into an iterator slot of its own empties it; a move,
 drop, or consume of a field or tuple-element path marks that part missing
-and a store into it fills it again; reads, borrows, calls, and lifetime
-markers keep it; an in-place owned `iter.init` or a store of a `try_next`
-result on its exhausted edge leaves it partial. A named drop of a slot
+and a store into it fills it again; reads, borrows, calls, iterator
+advances, and lifetime markers keep it; compiler-private iterator storage
+normalized in place leaves it partial. A `for` loop binds what
+`iter.try_next` yields only past its exhaustion test, in the body, so its
+`$yield` slot is never filled on the exhausted edge. A named drop of a slot
 empty on every path to it is erased, since nothing dies there. Every other
 named drop stays a `drop.var`, whose runtime partial-aggregate rule,
 Pliron's drop and leaf flags, and an owned pack's reverse order carry
-the states upstream's lifetime checker makes definite (R1088); once the
+the states upstream's lifetime checker makes definite; once the
 move and initialization checks walk regions (R875) the lowering reads
 their state instead of its own.
 A cleanup list's entries name their destructor as a `DropVar` does

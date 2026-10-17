@@ -1690,7 +1690,13 @@ impl VmBackend {
                     .iter()
                     .find(|symbol| symbol.starts_with("__trait_dispatch."))
                     .cloned();
-                let mut current = vars[*source as usize].clone();
+                // An owned `__iter__` consumes a source in a slot of its own,
+                // leaving the slot moved.
+                let mut current = if i.consumed_iteration_source().is_some() {
+                    std::mem::replace(&mut vars[*source as usize], Value::Moved)
+                } else {
+                    vars[*source as usize].clone()
+                };
                 // A borrowed named source binds the source slot to a reference;
                 // follow it to the underlying source struct for method resolution.
                 // A borrowed `__iter__(ref self)` re-roots at the source below via

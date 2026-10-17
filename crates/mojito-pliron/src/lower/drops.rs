@@ -340,15 +340,6 @@ impl<'a> FnLowering<'a> {
         self.append(ctx, store.get_operation(), None);
     }
 
-    /// Store an SSA `i1` into a variable's initialization flag.
-    pub(super) fn set_drop_flag_value(&mut self, ctx: &mut Context, var: u32, value: Value) {
-        let Some(&flag) = self.drop_flags.get(&var) else {
-            return;
-        };
-        let store = StoreOp::new(ctx, value, flag);
-        self.append(ctx, store.get_operation(), None);
-    }
-
     /// Clear the presence flag selected by a runtime pack cursor. Pack
     /// iteration moves that element out; later cleanup must destroy only the
     /// leaves which were not visited (including an early-break suffix).

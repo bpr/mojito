@@ -22,7 +22,7 @@ use super::{
 };
 use mojito_common::token::SourceSpan;
 use mojito_types::types::TyKind;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// Lower every named `drop.var` of `function` whose slot holds a whole
 /// value on every path to it to a call of the destructor, and erase every
@@ -349,7 +349,6 @@ fn flow(list: &[MirBlock], entry: State, var: VarId) -> Flow {
 /// after its last, entered in `input`, and joined over every point of the
 /// block, its regions included.
 fn through(block: &MirBlock, input: State, var: VarId) -> (Vec<State>, State) {
-    let mut conditional = HashSet::new();
     let mut anywhere = input.clone();
     let mut states = vec![input];
     for instruction in &block.instrs {
@@ -360,10 +359,7 @@ fn through(block: &MirBlock, input: State, var: VarId) -> (Vec<State>, State) {
                 let region = region_flow(instruction, state, var);
                 (region.after, region.anywhere)
             }
-            Some(held) => (
-                Some(held_after(held, instruction, var, &mut conditional)),
-                None,
-            ),
+            Some(held) => (Some(held_after(held, instruction, var)), None),
         };
         anywhere = join(join(anywhere, inside), after.clone());
         states.push(after);
@@ -454,37 +450,24 @@ fn region_flow(instruction: &MirInstr, state: State, var: VarId) -> RegionFlow {
 ///
 /// A whole store fills the slot, and so do a mark of it initialized and
 /// the iterator a `for` loop makes in a slot of its own; a declaration, a
-/// drop, an end, a move of the whole, or a mark of it destroyed empties it;
+/// drop, an end, a move of the whole, a consuming `__iter__`, or a mark of
+/// it destroyed empties it;
 /// a move out of an owned part, a destruction of one, or an end of one
 /// marks that part missing, and a store into it, or a mark of it
 /// initialized, fills it again; a read, a borrow, a store into a part
 /// present, or an advance of the iterator keeps the state; anything else
 /// naming the slot, or naming it empty, leaves it partial; a lifetime
-/// marker names it without touching it. An iterable a `for` loop consumes in
-/// place holds the loop's iterator from then on, a value of another type
-/// than the slot's, which the slot's destructor does not destroy. A store
-/// of what a `try_next` yielded fills the slot on the yielding edge alone:
-/// the block's `conditional` registers are those, which the fold collects.
-fn held_after(
-    held: Held,
-    instruction: &MirInstr,
-    var: VarId,
-    conditional: &mut HashSet<u32>,
-) -> Held {
+/// marker names it without touching it. Compiler-private iterator storage
+/// a `for` loop normalizes in place holds a cursor from then on, which the
+/// slot's destructor does not destroy.
+fn held_after(held: Held, instruction: &MirInstr, var: VarId) -> Held {
     match instruction {
-        MirInstr::TryNext { dest, .. } => {
-            conditional.insert(dest.0);
-            held
-        }
-        MirInstr::DefVar { var: slot, src, .. } if *slot == var => {
-            if conditional.contains(&src.0) {
-                Held::Partial
-            } else {
-                Held::Whole
-            }
-        }
+        MirInstr::DefVar { var: slot, .. } if *slot == var => Held::Whole,
         MirInstr::GetIter { source, dest, .. } if *source == var && *dest == var => Held::Partial,
         MirInstr::GetIter { dest, .. } if *dest == var => Held::Whole,
+        MirInstr::GetIter { .. } if instruction.consumed_iteration_source() == Some(var) => {
+            Held::Empty
+        }
         MirInstr::DeclareVar { var: slot }
         | MirInstr::DropVar { var: slot, .. }
         | MirInstr::ConsumeVar { var: slot }
@@ -556,7 +539,8 @@ fn held_after(
         | MirInstr::ConstructTypeParam { .. }
         | MirInstr::GetIter { .. }
         | MirInstr::HasNext { .. }
-        | MirInstr::Next { .. } => held,
+        | MirInstr::Next { .. }
+        | MirInstr::TryNext { .. } => held,
         _ if names_slot(instruction, var) => Held::Partial,
         _ => held,
     }

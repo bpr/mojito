@@ -499,8 +499,6 @@ impl FnLowering<'_> {
         let ok_tag = self.tag_constant(ctx, mojito_native::native::rt_abi::MJ_TAG_OK);
         let is_ok = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, tag.get_result(ctx), ok_tag);
         self.define(ctx, yielded, is_ok.get_operation(), is_ok.get_result(ctx))?;
-        self.conditional_values
-            .insert(dest.0, is_ok.get_result(ctx));
         let region = self.region.expect("lowering is inside a function");
         let exhausted_block = BasicBlock::new(ctx, None, vec![]);
         exhausted_block.insert_at_back(region, ctx);
@@ -545,9 +543,9 @@ impl FnLowering<'_> {
             }
             LowerTy::Aggregate { .. } => {
                 let address = self.offset_address(ctx, storage, outcome.ok_offset);
-                // Deliberately not an owned temporary: the following
-                // `DefVar` copies the element out, and the zeroed exhausted
-                // bytes must never release.
+                // Deliberately not an owned temporary: the loop body's
+                // `DefVar` copies the element out on the yielded edge, and
+                // the zeroed exhausted bytes must never release.
                 self.reg_values.insert(dest.0, address);
                 Ok(())
             }
@@ -611,8 +609,6 @@ impl FnLowering<'_> {
         let ok_tag = self.tag_constant(ctx, mojito_native::native::rt_abi::MJ_TAG_OK);
         let is_ok = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, tag.get_result(ctx), ok_tag);
         self.define(ctx, yielded, is_ok.get_operation(), is_ok.get_result(ctx))?;
-        self.conditional_values
-            .insert(dest.0, is_ok.get_result(ctx));
         let region = self.region.expect("lowering is inside a function");
         let ok_block = BasicBlock::new(ctx, None, vec![]);
         ok_block.insert_at_back(region, ctx);
@@ -694,9 +690,9 @@ impl FnLowering<'_> {
                 self.define(ctx, dest, load.get_operation(), load.get_result(ctx))
             }
             LowerTy::Aggregate { .. } => {
-                // Deliberately not an owned temporary: the following `DefVar`
-                // copies the element out, and the zeroed exhausted bytes must
-                // never release.
+                // Deliberately not an owned temporary: the loop body's
+                // `DefVar` copies the element out on the yielded edge, and
+                // the zeroed exhausted bytes must never release.
                 self.reg_values.insert(dest.0, temp);
                 Ok(())
             }

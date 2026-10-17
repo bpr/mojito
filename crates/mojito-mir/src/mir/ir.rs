@@ -2468,6 +2468,20 @@ pub enum MirInstr {
 const _: () = assert!(std::mem::size_of::<MirInstr>() <= 304);
 
 impl MirInstr {
+    /// The slot an owned `GetIter` consumes into an iterator slot of its
+    /// own: `(a^).__iter__()` ends `a`, as upstream's owned argument does.
+    pub fn consumed_iteration_source(&self) -> Option<VarId> {
+        match self {
+            Self::GetIter {
+                source,
+                dest,
+                mode: mojito_checked::checked::IterationMode::Owned,
+                prepare,
+            } if source != dest && !prepare.is_empty() => Some(*source),
+            _ => None,
+        }
+    }
+
     /// The checked error type a call instruction raises, if it raises.
     pub fn call_error(&self) -> Option<&Ty> {
         match self {

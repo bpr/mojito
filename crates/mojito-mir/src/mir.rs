@@ -2640,6 +2640,9 @@ struct Flatten<'a> {
     /// A borrowed loop's iterator slot over a runtime pack to its
     /// [`PackCursor`].
     pack_cursors: HashMap<VarId, PackCursor>,
+    /// A `for` loop's yield slot to the register its `try_next` stepped
+    /// into, until the body binds it past the exhaustion test.
+    pending_yields: HashMap<VarId, Reg>,
     runtime_aliases: std::collections::HashSet<VarId>,
     /// Persistent owner loans carried by reference-bearing aggregate variables.
     /// The runtime value contains the handles; this map transfers their static
@@ -4123,6 +4126,7 @@ fn lower_cfg_body(
             aliases: HashMap::new(),
             pack_sources: HashMap::new(),
             pack_cursors: HashMap::new(),
+            pending_yields: HashMap::new(),
             runtime_aliases: reference_parameters
                 .iter()
                 .take(cfg.n_params)

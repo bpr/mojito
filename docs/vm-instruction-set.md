@@ -766,7 +766,9 @@ iter.init $iterator
 
 Normalizes `$iterator` for a value or owned `for` loop by following the
 checker-selected `__iter__()` chain until it yields a nominal struct with
-`__next__`, with a defensive iteration-depth limit. Bundled ranges and
+`__next__`, with a defensive iteration-depth limit. The iterator lands in a
+slot of its own; an owned chain (`__iter__(var self)`) moves the source out
+of its slot, leaving it moved. Bundled ranges and
 collections take this same path as concrete user structs.
 
 ### `iter.try_next` — Advance A Typed-Raising Iterator
@@ -783,7 +785,8 @@ iterators use this path. An abstract value-result call may carry the verified
 `CopyIteratorReference` adapter: runtime dispatch consults the selected concrete
 declaration's ABI and, when it returns `ref T`, reads and lifecycle-copies the
 `Copyable` referent before writing `%dest`. Exhaustion is never interpreted as an
-adapter failure.
+adapter failure. A `for` loop stores `%dest` into its `$yield` slot only on the
+yielded edge, past the branch on `%yielded`.
 
 ### `iter.has_next` — Test Compiler-Private Iterator Storage
 

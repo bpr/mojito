@@ -435,23 +435,18 @@ fn split_iterator_slot_is_typed_by_its_iter_result() {
 }
 
 #[test]
-fn owned_iteration_slot_keeps_its_source_type() {
+fn owned_iteration_iterator_has_a_slot_of_its_own() {
     let source = "def main():\n    var l: List[Int] = [3, 4]\n    var s = 0\n\
                   \x20   for x in l^:\n        s += x\n    print(s)\n";
     let mir = driver_mir(source);
     let main = mir_function(&mir, "main");
-    assert!(
-        !main
-            .var_names
+    let slot = |prefix: &str| {
+        main.var_names
             .iter()
-            .any(|slot| slot.starts_with("$iterobj")),
-        "{main:#?}"
-    );
-    let source_slot = main
-        .var_names
-        .iter()
-        .position(|slot| slot.starts_with("$iter"))
-        .expect("$iter slot") as u32;
+            .position(|slot| slot.starts_with(prefix))
+            .map_or_else(|| panic!("{prefix} slot: {main:#?}"), |slot| slot as u32)
+    };
+    let (source_slot, iterator_slot) = (slot("$iter"), slot("$iterobj"));
     assert!(
         matches!(
             main.var_tys.get(&source_slot).map(Ty::kind),
@@ -459,6 +454,54 @@ fn owned_iteration_slot_keeps_its_source_type() {
         ),
         "{main:#?}"
     );
+    assert!(
+        matches!(
+            main.var_tys.get(&iterator_slot).map(Ty::kind),
+            Some(TyKind::Struct(name, _)) if name != "List"
+        ),
+        "{main:#?}"
+    );
+    let consumed = main
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .find_map(MirInstr::consumed_iteration_source);
+    assert_eq!(consumed, Some(source_slot), "{main:#?}");
+}
+
+#[test]
+fn try_next_yield_is_bound_past_the_exhaustion_test() {
+    let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct I:\n    var current: Int\n    var end: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        if self.current >= self.end:\n            raise StopIteration(0)\n        var result = self.current\n        self.current += 1\n        return result\n\n@fieldwise_init\nstruct C:\n    var end: Int\n    def __iter__(self) -> I:\n        return I(0, self.end)\n\ndef main():\n    for value in C(2):\n        print(value)\n";
+    let program = lower_program(&parse(source).expect("parse")).expect("checked lowering");
+    let main = mir_function(&program, "main");
+    let (stepping, element) = main
+        .blocks
+        .iter()
+        .enumerate()
+        .find_map(|(index, block)| {
+            block
+                .instrs
+                .iter()
+                .find_map(|instruction| match instruction {
+                    MirInstr::TryNext { dest, .. } => Some((index, *dest)),
+                    _ => None,
+                })
+        })
+        .expect("typed TryNext");
+    let binding = main
+        .blocks
+        .iter()
+        .position(|block| {
+            block.instrs.iter().any(
+                |instruction| matches!(instruction, MirInstr::DefVar { src, .. } if *src == element),
+            )
+        })
+        .expect("bound element");
+    assert!(
+        matches!(main.blocks[stepping].term, MirTerm::Branch { .. }),
+        "{main:#?}"
+    );
+    assert_ne!(stepping, binding, "{main:#?}");
 }
 
 #[test]

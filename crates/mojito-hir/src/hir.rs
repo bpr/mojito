@@ -155,9 +155,10 @@ pub enum HirInstr {
         element_ty: Ty,
     },
     /// Nominal iterator protocol: call a typed-raising `__next__` exactly once,
-    /// storing its exact result in `raw` and whether it yielded in `yielded`.
-    /// Raising the checked exhaustion type sets `yielded = False`; every other
-    /// runtime error propagates normally.
+    /// storing whether it yielded in `yielded`; its exact result is bound to
+    /// `raw` by the [`HirInstr::BindIteration`] past the exhaustion test, so
+    /// the exhausted edge never fills it. Raising the checked exhaustion type
+    /// sets `yielded = False`; every other runtime error propagates normally.
     TryNext {
         iter: VarId,
         raw: VarId,
@@ -165,7 +166,6 @@ pub enum HirInstr {
         /// Exact checker-selected reference/value result and effect contract.
         call: mojito_checked::checked::CheckedIteratorCall,
         exhaustion: Ty,
-        element_ty: Ty,
     },
     /// Adapt one raw iterator result into the user-visible target. This executes
     /// only in the yielded body, so reference copies and value moves never run on
@@ -1232,24 +1232,23 @@ impl Lower {
         // user variables; a monotone `vars.len()` suffix keeps them unique.
         let it_name = format!("$iter{}", self.vars.len());
         let it_var = self.var(&it_name);
-        // Every borrowed source is retained in its own slot — `it_var`
-        // holds either a `BorrowIter` reference handle to the named
-        // source or the `Bind`-bound owned temporary — and the iterator
-        // object lives in a distinct slot: `GetIter` normalization must
-        // not clobber the source the iterator still refers to. Only an
-        // empty-`prepare` iterable normalizes in place, and owned
-        // iteration (`__iter__(var self)`) consumes the source into the
-        // iterator, so both keep the single slot (retaining and dropping
-        // a consumed source again would double-free).
+        // The iterator `__iter__` returns is a value of its own type in a
+        // slot of its own, apart from `it_var`, which holds either a
+        // `BorrowIter` reference handle to the named source or the
+        // `Bind`-bound owned temporary: a borrowing `__iter__` must not
+        // clobber the source the iterator still refers to, and an owned
+        // one (`__iter__(var self)`) consumes the source, whose slot is
+        // empty from then on. Only an empty-`prepare` iterable, already
+        // compiler-private iterator storage, normalizes in place.
         // A `BorrowIter`'d source (borrowed origin present) is a loan of
-        // storage owned elsewhere; only a `Bind`'d owned temporary that
+        // storage owned elsewhere; only a `Bind`'d borrowed temporary that
         // the iterator may refer to is kept alive and dropped by the loop.
         let borrowed = protocol.borrowed_origin.is_some();
-        let split_source = matches!(
-            protocol.mode,
-            mojito_checked::checked::IterationMode::Borrowed
-        ) && (borrowed || !protocol.prepare.is_empty());
-        let loop_owns_source = split_source && !borrowed && protocol.source_retained;
+        let split_source = borrowed || !protocol.prepare.is_empty();
+        let loop_owns_source = split_source
+            && !borrowed
+            && protocol.source_retained
+            && protocol.mode == mojito_checked::checked::IterationMode::Borrowed;
         if let Some(origin) = protocol.borrowed_origin.clone() {
             self.push(HirInstr::BorrowIter {
                 dest: it_var,
@@ -1314,7 +1313,6 @@ impl Lower {
                         .clone()
                         .expect("raising iterator has checked __next__ contract"),
                     exhaustion,
-                    element_ty: binding_plan.yielded_ty.clone(),
                 });
             } else {
                 this.push(HirInstr::HasNext {

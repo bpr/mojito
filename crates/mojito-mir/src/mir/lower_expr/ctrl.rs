@@ -521,15 +521,13 @@ impl<'a> Flatten<'a> {
                         in_place: false,
                     });
                 }
-                // The same retained-source/iterator-object slot split as the
-                // statement path: a borrowed source stays in its own slot, so
-                // `GetIter` normalization cannot clobber the storage (or the
-                // reference handle) the iterator still refers to.
+                // The same source/iterator-object slot split as the
+                // statement path: the iterator is a value of its own type in
+                // its own slot, so `GetIter` normalization cannot clobber the
+                // storage (or the reference handle) a borrowing iterator
+                // still refers to, and an owned one empties the source.
                 let borrowed = protocol.borrowed_origin.is_some();
-                let split_source = matches!(
-                    protocol.mode,
-                    mojito_checked::checked::IterationMode::Borrowed
-                ) && (borrowed || !protocol.prepare.is_empty());
+                let split_source = borrowed || !protocol.prepare.is_empty();
                 let iterator_object = if split_source {
                     let object = self.var(&format!("$compiterobj{}", self.vars.len()));
                     self.var_types.insert(object, protocol.iterator_ty.clone());
@@ -616,7 +614,11 @@ impl<'a> Flatten<'a> {
                     MirTerm::Continue { label }
                 });
                 self.emit(MirInstr::Loop { label, body });
-                if split_source && !borrowed && protocol.source_retained {
+                if split_source
+                    && !borrowed
+                    && protocol.source_retained
+                    && protocol.mode == mojito_checked::checked::IterationMode::Borrowed
+                {
                     // An owned temporary source is used only by `GetIter` before
                     // the loop, so when the iterator may refer to its storage a
                     // liveness anchor at the exit keeps it live through the loop,

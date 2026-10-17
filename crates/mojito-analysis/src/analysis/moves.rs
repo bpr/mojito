@@ -617,6 +617,11 @@ pub(super) fn apply_effects(state: &mut [Node], i: &MirInstr, context: &MoveCont
         }
         // A named destructor's receiver: consumed by the call it follows.
         MirInstr::ConsumeVar { var } => state[*var as usize].do_move(&[]),
+        MirInstr::GetIter { .. } => {
+            if let Some(source) = i.consumed_iteration_source() {
+                state[source as usize].do_move(&[]);
+            }
+        }
         MirInstr::ConsumePlace { place, .. }
         | MirInstr::DropPlace { place, .. }
         | MirInstr::MarkDestroyed { place } => {

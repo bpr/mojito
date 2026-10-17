@@ -367,6 +367,8 @@ pub(super) fn vars_moved(i: &MirInstr) -> Vec<VarId> {
             .filter(|capture| capture.mode == MirCaptureMode::Move && capture.place.is_whole_root())
             .map(|capture| capture.place.root)
             .collect(),
+        // An owned `__iter__` consumes the iterable into the iterator.
+        MirInstr::GetIter { .. } => i.consumed_iteration_source().into_iter().collect(),
         _ => Vec::new(),
     }
 }

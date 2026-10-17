@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1093**.
+Next free ID: **R1095**.
 
 ## Ordered Work
 
@@ -56,6 +56,43 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
+- [ ] **R1093 Dropping an empty `Tuple()` fails MIR verification since
+  structs get a synthesized destructor**
+
+  `var t = Tuple()` then `print(len(t))` stops on the VM with "place names
+  parameter `*Ts` of `Tuple` that no enclosing declaration binds" after
+  `inline-parametric`, where it ran before.
+  - Probe: `assets/ok/pack_inferred_through_tuple.mojo`
+    (`count(Tuple())`) and `assets/ok/tuple_template_served.mojo`.
+  - Bisected to 8e39755f (R1041): splicing `Tuple`'s `nodebug`
+    destructor into `main` leaves a place naming `Tuple`'s own `*Ts`
+    unbound, an empty element list binding nothing.
+  - Bind the struct's pack to the dropped value's element list, the
+    empty one included, as the inliner binds a method's since R986.
+  - `benchmarks/instantiation.tsv` keeps both fixtures' rows from before,
+    so the ratchet reports them lost until this lands.
+  - Found while landing R1088 (2026-10-16).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1094 A converting default at a parametric struct's implicit
+  constructor fails MIR verification since omitted arguments are filled
+  at the call**
+
+  `assets/ok/constructor_reads_no_struct_parameter.mojo` stops on the VM
+  with "required compile-time value parameter 'n' is missing" in `main`,
+  where it ran before.
+  - Bisected to f55bbb08 (R1077): `f()` over `def f(t: Tag[3] = 5)` now
+    writes `Tag[3](5)` into the call, and the filled construction of an
+    owner-less constructor (R1000) does not carry `Tag`'s `n`.
+  - Fill a converting default with the constructor's application as the
+    parameter's checked type spells it, as the explicit `f(6)` lowers.
+  - `benchmarks/instantiation.tsv` keeps the fixture's row from before, so
+    the ratchet reports it lost until this lands.
+  - Found while landing R1088 (2026-10-16).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1090 A drop of a tuple's storage names no destructor per element;
   the backends find each element's from the type**
 
@@ -74,29 +111,6 @@ which names the upstream pass each one follows. Each is measured by the
     field's is since R1041.
   - An owned `VariadicPack`'s destruction is R1073's.
   - Found while landing R1085 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1088 A `for` loop's lowering stores its yield on the exhausted
-  edge and its owned iterator into the iterable's slot**
-
-  `iter.try_next`'s result is stored into the `$yield` slot before the
-  branch on `yielded`, so on the exhausted edge the slot holds nothing,
-  and an owned `for x in a^` normalizes the iterator into `a`'s own slot
-  (`iter.init { source: $a, dest: $a }`), whose declared type and named
-  destructor stay the iterable's; upstream binds the element inside the
-  body region and makes the iterator a value of its own type.
-  - Probe: `for var item in d^` over an `Optional[Res]`
-    (`assets/ok/optional_owning_api.mojo`), `for var x in a^` over an
-    `Array` (`assets/ok/array_fixed_size_core.mojo`), and every `for` over
-    a nominal iterator yielding a struct with a destructor.
-  - `mir::lower_whole_drops` keeps both drops as drops (a store of a
-    `try_next` result counts as conditional; an in-place `iter.init` ends
-    the slot's whole value), and Pliron's `conditional_values` and the
-    VM's `None` slot carry the exhausted edge.
-  - Bind the yield in the body region, as R877's structured drop
-    placement will, and give the owned iterator a slot of its own type.
-  - Found while landing R1043 (2026-10-16).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7272,6 +7286,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `drop_owned_pack` is its counterpart.
   - Once R743 declares the nominal `VariadicList` over the same layout,
     these become calls of its library methods and the backend arms go.
+  - Probe: an owned `for v in xs^` over a run-time pack normalizes the
+    pack in place (`iter.init` with no `prepare`), its slot holding a
+    backend cursor, where every nominal `__iter__` now makes an iterator
+    slot of its own type (R1088); the nominal `VariadicList` splits too.
   - Found while landing R1040 (2026-10-16).
   - Depends on R743.
   - Model: Opus, Not Planned.

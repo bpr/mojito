@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `for` loop over a nominal iterator now binds what `__next__` yields
+  only past its exhaustion test, in the body, so its yield slot is never
+  filled on the exhausted edge, and an owned `for x in a^` consumes `a`
+  into an iterator slot of its own, typed by `__iter__`'s result, whose
+  drop names the iterator's `__deinit__` rather than the iterable's
+  (R1088), as upstream binds the element in the body and makes the
+  iterator a value of its own type. Both drops are now destructor calls,
+  and Pliron's conditional drop flag for a `try_next` result is gone. No
+  fixture's output changes on either backend.
+
 - The test deciding where a `drop.var` becomes the call of its destructor
   is now a definite-initialization state that follows a `try`'s regions,
   as upstream's `CheckLifetimes` walks them, and tracks moved-out parts

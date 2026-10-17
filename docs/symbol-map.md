@@ -655,7 +655,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `lower_expr/ctrl.rs` comprehensions) read to decide whether a loop keeps its
   source alive and loaned. It also records `IterationProtocol::iterator_ty`,
   the `__iter__` result those two `GetIter` sites type a split iterator slot
-  with: a conformer's from `struct_iteration_protocol`, a bounded
+  with (every iterable with an `__iter__` step splits; an owned one's
+  consumed source is `MirInstr::consumed_iteration_source`, which the move,
+  drop, and whole-drop states and both backends read): a conformer's from `struct_iteration_protocol`, a bounded
   parameter's from its bound's own `__iter__` (`generic_iterator_ty`), with
   `origin_of(self)` resolved to the named source by
   `resolve_iterator_origin`. A borrowed loop over a named homogeneous

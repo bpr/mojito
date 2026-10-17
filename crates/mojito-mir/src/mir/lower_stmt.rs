@@ -199,7 +199,6 @@ impl<'a> Flatten<'a> {
                 yielded,
                 call,
                 exhaustion,
-                element_ty,
             } => {
                 let element = self.fresh_typed(
                     SourceSpan::new(None, DUMMY_SPAN),
@@ -215,12 +214,10 @@ impl<'a> Flatten<'a> {
                     exhaustion: exhaustion.clone(),
                     adapter_constructor: None,
                 });
-                self.emit(MirInstr::DefVar {
-                    var: *raw,
-                    src: element,
-                    binding_ty: Some(element_ty.clone()),
-                    in_place: false,
-                });
+                // The element is bound to `raw` only past the exhaustion
+                // test, in the body, so on the exhausted edge the slot was
+                // never filled.
+                self.pending_yields.insert(*raw, element);
                 self.emit(MirInstr::DefVar {
                     var: *yielded,
                     src: has_element,
@@ -235,6 +232,14 @@ impl<'a> Flatten<'a> {
                 plan,
                 binding,
             } => {
+                if let Some(element) = self.pending_yields.remove(raw) {
+                    self.emit(MirInstr::DefVar {
+                        var: *raw,
+                        src: element,
+                        binding_ty: Some(plan.yielded_ty.clone()),
+                        in_place: false,
+                    });
+                }
                 self.bind_iteration_result(plan, *raw, *dest, *iter, *binding);
             }
         }

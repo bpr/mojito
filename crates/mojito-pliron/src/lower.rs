@@ -258,7 +258,6 @@ pub fn lower_body(
         str_consts: HashMap::new(),
         str_runtime: HashMap::new(),
         owned_temps: HashMap::new(),
-        conditional_values: HashMap::new(),
         last_uses: HashMap::new(),
         position: (0, 0),
         erased: HashSet::new(),
@@ -457,10 +456,6 @@ struct FnLowering<'a> {
     /// heap buffers free directly after the temporary's last use, and no
     /// user destructor runs.
     owned_temps: HashMap<u32, Ty>,
-    /// Runtime presence for values produced only on one control-flow edge.
-    /// `TryNext` uses this to make the following loop binding inert on the
-    /// exhausted edge, including for types with observable destructors.
-    conditional_values: HashMap<u32, Value>,
     /// `(block, instruction)` of each register's final operand appearance;
     /// terminator uses record `usize::MAX`.
     last_uses: HashMap<u32, (usize, usize)>,
