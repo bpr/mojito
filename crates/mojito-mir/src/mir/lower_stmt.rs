@@ -2115,6 +2115,66 @@ impl<'a> Flatten<'a> {
         });
     }
 
+    /// Copy or move each copied or moved capture of nested `def` `info`,
+    /// declared at `at`, into the frame slot that holds that entry of its
+    /// environment ([`NestedInfo::holds_environment`]).
+    fn lower_nested_environment(&mut self, info: &NestedInfo, at: &SourceSpan) {
+        for capture in &info.captures {
+            let mode = match capture.kind {
+                mojito_ast::ast::CaptureKind::Copy => UseMode::Copy,
+                mojito_ast::ast::CaptureKind::Move => UseMode::Move,
+                mojito_ast::ast::CaptureKind::Imm
+                | mojito_ast::ast::CaptureKind::Mut
+                | mojito_ast::ast::CaptureKind::Ref => continue,
+            };
+            let ty = mir_nested_callable_ty(capture.ty.clone());
+            let place = self.capture_place(capture);
+            let direct = place.through.is_none()
+                && place.proj.is_empty()
+                && !self.runtime_aliases.contains(&place.root);
+            let src = if direct || mode == UseMode::Move {
+                let dest = self.fresh_typed(at.clone(), Some(place.root), ty.clone());
+                self.emit(MirInstr::UseVar {
+                    dest,
+                    var: place.root,
+                    mode,
+                    constructor: None,
+                });
+                dest
+            } else {
+                let value = self.read_slot(place.root, at.clone(), None);
+                let dest = self.fresh_typed(at.clone(), Some(place.root), ty.clone());
+                self.emit(MirInstr::CopyValue {
+                    dest,
+                    value,
+                    constructor: None,
+                });
+                dest
+            };
+            let key = (info.binding, capture.binding);
+            let var = if let Some(var) = self.environment.get(&key) {
+                *var
+            } else {
+                let name = format!("{}${}", info.source_name, capture.name);
+                let name = if self.vars.contains(&name) {
+                    format!("{name}$binding{}", info.binding.0)
+                } else {
+                    name
+                };
+                let var = self.var(&name);
+                self.environment.insert(key, var);
+                var
+            };
+            self.var_types.insert(var, ty.clone());
+            self.emit(MirInstr::DefVar {
+                var,
+                src,
+                binding_ty: Some(ty),
+                in_place: false,
+            });
+        }
+    }
+
     #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     fn lower_stmt_dispatch(&mut self, node: &CheckedStmt, hir: &'a hir::HirStmt) {
         let statement_binding = node.binding;
@@ -2615,16 +2675,20 @@ impl<'a> Flatten<'a> {
             ) => {}
 
             // A direct nested declaration lowers to nothing unless it needs
-            // a closure slot (`NestedInfo::slotted`): then it creates its
-            // closure exactly here, so copy and move captures snapshot or
-            // transfer before any following statement can mutate or use the
-            // source binding, and later uses load this internal slot.
+            // a closure slot (`NestedInfo::slotted`) or holds its
+            // environment (`NestedInfo::holds_environment`): then it creates
+            // its closure, or its environment's entries, exactly here, so
+            // copy and move captures snapshot or transfer before any
+            // following statement can mutate or use the source binding.
             (CheckedStmtOp::Def(def), _) => {
                 let info = statement_binding
                     .and_then(|binding| self.nested.get(&binding))
                     .filter(|info| info.materialized_here)
                     .cloned();
                 match info {
+                    Some(info) if info.holds_environment => {
+                        self.lower_nested_environment(&info, &node.location());
+                    }
                     Some(info) if !info.slotted => {}
                     Some(info) => {
                         self.lower_slotted_nested_def(&info, &def.name, node.location());

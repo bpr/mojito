@@ -10,8 +10,9 @@
 //! `hlcf.if`'s `RemoveStaticCondition` pattern keeps the arm a static
 //! condition takes; blocks the entry does not reach go, as MLIR's
 //! `eraseUnreachableBlocks` erases them; an instruction that folds to one of
-//! its operands ([`MirInstr::forwarded_operand`], an identity `value.copy`)
-//! is replaced by that operand in every reader, as MLIR's greedy driver
+//! its operands ([`MirInstr::forwarded_operand`], an identity `value.copy`,
+//! or a copy of a closure of reference captures, a struct of pointers) is
+//! replaced by that operand in every reader, as MLIR's greedy driver
 //! applies a `fold` that returns an operand; and an instruction whose
 //! results nothing reads goes when it has no effect but reading
 //! ([`MirInstr::would_be_trivially_dead`]), repeated until nothing changes.
@@ -403,13 +404,34 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
     let definitions = definition_counts(blocks, *n_regs);
     let mut reads = vec![0_u32; *n_regs as usize];
     count_register_reads(blocks, &mut reads);
+    let mut closures = HashSet::new();
+    visit_blocks(blocks, &mut |block| {
+        for instruction in &block.instrs {
+            if let MirInstr::MakeClosure { dest, .. } = instruction
+                && instruction.would_be_trivially_dead()
+            {
+                closures.insert(dest.0);
+            }
+        }
+    });
+    // A copy of a closure of reference captures copies its pointers.
+    let copied_closure = |instruction: &MirInstr| match instruction {
+        MirInstr::CopyValue { dest, value, .. }
+            if closures.contains(&value.0) && reg_types.get(&dest.0) == reg_types.get(&value.0) =>
+        {
+            Some(*value)
+        }
+        _ => None,
+    };
     let mut folds = HashMap::new();
     visit_blocks(blocks, &mut |block| {
         for instruction in &block.instrs {
             let mut results = Vec::new();
             instruction_result_regs(instruction, &mut results);
             if let (Some(operand), [dest]) = (
-                instruction.forwarded_operand(reg_types, declarations),
+                instruction
+                    .forwarded_operand(reg_types, declarations)
+                    .or_else(|| copied_closure(instruction)),
                 results.as_slice(),
             ) {
                 folds.insert(dest.0, operand);
@@ -418,9 +440,10 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
     });
     let single = |reg: u32, most: u32| definitions.get(reg as usize).is_some_and(|n| *n <= most);
     let in_register = |reg: &Reg| {
-        reg_types
-            .get(&reg.0)
-            .is_some_and(|ty| copy_is_identity(ty.kind()))
+        closures.contains(&reg.0)
+            || reg_types
+                .get(&reg.0)
+                .is_some_and(|ty| copy_is_identity(ty.kind()))
     };
     let sole_reader = |reg: &Reg| reads.get(reg.0 as usize) == Some(&1);
     folds.retain(|dest: &u32, operand: &mut Reg| {

@@ -311,8 +311,9 @@ impl Specializer<'_> {
     }
 
     /// Point each direct call, closure, and function value of a region copy
-    /// that names a body nested in `template` inside the region at that
-    /// body's instance under the copy's `iteration`: the nested body is a
+    /// that names a body nested in `template` inside the region, or in a
+    /// body nested there ([`Self::region_binders_up_to`]), at that body's
+    /// instance under the copy's `iteration`: the nested body is a
     /// generator over the region's binders, as over its enclosing
     /// declaration's, so each clone of the region declares its own. A
     /// generic nested body names the copy's generator instead, whose calls
@@ -338,18 +339,16 @@ impl Specializer<'_> {
                     func: mojito_mir::mir::FuncRef(target),
                     ..
                 } => {
-                    let Some(generic) =
-                        self.declarations
-                            .get(target.as_str())
-                            .and_then(|declaration| {
-                                (declaration.enclosing.as_deref() == Some(template)
-                                    && !declaration.region_binders.is_empty()
-                                    && declaration
-                                        .region_binders
-                                        .iter()
-                                        .all(|decl| iteration.values.contains_key(&decl.binder())))
-                                .then_some(!declaration.param_decls.is_empty())
-                            })
+                    let Some(generic) = self
+                        .region_binders_up_to(target, template)
+                        .filter(|binders| {
+                            !binders.is_empty()
+                                && binders
+                                    .iter()
+                                    .all(|binder| iteration.values.contains_key(binder))
+                        })
+                        .and_then(|_| self.declarations.get(target.as_str()))
+                        .map(|declaration| !declaration.param_decls.is_empty())
                     else {
                         continue;
                     };
@@ -384,6 +383,24 @@ impl Specializer<'_> {
         Ok(())
     }
 
+    /// The binders of the regions body `target` and each body it is nested
+    /// in below `template` are declared in, when `template` encloses it: a
+    /// body nested in a region body that was inlined into `template` is a
+    /// generator over both regions' binders, as one nested in `template`'s
+    /// own region is over that region's.
+    fn region_binders_up_to(&self, target: &str, template: &str) -> Option<Vec<ParamRef>> {
+        let mut binders = Vec::new();
+        let mut link = self.declarations.get(target)?;
+        loop {
+            binders.extend(link.region_binders.iter().map(ParamDecl::binder));
+            let enclosing = link.enclosing.as_deref()?;
+            if enclosing == template {
+                return Some(binders);
+            }
+            link = self.declarations.get(enclosing)?;
+        }
+    }
+
     /// The slots of a loop body that bind a closure or function value
     /// naming a body nested in `template` over the loop's `binder`: each
     /// copy binds the instance of its own iteration, so each copy's slot is
@@ -405,15 +422,8 @@ impl Specializer<'_> {
                     dest,
                     k: Const::Function(function),
                 } => self
-                    .declarations
-                    .get(function.as_str())
-                    .is_some_and(|declaration| {
-                        declaration.enclosing.as_deref() == Some(template)
-                            && declaration
-                                .region_binders
-                                .iter()
-                                .any(|decl| decl.binder() == *binder)
-                    })
+                    .region_binders_up_to(function, template)
+                    .is_some_and(|binders| binders.contains(binder))
                     .then_some(dest.0),
                 _ => None,
             })

@@ -695,10 +695,16 @@ policy or data-model responsibilities to focused children:
   of a nested `def` by name is a direct `call` of the lifted function
   passing the captured places as its leading reference arguments
   (`Flatten::lower_nested_call`), as the pin calls the lifted closure
-  generator; a closure (`closure.make`) is made at a first-class use, or
-  at the declaration when a capture is copied or moved or a sibling
-  captures the closure itself (`NestedInfo::slotted`), and only a body
-  with a copied or moved capture is called through its closure value.
+  generator. A body with a copied or moved capture and no use but calls
+  by name holds its environment in its declaring frame
+  (`NestedInfo::holds_environment`): the declaration copies or moves each
+  such capture into a slot of its own, and a call passes that slot, the
+  shape upstream's SROA leaves of the closure's `__storage` struct. A
+  closure (`closure.make`) is made at a first-class use, or at the
+  declaration when a capture is copied or moved and the body has another
+  use, or a sibling captures the closure itself (`NestedInfo::slotted`),
+  and only such a slotted body with a copied or moved capture is called
+  through its closure value.
 - `backend/vm.rs` drives execution; `backend/vm/calls.rs` owns runtime argument
   binding and construction, while `backend/vm/places.rs` owns projected storage
   navigation and access; further `impl VmBackend` clusters live in
@@ -5324,9 +5330,19 @@ point where a slot declared in a loop is uninitialized again.
   pass resolves that register through `mir::callable_targets` over the
   caller, or the `const function` the block defines, and binds the slot to
   the function as a constant (the private `SlotValue::Function`), deleting
-  its drops and clearing a `call.indirect`'s `callee_place` rooted at it; a
-  register naming a closure with captures, or nothing, keeps the call
-  (R1080). A callable-bound type binder binds as any type. An origin
+  its drops and clearing a `call.indirect`'s `callee_place` rooted at it.
+  A register naming a closure of reference captures the caller makes binds
+  the slot to that closure (`CallableArgument::Closure`): the inlined entry
+  stores it there at the closure's type, so the body's call through the
+  slot inlines as a call through a caller's closure, and the call's
+  `capture_accesses` are that closure's (`accessed_through`); one naming a
+  closure with a copied or moved capture, or nothing, keeps the call. A
+  body declared in a `comptime for` inlines where the binders of its
+  regions are in scope: the caller's own, or a `comptime for` enclosing the
+  call (`Inliner::unscoped_region_binders`, `LoopBodies`), as upstream
+  inlines a generator in the loop it unrolls; the elaborator then
+  instantiates a body nested in it from the caller's unrolled copy
+  (`Specializer::region_binders_up_to`). A callable-bound type binder binds as any type. An origin
   argument binds no binder (the private `without_origins`): the MIR
   declaration's binders are its type and value parameters, and the body's
   origin parameters stay symbolic in the caller as in an instance. A
@@ -5458,7 +5474,12 @@ point where a slot declared in a loop is uninitialized again.
   once drops are elaborated.
   A destructor or copy constructor takes the slot's address, so its type is
   never one, as upstream's never is; a borrow, capture, loan, projection,
-  iterator, or cleanup list keeps the slot. A forward dataflow over the
+  iterator, or cleanup list keeps the slot. A slot every store of which is
+  a `closure.make` of reference captures is promoted at any type: that
+  closure is a struct of pointers, trivially register-passable as
+  upstream's is, and a `call.indirect` through the slot keeps it;
+  `canonicalize` then forwards a `value.copy` of such a closure and erases
+  the unread `closure.make` (`MirInstr::would_be_trivially_dead`). A forward dataflow over the
   list's blocks (a `try`'s escapes taking the state at the `try`) finds
   each read's reaching store; when every read sees exactly one, that store
   lies on every path to the read and its register's definition before it,
@@ -5716,7 +5737,8 @@ point where a slot declared in a loop is uninitialized again.
   nested body by name is a direct call of it (R1037), which names the
   reduced generator and drops the removed operands as any direct call
   does; only a body a closure or function value names (a function value
-  passed on, a copied or moved capture, a sibling-captured closure) keeps
+  passed on, a copied or moved capture of a body used other than by name,
+  a sibling-captured closure) keeps
   a full instance beside the reduced one
   (`Specializer::instantiate_nested_bodies`), and the enclosing function
   reads every binder through such a body, whose entry joins the snapshot

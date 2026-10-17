@@ -1,0 +1,76 @@
+  functions: [
+      fn {
+        name: outer,
+        registers: 8,
+        vars: 3,
+        var_names: [x, "take$x", "x$inline2"],
+        params: 1,
+        param_types: [Int],
+        owned_params: [true],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }, reg_type { reg: %r5, type: IntLiteral }, reg_type { reg: %r6, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: move },
+              var.store { var: $v1, src: %r0, binding_type: present(Int), in_place: false },
+              place.load { dest: %r1, place: place { root: $v1, root_type: present(Int), projections: [], type: present(Int), through: absent } }
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb1 {
+            instructions: [
+              ref.make { dest: %r4, place: place { root: $v1, root_type: present(Int), projections: [], type: present(Int), through: absent } },
+              ref.read { dest: %r3, reference: %r4 },
+              const { dest: %r5, value: int_literal(2) },
+              literal.materialize { dest: %r6, value: %r5, target: Int },
+              binary { op: mul, dest: %r2, a: %r3, b: %r6, resolved: absent, raises: absent }
+            ],
+            terminator: jump { target: bb2 }
+          },
+          bb2 {
+            instructions: [
+              drop.var { var: $v1 }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      },
+      fn {
+        name: "outer$take",
+        registers: 5,
+        vars: 1,
+        var_names: [x],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [true],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              ref.make { dest: %r1, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: present($v0) } },
+              ref.read { dest: %r0, reference: %r1 },
+              const { dest: %r2, value: int_literal(2) },
+              literal.materialize { dest: %r3, value: %r2, target: Int },
+              binary { op: mul, dest: %r4, a: %r0, b: %r3, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r4) }
+          }
+        ]
+      }
+  ]

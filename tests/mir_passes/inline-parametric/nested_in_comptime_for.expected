@@ -1,0 +1,111 @@
+  functions: [
+      fn {
+        name: outer,
+        registers: 11,
+        vars: 2,
+        var_names: [s, "s$inline1"],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: None }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r10, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }, reg_loc { reg: %r10, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(0) },
+              literal.materialize { dest: %r1, value: %r0, target: Int },
+              var.store { var: $v0, src: %r1, binding_type: present(Int), in_place: false }
+            ],
+            terminator: jump { target: bb2 }
+          },
+          bb1 {
+            instructions: [
+              var.use { dest: %r4, var: $v0, mode: copy },
+              drop.var { var: $v0 }
+            ],
+            terminator: return { value: present(%r4) }
+          },
+          bb2 {
+            instructions: [
+            ],
+            terminator: comptime_for.iterator { binder: binder { owner: "$comptime_for@comptime_for.mojo:56..64", slot: 0, name: "$iter" }, initial: param_apply { function: "$comptime$outer$0", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), args: [] }, has_next: param_apply { function: "__module$std$builtin$$stubs$paramfor_has_next", type: meta_value(Bool), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@comptime_for.mojo:56..64", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }, next_iter: param_apply { function: "__module$std$builtin$$stubs$paramfor_next_iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@comptime_for.mojo:56..64", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }, next_value: param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@comptime_for.mojo:56..64", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }, body: bb3, exit: bb1 }
+          },
+          bb3 {
+            instructions: [
+            ],
+            terminator: comptime_branch { condition: eq { left: operand_expr(param_apply { function: "__module$std$builtin$$stubs$paramfor_has_next", type: meta_value(Bool), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@comptime_for.mojo:56..64", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }), right: operand_value(ct_bool(true)) }, then: bb5, else: bb6 }
+          },
+          bb4 {
+            instructions: [
+            ],
+            terminator: return { value: absent }
+          },
+          bb5 {
+            instructions: [
+              place.load { dest: %r2, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } }
+            ],
+            terminator: jump { target: bb7 }
+          },
+          bb6 {
+            instructions: [
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb7 {
+            instructions: [
+              ref.make { dest: %r6, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } },
+              ref.read { dest: %r5, reference: %r6 },
+              const { dest: %r7, value: param(param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@comptime_for.mojo:56..64", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }) },
+              binary { op: add, dest: %r8, a: %r5, b: %r7, resolved: absent, raises: absent },
+              ref.make { dest: %r10, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } },
+              ref.write { reference: %r10, value: %r8 }
+            ],
+            terminator: jump { target: bb8 }
+          },
+          bb8 {
+            instructions: [
+              const { dest: %r3, value: none }
+            ],
+            terminator: jump { target: bb2 }
+          }
+        ]
+      },
+      fn {
+        name: "outer$add",
+        registers: 6,
+        vars: 1,
+        var_names: [s],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [true],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r5, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              ref.make { dest: %r1, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: present($v0) } },
+              ref.read { dest: %r0, reference: %r1 },
+              const { dest: %r2, value: param(param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@comptime_for.mojo:56..64", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }) },
+              binary { op: add, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent },
+              ref.make { dest: %r5, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: present($v0) } },
+              ref.write { reference: %r5, value: %r3 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      }
+  ]

@@ -13,7 +13,10 @@
 //! `var.consume`).
 //! A destructor or copy constructor would take the slot's address, so a
 //! type with either is never one, as upstream's never is; a borrow, a
-//! capture, a loan, or a projected place keeps the slot too.
+//! capture, a loan, or a projected place keeps the slot too. A slot every
+//! store of which is a closure of reference captures is one too: that
+//! closure is a struct of pointers, trivially register-passable as
+//! upstream's is, and a call through the slot keeps it.
 //!
 //! Upstream walks structured `hlcf` regions and carries an allocation
 //! stored inside one across it as region arguments and results. A MIR body
@@ -243,6 +246,8 @@ fn promotable(
     let definitions = definition_counts(&mut function.blocks, function.n_regs);
     let mut reads = vec![0_u32; function.n_regs as usize];
     count_register_reads(&mut function.blocks, &mut reads);
+    let mut closures = HashSet::new();
+    reference_closures(&function.blocks, &mut closures);
     let mut lists = Vec::new();
     collect_lists(&function.blocks, true, &mut lists);
     let mut census: HashMap<VarId, Census> = HashMap::new();
@@ -251,9 +256,13 @@ fn promotable(
     }
     let candidate = |var: VarId, entry: &Census| {
         let typed = function.var_tys.get(&var);
+        let stores_closures = entry.mentions.iter().all(|(_, mention)| match *mention {
+            Mention::Store(src) => closures.contains(&src.0),
+            Mention::Read { .. } | Mention::Kill => true,
+        });
         (var as usize >= function.n_params || entry_stored.contains(&var))
             && !entry.kept
-            && typed.is_some_and(|ty| promotable_type(ty, declarations))
+            && typed.is_some_and(|ty| promotable_type(ty, declarations) || stores_closures)
             && entry.mentions.iter().all(|(_, mention)| match *mention {
                 Mention::Store(src) => {
                     function.reg_types.get(&src.0) == typed
@@ -305,6 +314,22 @@ fn promotable(
         );
     }
     promotion
+}
+
+/// The registers `blocks`, its regions included, defines by a
+/// `closure.make` of reference captures: a struct of pointers, trivially
+/// register-passable as upstream's closure of borrows is.
+fn reference_closures(blocks: &[MirBlock], closures: &mut HashSet<u32>) {
+    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+        for region in instruction_regions(instruction) {
+            reference_closures(region, closures);
+        }
+        if let MirInstr::MakeClosure { dest, .. } = instruction
+            && instruction.would_be_trivially_dead()
+        {
+            closures.insert(dest.0);
+        }
+    }
 }
 
 /// Whether a slot of `ty` may be promoted: a trivially register-passable

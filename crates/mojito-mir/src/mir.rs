@@ -2661,6 +2661,10 @@ struct Flatten<'a> {
     /// into, until the body binds it past the exhaustion test.
     pending_yields: HashMap<VarId, Reg>,
     runtime_aliases: std::collections::HashSet<VarId>,
+    /// The frame slot holding each copied or moved capture of a nested
+    /// `def` that holds its environment ([`NestedInfo::holds_environment`]),
+    /// keyed by the declaration's binding and the capture's.
+    environment: HashMap<(mojito_types::origin::OwnerId, mojito_types::origin::OwnerId), VarId>,
     /// Persistent owner loans carried by reference-bearing aggregate variables.
     /// The runtime value contains the handles; this map transfers their static
     /// loans when an aggregate is moved or forwarded into a new binding.
@@ -4016,14 +4020,20 @@ struct NestedInfo {
     materialized_here: bool,
     /// True when the declaration statement makes the closure and stores it
     /// in a slot of its own, which later uses load: the body copies or
-    /// moves a capture, which the statement snapshots before any following
-    /// statement can change the source, or a sibling captures the closure
-    /// itself, whose place the sibling's call and environment name.
-    /// Otherwise the statement lowers to nothing: a call by name is a
-    /// direct call of the lifted body, and a first-class use makes the
-    /// closure where it stands, as the pin takes the function value at
-    /// the use.
+    /// moves a capture and has a use other than a call by name in its
+    /// declaring body, or a sibling captures the closure itself, whose
+    /// place the sibling's call and environment name. Otherwise the
+    /// statement makes no closure: a call by name is a direct call of the
+    /// lifted body, and a first-class use makes the closure where it
+    /// stands, as the pin takes the function value at the use.
     slotted: bool,
+    /// True when the body copies or moves a capture and is only called by
+    /// name in its declaring body: the declaration statement copies or
+    /// moves each such capture into a frame slot of its own, its closure
+    /// environment's entry, and a call by name passes that slot as the
+    /// lifted body's leading reference argument, the shape upstream's SROA
+    /// leaves of the closure's `__storage` struct.
+    holds_environment: bool,
     /// Captured enclosing-local names, in a deterministic (sorted) order shared by
     /// the lifted function's parameter list and every rewritten call site.
     captures: Vec<NestedCapture>,
@@ -4150,6 +4160,7 @@ fn lower_cfg_body(
                 .enumerate()
                 .filter_map(|(slot, reference)| reference.then_some(slot as VarId))
                 .collect(),
+            environment: HashMap::new(),
             aggregate_loans: HashMap::new(),
             conversion_view_loans: HashMap::new(),
             pending_argument_anchors: Vec::new(),

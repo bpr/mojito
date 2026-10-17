@@ -2521,8 +2521,9 @@ impl MirInstr {
     /// - a move, forward, or place move: each ends a slot;
     /// - an operator: a generic operand's becomes a dunder call per instance,
     ///   and built-in division traps;
-    /// - a tuple, variant, or closure construction: it takes or copies owned
-    ///   operands; a type construction runs an initializer;
+    /// - a tuple or variant construction, or a closure of a copied or moved
+    ///   capture: it takes or copies owned operands; a type construction
+    ///   runs an initializer;
     /// - `rebind`, a place read through an index, variant, uninit-payload, or
     ///   rebind projection: each calls `__getitem__`, traps, or is an
     ///   assertion the elaborator judges per instance;
@@ -2549,6 +2550,12 @@ impl MirInstr {
             | Self::SimdCast { .. }
             | Self::SimdBitcast { .. }
             | Self::SimdShuffle { .. } => true,
+            // A closure of reference captures is a struct of pointers to
+            // the captured places, as upstream's trivially register-passable
+            // closure is; a copied or moved capture runs its constructor.
+            Self::MakeClosure { captures, .. } => captures
+                .iter()
+                .all(|capture| capture.mode == MirCaptureMode::Reference),
             Self::UseVar { mode, .. } => matches!(mode, UseMode::BorrowShared | UseMode::BorrowMut),
             Self::LoadPlace { place, .. } | Self::MakeRef { place, .. } => reads_storage(place),
             Self::EstablishLoans { .. }
@@ -2556,7 +2563,6 @@ impl MirInstr {
             | Self::Rebind { .. }
             | Self::CopyValue { .. }
             | Self::WriteRef { .. }
-            | Self::MakeClosure { .. }
             | Self::KeepAlive { .. }
             | Self::ConstructTypeParam { .. }
             | Self::ConstructType { .. }

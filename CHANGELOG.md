@@ -8,6 +8,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `inline-parametric` now inlines a call of a nested `def` whose closure
+  the caller did not show, as the pin does (R1080). A body with a copied
+  or moved capture that is only called by name holds each such capture in
+  a frame slot of its own, copied or moved at the declaration, and a call
+  passes that slot, the shape upstream's SROA leaves of the closure's
+  storage; so a call of it inlines, and its unused arguments go (R1038).
+  The snapshot now ends after its last call and before its source, as the
+  pin destroys the closure's storage.
+  A body declared in a `comptime for` inlines inside the loop, and the
+  elaborator instantiates a body nested in it from the caller's unrolled
+  copy. A callable binder bound to a closure of reference captures binds
+  to that closure, so the callee and the closure's body both inline. A
+  closure of reference captures counts as trivially register-passable:
+  `mem-2-reg` promotes its slot, `canonicalize` forwards its copies, and
+  an unread `closure.make` is erased. New fixture
+  `assets/ok/nested_def_inline_shapes.mojo`; residues R1104 and R1105.
 - `inline-parametric` now inlines every call that collects or spreads
   arguments into a `nodebug`, `builtin`, or small `@always_inline` callee,
   as the pin inlines them (R1079): the call's block builds a positional

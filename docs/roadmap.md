@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1104**.
+Next free ID: **R1106**.
 
 ## Ordered Work
 
@@ -140,28 +140,28 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1102.
   - Model: Opus, Not Planned.
 
-- [ ] **R1080 `inline-parametric` keeps a call of a nested `def` whose
-  closure the caller does not show**
+- [ ] **R1104 A copy- or move-capturing nested `def` that a sibling
+  captures keeps its closure, and every call of it goes through that
+  closure**
 
-  A nested `def` with a copied or moved capture (`{var x}`, `{x^}`), one
-  called through a sibling's captured closure (`def twice() {get}`), one
-  declared in a `comptime for`, and a callee passed a capturing closure as
-  its callable binder (`apply[plus](3)`) keep their calls, where the pin
-  inlines them.
-  - Such a body's closure also stays made, stored, and dropped after its
-    call inlines, where upstream erases it.
-  - A call by name is a direct call passing its captures (R1037); a call
-    through a captured sibling closure or of a copy- or move-capturing
-    body still goes through the closure.
-  - Bind a copied or moved capture to the closure environment's entry, a
-    `comptime for` index slot to the caller's loop binder, and a capturing
-    callable binder through R1078's map.
-  - Erase a closure slot nothing reads but its drop, and its `closure.make`.
-  - Done when each shape inlines in a pass test,
-    `tests/mir_passes/inline-parametric/nested_captures.mir`'s callers keep
-    no closure, and the differential is clean.
-  - Depends on R1037, R1078.
-  - Model: Opus, Planned.
+  `def inc() {var x}` captured by `def twice() {inc}` still makes its
+  closure at the declaration, and its calls by name and the sibling's
+  calls through it stay `call.indirect`, where the pin inlines them all.
+  - Upstream's closure is a `__storage` struct whose fields are the
+    captures, so a call through it binds the body's captures to those
+    fields; MIR has no place naming a closure value's environment entry,
+    so `inline-parametric` refuses a copied or moved capture it would
+    reach only through the closure.
+  - A body used only by name holds its environment in frame slots
+    (`NestedInfo::holds_environment`) and inlines; a sibling-captured one
+    could hold the same slots, with the sibling capturing them by
+    reference instead of the closure.
+  - Probe: `outer(4)` over `inc` and `twice` above, returning
+    `twice() + inc()`, prints 15 on the pin and on the VM and keeps three
+    `call.indirect` and one `closure.make` in concrete MIR.
+  - Found while landing R1080 (2026-10-17).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1081 `inline-parametric` keeps destructor calls that a drop
   does not spell as a call**
@@ -520,20 +520,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1038 A nested `def` with a copied or moved capture keeps its
-  unused arguments**
-
-  `vc(x) {var j}` returning `j + 1` keeps `x`, where the pin's
-  `vc(Int)_REMOVED_ARG(i64)` keeps only the capture.
-  - A body with a copied or moved capture keeps its statement-made
-    closure and is called through it (`call.indirect`), so its calls name
-    the full instance, never the reduced generator.
-  - Pass the closure's environment entry as the capture argument, as R962
-    needs for inlining.
-  - Found while landing R1014 (2026-10-16).
-  - Depends on R1037, R1080.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1039 A nested `def` declared in a `comptime for` keeps its
   unused arguments**
 
@@ -659,6 +645,23 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R879 (structured bodies at the seam), R886 (region values),
     R880 (regions cloned).
   - Model: Fable, Planned.
+
+- [ ] **R1105 `mem-2-reg` keeps a slot that a body reads through a
+  reference the same block makes**
+
+  After an inlined body reads a captured or environment slot, the caller
+  holds `ref.make` of the slot and `ref.read` through it, and the slot
+  stays in memory, where upstream's inlined `ref` parameter is the
+  allocation's own address and its loads promote.
+  - `mem-2-reg` counts a `ref.make` as a borrow, which keeps the slot.
+  - A `ref.read` of a whole-root `ref.make` the same block made, with no
+    store between, is a load of the slot.
+  - Probe: `outer(4)` over `def get() {imm y} -> Int: return y + 1`
+    (`y` a local copy of `x`) keeps a `ref.make` and a `ref.read` of `y`
+    in concrete `outer`; so does `def inc() {var x}`'s environment slot.
+  - Found while landing R1080 (2026-10-17).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R928 Aggregate slots are not split, where upstream's `SROA` gives
   each element its own allocation**

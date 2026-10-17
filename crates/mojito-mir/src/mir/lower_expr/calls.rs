@@ -379,18 +379,31 @@ impl<'a> Flatten<'a> {
     }
 
     /// Whether a call of `info` by name is a direct call of its lifted
-    /// body: every capture is a reference capture, and the frame holds
-    /// each captured place, its own local or a forwarded environment
-    /// parameter.
+    /// body: the frame holds each captured place, its own local or a
+    /// forwarded environment parameter for a reference capture, and the
+    /// environment slot of a copied or moved one
+    /// ([`NestedInfo::holds_environment`]).
     pub(in crate::mir) fn calls_nested_directly(&self, info: &NestedInfo) -> bool {
-        info.captures.iter().all(|capture| {
-            matches!(
-                capture.kind,
-                mojito_ast::ast::CaptureKind::Imm
-                    | mojito_ast::ast::CaptureKind::Mut
-                    | mojito_ast::ast::CaptureKind::Ref
-            ) && (info.materialized_here || self.owner_vars.contains_key(&capture.binding))
+        info.captures.iter().all(|capture| match capture.kind {
+            mojito_ast::ast::CaptureKind::Imm
+            | mojito_ast::ast::CaptureKind::Mut
+            | mojito_ast::ast::CaptureKind::Ref => {
+                info.materialized_here || self.owner_vars.contains_key(&capture.binding)
+            }
+            mojito_ast::ast::CaptureKind::Copy | mojito_ast::ast::CaptureKind::Move => self
+                .environment
+                .contains_key(&(info.binding, capture.binding)),
         })
+    }
+
+    /// The place a call of `info` by name passes for `capture`: the
+    /// environment slot holding a copied or moved capture, else the
+    /// captured place.
+    fn nested_capture_argument(&mut self, info: &NestedInfo, capture: &NestedCapture) -> MirPlace {
+        match self.environment.get(&(info.binding, capture.binding)) {
+            Some(var) => MirPlace::root(*var, self.var_types.get(var).cloned()),
+            None => self.capture_place(capture),
+        }
     }
 
     /// The direct call of the lifted body of `info`: its captured places,
@@ -417,7 +430,7 @@ impl<'a> Flatten<'a> {
             .captures
             .iter()
             .map(|capture| {
-                let place = self.capture_place(capture);
+                let place = self.nested_capture_argument(info, capture);
                 let ty = place.ty.clone().unwrap_or_else(|| capture.ty.clone());
                 let dest = self.fresh_typed(call.location(), Some(place.root), ty);
                 self.emit(MirInstr::LoadPlace {
@@ -465,13 +478,18 @@ impl<'a> Flatten<'a> {
         d
     }
 
-    /// Keep the owners of the reference captures of `info` alive through
-    /// a call of it.
+    /// Keep the owners of the reference captures of `info`, and the
+    /// environment slots of its copied or moved ones, alive through a call
+    /// of it.
     fn emit_capture_keepalives(&mut self, info: &NestedInfo) {
         let mut owners = Vec::new();
         let mut seen = HashSet::new();
         for capture in &info.captures {
-            self.collect_capture_keepalives(capture, &mut owners, &mut seen);
+            match self.environment.get(&(info.binding, capture.binding)) {
+                Some(var) if !owners.contains(var) => owners.push(*var),
+                Some(_) => {}
+                None => self.collect_capture_keepalives(capture, &mut owners, &mut seen),
+            }
         }
         for var in owners {
             self.emit(MirInstr::KeepAlive { var });

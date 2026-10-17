@@ -281,7 +281,7 @@ folds the operators over it (R840);
    through a reference the block made included, or a fresh slot for an
    owned, scalar, or trivially copied one. What still keeps a call: keywords
    collected afresh into `**kwargs` (R1070),
-   a closure the caller does not show (R1080), a destructor a drop does
+   a copy- or move-capturing body a sibling captures (R1104), a destructor a drop does
    not spell as a call (R1081), `conforms_to` over a concrete binding
    (R1096), `T()` at a concrete `T` (R1097), and an argument with no place
    or slot form (R1099); a small plain `@always_inline` callee inlines too

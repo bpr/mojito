@@ -75,7 +75,7 @@ pub(super) fn lower_fn_nested(
         overloads,
     } = request;
     let children = analyze_root_children(checked, name, statements);
-    let registry = scope_registry(&children, &HashMap::new());
+    let registry = scope_registry(checked, statements, &children, &HashMap::new());
 
     let cfg = returned.map_or_else(
         || Cfg::build_checked_fn(checked, param_names, statements),
@@ -163,6 +163,26 @@ pub(super) fn lower_fn_nested(
             },
         );
     }
+}
+
+/// `RuntimePack` distinguishes per-position variadic checking but is not a
+/// runtime value type. A nested direct call is lowered through a closure-value
+/// register, so erase that declaration-only discriminator to the Tuple storage
+/// actually carried by the lifted function's single collector slot.
+pub(super) fn mir_nested_callable_ty(mut ty: Ty) -> Ty {
+    if let Some(TyKind::RuntimePack(elements)) = ty
+        .callable()
+        .and_then(|func| func.variadic.as_ref())
+        .map(Ty::kind)
+    {
+        let storage = Ty::new(TyKind::Tuple(elements.clone()));
+        ty.update(|kind| {
+            if let Some(func) = kind.callable_mut() {
+                func.variadic = Some(storage);
+            }
+        });
+    }
+    ty
 }
 
 /// Collect the declarations belonging to one lexical function scope (those in
@@ -346,12 +366,18 @@ fn analyze_node(
     }
 }
 
-/// Build the callable registry visible in one lexical function. Direct
-/// declarations and inherited callables are keyed by checked identity, so
-/// same-spelled bindings coexist without shadow-removal heuristics. A
-/// direct declaration is slotted ([`NestedInfo::slotted`]) when it copies
-/// or moves a capture or a sibling captures it.
+/// Build the callable registry visible in one lexical function, whose
+/// body is statement nodes `statements`. Direct declarations and inherited
+/// callables are keyed by checked identity, so same-spelled bindings
+/// coexist without shadow-removal heuristics. A direct declaration that
+/// copies or moves a capture holds its environment in the frame
+/// ([`NestedInfo::holds_environment`]) when every use of it is a call by
+/// name in this body; it is slotted ([`NestedInfo::slotted`]) when it
+/// copies or moves a capture and has any other use, or a sibling captures
+/// it.
 fn scope_registry(
+    checked: &mojito_checked::checked::CheckedProgram,
+    statements: &[CheckedStmtId],
     children: &[NestedNode],
     inherited: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
 ) -> HashMap<mojito_types::origin::OwnerId, NestedInfo> {
@@ -359,19 +385,25 @@ fn scope_registry(
     for info in registry.values_mut() {
         info.materialized_here = false;
     }
+    let called_by_name_only = called_by_name_only(checked.tables(), statements);
     for child in children {
-        let slotted = child.captures.iter().any(|capture| {
+        let owns_environment = child.captures.iter().any(|capture| {
             matches!(
                 capture.kind,
                 mojito_ast::ast::CaptureKind::Copy | mojito_ast::ast::CaptureKind::Move
             )
-        }) || children.iter().any(|sibling| {
+        });
+        let captured_by_sibling = children.iter().any(|sibling| {
             sibling.binding != child.binding
                 && sibling
                     .captures
                     .iter()
                     .any(|capture| capture.binding == child.binding)
         });
+        let holds_environment = owns_environment
+            && !captured_by_sibling
+            && called_by_name_only.contains(&child.binding);
+        let slotted = (owns_environment && !holds_environment) || captured_by_sibling;
         registry.insert(
             child.binding,
             NestedInfo {
@@ -380,6 +412,7 @@ fn scope_registry(
                 mangled: child.mangled.clone(),
                 materialized_here: true,
                 slotted,
+                holds_environment,
                 captures: child.captures.clone(),
                 callable_ty: child.callable_ty.clone(),
             },
@@ -387,6 +420,55 @@ fn scope_registry(
     }
 
     registry
+}
+
+/// The nested declarations every use of which, in the lexical body of
+/// statement nodes `statements` and the bodies nested in it, is a call by
+/// name in that body itself: a call node whose binding is the
+/// declaration's. A name read, a type application, a lambda, and a call
+/// from a nested body are other uses.
+fn called_by_name_only(
+    tables: &mojito_checked::checked::CheckedTables,
+    statements: &[CheckedStmtId],
+) -> HashSet<mojito_types::origin::OwnerId> {
+    let mut calls = HashMap::<mojito_types::origin::OwnerId, usize>::new();
+    tables.walk(statements, &mut |walked| match walked {
+        Walked::Statement(statement) if matches!(statement.op, CheckedStmtOp::Def(_)) => {
+            WalkResult::SkipBodies
+        }
+        Walked::Expression(node) if matches!(node.op, CheckedOp::Lambda { .. }) => {
+            WalkResult::SkipBodies
+        }
+        Walked::Expression(node) => {
+            if let (CheckedOp::Call { .. }, Some(binding)) = (&node.op, node.binding) {
+                *calls.entry(binding).or_default() += 1;
+            }
+            WalkResult::Advance
+        }
+        Walked::Statement(_) => WalkResult::Advance,
+    });
+    let mut uses = HashMap::<mojito_types::origin::OwnerId, usize>::new();
+    tables.walk(statements, &mut |walked| {
+        if let Walked::Expression(node) = walked {
+            let lambda = match &node.op {
+                CheckedOp::Lambda { def } => tables
+                    .statement(*def)
+                    .and_then(|statement| statement.declaration)
+                    .and_then(|id| tables.declaration(id))
+                    .and_then(|declaration| declaration.binding),
+                _ => None,
+            };
+            for binding in node.binding.into_iter().chain(lambda) {
+                *uses.entry(binding).or_default() += 1;
+            }
+        }
+        WalkResult::Advance
+    });
+    calls
+        .into_iter()
+        .filter(|(binding, count)| uses.get(binding) == Some(count))
+        .map(|(binding, _)| binding)
+        .collect()
 }
 
 /// The declaration a nested function is lowered inside: its lowered name,
@@ -430,7 +512,7 @@ fn lower_nested_node(
     let def = def_of(checked, node.node);
     let dparams = &def.params;
     let (positional_only, keyword_only) = (&def.positional_only, &def.keyword_only);
-    let registry = scope_registry(&node.children, enclosing.registry);
+    let registry = scope_registry(checked, &def.body, &node.children, enclosing.registry);
     let captures = &node.captures;
     let mangled = &node.mangled;
     let capture_types: Vec<Ty> = captures
@@ -724,26 +806,6 @@ fn materialize_named_result_return(function: &mut MirFunction, result: &str) {
             }
         }
     }
-}
-
-/// `RuntimePack` distinguishes per-position variadic checking but is not a
-/// runtime value type. A nested direct call is lowered through a closure-value
-/// register, so erase that declaration-only discriminator to the Tuple storage
-/// actually carried by the lifted function's single collector slot.
-fn mir_nested_callable_ty(mut ty: Ty) -> Ty {
-    if let Some(TyKind::RuntimePack(elements)) = ty
-        .callable()
-        .and_then(|func| func.variadic.as_ref())
-        .map(Ty::kind)
-    {
-        let storage = Ty::new(TyKind::Tuple(elements.clone()));
-        ty.update(|kind| {
-            if let Some(func) = kind.callable_mut() {
-                func.variadic = Some(storage);
-            }
-        });
-    }
-    ty
 }
 
 /// Copy the checker-resolved capture environment. This includes unused explicit
