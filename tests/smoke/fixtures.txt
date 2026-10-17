@@ -1,0 +1,80 @@
+# Fixtures `scripts/smoke` runs: a fast cross-section of the corpus, chosen
+# from the features recent overnight-gate failures involved. One per line:
+#
+#   run     the VM exits 0 and prints its golden (tests/smoke/expected/),
+#           and the native backend prints exactly what the VM does
+#   vm      the VM alone, against its golden
+#   reject  `mojito check` fails with the fixture's `# expect:` text
+#
+# Keep it to what runs in a couple of minutes on both backends. A fixture
+# whose output legitimately changes is re-blessed with `scripts/smoke --bless`.
+
+# Collections, hashing, and the stdlib's inlined accessors.
+run     assets/ok/pliron_dict_set.mojo
+run     assets/ok/self_hosted_dict.mojo
+run     assets/ok/dict_methods_growth.mojo
+run     assets/ok/optional_dict_keys.mojo
+run     assets/ok/nominal_string_dict_keys.mojo
+run     assets/ok/mapping_key_iteration_reads.mojo
+run     assets/ok/hasher_user_conformer.mojo
+run     assets/ok/hashlib_explicit_hasher_containers.mojo
+run     assets/ok/list_methods_growth.mojo
+run     assets/ok/list_subscript_field_store_shapes.mojo
+run     assets/ok/optional_owning_api.mojo
+run     assets/ok/comptime_collections.mojo
+run     assets/ok/ctfe_module_display_constant_requests.mojo
+
+# Calls: defaults, constructors, variadics, packs.
+run     assets/ok/evaluated_default_argument.mojo
+run     assets/ok/default_reads_binder.mojo
+run     assets/ok/collection_display_default.mojo
+run     assets/ok/constructor_reads_no_struct_parameter.mojo
+run     assets/ok/generic_struct_generic_constructor_overload.mojo
+run     assets/ok/collector_runtime_index.mojo
+run     assets/ok/variadic_collector_forwarded_and_borrowed.mojo
+run     assets/ok/homogeneous_variadic_loan_carrying_element.mojo
+run     assets/ok/tuple_reverse_concat.mojo
+run     assets/ok/parametric_static_methods.mojo
+run     assets/ok/template_method_element_field_result.mojo
+run     assets/ok/display_argument_built_at_call_setup.mojo
+run     assets/ok/string_format_declared.mojo
+run     assets/ok/tstring_forms.mojo
+
+# The pre-elaboration passes: inlining and unused-parameter removal.
+run     assets/ok/always_inline_nodebug_binders.mojo
+run     assets/ok/always_inline_nodebug_collectors.mojo
+run     assets/ok/nested_def_inline_shapes.mojo
+run     assets/ok/lifted_body_owner_instances.mojo
+run     assets/ok/nested_unread_enclosing_instances.mojo
+run     assets/ok/unused_argument_nested_variadic_instances.mojo
+
+# Closures and nested defs.
+run     assets/ok/closures.mojo
+run     assets/ok/generic_nested_def_captures.mojo
+run     assets/ok/pliron_closure_env.mojo
+
+# Ownership: copies, moves, drops, and raise edges.
+run     assets/ok/nested_copy_lifecycle.mojo
+run     assets/ok/conditional_expression_transfer.mojo
+run     assets/ok/pointer_subscript_reads_in_place.mojo
+run     assets/ok/explicit_destroy_raise_edges.mojo
+run     assets/ok/pliron_try_cleanup_drop_order.mojo
+run     assets/ok/try_in_loop_temporary_drop_order.mojo
+
+# `ref` fields and origins (Mojito's kept extension).
+run     assets/extensions/ok/ref_field_ctor_from_ref_field.mojo
+run     assets/extensions/ok/ref_field_chained_view_call.mojo
+run     assets/extensions/ok/origin_delegated_multi_binder.mojo
+run     assets/extensions/ok/origin_delegated_parameter_receiver.mojo
+run     assets/extensions/ok/copyable_iterator_reference_aggregate.mojo
+run     conformance/fixtures/reference_valued_aggregate.mojo
+run     conformance/fixtures/reference_iteration_binding_modes.mojo
+
+# Callable compile-time parameters.
+run     conformance/fixtures/callable_parameter_defaults.mojo
+run     conformance/fixtures/generic_anonymous_callables.mojo
+
+# Checker rejections.
+reject  assets/type_error/implicit_copy_conditional_arm.mojo
+reject  assets/type_error/implicit_copy_owned_argument.mojo
+reject  assets/type_error/implicit_copy_field_store.mojo

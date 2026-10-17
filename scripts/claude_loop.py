@@ -13,17 +13,25 @@ on one of those is skipped for the rest of the run. A session a usage limit
 cuts off is not a bad task: the loop waits for the limit to reset and resumes
 that session with its context, and if the reset is more than six hours away it
 stops, leaving the session's work uncommitted and printing how to resume it.
-The other thing that does
-stop a run is three sessions in a row failing inside a minute, which means the
-environment is refusing to work (expired credentials, an exhausted rate limit)
-rather than the tasks being hard. Uncommitted tracked
-changes present when the loop starts are committed on their own first, so no
-task's commit sweeps them up, and `--no-commit` leaves everything uncommitted.
+The other thing that does stop a run is three sessions in a row failing inside
+a minute, which means the environment is refusing to work (expired
+credentials, an exhausted rate limit) rather than the tasks being hard.
+Uncommitted tracked changes present when the loop starts are committed on their
+own first, so no task's commit sweeps them up, and `--no-commit` leaves
+everything uncommitted.
 
 Each task's commit takes every tracked change plus the files the session
 created, except new files at the repository root (plan files, prompts,
 `commit_msg.txt`), which stay untracked. The message is the session's
 `commit_msg.txt`.
+
+After each executed task the loop runs `scripts/smoke`, a run of a corpus
+cross-section on both backends that takes about a minute, against a baseline
+taken before the first task, so a task answers only for the failures it adds.
+A task that adds one gets its own session resumed with the report to repair it
+(`--smoke-fix N` times, once by default), each repair committed on its own; a
+task that still fails it counts as having left work behind. `--no-smoke` turns
+the check off and `--smoke-vm-only` skips the native backend.
 
 Entries are named by their stable IDs (`R12`), which never change, and the
 order is `scripts/roadmap.py`'s work order, recomputed before every task: the
@@ -62,6 +70,8 @@ Usage:
   scripts/claude_loop.py --model opus -n 0    # run every entry on Opus
   scripts/claude_loop.py --dry-run -n 2       # print prompts, run nothing
   scripts/claude_loop.py --no-commit          # leave the work uncommitted
+  scripts/claude_loop.py --no-smoke           # skip the smoke check after each task
+  scripts/claude_loop.py --smoke-fix 0        # report smoke failures, never repair them
 """
 
 from __future__ import annotations
@@ -87,6 +97,17 @@ QUICK_FAIL = 60
 QUICK_FAIL_LIMIT = 3
 LIMIT_MAX_WAIT = 6 * 3600
 LIMIT_SLACK = 90
+BUILD_FAILED = "<the build>"
+SMOKE_FIX_PROMPT = (
+    "Your work on {task} is committed, and `scripts/smoke` now fails where it "
+    "passed before the task:\n\n{report}\n\nFind the cause in this task's change "
+    "and fix it, keeping what the task set out to do. Rerun `scripts/smoke` "
+    "(it takes about a minute) until it passes. Re-bless a golden with "
+    "`scripts/smoke --bless` only when the new output is intended and is what "
+    "the pinned Mojo prints, and say so. If the failure is not yours to fix, "
+    "file it as a roadmap entry instead. Overwrite commit_msg.txt with one short "
+    "paragraph describing the fix.\n"
+)
 RESUME_PROMPT = (
     "Your session was cut off by a usage limit, which has now reset. Continue "
     "the task from where you stopped, under the same instructions, and finish "
@@ -398,11 +419,14 @@ def commit_stray() -> None:
                   "stays its own.\n")
 
 
-def commit_task(task: Task, untracked_before: set[str], msg_before: str, finished: bool) -> None:
+def commit_task(task: Task, untracked_before: set[str], msg_before: str, finished: bool,
+                fallback: str | None = None) -> None:
     """Commit the session's work for `task` as one commit.
 
     Stages every tracked change and each file the session created below the
     repository root; new root-level files are scratch and stay untracked.
+    The message is the session's `commit_msg.txt`, or `fallback` (by default
+    one naming the task) when the session left it unchanged.
     """
     created = sorted(untracked_files() - untracked_before)
     staged = [f for f in created if "/" in f]
@@ -413,10 +437,86 @@ def commit_task(task: Task, untracked_before: set[str], msg_before: str, finishe
         return
     msg = read_commit_msg()
     if not msg or msg == msg_before:
-        msg = f"Roadmap {task.id}: {task.title}"
+        msg = fallback or f"Roadmap {task.id}: {task.title}"
         if not finished:
             msg += "\n\nThe session ended without removing the roadmap entry."
     git("commit", "--quiet", "--file", "-", stdin=msg + "\n")
+
+
+class Smoke:
+    """`scripts/smoke` around each executed task.
+
+    A baseline run before the first task records what already fails, so a
+    task answers only for the failures it adds; after each task the failing
+    set becomes the next task's baseline. A task that adds a failure gets
+    `--smoke-fix` resumptions of its own session, handed the report, to
+    repair it, each committed on its own.
+    """
+
+    def __init__(self, args):
+        self.args = args
+        self.failing: set[str] = set()
+        self.enabled = True
+
+    def start(self) -> None:
+        failing, report, seconds = self.run()
+        if failing == {BUILD_FAILED}:
+            print("claude_loop: the smoke check cannot build the tree, so the run "
+                  f"goes without it:\n{report}", file=sys.stderr)
+            self.enabled = False
+            return
+        self.failing = failing
+        listed = "".join(f"\n  {path}" for path in sorted(failing))
+        print(f"claude_loop: smoke baseline ({seconds:.0f}s): {len(failing)} failing{listed}",
+              file=sys.stderr, flush=True)
+
+    def after(self, args, task: Task, model: str, label: str, outcome: Outcome,
+              committing: bool) -> bool:
+        """Whether `task` left the smoke check no worse than it found it."""
+        if not self.enabled:
+            return True
+        for attempt in range(self.args.smoke_fix + 1):
+            failing, report, seconds = self.run()
+            LOG_DIR.mkdir(parents=True, exist_ok=True)
+            log = LOG_DIR / f"{dt.datetime.now():%Y%m%d-%H%M%S}-{task.id}-smoke.log"
+            log.write_text(report)
+            added = failing - self.failing
+            if not added:
+                print(f"claude_loop: smoke after {task.id} passed ({seconds:.0f}s)",
+                      file=sys.stderr, flush=True)
+                self.failing = failing
+                return True
+            print(f"claude_loop: smoke after {task.id} has {len(added)} new failure(s) "
+                  f"({log.relative_to(ROOT)}):" + "".join(f"\n  {p}" for p in sorted(added)),
+                  file=sys.stderr, flush=True)
+            if attempt == self.args.smoke_fix or not outcome.session_id:
+                break
+            untracked_before = untracked_files() if committing else set()
+            msg_before = read_commit_msg()
+            prompt = SMOKE_FIX_PROMPT.format(task=task.id, report=report)
+            outcome = resume_through_limits(
+                args, task, model, f"{label}, smoke fix",
+                run_claude(args, task, model, f"{label}, smoke fix", prompt,
+                           resume=outcome.session_id))
+            if committing:
+                commit_task(task, untracked_before, msg_before, True,
+                            fallback=f"Fix the smoke failures {task.id} left")
+        self.failing = failing
+        return False
+
+    def run(self) -> tuple[set[str], str, float]:
+        """The failing fixtures, the report, and the seconds it took."""
+        command = [str(ROOT / "scripts" / "smoke")]
+        if self.args.smoke_vm_only:
+            command.append("--vm-only")
+        began = time.monotonic()
+        done = subprocess.run(command, cwd=ROOT, capture_output=True, text=True,
+                              stdin=subprocess.DEVNULL)
+        report = done.stdout + done.stderr
+        if done.returncode == 2:
+            return {BUILD_FAILED}, report, time.monotonic() - began
+        failing = {line.split()[2] for line in report.splitlines() if line.startswith("FAIL ")}
+        return failing, report, time.monotonic() - began
 
 
 def model_name(args, task: Task) -> str:
@@ -486,6 +586,13 @@ def main() -> int:
                    help="extra argument passed to claude (repeatable)")
     p.add_argument("--no-commit", action="store_true",
                    help="do not commit each finished task")
+    p.add_argument("--no-smoke", action="store_true",
+                   help="do not run scripts/smoke after each executed task")
+    p.add_argument("--smoke-vm-only", action="store_true",
+                   help="run the smoke check on the VM alone (no LLVM build)")
+    p.add_argument("--smoke-fix", type=int, default=1, metavar="N",
+                   help="resume a task's session up to N times to fix the smoke "
+                        "failures it added (default 1; 0 only reports them)")
     args = p.parse_args()
     if args.count is None:
         args.count = 0 if args.until or args.only else 1
@@ -525,6 +632,11 @@ def main() -> int:
               f"the first task's commit stays its own:\n{dirty}", file=sys.stderr)
         commit_stray()
 
+    smoke = None
+    if not (args.no_smoke or args.dry_run or args.plan):
+        smoke = Smoke(args)
+        smoke.start()
+
     ran = 0
     quick = 0
     stopped_by_limit: tuple[Task, Outcome] | None = None
@@ -553,6 +665,7 @@ def main() -> int:
                 stopped_by_limit = (current, outcome)
                 break
             ok = outcome.ok
+            smoked = True
             quick = quick + 1 if not ok and time.time() - began < QUICK_FAIL else 0
             if mode == "plan":
                 landed = plan_written(current, began)
@@ -566,9 +679,13 @@ def main() -> int:
                 if ok and not landed:
                     print(f"claude_loop: entry {current.id} is still on the roadmap",
                           file=sys.stderr)
+                if smoke and not smoke.after(args, current, model, label, outcome, committing):
+                    print(f"claude_loop: {current.id} left the smoke check failing",
+                          file=sys.stderr)
+                    smoked = False
             if not ok:
                 print(f"claude_loop: session for {current.id} failed", file=sys.stderr)
-            if not (ok and landed):
+            if not (ok and landed and smoked):
                 troubled.add(current.id)
                 break
 

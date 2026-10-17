@@ -22,6 +22,29 @@ env RUSTC_WRAPPER= cargo test
 env RUSTC_WRAPPER= cargo clippy --all-targets
 ```
 
+### Smoke check
+
+`scripts/smoke` is the fast check between a change and the overnight gate.
+It builds the CLI and runs the fixtures listed in `tests/smoke/fixtures.txt`,
+a cross-section of the corpus, in under a minute:
+
+- a `run` fixture must exit 0 on the VM, print its golden output
+  (`tests/smoke/expected/`), and print the same natively;
+- a `vm` fixture is checked on the VM alone;
+- a `reject` fixture must fail `mojito check` with its `# expect:` text.
+
+```sh
+scripts/smoke                 # VM and native
+scripts/smoke --vm-only       # no LLVM needed
+scripts/smoke --filter dict   # fixtures whose path contains `dict`
+scripts/smoke --bless         # record the VM's output as each golden
+```
+
+It exits 1 when a fixture fails and 2 when the build does, and keeps the
+report in `target/smoke/last.log`. `scripts/claude_loop.py` runs it after every
+task (`--no-smoke`, `--smoke-vm-only`, `--smoke-fix N`). Add a fixture to the
+list, then bless it, when a gate failure shows a feature the list misses.
+
 ## CLI Usage
 
 Run a compiler stage over a file:

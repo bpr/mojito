@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""Run a fast cross-section of the corpus on both backends.
+
+`tests/smoke/fixtures.txt` lists the fixtures and what each must do: a `run`
+fixture exits 0 on the VM, prints its golden in `tests/smoke/expected/`, and
+prints the same natively; a `vm` fixture is checked on the VM alone; a
+`reject` fixture fails `mojito check` with its `# expect:` text. The whole
+run takes a minute or two, so it can follow every change; the overnight gate
+remains the broad check.
+
+The script builds the CLI first (with the `backend-pliron` feature unless
+`--vm-only`), under the same LLVM environment `scripts/check-pliron` uses.
+It exits 0 when every fixture passes, 1 when any fails, and 2 when the build
+fails. The report goes to stdout and to `target/smoke/last.log`.
+
+Usage:
+  scripts/smoke                  # build, then run every fixture
+  scripts/smoke --vm-only        # skip the native backend (no LLVM needed)
+  scripts/smoke --filter dict    # only fixtures whose path contains `dict`
+  scripts/smoke --no-build       # use the binary already built
+  scripts/smoke --bless          # record the VM's output as each golden
+"""
+
+from __future__ import annotations
+
+import argparse
+import concurrent.futures
+import os
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+SMOKE = ROOT / "tests" / "smoke"
+FIXTURES = SMOKE / "fixtures.txt"
+EXPECTED = SMOKE / "expected"
+BIN = ROOT / "target" / "debug" / "mojito"
+LOG = ROOT / "target" / "smoke" / "last.log"
+MODES = ("run", "vm", "reject")
+TIMEOUT = 300
+
+
+@dataclass
+class Fixture:
+    mode: str
+    path: str
+
+    @property
+    def golden(self) -> Path:
+        return EXPECTED / (self.path.replace("/", "__").removesuffix(".mojo") + ".out")
+
+
+@dataclass
+class Outcome:
+    exit_code: int
+    output: str
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--vm-only", action="store_true", help="skip the native backend")
+    p.add_argument("--no-build", action="store_true", help="use the binary already built")
+    p.add_argument("--bless", action="store_true",
+                   help="write each run/vm fixture's VM output as its golden")
+    p.add_argument("--filter", metavar="TEXT", help="only fixtures whose path contains TEXT")
+    p.add_argument("--jobs", type=int, default=8, help="fixtures run in parallel (default 8)")
+    p.add_argument("--fixtures", type=Path, default=FIXTURES, help="the fixture list")
+    args = p.parse_args()
+
+    fixtures = read_fixtures(args.fixtures)
+    if args.filter:
+        fixtures = [f for f in fixtures if args.filter in f.path]
+    env = native_env()
+    began = time.monotonic()
+    if not args.no_build and not build(args.vm_only, env):
+        return 2
+    if args.bless:
+        return bless(fixtures, env)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
+        results = list(pool.map(lambda f: (f, check(f, args.vm_only, env)), fixtures))
+    failures = [(f, problem) for f, problem in results if problem]
+    lines = [f"FAIL {f.mode:6} {f.path}\n{indent(problem)}" for f, problem in failures]
+    native = "VM only" if args.vm_only else "VM and native"
+    lines.append(f"smoke: {len(fixtures)} fixtures ({native}), {len(failures)} failed, "
+                 f"{time.monotonic() - began:.0f}s")
+    report = "\n".join(lines)
+    print(report)
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    LOG.write_text(report + "\n")
+    return 1 if failures else 0
+
+
+def read_fixtures(path: Path) -> list[Fixture]:
+    fixtures = []
+    for number, line in enumerate(path.read_text().splitlines(), 1):
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        mode, _, fixture = line.partition(" ")
+        fixture = fixture.strip()
+        if mode not in MODES or not fixture:
+            sys.exit(f"smoke: {path}:{number}: expected `<{'|'.join(MODES)}> <path>`")
+        if not (ROOT / fixture).is_file():
+            sys.exit(f"smoke: {path}:{number}: no such fixture {fixture}")
+        fixtures.append(Fixture(mode, fixture))
+    return fixtures
+
+
+def check(fixture: Fixture, vm_only: bool, env: dict[str, str]) -> str | None:
+    """What is wrong with `fixture`, or `None` when it passes."""
+    if fixture.mode == "reject":
+        return check_reject(fixture, env)
+    vm = mojito(["run", fixture.path], env)
+    if vm.exit_code != 0:
+        return f"the VM exited {vm.exit_code}:\n{tail(vm.output)}"
+    if not fixture.golden.is_file():
+        return "no golden output; record one with scripts/smoke --bless"
+    golden = fixture.golden.read_text()
+    if vm.output != golden:
+        return f"the VM's output differs from its golden:\n{first_difference(golden, vm.output)}"
+    if fixture.mode == "vm" or vm_only:
+        return None
+    native = mojito(["run", "--backend", "pliron", fixture.path], env)
+    if native.exit_code != 0:
+        return f"the native run exited {native.exit_code}:\n{tail(native.output)}"
+    if native.output != vm.output:
+        return f"the native output differs from the VM's:\n{first_difference(vm.output, native.output)}"
+    return None
+
+
+def check_reject(fixture: Fixture, env: dict[str, str]) -> str | None:
+    expect = [line.split("# expect:", 1)[1].strip()
+              for line in (ROOT / fixture.path).read_text().splitlines()
+              if line.startswith("# expect:")]
+    if not expect:
+        return "a reject fixture needs a `# expect:` line"
+    outcome = mojito(["check", fixture.path], env)
+    if outcome.exit_code == 0:
+        return "`mojito check` accepted it"
+    missing = [text for text in expect if text not in outcome.output]
+    if missing:
+        return f"the rejection lacks `{missing[0]}`:\n{tail(outcome.output)}"
+    return None
+
+
+def bless(fixtures: list[Fixture], env: dict[str, str]) -> int:
+    EXPECTED.mkdir(parents=True, exist_ok=True)
+    failed = 0
+    for fixture in fixtures:
+        if fixture.mode == "reject":
+            continue
+        vm = mojito(["run", fixture.path], env)
+        if vm.exit_code != 0:
+            print(f"not blessed, the VM exited {vm.exit_code}: {fixture.path}\n{indent(tail(vm.output))}")
+            failed += 1
+            continue
+        if not fixture.golden.is_file() or fixture.golden.read_text() != vm.output:
+            fixture.golden.write_text(vm.output)
+            print(f"blessed {fixture.path}")
+    return 1 if failed else 0
+
+
+def mojito(argv: list[str], env: dict[str, str]) -> Outcome:
+    try:
+        done = subprocess.run([str(BIN), *argv], cwd=ROOT, env=env, capture_output=True,
+                              text=True, timeout=TIMEOUT, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return Outcome(124, f"timed out after {TIMEOUT}s\n")
+    return Outcome(done.returncode, done.stdout + done.stderr)
+
+
+def build(vm_only: bool, env: dict[str, str]) -> bool:
+    steps = [["cargo", "build", "--quiet"]]
+    if not vm_only:
+        steps = [["cargo", "build", "--quiet", "-p", "mojito-runtime"],
+                 ["cargo", "build", "--quiet", "--features", "backend-pliron"]]
+    for step in steps:
+        done = subprocess.run(step, cwd=ROOT, env=env, capture_output=True, text=True)
+        if done.returncode != 0:
+            print(f"smoke: `{' '.join(step)}` failed:\n{tail(done.stderr, 40)}")
+            return False
+    return True
+
+
+def native_env() -> dict[str, str]:
+    """The environment `scripts/check-pliron` builds and runs under."""
+    env = dict(os.environ)
+    prefix = env.setdefault("LLVM_SYS_231_PREFIX", "/opt/llvm-23")
+    env["PATH"] = f"{prefix}/bin:{env.get('PATH', '')}"
+    env.setdefault("MOJITO_RUNTIME_LIB", str(ROOT / "target" / "debug" / "libmojito_runtime.a"))
+    return env
+
+
+def first_difference(expected: str, actual: str) -> str:
+    want, got = expected.splitlines(), actual.splitlines()
+    for line, (a, b) in enumerate(zip(want, got), 1):
+        if a != b:
+            return f"line {line}: expected `{a}`, got `{b}`"
+    if len(want) != len(got):
+        return f"expected {len(want)} lines, got {len(got)}"
+    return "the outputs differ in trailing whitespace"
+
+
+def tail(text: str, lines: int = 8) -> str:
+    return "\n".join(text.rstrip().splitlines()[-lines:])
+
+
+def indent(text: str) -> str:
+    return "\n".join(f"    {line}" for line in text.splitlines())
+
+
+if __name__ == "__main__":
+    sys.exit(main())

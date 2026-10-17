@@ -1,0 +1,21 @@
+x 1
+x 2
+del 2
+del 1
+r 3
+r 4
+c 3 4
+i 3 2
+del 4
+del 3
+t M5
+t M6
+del 6
+del 5
+u 17
+u 18
+del 18
+del 17
+i 9 1
+del 9
+9

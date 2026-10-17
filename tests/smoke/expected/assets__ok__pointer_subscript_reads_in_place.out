@@ -1,0 +1,51 @@
+generic copy
+copy S 4
+g 14
+del S 14
+concrete copy
+copy S 4
+c 14
+del S 14
+deref copy
+copy S 4
+d 14
+del S 14
+keyword copy
+copy S 4
+k 14
+del S 14
+field read
+v 4
+call result copy
+copy S 4
+r 14
+del S 14
+implicit copy
+copy C 5
+x 15
+del C 15
+returned
+copy C 5
+y 15
+del C 15
+var argument
+copy C 5
+take 15
+del C 15
+tuple element
+copy C 5
+t 15
+del C 15
+constructor argument
+copy C 5
+h 15
+del C 15
+place pointer
+copy C 6
+z 16
+del C 16
+a 6
+del C 6
+del S 4
+del C 5
+lists 1 1

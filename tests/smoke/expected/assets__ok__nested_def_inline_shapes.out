@@ -1,0 +1,16 @@
+105
+before
+del 7
+after
+14
+copy 100
+del 0
+del 100
+call 100 100
+copy 101
+del 1
+del 101
+call 101 101
+10
+60
+7

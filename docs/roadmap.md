@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1108**.
+Next free ID: **R1109**.
 
 ## Ordered Work
 
@@ -858,26 +858,6 @@ Track: `native`.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
-- [ ] **R1092 Natively, a `Dict` or `Set` lookup misses a key it holds
-  since small `@always_inline` callees inline**
-
-  `Dict[Int, Int]` with `d[1] = 1` then `print(d[1])` prints `1` on the
-  VM and raises `missing key` natively; `"a" in d` answers `False`.
-  - Bisected to 68634057 (R923): the native build of 1625dacb runs it.
-  - Probe: `assets/ok/dict_methods_growth.mojo`,
-    `assets/ok/pliron_dict_set.mojo`, `assets/ok/self_hosted_dict.mojo`,
-    `assets/ok/tuple_hashable_dict_key.mojo`,
-    `assets/ok/ctfe_module_display_constant_requests.mojo` (`"a" in d`),
-    and twelve more `exe-differential` rows that hash a key.
-  - The VM runs the same concrete MIR correctly, so some inlined hasher
-    or probe body lowers wrongly natively; diff the native result of the
-    `AHasher` and `Dict._find_index` instances with the inliner off.
-  - `assets/ok/nested_copy_lifecycle.mojo`, R1086's probe, fails the same
-    way: check R1086 against it once this lands.
-  - Found while landing R1087 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1091 Natively, an owned temporary is rejected when an inlined
   callee's blocks fall between it and its use**
 
@@ -904,21 +884,6 @@ change that needs a new `MJRT_ABI_VERSION`.
     block; release it on every edge from its definition to its consumer,
     as an SSA value is live across blocks upstream.
   - Found while landing R1087 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1086 Natively, copying a `Dict` with `Optional` keys loses its
-  keys**
-
-  `Dict[Optional[Int], String]` holding `None` and `3`, copied with
-  `.copy()`, raises `missing key` at `t2[None]` natively, where the VM
-  prints `2 none three three` (`assets/ok/nested_copy_lifecycle.mojo`).
-  - `Dict[Int, String]` copies natively; so do a fieldwise struct of
-    `UInt64`, `Optional[Int]`, and `String` fields and a `List` of them.
-  - Predates R1044: the native build before it fails the same way, and
-    the fixture's `exe-differential` row in `conformance/pliron-parity.tsv`
-    reports it.
-  - Found while landing R1044 (2026-10-16).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

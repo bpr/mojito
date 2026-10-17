@@ -155,3 +155,50 @@ Run these from the repository root.
 Alternative to steps 1–2: run step 3 alone. The loop then commits the tree
 first and a fresh R1043 session starts over from the partial code in HEAD,
 without the earlier session's context.
+
+## Status and next steps (2026-10-17)
+
+Corpus totals from `benchmarks/instantiation.tsv`, at its first commit
+(2026-10-13) and now:
+
+| counter | 10-13 | 10-17 |
+|---|---|---|
+| concrete functions | 42,409 | 24,749 |
+| concrete instructions | 892,391 | 401,630 |
+| generators | 16,553 | 8,678 |
+| generator instances | 26,868 | 13,700 |
+| instances per generator | 1.62 | 1.58 |
+
+The program is less than half its 10-13 size, but almost all of that came
+from removing dead code and inlining. Instances per generator barely moved:
+a generic body is still copied about as often as before. Upstream's
+`RemoveUnusedParams` attacks exactly that ratio, so it is next.
+
+1. **R1094**, a MIR verification failure, so a correctness bug:
+
+   ```sh
+   scripts/claude_loop.py --only R1094 -n 0
+   ```
+
+2. **Fewer instances.** Each entry stops a body being split into separate
+   instances by a binder it never reads:
+
+   ```sh
+   scripts/claude_loop.py --only R973 --only R974 --only R1039 --only R975 \
+       --only R1032 --only R1033 --only R1034 -n 0
+   ```
+
+3. **Structured regions, then smaller generators.** R875–R880 move the
+   lifetime checks and drop elaboration onto `hlcf`-style regions, as
+   upstream's pipeline is; R927 (`Mem2Reg` through region values) waits on
+   them. R928 (`SROA`) and R926/R929/R930 (CSE) shrink each generator:
+
+   ```sh
+   scripts/claude_loop.py --task R927 -n 0
+   scripts/claude_loop.py --only R928 --only R926 --only R929 --only R930 -n 0
+   ```
+
+The overnight gate stays overnight. The 10-17 gate's two real bugs (R923's
+zero native stride, R1046's VM `ref` field) would each have been caught the
+day they landed by running a few dozen representative fixtures on both
+backends: a Dict, the `ref`-field extensions, a default-heavy fixture.

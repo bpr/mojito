@@ -219,6 +219,10 @@ verification happens. In-session verification must take seconds, not hours:
   — a misplaced row and an under-bumped ratchet — used to surface only in the
   heavy lane, days later; `scripts/check-parity-manifest` now catches them in
   the default gate, so run it after hand-editing either manifest.
+- `scripts/smoke` runs a corpus cross-section on both backends in under a
+  minute (`docs/usage.md` §Smoke check). `scripts/claude_loop.py` runs it
+  after every task, so a session need not; run it when fixing a failure it
+  reported.
 - CLI: `cargo run -- <lex|parse|check|own|run> [FILE]`
 - Module roots: repeat `--module-path PATH` / `-I PATH`; `--stdlib PATH` is
   another search root. `std` always comes from the bundled library.

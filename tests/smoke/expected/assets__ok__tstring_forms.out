@@ -1,0 +1,7 @@
+answer: 7!
+raw \n 7
+
+v=7 3
+outer=inner=1|
+wrapped:kept=7;
+point=Point(2, 5), sum=7

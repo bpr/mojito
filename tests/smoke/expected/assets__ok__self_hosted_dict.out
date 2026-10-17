@@ -1,0 +1,11 @@
+mojito  :  self-host
+mojito  :  stdlib
+name
+mojito
+phase
+stdlib
+2
+Caught error:  missing key
+mojito  :  stdlib
+mojito  :  copy
+mojito  :  stdlib
