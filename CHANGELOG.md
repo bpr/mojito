@@ -8,6 +8,24 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A runtime argument a function only passes back to itself, at its own
+  position by every self-recursive call, now leaves the generator its calls
+  name, as upstream's `RemoveUnusedParams` reads through a self-recursive
+  call: `remove-unused-params` assumes each such call removed the arguments
+  it passes as themselves and narrows to those found unused, and then
+  removes the parameters only their types named, the self-recursive call
+  forwarding those too, spelled, inferred, or through its receiver. So
+  `frec[n](a: Arr[n], k: Int)` returning `frec(a, k - 1) + 1`, a keyword
+  `fkw(a=a, k=k - 1)`, a two-call `fdeep`, and `Grid[n].mrec(self, a, d)`
+  have one instance each, `frec$REMOVED$ARG$mono` and
+  `Grid.mrec$REMOVED$ARG$mono`, for every `n`, as on the pin, while an
+  argument passed back at another position, one read beside the forward,
+  and a forward around a longer cycle keep one per `n`. A static method's
+  self-recursive call through `S[Self.n]` or `Self` forwards the struct's
+  parameter to itself the same way, so `S[n].down(k)` is one instance,
+  `S.down$mono`. Fixtures `assets/ok/recursive_argument_instances.mojo` and
+  `assets/ok/static_method_unread_owner_instances.mojo`. This closes R1034
+  and R1065.
 - A dunder's runtime argument its body never uses now leaves the generator
   an operator, a call, or a subscript names, as upstream's
   `RemoveUnusedParams` removes it and then the parameters only its type

@@ -4564,3 +4564,75 @@ fn callers_of_merged_instances_merge_into_one() {
     };
     assert_eq!((count("foo"), count("bar")), (1, 1));
 }
+
+#[test]
+fn self_forwarded_arguments_leave_the_instance_key() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/recursive_argument_instances.mojo");
+    let program = Compiler::default()
+        .compile_path(&path)
+        .expect("compile the fixture");
+    let concrete = program.concrete_mir().expect("elaborate");
+    let instances = |template: &str| {
+        concrete
+            .counts
+            .generators
+            .iter()
+            .find(|row| row.template == template)
+            .map_or(0, |row| row.instances)
+    };
+    for (template, count) in [
+        ("frec", 1),
+        ("fkw", 1),
+        ("fdeep", 1),
+        ("Grid.mrec", 1),
+        ("fother", 2),
+        ("fboth", 2),
+        ("Grid.ping", 2),
+        ("Grid.pong", 2),
+    ] {
+        assert_eq!(instances(template), count, "instances of `{template}`");
+    }
+    let names: Vec<&str> = concrete
+        .program
+        .functions
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
+    for name in [
+        "frec$REMOVED$ARG$mono",
+        "fkw$REMOVED$ARG$mono",
+        "fdeep$REMOVED$ARG$mono",
+        "Grid.mrec$REMOVED$ARG$mono",
+    ] {
+        assert!(names.contains(&name), "no concrete `{name}`: {names:?}");
+    }
+}
+
+#[test]
+fn static_self_forwarded_struct_parameters_leave_the_instance_key() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/static_method_unread_owner_instances.mojo");
+    let program = Compiler::default()
+        .compile_path(&path)
+        .expect("compile the fixture");
+    let concrete = program.concrete_mir().expect("elaborate");
+    let instances = |template: &str| {
+        concrete
+            .counts
+            .generators
+            .iter()
+            .find(|row| row.template == template)
+            .map_or(0, |row| row.instances)
+    };
+    for (template, count) in [
+        ("S.st", 1),
+        ("S.chained", 1),
+        ("S.down", 1),
+        ("S.down_self", 1),
+        ("S.reads", 2),
+        ("P.first", 2),
+    ] {
+        assert_eq!(instances(template), count, "instances of `{template}`");
+    }
+}

@@ -431,20 +431,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1034 A runtime argument a function only passes to itself is a
-  use**
-
-  `frec[n](a: Arr[n], k: Int)` returning `frec(a, k - 1) + 1` keeps `a` and
-  one instance per `n`, where the pin's `frec…_REMOVED_ARG(i64)` takes
-  only `k`.
-  - A self-recursive body lies on a cycle, so `Callees::unit_body` gives
-    the pass no finished body to read its removed arguments from.
-  - Upstream's `RemoveUnusedParams` treats an argument a recursive call
-    passes back in its own position as unused.
-  - Found while planning R1013 (2026-10-15).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1035 A package body's cycle check misses the calls its drops
   add**
 
@@ -8672,24 +8658,6 @@ follow-ups the landed producer stages filed come last.
     which needs the whole program at once, as R907 does.
   - Depends on R907.
   - Model: Fable, Not Planned.
-
-- [ ] **R1065 A static method's self-recursive call keeps the struct
-  parameter it forwards to itself, where the pin removes it**
-
-  `S[n].down(k)`, which returns `7` or `S[Self.n].down(k - 1)` (or
-  `Self.down(k - 1)`), keeps `n`, where the pin emits one
-  `S::down(…)_REMOVED_ARG` with no `n=` in its symbol.
-  - R1028 discounts a self-recursive forward only through a call's or a
-    resolved method call's own parameter arguments
-    (`self_forwarded_parameters` in `analysis/unused_params.rs`).
-  - A static call's spelled receiver (`S[Self.n]`) or `Self` forwards the
-    struct's parameters instead, which `drop_receiver_arguments` in
-    `mir/param_uses.rs` drops, so the walk should count a receiver argument
-    naming the parameter itself as a self-forward too.
-  - Add the case to `assets/ok/static_method_unread_owner_instances.mojo`.
-  - Found while landing R1028 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R937 `**` on integers and scalar displays call bundled bodies
   that no instruction names**

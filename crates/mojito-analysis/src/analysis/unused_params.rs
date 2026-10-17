@@ -69,24 +69,30 @@
 //! The pass reads a callee's removals only from a finished body of the same
 //! unit, as upstream skips an external generator, and only off a cycle
 //! ([`Callees::unit_body`]). A self-recursive call is the one cycle it
-//! reads through, as upstream's walk does (`isRecursive`): a parameter
-//! every such call passes as itself, and that the body reads nowhere else,
-//! is removed, the greatest such set found by assuming the call removed it
-//! until the assumption holds; a forward around a longer cycle stays a
-//! read. Each run records the body's unread parameters afresh, and the
-//! pipeline's last round runs it after every cleanup pass, so a read they
-//! removed keeps no parameter.
+//! reads through, as upstream's walk does (`isRecursive`): an argument
+//! every such call passes back at its own position, and that the body
+//! uses nowhere else, is unused, and a parameter every such call passes as
+//! itself (spelled, inferred, or through the call's receiver), and that the
+//! body reads nowhere else, is removed, each the greatest such set found by
+//! assuming the call removed it until the assumption holds; a forward
+//! around a longer cycle, or to another position, stays a use. Each run
+//! records the body's unread parameters afresh, and the pipeline's last
+//! round runs it after every cleanup pass, so a read they removed keeps no
+//! parameter.
 
 use super::pre_elaboration::{CallGraphPass, Callees};
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
-    Const, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
+    Const, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace, Reg,
     instruction_regions, instruction_subscript_call, lifecycle_callees, method_owner_params,
-    named_lifted_bodies, supplied_parameter_arguments, unread_parameters_of, unused_arguments,
-    without_removed_argument_forwards, without_removed_arguments, without_removed_forwards,
+    named_lifted_bodies, removed_argument_operands, supplied_parameter_arguments,
+    unread_parameters_of, unused_arguments, without_removed_argument_forwards,
+    without_removed_arguments, without_removed_forwards,
 };
+use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{ParamId, ParamKind};
-use std::collections::{BTreeMap, BTreeSet};
+use mojito_types::types::{Ty, TyArg, TyKind};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub const REMOVE_UNUSED_PARAMS: CallGraphPass = CallGraphPass {
     name: "remove-unused-params",
@@ -117,19 +123,46 @@ pub fn remove_unused_params(
     let mut forwarded = BTreeSet::new();
     call_targets(&function.blocks, &mut forwarded);
     let argument_removals: BTreeMap<&str, &[VarId]> = forwarded
-        .into_iter()
-        .filter_map(|target| {
+        .iter()
+        .filter_map(|&target| {
             callees
                 .unit_body(target)
                 .filter(|body| !body.removed_args.is_empty())
                 .map(|body| (target, body.removed_args.as_slice()))
         })
         .collect();
-    let arguments_view = without_removed_argument_forwards(function, declarations, &|callee| {
-        argument_removals.get(callee).copied()
-    });
+    // Assume each self-recursive call removed the arguments it passes as
+    // themselves, narrowing to those found unused until none drops out.
+    let mut recursive_args = self_forwarded_arguments(name, function, declarations);
+    let (mut arguments_view, removed_args) = loop {
+        let removals = |callee: &str| {
+            if callee == name {
+                (!recursive_args.is_empty()).then_some(recursive_args.as_slice())
+            } else {
+                argument_removals.get(callee).copied()
+            }
+        };
+        let view = without_removed_argument_forwards(function, declarations, &removals);
+        let source = view.as_ref().map_or(&*function, |(view, _)| view);
+        let removed_args = unused_arguments(name, source, declarations);
+        let kept = recursive_args.len();
+        recursive_args.retain(|slot| removed_args.contains(slot));
+        if recursive_args.len() == kept {
+            break (view, removed_args);
+        }
+    };
+    // The rewritten self-recursive call passes none of the removed
+    // arguments, as every direct call of the reduced generator does.
+    if forwarded.contains(name) && recursive_args != removed_args {
+        arguments_view = without_removed_argument_forwards(function, declarations, &|callee| {
+            if callee == name {
+                Some(removed_args.as_slice())
+            } else {
+                argument_removals.get(callee).copied()
+            }
+        });
+    }
     let source = arguments_view.as_ref().map_or(&*function, |(view, _)| view);
-    let removed_args = unused_arguments(name, source, declarations);
     let reduced = declarations
         .function(name)
         .filter(|_| !removed_args.is_empty())
@@ -167,7 +200,7 @@ pub fn remove_unused_params(
         .collect();
     // Assume each self-recursive call removed the parameters it forwards
     // to themselves, narrowing to those found unread until none drops out.
-    let mut recursive = self_forwarded_parameters(name, &body.blocks, declarations);
+    let mut recursive = self_forwarded_parameters(name, body, declarations);
     let (removed, mut discounted) = loop {
         let (unread, discounted) = {
             let mut removals: BTreeMap<&str, &[ParamId]> = targets
@@ -238,7 +271,14 @@ pub fn remove_unused_params(
     let argument_discounted: Vec<(String, Vec<VarId>)> = match &arguments_view {
         Some((_, callees)) if !removed_args.is_empty() || !removed.is_empty() => callees
             .iter()
-            .map(|callee| (callee.clone(), argument_removals[callee.as_str()].to_vec()))
+            .map(|callee| {
+                let slots = if callee == name {
+                    removed_args.as_slice()
+                } else {
+                    argument_removals[callee.as_str()]
+                };
+                (callee.clone(), slots.to_vec())
+            })
             .collect(),
         _ => Vec::new(),
     };
@@ -256,16 +296,51 @@ pub fn remove_unused_params(
     true
 }
 
-/// The compile-time parameters of `name` that every call of `name` in
-/// `blocks` and their regions, direct or a resolved method call, supplies
-/// as the parameter itself; none when `name` never calls itself.
+/// The compile-time parameters of `name` that every call of `name` in the
+/// body `function`, direct or a resolved method call, supplies as the
+/// parameter itself, a method's struct's included when the call's receiver,
+/// a value's or a static call's spelled one, spells them so (`Self`,
+/// `Grid[n]`, `S[Self.n]`); none when `name` never calls itself.
 fn self_forwarded_parameters(
     name: &str,
-    blocks: &[MirBlock],
+    function: &MirFunction,
     declarations: &MirDeclarations,
 ) -> Vec<ParamId> {
     let mut forwarded = None;
-    self_forwards(name, blocks, declarations, &mut forwarded);
+    self_forwards(
+        name,
+        function,
+        &function.blocks,
+        declarations,
+        &mut forwarded,
+    );
+    forwarded.unwrap_or_default()
+}
+
+/// The parameter slots of `name`, the body `function`, that every call of
+/// `name` in it, direct or a resolved method call, passes as themselves at
+/// their own position: the operand bound to the slot is a whole read of
+/// it, or its place. None when `name` never calls itself, or calls itself
+/// through a spread, which binds as many slots as its pack holds.
+fn self_forwarded_arguments(
+    name: &str,
+    function: &MirFunction,
+    declarations: &MirDeclarations,
+) -> Vec<VarId> {
+    let Some(declaration) = declarations.function(name) else {
+        return Vec::new();
+    };
+    let mut reads = HashMap::new();
+    whole_slot_reads(&function.blocks, &mut reads);
+    let mut forwarded = None;
+    self_argument_forwards(
+        name,
+        declaration,
+        function.n_params,
+        &function.blocks,
+        &reads,
+        &mut forwarded,
+    );
     forwarded.unwrap_or_default()
 }
 
@@ -355,10 +430,14 @@ fn nested_bodies<'a>(
     }
 }
 
-/// Narrow `forwarded` to the parameters each call of `name` in `blocks`
-/// and their regions supplies as themselves; the first call sets it.
+/// Narrow `forwarded` to the parameters each call of `name`, the body
+/// `function`, in `blocks` and their regions supplies as themselves
+/// ([`self_forwarded_parameters`]); the first call sets it. A call
+/// supplies a parameter by an explicit argument or, inferred, by its
+/// `instantiated_args` entry when those align with the callee's binders.
 fn self_forwards(
     name: &str,
+    function: &MirFunction,
     blocks: &[MirBlock],
     declarations: &MirDeclarations,
     forwarded: &mut Option<Vec<ParamId>>,
@@ -368,20 +447,41 @@ fn self_forwards(
             MirInstr::Call {
                 func,
                 param_arg_regs,
+                instantiated_args,
+                receiver,
                 ..
-            } if func.0 == name => declarations
-                .function(name)
-                .map(|callee| (callee.param_decls.as_slice(), param_arg_regs)),
+            } if func.0 == name => declarations.function(name).map(|callee| {
+                (
+                    callee.param_decls.as_slice(),
+                    param_arg_regs,
+                    instantiated_args,
+                    receiver.as_ref(),
+                )
+            }),
             MirInstr::MethodCall {
+                recv,
+                recv_place,
                 resolved: Some(target),
                 param_arg_regs,
                 param_decls,
+                instantiated_args,
                 ..
-            } if target == name => Some((param_decls.as_slice(), param_arg_regs)),
+            } if target == name => {
+                let receiver = recv_place
+                    .as_deref()
+                    .and_then(|place| place.storage_ty(&function.var_tys))
+                    .or_else(|| function.reg_types.get(&recv.0));
+                Some((
+                    param_decls.as_slice(),
+                    param_arg_regs,
+                    instantiated_args,
+                    receiver,
+                ))
+            }
             _ => None,
         };
-        if let Some((decls, arguments)) = call {
-            let itself: Vec<ParamId> = supplied_parameter_arguments(decls, arguments)
+        if let Some((decls, arguments, instantiated, receiver)) = call {
+            let mut itself: Vec<ParamId> = supplied_parameter_arguments(decls, arguments)
                 .into_iter()
                 .filter(|(decl, argument)| {
                     argument.expr.as_ref().is_some_and(|expr| {
@@ -390,13 +490,185 @@ fn self_forwards(
                 })
                 .map(|(decl, _)| decl.id().clone())
                 .collect();
+            if instantiated.len() == decls.len() {
+                itself.extend(
+                    decls
+                        .iter()
+                        .zip(instantiated)
+                        .filter(|(decl, argument)| names_parameter(argument, decl.id()))
+                        .map(|(decl, _)| decl.id().clone()),
+                );
+            }
+            itself.extend(receiver.map_or_else(Vec::new, |receiver| {
+                receiver_forwarded_owner_params(name, receiver, declarations)
+            }));
             match forwarded {
                 Some(ids) => ids.retain(|id| itself.contains(id)),
                 None => *forwarded = Some(itself),
             }
         }
         for region in instruction_regions(instruction) {
-            self_forwards(name, region, declarations, forwarded);
+            self_forwards(name, function, region, declarations, forwarded);
+        }
+    }
+}
+
+/// The parameters of the struct whose method `name` is that a call of
+/// `name` on a `receiver` of that type passes as themselves: every one
+/// when the receiver is the bare `Self`, else each the receiver's
+/// argument at it names.
+fn receiver_forwarded_owner_params(
+    name: &str,
+    receiver: &Ty,
+    declarations: &MirDeclarations,
+) -> Vec<ParamId> {
+    let receiver = match receiver.kind() {
+        TyKind::Ref(reference) => &reference.referent,
+        _ => receiver,
+    };
+    let TyKind::Struct(struct_name, arguments) = receiver.kind() else {
+        return Vec::new();
+    };
+    if mojito_symbol::symbol::split_method_symbol(name)
+        .is_none_or(|(owner, _)| owner != *struct_name)
+    {
+        return Vec::new();
+    }
+    let decls = method_owner_params(name, declarations);
+    if arguments.is_empty() {
+        return decls.iter().map(|decl| decl.id().clone()).collect();
+    }
+    if arguments.len() != decls.len() {
+        return Vec::new();
+    }
+    decls
+        .iter()
+        .zip(arguments)
+        .filter(|(decl, argument)| names_parameter(argument, decl.id()))
+        .map(|(decl, _)| decl.id().clone())
+        .collect()
+}
+
+/// Whether the type or value argument `argument` is the parameter `id`
+/// itself.
+fn names_parameter(argument: &TyArg, id: &ParamId) -> bool {
+    match argument {
+        TyArg::Val(CtValue::Expr(expr)) => {
+            matches!(expr.kind(), ParamKind::DeclRef(reference) if reference.id == *id)
+        }
+        TyArg::Ty(ty) => matches!(ty.kind(), TyKind::Param { binder, .. } if binder.id == *id),
+        TyArg::Val(_) | TyArg::Origin(_) => false,
+    }
+}
+
+/// The slot each register of `blocks` and their regions reads whole, by a
+/// slot use or a load of its unprojected place.
+fn whole_slot_reads(blocks: &[MirBlock], reads: &mut HashMap<u32, VarId>) {
+    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+        match instruction {
+            MirInstr::UseVar { dest, var, .. } => {
+                reads.insert(dest.0, *var);
+            }
+            MirInstr::LoadPlace { dest, place } if place.proj.is_empty() => {
+                reads.insert(dest.0, place.root);
+            }
+            _ => {}
+        }
+        for region in instruction_regions(instruction) {
+            whole_slot_reads(region, reads);
+        }
+    }
+}
+
+/// Narrow `forwarded` to the slots of `name`, declared with `n_params`
+/// slots, each call of `name` in `blocks` and their regions passes as
+/// themselves ([`self_forwarded_arguments`]); the first call sets it.
+fn self_argument_forwards(
+    name: &str,
+    declaration: &MirFunctionDeclaration,
+    n_params: usize,
+    blocks: &[MirBlock],
+    reads: &HashMap<u32, VarId>,
+    forwarded: &mut Option<Vec<VarId>>,
+) {
+    let itself = |slot: VarId, reg: &Reg, place: Option<&MirPlace>| {
+        reads.get(&reg.0) == Some(&slot)
+            || place.is_some_and(|place| place.root == slot && place.proj.is_empty())
+    };
+    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+        let call = match instruction {
+            MirInstr::Call {
+                func,
+                args,
+                kwargs,
+                arg_places,
+                kwarg_places,
+                spread,
+                ..
+            } if func.0 == name => Some((None, args, kwargs, arg_places, kwarg_places, spread)),
+            MirInstr::MethodCall {
+                recv,
+                recv_place,
+                resolved: Some(target),
+                args,
+                kwargs,
+                arg_places,
+                kwarg_places,
+                spread,
+                ..
+            } if target == name => Some((
+                Some((recv, recv_place)),
+                args,
+                kwargs,
+                arg_places,
+                kwarg_places,
+                spread,
+            )),
+            _ => None,
+        };
+        if let Some((receiver, args, kwargs, arg_places, kwarg_places, spread)) = call {
+            let keywords: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
+            let passed: Vec<VarId> = (0..n_params as VarId)
+                .filter(|&slot| {
+                    if spread.is_some() {
+                        return false;
+                    }
+                    if declaration.has_receiver && slot == 0 {
+                        return receiver.is_some_and(|(recv, recv_place)| {
+                            itself(slot, recv, recv_place.as_deref())
+                        });
+                    }
+                    let Ok((positional, keyword)) =
+                        removed_argument_operands(declaration, &[slot], args.len(), &keywords)
+                    else {
+                        return false;
+                    };
+                    match (positional.len(), keyword.len()) {
+                        (1, 0) => positional.iter().all(|&index| {
+                            itself(
+                                slot,
+                                &args[index],
+                                arg_places.get(index).and_then(Option::as_ref),
+                            )
+                        }),
+                        (0, 1) => keyword.iter().all(|&index| {
+                            itself(
+                                slot,
+                                &kwargs[index].1,
+                                kwarg_places.get(index).and_then(Option::as_ref),
+                            )
+                        }),
+                        _ => false,
+                    }
+                })
+                .collect();
+            match forwarded {
+                Some(slots) => slots.retain(|slot| passed.contains(slot)),
+                None => *forwarded = Some(passed),
+            }
+        }
+        for region in instruction_regions(instruction) {
+            self_argument_forwards(name, declaration, n_params, region, reads, forwarded);
         }
     }
 }
