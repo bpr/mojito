@@ -9,23 +9,29 @@
 //! recorded call against that declaration and fills every slot it leaves
 //! out, before ownership analysis, so the filled argument is destroyed like
 //! any written one and a default instance is named by the call that needs
-//! it.
+//! it. A call of a generator without the argument passes none, so the view
+//! of a body with its calls so rewritten evaluates no default for it
+//! ([`erase_unpassed_defaults`]).
 
+use crate::mir::verify::instruction_result_regs;
 use crate::mir::{
     Const, FORWARDED_ARGUMENT_SLOT, FuncRef, LoweredCall, MirBlock, MirDeclarations, MirFunction,
-    MirFunctionDeclaration, MirInstr, MirPlace, MirSubscriptArg, READ_TEMPORARY_SLOT, Reg, UseMode,
-    callable_targets, calls::literal_materializes_to, calls::owns_droppable_storage,
-    fresh_register, instruction_regions_mut,
+    MirFunctionDeclaration, MirInstr, MirPlace, MirSubscriptArg, MirTerm, READ_TEMPORARY_SLOT, Reg,
+    UseMode, callable_targets, calls::literal_materializes_to, calls::owns_droppable_storage,
+    fresh_register, instruction_regions, instruction_regions_mut, instruction_regs_mut,
+    instruction_slots, terminator_regs_mut,
 };
 use mojito_ast::ast::ArgConvention;
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
 use mojito_checked::checked::{CheckedCallArgumentSource, CheckedConst};
 use mojito_common::token::SourceSpan;
+use mojito_hir::hir::VarId;
+use mojito_symbol::symbol::{LiftedOwner, lifted_owner};
 use mojito_types::param_expr::{ParamBindings, ParamContext};
 use mojito_types::types::{
     ParamDecl, Ty, TyArg, TyKind, names_binder, replace_argument_parameters, replace_parameters,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// Fill, at every call `functions` lowered from a checked call
 /// ([`MirFunction::lowered_calls`]), each argument it leaves out of a
@@ -81,6 +87,60 @@ pub fn fill_omitted_arguments(
         );
         function.blocks = blocks;
     }
+}
+
+/// Erase from `function` the evaluation of each default a call no longer
+/// passes, and return the registers it defined.
+///
+/// `dropped` are the operands a rewrite of the body's calls took for their
+/// callees' removed arguments, and `original` how many times the body read
+/// each register before it. Upstream's `RemoveUnusedParams` rewrites such a
+/// call to pass nothing for a removed argument, so the caller evaluates no
+/// default for it. An operand only the call read goes with the lifted
+/// default's call (`$default$f$x`) that defines it; one loaded from the
+/// read temporary that call's result was bound to goes with the temporary:
+/// its binding, its loads, and its destruction, every instruction that
+/// only served it. A temporary whose destruction reaches a terminator, a
+/// region, or a slot the inliner did not introduce stays, with its default.
+pub fn erase_unpassed_defaults(
+    function: &mut MirFunction,
+    dropped: &BTreeSet<u32>,
+    original: &[u32],
+) -> HashSet<u32> {
+    let mut producers = HashMap::new();
+    let mut bindings: HashMap<VarId, Vec<u32>> = HashMap::new();
+    collect_producers(&function.blocks, function, &mut producers, &mut bindings);
+    let once = |reg: u32| original.get(reg as usize) == Some(&1);
+    let mut calls = HashSet::new();
+    let mut slots = BTreeSet::new();
+    let mut regs = HashSet::new();
+    for &operand in dropped.iter().filter(|&&operand| once(operand)) {
+        match producers.get(&operand) {
+            Some(Producer::Default) => {
+                calls.insert(operand);
+            }
+            Some(&Producer::Temporary(slot)) => {
+                let Some(&[source]) = bindings.get(&slot).map(Vec::as_slice) else {
+                    continue;
+                };
+                if !once(source) || !matches!(producers.get(&source), Some(Producer::Default)) {
+                    continue;
+                }
+                if let Some((slice_slots, slice_regs)) = temporary_slice(function, slot, dropped) {
+                    calls.insert(source);
+                    slots.extend(slice_slots);
+                    regs.extend(slice_regs);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut erased = HashSet::new();
+    if calls.is_empty() {
+        return erased;
+    }
+    erase_slice(&mut function.blocks, &slots, &regs, &calls, &mut erased);
+    erased
 }
 
 /// The body whose calls are filled: its name, the declarations its callees
@@ -974,4 +1034,193 @@ fn bind_temporary(
         }
     });
     read
+}
+
+/// The registers `instruction` reads, as [`crate::mir::count_register_reads`]
+/// counts them: every register it names but its own results.
+fn register_operands(instruction: &mut MirInstr) -> Vec<u32> {
+    let mut results = Vec::new();
+    instruction_result_regs(instruction, &mut results);
+    let mut operands = Vec::new();
+    for reg in instruction_regs_mut(instruction) {
+        match results.iter().position(|result| result == reg) {
+            Some(at) => {
+                results.swap_remove(at);
+            }
+            None => operands.push(reg.0),
+        }
+    }
+    operands
+}
+
+/// What defines a register [`erase_unpassed_defaults`] may erase.
+enum Producer {
+    /// A call of a lifted default (`$default$f$x`).
+    Default,
+    /// A whole load of a read temporary.
+    Temporary(VarId),
+}
+
+/// Record in `producers` each register `blocks` and their regions define by
+/// a [`Producer`], and in `bindings` each register a slot is bound to.
+fn collect_producers(
+    blocks: &[MirBlock],
+    function: &MirFunction,
+    producers: &mut HashMap<u32, Producer>,
+    bindings: &mut HashMap<VarId, Vec<u32>>,
+) {
+    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+        match instruction {
+            MirInstr::Call { dest, func, .. }
+                if matches!(lifted_owner(&func.0), Some(LiftedOwner::Default { .. })) =>
+            {
+                producers.insert(dest.0, Producer::Default);
+            }
+            MirInstr::LoadPlace { dest, place }
+                if place.proj.is_empty()
+                    && place.through.is_none()
+                    && function
+                        .var_names
+                        .get(place.root as usize)
+                        .is_some_and(|name| name.starts_with(READ_TEMPORARY_SLOT)) =>
+            {
+                producers.insert(dest.0, Producer::Temporary(place.root));
+            }
+            MirInstr::DefVar { var, src, .. } => bindings.entry(*var).or_default().push(src.0),
+            _ => {}
+        }
+        for region in instruction_regions(instruction) {
+            collect_producers(region, function, producers, bindings);
+        }
+    }
+}
+
+/// The slots and registers that serve only the read temporary `slot`, once
+/// the call took the loads of it among `dropped`: an instruction naming one
+/// of the slots or reading one of the registers serves it, and its slots
+/// and its results but the dropped ones join. `None` when a region's
+/// instruction or a terminator would serve it, or a slot other than `slot`
+/// the inliner did not introduce would join.
+fn temporary_slice(
+    function: &mut MirFunction,
+    slot: VarId,
+    dropped: &BTreeSet<u32>,
+) -> Option<(BTreeSet<VarId>, HashSet<u32>)> {
+    let mut slice = Slice {
+        names: &function.var_names,
+        dropped,
+        slots: BTreeSet::from([slot]),
+        regs: HashSet::new(),
+    };
+    loop {
+        let before = (slice.slots.len(), slice.regs.len());
+        slice.grow(&mut function.blocks)?;
+        if (slice.slots.len(), slice.regs.len()) == before {
+            return Some((slice.slots, slice.regs));
+        }
+    }
+}
+
+/// The slots and registers [`temporary_slice`] grows.
+struct Slice<'a> {
+    names: &'a [String],
+    dropped: &'a BTreeSet<u32>,
+    slots: BTreeSet<VarId>,
+    regs: HashSet<u32>,
+}
+
+impl Slice<'_> {
+    /// Add what each instruction of `blocks` serving the slice names and
+    /// defines; `None` when the slice cannot be erased.
+    fn grow(&mut self, blocks: &mut [MirBlock]) -> Option<()> {
+        for block in blocks {
+            for instruction in &mut block.instrs {
+                let named = instruction_slots(instruction);
+                let serves = named.iter().any(|slot| self.slots.contains(slot))
+                    || register_operands(instruction)
+                        .iter()
+                        .any(|reg| self.regs.contains(reg));
+                if !instruction_regions(instruction).is_empty() {
+                    if serves {
+                        return None;
+                    }
+                    for region in instruction_regions_mut(instruction) {
+                        self.grow(region)?;
+                    }
+                    continue;
+                }
+                if !serves {
+                    continue;
+                }
+                for slot in named {
+                    let introduced = self
+                        .names
+                        .get(slot as usize)
+                        .is_some_and(|name| name.contains("$inline"));
+                    if !self.slots.contains(&slot) && !introduced {
+                        return None;
+                    }
+                    self.slots.insert(slot);
+                }
+                let mut results = Vec::new();
+                instruction_result_regs(instruction, &mut results);
+                self.regs.extend(
+                    results
+                        .into_iter()
+                        .map(|reg| reg.0)
+                        .filter(|reg| !self.dropped.contains(reg)),
+                );
+            }
+            if terminator_regs_mut(&mut block.term)
+                .iter()
+                .any(|reg| self.regs.contains(&reg.0))
+            {
+                return None;
+            }
+        }
+        Some(())
+    }
+}
+
+/// Remove from `blocks` and their regions each instruction serving the
+/// slice `slots` and `regs` and each defining only `calls`, recording their
+/// results in `erased`, and every cleanup entry of a slot in `slots`.
+fn erase_slice(
+    blocks: &mut [MirBlock],
+    slots: &BTreeSet<VarId>,
+    regs: &HashSet<u32>,
+    calls: &HashSet<u32>,
+    erased: &mut HashSet<u32>,
+) {
+    for block in blocks {
+        block.instrs.retain_mut(|instruction| {
+            if !instruction_regions(instruction).is_empty() {
+                for region in instruction_regions_mut(instruction) {
+                    erase_slice(region, slots, regs, calls, erased);
+                }
+                if let MirInstr::Try { cleanup, .. } = instruction {
+                    cleanup.retain(|drop| !slots.contains(&drop.var));
+                }
+                return true;
+            }
+            let mut results = Vec::new();
+            instruction_result_regs(instruction, &mut results);
+            let serves = instruction_slots(instruction)
+                .iter()
+                .any(|slot| slots.contains(slot))
+                || register_operands(instruction)
+                    .iter()
+                    .any(|reg| regs.contains(reg))
+                || (!results.is_empty() && results.iter().all(|reg| calls.contains(&reg.0)));
+            if serves {
+                erased.extend(results.iter().map(|reg| reg.0));
+            }
+            !serves
+        });
+        if let MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } =
+            &mut block.term
+        {
+            cleanup.retain(|drop| !slots.contains(&drop.var));
+        }
+    }
 }

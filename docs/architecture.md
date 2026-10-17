@@ -1768,8 +1768,12 @@ symbol names the member body, whose `self` leads), and a function value's
 `mir::callable_targets`, a variable every definition of which holds the
 same function included) are all filled; a default whose binders the call
 does not bind is an invariant error. The default of an argument the callee
-never uses is filled too, and `remove-unused-params` drops the operand as it
-drops a written one (R1083). The callee evaluates no default: the
+never uses is filled too, and the elaborator drops the operand as it drops a
+written one; the view of the caller it instantiates, with every call so
+rewritten (`mir::with_removed_argument_forwards_erased`), erases the
+default's `$default$` call and the read temporary bound to it, its
+destruction included, so the call evaluates nothing for the argument, as on
+the pin. The callee evaluates no default: the
 elaborator enqueues no default function from a declaration, and a slot a
 call shape still leaves out is an explicit `Unsupported` error on both
 backends. A default reading a binder in scope (`Self.n`, an enclosing `n`,

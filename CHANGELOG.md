@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call omitting an argument its callee never uses no longer evaluates
+  that argument's default (R1083), as upstream's `RemoveUnusedParams`
+  rewrites the call to pass nothing for it: the view of a caller the
+  elaborator instantiates, with each direct call's operands for removed
+  arguments dropped (`mir::with_removed_argument_forwards_erased`, now
+  built for every caller of such a callee rather than only one whose own
+  removals relied on it), erases the `$default$` call that only fed such
+  an operand and the read temporary it was bound to, with its loads and its
+  destruction (`erase_unpassed_defaults`). `fside()` over an unused
+  `x: Int = side()` no longer prints `side`, as on the pin
+  (`assets/ok/unused_argument_instances.mojo`); no other fixture's output
+  changes. A converted literal default still runs its constructor (R528).
 - A `drop.var` whose slot holds a whole value on every path to it is now
   the call of its destructor (R1043), as upstream's destructor insertion
   leaves a plain `__del__` call at each death: `mir::lower_whole_drops`,

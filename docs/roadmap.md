@@ -56,27 +56,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R1083 The default of an argument the callee never uses is still
-  evaluated at the call**
-
-  `mir::fill_omitted_arguments` fills every omitted slot, and
-  `remove-unused-params` then drops the operand of a slot the callee never
-  uses, leaving the default's evaluation as a dead call, where the pin runs
-  nothing for it.
-  - Probe: `pafter[n, m](x: Int = side(), y: Int = m * 2, /)` with `side`
-    printing, called as `pafter[1, 2]()`: Mojito prints `side`, the pin
-    does not (`assets/ok/lifted_body_owner_instances.mojo` keeps its `side`
-    silent so both agree).
-  - The lever: where the elaborator drops a removed argument's operand
-    (`drop_removed_arguments`), remove the `$default$` call, and the
-    read-temporary or forwarding slot bound to it, that only that operand
-    read.
-  - Measure by the instruction counters: the fill's read temporary also
-    costs a drop per such call.
-  - Found while landing R1077 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1085 A teardown a compiler primitive performs names no
   destructor; the backends find it from the type**
 
@@ -3659,11 +3638,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R528 A default value that does I/O is rejected; the pin evaluates it once**
+- [ ] **R528 A default value is evaluated at each call; the pin evaluates it once at compile time**
 
-  Problem: `def f(x: Int = tick())` where `tick` prints is rejected by `native::mono`, where the pin evaluates the default once at compile time.
-  - The rejection keeps Mojito a subset; without it each call would print.
-  - Evaluate a default once at compile time, as the pin does, then drop the rejection.
+  Problem: `def fd2(x: Int = side())` returning `x`, where `side` prints, prints `side` at each `fd2()` call, where the pin evaluates the default once at compile time: `mojo run` prints `side` once before `main` runs, and a `mojo build` binary never prints it.
+  - `mir::fill_omitted_arguments` writes the default's evaluation into each call, a `$default$` call or an `@implicit` conversion's constructor call.
+  - Probe: `conv(a: Int, l: Loud = 3)` with an unused `l`, where `Loud`'s `@implicit __init__` and `__deinit__` print, called as `conv(1)`: Mojito prints `init 3` and `del 3`, the pin's binary only `del 3`. `erase_unpassed_defaults` erases only a `$default$` call, since the conversion's constructor call is spelled as a written one.
+  - Probe: `noisy(a: Int, n: Noisy = Noisy())` with an unused `n`, called as `noisy(4)`: Mojito runs neither `Noisy()` nor its destructor, the pin destroys the value it evaluated at compile time, printing `del` at each call.
+  - Evaluate a default once at compile time, as the pin does, and materialize the value at each call.
   - Depends on nothing.
   - Model: Opus, Planned.
 

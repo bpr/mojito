@@ -897,22 +897,26 @@ impl<'a> Specializer<'a> {
         }
         // Each direct call of a generator that removed an argument passes
         // it no operand, as upstream's `RemoveUnusedParams` rewrote the call
-        // to name the clone without it, so the instance computes none.
-        let arguments = (!template.callee_removed_args.is_empty())
-            .then(|| {
-                mojito_mir::mir::with_removed_argument_forwards_erased(
-                    template,
-                    &self.source.declarations,
-                    &|callee| {
-                        template
-                            .callee_removed_args
-                            .iter()
-                            .find(|(name, _)| name == callee)
-                            .map(|(_, slots)| slots.as_slice())
-                    },
-                )
-            })
-            .flatten();
+        // to name the clone without it, so the instance computes none, nor
+        // the default of one the call leaves out. The callees whose removals
+        // the body was read through answer first, then every other callee
+        // ([`Self::drop_removed_arguments`]).
+        let arguments = mojito_mir::mir::with_removed_argument_forwards_erased(
+            template,
+            &self.source.declarations,
+            &|callee| {
+                template
+                    .callee_removed_args
+                    .iter()
+                    .find(|(name, _)| name == callee)
+                    .map(|(_, slots)| slots.as_slice())
+                    .or_else(|| {
+                        self.functions
+                            .get(callee)
+                            .map(|function| function.removed_args.as_slice())
+                    })
+            },
+        );
         let template = arguments.as_ref().map_or(template, |(view, _)| view);
         let undefined_operands = arguments.as_ref().map(|(_, operands)| operands.clone());
         // The generator a direct call names has its unused arguments

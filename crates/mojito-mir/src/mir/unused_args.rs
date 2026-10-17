@@ -9,6 +9,7 @@
 //! a user, so an owned `var a: Arr[n]` whose struct only holds a vector is
 //! as unused as a borrowed one.
 
+use crate::mir::call_defaults::erase_unpassed_defaults;
 use crate::mir::param_uses::{erase_forward_chains, register_reads};
 use crate::mir::verify::instruction_result_regs;
 use crate::mir::{
@@ -240,7 +241,9 @@ pub fn removed_argument_operands(
 /// parameters its type spells. An erased forward is a
 /// whole-place load, a borrow, a copy of a slot whose type has no
 /// destructor, or a move of a parameter whose drop runs no code; a copy of
-/// any other value is a call of its own, and stays.
+/// any other value is a call of its own, and stays. The evaluation of a
+/// default the call left out goes too, with the read temporary it was
+/// bound to ([`crate::mir::call_defaults::erase_unpassed_defaults`]).
 pub fn without_removed_argument_forwards<'a>(
     function: &MirFunction,
     declarations: &MirDeclarations,
@@ -254,8 +257,9 @@ pub fn without_removed_argument_forwards<'a>(
 /// [`without_removed_argument_forwards`] views it but for the operands.
 ///
 /// The instructions that only computed an operand its direct calls pass
-/// for their callees' removed arguments, `removed(callee)`, are erased;
-/// `None` when no call drops one.
+/// for their callees' removed arguments, `removed(callee)`, are erased,
+/// a left-out default's evaluation among them; `None` when no call drops
+/// one.
 ///
 /// Each call keeps those operands, with their registers' types, and only
 /// loses their places, a removed receiver taking a register no instruction
@@ -414,6 +418,9 @@ fn argument_forwards_view<'a>(
     removed: &dyn Fn(&str) -> Option<&'a [VarId]>,
     operands: Operands,
 ) -> Option<ArgumentForwards> {
+    if !calls_removing(&function.blocks, removed) {
+        return None;
+    }
     let mut view = function.clone();
     let original = register_reads(&mut view);
     let mut discounted = BTreeSet::new();
@@ -433,7 +440,14 @@ fn argument_forwards_view<'a>(
     if discounted.is_empty() {
         return None;
     }
-    let erased = erase_forward_chains(&mut view, declarations, &HashSet::new(), &original);
+    let mut erased = erase_unpassed_defaults(&mut view, &dropped, &original);
+    view.reg_types.retain(|reg, _| !erased.contains(reg));
+    erased.extend(erase_forward_chains(
+        &mut view,
+        declarations,
+        &HashSet::new(),
+        &original,
+    ));
     let mut undefined = Vec::new();
     if operands == Operands::Keep {
         view = function.clone();
@@ -450,6 +464,7 @@ fn argument_forwards_view<'a>(
             &mut BTreeSet::new(),
             &mut kept,
         );
+        erase_unpassed_defaults(&mut view, &kept, &original);
         erase_results(&mut view.blocks, &erased);
         undefined = kept
             .into_iter()
@@ -464,6 +479,29 @@ fn argument_forwards_view<'a>(
         discounted: discounted.into_iter().collect(),
         undefined,
     })
+}
+
+/// Whether `blocks` or their regions hold a direct call, or a resolved
+/// method call, of a callee `removed` names arguments of.
+fn calls_removing<'a>(blocks: &[MirBlock], removed: &dyn Fn(&str) -> Option<&'a [VarId]>) -> bool {
+    blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .any(|instruction| {
+            let target = match instruction {
+                MirInstr::Call {
+                    func, spread: None, ..
+                } => Some(func.0.as_str()),
+                MirInstr::MethodCall { resolved, .. } => resolved.as_deref(),
+                _ => None,
+            };
+            target
+                .and_then(removed)
+                .is_some_and(|slots| !slots.is_empty())
+                || instruction_regions(instruction)
+                    .into_iter()
+                    .any(|region| calls_removing(region, removed))
+        })
 }
 
 /// Where a view takes a register no instruction defines, for a call's

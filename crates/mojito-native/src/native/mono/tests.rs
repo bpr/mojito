@@ -2695,6 +2695,38 @@ fn a_forward_to_a_removed_argument_leaves_one_reduced_instance() {
     assert_eq!(call, Some(("fa$REMOVED$ARG$mono".to_string(), 0)));
 }
 
+/// A call omitting a removed argument evaluates no default for it, as
+/// upstream's rewritten call passes nothing: `ign(1)` runs neither
+/// `$default$ign$s` nor the read temporary's destructor, while `used(1)`
+/// still evaluates its own.
+#[test]
+fn a_removed_argument_left_out_evaluates_no_default() {
+    let source = "def make() -> String:\n\
+     \x20   print(\"make\")\n\
+     \x20   return String(\"made\")\n\
+     @no_inline\n\
+     def ign(a: Int, s: String = make()) -> Int:\n\
+     \x20   return a\n\
+     @no_inline\n\
+     def used(a: Int, s: String = make()) -> Int:\n\
+     \x20   return a + s.byte_length()\n\
+     def main() raises:\n\
+     \x20   print(ign(1), used(1))\n";
+    let specialized = specialized_with_removed(source, &[]).expect("specialize");
+    assert_eq!(
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
+    );
+    let defaults = instructions(&function(&specialized, "main").blocks)
+        .into_iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::Call { func, .. } if func.0.starts_with("$default$") => Some(func.0.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(defaults, ["$default$used$s"]);
+}
+
 #[test]
 fn a_nested_body_ignoring_its_argument_is_called_as_its_reduced_generator() {
     let source = "@no_inline\n\
