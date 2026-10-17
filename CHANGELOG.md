@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A static method's runtime argument its body never uses now leaves the
+  generator its calls name, as upstream's `RemoveUnusedParams` removes it
+  and then the parameters only its type named: `S.st[n](a: Arr[n])`
+  returning `3` has one instance, `S.st$REMOVED$ARG$mono`, for every `n`,
+  whether called through its struct or an instance, as on the pin. Fixture `assets/ok/static_method_unused_argument_instances.mojo`.
+  This closes R1032.
 - A `def` nested in a parametric struct's method is now a generator over
   the struct's parameters beside its enclosing scope's, and removes those
   it never reads, so `Counter[1](1).get()` and `Counter[2](2).get()` share

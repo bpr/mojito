@@ -27,11 +27,12 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 /// uses ([`used_slots`]), ascending: the arguments upstream's
 /// `RemoveUnusedParams` removes from the generator a direct call names.
 ///
-/// Only a free function, a nested one, and a method a resolved method call
+/// Only a free function, a nested one, a method a resolved method call
+/// names, and a static method a call through its struct or an instance
 /// names, the callees whose every direct call the elaborator reduces, have
-/// candidates: neither a static method, a constructor, nor a dunder or
-/// table member ([`crate::mir::table_member`]), which an operator, a
-/// subscript, or a backend reaches without a call naming it, nor a body
+/// candidates: neither a constructor nor a dunder or table member
+/// ([`crate::mir::table_member`]), which an operator, a subscript, or a
+/// backend reaches without a call naming it, nor a body
 /// declared in a compile-time region, nor one whose signature ties an
 /// origin or a returned reference to a parameter. A nested body's calls by
 /// name are direct calls, and its captures are leading arguments like any
@@ -298,9 +299,7 @@ fn reducible(name: &str, function: &MirFunction, declaration: &MirFunctionDeclar
     name != "__toplevel__"
         && (declaration.enclosing.is_some()
             || mojito_symbol::symbol::split_method_symbol(name).is_none_or(|(_, method)| {
-                declaration.has_receiver
-                    && !method.starts_with("__")
-                    && table_member(method).is_none()
+                !method.starts_with("__") && table_member(method).is_none()
             }))
         && declaration.region_binders.is_empty()
         && !declaration.returns_reference

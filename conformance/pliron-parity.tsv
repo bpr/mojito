@@ -752,6 +752,7 @@ assets/ok/static_method_explicit_application.mojo	main	exe-differential	sanitize
 assets/ok/static_method_pack_spread.mojo	main	exe-differential	sanitized
 assets/ok/static_method_reads_struct_value_parameter.mojo	main	exe-differential	sanitized
 assets/ok/static_method_unread_owner_instances.mojo	main	exe-differential	sanitized
+assets/ok/static_method_unused_argument_instances.mojo	main	exe-differential	sanitized
 assets/ok/static_methods.mojo	main	exe-differential	sanitized
 assets/ok/static_reference_result_argument.mojo	main	exe-differential	sanitized
 assets/ok/std_traits_origin_imports.mojo	main	exe-differential	sanitized

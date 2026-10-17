@@ -154,6 +154,7 @@ assets/ok/constructor_read_temporary_drop_order.mojo	elaborated	15	321	2	3	6	8	2
 assets/ok/constructor_reads_no_struct_parameter.mojo	elaborated	65	1049	35	52	691	847	188	106	152
 assets/ok/container_hashable.mojo	elaborated	125	2028	56	110	1112	1622	339	199	292
 assets/ok/contextual_member_static.mojo	elaborated	17	224	7	7	105	98	40	20	20
+assets/ok/converting_default_reads_erased_struct_parameter.mojo	elaborated	10	104	2	4	6	14	18	2	4
 assets/ok/copy_construction_last_use_moves.mojo	elaborated	22	325	7	7	38	34	40	9	9
 assets/ok/copy_construction_owned_receiver_forwards.mojo	elaborated	19	218	2	2	21	16	37	4	4
 assets/ok/copy_construction_read_argument_lends.mojo	elaborated	22	262	2	2	21	16	42	4	4
@@ -743,6 +744,7 @@ assets/ok/static_method_explicit_application.mojo	elaborated	20	173	6	9	21	24	34
 assets/ok/static_method_pack_spread.mojo	elaborated	23	318	8	11	66	101	49	23	14
 assets/ok/static_method_reads_struct_value_parameter.mojo	elaborated	18	115	8	12	27	32	26	8	12
 assets/ok/static_method_unread_owner_instances.mojo	elaborated	12	89	5	7	7	9	20	5	7
+assets/ok/static_method_unused_argument_instances.mojo	elaborated	15	160	5	9	7	12	23	5	9
 assets/ok/static_methods.mojo	elaborated	7	79	0	0	0	0	15	0	0
 assets/ok/static_reference_result_argument.mojo	elaborated	7	86	0	0	0	0	15	0	0
 assets/ok/std_traits_origin_imports.mojo	elaborated	8	95	0	0	0	0	16	0	0
@@ -1062,4 +1064,4 @@ benchmarks/compile/stdlib_heavy.mojo	elaborated	103	1691	42	90	769	1360	302	124	
 benchmarks/compile/trait_defaults.mojo	elaborated	159	1432	24	117	195	1031	192	37	133
 benchmarks/compile/tstring.mojo	elaborated	17	242	6	7	33	54	31	15	10
 benchmarks/compile/tuple.mojo	elaborated	24	252	7	13	40	71	41	10	16
-total	1063	24833	402199	8735	13768	120647	167886	68882	25546	34908
+total	1065	24858	402463	8742	13781	120660	167912	68923	25553	34921

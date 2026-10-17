@@ -4312,6 +4312,36 @@ fn nested_method_unread_owner_parameters_leave_the_instance_key() {
 }
 
 #[test]
+fn static_method_unused_arguments_leave_the_instance_key() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/static_method_unused_argument_instances.mojo");
+    let program = Compiler::default()
+        .compile_path(&path)
+        .expect("compile the fixture");
+    let concrete = program.concrete_mir().expect("elaborate");
+    let instances = |template: &str| {
+        concrete
+            .counts
+            .generators
+            .iter()
+            .find(|row| row.template == template)
+            .map_or(0, |row| row.instances)
+    };
+    for (template, count) in [("S.st", 1), ("S.sk", 1), ("P.st", 1), ("S.used", 2)] {
+        assert_eq!(instances(template), count, "instances of `{template}`");
+    }
+    let names: Vec<&str> = concrete
+        .program
+        .functions
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
+    for name in ["S.st$REMOVED$ARG$mono", "P.st$REMOVED$ARG$mono"] {
+        assert!(names.contains(&name), "no concrete `{name}`: {names:?}");
+    }
+}
+
+#[test]
 fn forwarded_parameters_leave_the_instance_key() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/forwarded_parameter_instances.mojo");

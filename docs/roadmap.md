@@ -385,21 +385,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1032 A static method's unused argument keeps the parameters its
-  type names**
-
-  `S.st[n](a: Arr[n])` returning `3` keeps one instance per `n`, where
-  upstream's pass clones the generator without `a` (`_REMOVED_ARG`).
-  - `mir::unused_arguments` gives candidates only to a free function and
-    a method with a receiver, since a static method is reached through a
-    `Call` (`S.st(a)`) and through a resolved `MethodCall` on an instance
-    (`s.st(a)`), and each arm must drop the argument.
-  - Both arms already call `Specializer::drop_removed_arguments`; the
-    static declaration has no receiver slot, so no position shifts.
-  - Found while landing R1011 (2026-10-15).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1033 A dunder or table member's unused argument keeps the
   parameters its type names**
 
@@ -2950,6 +2935,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Any generic static on a struct without parameters is affected, whether
     or not its body holds a `comptime if`.
   - The inferred spelling `P.plain(4)` works.
+  - Probe: `var f = S.st` over `@staticmethod def st(x: Int) -> Int` fails
+    with "Undefined variable 'S'", where the pin prints `f(3)` (found
+    while landing R1032, 2026-10-17).
   - The explicit spelling parses as `Invoke` over `Member(P, plain)`. The
     error is raised before the non-parametric static path in
     `checker/method_calls/type_receivers.rs` sees the call.
