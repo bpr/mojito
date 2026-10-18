@@ -5,7 +5,7 @@
 # call's selection is the template's; each instance re-keys only the
 # application.
 from std.collections import Set
-from std.hashlib import Hasher
+from std.hash import Hasher
 
 
 @fieldwise_init

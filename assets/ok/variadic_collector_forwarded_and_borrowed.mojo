@@ -2,7 +2,10 @@
 # source's storage, as at Mojo, so no move initializer runs, and the pack
 # destroys its elements last to first when it dies. A loop or comprehension
 # over a collector, read or owning, borrows each element in place rather than
-# copying the pack or moving its elements out.
+# copying the pack or moving its elements out. One line differs from the pin,
+# which moves a *temporary* argument into the pack through the move
+# initializer (`i 1009 1`, `del 1009` where Mojito prints `i 9 1`, `del 9`):
+# conformance/assets-mojo-output-diffs.tsv, roadmap R1131.
 struct M(Copyable, Movable, Writable):
     var v: Int
     def __init__(out self, v: Int):

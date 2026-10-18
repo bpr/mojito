@@ -3,7 +3,7 @@
 # rejected, as at the pin: the construction selects the declared `__init__`,
 # whose collector owns its elements.
 def copied[*Ts: Copyable & Movable](*args: *Ts) -> Tuple[*Ts]:
-    return Tuple[*Ts](*args)
+    return Tuple(*args)
 
 
 def main():

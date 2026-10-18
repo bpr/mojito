@@ -1,7 +1,7 @@
 # Upstream's raw-bytes hashing entry points: `hash(bytes, n)` over an
 # `ImmPointer[UInt8, _]` (any provenance, immutable) agrees with hashing the
 # String those bytes spell, and `hash_seeded_bytes` with `hash_seeded`.
-from std.hashlib._ahash import U256, hash_seeded, hash_seeded_bytes
+from std.hash._ahash import U256, hash_seeded, hash_seeded_bytes
 
 def main():
     var s = String("hello")

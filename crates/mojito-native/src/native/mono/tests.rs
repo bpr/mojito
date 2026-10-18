@@ -2412,7 +2412,7 @@ fn an_equality_member_that_reads_no_struct_parameter_is_one_instance() {
 
 #[test]
 fn a_hash_member_that_hashes_a_field_is_one_instance() {
-    let source = "from std.hashlib import Hasher\n\
+    let source = "from std.hash import Hasher\n\
          @fieldwise_init\n\
          struct HBox[n: Int](Hashable, ImplicitlyCopyable):\n\
          \x20   var v: Int\n\
@@ -2425,7 +2425,7 @@ fn a_hash_member_that_hashes_a_field_is_one_instance() {
         source,
         "HBox",
         "__hash__",
-        "HBox.__hash__$mono$T$$module$std$hashlib$$ahash$AHasher$mono$V$0$$0$$0$$0$$$$SIMD$DType$uint64$$4$",
+        "HBox.__hash__$mono$T$$module$std$hash$$ahash$AHasher$mono$V$0$$0$$0$$0$$$$SIMD$DType$uint64$$4$",
     );
 }
 

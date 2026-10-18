@@ -14,7 +14,7 @@ struct Bag[*Ts: Movable](
     var storage: Tuple[*Self.Ts]
 
     def __init__(out self, var *args: *Self.Ts):
-        self.storage = Tuple[*Self.Ts](*args^)
+        self.storage = Tuple(*args^)
 
     def get[T: AnyType](ref self) -> ref[self.storage] T:
         comptime for i in range(Self.Ts.length):

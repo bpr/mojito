@@ -3,7 +3,7 @@
 # (`to_bits` reads the lanes), a string's bytes arrive as a `Span[Byte, _]`
 # (`_update_with_bytes`), and `update` dispatches a Hashable value's own
 # `__hash__`. The conformer works through `hash[H]` and as a `Dict` hasher.
-from std.hashlib import Hasher
+from std.hash import Hasher
 
 struct SumHasher(Defaultable, Hasher):
     var total: UInt64

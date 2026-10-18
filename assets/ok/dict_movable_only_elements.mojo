@@ -3,7 +3,7 @@
 # copying APIs (`copy`, `get`, the borrowing views, the set algebra)
 # available where the elements are `Copyable`.
 from std.collections import Set
-from std.hashlib import Hasher
+from std.hash import Hasher
 
 struct NC(Movable, Deinitable):
     var v: Int

@@ -3712,6 +3712,33 @@ fn lambda_is_a_reserved_word() {
 }
 
 #[test]
+fn pattern_matching_words_are_keywords_outside_member_names() {
+    // `match` and `case` (with `class`, `del`, `yield`) are keywords at the
+    // pin: a binding, parameter, or field cannot be named by one without
+    // backticks, while a method or member still can.
+    for source in [
+        "var match = 1\n",
+        "def f(case: Int):\n    pass\n",
+        "struct S:\n    var match: Int\n",
+    ] {
+        let mut parser = Parser::new(Lexer::new(source));
+        parser
+            .parse_program()
+            .expect_err("a keyword as a binding name must be rejected");
+    }
+    for source in [
+        "var `match` = 1\n",
+        "struct S:\n    def match(self):\n        pass\n    def case(self):\n        pass\n",
+        "def main():\n    s.match()\n    print(s.case)\n",
+    ] {
+        let mut parser = Parser::new(Lexer::new(source));
+        parser
+            .parse_program()
+            .unwrap_or_else(|err| panic!("{source:?} must parse: {err:?}"));
+    }
+}
+
+#[test]
 fn postfix_transfer_binds_tighter_than_infix_operators() {
     // `primary '^'` is a postfix sigil: `p + q^` transfers `q`, not the sum,
     // while a whitespace-separated `^` stays the bitwise-xor operator.

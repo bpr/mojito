@@ -4,7 +4,7 @@
 # `write_to`, and a `__hash__[H: Hasher]` beside a generic rival reached
 # through a generic struct's `Hashable` bound. A `write_to` beside a rival
 # taking a `String` displays through a `Writable` bound by the `Writer` one.
-from std.hashlib import Hasher
+from std.hash import Hasher
 
 
 def inc(x: Int) -> Int:

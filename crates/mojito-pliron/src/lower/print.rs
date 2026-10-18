@@ -93,7 +93,7 @@ impl<'a> FnLowering<'a> {
         Ok(())
     }
 
-    /// The `value` field of a `FileDescriptor` register as a C `int`.
+    /// The `_value` field of a `RawFileDescriptor` register as a C `int`.
     fn descriptor_value(
         &mut self,
         ctx: &mut Context,
@@ -104,7 +104,7 @@ impl<'a> FnLowering<'a> {
             return Err(self.unsupported_reg("untyped `file` argument to print".into(), dest));
         };
         let storage = self.reg_ptr(ctx, reg)?;
-        let (offset, _) = self.field_offset(&ty, "value", dest)?;
+        let (offset, _) = self.field_offset(&ty, "_value", dest)?;
         let address = self.gep_byte(ctx, storage, offset, dest);
         let int_handle = ScalarTy::Int.handle(ctx);
         let load = LoadOp::new(ctx, address, int_handle);

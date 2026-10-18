@@ -64,11 +64,12 @@ the **Mojo-only** ones (`var struct trait comptime raises`). `Token::keyword` is
 lookup table. Soft/contextual words such as `mut` (in `mut self`) are **not** reserved — they
 lex as identifiers, so they stay usable as ordinary names, matching Mojo.
 
-The predefined future-syntax words `class`, `del`, `match`, and `yield` also
-remain ordinary lexer identifiers. Declaration checking rejects them only as
-free or nested function names; they remain usable for variables and parameters,
-and current method names such as `match` remain valid. This keeps future class,
-pattern, and generator syntax out of tokenization until those constructs exist.
+The words of syntax Mojito does not implement — `match` and `case` (pattern
+matching), `class`, `del`, and `yield` — are keywords too, as in current Mojo:
+a variable, parameter, field, or imported name spelled by one is a parse
+error unless stropped (`` `match` ``), and declaration checking rejects a free
+or nested function named by one. A method may still be named `match` or
+`case`, and a member access (`s.match()`) still admits every one of them.
 
 **Line joining.** A logical line may span several physical lines two ways. *Implicit*:
 inside `( … )` / `[ … ]` newlines and indentation are suppressed (the brackets carry the

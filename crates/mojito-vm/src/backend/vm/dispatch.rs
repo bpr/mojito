@@ -1042,17 +1042,17 @@ fn scalar_repr(value: &Value) -> String {
     }
 }
 
-/// The raw descriptor held by a `FileDescriptor` value (`print(file=)`).
+/// The raw descriptor held by a `RawFileDescriptor` value (`print(file=)`).
 fn descriptor_value(value: &Value) -> Result<i32, RuntimeError> {
     let Value::Struct { fields, .. } = value else {
         return Err(RuntimeError::TypeError(
-            "vm: 'file' argument to 'print' is not a FileDescriptor".to_string(),
+            "vm: 'file' argument to 'print' is not a RawFileDescriptor".to_string(),
         ));
     };
-    match fields.iter().find(|(name, _)| name == "value") {
+    match fields.iter().find(|(name, _)| name == "_value") {
         Some((_, Value::Int(fd))) => Ok(*fd as i32),
         _ => Err(RuntimeError::TypeError(
-            "vm: FileDescriptor value without an Int descriptor".to_string(),
+            "vm: RawFileDescriptor value without an Int descriptor".to_string(),
         )),
     }
 }

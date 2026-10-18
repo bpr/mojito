@@ -1,7 +1,7 @@
-"""IO constants and functions: the standard streams as `FileDescriptor`s."""
+"""IO constants and functions: the standard streams as `RawFileDescriptor`s."""
 
-from std.io import FileDescriptor
+from std.io import RawFileDescriptor
 
-comptime stdin = FileDescriptor(0)
-comptime stdout = FileDescriptor(1)
-comptime stderr = FileDescriptor(2)
+comptime stdin = RawFileDescriptor(0)
+comptime stdout = RawFileDescriptor(1)
+comptime stderr = RawFileDescriptor(2)

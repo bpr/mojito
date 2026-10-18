@@ -6,7 +6,7 @@
 # lane to a demanded `SIMD[DType.int16, 2]`, folds both
 # (`assets/ok/template_method_simd_leaf_default_bits.mojo` casts the whole
 # vector first).
-from std.hashlib import Hasher
+from std.hash import Hasher
 
 
 struct LaneBitsHasher(Defaultable, Hasher):

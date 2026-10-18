@@ -1,5 +1,5 @@
 def repack[*Ts: Movable](var *args: *Ts) -> Tuple[*Ts]:
-    return Tuple[*Ts](*args^)
+    return Tuple(*args^)
 
 
 def main():

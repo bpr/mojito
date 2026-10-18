@@ -135,7 +135,7 @@ pub(super) fn not_writable(ty: &Ty) -> TypeError {
 
 /// Whether `print` accepts a value of type `ty` for its keyword `name`, with
 /// the type it expects there: `sep`/`end` take a string, `flush` a `Bool`,
-/// and `file` the stdlib `FileDescriptor`. `None` for any other keyword.
+/// and `file` the stdlib `RawFileDescriptor`. `None` for any other keyword.
 pub(super) fn print_keyword(name: &str, ty: &Ty) -> Option<(bool, &'static str)> {
     match name {
         "sep" | "end" => Some((
@@ -149,7 +149,7 @@ pub(super) fn print_keyword(name: &str, ty: &Ty) -> Option<(bool, &'static str)>
         "file" => Some((
             matches!(ty.kind(), TyKind::Struct(name, _)
                 if mojito_types::types::is_stdlib_file_descriptor_struct(name)),
-            "FileDescriptor",
+            "RawFileDescriptor",
         )),
         _ => None,
     }
@@ -473,7 +473,7 @@ impl Checker {
     /// including public collections, opt into current `Writable`.
     /// Type the built-in `print(*args, sep=, end=, flush=, file=)`: every
     /// positional argument is printable; `sep`/`end` are strings, `flush` a
-    /// `Bool`, and `file` the stdlib `FileDescriptor`.
+    /// `Bool`, and `file` the stdlib `RawFileDescriptor`.
     pub(super) fn infer_print(
         &self,
         args: &[Expr],

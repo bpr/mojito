@@ -2,7 +2,7 @@
 # VM CTFE (`default_comp_time_hasher` is Fnv1a; the default is the keyed
 # AHasher) for scalar, Bool, Float64, and string arguments, and each constant
 # equals the runtime value.
-from std.hashlib import default_comp_time_hasher
+from std.hash import default_comp_time_hasher
 
 comptime CT_INT = hash[default_comp_time_hasher](Int(1))
 comptime CT_DEFAULT = hash(Int(1))

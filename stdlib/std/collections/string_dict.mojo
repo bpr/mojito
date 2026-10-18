@@ -8,7 +8,7 @@
 
 from std.collections.dict import DictEntry, _DictEntryIter, _DictKeyIter
 from std.collections.list import List
-from std.hashlib import default_hasher, hash
+from std.hash import default_hasher, hash
 from std.iter import Iterable
 from std.collections.optional import Optional
 

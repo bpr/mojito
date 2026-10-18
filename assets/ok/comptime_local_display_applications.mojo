@@ -3,7 +3,7 @@
 # whole by a lifted call or a `comptime(e)` operand as well as by a loop,
 # a condition, or `materialize`.
 from std.collections import Set
-from std.hashlib.hasher import default_hasher
+from std.hash.hasher import default_hasher
 
 
 def total[n: Int](xs: Array[Int, n]) -> Int:

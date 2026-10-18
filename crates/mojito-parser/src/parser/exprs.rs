@@ -390,7 +390,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     ExprKind::Identifier(mojito_ast::ast::CONTEXTUAL_SENTINEL.into()),
                     start,
                 );
-                let field = self.expect_identifier("Expected a member name after a leading '.'")?;
+                let field =
+                    self.expect_member_name("Expected a member name after a leading '.'")?;
                 if matches!(self.peek_token()?, Some(Token::LParen)) {
                     self.next_token()?; // consume '('
                     let (args, kwargs) = self.parse_call_args()?;
@@ -434,7 +435,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         // Postfix member access `expr '.' NAME` or method call `expr '.' NAME (args)`.
         if matches!(self.peek_token()?, Some(Token::Dot)) {
             self.next_token()?; // consume '.'
-            let field = self.expect_identifier("Expected a field or method name after '.'")?;
+            let field = self.expect_member_name("Expected a field or method name after '.'")?;
             if matches!(self.peek_token()?, Some(Token::LParen)) {
                 self.next_token()?; // consume '('
                 let (args, kwargs) = self.parse_call_args()?;

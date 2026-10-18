@@ -7,7 +7,7 @@
 # and an instance re-selects each on its own type: a built-in leaf has no
 # callee, `String` and a user struct select their own method. The method's
 # own `[H: Hasher]` binder stays symbolic in every clone.
-from std.hashlib import Hasher
+from std.hash import Hasher
 
 
 @fieldwise_init

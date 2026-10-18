@@ -1,4 +1,4 @@
-from std.hashlib import Hasher
+from std.hash import Hasher
 
 @fieldwise_init
 struct Pair(Hashable, Copyable, Movable):

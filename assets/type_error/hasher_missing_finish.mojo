@@ -1,7 +1,7 @@
 # expect: does not conform to trait 'Hasher'
 # A Hasher needs `__init__`, `_update_with_bytes`, `_update_with_simd`,
 # `update`, and `finish`; omitting `finish` is a conformance error.
-from std.hashlib import Hasher
+from std.hash import Hasher
 
 struct BrokenHasher(Hasher):
     var state: UInt64

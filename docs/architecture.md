@@ -2307,7 +2307,7 @@ Hashable values contribute to a caller-provided hasher through
 `__hash__(self, mut hasher: Some[Hasher])`; a conformer that omits it receives
 a synthesized field-by-field default at elaboration (next to the `copy`
 synthesis). `hash`, `Dict`'s bucketing, and the bundled `AHasher`/`Fnv1a` are
-ordinary stdlib code in `std.hashlib`. The compiler contributes only the leaf:
+ordinary stdlib code in `std.hash`. The compiler contributes only the leaf:
 a scalar or literal receiver's `__hash__(hasher)` is an intrinsic that
 normalizes the value (`-0.0` folded to `0.0`, a `DType` to its `UInt8` code,
 a `Bool` to `Scalar[DType.bool]`; a `StringLiteral` materializes to `String`
@@ -6320,7 +6320,7 @@ declares the C function on demand and calls it. No compiler-private
 same builtin with keywords: the VM joins the cells and writes them to the
 captured stdout or, for `file=`, through its descriptor table; the native
 backend routes every piece of such a call through libc `write` on the
-`FileDescriptor`'s value instead of `mjrt_write_stdout`.
+`RawFileDescriptor`'s value instead of `mjrt_write_stdout`.
 
 The `with` statement is a checker desugar (`checker/with_stmt.rs`), not a
 lowering construct: the manager's declared `__enter__`/`__exit__` methods

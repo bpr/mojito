@@ -513,7 +513,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     ) -> Result<mojito_ast::ast::TraitMethod, ParseError> {
         self.expect(&Token::Def, "Expected 'def'")?;
         let name = {
-            let spelled = self.expect_identifier("Expected a method name after 'def'")?;
+            let spelled = self.expect_member_name("Expected a method name after 'def'")?;
             mojito_ast::ast::canonical_destructor_name(&spelled).to_string()
         };
         let type_params = self.parse_type_params()?;
@@ -616,7 +616,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     ) -> Result<Method, ParseError> {
         self.expect(&Token::Def, "Expected 'def'")?;
         let name = {
-            let spelled = self.expect_identifier("Expected a method name after 'def'")?;
+            let spelled = self.expect_member_name("Expected a method name after 'def'")?;
             mojito_ast::ast::canonical_destructor_name(&spelled).to_string()
         };
         let type_params = self.parse_type_params()?;

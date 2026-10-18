@@ -2,7 +2,7 @@
 # `def` or a method of a `DType`-keyed struct, served by one template: the
 # elaborator instantiates the hasher's `_update_with_simd(mut self, value:
 # SIMD[_, _])` at each vector type it reaches, at every width.
-from std.hashlib.hasher import Fnv1a
+from std.hash.hasher import Fnv1a
 
 
 def hs[dt: DType](v: Scalar[dt]) -> UInt64:

@@ -3,7 +3,7 @@
 # holding another struct's instance, a generic method beside its struct's
 # binder, swapped binder names across calls, and an associated type equal
 # to the struct's binder against a def's own.
-from std.hashlib import Hasher
+from std.hash import Hasher
 
 
 trait Container:

@@ -10,7 +10,7 @@
 # upstream's `SIMD[_, _]` does: one template serves every hashed scalar and
 # vector type, and every scalar leaf reaches it as itself with `-0.0` folded
 # first, as upstream's `SIMD.__hash__`. This docstring-only home lets
-# `from std.hashlib.hasher import Hasher` resolve.
+# `from std.hash.hasher import Hasher` resolve.
 
 from ._ahash import AHasher
 from ._fnv1a import Fnv1a

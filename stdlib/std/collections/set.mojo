@@ -1,6 +1,6 @@
 from std.collections.list import List, _ListOwnedIter
 from std.reflection.type_info import _unqualified_type_name
-from std.hashlib import Hasher, default_hasher, hash
+from std.hash import Hasher, default_hasher, hash
 from std.iter import Iterable, IterableOwned, Iterator, StopIteration
 from std.memory.alloc import unsafe_alloc
 from std.collections.optional import Optional

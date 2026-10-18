@@ -5,7 +5,7 @@
 # the template's construction (`H()`) and consumes the fresh hasher through
 # the same `finish` builtin (`inner^.finish()`), whatever the struct's own
 # parameter binds.
-from std.hashlib import Hasher
+from std.hash import Hasher
 
 
 @fieldwise_init

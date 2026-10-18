@@ -5,7 +5,7 @@
 # clone. The same annotation resolves on a module-level `def`, on a plain
 # struct's method, and on a generic struct's method with no compile-time
 # construct, which mints no clone. Roadmap section 3 carries the entry.
-from std.hashlib import default_hasher
+from std.hash import default_hasher
 
 
 struct Box[T: Copyable & Deinitable & Hashable](Movable):

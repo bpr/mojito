@@ -1,7 +1,7 @@
 # expect: does not conform to trait 'Hasher'
 # `Hasher.finish` consumes the hasher and returns `UInt64`; a word-sized
 # `UInt` result does not satisfy the protocol.
-from std.hashlib import Hasher
+from std.hash import Hasher
 
 struct NarrowHasher(Hasher):
     var state: UInt64

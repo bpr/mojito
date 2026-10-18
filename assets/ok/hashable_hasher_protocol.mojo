@@ -2,7 +2,7 @@
 # spelled `__hash__[H: Hasher](self, mut hasher: H)`; a conformer that omits it
 # gets the reflective default, which feeds every field in declaration order —
 # exactly what an explicit field-by-field implementation does.
-from std.hashlib import Hasher
+from std.hash import Hasher
 
 @fieldwise_init
 struct Pair(Hashable, Copyable, Movable):

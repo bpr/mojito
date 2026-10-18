@@ -2,8 +2,8 @@
 # derives its method's hashed leaf from the checked template, and its
 # per-instantiation constructor clone keeps the whole instance name natively:
 # the vector's `DType.float32` never splits the method symbol.
-from std.hashlib import Hasher
-from std.hashlib._ahash import AHasher
+from std.hash import Hasher
+from std.hash._ahash import AHasher
 
 
 struct Box[T: Copyable & Deinitable & Hashable]:

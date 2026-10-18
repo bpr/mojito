@@ -3,7 +3,7 @@
 # `value : Type` while a `Bool` argument spells bare, at the top level and
 # nested in another application.
 from std.reflection.type_info import _unqualified_type_name
-from std.hashlib import default_hasher
+from std.hash import default_hasher
 
 struct Box[T: Copyable, n: Int](Copyable, Movable):
     var v: Int

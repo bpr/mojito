@@ -25,6 +25,36 @@ seventeen probes; their answers live in `cases.tsv` claims
 `span-parameter-bare-element`, `len-string-units`, `subtree-origin-cast`,
 `raise-caught-error`) and the parity rows they reference.
 
+## Re-run at the `cfd79ca736` re-pin (2026-10-17)
+
+Every probe in this directory ran against `Mojo 1.2.0.dev2026101705
+(46f49943)`. Every row below holds, after three probes were respelled to
+the window's vocabulary: `mut_self_hash_witness.mojo` and
+`imported_alias_in_generic_method.mojo` import from `std.hash` (upstream
+renamed `std.hashlib`), and the `pack_*` probes build their storage with
+the inferred `Tuple(*args^)`, because the explicit `Tuple[*Ts](*args^)`
+application regressed upstream. The window's two upstream regressions are
+probes of their own:
+
+| Probe | Question | Answer |
+|---|---|---|
+| `for_else_over_range.mojo` | Does a `for ... else` over `range` run its `else` when the loop completes? | **differs**: the previous pin and Mojito print `range else`; `46f49943` skips it (a `List` loop's `else` still runs). `cases.tsv` carries `loop-completion` as `output-diff` until this prints `range else` again. |
+| `tuple_explicit_pack_application.mojo` | Does `Tuple[*Ts](*args^)` construct from a `*Ts: Movable` pack? | **differs**: the previous pin and Mojito print `2` twice; `46f49943` rejects ("cannot unpack a pack of type 'Movable' ('Ts.values') into a call that expects a pack of type 'AnyType'") for every bound tried, while `Tuple(*args^)` runs. Every fixture spells the inferred form until this runs again. |
+
+Hand checks the same day: `match`, `case`, `class`, `del`, and `yield` are
+keywords (a binding named by one fails to parse with "escape keyword
+'match' with backticks to use it as an identifier"; a method may still be
+named `match` or `case`), `()` is never a type ("use 'Tuple[...]' to write a
+tuple type"), and passing `x^` to a borrowed argument warns rather than
+errors ("this value is borrowed here, so the transfer has no effect and can
+be removed") — Mojito has no warning channel and accepts it silently.
+
+A third regression needs no probe of its own: `assets/ok/tuple_reverse_concat.mojo`
+(`Tuple.reverse()` typed `Tuple[*Ts.reverse()]`) ran at the previous pin
+and `46f49943` rejects it with an error naming the same type on both sides.
+It sits in `conformance/assets-mojo-rejects.tsv` as `upstream-regression`,
+and the sweep reports the row the day the pin accepts it again.
+
 ## Deprecation / vocabulary tracking (re-run at every re-pin)
 
 Re-run 2026-08-26 against the `a79fbdf59f2` build (`Mojo 1.1.0.dev2026082605

@@ -3,7 +3,7 @@ checks, file I/O, and directory listing over `std.os`; `cwd`."""
 
 from std.collections.list import List
 from std.ffi import external_call
-from std.hashlib.hasher import Hasher
+from std.hash.hasher import Hasher
 from std.os import PathLike, listdir as _listdir
 from std.os.path import basename as _basename, exists as _exists, expanduser as _expanduser
 from std.os.path import isdir as _isdir, isfile as _isfile

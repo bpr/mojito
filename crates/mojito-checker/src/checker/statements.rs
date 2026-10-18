@@ -3377,7 +3377,7 @@ impl Checker {
     }
 }
 
-const RESERVED_FUNCTION_NAMES: &[&str] = &["class", "del", "match", "yield"];
+const RESERVED_FUNCTION_NAMES: &[&str] = &["class", "del", "match", "yield", "case"];
 
 /// Rejects a lambda in any of `params`' defaults: a default is inferred
 /// without scoped pre-registration, so a lambda there has no declaration

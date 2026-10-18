@@ -4,7 +4,7 @@
 # caller's hasher type, and Optional/Variant/Tuple tag then delegate. Every
 # value is current Mojo's for the same program.
 from std.collections import Set
-from std.hashlib import default_comp_time_hasher
+from std.hash import default_comp_time_hasher
 from std.utils import Variant
 
 def main():

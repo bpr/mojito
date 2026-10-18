@@ -1,7 +1,7 @@
 # Upstream's keyed `AHasher[key: U256]`: `default_hasher` is the zero-keyed
 # specialization, `hash_seeded` folds a seed into the key, and a zero seed is
 # the default hasher. Every value is current Mojo's for the same program.
-from std.hashlib._ahash import U256, hash_seeded
+from std.hash._ahash import U256, hash_seeded
 
 def main():
     var text = String("hello")

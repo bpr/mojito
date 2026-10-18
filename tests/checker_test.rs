@@ -57,9 +57,9 @@ fn accepts_functions_and_calls() {
 }
 
 #[test]
-fn reserved_function_words_remain_valid_for_parameters_variables_and_methods() {
+fn reserved_function_words_remain_valid_for_methods() {
     ok(
-        "def allowed(class: Int, del: Int) -> Int:\n    var match = class\n    var yield = match + del\n    return yield\n\nstruct Methods:\n    def class(self):\n        pass\n    def match(self):\n        pass\n    def yield(self):\n        pass\n",
+        "@fieldwise_init\nstruct Methods:\n    def class(self):\n        pass\n    def match(self):\n        pass\n    def yield(self):\n        pass\n    def case(self):\n        pass\n\ndef main():\n    var m = Methods()\n    m.match()\n    m.case()\n",
     );
 }
 
@@ -444,7 +444,7 @@ fn rejects_same_scope_redeclaration() {
 
 #[test]
 fn rejects_reserved_free_and_nested_function_names() {
-    for name in ["class", "del", "match", "yield"] {
+    for name in ["class", "del", "match", "yield", "case"] {
         let free = format!("def {name}():\n    pass\n");
         assert_eq!(err(&free), TypeError::ReservedName(name.to_string()));
 
@@ -7462,7 +7462,7 @@ fn print_keywords_are_checked() {
     );
     let e = err("def main():\n    print(1, file=2)\n");
     assert!(
-        matches!(&e, TypeError::TypeMismatch { expected, .. } if expected == "FileDescriptor"),
+        matches!(&e, TypeError::TypeMismatch { expected, .. } if expected == "RawFileDescriptor"),
         "got {e:?}"
     );
 }

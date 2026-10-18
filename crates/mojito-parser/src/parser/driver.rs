@@ -132,6 +132,20 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         }
     }
 
+    /// Consumes the next token as a function, method, or member name: an
+    /// identifier, or a keyword current Mojo still admits there (`s.match()`,
+    /// `def case(self)`), whose use as a free function name the checker
+    /// rejects.
+    pub(super) fn expect_member_name(&mut self, context_msg: &str) -> Result<String, ParseError> {
+        match self.next_token()? {
+            Token::Identifier(id) => Ok(id),
+            token => token
+                .member_name_keyword()
+                .map(str::to_string)
+                .ok_or_else(|| ParseError::UnexpectedToken(token, context_msg.to_string())),
+        }
+    }
+
     /// Parses the top-level program
     pub fn parse_program(&mut self) -> Result<Vec<Stmt>, ParseError> {
         let mut stmts = Vec::new();

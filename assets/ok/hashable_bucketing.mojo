@@ -2,7 +2,7 @@
 # `K: Hashable`, and `key.__hash__(hasher)` contributes a key to a caller-owned
 # hasher, so a helper can bucket keys. The default hasher is deterministic, so
 # equal keys land in the same bucket every run.
-from std.hashlib import default_hasher
+from std.hash import default_hasher
 
 def bucket_index[K: Hashable](key: K, bucket_count: Int) -> Int:
     return Int(hash(key)) & (bucket_count - 1)

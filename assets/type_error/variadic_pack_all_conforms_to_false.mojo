@@ -19,7 +19,7 @@ struct Bag[*Ts: Copyable & Movable & Deinitable](
     var storage: Tuple[*Self.Ts]
 
     def __init__(out self, var *args: *Self.Ts):
-        self.storage = Tuple[*Self.Ts](*args^)
+        self.storage = Tuple(*args^)
 
     def write_to(self, mut writer: Some[Writer]) where Self.Ts.all_conforms_to[Writable]():
         comptime for i in range(Self.Ts.length):

@@ -26,7 +26,7 @@ Mojito's:
    an erased run, compile-time evaluation included, calls the template with
    the binders read off the value. Bodies read lanes with
    `to_bits[DType.uint64]()` and `.length` (both compiler intrinsics), in
-   `while` loops because `range` is not visible inside `std.hashlib`. A
+   `while` loops because `range` is not visible inside `std.hash`. A
    width binder declared `Int` (`[dtype: DType, width: Int]`) is not
    inferred, in the pin as in Mojito, so the bundled bodies spell the
    wildcard.
@@ -68,6 +68,6 @@ Mojito's:
    constructor.
 
 Two leniencies remain on the acceptance side, both recorded: `Hasher`, like
-`Writer`, resolves without `from std.hashlib import Hasher`; and
+`Writer`, resolves without `from std.hash import Hasher`; and
 `StringLiteral` satisfies `Hashable` (it hashes as the `String` it
 materializes to), which `StringDict`'s literal-keyed entries rely on.

@@ -4,7 +4,7 @@
 # parameter 'Self' does not conform to trait 'Hashable': missing required
 # operation"), because a witness must repeat the requirement's receiver
 # convention exactly. Roadmap section 3 carries the entry.
-from std.hashlib import Hasher
+from std.hash import Hasher
 
 
 struct Odd(Copyable, Hashable, Movable):

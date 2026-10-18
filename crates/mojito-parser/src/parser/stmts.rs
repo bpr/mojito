@@ -441,7 +441,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
     pub(super) fn parse_def(&mut self, decorators: Vec<Decorator>) -> Result<StmtKind, ParseError> {
         self.expect(&Token::Def, "Expected 'def'")?;
-        let name = self.expect_identifier("Expected function name after 'def'")?;
+        let name = self.expect_member_name("Expected function name after 'def'")?;
         let type_params = self.parse_type_params()?;
 
         self.expect(&Token::LParen, "Expected '(' after function name")?;

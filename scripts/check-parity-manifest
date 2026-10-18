@@ -134,7 +134,7 @@ $1 == "fixture" { if ($0 != "fixture\tfamily\tfirst-error") { print "invalid ass
 {
     if (NF != 3) { print "assets reject row " NR " has " NF " fields, expected 3" > "/dev/stderr"; ok = 0 }
     if (seen[$1]++) { print "duplicate assets reject fixture: " $1 > "/dev/stderr"; ok = 0 }
-    if ($2 !~ /^(alias-keyword|self-qualification|unbound-parameter|missing-import|no-main|iterator-protocol|hasher-protocol|layout-alignment|ledgered|divergence|skip)$/) {
+    if ($2 !~ /^(alias-keyword|self-qualification|unbound-parameter|missing-import|no-main|iterator-protocol|hasher-protocol|layout-alignment|upstream-regression|ledgered|divergence|skip)$/) {
         print "invalid assets reject family for " $1 ": " $2 > "/dev/stderr"; ok = 0
     }
     if ($3 == "") { print "assets reject row lacks an error: " $1 > "/dev/stderr"; ok = 0 }
@@ -169,7 +169,7 @@ $1 == "fixture" { if ($0 != "fixture\tverdict\tfamily\tupstream") { print "inval
         print "error-ledger fixture is not in an error folder: " $1 > "/dev/stderr"; ok = 0
     }
     if ($2 !~ /^(compile-reject|trap|runs|timeout)$/) { print "invalid error-ledger verdict for " $1 ": " $2 > "/dev/stderr"; ok = 0 }
-    if ($3 !~ /^(agree|alias-keyword|self-qualification|unbound-parameter|missing-import|no-main|iterator-protocol|ledgered|subset|divergence|skip)$/) {
+    if ($3 !~ /^(agree|alias-keyword|self-qualification|unbound-parameter|missing-import|no-main|iterator-protocol|handler-argument|ledgered|subset|divergence|skip)$/) {
         print "invalid error-ledger family for " $1 ": " $3 > "/dev/stderr"; ok = 0
     }
     if ($4 == "") { print "error-ledger row lacks upstream text: " $1 > "/dev/stderr"; ok = 0 }

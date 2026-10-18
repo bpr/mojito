@@ -8,6 +8,23 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The differential pin is now Mojo `1.2.0.dev2026101705` (upstream
+  `cfd79ca736`, 2026-10-17), whose window released `match`/`case` pattern
+  matching, and three of its spelling changes reach Mojito. `match`, `case`,
+  `class`, `del`, and `yield` are keywords: a variable, parameter, field, or
+  imported name spelled by one is a parse error unless stropped
+  (`` `match` ``), a free or nested `def` named by one is still rejected by
+  the checker, and a method may still be named `match` or `case` and called
+  as one. The bundled hashing package is `std.hash`, as upstream renamed
+  `std.hashlib`. The descriptor `Writer` is `RawFileDescriptor` with a
+  `_value` field, as upstream renamed `FileDescriptor`; its `c_int` type and
+  `-1` niche are roadmap R1127. `docs/mojo-nightly.md` carries the audit,
+  the window's unimplemented features (R1114–R1127), and the two upstream
+  regressions the run exposed, which are probes rather than divergences: a
+  `for ... else` over `range` skips its `else` at the pin, and the explicit
+  `Tuple[*Ts](*args^)` application no longer constructs, so every fixture
+  spells the inferred `Tuple(*args^)`.
+
 - The Pliron backend now depends on the crates.io releases `pliron` and
   `pliron-llvm` `0.20.0` rather than a pinned git revision; the toolchain
   is unchanged (`llvm-sys 231`, LLVM 23.1). The adapter follows the API:

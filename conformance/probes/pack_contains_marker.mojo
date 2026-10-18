@@ -17,7 +17,7 @@ struct Bag[*Ts: Movable](
     var storage: Tuple[*Self.Ts]
 
     def __init__(out self, var *args: *Self.Ts):
-        self.storage = Tuple[*Self.Ts](*args^)
+        self.storage = Tuple(*args^)
 
     def has[T: AnyType](self) -> Int:
         comptime if Self.Ts.contains[T]():

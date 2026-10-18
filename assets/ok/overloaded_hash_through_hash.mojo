@@ -2,8 +2,8 @@
 # bundled `hash` is a plain trait-bound `def`, served by its template, and the
 # elaborator selects the overload the hasher instance takes. The pin prints
 # `True`.
-from std.hashlib import Hasher
-from std.hashlib._ahash import AHasher
+from std.hash import Hasher
+from std.hash._ahash import AHasher
 
 
 @fieldwise_init

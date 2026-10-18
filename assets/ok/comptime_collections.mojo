@@ -4,7 +4,7 @@
 # constructors carry `default_comp_time_hasher`, and a runtime use crosses
 # explicitly through `materialize[...]()` or `comptime(...)`.
 from std.collections import Set
-from std.hashlib import default_comp_time_hasher
+from std.hash import default_comp_time_hasher
 
 comptime M = {"a": 1, "b": 2}
 comptime S = {1, 2, 3}

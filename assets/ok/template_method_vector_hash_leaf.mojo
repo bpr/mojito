@@ -4,8 +4,8 @@
 # and a direct `__hash__` on a vector or a sized scalar feeds the hasher as
 # `hash()` does (`-0.0` folded first). The multi-lane vector instance is
 # `template_method_vector_instance.mojo`.
-from std.hashlib import Hasher
-from std.hashlib._ahash import AHasher
+from std.hash import Hasher
+from std.hash._ahash import AHasher
 
 
 struct Box[T: Copyable & Deinitable & Hashable]:

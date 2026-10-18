@@ -3,7 +3,7 @@
 # moves into its list, and the constructor copies every entry into a pair
 # and the pair's halves into the table, then destroys the pair and, last,
 # the lists. The display and the spelled constructor call trace alike.
-from std.hashlib import Hasher
+from std.hash import Hasher
 
 
 @fieldwise_init

@@ -105,6 +105,7 @@ legacy-owned-convention	reject	conformance/fixtures/legacy_owned_convention.mojo
 static-methods	run	assets/ok/static_methods.mojo
 reserved-method-name	run	conformance/fixtures/reserved_method_name.mojo
 reserved-word-function-name	reject	assets/type_error/reserved_word_function_name.mojo
+reserved-word-binding-name	reject	assets/parse_error/reserved_word_binding_name.mojo
 overload-by-type	run	conformance/fixtures/overload_by_type.mojo
 overload-ordering	run	conformance/fixtures/overload_ordering.mojo
 overload-var-copy-ranking	run	assets/ok/overload_var_copy_beside_generic.mojo
@@ -156,7 +157,7 @@ legacy-reflected-field-type	reject	conformance/fixtures/legacy_reflected_field_t
 reflected-field-handles	run	conformance/fixtures/reflected_field_handles.mojo
 late-initialization	reject	conformance/fixtures/late_initialization.mojo
 context-managers	run	conformance/fixtures/context_managers.mojo
-loop-completion	run	conformance/fixtures/loop_completion.mojo
+loop-completion	output-diff	conformance/fixtures/loop_completion.mojo
 reference-iteration	run	conformance/fixtures/reference_iteration.mojo
 pattern-completion	run	conformance/fixtures/pattern_completion.mojo
 string-interpolation	run	conformance/fixtures/string_interpolation.mojo

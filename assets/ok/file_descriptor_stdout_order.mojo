@@ -1,4 +1,4 @@
-# `FileDescriptor` is a `Writer` over a raw descriptor: writes to descriptor
+# `RawFileDescriptor` is a `Writer` over a raw descriptor: writes to descriptor
 # 1 interleave in order with `print`, `print(file=)` routes through it, and
 # a descriptor over an open `FileHandle` writes to that file.
 from std.os import remove, rmdir
@@ -9,7 +9,7 @@ from std.tempfile import mkdtemp
 
 def main() raises:
     print("one")
-    var out = FileDescriptor(1)
+    var out = RawFileDescriptor(1)
     out.write_string("two\n")
     out.write("three", 3, "\n")
     print("four", file=out)
@@ -17,7 +17,7 @@ def main() raises:
     var scratch = mkdtemp(prefix="mojito_fd_")
     var path = join(scratch, "log.txt")
     var handle = open(path, "w")
-    var into_file = FileDescriptor(handle)
+    var into_file = RawFileDescriptor(handle)
     print("six", 6, file=into_file)
     into_file.write_string("seven\n")
     handle.close()
@@ -26,4 +26,4 @@ def main() raises:
     reader.close()
     remove(path)
     rmdir(scratch)
-    print(FileDescriptor().value, stdout.value)
+    print(RawFileDescriptor()._value, stdout._value)

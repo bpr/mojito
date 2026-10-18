@@ -4,7 +4,7 @@
 # Each instance's comparison, hash, and write read the pack's elements by
 # loop index, one copy per element.
 
-from std.hashlib import Hasher
+from std.hash import Hasher
 
 
 @fieldwise_init

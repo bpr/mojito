@@ -8,7 +8,7 @@
 # Each clone bakes the binder to one vector type, from a `Bool` lane to a
 # demanded `SIMD[DType.uint8, 4]`, and folds the dtype and width into what
 # the template left open.
-from std.hashlib import Hasher
+from std.hash import Hasher
 
 
 struct FoldHasher(Defaultable, Hasher):

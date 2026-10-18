@@ -8,7 +8,7 @@ struct Bag[*Ts: Movable](
     var storage: Tuple[*Ts]
 
     def __init__(out self, var *args: *Self.Ts):
-        self.storage = Tuple[*Self.Ts](*args^)
+        self.storage = Tuple(*args^)
 
 
 def main():

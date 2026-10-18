@@ -16,6 +16,13 @@
 # under Mojito's feet. Each has a roadmap task; neither is a shape the pin
 # refuses, so neither belongs in assets/extensions/.
 #
+# The 2026-10-17 re-pin added one `hasher-protocol` row (the pin's `Hasher`
+# no longer requires `__init__`, so `H()` over a bare `Hasher` binder has no
+# candidate; roadmap R1125) and the `upstream-regression` family: a fixture
+# the previous pin ran and `46f49943` rejects with an error naming the same
+# type on both sides. Such a row leaves when the pin recovers, which the sweep
+# reports as a listed fixture the pin now accepts.
+#
 # The error is the pin's FIRST complaint, so it can mask a later one: lifting
 # a mask moves a row to another family rather than deleting it.
 # swept-count	1082
@@ -23,6 +30,8 @@ fixture	family	first-error
 assets/ok/dict_hasher_forwarding.mojo	hasher-protocol	error: 'LoudHasher' does not implement all requirements for 'Hasher'
 assets/ok/hasher_user_conformer.mojo	hasher-protocol	error: 'SumHasher' does not implement all requirements for 'Hasher'
 assets/ok/layout_allocation.mojo	layout-alignment	error: no matching function in initialization
+assets/ok/template_method_binder_construction.mojo	hasher-protocol	error: invalid call to '__init__': no candidates found
 assets/ok/template_method_simd_leaf.mojo	hasher-protocol	error: 'FoldHasher' does not implement all requirements for 'Hasher'
 assets/ok/template_method_simd_leaf_default_bits.mojo	hasher-protocol	error: 'BitsHasher' does not implement all requirements for 'Hasher'
 assets/ok/template_method_simd_leaf_default_bits_lanes.mojo	hasher-protocol	error: 'LaneBitsHasher' does not implement all requirements for 'Hasher'
+assets/ok/tuple_reverse_concat.mojo	upstream-regression	error: cannot implicitly convert 'Tuple[*#kgen.param_list.tabulate(len(Ts.values), [idx: __mlir_type.index] Ts.values[(add (mul idx, -1), len(Ts.values), -1)])]' value to 'Tuple[*#kgen.param_list.tabulate(len(Ts.values), [idx: __mlir_type.index] Ts.values[(add (mul idx, -1), len(Ts.values), -1)])]'

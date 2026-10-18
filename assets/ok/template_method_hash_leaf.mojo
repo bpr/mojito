@@ -4,7 +4,7 @@
 # a closed type, the same under every instance, so the template keeps it and
 # each instance records it again: a tag vector and a seed pair, one in each
 # arm of an `if`, derive for an `Int`, a `String`, and a user-struct instance.
-from std.hashlib import Hasher
+from std.hash import Hasher
 
 
 @fieldwise_init

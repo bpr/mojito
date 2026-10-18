@@ -5,8 +5,8 @@
 # binder selects the per-call clone keyed by the instance and the call
 # together, and a synthesized `Copyable.copy` under a conditional conformance
 # is the template's own body, which every instance shares.
-from std.hashlib import Hasher
-from std.hashlib._ahash import AHasher
+from std.hash import Hasher
+from std.hash._ahash import AHasher
 
 
 @fieldwise_init

@@ -5,7 +5,7 @@
 # lane-shaped vector. Every per-call leaf clone, from a `Bool` lane to a
 # demanded `SIMD[DType.int16, 2]`, folds both and inherits the template's
 # facts (`assets/ok/template_method_simd_leaf.mojo` spells the target).
-from std.hashlib import Hasher
+from std.hash import Hasher
 
 
 struct BitsHasher(Defaultable, Hasher):

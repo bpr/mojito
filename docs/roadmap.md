@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1114**.
+Next free ID: **R1132**.
 
 ## Ordered Work
 
@@ -2563,6 +2563,82 @@ Track: `calls`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
+- [ ] **R1114 `not <Trait>` opts a struct out of a trait in its conformance
+  list**
+
+  Problem: `struct Handle(not Movable)` and
+  `struct Example(not Deinitable else "call 'cleanup()'")` fail to parse
+  ("Unexpected token Not: Expected a trait name in the conformance list"),
+  where the pin reads them as the preferred spelling of `Movable where
+  False` and `Deinitable where (False, "call 'cleanup()'")`, which keep
+  working.
+  - The manual's explicit-destruction page now spells every opt-out this
+    way.
+  - Lever: `parse_struct`'s conformance list reads `not NAME [else STRING]`
+    into the conditional-conformance-false fact it already builds for
+    `where False`, message included.
+  - `docs/grammar.md` first, then parser tests and an `assets/ok` fixture
+    beside the `where False` ones.
+  - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1116 `match`/`case` pattern matching needs a plan**
+
+  Problem: the pin's `match subject:` statement with `case pattern:` arms —
+  literals, `|` alternatives, `if` guards, name and `as` bindings, `var`/
+  `ref` bindings, tuple, struct, and list patterns, `.Some(x)` cases of
+  `EnumLike` types, explicit `== value` patterns, `comptime match`, and
+  exhaustiveness warnings — has no Mojito surface. `match` and `case` lex
+  as keywords since the 2026-10-17 re-pin, so a `match` statement is a
+  parse error.
+  - The feature is released (`Mojo/docs/site/releases/v1.2.0.md`,
+    `Mojo/docs/site/manual/control-flow.mdx`); it is the window's one
+    large language addition.
+  - Write `docs/pattern-matching-plan.md`: the grammar, the AST and
+    parser slice, how the checker decides each pattern kind (comparison
+    through `__eq__`, `EnumLike` case metadata, destructuring), the HIR
+    lowering to a CFG of tests and bindings, and `comptime match` as a
+    folded chain, each stage one session.
+  - This entry lands when the plan is written and its slices are filed as
+    chained entries.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R1117 `if case` and `while case` test one pattern without a `match`**
+
+  Problem: `if case .Some(item) = value:` and
+  `while case .Some(item) = get_next():` are parse errors, where the pin
+  evaluates the value once, binds the pattern's names in the body, and
+  runs `elif`/`else` or the loop's `else` on a failed match.
+  - The pattern machinery is R1116's; this is the statement-form slice.
+  - Depends on R1116.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1118 List destructuring and list patterns**
+
+  Problem: `var [first, *middle, last] = values` is a parse error, where
+  the pin destructures any `Sized` subscriptable collection, a single
+  `*name` taking the elements between the leading and trailing ones, and
+  raises on a wrong length. `case []`, `case [1, *middle, last]` are the
+  pattern form, which does not match on a wrong length.
+  - A `*` pattern needs `ContiguousSlice` subscripting on the subject.
+  - Depends on R1116.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1119 `Defaultable` supplies a default `__init__()`**
+
+  Problem: a struct that conforms to `Defaultable` without writing an
+  initializer is rejected ("struct 'S' has no constructor"), where the pin
+  synthesizes `__init__()` through reflection, default-constructing each
+  field, whenever every field is `Defaultable`.
+  - Lever: a trait default body for `Defaultable.__init__` over
+    `reflect[Self]`'s fields, the way the `Hashable`/`Writable` defaults
+    read them.
+  - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 - [ ] **R503 A call through a callable local reads a same-spelled
   sibling's slot**
 
@@ -2854,7 +2930,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `hash_bytes(ImmSpan[Byte])`, which lands in the same pass.
   - The levers are `checker/traits.rs` (the `Hasher` requirement set and its
     shape message), `checker/method_calls/intrinsic_receivers.rs` (the intrinsic arms),
-    and `stdlib/std/hashlib/` (`hasher.mojo`, `_ahash.mojo`, `_fnv1a.mojo`
+    and `stdlib/std/hash/` (`hasher.mojo`, `_ahash.mojo`, `_fnv1a.mojo`
     plus every `hasher.update(...)` call site).
   - It changes a compiler-known trait's contract.
   - Depends on nothing.
@@ -3725,6 +3801,38 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
+
+- [ ] **R1115 `where <cond> else "<message>"` is the preferred constraint
+  message**
+
+  Problem: `def foo[sc: Int]() where sc > 1 else "scaling factor must be
+  greater than 1":` fails to parse ("Unexpected token Else: Expected ':'
+  before the function body"), where the pin reads it as the preferred
+  spelling of `where (sc > 1, "...")`, which it will deprecate over time.
+  - A struct's conditional conformance takes the same tail:
+    `Marker where conforms_to(T, Marker) else "Box[T] is a Marker only
+    when T is"`.
+  - Lever: `where_clause` reads an optional `else STRING` after its
+    expression into the (condition, message) pair the tuple form fills.
+  - `docs/grammar.md` first, then parser tests and fixtures beside the
+    tuple-form ones.
+  - Found at the 2026-09-21 re-pin and left unfiled; refiled at the
+    2026-10-17 re-pin.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1120 `Tuple[]` is the empty tuple's type**
+
+  Problem: `def f() -> Tuple[]:` fails to parse ("Unexpected token
+  RBracket: Expected an expression"), where the pin spells the empty
+  tuple's type `Tuple[]` and nothing else: `()` is a tuple value ("expected
+  a type, found a tuple value; use 'Tuple[...]' to write a tuple type"),
+  which Mojito already rejects as a type.
+  - Lever: `parse_type` admits an empty argument list on `Tuple`, and the
+    checker resolves it to the zero-element tuple.
+  - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R849 A `comptime if` over a scalar SIMD value parameter takes the
   wrong arm**
@@ -5882,11 +5990,13 @@ Track: `divergences`.
   re-probed at every re-pin; every other Mojito-only acceptance is a
   divergence on the ledger below, waiting to be withdrawn. Both keep their
   fixtures under `assets/extensions/`.
-- The `26cfe94f40` re-pin (2026-09-21, Mojo `1.6.0.dev2026092105`) closed the
-  one subset change its window forced: a walrus updates and never introduces
-  a binding. The window's unimplemented features are the changeset in
-  [`docs/mojo-nightly.md`](mojo-nightly.md) and are filed separately; the two
-  divergences it found are checkboxes below.
+- The `cfd79ca736` re-pin (2026-10-17, Mojo `1.2.0.dev2026101705`) closed
+  the spelling changes its window forced: `match`, `case`, `class`, `del`,
+  and `yield` are keywords, `std.hashlib` is `std.hash`, and
+  `FileDescriptor` is `RawFileDescriptor`. The window's unimplemented
+  features are R1114–R1127, and its two upstream regressions are probes
+  (`for_else_over_range.mojo`, `tuple_explicit_pack_application.mojo`)
+  re-run at the next re-pin, not entries here.
 
 Behavioral divergences from the pinned Mojo, to burn to zero. Every new
 divergence lands here with a probe or a `cases.tsv` `mojito-only` /
@@ -5895,6 +6005,64 @@ fixture. Each entry's `Ledger name` is the slug `conformance/cases.tsv` uses
 for it, and an entry that waits on another names it. Five divergences are
 retained on purpose and re-probed rather than fixed; they are listed in
 [`docs/non-goals.md`](non-goals.md).
+
+- [ ] **R1128 `main()` may raise only `Error`**
+
+  Problem: `def main() raises StopIteration:` is accepted and traps at run
+  time, where the pin rejects the declaration ("'main()' can only raise
+  'Error'; remove the explicit error type").
+  - `assets/runtime_error/pliron_raise_iter_stop_unhandled.mojo` pins the
+    native unhandled-error text through exactly this spelling; once `main`
+    rejects a typed `raises`, a helper raises `StopIteration` and `main`
+    lets it escape through a plain `raises`, or the fixture retires.
+  - Ledger: `conformance/assets-mojo-errors.tsv` carries the fixture as
+    `skip` with the pin's complaint.
+  - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1129 A late-initialized local dies in reverse initialization order**
+
+  Problem: after `var a: S`, `var b = S(2)`, `a = S(1)`, a raise destroys
+  `a` then `b` at the pin (`del 1`, `del 2`), where Mojito destroys `b`
+  then `a`, in reverse declaration order.
+  - Ledger name: `assets/ok/try_raise_edge_drop_order.mojo` in
+    `conformance/assets-mojo-output-diffs.tsv` (`drop-timing`); the
+    fixture's header describes Mojito's order.
+  - Both pins behave alike, so this is an unoracled Mojito divergence, not a
+    window change.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1130 A t-string reads its interpolations when it is written**
+
+  Problem: `var t = t"x={x}"` then `x = 2` then `print(t)` prints `x=1` in
+  Mojito, which snapshots each interpolation at creation, where the pin
+  prints `x=2`: its `TString` holds references into the origins it is
+  parameterized on and formats what they hold at write time.
+  - The previous pin printed `x=1` too, so this is the window's change;
+    `assets/ok/tstring_lazy.mojo` is the ledger row (`one-off`), and
+    `conformance/parity.tsv` `types.string-literal-families` records the
+    representation difference.
+  - Lever: an origin-parameterized reference pack on the bundled `TString`
+    (`TString[origins, //, *Ts]`), which the capability ledger has long
+    named as the missing shape.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1131 A temporary handed to an owning collector runs its move
+  initializer**
+
+  Problem: `idx(M(copy=k))` with `def idx(var *xs: M)` prints `i 9 1` and
+  `del 9` in Mojito, where the pin prints `i 1009 1` and `del 1009`: the
+  temporary is moved into the pack through `__init__(out self, *, deinit
+  move: Self)`, and Mojito hands its storage over without a call.
+  - Ledger name: `assets/ok/variadic_collector_forwarded_and_borrowed.mojo`
+    in `conformance/assets-mojo-output-diffs.tsv` (`one-off`). The `^`
+    transfers of named locals in the same fixture agree on both.
+  - Both pins behave alike, so this is an unoracled Mojito divergence.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1107 A temporary arm of a conditional expression is built in the
   result, where the pin moves it in**
@@ -8707,6 +8875,103 @@ recorded limit, listed in impact order: soundness of the executable oracle
 first, then everyday spellings that reject today, then parity details. A
 residue found inside a task moves to the task that owns its fix.
 
+- [ ] **R1121 `Tuple` elements need not be `Movable`**
+
+  Problem: the bundled `Tuple[*Ts: Movable]` rejects a non-movable
+  element, where the pin's `Tuple[*Ts: AnyType]` is `Movable` only when
+  every element is (`Movable where Ts.all_conforms_to[Movable]()`), and
+  likewise `Deinitable`, `Defaultable`, `RegisterPassable`, and
+  `ImplicitlyCopyable`.
+  - The pack storage moves elements in, so the consuming constructors and
+    `reverse`/`concat` need a `Movable` gate of their own.
+  - The explicit application `Tuple[*Ts](*args^)` regressed at the pin
+    (probe `conformance/probes/tuple_explicit_pack_application.mojo`);
+    the fixtures were respelled to `Tuple(*args^)`, and Mojito keeps
+    accepting both.
+  - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1122 `Tuple(init_with=...)` constructs each element in place**
+
+  Problem: `T(init_with=lambda [i: Int]() -> T.Ts[i]: Pinned(i * 10))` is
+  rejected, where the pin builds each element from a closure parameterized
+  on the element index, which is how a tuple of non-movable elements is
+  made at all.
+  - The handler is a callable parameter with its own binder and a
+    dependent result type, `F: def[idx: Int]() -> Self.Ts[idx]`.
+  - Depends on R1121.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1123 `Tuple.first_of[T]()` returns the first element of type `T`**
+
+  Problem: `t.first_of[String]() += "!"` is rejected ("no attribute
+  'first_of'"), where the pin resolves the lookup at compile time and
+  returns a reference, erroring when no element has that type.
+  - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1124 `consume_elements` and `deinit_with` take the handler as a
+  runtime closure argument**
+
+  Problem: the bundled `Tuple.consume_elements[handler]()` is a
+  compile-time parameter, where the pin takes `t^.consume_elements(handler)`
+  for `def handler[idx: Int](var elt: t.Ts[idx]) {mut collected}` and
+  rejects the parameter spelling ("missing required argument:
+  'elt_handler'"); `Tuple.deinit_with` and `VariadicPack.consume_elements`
+  changed the same way, matching `List.deinit_with`.
+  - `conformance/fixtures/tuple_consume_elements.mojo` and the three
+    `assets/type_error/tuple_consume_elements_*.mojo` keep the parameter
+    spelling until this lands.
+  - The handler is a generic callable argument whose binder indexes the
+    receiver's pack, as R1122's is.
+  - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1125 `Hasher` drops `__init__` and `finish` reads `self`**
+
+  Problem: the bundled `Hasher` requires `__init__(out self)` and
+  `finish(var self) -> UInt64`, where the pin's trait requires neither:
+  `finish(self)` borrows, construction comes from `Defaultable`, and
+  `Dict`, `Set`, and `StringDict` bound their hasher
+  `H: Hasher & Defaultable & Deinitable`.
+  - `stdlib/std/hash/hasher.mojo` states the requirement set;
+    `_ahash.mojo`, `_fnv1a.mojo`, and the user hashers in
+    `assets/ok/hashable_hasher_protocol.mojo`,
+    `hasher_upstream_spellings.mojo`, and `hasher_user_conformer.mojo`
+    spell `finish(var self)`.
+  - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1126 `Array` slices into a `Span`**
+
+  Problem: `arr[1:3]` on an `Array[Int, 4]` is rejected, where the pin
+  returns a `Span` over the selected elements whose mutability follows the
+  array reference.
+  - The bundled `Array` has element subscripts only; `List` already slices
+    through `ContiguousSlice`.
+  - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1127 `RawFileDescriptor` holds a `c_int` with `-1` as its niche**
+
+  Problem: the bundled `RawFileDescriptor` keeps `_value: Int`, an
+  `__init__(value: Int = 1)` that accepts any integer, and no
+  `unsafe_unchecked_value=` constructor, where the pin's takes `c_int`,
+  aborts on a negative value, exposes `-1` through
+  `UnsafeSingleNicheable` so `Optional[RawFileDescriptor]` is one word,
+  and spells `stdout = RawFileDescriptor(unsafe_unchecked_value=1)`.
+  - The 2026-10-17 re-pin renamed the struct from `FileDescriptor` and the
+    field from `value`; the type and the niche are this entry.
+  - The VM's `descriptor_value` and the Pliron `print` lowering read
+    `_value` as an `Int`; a `c_int` reaches them as a `SIMD` scalar.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1101 `String.__init__(literal)` carries no inline marking in the
   bundled library**
 
@@ -9102,7 +9367,7 @@ residue found inside a task moves to the task that owns its fix.
 
 - [ ] **R229 `isatty` is not ported**
 
-  Problem: the I/O stage left `isatty` (`FileDescriptor.isatty` / `fchdir`)
+  Problem: the I/O stage left `isatty` (`RawFileDescriptor.isatty` / `fchdir`)
   unported.
   - A small port.
   - Depends on nothing.

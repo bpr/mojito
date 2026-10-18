@@ -333,6 +333,16 @@ pub enum Token {
     From,
     As,
 
+    // --- Keywords of syntax Mojito does not implement ---
+    // `match`/`case` (pattern matching), `class`, `del`, and `yield` are
+    // keywords in current Mojo, so none can name a binding or a free function
+    // without backticks; a method or member may still be named by one.
+    Class,
+    Del,
+    Match,
+    Yield,
+    Case,
+
     // Identifiers (includes type names like `Int`, `String`, `Bool`)
     Identifier(String),
 
@@ -448,9 +458,28 @@ impl Token {
             "import" => Self::Import,
             "from" => Self::From,
             "as" => Self::As,
+            // Unimplemented syntax
+            "class" => Self::Class,
+            "del" => Self::Del,
+            "match" => Self::Match,
+            "yield" => Self::Yield,
+            "case" => Self::Case,
             // Boolean literals lex as values, not keywords.
             "True" => Self::BoolLiteral(true),
             "False" => Self::BoolLiteral(false),
+            _ => return None,
+        })
+    }
+
+    /// The spelling of a keyword that may still name a method or a member
+    /// (`class`, `del`, `match`, `yield`, `case`), or `None` for any other token.
+    pub const fn member_name_keyword(&self) -> Option<&'static str> {
+        Some(match self {
+            Self::Class => "class",
+            Self::Del => "del",
+            Self::Match => "match",
+            Self::Yield => "yield",
+            Self::Case => "case",
             _ => return None,
         })
     }

@@ -4,8 +4,8 @@
 # a member of an overload set the arity selects, a `[H: Hasher]` binder a
 # concrete hasher bakes into the per-call clone, a `mut self` requirement,
 # and a `var self` one the receiver's `^` transfer consumes.
-from std.hashlib import Hasher
-from std.hashlib._ahash import AHasher
+from std.hash import Hasher
+from std.hash._ahash import AHasher
 
 
 @fieldwise_init

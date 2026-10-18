@@ -8,7 +8,7 @@ struct PackTuple[*Ts: Copyable & Movable & Deinitable](Copyable, Movable):
     var storage: Tuple[*Self.Ts]
 
     def __init__(out self, var *args: *Self.Ts):
-        self.storage = Tuple[*Self.Ts](*args^)
+        self.storage = Tuple(*args^)
 
     # The one compile-time-index hook, spelled as `Tuple`'s own is: an element
     # is read through a reference, because the element type is the pack's and

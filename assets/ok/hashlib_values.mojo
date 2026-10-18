@@ -1,7 +1,7 @@
 # `hash` runs the stdlib hashers: `default_hasher` (AHasher) and
 # `default_comp_time_hasher` (Fnv1a). Every printed value is current Mojo's
 # for the same program; the reflective `Point` feeds its fields in order.
-from std.hashlib import default_comp_time_hasher
+from std.hash import default_comp_time_hasher
 
 @fieldwise_init
 struct Point(Hashable, Copyable, Movable):

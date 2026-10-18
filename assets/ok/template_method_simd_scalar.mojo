@@ -7,7 +7,7 @@
 # doubled in place, and a `UInt64` passed by value to a sibling method. A
 # closed type is the same under every instance, so each derives for an
 # `Int` and a `String` instance.
-from std.hashlib import Hasher
+from std.hash import Hasher
 
 
 struct Mixer[T: Copyable & Deinitable & Hashable & Writable](Hashable, Movable):

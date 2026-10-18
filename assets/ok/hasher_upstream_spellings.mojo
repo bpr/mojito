@@ -3,7 +3,7 @@
 # `Float64`, a `Scalar[DType.bool]`, and a two-lane vector — each reaches the
 # hasher as its own vector type (`SIMD[_, _]` infers per call), and the
 # values are current Mojo's under both bundled hashers.
-from std.hashlib import Hasher, default_comp_time_hasher
+from std.hash import Hasher, default_comp_time_hasher
 
 @fieldwise_init
 struct Pair(Copyable, Hashable, Movable):

@@ -1684,8 +1684,8 @@ const BUILTIN_MODULE_EXPORTS: &[(&str, &[&str])] = &[
             "ImmUnsafeAnyOrigin",
         ],
     ),
-    ("std/hashlib/hash.mojo", &["Hashable"]),
-    ("std/hashlib/hasher.mojo", &["Hasher"]),
+    ("std/hash/hash.mojo", &["Hashable"]),
+    ("std/hash/hasher.mojo", &["Hasher"]),
     (
         "std/builtin/builtin_slice.mojo",
         &["Slice", "ContiguousSlice", "StridedSlice", "slice"],
@@ -1734,7 +1734,7 @@ const PRELUDE_EXPORTS: &[&str] = &[
     "reversed",
     "open",
     "FileHandle",
-    "FileDescriptor",
+    "RawFileDescriptor",
 ];
 
 fn bundled_path(relative: &str) -> Option<PathBuf> {

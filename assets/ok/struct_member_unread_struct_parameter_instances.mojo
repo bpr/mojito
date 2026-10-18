@@ -7,7 +7,7 @@
 # declaration's member table, so printing, hashing, comparing, converting,
 # writing, and calling a value still runs the member, not a reflective
 # default.
-from std.hashlib import Hasher
+from std.hash import Hasher
 
 
 @fieldwise_init

@@ -118,7 +118,7 @@ point, as upstream's toolchain does.
   code: type predicates, CTFE-computed constants, value parameters, and associated
   compile-time facts. It includes `first_or[C: Iterable]`, which consumes
   `C.Element` through an opaque iterable bound.
-- `std/hashlib/` — current Mojo's hashing package: `hash.mojo` is the
+- `std/hash/` — current Mojo's hashing package: `hash.mojo` is the
   `Hashable` home and defines `hash[T: Hashable, //, HasherType: Hasher =
   default_hasher](x) -> UInt64` and the bytes overload `hash[HasherType](bytes:
   ImmPointer[UInt8, _], n: Int)`; `hasher.mojo` is the `Hasher` home and
@@ -162,10 +162,10 @@ point, as upstream's toolchain does.
   `expanduser`). Every host call is upstream's `external_call` over the closed
   libc table (`std/ffi`).
 - `std/io/` — `file.mojo` (`FileHandle` over a raw descriptor and `open`;
-  both prelude names) and `file_descriptor.mojo` (`FileDescriptor`, a
+  both prelude names) and `file_descriptor.mojo` (`RawFileDescriptor`, a
   `Writer` over a descriptor; `print(file=)` writes through it). `std/sys/`
   adds `_io.mojo` (`stdin`/`stdout`/`stderr` as compile-time
-  `FileDescriptor` values). Because the prelude imports `std.io`, every
+  `RawFileDescriptor` values). Because the prelude imports `std.io`, every
   module on its import graph (`std.os`, `std.sys`, `std.stat`, ...) loads
   while the prelude bootstraps and must import `String` explicitly (`from
   std.string import String`); `range` is not visible there either.

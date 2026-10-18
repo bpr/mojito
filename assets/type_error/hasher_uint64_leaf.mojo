@@ -1,7 +1,7 @@
 # expect: retired Mojito spelling
 # `Hasher._update_with_simd` takes upstream's `SIMD[_, _]` vector; the
 # `UInt64` leaf Mojito once accepted is a conformance error with a hint.
-from std.hashlib import Hasher
+from std.hash import Hasher
 
 struct SumHasher(Defaultable, Hasher):
     var total: UInt64

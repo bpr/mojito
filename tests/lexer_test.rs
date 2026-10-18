@@ -364,6 +364,8 @@ fn keyword_table_and_lex_helper() {
     assert_eq!(Token::keyword("comptime"), Some(Token::Comptime));
     assert_eq!(Token::keyword("with"), Some(Token::With));
     assert_eq!(Token::keyword("True"), Some(Token::BoolLiteral(true)));
+    assert_eq!(Token::keyword("match"), Some(Token::Match));
+    assert_eq!(Token::keyword("case"), Some(Token::Case));
     assert_eq!(Token::keyword("mut"), None); // soft word, stays an identifier
     assert_eq!(Token::keyword("point"), None);
     assert_eq!(mojito::lex("var\n").unwrap()[0], Token::Var);

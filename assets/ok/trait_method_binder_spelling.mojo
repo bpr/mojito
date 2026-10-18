@@ -1,7 +1,7 @@
 # A witness whose own binder is spelled differently from the requirement's
 # (`push[X: Hasher]` for `push[H: Hasher]`) satisfies the trait: a binder's
 # identity is its declaration's and its spelling is not part of the shape.
-from std.hashlib import Hasher
+from std.hash import Hasher
 
 
 trait Sink:

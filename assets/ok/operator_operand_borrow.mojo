@@ -1,7 +1,7 @@
 # A struct operator whose dunder reads its operands borrows named ones where
 # they lie, and `hash(value)` hashes its argument in place: no lifecycle copy
 # runs, so the printing copy constructor stays silent, as upstream.
-from std.hashlib import Hasher
+from std.hash import Hasher
 
 
 struct Box(Copyable, Equatable, Hashable):

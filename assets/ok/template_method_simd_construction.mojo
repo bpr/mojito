@@ -7,8 +7,8 @@
 # local bound to a construction, and a construction passed by value to a
 # sibling method all derive for an `Int`, a `String`, and a user-struct
 # instance.
-from std.hashlib import Hasher
-from std.hashlib.hasher import default_hasher
+from std.hash import Hasher
+from std.hash.hasher import default_hasher
 
 
 @fieldwise_init

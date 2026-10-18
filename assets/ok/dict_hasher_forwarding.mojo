@@ -3,7 +3,7 @@
 # as upstream's `_insert`) and the lookup's probe.
 # The hasher reports each leaf it receives, so a fallback to the default
 # hasher anywhere would change the output (or miss the key).
-from std.hashlib import Hasher
+from std.hash import Hasher
 
 struct LoudHasher(Defaultable, Hasher):
     var total: UInt64

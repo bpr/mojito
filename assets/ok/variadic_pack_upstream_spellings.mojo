@@ -17,7 +17,7 @@ struct Bag[*Ts: Movable](
     var storage: Tuple[*Self.Ts]
 
     def __init__(out self, var *args: *Self.Ts):
-        self.storage = Tuple[*Self.Ts](*args^)
+        self.storage = Tuple(*args^)
 
     def __eq__(self, other: Self) -> Bool where Self.Ts.all_conforms_to[Equatable]():
         comptime for i in range(Self.Ts.length):
