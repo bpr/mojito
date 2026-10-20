@@ -22,6 +22,7 @@ impl Decoder {
                 "Infer" => Ty::infer(),
                 "DType" => Ty::dtype(),
                 "TypeType" => TyKind::TypeType.into(),
+                "KgenString" => TyKind::KgenString.into(),
                 "Self" => Ty::self_type(),
                 "Error" => Ty::error(),
                 other => {
@@ -1149,6 +1150,7 @@ impl Decoder {
                 "ct_type" => self.ty(inner).map(CtValue::Type),
                 "ct_reflected" => self.ty(inner).map(CtValue::Reflected),
                 "ct_trait" => Some(CtValue::Trait(self.strings(inner))),
+                "ct_kgen_string" => self.string(inner).map(CtValue::KgenString),
                 "ct_expr" => self.param_expr(inner).map(ParamExpr::into_value),
                 "ct_deferred" => self.deferred_slot(inner),
                 "ct_marker" => self.ct_marker(inner).map(CtValue::Marker),

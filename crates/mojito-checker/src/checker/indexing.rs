@@ -2027,6 +2027,17 @@ impl Checker {
                 return Ok(ty);
             }
         }
+        // A string literal's `value` parameter is its KGEN string, which a
+        // compile-time position reads and no runtime value holds.
+        if field == mojito_types::ct::LITERAL_VALUE_MEMBER
+            && matches!(obj_ty.kind(), TyKind::StringLiteral)
+        {
+            return if self.crosses_to_runtime() {
+                Err(super::comptime_validation::kgen_string_runtime_read())
+            } else {
+                Ok(TyKind::KgenString.into())
+            };
+        }
         Err(TypeError::NoSuchField {
             object_type: obj_ty.to_string(),
             field: field.to_string(),

@@ -2204,6 +2204,29 @@ fn kgen_type_metatype_round_trips() {
     assert!(write::program(&program).contains("TypeType"));
 }
 
+/// Schema 1.79 spells upstream's `!kgen.string` type `KgenString`, and a
+/// literal's KGEN string `ct_kgen_string("...")`.
+#[test]
+fn kgen_string_metatype_round_trips() {
+    let ty = Ty::new(TyKind::KgenString);
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            vec![ty.clone(), Ty::none()],
+            vec![
+                MirInstr::ConstructType { dest: Reg(0), ty },
+                MirInstr::Const {
+                    dest: Reg(1),
+                    k: Const::Value(mojito_types::ct::CtValue::KgenString("None".into())),
+                },
+            ],
+        ),
+    )]);
+    assert_reprints(&program);
+    let text = write::program(&program);
+    assert!(text.contains("KgenString") && text.contains("ct_kgen_string(\"None\")"));
+}
+
 /// Schema 1.78 spells a trait used as a type `trait_type([...])` and a type
 /// binder's trait-parameter bound `trait_param: present(binder {...})`.
 #[test]

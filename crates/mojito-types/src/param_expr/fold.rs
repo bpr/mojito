@@ -35,6 +35,14 @@ use mojito_common::literal::{FloatLiteral, IntLiteral};
 pub fn fold_infix(op: InfixOp, left: &CtValue, right: &CtValue) -> Result<CtValue, ParamError> {
     use InfixOp::{Eq, Ge, Gt, Le, Lt, Ne};
     match (left, right) {
+        // A KGEN string is an attribute that implements no operator.
+        (CtValue::KgenString(_), _) | (_, CtValue::KgenString(_)) => {
+            return Err(unsupported(&format!(
+                "'{}' does not implement the '{}' method",
+                crate::types::KGEN_STRING_TYPE_SPELLING,
+                op.dunder().unwrap_or("operator")
+            )));
+        }
         (CtValue::Type(a), CtValue::Type(b)) => {
             return match op {
                 Eq => Ok(CtValue::Bool(a == b)),

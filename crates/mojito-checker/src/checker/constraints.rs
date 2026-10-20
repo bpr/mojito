@@ -560,6 +560,13 @@ impl Checker {
                 if let Some(reference) = self.value_parameter_in_scope(name) {
                     return Ok(CtValue::Expr(reference));
                 }
+                // A local `comptime` binding of a string literal's KGEN
+                // string (`comptime v = "None".value`) is inlined.
+                if let Some(bound) = self.local_comptime_value(name)
+                    && self.reads_literal_value(bound)
+                {
+                    return self.eval_associated_ct(bound, associated);
+                }
                 // An applied constant is its application in a type
                 // position, whatever literal the elaborator folded it to.
                 if !self.module_constant_shadowed(name) {
@@ -773,13 +780,23 @@ impl Checker {
             {
                 Ok(CtValue::Dtype(dtype))
             }
-            // Upstream's KGEN metatype (`comptime KGENTypeType =
-            // __mlir_type.`!kgen.type``).
+            // Upstream's KGEN types (`comptime KGENTypeType =
+            // __mlir_type.`!kgen.type``, `comptime KS =
+            // __mlir_type.`!kgen.string``).
             ExprKind::Member { object, field }
-                if field == "!kgen.type"
-                    && matches!(&object.kind, ExprKind::Identifier(name) if name == "__mlir_type") =>
+                if matches!(&object.kind, ExprKind::Identifier(name) if name == "__mlir_type")
+                    && let Some(ty) = mojito_types::types::kgen_type_named(field) =>
             {
-                Ok(CtValue::Type(TyKind::TypeType.into()))
+                Ok(CtValue::Type(ty))
+            }
+            // A compile-time `StringLiteral`'s `value` parameter
+            // (`comptime none = "None".value`).
+            ExprKind::Member { object, field }
+                if field == mojito_types::ct::LITERAL_VALUE_MEMBER
+                    && let Ok(literal) = self.eval_associated_ct(object, associated)
+                    && let Some(parameter) = literal.literal_value() =>
+            {
+                Ok(parameter)
             }
             ExprKind::Member { object, field } => {
                 if let ExprKind::Identifier(s) = &object.kind
@@ -1348,6 +1365,16 @@ impl Checker {
                     None => Err(TypeError::UnknownSelfParam(field.clone())),
                 }
             }
+            // A closed `StringLiteral`'s `value` parameter (`s: KGENString =
+            // "x".value`).
+            ExprKind::Member { object, field }
+                if field == mojito_types::ct::LITERAL_VALUE_MEMBER
+                    && let Ok(literal) = self.compile_dependent_ct_expr(object)
+                    && let Some(parameter) =
+                        literal.as_constant().and_then(CtValue::literal_value) =>
+            {
+                constant(parameter)
+            }
             // `DType.<dt>` — a dtype value parameter's default (`dtype: DType
             // = DType.int`), mirroring the comptime evaluator's spelling.
             ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "DType") =>
@@ -1855,6 +1882,15 @@ impl Checker {
             ),
             ExprKind::Infix(op, left, right) => {
                 let (left, right) = binary(left, right)?;
+                // A KGEN string implements no comparison, which the shared
+                // folder reports (`"a".value == "a".value`).
+                if let (ConstraintOperand::Value(a), ConstraintOperand::Value(b)) = (&left, &right)
+                    && [a, b]
+                        .iter()
+                        .any(|value| matches!(value, CtValue::KgenString(_)))
+                {
+                    mojito_types::param_expr::fold::fold_infix(*op, a, b).map_err(param_error)?;
+                }
                 match op {
                     InfixOp::Eq => GenericConstraint::Eq(left, right),
                     InfixOp::Ne => GenericConstraint::Ne(left, right),
@@ -2057,6 +2093,16 @@ impl Checker {
             }
             TypeListReceiver::Derived(list) => Ok(list),
         }
+    }
+
+    /// Whether `expr` reads a compile-time `StringLiteral`'s `value`
+    /// parameter (`"None".value`), a KGEN string with no run-time form.
+    pub(super) fn reads_literal_value(&self, expr: &Expr) -> bool {
+        matches!(&expr.kind, ExprKind::Member { field, .. }
+            if field == mojito_types::ct::LITERAL_VALUE_MEMBER)
+            && self
+                .eval_associated_ct(expr, &HashMap::new())
+                .is_ok_and(|value| matches!(value, CtValue::KgenString(_)))
     }
 
     /// The list a spread's operand denotes (`Ts.reverse()` in

@@ -2522,6 +2522,7 @@ impl MetaTy {
             CtValue::Type(_) => Self::Type,
             CtValue::Reflected(_) => Self::ReflectedType,
             CtValue::Trait(traits) => Self::value(TyKind::AnyTrait(traits.clone()).into()),
+            CtValue::KgenString(_) => Self::value(TyKind::KgenString.into()),
             CtValue::Expr(expr) => expr.meta().clone(),
             // A deferred slot has no value yet, so no domain either.
             CtValue::Deferred(_) | CtValue::Marker(_) | CtValue::RemovedArg => {

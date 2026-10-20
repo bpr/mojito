@@ -134,6 +134,16 @@ pub(super) fn raw_list_runtime_read(meta: &mojito_types::param_expr::MetaTy) -> 
     ))
 }
 
+/// The rejection of a KGEN string (a string literal's `.value`, a
+/// `!kgen.string` binder) read as a runtime value, which the pin
+/// materializes and Mojito does not.
+pub(super) fn kgen_string_runtime_read() -> TypeError {
+    TypeError::Unsupported(format!(
+        "a '{}' value read at run time is not supported",
+        mojito_types::types::KGEN_STRING_TYPE_SPELLING
+    ))
+}
+
 /// The callables a compile-time call applies by name
 /// ([`Checker::called_application`]), every overload under the name a call
 /// spells: `h` for a module `def`, `S.f` for a static method.
@@ -404,9 +414,10 @@ impl Checker {
                     let Some(operand) = operand else {
                         return Ok(None);
                     };
-                    let conforms = trait_names
-                        .iter()
-                        .all(|trait_name| self.conforms_to(&operand, trait_name));
+                    let conforms = !mojito_types::conformance::reflects_no_conformance(&operand)
+                        && trait_names
+                            .iter()
+                            .all(|trait_name| self.conforms_to(&operand, trait_name));
                     let constraint = GenericConstraint::Bool(conforms);
                     self.record_comptime_condition(cond, &constraint);
                     return Ok(Some(constraint));
@@ -1164,6 +1175,11 @@ impl Checker {
         annotation: Option<&SourceType>,
         value: &Expr,
     ) -> Result<bool, TypeError> {
+        // A string literal's KGEN string is compile-time only before any
+        // probe below types it as a template's expression.
+        if self.reads_literal_value(value) {
+            return self.bind_compile_time_only_value(name, value);
+        }
         let Some(level) = self.tparams.len().checked_sub(1) else {
             if self.bind_compile_time_only_value(name, value)? {
                 return Ok(true);
@@ -1271,11 +1287,11 @@ impl Checker {
     }
 
     /// Bind a reflection handle (`reflect[T]`, `r.field["x"]`), a reflected
-    /// list (`r.field_names()`), or a
+    /// list (`r.field_names()`), a
     /// type list computed from the body's packs
-    /// (`TypeList._concat[Self.Ts.values, OtherTs.values]()`): a
-    /// compile-time-only value inlined at its uses. `false` when `value` is
-    /// none of these.
+    /// (`TypeList._concat[Self.Ts.values, OtherTs.values]()`), or a string
+    /// literal's KGEN string (`"None".value`): a compile-time-only value
+    /// inlined at its uses. `false` when `value` is none of these.
     fn bind_compile_time_only_value(
         &mut self,
         name: &str,
@@ -1283,7 +1299,8 @@ impl Checker {
     ) -> Result<bool, TypeError> {
         if !(matches!(self.reflection_handle(value), Ok(Some(_)))
             || matches!(self.reflection_list(value), Ok(Some(_)))
-            || matches!(self.type_list_operand(value), Ok(Some(_))))
+            || matches!(self.type_list_operand(value), Ok(Some(_)))
+            || self.reads_literal_value(value))
         {
             return Ok(false);
         }

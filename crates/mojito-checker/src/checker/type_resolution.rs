@@ -69,12 +69,12 @@ pub(super) fn bracket_attribute(
     match argument {
         ParamArg::Named { value, .. } => bracket_attribute(value, bound),
         ParamArg::Type(_) => Some(bound.clone()),
-        // A trait or a type list has no run-time form, so such an argument
-        // is an attribute like a type.
+        // A trait, a type list, or a KGEN string has no run-time form, so
+        // such an argument is an attribute like a type.
         ParamArg::Value(_) => matches!(bound, TyArg::Ty(_) | TyArg::Origin(_))
             .then(|| bound.clone())
             .or_else(|| match bound {
-                TyArg::Val(value) if value.is_metatype_valued() => Some(bound.clone()),
+                TyArg::Val(value) if value.is_compile_time_only() => Some(bound.clone()),
                 _ => None,
             }),
     }
@@ -463,15 +463,16 @@ impl Checker {
             },
             // Upstream's `Indexer` requirement returns `__mlir_type.index`;
             // the VM represents that index as `Int`. `!kgen.type` is the
-            // metatype of every type. Every other MLIR type spelling is
-            // outside the subset.
+            // metatype of every type, and `!kgen.string` a `StringLiteral`'s
+            // parameter type. Every other MLIR type spelling is outside the
+            // subset.
             SourceType::Assoc { base, name, args }
                 if matches!(base.as_ref(), SourceType::Named(base, base_args)
                     if base == "__mlir_type" && base_args.is_empty()) =>
             {
                 match (name.as_str(), args.is_empty()) {
                     ("index", true) => Ty::int(),
-                    ("!kgen.type", true) => TyKind::TypeType.into(),
+                    (name, true) if let Some(ty) = mojito_types::types::kgen_type_named(name) => ty,
                     _ => return Err(unsupported_mlir_type()),
                 }
             }
@@ -2389,8 +2390,9 @@ impl Checker {
                         });
                     }
                     self.record_literal_materializations(expr, &actual, ty)?;
-                    // A type list (`Ts.values`) has no run-time form.
-                    if value.is_metatype_valued() {
+                    // A type list (`Ts.values`) or a KGEN string has no
+                    // run-time form.
+                    if value.is_compile_time_only() {
                         self.record_at(expr.source_span()).argument_attribute =
                             Some(TyArg::Val(value.clone()));
                     }
@@ -3642,6 +3644,7 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         | TyKind::AnyTrait(_)
         | TyKind::Trait(_)
         | TyKind::TypeType
+        | TyKind::KgenString
         | TyKind::Error => false,
         TyKind::Func(_) | TyKind::GenericFunc(_) => ty
             .callable()
@@ -3741,7 +3744,8 @@ fn origin_has_subtree_tail(origin: &mojito_types::origin::PointerOrigin) -> bool
 fn unsupported_mlir_type() -> TypeError {
     TypeError::Unsupported(
         "this MLIR type spelling is outside the supported subset; only \
-         '__mlir_type.index', '__mlir_type.`!kgen.type`', and \
+         '__mlir_type.index', '__mlir_type.`!kgen.type`', \
+         '__mlir_type.`!kgen.string`', and \
          '__mlir_type[`!kgen.param_list<`, T, `>`]' are accepted"
             .to_string(),
     )

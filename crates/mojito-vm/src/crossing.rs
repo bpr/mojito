@@ -90,6 +90,7 @@ pub fn ct_to_vm(value: &CtValue) -> Result<Value, RuntimeError> {
         CtValue::Type(_)
         | CtValue::Reflected(_)
         | CtValue::Trait(_)
+        | CtValue::KgenString(_)
         | CtValue::Expr(_)
         | CtValue::Deferred(_)
         | CtValue::Marker(_)

@@ -8,6 +8,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A string literal's `.value` is its `!kgen.string` parameter, as on the
+  pin: `"None".value`, `("So" + "me").value`, and a module, member, or local
+  `comptime` of one fold to a KGEN string, which a parameter typed by
+  `` __mlir_type.`!kgen.string` `` binds, spelled directly or through a
+  module or member alias (`comptime KGENString = ...`). A
+  `*names: KGENString` pack's elements and raw list forward, a default
+  `s: KGENString = "x".value` applies, and two strings of different text
+  key different instances, on the VM and natively
+  (`assets/ok/kgen_string_literal_value.mojo`). A string literal does not
+  convert to one, a KGEN string implements no operator, and spelled
+  directly the type conforms to no trait, each as at the pin
+  (`assets/type_error/kgen_string_*.mojo`). A runtime read, which the pin
+  materializes, is rejected (R1190). MIR text schema 1.79 spells the type
+  `KgenString` and a value `ct_kgen_string`, and the package format is 75.
+  This closes R1183.
+
 - A type pack is upstream's `TypeList`, as on the pin: the prelude exports
   the bundled `TypeList[Trait: type_of(AnyType), //, values:
   _MLIR.KGENParamListType[Trait]]` with `length`, `__getitem_param__`, and

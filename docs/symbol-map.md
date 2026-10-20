@@ -1075,7 +1075,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   its trait, whose body the elaborator's trait arm elaborates as its
   member's (`checker::trait_member_declaration`);
   `prepare_importing` prepares an importer's own statements beside the
-  package's elaborated SIMD and `!kgen.type` aliases, reading no package declaration; `elaborate_prepared` and
+  package's elaborated SIMD, `!kgen.type`, and `!kgen.string` aliases, reading no package declaration; `elaborate_prepared` and
   `elaborate_importing` (an importer's own statements, `ImportedScope`
   under its module environment: a name the own frame misses is the
   installed package's constant, decoded on first lookup through
@@ -1804,14 +1804,34 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `TyKind::TypeType` (displayed `__TypeOfAllTypes`), the value of a
   `comptime` alias of it (`Checker::eval_associated_ct`, `constraints.rs`;
   `Elab::eval`, `comptime/eval.rs`) and of the annotation
-  (`resolve_ty_from_anno_at_depth`). A parameter it types is a type binder:
-  `fold_type_type_parameters` (`comptime/synth.rs`, run by
+  (`resolve_ty_from_anno_at_depth`), each through
+  `types::kgen_type_named`. A parameter it types is a type binder:
+  `fold_kgen_type_parameters` (`comptime/synth.rs`, run by
   `prepare_importing` over a new `MutVisitor::visit_type_param_mut` hook)
   rewrites one spelled directly, through a module alias (the program's own
   or the package's elaborated one), or through one of the program's own
   structs' member aliases to the bound `types::TYPE_OF_ALL_TYPES`, which
   `Checker::conforms_to` grants every type and `trait_implies` lets imply
   no other trait.
+- Upstream's `` __mlir_type.`!kgen.string` `` is `TyKind::KgenString`
+  (displayed `types::KGEN_STRING_TYPE_SPELLING`), the type of a
+  `StringLiteral`'s `value` parameter, and its values are
+  `CtValue::KgenString`. `CtValue::literal_value` reads a compile-time
+  string's `value` (`ct::LITERAL_VALUE_MEMBER`) for every evaluator:
+  `Elab::eval`, `Checker::eval_associated_ct` and
+  `compile_dependent_ct_expr` (`constraints.rs`), and the member typing in
+  `indexing.rs`, which types it in a compile-time position and rejects it
+  at run time (`comptime_validation::kgen_string_runtime_read`, also for a
+  binder read in `inference.rs`). `fold_kgen_type_parameters` spells a
+  parameter typed by an alias of it as a value binder of the direct
+  spelling, and a local `comptime` of one is compile-time only
+  (`Checker::reads_literal_value`, `bind_compile_time_only_value`).
+  `CtValue::is_compile_time_only` makes a bracket argument of one an
+  attribute with no run-time form (`bracket_attribute`,
+  `mir::attribute_has_no_runtime_form`, `is_parameter_attribute`).
+  `param_expr::fold::fold_infix` gives it no operator, and
+  `conformance::reflects_no_conformance` makes a closed `conforms_to` over
+  it `False` (`check_ct_bool`, `Elab::eval`).
 
 ## The compile-time branch and the request path (2026-10-03)
 

@@ -24,6 +24,10 @@ use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_common::token::Span;
 use std::fmt;
 
+/// The member of a `StringLiteral` that reads its `value` parameter, the
+/// literal's KGEN string ([`CtValue::literal_value`]).
+pub const LITERAL_VALUE_MEMBER: &str = "value";
+
 /// One lane of a compile-time SIMD value: integer lanes hold the post-wrap
 /// mathematical value (an unsigned lane is non-negative), float lanes their
 /// IEEE bits (so equality is structural).
@@ -408,6 +412,11 @@ pub enum CtValue {
     /// ([`TyKind::AnyTrait`]). The list is the canonical trait set
     /// ([`crate::types::trait_set`]); it displays as `A & B`.
     Trait(Vec<String>),
+    /// A KGEN string attribute — upstream's `#kgen.string`, the `value`
+    /// parameter of a `StringLiteral` ([`Self::literal_value`]), whose type
+    /// is [`TyKind::KgenString`]. It displays as `"text"`, as the pin prints
+    /// `Tag["Some"]`.
+    KgenString(String),
     /// A residual parameter expression: a declared parameter, or an operator
     /// over one, while a generic declaration is checked. Never a constant — a
     /// folded expression is its ordinary concrete variant
@@ -471,6 +480,16 @@ impl fmt::Display for CtMarker {
 }
 
 impl CtValue {
+    /// The `value` parameter of the `StringLiteral` this compile-time value
+    /// is, as upstream's `StringLiteral[value: __mlir_type.`!kgen.string`]`
+    /// reads it: the literal's KGEN string. `None` for any other value.
+    pub fn literal_value(&self) -> Option<Self> {
+        match self {
+            Self::Str(text) => Some(Self::KgenString(text.clone())),
+            _ => None,
+        }
+    }
+
     /// The elements a compile-time collection read sees, in order: a list's
     /// or a set's elements, a dictionary's keys, and a bound value pack's
     /// elements; `None` for any other value. Compile-time indexing, `len`,
@@ -656,11 +675,11 @@ impl CtValue {
 
     /// Whether a bracket argument solved to this value has no run-time form
     /// at its call, which carries it as a parameter attribute alone, as
-    /// Mojo's call does: a string, a [trait or type list](Self::is_metatype_valued),
-    /// or any value [`Self::is_folded_parameter_argument`] accepts.
+    /// Mojo's call does: a string, [compile-time-only](Self::is_compile_time_only)
+    /// data, or any value [`Self::is_folded_parameter_argument`] accepts.
     pub fn is_parameter_attribute(&self) -> bool {
         matches!(self, Self::Str(_))
-            || self.is_metatype_valued()
+            || self.is_compile_time_only()
             || self.is_folded_parameter_argument()
     }
 
@@ -684,6 +703,24 @@ impl CtValue {
     pub fn is_metatype_valued(&self) -> bool {
         self.is_trait_valued()
             || matches!(self, Self::Expr(expr) if *expr.meta() == crate::param_expr::MetaTy::type_list())
+    }
+
+    /// Whether this value is compile-time data no run-time value holds, so a
+    /// bracket argument of it is an attribute like a type: a
+    /// [metatype-valued](Self::is_metatype_valued) value, a KGEN string, a
+    /// raw list or pack of them, or a parameter expression of such a type.
+    pub fn is_compile_time_only(&self) -> bool {
+        self.is_metatype_valued()
+            || match self {
+                Self::KgenString(_) => true,
+                Self::List(values) | Self::Tuple(values) => {
+                    values.iter().any(Self::is_compile_time_only)
+                }
+                Self::Expr(expr) => expr.meta().as_value().is_some_and(|ty| {
+                    crate::types::mentions(ty, &|ty| matches!(ty.kind(), TyKind::KgenString))
+                }),
+                _ => false,
+            }
     }
 
     /// Whether this value is closed data a constant holds whole: a closed
@@ -772,6 +809,7 @@ impl CtValue {
             | Self::Type(_)
             | Self::Reflected(_)
             | Self::Trait(_)
+            | Self::KgenString(_)
             | Self::Expr(_)
             | Self::Deferred(_)
             | Self::Marker(_)
@@ -843,6 +881,7 @@ impl CtValue {
             // A trait converts to a metatype over a trait it implies, which
             // the checker proved, and stays the trait it is.
             (value @ Self::Trait(_), TyKind::AnyTrait(_)) => Some(value),
+            (value @ Self::KgenString(_), TyKind::KgenString) => Some(value),
             (
                 value @ Self::Simd { .. },
                 TyKind::Simd {
@@ -1068,6 +1107,17 @@ impl CtValue {
                     syntax_id: mojito_common::token::SyntaxId::fresh(),
                 }),
                 field: dtype.name().to_string(),
+            },
+            // The literal's parameter read, `"text".value`, which re-folds to
+            // this value.
+            Self::KgenString(text) => ExprKind::Member {
+                object: Box::new(Expr {
+                    kind: ExprKind::Str(text.clone()),
+                    span,
+                    source: None,
+                    syntax_id: mojito_common::token::SyntaxId::fresh(),
+                }),
+                field: LITERAL_VALUE_MEMBER.to_string(),
             },
             // The explicit construction `SIMD[DType.d, w](l0, l1, ...)`.
             Self::Simd { dtype, lanes } => ExprKind::Call {
@@ -1325,6 +1375,7 @@ impl fmt::Display for CtValue {
             Self::Type(ty) => write!(f, "{ty}"),
             Self::Reflected(ty) => write!(f, "reflect[{ty}]"),
             Self::Trait(traits) => f.write_str(&traits.join(" & ")),
+            Self::KgenString(text) => write!(f, "{text:?}"),
             Self::Expr(expr) => write!(f, "{expr}"),
             Self::Deferred(binder) => write!(f, "{binder}"),
             Self::Marker(marker) => write!(f, "{marker}"),

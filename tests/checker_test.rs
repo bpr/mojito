@@ -8020,6 +8020,39 @@ fn raw_parameter_list_is_no_pack() {
 }
 
 #[test]
+fn kgen_string_has_no_runtime_form() {
+    // A string literal's `.value` and a `!kgen.string` binder are KGEN
+    // strings, which a compile-time position reads; a runtime read of one
+    // is rejected explicitly, as is a `StringLiteral` bound to the binder.
+    let alias = "comptime KS = __mlir_type.`!kgen.string`\n\n\n";
+    for source in [
+        "def main():\n    var x = \"a\".value\n    _ = x\n".to_string(),
+        "def main():\n    print(\"a\".value)\n".to_string(),
+        format!(
+            "{alias}def g[s: KS]():\n    var x = s\n    _ = x\n\n\ndef main():\n    g[\"a\".value]()\n"
+        ),
+    ] {
+        let error = err_std(&source);
+        assert!(
+            error
+                .to_string()
+                .contains("a '__mlir_type.`!kgen.string`' value read at run time is not supported"),
+            "{error}"
+        );
+    }
+    let literal = err_std(&format!(
+        "{alias}def g[s: KS]():\n    pass\n\n\ndef main():\n    g[\"a\"]()\n"
+    ));
+    assert!(
+        literal.to_string().contains("found StringLiteral"),
+        "{literal}"
+    );
+    ok_std(&format!(
+        "{alias}def g[s: KS]():\n    pass\n\n\ndef main():\n    g[\"a\".value]()\n"
+    ));
+}
+
+#[test]
 fn comptime_member_read_through_an_instance() {
     // A compile-time value member read through an instance is the member of
     // the instance's type, as `args.size` reads `ParameterList.size`.

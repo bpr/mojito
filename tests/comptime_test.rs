@@ -1709,3 +1709,33 @@ fn a_kgen_type_parameter_prepares_as_a_type_of_all_types_binder() {
     let spelled = "def k[T: __TypeOfAllTypes]():\n    pass\n";
     assert!(mojito::comptime::prepare(parse(spelled).unwrap()).is_err());
 }
+
+#[test]
+fn a_kgen_string_parameter_prepares_as_a_value_binder_of_its_spelling() {
+    // A binder typed by upstream's `!kgen.string` binds a KGEN string value:
+    // through a module alias, a struct's member alias, or the direct
+    // spelling, each prepares as a value binder spelled
+    // `` __mlir_type.`!kgen.string` ``, while a `!kgen.type` binder beside
+    // them stays a type binder.
+    let src = "comptime KS = __mlir_type.`!kgen.string`\ncomptime KT = __mlir_type.`!kgen.type`\n\nstruct M:\n    comptime S = __mlir_type.`!kgen.string`\n\ndef f[a: KS, *b: KS, c: M.S, d: __mlir_type.`!kgen.string`, T: KT]():\n    pass\n";
+    let prepared = mojito::comptime::prepare(parse(src).unwrap()).unwrap();
+    let function = prepared
+        .iter()
+        .find_map(|stmt| match &stmt.kind {
+            mojito::ast::StmtKind::Def { type_params, .. } => Some(type_params),
+            _ => None,
+        })
+        .expect("the function");
+    let kgen_string = |parameter: &mojito::ast::TypeParam| {
+        matches!(&parameter.value_type,
+            Some(mojito::ast::Type::Assoc { base, name, args })
+                if name == "!kgen.string"
+                    && args.is_empty()
+                    && matches!(base.as_ref(), mojito::ast::Type::Named(base, _) if base == "__mlir_type"))
+    };
+    assert_eq!(
+        function.iter().map(kgen_string).collect::<Vec<_>>(),
+        [true, true, true, true, false]
+    );
+    assert_eq!(function[4].bounds, ["__TypeOfAllTypes"]);
+}

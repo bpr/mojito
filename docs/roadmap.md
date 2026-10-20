@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1190**.
+Next free ID: **R1193**.
 
 ## Ordered Work
 
@@ -4375,6 +4375,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     bound, not as a value type.
   - Its argument `s[Int16(5)]()` also stops the parser with "Expected ']'
     after a subscript", a different shape from R381's operator.
+  - Probe: a binder typed by a module type alias, `comptime MyInt = Int`
+    then `def g[n: MyInt]()`, fails with "unknown trait 'MyInt' in a
+    type-parameter bound", where the pin prints `3` for `g[3]()`. Prepare
+    folds only aliases of `!kgen.type` and `!kgen.string` this way.
   - Found while landing R477 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -4920,31 +4924,49 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1183 `!kgen.string` is outside the subset, so a string literal's
-  `.value` cannot be read**
+- [ ] **R1190 A `!kgen.string` value has no runtime form**
 
-  Problem: ``comptime KGENString = __mlir_type.`!kgen.string` `` fails with
-  "'__mlir_type' is not a compile-time type", and `"None".value` with
-  "compile-time member access '.value' needs a type value", where the pin
-  reads the literal's `!kgen.string` parameter.
-  - As a struct member the alias fails with "unsupported associated
-    comptime member access".
-  - Upstream's `StringLiteral[value: !kgen.string]` exposes the literal's
-    KGEN string as its parameter. Mojito's string literal is modelled.
-  - The MLIR arm of `ty_from_anno` (`checker/type_resolution.rs`) knows
-    only `index` and `!kgen.type`.
-  - Lever: `!kgen.string` becomes a metatype whose compile-time values are
-    the existing `CtValue::Str`, and a literal's `.value` folds to one.
-  - A raw list `_MLIR.KGENParamListType[KGENString]` then holds them, and
-    `ParameterList[...]`'s element reads one.
-  - Converting one to a runtime string (`StaticString(names[i])`) is
-    R432's.
-  - A MIR schema and package format bump.
-  - Probe: `conformance/probes/kgen_string_literal_value.mojo`, which also
-    needs R809.
-  - Found while planning R1132 (2026-10-20).
+  Problem: `var x = "a".value` is rejected ("a '__mlir_type.`!kgen.string`'
+  value read at run time is not supported"), where the pin materializes the
+  literal's KGEN string as a runtime value.
+  - `TyKind::KgenString` has no layout, no VM value, and no native
+    representation. The checker rejects a runtime read of `.value` or of a
+    `!kgen.string` binder (`comptime_validation::kgen_string_runtime_read`),
+    and elaborated MIR rejects a register, slot, or signature that holds
+    one (`verify/concrete.rs`).
+  - Probe: a runtime parameter `def f(x: __mlir_type.`!kgen.string`)`
+    called as `f("a".value)`, which the pin runs.
+  - Probe: `var l = List[KGENString]()` then `l.append("a".value)` and
+    `print(len(l))`, which prints `1` at the pin. Mojito stops only in
+    elaborated MIR ("holds the compile-time-only metatype").
+  - Probe: `ParameterList[names]()[0]` over `*names: KGENString`, which
+    reads the elements' runtime storage through `get_span`.
+  - A sibling of R1149's raw-list runtime form.
+  - Found while landing R1183 (2026-10-20).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1191 A `comptime` string constant is not read in a bracket
+  argument**
+
+  Problem: `comptime lit = "So"` then `bind[lit]()` over `def bind[s:
+  StringLiteral]()` fails with "not a compile-time Int constant: lit",
+  where the pin prints `So`.
+  - The `ExprKind::Identifier` arm of `Checker::eval_associated_ct`
+    (`checker/constraints.rs`) reads only `Int` constants (`comptimes`),
+    applied constants, and `module_values`, which holds only
+    `is_folded_parameter_argument` values.
+  - A module string constant sits in `comptime_literals`, and a local one
+    is an ordinary immutable binding, so neither is a compile-time value
+    there.
+  - Probe: a local `comptime local = "Lo"` then `bind[local]()`.
+  - Probe: `bind[lit + "me"]()`, which prints `Some` at the pin.
+  - Probe: the literal's KGEN string read through one,
+    `kbind[(lit + "me").value]()` and `kbind[local.value]()` over `def
+    kbind[s: KGENString]()`.
+  - Found while landing R1183 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1184 `TypeList[...]` reads only a pack's own `Ts.values`, not a
   raw list a `comptime` member holds**
@@ -5001,7 +5023,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   "type mismatch for value parameter 'T': expected a value, found a type",
   where the pin binds `k[Int]()` and `k[_MLIR.KGENTypeType]()` and prints
   `2` for each.
-  - `fold_type_type_parameters` (`comptime/synth.rs`) makes a
+  - `fold_kgen_type_parameters` (`comptime/synth.rs`) makes a
     `!kgen.type`-typed parameter a `__TypeOfAllTypes` type binder before
     any phase classifies it, but sees only the program's own structs'
     member aliases.
@@ -5009,6 +5031,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (`InstalledInterfaces::elaborated`) and no package struct's members, so
     the bundled `_MLIR`'s alias is folded only in the library's own build.
   - Probe: `conformance/probes/kgen_type_imported_member_alias.mojo`.
+  - Probe: a `!kgen.string` member alias of an imported package's struct
+    (`s: M.KS`), which the same fold spells as a value binder only for the
+    program's own structs.
   - Found while landing R1150 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9097,6 +9122,30 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1132 (the trait) and R1188 (a library `Bool`).
   - Model: Opus, Not Planned.
 
+- [ ] **R1192 `StringLiteral` is a compiler-modelled type where upstream's
+  is `StringLiteral[value: !kgen.string]`**
+
+  Problem: `print(StringLiteral["None".value]())` fails with "Undefined
+  variable 'StringLiteral'", where the pin prints `None`, because Mojito's
+  string literal type has no `value` parameter.
+  - `StringLiteral` is `TyKind::StringLiteral`, and a literal's `.value` is
+    a compiler fold (`CtValue::literal_value`) rather than a read of the
+    type's parameter.
+  - Port upstream's `std/builtin/string_literal.mojo` struct, the way R1188
+    ports `Bool`, so a literal's type is the application its text keys.
+  - Probe: `StringLiteral[v]().byte_length()` over `comptime v =
+    "None".value`, which prints `4` at the pin.
+  - Probe: a symbolic read `def f[s: StringLiteral](): g[s.value]()`,
+    which the pin runs, fails with "unsupported associated comptime member
+    access".
+  - Converting a KGEN string to a runtime string (`StaticString(names[i])`)
+    then follows with R432.
+  - The planning session splits it into chained one-session entries if
+    one session cannot land it.
+  - Found while landing R1183 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R324 `reflect[T]` is a compiler builtin where upstream's is a
   stdlib struct over parameter attributes**
 
@@ -9839,6 +9888,8 @@ residue found inside a task moves to the task that owns its fix.
   - Upstream: `of[type: AnyType, //, *values: type] =
     ParameterList[type=type, values.values]`, and `empty_of[type] =
     Self.of[type=type]`.
+  - Probe: `conformance/probes/kgen_string_literal_value.mojo`, an `of`
+    over `"None".value` and `"Some".value`.
   - Found while planning R493 (2026-10-13).
   - Depends on R806 (the alias read through the struct) and R807 (the raw
     `values` parameter).

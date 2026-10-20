@@ -1438,6 +1438,7 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         TyKind::AnyTrait(traits) => format!("__AnyTrait${}", traits.join("$")),
         TyKind::Trait(traits) => format!("__Trait${}", traits.join("$")),
         TyKind::TypeType => mojito_types::types::TYPE_OF_ALL_TYPES.to_string(),
+        TyKind::KgenString => "__KgenString".to_string(),
         TyKind::Tuple(elems) => format!(
             "Tuple${}",
             elems
@@ -2579,13 +2580,14 @@ fn decode_specialization_value(text: &str, position: usize) -> Option<(Option<Ct
         // string or a literal spelling reads back exactly; a type or a
         // reflected type renders a `Ty`, so the walk reports where the value
         // ends and leaves rebuilding to a phase that can parse one.
-        b'y' | b'r' | b'I' | b'F' | b's' => {
+        b'y' | b'r' | b'I' | b'F' | b's' | b'k' => {
             let (digits, after) = until(b':')?;
             let length: usize = digits.parse().ok()?;
             let end = after.checked_add(length)?;
             let spelling = text.get(after..end)?;
             let value = match code {
                 b's' => Some(CtValue::Str(spelling.to_string())),
+                b'k' => Some(CtValue::KgenString(spelling.to_string())),
                 b'I' => IntLiteral::parse_radix(spelling, 10).map(CtValue::IntLiteral),
                 b'F' => FloatLiteral::parse_exact(spelling).map(CtValue::FloatLiteral),
                 _ => None,
@@ -2818,6 +2820,7 @@ pub fn specialization_value_is_closed(value: &CtValue) -> bool {
         | CtValue::Dtype(_)
         | CtValue::Simd { .. }
         | CtValue::Trait(_)
+        | CtValue::KgenString(_)
         | CtValue::RemovedArg => true,
     }
 }
@@ -2881,6 +2884,7 @@ fn encode_specialization_value(value: &CtValue, out: &mut String) {
         }
         CtValue::Bool(value) => out.push_str(if *value { "b1;" } else { "b0;" }),
         CtValue::Str(value) => out.push_str(&format!("s{}:{value}", value.len())),
+        CtValue::KgenString(value) => out.push_str(&format!("k{}:{value}", value.len())),
         CtValue::Tuple(values) => {
             out.push_str(&format!("t{}[", values.len()));
             for value in values {

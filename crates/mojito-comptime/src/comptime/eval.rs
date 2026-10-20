@@ -98,16 +98,24 @@ impl Elab<'_> {
                 {
                     return Ok(CtValue::Dtype(dtype));
                 }
-                // Upstream's KGEN metatype `` __mlir_type.`!kgen.type` ``.
+                // Upstream's KGEN types `` __mlir_type.`!kgen.type` `` and
+                // `` __mlir_type.`!kgen.string` ``.
                 if let ExprKind::Identifier(name) = &object.kind
                     && name == "__mlir_type"
-                    && field == "!kgen.type"
+                    && let Some(ty) = mojito_types::types::kgen_type_named(field)
                 {
-                    return Ok(CtValue::Type(TyKind::TypeType.into()));
+                    return Ok(CtValue::Type(ty));
                 }
                 match self.eval(object, scope)? {
                     CtValue::Type(ty) => self.associated_value(&ty, field),
                     CtValue::Reflected(ty) if field == "T" => Ok(CtValue::Type(ty)),
+                    // A compile-time `StringLiteral`'s `value` parameter.
+                    value
+                        if field == mojito_types::ct::LITERAL_VALUE_MEMBER
+                            && let Some(parameter) = value.literal_value() =>
+                    {
+                        Ok(parameter)
+                    }
                     // `tl.length` on a compile-time TypeList value (the
                     // removed `size` alias rejects like any unknown member).
                     value if value.typelist_elements().is_some() && field == "length" => Ok(
@@ -457,9 +465,10 @@ impl Elab<'_> {
                     }
                 };
                 Ok(CtValue::Bool(types.iter().all(|ty| {
-                    trait_names
-                        .iter()
-                        .all(|trait_name| self.conformance.require(ty, trait_name).is_ok())
+                    !mojito_types::conformance::reflects_no_conformance(ty)
+                        && trait_names
+                            .iter()
+                            .all(|trait_name| self.conformance.require(ty, trait_name).is_ok())
                 })))
             }
             ExprKind::Call {

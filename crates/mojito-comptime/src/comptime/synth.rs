@@ -1,6 +1,6 @@
 //! Synthesized conformance methods: `Copyable.copy` and
 //! `Hashable.__hash__` bodies, plus upstream's `SIMD[_, _]` parameter
-//! desugar, the vector-alias bound fold, the `!kgen.type` binder fold, and
+//! desugar, the vector-alias bound fold, the KGEN-typed binder fold, and
 //! the value reading of a `Self.`-spelled `materialize` operand.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
@@ -368,19 +368,24 @@ pub(super) fn fold_simd_alias_bounds(
     }
 }
 
-/// Fold every parameter whose type is upstream's KGEN metatype
-/// `` __mlir_type.`!kgen.type` `` into a type binder bounded by
-/// [`TYPE_OF_ALL_TYPES`], as upstream binds a type to such a parameter:
+/// Fold every parameter whose type is one of upstream's KGEN types,
 /// spelled directly, through a module alias of it (the program's own or an
 /// imported package's), or through a member alias of it on one of the
 /// program's own structs (`elt_type: Self.KGENTypeType`, `T:
-/// _MLIR.KGENTypeType`). The bound itself names no declaration, so a
-/// parameter spelling it is rejected, as at the pin.
-pub(super) fn fold_type_type_parameters(
+/// _MLIR.KGENTypeType`, `s: KGENString`).
+///
+/// A parameter typed `` __mlir_type.`!kgen.type` `` becomes a type binder
+/// bounded by [`TYPE_OF_ALL_TYPES`], as upstream binds a type to such a
+/// parameter. The bound itself names no declaration, so a parameter
+/// spelling it is rejected, as at the pin. A parameter typed
+/// `` __mlir_type.`!kgen.string` `` becomes a value binder of that type
+/// spelled directly, since an alias name in a binder's type otherwise reads
+/// as a trait bound.
+pub(super) fn fold_kgen_type_parameters(
     program: &mut [Stmt],
     installed: Option<&InstalledInterfaces>,
 ) -> Result<(), ComptimeError> {
-    let module_aliases: HashSet<String> = program
+    let module_aliases: HashMap<String, Ty> = program
         .iter()
         .filter_map(|statement| match &statement.kind {
             StmtKind::Comptime {
@@ -388,11 +393,11 @@ pub(super) fn fold_type_type_parameters(
                 type_params,
                 value,
                 ..
-            } if type_params.is_empty() && spells_type_type(value) => Some(name.clone()),
+            } if type_params.is_empty() => Some((name.clone(), spelled_kgen_type(value)?)),
             _ => None,
         })
         .collect();
-    let members: HashMap<String, HashSet<String>> = program
+    let members: HashMap<String, HashMap<String, Ty>> = program
         .iter()
         .filter_map(|statement| match &statement.kind {
             StmtKind::Struct {
@@ -401,15 +406,17 @@ pub(super) fn fold_type_type_parameters(
                 name.clone(),
                 associated
                     .iter()
-                    .filter(|member| member.params.is_empty() && spells_type_type(&member.value))
-                    .map(|member| member.name.clone())
-                    .collect::<HashSet<_>>(),
+                    .filter(|member| member.params.is_empty())
+                    .filter_map(|member| {
+                        Some((member.name.clone(), spelled_kgen_type(&member.value)?))
+                    })
+                    .collect::<HashMap<_, _>>(),
             )),
             _ => None,
         })
         .filter(|(_, aliases)| !aliases.is_empty())
         .collect();
-    let mut fold = TypeTypeFold {
+    let mut fold = KgenTypeFold {
         module_aliases: &module_aliases,
         installed,
         members: &members,
@@ -448,56 +455,61 @@ fn self_value_operand(operand: &Type, span: Span) -> Option<Expr> {
     }
 }
 
-/// Whether `expr` spells upstream's `` __mlir_type.`!kgen.type` ``.
-fn spells_type_type(expr: &Expr) -> bool {
-    matches!(&expr.kind, ExprKind::Member { object, field }
-        if field == "!kgen.type"
-            && matches!(&object.kind, ExprKind::Identifier(name) if name == "__mlir_type"))
+/// The KGEN type `expr` spells, `` __mlir_type.`!kgen.type` `` or
+/// `` __mlir_type.`!kgen.string` ``.
+fn spelled_kgen_type(expr: &Expr) -> Option<Ty> {
+    match &expr.kind {
+        ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "__mlir_type") => {
+            mojito_types::types::kgen_type_named(field)
+        }
+        _ => None,
+    }
 }
 
-/// The [`fold_type_type_parameters`] walk: the program's `!kgen.type`
-/// aliases, and those of the struct being walked, which `Self.` names.
-struct TypeTypeFold<'a> {
-    module_aliases: &'a HashSet<String>,
+/// The [`fold_kgen_type_parameters`] walk: the program's KGEN type aliases,
+/// and those of the struct being walked, which `Self.` names.
+struct KgenTypeFold<'a> {
+    module_aliases: &'a HashMap<String, Ty>,
     installed: Option<&'a InstalledInterfaces>,
-    members: &'a HashMap<String, HashSet<String>>,
-    own: Option<&'a HashSet<String>>,
+    members: &'a HashMap<String, HashMap<String, Ty>>,
+    own: Option<&'a HashMap<String, Ty>>,
     error: Option<ComptimeError>,
 }
 
-impl TypeTypeFold<'_> {
-    fn denotes_type_type(&self, parameter: &TypeParam) -> bool {
+impl KgenTypeFold<'_> {
+    /// The KGEN type `parameter`'s type spelling denotes, if any.
+    fn denoted(&self, parameter: &TypeParam) -> Option<Ty> {
         match &parameter.value_type {
             Some(Type::Assoc { base, name, args }) if args.is_empty() => match base.as_ref() {
                 Type::Named(base, base_args) if base_args.is_empty() => {
-                    (base == "__mlir_type" && name == "!kgen.type")
-                        || self
-                            .members
-                            .get(base)
-                            .is_some_and(|aliases| aliases.contains(name))
+                    if base == "__mlir_type" {
+                        mojito_types::types::kgen_type_named(name)
+                    } else {
+                        self.members.get(base)?.get(name).cloned()
+                    }
                 }
-                _ => false,
+                _ => None,
             },
-            Some(Type::SelfParam(name)) => self.own.is_some_and(|aliases| aliases.contains(name)),
-            Some(_) => false,
+            Some(Type::SelfParam(name)) => self.own?.get(name).cloned(),
+            Some(_) => None,
             None => match parameter.bounds.as_slice() {
-                [only] => {
-                    self.module_aliases.contains(only)
-                        || self
-                            .installed
-                            .and_then(|installed| installed.elaborated(only))
-                            .is_some_and(|constant| {
-                                matches!(constant, ElaboratedConstant::Value(CtValue::Type(ty))
-                                    if matches!(ty.kind(), TyKind::TypeType))
-                            })
-                }
-                _ => false,
+                [only] => self.module_aliases.get(only).cloned().or_else(|| {
+                    match self.installed?.elaborated(only)? {
+                        ElaboratedConstant::Value(CtValue::Type(ty))
+                            if matches!(ty.kind(), TyKind::TypeType | TyKind::KgenString) =>
+                        {
+                            Some(ty.clone())
+                        }
+                        _ => None,
+                    }
+                }),
+                _ => None,
             },
         }
     }
 }
 
-impl mojito_ast::visit::MutVisitor for TypeTypeFold<'_> {
+impl mojito_ast::visit::MutVisitor for KgenTypeFold<'_> {
     fn visit_type_param_mut(&mut self, parameter: &mut TypeParam) {
         if parameter.value_type.is_none()
             && parameter
@@ -510,9 +522,18 @@ impl mojito_ast::visit::MutVisitor for TypeTypeFold<'_> {
                     TYPE_OF_ALL_TYPES.to_string(),
                 ))
             });
-        } else if self.denotes_type_type(parameter) {
-            parameter.value_type = None;
-            parameter.bounds = vec![TYPE_OF_ALL_TYPES.to_string()];
+            return;
+        }
+        match self.denoted(parameter).as_ref().map(Ty::kind) {
+            Some(TyKind::TypeType) => {
+                parameter.value_type = None;
+                parameter.bounds = vec![TYPE_OF_ALL_TYPES.to_string()];
+            }
+            Some(TyKind::KgenString) => {
+                parameter.value_type = Some(kgen_string_source_type());
+                parameter.bounds = vec!["__mlir_type".to_string()];
+            }
+            _ => {}
         }
     }
 }

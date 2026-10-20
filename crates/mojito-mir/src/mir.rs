@@ -5142,12 +5142,12 @@ use nested::*;
 use node::Node;
 
 /// Whether a bracket attribute has no slot value at run time: an origin,
-/// a trait (`g[Copyable]()`), or a type list (`L[Ts.values]()`), which the
-/// instantiated arguments carry.
+/// a trait (`g[Copyable]()`), a type list (`L[Ts.values]()`), or a KGEN
+/// string (`g["None".value]()`), which the instantiated arguments carry.
 fn attribute_has_no_runtime_form(value: Option<&TyArg>) -> bool {
     match value {
         Some(TyArg::Origin(_)) => true,
-        Some(TyArg::Val(value)) => value.is_metatype_valued(),
+        Some(TyArg::Val(value)) => value.is_compile_time_only(),
         _ => false,
     }
 }

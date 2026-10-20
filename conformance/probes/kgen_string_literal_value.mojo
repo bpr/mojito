@@ -1,10 +1,10 @@
-# PROBE: a string literal's `.value` is a `!kgen.string` compile-time value, and a raw list of them is a `ParameterList`'s parameter (roadmap R1183).
+# PROBE: a string literal's `.value` is a `!kgen.string` compile-time value, and a raw list of them is a `ParameterList`'s parameter (roadmap R809).
 #
 # The pin prints:
 #   2
 #
 # Observed 2026-10-20 against `Mojo 1.2.0.dev2026101705 (46f49943)`.
-# Mojito: stops at `ParameterList.of` (R809). With it, `"None".value` still fails ("compile-time member access '.value' needs a type value"), and so does the `__mlir_type` alias ("'__mlir_type' is not a compile-time type").
+# Mojito: stops only at `ParameterList.of` (R809); `"None".value` and the `__mlir_type` alias run (`assets/ok/kgen_string_literal_value.mojo`).
 # When Mojito runs it, delete it: R1132's fixture covers the spelling.
 #
 # Run:    mojo run kgen_string_literal_value.mojo

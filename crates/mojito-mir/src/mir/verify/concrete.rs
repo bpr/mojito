@@ -154,12 +154,12 @@ fn require_concrete(head: &str, role: &str, ty: &Ty, errors: &mut Vec<String>) {
             "{head} {role} holds the compile-time-only raw parameter list type `{ty}`"
         ));
     }
-    // A trait or a type is a compile-time value: no run-time value holds
-    // one.
+    // A trait, a type, or a KGEN string is a compile-time value: no
+    // run-time value holds one.
     if mojito_types::types::mentions(ty, &|ty| {
         matches!(
             ty.kind(),
-            TyKind::AnyTrait(_) | TyKind::Trait(_) | TyKind::TypeType
+            TyKind::AnyTrait(_) | TyKind::Trait(_) | TyKind::TypeType | TyKind::KgenString
         )
     }) {
         errors.push(format!(

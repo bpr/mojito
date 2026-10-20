@@ -612,6 +612,12 @@ pub enum TyKind {
     /// parameter it types is a type binder bound by [`TYPE_OF_ALL_TYPES`].
     /// It is compile-time only; no runtime register holds one.
     TypeType,
+    /// Upstream's KGEN string type `!kgen.string`, the type of a
+    /// `StringLiteral`'s `value` parameter, displayed
+    /// ``__mlir_type.`!kgen.string` ``. Its values are
+    /// [`CtValue::KgenString`](crate::ct::CtValue::KgenString). It is
+    /// compile-time only; no runtime register holds one.
+    KgenString,
     /// Compiler-private `__RuntimeTuple[T1, ..., Tn]` storage. Public
     /// `Tuple[T1, ..., Tn]` values are nominal standard-library structs.
     Tuple(Vec<Ty>),
@@ -1044,6 +1050,10 @@ pub const TUPLE_TYPE_NAME: &str = "Tuple";
 /// satisfies it, and it implies no trait, not even `AnyType`.
 pub const TYPE_OF_ALL_TYPES: &str = "__TypeOfAllTypes";
 
+/// The spelling of upstream's `!kgen.string` type ([`TyKind::KgenString`]),
+/// as the pin prints it.
+pub const KGEN_STRING_TYPE_SPELLING: &str = "__mlir_type.`!kgen.string`";
+
 pub const TSTRING_TYPE_NAME: &str = "TString";
 /// The public `Variant` struct's name.
 pub const VARIANT_TYPE_NAME: &str = "Variant";
@@ -1058,6 +1068,18 @@ pub const SCALAR_RANGE_FAMILY: [&str; 3] =
 /// The floating-point strided range: upstream's `_StridedRange` float path,
 /// which iterates by index through a fused multiply-add rather than by value.
 pub const FLOAT_STRIDED_RANGE: &str = "_FloatStridedRange";
+
+/// The KGEN type an `` __mlir_type.`name` `` spelling names.
+///
+/// It is one of the compile-time-only types the subset reads: `!kgen.type`
+/// ([`TyKind::TypeType`]) or `!kgen.string` ([`TyKind::KgenString`]).
+pub fn kgen_type_named(name: &str) -> Option<Ty> {
+    match name {
+        "!kgen.type" => Some(TyKind::TypeType.into()),
+        "!kgen.string" => Some(TyKind::KgenString.into()),
+        _ => None,
+    }
+}
 
 /// Decompose a checker-abstract scalar-range type — a struct naming a
 /// [`SCALAR_RANGE_FAMILY`] member or [`FLOAT_STRIDED_RANGE`] (plain or
@@ -2236,6 +2258,7 @@ impl fmt::Display for TyKind {
             Self::AnyTrait(traits) => write!(f, "AnyTrait[{}]", traits.join(" & ")),
             Self::Trait(traits) => f.write_str(&traits.join(" & ")),
             Self::TypeType => write!(f, "{TYPE_OF_ALL_TYPES}"),
+            Self::KgenString => f.write_str(KGEN_STRING_TYPE_SPELLING),
             Self::Tuple(elems) => {
                 write!(f, "Tuple[")?;
                 for (i, t) in elems.iter().enumerate() {
@@ -2662,7 +2685,7 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         (TyKind::ParamList(a), TyKind::ParamList(b)) => a == b,
         (TyKind::AnyTrait(a), TyKind::AnyTrait(b)) => a == b,
         (TyKind::Trait(a), TyKind::Trait(b)) => a == b,
-        (TyKind::TypeType, TyKind::TypeType) => true,
+        (TyKind::TypeType, TyKind::TypeType) | (TyKind::KgenString, TyKind::KgenString) => true,
         (
             TyKind::Pointer {
                 element: a,
@@ -3740,6 +3763,7 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
         | TyKind::AnyTrait(_)
         | TyKind::Trait(_)
         | TyKind::TypeType
+        | TyKind::KgenString
         | TyKind::SelfType
         | TyKind::Error => ty.clone(),
     })
@@ -3827,6 +3851,7 @@ pub fn rewrite_value(value: &CtValue, rewrite: &mut dyn TyRewrite) -> Result<CtV
         | CtValue::Str(_)
         | CtValue::Dtype(_)
         | CtValue::Trait(_)
+        | CtValue::KgenString(_)
         | CtValue::Simd { .. }
         | CtValue::Deferred(_)
         | CtValue::Marker(_)
@@ -4234,6 +4259,7 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         | TyKind::AnyTrait(_)
         | TyKind::Trait(_)
         | TyKind::TypeType
+        | TyKind::KgenString
         | TyKind::Int
         | TyKind::UInt
         | TyKind::Bool
@@ -4335,6 +4361,7 @@ pub fn ct_value_is_symbolic(value: &CtValue) -> bool {
         | CtValue::Simd { .. }
         | CtValue::Str(_)
         | CtValue::Trait(_)
+        | CtValue::KgenString(_)
         | CtValue::RemovedArg => false,
     }
 }
