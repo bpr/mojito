@@ -161,16 +161,23 @@ impl FnLowering<'_> {
         {
             return self.lower_writer_write(ctx, dest, write_string, args, recv_place);
         }
-        // `Sized` spelled on a specialized pack's storage: the clone has no
-        // nominal Tuple to resolve the method onto, so the static element
-        // count answers it exactly as the `len` builtin does.
+        // `Sized` spelled on a specialized pack's storage or a scalar: neither
+        // has a nominal struct to resolve the method onto, so the static count
+        // answers it exactly as the `len` builtin does.
         if resolved.is_none()
             && method == "__len__"
             && args.is_empty()
             && kwargs.is_empty()
             && matches!(
                 self.func.reg_types.get(&recv.0).map(Ty::kind),
-                Some(TyKind::Tuple(_) | TyKind::RuntimePack(_) | TyKind::VariadicPack(_))
+                Some(
+                    TyKind::Tuple(_)
+                        | TyKind::RuntimePack(_)
+                        | TyKind::VariadicPack(_)
+                        | TyKind::Int
+                        | TyKind::UInt
+                        | TyKind::Float64
+                )
             )
         {
             return self.lower_len_builtin(ctx, dest, &[recv], &[]);

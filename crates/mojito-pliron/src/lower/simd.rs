@@ -470,6 +470,12 @@ impl FnLowering<'_> {
                 [recv, args[0], args[1]],
                 &canonical_simd_ty(dtype, 1),
             ),
+            // `Sized.__len__`: the lane count.
+            "__len__" if args.is_empty() => {
+                let length = self.int_constant(ctx, width as i64);
+                self.reg_values.insert(dest.0, length);
+                Ok(())
+            }
             _ => Err(self.unsupported_reg(format!("SIMD method `{method}`"), dest)),
         }
     }

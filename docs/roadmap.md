@@ -2915,19 +2915,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     bounds.
   - Model: Opus, Not Planned.
 
-- [ ] **R510 A user trait named like a prelude trait replaces it**
-
-  Problem: a module declaring `trait Sized: comptime size: Int` prints `1`
-  at the pin and stops in Mojito with "struct 'Tuple' declares conformance
-  to trait 'Sized' but is missing comptime member 'size'".
-  - The user declaration takes the name the bundled library's conformances
-    resolve to, where at the pin it shadows the prelude trait in its own
-    module alone.
-  - Probe: `conformance/probes/user_trait_named_like_prelude.mojo`.
-  - Found while planning R488 (2026-10-08).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R858 A program's own `def Int` breaks a library body's builtin
   `Int(...)`**
 
@@ -6529,11 +6516,10 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Model: Opus, Not Planned.
 
 - [ ] **R577 A struct conforms to a compiler-known trait it never
-  declares, such as `Boolable` or `Sized`**
+  declares, such as `Boolable`**
 
-  Problem: `comptime if conforms_to(T, Sized)` holds for a plain
-  `@fieldwise_init` struct, `Optional[Int]`, and `String` in Mojito, where
-  the pin answers no for all three.
+  Problem: `comptime if conforms_to(T, Boolable)` holds for a plain
+  `@fieldwise_init` struct in Mojito, where the pin answers no.
   - Cause: the shared rule answers every compiler-known trait outside its
     declared, lifecycle, and operation classes as always held
     (`StructTraitRule::Shallow` in `mojito_types::conformance`, and the
@@ -6555,7 +6541,7 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Cause: the shared rule answers the trait shallowly
     (`StructTraitRule::Shallow` in `mojito_types::conformance`, and the
     checker's `conforms_to` `_ => true` arm), as R577 describes for
-    `Sized`.
+    `Boolable`.
   - Unlike R577's traits, every fact is already at hand: a struct's
     `declared` rows, and `types::trivially_register_passable_leaf` for the
     compiler-known types upstream declares it on.
@@ -7703,26 +7689,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1051 `Sized` and `SizedRaising` are compiler-known, where
-  upstream's library declares them**
-
-  Upstream declares `trait Sized` and `trait SizedRaising`, each with a
-  `__len__` requirement, in `std/builtin/len.mojo`; Mojito knows both by
-  name and declares no requirement, so `def f[T: Sized](x: T)` returning
-  `x.__len__()` fails with "type 'T' has no method '__len__'".
-  - That rejects valid Mojo, and R988's library `len[T: Sized]` cannot be
-    written until it is fixed.
-  - Declare both in the bundled std, export them as builtins, and retire
-    `"Sized"`/`"SizedRaising"` from `conformance::COMPILER_TRAITS` and
-    `checker::builtins::has_len_bound`, following R705's model.
-  - Every std struct with `__len__` lists `Sized`, as the pin's do; check
-    whether the compiler-modelled `SIMD` and `StringLiteral` still conform.
-  - Done when the probe above runs and every `assets/ok` fixture using
-    `Sized` runs unchanged.
-  - Found while planning R1021 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R988 `len` is a checker builtin, where upstream's is a library
   function**
 
@@ -7734,6 +7700,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     it (R804).
   - Done when `len(xs)` over a `List` lowers to a call of the library
     `len` and every fixture's output is unchanged.
+  - Probe: `len(x)` over a `T: SizedRaising` in a `def` that does not
+    raise is accepted, where the pin rejects it with "cannot call function
+    that may raise in a context that cannot raise"; the builtin carries no
+    raising overload.
   - Found while landing R939 (2026-10-15).
   - Depends on nothing.
   - Model: Fable, Not Planned.

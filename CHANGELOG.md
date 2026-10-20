@@ -116,6 +116,9 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A trait body may hold `pass`, as on the pin (`trait Measured(Sized):
+  pass`), where it was a parse error.
+
 - A temporary view operand of an operator (`s.rstrip() == "  ab"`,
   `s[byte=0:2] == s[byte=0:2]`) keeps its source alive through the
   comparison, as a call argument does, instead of stopping the VM with
@@ -139,6 +142,18 @@ to evolve under the `0.x` compatibility rules.
   the referent is not a conflict.
 
 ### Changed
+
+- `Sized` and `SizedRaising` are upstream's library traits, declared in the
+  bundled `std/builtin/len.mojo` and exported by the prelude, rather than
+  names the compiler knew without requirements. A bound's `x.__len__()`
+  now resolves, as on the pin, and a struct conforms only by declaring one:
+  `List`, `Array`, `Set`, `Dict`, `StringDict`, the ranges, the string
+  iterators, and `CStringSlice` now list `Sized` as upstream's do, while
+  `Optional`, `String`, and an undeclared user struct no longer conform.
+  `SIMD` values (`Int`, `UInt`, and `Float64` included), tuples, and packs
+  conform as upstream's structs declare, so `len(7)` is one on the VM and
+  natively. A user trait named `Sized` now shadows the library's in its own
+  module alone (closes R1051 and R510).
 
 - Decorators are validated against the declaration they decorate, as the
   pin resolves each decorator by name per declaration kind

@@ -427,7 +427,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 Token::Newline => {
                     self.next_token()?;
                 }
-                Token::TripleStringLiteral(_) => {
+                Token::TripleStringLiteral(_) | Token::Pass => {
                     self.next_token()?;
                     self.expect_stmt_end()?;
                 }
@@ -446,7 +446,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 other => {
                     return Err(ParseError::UnexpectedToken(
                         other.clone(),
-                        "a trait body may only contain 'def' methods or 'comptime' members".into(),
+                        "a trait body may only contain 'def' methods, 'comptime' members, or 'pass'"
+                            .into(),
                     ));
                 }
             }

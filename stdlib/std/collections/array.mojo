@@ -93,6 +93,7 @@ struct Array[T: AnyType, length: Int](
     Iterable where conforms_to(T, Copyable),
     IterableOwned where conforms_to(T, Movable) and conforms_to(T, Deinitable),
     Movable where conforms_to(T, Movable),
+    Sized,
     Writable where conforms_to(T, Writable),
 ):
     comptime Element = Self.T

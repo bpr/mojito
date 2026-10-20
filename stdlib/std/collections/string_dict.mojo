@@ -13,7 +13,9 @@ from std.iter import Iterable
 from std.collections.optional import Optional
 
 struct StringDict[V: Movable](
-    Copyable where conforms_to(V, Copyable), Iterable where conforms_to(V, Copyable)
+    Copyable where conforms_to(V, Copyable),
+    Iterable where conforms_to(V, Copyable),
+    Sized,
 ):
     comptime Element = String
     comptime IteratorType[

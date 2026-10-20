@@ -567,7 +567,7 @@ diagnostic tuple form retains its message through those checks.
 ```
 trait_def: 'trait' NAME [conformance] ':' trait_block         # conformance here = super-traits (refinement)
 trait_block: NEWLINE INDENT trait_member+ DEDENT
-trait_member: trait_method | trait_comptime
+trait_member: trait_method | trait_comptime | 'pass' NEWLINE  # `pass` declares nothing (`trait Named(Sized): pass`)
 trait_method: decorators 'def' NAME [params_decl] '(' 'self' [',' params] ')' ['raises' [type]] ['->' type] where_clause* ':' NEWLINE INDENT (trait_req | block) DEDENT
 trait_req: '...' NEWLINE                                       # a pure requirement
 trait_comptime: 'comptime' NAME [params_decl] ':' type where_clause* NEWLINE

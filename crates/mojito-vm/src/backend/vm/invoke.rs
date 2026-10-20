@@ -452,6 +452,12 @@ impl VmBackend {
                 ("__fma__", 2) => {
                     return crate::runtime::builtin_fma(&recv, &args[0], &args[1]);
                 }
+                // `SIMD.__len__`: the lane count, one for each scalar it models.
+                ("__len__", 0) => match &recv {
+                    Value::Int(_) | Value::UInt(_) | Value::Float64(_) => return Ok(Value::Int(1)),
+                    Value::Simd { lanes, .. } => return Ok(Value::Int(lanes.width() as i64)),
+                    _ => {}
+                },
                 _ => {}
             }
         }

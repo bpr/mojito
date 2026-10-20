@@ -131,6 +131,7 @@ struct List[T: AnyType](
     Iterable where conforms_to(T, Copyable),
     IterableOwned where conforms_to(T, Deinitable) and conforms_to(T, Movable),
     Movable,
+    Sized,
     Writable where conforms_to(T, Writable),
 ):
     comptime Element = Self.T

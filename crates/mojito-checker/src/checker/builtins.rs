@@ -94,11 +94,6 @@ pub(super) fn has_order_bound(ty: &Ty) -> bool {
     }
 }
 
-/// Whether an opaque type parameter carries a bound that promises a length, so
-/// `len(x)` is well-typed on it. `Sized` (`__len__(self) -> Int`) and
-/// `SizedRaising` (`__len__(self) raises -> Int`) both do — mojito's effect
-/// analysis is deferred, so the two are not distinguished at the call site; a
-/// plain `T: AnyType` grants no length.
 /// Upstream's `@unavailable` text for `len` over a string: a UTF-8 length
 /// is ambiguous between bytes, codepoints, and grapheme clusters, so
 /// `String`, `StringSpan`, and a literal name the unit instead.
@@ -152,15 +147,6 @@ pub(super) fn print_keyword(name: &str, ty: &Ty) -> Option<(bool, &'static str)>
             "RawFileDescriptor",
         )),
         _ => None,
-    }
-}
-
-pub(super) fn has_len_bound(ty: &Ty) -> bool {
-    match ty.kind() {
-        TyKind::Param { bounds, .. } => bounds
-            .iter()
-            .any(|b| matches!(b.as_str(), "Sized" | "SizedRaising")),
-        _ => false,
     }
 }
 
@@ -768,16 +754,9 @@ impl Checker {
         if string_len_unavailable(ty).is_some() {
             return Ok(None);
         }
-        // `SIMD.__len__` returns the lane count; `Float64` is `SIMD[DType.float64, 1]`.
-        if matches!(
-            ty.kind(),
-            TyKind::ComptimeList(_)
-                | TyKind::Tuple(_)
-                | TyKind::RuntimePack(_)
-                | TyKind::VariadicPack(_)
-                | TyKind::Simd { .. }
-                | TyKind::Float64
-        ) {
+        // A literal argument materializes, and `SIMD.__len__` returns the
+        // lane count of every scalar it models.
+        if mojito_types::conformance::modelled_declares(&default_literal(ty), "Sized") {
             return Ok(Some(Ty::int()));
         }
         if let TyKind::Struct(name, _) = ty.kind()
@@ -798,10 +777,13 @@ impl Checker {
                 .and_then(|ret| require_dunder_ret(ret, &Ty::int(), "__len__"))
                 .map(Some);
         }
-        // `len(x)` on an opaque type parameter is permitted when its bound
-        // promises a length (`T: Sized`) — the concrete type's `__len__` runs at
-        // runtime after type erasure.
-        if has_len_bound(ty) {
+        // `len(x)` on an opaque type parameter is permitted when it conforms
+        // to either of upstream's `len` overload bounds, `Sized` or
+        // `SizedRaising` — the concrete type's `__len__` runs after
+        // elaboration.
+        if matches!(ty.kind(), TyKind::Param { .. })
+            && (self.conforms_to(ty, "Sized") || self.conforms_to(ty, "SizedRaising"))
+        {
             return Ok(Some(Ty::int()));
         }
         Ok(None)

@@ -2615,8 +2615,8 @@ fn rejects_stringify_of_non_stringable() {
 #[test]
 fn rejects_len_of_non_string() {
     // Upstream's text: `len` over a non-`Sized` operand has no matching
-    // function.
-    let e = err("var n: Int = len(5)\n");
+    // function. (An `Int` is a `SIMD` scalar, so `len(5)` is one.)
+    let e = err("var n: Int = len(True)\n");
     assert!(
         matches!(&e, TypeError::NoMatchingFunction { name } if name == "len"),
         "got {e:?}"
@@ -5843,11 +5843,15 @@ fn equatable_bound_does_not_permit_ordering() {
 
 #[test]
 fn sized_bound_permits_len() {
-    // `len(x)` on an opaque type parameter type-checks when the parameter carries
-    // a `Sized` bound (Phase 5). `SizedRaising` also promises a length.
-    ok("def is_empty[T: Sized](x: T) -> Bool:\n    return len(x) == 0\n");
-    ok("def sz[T: Sized](x: T) -> Int:\n    return len(x)\n");
-    ok("def szr[T: SizedRaising](x: T) -> Int:\n    return len(x)\n");
+    // `len(x)` on an opaque type parameter type-checks when the parameter
+    // conforms to the bundled `Sized` or `SizedRaising`, directly or through
+    // a refining trait, and its declared `__len__` resolves through the bound.
+    ok_std("def is_empty[T: Sized](x: T) -> Bool:\n    return len(x) == 0\n");
+    ok_std("def sz[T: Sized](x: T) -> Int:\n    return x.__len__()\n");
+    ok_std("def szr[T: SizedRaising](x: T) raises -> Int:\n    return len(x)\n");
+    ok_std(
+        "trait Measured(Sized):\n    pass\n\ndef sm[T: Measured](x: T) -> Int:\n    return len(x)\n",
+    );
 }
 
 #[test]

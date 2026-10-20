@@ -535,7 +535,13 @@ impl VmBackend {
                 }
                 Some(Value::Tuple(items)) => Ok(Value::Int(items.len() as i64)),
                 Some(Value::Simd { lanes, .. }) => Ok(Value::Int(lanes.width() as i64)),
-                Some(Value::Float64(_)) => Ok(Value::Int(1)),
+                Some(
+                    Value::Int(_)
+                    | Value::UInt(_)
+                    | Value::Float64(_)
+                    | Value::IntLiteral(_)
+                    | Value::FloatLiteral(_),
+                ) => Ok(Value::Int(1)),
                 Some(Value::Struct {
                     name,
                     fields,
@@ -547,7 +553,7 @@ impl VmBackend {
                     self.call_dunder(prog, &name, "__len__", vec![recv])
                 }
                 _ => Err(RuntimeError::Unsupported(
-                    "vm: len supports String, internal Tuple storage, SIMD, and nominal structs with __len__"
+                    "vm: len supports String, internal Tuple storage, SIMD and its scalars, and nominal structs with __len__"
                         .into(),
                 )),
             },

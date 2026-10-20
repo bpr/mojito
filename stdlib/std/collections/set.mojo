@@ -54,6 +54,7 @@ struct Set[
     Iterable where conforms_to(T, Copyable),
     IterableOwned where conforms_to(T, Deinitable),
     Movable,
+    Sized,
     Writable where conforms_to(T, Copyable) and conforms_to(T, Writable),
 ):
     comptime Element = Self.T

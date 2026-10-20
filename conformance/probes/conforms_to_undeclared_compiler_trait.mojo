@@ -2,9 +2,10 @@
 #
 # The pin (2026-10-10) prints an empty line for `Plain`, `Boolable` alone
 # for `Optional[Int]`, and `Boolable` alone for `String`. Mojito prints
-# `Boolable Sized` for all three: a struct conforms to every compiler-known
-# trait outside its rule's declared, lifecycle, and operation classes
+# `Boolable` for all three: a struct conforms to every compiler-known trait
+# outside its rule's declared, lifecycle, and operation classes
 # (`mojito_types::conformance::StructTraitRule::Shallow`), declared or not.
+# `Sized`, now the bundled library's trait, answers as the pin does (R1051).
 # docs/roadmap.md R577.
 @fieldwise_init
 struct Plain(Copyable, Movable):

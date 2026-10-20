@@ -64,6 +64,10 @@ point, as upstream's toolchain does.
   public Tuple is nominal and is not a method-free runtime iterable. Its
   default initializer stores each element's default construction to that
   storage, available where every element is `Defaultable`.
+- `std/builtin/len.mojo` — upstream's `Sized` and `SizedRaising` traits,
+  each requiring `__len__`; the prelude exports both. A struct conforms by
+  declaring one, and the compiler-modelled `SIMD` scalars, tuples, and packs
+  conform as the upstream structs they stand in for declare `Sized`.
 - `std/builtin/_stubs.mojo` — upstream's `paramfor_has_next`,
   `paramfor_next_iter`, and `paramfor_next_value`, which step a `comptime
   for` iterator at compile time. The prelude links them for their bodies:

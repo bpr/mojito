@@ -2679,7 +2679,7 @@ struct _FormatCurlyEntry(ImplicitlyCopyable):
 @fieldwise_init
 struct _GraphemeIter[
     iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-](Copyable, ImplicitlyCopyable, Iterator, Movable):
+](Copyable, ImplicitlyCopyable, Iterator, Movable, Sized):
     comptime Element = StringSpan[Self.iterable_origin]
 
     var src: StringSpan[Self.iterable_origin]
@@ -2708,7 +2708,7 @@ struct _GraphemeIter[
 @fieldwise_init
 struct _GraphemeReversedIter[
     iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-](Copyable, ImplicitlyCopyable, Iterator, Movable):
+](Copyable, ImplicitlyCopyable, Iterator, Movable, Sized):
     comptime Element = StringSpan[Self.iterable_origin]
 
     var src: StringSpan[Self.iterable_origin]
@@ -2738,7 +2738,7 @@ struct _GraphemeReversedIter[
 @fieldwise_init
 struct _CodepointIter[
     iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-](Copyable, ImplicitlyCopyable, Iterator, Movable):
+](Copyable, ImplicitlyCopyable, Iterator, Movable, Sized):
     comptime Element = Codepoint
 
     var src: StringSpan[Self.iterable_origin]
@@ -2775,7 +2775,7 @@ struct _CodepointIter[
 @fieldwise_init
 struct _CodepointSliceIter[
     iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-](Copyable, ImplicitlyCopyable, Iterator, Movable):
+](Copyable, ImplicitlyCopyable, Iterator, Movable, Sized):
     comptime Element = StringSpan[Self.iterable_origin]
 
     var src: StringSpan[Self.iterable_origin]
@@ -2808,7 +2808,7 @@ struct _CodepointSliceIter[
 @fieldwise_init
 struct _CodepointSliceReversedIter[
     iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-](Copyable, ImplicitlyCopyable, Iterator, Movable):
+](Copyable, ImplicitlyCopyable, Iterator, Movable, Sized):
     comptime Element = StringSpan[Self.iterable_origin]
 
     var src: StringSpan[Self.iterable_origin]
@@ -2835,7 +2835,7 @@ struct _CodepointSliceReversedIter[
 @fieldwise_init
 struct _BytesIter[
     iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-](Copyable, ImplicitlyCopyable, Iterator, Movable):
+](Copyable, ImplicitlyCopyable, Iterator, Movable, Sized):
     comptime Element = Byte
 
     var src: StringSpan[Self.iterable_origin]
@@ -2862,7 +2862,7 @@ struct _BytesIter[
 # constructor itself does not, so it is not `@implicit`. Mojito views `Byte`
 # rather than upstream's `c_char` (`Int8`) elements.
 struct CStringSlice[mut: Bool, //, origin: Origin[mut=mut]](
-    ImplicitlyCopyable, Movable, Writable
+    ImplicitlyCopyable, Movable, Sized, Writable
 ):
     var _data: Pointer[Byte, Self.origin._get_owned_interior["bytes"]]
 

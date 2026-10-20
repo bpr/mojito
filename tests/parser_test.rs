@@ -930,6 +930,23 @@ fn parses_trait_inheritance_list() {
 }
 
 #[test]
+fn parses_pass_in_trait_body() {
+    // `pass` declares nothing: a refining trait may add no member.
+    match &parse("trait Measured(Sized):\n    pass\n")[0].kind {
+        StmtKind::Trait {
+            refines,
+            methods,
+            comptime_members,
+            ..
+        } => {
+            assert_eq!(refines, &vec!["Sized".to_string()]);
+            assert!(methods.is_empty() && comptime_members.is_empty());
+        }
+        other => panic!("expected a trait, got {other:?}"),
+    }
+}
+
+#[test]
 fn parses_trait_comptime_member() {
     // `comptime count: Int` — a compile-time member requirement.
     match &parse("trait Repeater:\n    comptime count: Int\n")[0].kind {

@@ -23,7 +23,7 @@ def _range_length(start: Int, stop: Int, step: Int) -> Int:
     return (start - stop + stride - 1) // stride
 
 struct _ZeroStartingRange[dtype: DType = DType.int](
-    Copyable, Deinitable, ImplicitlyCopyable, Iterable, Iterator, Movable
+    Copyable, Deinitable, ImplicitlyCopyable, Iterable, Iterator, Movable, Sized
 ):
     comptime Element = Scalar[Self.dtype]
     comptime IteratorType[
@@ -66,7 +66,7 @@ struct _ZeroStartingRange[dtype: DType = DType.int](
         return Scalar[Self.dtype](idx)
 
 struct _SequentialRange[dtype: DType = DType.int](
-    Copyable, Deinitable, ImplicitlyCopyable, Iterable, Iterator, Movable
+    Copyable, Deinitable, ImplicitlyCopyable, Iterable, Iterator, Movable, Sized
 ):
     comptime Element = Scalar[Self.dtype]
     comptime IteratorType[
@@ -108,7 +108,7 @@ struct _SequentialRange[dtype: DType = DType.int](
         return self.start + Scalar[Self.dtype](idx)
 
 struct _StridedRange[dtype: DType = DType.int](
-    Copyable, Deinitable, ImplicitlyCopyable, Iterable, Iterator, Movable
+    Copyable, Deinitable, ImplicitlyCopyable, Iterable, Iterator, Movable, Sized
 ):
     comptime Element = Scalar[Self.dtype]
     comptime IteratorType[

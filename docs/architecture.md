@@ -3233,7 +3233,10 @@ it, under an instance's bindings (`mono/availability.rs`), by the rule the
 checker shares (`mojito_types::conformance::struct_trait_rule`): a declared
 trait from the declared conformances that are `X` or refine it, a lifecycle
 trait from its row, an operation trait never, and any other compiler-known
-trait always. It ranks and re-derives nothing. A member its instance disproves is skipped when struct
+trait always. A compiler-modelled type that is not a struct (a `SIMD`
+scalar, a tuple, a pack) conforms to a library-declared trait only as the
+upstream struct it stands in for lists it
+(`mojito_types::conformance::modelled_declares`): all of them `Sized`. It ranks and re-derives nothing. A member its instance disproves is skipped when struct
 discovery reaches it and is an error when a call demands it. An instance that
 fails to materialize fails the compilation. The text schema carries the three
 fields from 1.9, and an older artifact reads as carrying none. Schema 1.10

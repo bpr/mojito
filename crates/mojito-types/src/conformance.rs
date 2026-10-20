@@ -31,8 +31,6 @@ pub const COMPILER_TRAITS: &[&str] = &[
     "Hashable",
     "Hasher",
     "Identifiable",
-    "Sized",
-    "SizedRaising",
     "Iterable",
     "IterableOwned",
     "Iterator",
@@ -201,6 +199,29 @@ pub fn leaf_conforms(
         // `AnyType`, and the layout and operation markers that stay shallow.
         _ => true,
     })
+}
+
+/// Whether the compiler-modelled type `ty` conforms to the library trait
+/// `trait_name`, as the upstream struct it stands in for declares.
+///
+/// Upstream's `SIMD` (whose scalars `Int`, `UInt`, and `Float64` are),
+/// `Tuple`, `VariadicPack`, and `TypeList` each list `Sized`. A struct or a
+/// type parameter answers by its own declaration or bounds instead.
+pub fn modelled_declares(ty: &Ty, trait_name: &str) -> bool {
+    match trait_name {
+        "Sized" => matches!(
+            ty.kind(),
+            TyKind::Int
+                | TyKind::UInt
+                | TyKind::Float64
+                | TyKind::Simd { .. }
+                | TyKind::Tuple(_)
+                | TyKind::RuntimePack(_)
+                | TyKind::VariadicPack(_)
+                | TyKind::ComptimeList(_)
+        ),
+        _ => false,
+    }
 }
 
 /// Whether `ty` is a non-numeric scalar value type — what `==`/`!=` compare once

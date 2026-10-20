@@ -1867,7 +1867,7 @@ impl Checker {
             TyKind::Param { bounds, .. } => bounds
                 .iter()
                 .any(|bound| bound == tr || self.trait_refines(bound, tr)),
-            _ => false,
+            _ => mojito_types::conformance::modelled_declares(ty, tr),
         }
     }
 

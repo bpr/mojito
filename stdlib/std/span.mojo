@@ -180,7 +180,7 @@ struct Span[mut: Bool, //, T: AnyType, origin: Origin[mut=mut]](
 @fieldwise_init
 struct _SpanIter[
     iterable_mut: Bool, //, T: AnyType, iterable_origin: Origin[mut=iterable_mut]
-](Copyable, Iterator where conforms_to(T, Copyable)):
+](Copyable, Iterator where conforms_to(T, Copyable), Sized):
     comptime Element = Self.T
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]

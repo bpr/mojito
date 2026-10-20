@@ -258,9 +258,10 @@ impl Specializer<'_> {
         let declarations = &self.source.declarations;
         let TyKind::Struct(name, arguments) = ty.kind() else {
             if declarations.declares_trait(trait_name) {
-                // No compiler-known type conforms to a declared trait.
+                // A compiler-known type conforms to a declared trait only as
+                // the upstream struct it models declares.
                 return mojito_types::conformance::leaf_conforms(ty, trait_name, &mut |_, _| true)
-                    .map(|_| false);
+                    .map(|_| mojito_types::conformance::modelled_declares(ty, trait_name));
             }
             let mut undecided = false;
             let conforms = mojito_types::conformance::leaf_conforms(

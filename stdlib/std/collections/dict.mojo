@@ -191,6 +191,7 @@ struct Dict[
     Hashable where conforms_to(K, Copyable) and conforms_to(V, Hashable),
     Iterable where conforms_to(K, Copyable) and conforms_to(V, Copyable),
     Movable,
+    Sized,
     Writable where conforms_to(K, Copyable) and conforms_to(K, Writable) and conforms_to(
         V, Writable
     ),

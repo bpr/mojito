@@ -66,9 +66,14 @@ impl FnLowering<'_> {
                 self.reg_values.insert(dest.0, length);
                 Ok(())
             }
-            Some(ty @ (TyKind::Float64 | TyKind::Simd { .. }))
-                if let Some((_, width)) = mojito_types::types::simd_shape(ty) =>
-            {
+            Some(
+                ty @ (TyKind::Int
+                | TyKind::IntLiteral
+                | TyKind::UInt
+                | TyKind::Float64
+                | TyKind::FloatLiteral
+                | TyKind::Simd { .. }),
+            ) if let Some((_, width)) = mojito_types::types::simd_shape(ty) => {
                 let length = self.int_constant(ctx, width);
                 self.reg_values.insert(dest.0, length);
                 Ok(())
