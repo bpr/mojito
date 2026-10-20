@@ -2020,6 +2020,24 @@ impl ParamDecl {
     }
 }
 
+impl mojito_ast::call::CompileTimeParam for ParamDecl {
+    fn keyword(&self) -> &str {
+        self.name().trim_start_matches('*')
+    }
+
+    fn infer_only(&self) -> bool {
+        match self {
+            Self::Type { infer_only, .. } | Self::Value { infer_only, .. } => *infer_only,
+        }
+    }
+
+    fn variadic(&self) -> bool {
+        match self {
+            Self::Type { variadic, .. } | Self::Value { variadic, .. } => *variadic,
+        }
+    }
+}
+
 /// A type substitution: the solution for each type binder, by identity.
 pub type TySubst = HashMap<ParamId, Ty>;
 

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1175**.
+Next free ID: **R1176**.
 
 ## Ordered Work
 
@@ -5104,23 +5104,28 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R449 A keyword-supplied infer-only parameter is rejected**
+- [ ] **R1175 Compile-time bracket binding is re-implemented outside `call.rs`**
 
-  Problem: `f[T=Int, n=3](1)` over `def f[T: Writable & ImplicitlyCopyable,
-  //, n: Int](x: T) -> Int`, and `PL[T=Int]()` over `struct PL[T: …, //,
-  *vs: T]`, fail with "infer-only parameter 'T' cannot be supplied
-  explicitly", where the pin accepts both and prints `3` and `0`.
-  - The pin rejects only a positional argument for an infer-only binder.
-  - The check is made twice: in `Checker::resolve_use_params` and in
-    `split_callable_specialization` (`checker/generics.rs`).
-  - A keyword for the infer-only binder followed by a positional argument
-    (`B[d=DType.int8, 4]()` over `struct B[d: DType, //, n: Int]`, and
-    `Box[Tr=Copyable, 3]()` over `struct Box[Tr: type_of(AnyType), //, n:
-    Int]`) stops in `bracket_bindings` with "positional compile-time
-    argument follows a keyword argument", where the pin prints `4`.
-  - Found while landing R446 (2026-10-07).
+  Problem: five sites bind a bracket list to a declaration's parameters by
+  their own rule instead of `mojito_ast::call::match_parameter_slots`, the
+  pin's rule the checker's `bracket_bindings` uses.
+  - `callable_value_argument` (`checker/origins/subst.rs`) binds positional
+    arguments over infer-only binders, and skips a keyword-filled slot.
+  - `applied_arguments` (`checker/comptime_validation.rs`) pairs a binder
+    with the argument at its raw position.
+  - `mir::supplied_parameter_arguments` (`mir/ir.rs`) is a separate copy.
+  - `verify_param_arguments` (`mir/verify/subscripts.rs`) lets a
+    positional argument skip a keyword-filled slot, which the pin rejects.
+  - `freeze_arguments` (`comptime/elab.rs`) counts keywords when indexing
+    the explicit list.
+  - Probe: `T[k=3, Extent.square(2)]` over `struct T[e: Extent, k: Int]`
+    prints the pin's `23` only because CTFE later evaluates the unfrozen
+    construction.
+  - MIR lists carry erased origin arguments with no value, which the MIR
+    adapters must keep aligned.
+  - Found while landing R449 (2026-10-20).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R450 A `UInt` value parameter inferred from an argument type is missing at the call**
 
@@ -5191,7 +5196,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     variadic value parameter.
   - A clone of such a `def` would spell its runtime reads as
     `ParameterList()`, whose infer-only `type` then has no value to solve
-    from (R449 covers the keyword form).
+    from; the keyword form `ParameterList[type=Int]()` binds it.
   - Found while landing R325 (2026-10-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.

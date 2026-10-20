@@ -1,4 +1,4 @@
-# expect: infer-only parameter 'type' cannot be supplied explicitly
+# expect: unexpected parameter
 # `ParameterList` takes its list as one raw-list parameter, never as its
 # elements.
 def main():

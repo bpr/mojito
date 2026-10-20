@@ -719,10 +719,9 @@ fn solve_applied_args(
 impl Checker {
     /// Split the source parameter list at an explicit specialization site.
     /// Origin arguments are erased from the ordinary list handed to the
-    /// generic binder, which skips infer-only slots as this split does, so an
-    /// ordinary argument keeps its source form. A positional argument that
-    /// reaches a pack (`*Ts`, `*values: Int`) stays there: the pack collects
-    /// every positional argument after it.
+    /// generic binder, which binds the list as this split does
+    /// ([`mojito_ast::call::match_parameter_slots`]), so an ordinary argument
+    /// keeps its source form.
     pub(super) fn split_callable_specialization(
         &self,
         name: &str,
@@ -739,68 +738,20 @@ impl Checker {
                 HashMap::new(),
             ));
         }
-        let mut supplied = vec![false; signature.source.len()];
+        let slots = mojito_ast::call::match_parameter_slots(
+            &signature.source,
+            &mojito_ast::call::bracket_keywords(arguments),
+        )
+        .map_err(|error| error.into_type_error(name))?;
         let mut origins = vec![None; signature.origins.len()];
         let mut ordinary = Vec::new();
         let mut forwarded = ForwardedBrackets::empty(arguments.len());
-        let mut next_positional = 0;
-        for (position, argument) in arguments.iter().enumerate() {
-            let is_named = matches!(argument, ParamArg::Named { .. });
-            let (index, value) = match argument {
-                ParamArg::Named {
-                    name: argument_name,
-                    value,
-                } => {
-                    let index = signature
-                        .source
-                        .iter()
-                        .position(|parameter| parameter.name == *argument_name)
-                        .ok_or_else(|| TypeError::BadCall {
-                            func: name.to_string(),
-                            reason: format!("unknown compile-time parameter '{argument_name}'"),
-                        })?;
-                    (index, (**value).clone())
-                }
-                other => {
-                    while next_positional < signature.source.len()
-                        && (signature.source[next_positional].infer_only
-                            || (supplied[next_positional]
-                                && !signature.source[next_positional].variadic()))
-                    {
-                        next_positional += 1;
-                    }
-                    if next_positional == signature.source.len() {
-                        return Err(TypeError::WrongTypeArgCount {
-                            name: name.to_string(),
-                            expected: signature
-                                .source
-                                .iter()
-                                .filter(|parameter| !parameter.infer_only)
-                                .count(),
-                            got: arguments.len(),
-                        });
-                    }
-                    let index = next_positional;
-                    if !signature.source[index].variadic() {
-                        next_positional += 1;
-                    }
-                    (index, other.clone())
-                }
+        for (position, (argument, index)) in arguments.iter().zip(slots).enumerate() {
+            let (is_named, value) = match argument {
+                ParamArg::Named { value, .. } => (true, (**value).clone()),
+                other => (false, other.clone()),
             };
             let parameter = &signature.source[index];
-            if parameter.infer_only {
-                return Err(TypeError::Unsupported(format!(
-                    "infer-only parameter '{}' cannot be supplied explicitly",
-                    parameter.name
-                )));
-            }
-            if supplied[index] && (is_named || !parameter.variadic()) {
-                return Err(TypeError::BadCall {
-                    func: name.to_string(),
-                    reason: format!("parameter '{}' was supplied twice", parameter.name),
-                });
-            }
-            supplied[index] = true;
             if let Some(origin_index) = parameter.origin {
                 let origin = self.explicit_origin_argument(&value)?;
                 let attribute = TyArg::Origin(origin.clone());

@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A compile-time bracket list binds as on the pin: positional arguments
+  fill the parameters that are not infer-only, in order, then each keyword
+  binds its parameter by name, an infer-only binder included, wherever it
+  is written. `f[T=Int, n=3](1)`, `PL[T=Int]()`, `B[d=DType.int8, 4]()`,
+  `Box[Tr=Copyable, 3]()`, a method's `m[T=Int, n=5](1)`, and `C[b=2, 1]`
+  now run (`assets/ok/infer_only_parameter_by_keyword.mojo`). A keyword for
+  a slot a positional argument filled is "unexpected keyword parameter"
+  (including `t[n=1, origin_of(v)]`, which ran before), and a positional
+  argument for an infer-only binder is "unexpected parameter". The parser
+  now requires `,` or `]` after the `//` marker. This closes R449.
+
 - A parameter typed by upstream's KGEN metatype `` __mlir_type.`!kgen.type` ``
   (`__TypeOfAllTypes`) binds a type, as on the pin: spelled directly,
   through a module alias, or through a struct's member alias (`elt_type:

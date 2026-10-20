@@ -593,8 +593,17 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 for parameter in &mut params {
                     parameter.infer_only = true;
                 }
-                if matches!(self.peek_token()?, Some(Token::Comma)) {
-                    self.next_token()?;
+                match self.peek_token()? {
+                    Some(Token::Comma) => {
+                        self.next_token()?;
+                    }
+                    Some(Token::RBracket) => {}
+                    _ => {
+                        return Err(ParseError::UnexpectedToken(
+                            self.next_token()?,
+                            "expected ']' for parameter list".into(),
+                        ));
+                    }
                 }
                 if matches!(self.peek_token()?, Some(Token::RBracket)) {
                     break;

@@ -2897,7 +2897,15 @@ struct CallableSourceParam {
     ordinary: bool,
 }
 
-impl CallableSourceParam {
+impl mojito_ast::call::CompileTimeParam for CallableSourceParam {
+    fn keyword(&self) -> &str {
+        self.name.trim_start_matches('*')
+    }
+
+    fn infer_only(&self) -> bool {
+        self.infer_only
+    }
+
     /// Whether the parameter is a pack (`*Ts`, `*values: Int`), which
     /// collects every positional argument from its slot on.
     fn variadic(&self) -> bool {

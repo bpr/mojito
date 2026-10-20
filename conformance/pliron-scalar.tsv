@@ -306,6 +306,7 @@ assets/ok/implicit_conversion_bound_on_declaration.mojo	-	ineligible	no-scalar-e
 assets/ok/implicit_conversion_exact_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/implicit_conversion_raising.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/indexer_normalization.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/infer_only_parameter_by_keyword.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/init_out_self.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/initializer_list_contextual.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/inplace_field.mojo	-	ineligible	no-scalar-entry-shape

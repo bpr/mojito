@@ -3530,10 +3530,34 @@ fn supports_parameterized_aggregate_compile_time_values() {
 #[test]
 fn rejects_explicit_infer_only_compile_time_parameters() {
     let error = err(
-        "def identity[T: Copyable, // U: AnyType](value: T) -> T:\n    return value.copy()\n\nvar value: Int = identity[Int, Int](1)\n",
+        "def identity[T: Copyable, //, U: AnyType](value: T) -> T:\n    return value.copy()\n\nvar value: Int = identity[Int, Int](1)\n",
+    );
+    // The pin: "invalid call to 'identity': unexpected parameter".
+    assert!(
+        matches!(&error, TypeError::BadCall { reason, .. } if reason == "unexpected parameter"),
+        "got {error:?}"
+    );
+}
+
+#[test]
+fn binds_infer_only_parameter_by_keyword() {
+    // Positional arguments bind first, to the slots that are not
+    // infer-only; a keyword then binds its parameter by name, as on the pin.
+    ok_std(
+        "def f[T: Writable & ImplicitlyCopyable, //, n: Int](x: T) -> Int:\n    return n\n\nstruct B[d: DType, //, n: Int]:\n    def __init__(out self):\n        pass\n\nvar a: Int = f[T=Int, n=3](1)\nvar b: Int = f[T=Int, 3](1)\nvar c = B[d=DType.int8, 4]()\n",
+    );
+}
+
+#[test]
+fn rejects_keyword_for_a_positionally_bound_parameter() {
+    // `C[a=1, 2]` binds `2` to `a` first, so the keyword finds `a` filled.
+    let error = err(
+        "struct C[a: Int, b: Int]:\n    def __init__(out self):\n        pass\n\nvar c = C[a=1, 2]()\n",
     );
     assert!(
-        matches!(&error, TypeError::Unsupported(message) if message.contains("infer-only")),
+        error
+            .to_string()
+            .contains("unexpected keyword parameter 'a'"),
         "got {error:?}"
     );
 }
@@ -7955,9 +7979,7 @@ fn parameter_list_rejects_explicit_elements() {
     // is one raw-list parameter, never its elements.
     let error = err_std("def main():\n    var p = ParameterList[1, 2]()\n    print(len(p))\n");
     assert!(
-        error
-            .to_string()
-            .contains("infer-only parameter 'type' cannot be supplied explicitly"),
+        error.to_string().contains("unexpected parameter"),
         "{error}"
     );
 }

@@ -2302,32 +2302,17 @@ enum CandidateOutcome {
 const PARAM_LIST_ADDRESS: &str = "__param_list_address";
 
 /// The declaration each bracket argument binds, one entry per argument, as
-/// the MIR generic ABI binds them: a named argument selects its declaration,
-/// a positional one the next declaration that is not infer-only.
+/// [`mojito_ast::call::match_parameter_slots`] binds them; every entry is
+/// `None` when the list does not bind.
 fn bracket_argument_slots(
     decls: &[ParamDecl],
     param_args: &[mojito_ast::ast::ParamArg],
 ) -> Vec<Option<usize>> {
-    let mut next_positional = 0;
-    param_args
-        .iter()
-        .map(|argument| {
-            if let mojito_ast::ast::ParamArg::Named { name, .. } = argument {
-                return decls
-                    .iter()
-                    .position(|decl| decl.name().trim_start_matches('*') == name.as_str());
-            }
-            while decls.get(next_positional).is_some_and(|decl| match decl {
-                ParamDecl::Type { infer_only, .. } | ParamDecl::Value { infer_only, .. } => {
-                    *infer_only
-                }
-            }) {
-                next_positional += 1;
-            }
-            next_positional += 1;
-            Some(next_positional - 1)
-        })
-        .collect()
+    let keywords = mojito_ast::call::bracket_keywords(param_args);
+    mojito_ast::call::match_parameter_slots(decls, &keywords).map_or_else(
+        |_| vec![None; param_args.len()],
+        |slots| slots.into_iter().map(Some).collect(),
+    )
 }
 
 /// Rewrite the solver's slot-indexed exact-origin mismatch into upstream's

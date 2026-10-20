@@ -673,7 +673,12 @@ policy or data-model responsibilities to focused children:
 - `call.rs` is the phase-neutral function-call contract: it normalizes parser
   marker indexes and matches positional, keyword, default, `*args`, and
   `var **kwargs` collector inputs to parameter slots. The checker and VM separately adapt its
-  structural errors and matched slots to types and runtime values.
+  structural errors and matched slots to types and runtime values. A
+  compile-time bracket list binds through its `match_parameter_slots`, as
+  Mojo binds one: positional arguments first, each to the next parameter
+  that is not infer-only (a pack takes the rest), then each keyword by
+  name, an infer-only binder included; the checker's `bracket_bindings`,
+  `bracket_argument_slots`, and `split_callable_specialization` all use it.
 - `checker.rs` holds the `Checker` state, constructors, and shared prelude
   types, and coordinates checking; the single `Checker` type's methods are split
   by responsibility across `impl Checker` blocks in the `checker/` submodules —

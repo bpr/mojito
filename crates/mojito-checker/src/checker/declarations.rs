@@ -3277,22 +3277,6 @@ impl Checker {
             for (decl, arguments) in decls.iter().zip(bound) {
                 let typed = substituted_value_decl(decl, &subst);
                 let decl = typed.as_ref().unwrap_or(decl);
-                let infer_only = matches!(
-                    decl,
-                    ParamDecl::Type {
-                        infer_only: true,
-                        ..
-                    } | ParamDecl::Value {
-                        infer_only: true,
-                        ..
-                    }
-                );
-                if infer_only && !arguments.is_empty() {
-                    return Err(TypeError::Unsupported(format!(
-                        "infer-only parameter '{}' cannot be supplied explicitly",
-                        decl.name().trim_start_matches('*')
-                    )));
-                }
                 let variadic = matches!(
                     decl,
                     ParamDecl::Type { variadic: true, .. }
@@ -4162,98 +4146,24 @@ fn substituted_value_decl(decl: &ParamDecl, subst: &TySubst) -> Option<ParamDecl
 }
 
 /// Each of `decls`' bracket arguments in `param_args`, with its source
-/// position, positional ones skipping infer-only binders and keyword ones
-/// bound by name.
+/// position, bound as [`mojito_ast::call::match_parameter_slots`] binds them:
+/// positional arguments to the slots that are not infer-only, in order, then
+/// keyword ones by name, an infer-only binder included.
 fn bracket_bindings<'a>(
     name: &str,
     decls: &[ParamDecl],
     param_args: &'a [mojito_ast::ast::ParamArg],
 ) -> Result<Vec<Vec<(usize, &'a mojito_ast::ast::ParamArg)>>, TypeError> {
+    let keywords = mojito_ast::call::bracket_keywords(param_args);
+    let slots = mojito_ast::call::match_parameter_slots(decls, &keywords)
+        .map_err(|error| error.into_type_error(name))?;
     let mut bound: Vec<Vec<(usize, &mojito_ast::ast::ParamArg)>> = vec![Vec::new(); decls.len()];
-    let mut positional = 0;
-    let mut saw_keyword = false;
-    for (position, argument) in param_args.iter().enumerate() {
-        match argument {
-            mojito_ast::ast::ParamArg::Named {
-                name: keyword,
-                value,
-            } => {
-                saw_keyword = true;
-                let Some(index) = decls
-                    .iter()
-                    .position(|decl| decl.name().trim_start_matches('*') == keyword)
-                else {
-                    return Err(TypeError::Unsupported(format!(
-                        "generic '{name}' has no parameter named '{keyword}'"
-                    )));
-                };
-                if !bound[index].is_empty() {
-                    return Err(TypeError::Redeclaration(keyword.clone()));
-                }
-                bound[index].push((position, value));
-            }
-            positional_argument => {
-                if saw_keyword {
-                    return Err(TypeError::Unsupported(
-                        "positional compile-time argument follows a keyword argument".to_string(),
-                    ));
-                }
-                while positional < decls.len()
-                    && (matches!(
-                        decls[positional],
-                        ParamDecl::Type {
-                            infer_only: true,
-                            ..
-                        } | ParamDecl::Value {
-                            infer_only: true,
-                            ..
-                        }
-                    ) || (!bound[positional].is_empty()
-                        && !matches!(
-                            decls[positional],
-                            ParamDecl::Type { variadic: true, .. }
-                                | ParamDecl::Value { variadic: true, .. }
-                        )))
-                {
-                    positional += 1;
-                }
-                if positional >= decls.len() {
-                    // Surplus positional arguments where infer-only
-                    // slots were skipped mean the caller spelled an
-                    // infer-only binder explicitly.
-                    if let Some(hidden) = decls.iter().find(|decl| {
-                        matches!(
-                            decl,
-                            ParamDecl::Type {
-                                infer_only: true,
-                                ..
-                            } | ParamDecl::Value {
-                                infer_only: true,
-                                ..
-                            }
-                        )
-                    }) {
-                        return Err(TypeError::Unsupported(format!(
-                            "infer-only parameter '{}' cannot be supplied explicitly",
-                            hidden.name().trim_start_matches('*')
-                        )));
-                    }
-                    return Err(TypeError::WrongTypeArgCount {
-                        name: name.to_string(),
-                        expected: decls.len(),
-                        got: param_args.len(),
-                    });
-                }
-                bound[positional].push((position, positional_argument));
-                if !matches!(
-                    decls[positional],
-                    ParamDecl::Type { variadic: true, .. }
-                        | ParamDecl::Value { variadic: true, .. }
-                ) {
-                    positional += 1;
-                }
-            }
-        }
+    for (position, (argument, index)) in param_args.iter().zip(slots).enumerate() {
+        let argument = match argument {
+            mojito_ast::ast::ParamArg::Named { value, .. } => &**value,
+            positional => positional,
+        };
+        bound[index].push((position, argument));
     }
     Ok(bound)
 }

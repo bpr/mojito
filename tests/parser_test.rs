@@ -3659,6 +3659,20 @@ fn infer_only_marker_applies_to_the_parameter_prefix() {
 }
 
 #[test]
+fn infer_only_marker_is_followed_by_a_comma_or_the_bracket() {
+    // The pin: "expected ']' for parameter list".
+    let error = mojito::parse("def f[T: Copyable, // U: AnyType](value: T):\n    pass\n")
+        .expect_err("a parameter directly after `//` is rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("expected ']' for parameter list"),
+        "{error}"
+    );
+    assert!(mojito::parse("def f[T: Copyable, //](value: T):\n    pass\n").is_ok());
+}
+
+#[test]
 fn parses_parenthesized_from_imports() {
     assert_eq!(
         parse("from .backend import (\n    tile,\n    vectorize as vec,\n)\n"),
