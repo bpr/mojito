@@ -1334,7 +1334,6 @@ pub enum CheckedOp {
         lower: Option<CheckedNodeId>,
         upper: Option<CheckedNodeId>,
         step: Option<CheckedNodeId>,
-        explicit_step: bool,
     },
     MultiIndex {
         object: CheckedNodeId,
@@ -1668,13 +1667,11 @@ impl CheckedOp {
                 lower,
                 upper,
                 step,
-                explicit_step,
             } => Self::Slice {
                 object: map.expression(*object),
                 lower: optional(map, lower),
                 upper: optional(map, upper),
                 step: optional(map, step),
-                explicit_step: *explicit_step,
             },
             Self::MultiIndex { object, args } => Self::MultiIndex {
                 object: map.expression(*object),
@@ -1690,29 +1687,23 @@ impl CheckedOp {
                                 value: map.expression(*value),
                             }
                         }
-                        CheckedSubscriptArg::Slice {
-                            lower,
-                            upper,
-                            step,
-                            explicit_step,
-                        } => CheckedSubscriptArg::Slice {
-                            lower: optional(map, lower),
-                            upper: optional(map, upper),
-                            step: optional(map, step),
-                            explicit_step: *explicit_step,
-                        },
+                        CheckedSubscriptArg::Slice { lower, upper, step } => {
+                            CheckedSubscriptArg::Slice {
+                                lower: optional(map, lower),
+                                upper: optional(map, upper),
+                                step: optional(map, step),
+                            }
+                        }
                         CheckedSubscriptArg::KeywordSlice {
                             name,
                             lower,
                             upper,
                             step,
-                            explicit_step,
                         } => CheckedSubscriptArg::KeywordSlice {
                             name: name.clone(),
                             lower: optional(map, lower),
                             upper: optional(map, upper),
                             step: optional(map, step),
-                            explicit_step: *explicit_step,
                         },
                     })
                     .collect(),
@@ -1813,14 +1804,12 @@ pub enum CheckedSubscriptArg {
         lower: Option<CheckedNodeId>,
         upper: Option<CheckedNodeId>,
         step: Option<CheckedNodeId>,
-        explicit_step: bool,
     },
     KeywordSlice {
         name: String,
         lower: Option<CheckedNodeId>,
         upper: Option<CheckedNodeId>,
         step: Option<CheckedNodeId>,
-        explicit_step: bool,
     },
 }
 
@@ -5164,13 +5153,11 @@ impl<'a> ArenaBuilder<'a> {
                 lower,
                 upper,
                 step,
-                explicit_step,
             } => CheckedOp::Slice {
                 object: self.expr(object),
                 lower: self.optional(lower.as_deref()),
                 upper: self.optional(upper.as_deref()),
                 step: self.optional(step.as_deref()),
-                explicit_step: *explicit_step,
             },
             ExprKind::MultiIndex { object, args } => CheckedOp::MultiIndex {
                 object: self.expr(object),
@@ -5182,29 +5169,21 @@ impl<'a> ArenaBuilder<'a> {
                             name: name.clone(),
                             value: self.expr(value),
                         },
-                        SubscriptArg::Slice {
-                            lower,
-                            upper,
-                            step,
-                            explicit_step,
-                        } => CheckedSubscriptArg::Slice {
+                        SubscriptArg::Slice { lower, upper, step } => CheckedSubscriptArg::Slice {
                             lower: self.optional(lower.as_deref()),
                             upper: self.optional(upper.as_deref()),
                             step: self.optional(step.as_deref()),
-                            explicit_step: *explicit_step,
                         },
                         SubscriptArg::KeywordSlice {
                             name,
                             lower,
                             upper,
                             step,
-                            explicit_step,
                         } => CheckedSubscriptArg::KeywordSlice {
                             name: name.clone(),
                             lower: self.optional(lower.as_deref()),
                             upper: self.optional(upper.as_deref()),
                             step: self.optional(step.as_deref()),
-                            explicit_step: *explicit_step,
                         },
                     })
                     .collect(),

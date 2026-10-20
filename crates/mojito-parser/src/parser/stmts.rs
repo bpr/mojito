@@ -465,8 +465,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
     /// `def name(params) -> ret: <block>`
     /// Parses one or more decorators, each on its own line: `@` followed by a
-    /// dotted name and optional call arguments. A general grammar — any name is
-    /// accepted (only `@fieldwise_init` on a struct is acted on).
+    /// dotted name and optional call arguments. A general grammar — the parser
+    /// keeps every decorator, and the checker validates each site.
     pub(super) fn parse_decorators(&mut self) -> Result<Vec<Decorator>, ParseError> {
         let mut decorators = Vec::new();
         while matches!(self.peek_token()?, Some(Token::At)) {

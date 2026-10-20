@@ -1,6 +1,8 @@
 # expect: is not defined for ContiguousSlice
 # Only `Slice` is Equatable upstream; the `ContiguousSlice`/`StridedSlice`
 # descriptor sub-kinds do not compare.
+from std.builtin.builtin_slice import ContiguousSlice
+
 def same(a: ContiguousSlice, b: ContiguousSlice) -> Bool:
     return a == b
 

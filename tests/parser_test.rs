@@ -3167,7 +3167,6 @@ fn parses_keyword_slice_subscripts() {
                 lower: Some(int(1)),
                 upper: Some(int(3)),
                 step: None,
-                explicit_step: false,
             }],
         })
     );
@@ -3180,7 +3179,6 @@ fn parses_keyword_slice_subscripts() {
                 lower: None,
                 upper: Some(int(3)),
                 step: None,
-                explicit_step: false,
             }],
         })
     );
@@ -3193,7 +3191,6 @@ fn parses_keyword_slice_subscripts() {
                 lower: None,
                 upper: None,
                 step: Some(int(2)),
-                explicit_step: true,
             }],
         })
     );
@@ -3210,7 +3207,6 @@ fn parses_keyword_slice_subscripts() {
                     lower: Some(int(1)),
                     upper: None,
                     step: None,
-                    explicit_step: false,
                 },
             ],
         })
@@ -3226,7 +3222,6 @@ fn parses_slice_subscripts() {
             lower: Some(int(1)),
             upper: Some(int(2)),
             step: None,
-            explicit_step: false,
         })
     );
     assert_eq!(
@@ -3236,7 +3231,6 @@ fn parses_slice_subscripts() {
             lower: None,
             upper: None,
             step: Some(int(2)),
-            explicit_step: true,
         })
     );
     assert_eq!(
@@ -3246,7 +3240,6 @@ fn parses_slice_subscripts() {
             lower: Some(bx(ExprKind::Identifier("i".into()))),
             upper: None,
             step: None,
-            explicit_step: false,
         })
     );
 
@@ -3260,7 +3253,6 @@ fn parses_slice_subscripts() {
                     lower: Some(Box::new(int_expr(1))),
                     upper: Some(Box::new(int_expr(5))),
                     step: Some(Box::new(int_expr(2))),
-                    explicit_step: true,
                 },
             ],
         })
@@ -3838,10 +3830,10 @@ fn origin_capability_cast_keeps_a_parameter_application() {
 }
 
 #[test]
-fn normalizes_deprecated_lifecycle_spellings_at_parse_time() {
-    // `ImplicitlyDeletable` and `__del__` are upstream-deprecated compat
-    // spellings of `Deinitable`/`__deinit__`; the parser normalizes them so
-    // every later phase sees one canonical vocabulary.
+fn normalizes_del_and_keeps_trait_spellings_at_parse_time() {
+    // `__del__` is the pin's deprecated spelling of `__deinit__`, which the
+    // parser normalizes. `ImplicitlyDeletable` is gone from the pin: the
+    // parser keeps it verbatim and the checker rejects the unknown trait.
     let stmts = parse(
         "struct Res(Movable, ImplicitlyDeletable where False):\n    var id: Int\n    def __del__(deinit self):\n        pass\n",
     );
@@ -3856,17 +3848,19 @@ fn normalizes_deprecated_lifecycle_spellings_at_parse_time() {
     };
     assert_eq!(
         conforms,
-        &vec!["Movable".to_string(), "Deinitable".to_string()]
+        &vec!["Movable".to_string(), "ImplicitlyDeletable".to_string()]
     );
-    assert_eq!(conformance_conditions[0].0, "Deinitable");
+    assert_eq!(conformance_conditions[0].0, "ImplicitlyDeletable");
     assert_eq!(methods[0].name, "__deinit__");
 
-    // Bounds normalize too.
     let stmts = parse("def consume[T: Movable & ImplicitlyDeletable](var value: T):\n    pass\n");
     let StmtKind::Def { type_params, .. } = &stmts[0].kind else {
         panic!("expected a def");
     };
-    assert_eq!(type_params[0].bounds, vec!["Movable", "Deinitable"]);
+    assert_eq!(
+        type_params[0].bounds,
+        vec!["Movable", "ImplicitlyDeletable"]
+    );
 }
 
 /// The hidden definition synthesized for a lambda whose `lambda` keyword

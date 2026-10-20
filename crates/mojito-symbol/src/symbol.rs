@@ -31,7 +31,7 @@ use mojito_ast::ast::{
 };
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_types::ct::{CtLane, CtValue};
-use mojito_types::types::{FuncTy, Ty, TyArg, canonical_simd_ty, default_literal};
+use mojito_types::types::{FuncTy, SliceKind, Ty, TyArg, canonical_simd_ty, default_literal};
 use sha2::{Digest, Sha256};
 
 /// The lowered symbol of `std._intrinsics._pow_int`.
@@ -1608,6 +1608,14 @@ fn ast_raw(
         // Mirror `ty_raw`: the `NoneType` annotation resolves to `TyKind::None`,
         // which mangles as `None`.
         Type::Named(name, args) if args.is_empty() && name == "NoneType" => "None".to_string(),
+        // Mirror `ty_raw`: an imported slice kind's linked spelling resolves
+        // to the kind's own descriptor type.
+        Type::Named(name, args)
+            if args.is_empty()
+                && let Some(kind) = SliceKind::of_source_name(name) =>
+        {
+            kind.type_name().to_string()
+        }
         // `Scalar[DType.x]` / `SIMD[DType.x, N]` annotations mangle as their
         // canonical checked spelling (`Scalar[DType.float32]` is the width-1
         // `Float32`), matching `ty_raw`'s display of the resolved `TyKind::Simd`.
@@ -1871,6 +1879,12 @@ fn annotation_display(ty: &Type) -> String {
             "String".to_string()
         }
         Type::Named(name, args) if args.is_empty() && name == "NoneType" => "None".to_string(),
+        Type::Named(name, args)
+            if args.is_empty()
+                && let Some(kind) = SliceKind::of_source_name(name) =>
+        {
+            kind.type_name().to_string()
+        }
         Type::Named(name, args) => {
             let mut s = name.clone();
             if !args.is_empty() {
@@ -2007,7 +2021,6 @@ fn existential_trait(arg: &ParamArg) -> Option<&str> {
         }) => Some(trait_name),
         _ => None,
     }
-    .map(|trait_name| mojito_ast::ast::canonical_trait_name(trait_name))
 }
 
 /// The binder of the signature a `Scalar`/`SIMD` annotation argument names.

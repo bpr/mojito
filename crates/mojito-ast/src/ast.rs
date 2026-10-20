@@ -10,14 +10,7 @@
 
 use mojito_common::token::Span;
 
-/// Canonicalize a trait name: upstream deprecated `ImplicitlyDeletable` in
-/// favor of `Deinitable`.
-///
-/// The parser normalizes the compat spelling wherever a trait name enters
-/// semantic data (conformance lists, bounds), and the checker wraps the
-/// positions where a trait name is extracted from an ordinary expression
-/// (`conforms_to(T, ...)`), so every later phase sees one canonical spelling
-/// (the `read` → `imm` precedent). The compiler-internal base of a leading-dot
+/// The compiler-internal base of a leading-dot
 /// contextual member reference (`.red`); unspellable in source, resolved
 /// against the expected type during checking and substituted during HIR syntax
 /// renaming.
@@ -67,13 +60,6 @@ pub fn has_body_decorator(decorators: &[Decorator]) -> bool {
     decorators
         .iter()
         .any(|decorator| !is_nested_origins_read_only(std::slice::from_ref(decorator)))
-}
-
-pub fn canonical_trait_name(name: &str) -> &str {
-    match name {
-        "ImplicitlyDeletable" => "Deinitable",
-        other => other,
-    }
 }
 
 /// The trait names of a trait-position expression: one identifier, or a `&`
@@ -817,7 +803,6 @@ pub enum SubscriptArg {
         lower: Option<Box<Expr>>,
         upper: Option<Box<Expr>>,
         step: Option<Box<Expr>>,
-        explicit_step: bool,
     },
     /// `name=lower:upper[:step]` — a keyword slice argument (`s[byte=a:b]`),
     /// dispatched like [`SubscriptArg::Keyword`] with a slice-descriptor
@@ -827,7 +812,6 @@ pub enum SubscriptArg {
         lower: Option<Box<Expr>>,
         upper: Option<Box<Expr>>,
         step: Option<Box<Expr>>,
-        explicit_step: bool,
     },
 }
 
@@ -850,8 +834,7 @@ impl KwArg {
 /// Parsed into the AST. `@fieldwise_init` on a struct sets
 /// `Stmt::Struct.fieldwise_init`, and a callable's inline decorators set its
 /// declaration's inline level (`mojito_checked::declaration::InlineLevel`);
-/// the checker reads a few others by name, and the rest are recorded but
-/// not modeled.
+/// the checker validates every decorator against the site it decorates.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Decorator {
     /// The dotted name parts, e.g. `["always_inline"]` or `["a", "b"]`.
@@ -877,7 +860,8 @@ pub struct Method {
     /// owned/read receivers participate in lifecycle and call checking.
     pub self_convention: Option<ArgConvention>,
     pub self_origin: Option<OriginSpec>,
-    /// Decorators preceding the method (`@staticmethod`, …). Parsed, not modeled.
+    /// Decorators preceding the method (`@staticmethod`, …), validated by the
+    /// checker.
     pub decorators: Vec<Decorator>,
     pub params: Vec<FnParam>,
     /// Index of a `/` (positional-only) marker in `params`, if present (parsed).
@@ -1565,7 +1549,8 @@ pub enum StmtKind {
     /// `[decorators] def name[type_params](params) [raises] -> ret: <body>`
     Def {
         name: String,
-        /// Decorators preceding the function (`@staticmethod`, …). Parsed, not modeled.
+        /// Decorators preceding the function (`@always_inline`, …), validated by
+        /// the checker.
         decorators: Vec<Decorator>,
         /// Type parameters (`[T: Trait]`); empty for a non-generic function.
         type_params: Vec<TypeParam>,
@@ -1592,8 +1577,8 @@ pub enum StmtKind {
     /// comptime facts, and methods>`
     Struct {
         name: String,
-        /// Decorators preceding the struct (`@value`, …). Parsed; only
-        /// `@fieldwise_init` is acted on (via `fieldwise_init`).
+        /// Decorators preceding the struct (`@fieldwise_init`, …), validated by
+        /// the checker; `@fieldwise_init` also sets `fieldwise_init`.
         decorators: Vec<Decorator>,
         /// Type parameters (`[T: Trait]`); empty for a non-generic struct.
         type_params: Vec<TypeParam>,
@@ -1961,10 +1946,6 @@ pub enum ExprKind {
         lower: Option<Box<Expr>>,
         upper: Option<Box<Expr>>,
         step: Option<Box<Expr>>,
-        /// Whether the source contained the second colon. `a[:]` selects a
-        /// contiguous descriptor; `a[::]` selects a strided descriptor even
-        /// though both have an omitted step value.
-        explicit_step: bool,
     },
     /// Multiple subscript arguments, including mixed indices and slices:
     /// `matrix[row, 1:5:2]` → `matrix.__getitem__(row, <slice>)`.

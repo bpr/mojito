@@ -15,6 +15,7 @@ from std.memory.alloc import unsafe_alloc
 
 from std.collections.list import List
 from std.collections.optional import Optional
+from std.builtin.builtin_slice import ContiguousSlice
 from std.span import Span
 
 from std.iter import Iterable, Iterator, StopIteration

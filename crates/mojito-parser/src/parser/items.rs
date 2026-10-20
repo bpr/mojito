@@ -206,7 +206,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         &mut self,
         decorators: Vec<Decorator>,
     ) -> Result<StmtKind, ParseError> {
-        // `@fieldwise_init` (the one modeled decorator) generates the constructor.
+        // `@fieldwise_init` generates the constructor; the checker validates
+        // every decorator.
         let fieldwise_init = decorators
             .iter()
             .any(|d| d.path.len() == 1 && d.path[0] == "fieldwise_init");
@@ -338,7 +339,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         loop {
             let trait_name =
                 self.expect_identifier("Expected a trait name in the conformance list")?;
-            traits.push(mojito_ast::ast::canonical_trait_name(&trait_name).to_string());
+            traits.push(trait_name);
             if matches!(self.peek_token()?, Some(Token::Comma)) {
                 self.next_token()?; // consume ','
                 if matches!(self.peek_token()?, Some(Token::RParen)) {
@@ -381,11 +382,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 }
                 break;
             }
-            let trait_name = {
-                let spelled =
-                    self.expect_identifier("Expected a trait name in the conformance list")?;
-                mojito_ast::ast::canonical_trait_name(&spelled).to_string()
-            };
+            let trait_name =
+                self.expect_identifier("Expected a trait name in the conformance list")?;
             traits.push(trait_name.clone());
             if matches!(self.peek_token()?, Some(Token::Identifier(word)) if word == "where") {
                 self.next_token()?;

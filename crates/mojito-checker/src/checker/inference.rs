@@ -1408,14 +1408,12 @@ impl Checker {
                 lower,
                 upper,
                 step,
-                explicit_step,
             } => self.infer_slice_subscript(
                 expr.source_span(),
                 object,
                 lower.as_deref(),
                 upper.as_deref(),
                 step.as_deref(),
-                *explicit_step,
             ),
             ExprKind::MultiIndex { object, args } => {
                 self.infer_multi_subscript(expr.source_span(), object, args)

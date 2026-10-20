@@ -1,7 +1,10 @@
-# Mojito splits upstream's single `Slice` descriptor into `ContiguousSlice`
-# (two bounds) and `StridedSlice` (three), and a slice literal's second colon
-# picks between them, so a subscript can overload on the kind. The pin has
-# only `Slice` and rejects both names.
+# Upstream's slice literal binds a subscript parameter through the
+# parameter type's `__slice_literal__` constructor: a literal without a step
+# value passes `None` and so builds a `ContiguousSlice`, even when it spells
+# the second colon, and only a written step builds a `StridedSlice`. Both
+# kinds are imported from their module, as on the pin.
+from std.builtin.builtin_slice import ContiguousSlice, StridedSlice
+
 struct Grid:
     var base: Int
 
@@ -12,8 +15,8 @@ struct Grid:
         return self.base + part.start.or_else(0)
 
     def __getitem__(self, part: StridedSlice) -> Int:
-        return self.base + part.step.or_else(1) * 1000
+        return self.base + part.indices(100)[2] * 1000
 
 def main():
     var g = Grid(7)
-    print(g[2:5], g[2:5:3])
+    print(g[2:5], g[2:5:3], g[::], g[2:5:], g[::-1])

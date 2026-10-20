@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	626
+# swept-count	627
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -256,7 +256,7 @@ assets/type_error/constructor_transfer_aliases_read.mojo	compile-reject	agree	er
 assets/type_error/contextual_member_no_context.mojo	compile-reject	agree	error: cannot resolve inferred member without a contextual type
 assets/type_error/contextual_member_nonstruct.mojo	compile-reject	agree	error: 'Int' value has no attribute 'red'
 assets/type_error/contextual_member_unknown.mojo	compile-reject	agree	error: 'Color' value has no attribute 'nope'
-assets/type_error/contiguous_slice_not_equatable.mojo	compile-reject	agree	error: use of unknown declaration 'ContiguousSlice'
+assets/type_error/contiguous_slice_not_equatable.mojo	compile-reject	agree	error: 'ContiguousSlice' does not implement the '__eq__' method
 assets/type_error/copyable_bound_rejects_move_only.mojo	compile-reject	agree	error: invalid call to 'duplicate': value passed to 'x' cannot be converted from 'Handle' to 'T', argument type 'Handle' does not conform to trait 'Copyable'
 assets/type_error/copyable_field_rejects_move_only.mojo	compile-reject	agree	error: cannot synthesize copy constructor because field 'h' has non-copyable type 'Handle'
 assets/type_error/copy_method_requires_copyable.mojo	compile-reject	agree	error: 'Plain' value has no attribute 'copy'
@@ -306,6 +306,7 @@ assets/type_error/explicit_destroy_partial_move.mojo	compile-reject	agree	error:
 assets/type_error/explicit_destroy_raising.mojo	compile-reject	agree	error: use of uninitialized value 'transaction'
 assets/type_error/explicit_destroy_temporary_abandoned_on_raise.mojo	compile-reject	agree	error: '(expression temporary)' abandoned without being explicitly destroyed: L must be closed
 assets/type_error/explicit_destroy_transfer_abandoned_on_raise.mojo	compile-reject	agree	error: 'l' abandoned without being explicitly destroyed: L must be closed
+assets/type_error/explicit_destroy_unconditional_deinitable.mojo	compile-reject	agree	error: @explicit_destroy is not valid on `struct` with unconditional conformance to `Deinitable`
 assets/type_error/external_call_string_argument.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/external_call_unknown_callee.mojo	runs	subset	the pin runs it; Mojito rejects: is not in Mojito's libc allowlist
 assets/type_error/fieldwise_anytype_field.mojo	compile-reject	agree	error: field 'a' has non-'Deinitable' type 'T'
@@ -372,7 +373,7 @@ assets/type_error/is_operator_missing_dunder.mojo	compile-reject	agree	error: 'P
 assets/type_error/is_operator_non_struct.mojo	compile-reject	agree	error: 'Int' does not implement the '__is__' method
 assets/type_error/is_same_type_removed.mojo	compile-reject	agree	error: use of unknown declaration 'is_same_type'
 assets/type_error/keyword_only_by_position.mojo	compile-reject	agree	error: invalid call to 'kw_only': missing required argument: 'b'
-assets/type_error/keyword_slice_assignment_rejected.mojo	compile-reject	agree	error: use of unknown declaration 'ContiguousSlice'
+assets/type_error/keyword_slice_assignment_rejected.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/keyword_subscript_assignment.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/keyword_subscript_unknown_keyword.mojo	compile-reject	agree	error: invalid call to '__getitem__': missing required argument: 'byte'
 assets/type_error/lambda_capturing_thin_contract.mojo	compile-reject	agree	error: invalid call to '__call__': value cannot be converted from type value '$0' to an instance of '$0'; did you mean to instantiate '$0'?

@@ -64,14 +64,12 @@ enum ParsedBracketItem {
         lower: Option<Box<Expr>>,
         upper: Option<Box<Expr>>,
         step: Option<Box<Expr>>,
-        explicit_step: bool,
     },
     KeywordSlice {
         name: String,
         lower: Option<Box<Expr>>,
         upper: Option<Box<Expr>>,
         step: Option<Box<Expr>>,
-        explicit_step: bool,
     },
 }
 
@@ -149,7 +147,7 @@ type IfChain = (Vec<(Condition, Vec<Stmt>)>, Option<Vec<Stmt>>);
 
 type StructConformanceList = (Vec<String>, Vec<(String, Expr)>, Option<Type>);
 
-type ParsedSliceTail = (Option<Box<Expr>>, Option<Box<Expr>>, bool);
+type ParsedSliceTail = (Option<Box<Expr>>, Option<Box<Expr>>);
 
 /// Parses a t-string interpolation's raw source as a single expression, on a
 /// fresh sub-lexer/parser. The whole fragment must be one expression (trailing

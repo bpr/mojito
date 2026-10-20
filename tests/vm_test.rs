@@ -1651,8 +1651,8 @@ fn user_slice_dispatches_through_checked_getitem() {
 
 #[test]
 fn slice_descriptor_overloads_are_selected_statically() {
-    let src = "@fieldwise_init\nstruct Probe:\n    def __getitem__(self, part: ContiguousSlice) -> Int:\n        return 1\n    def __getitem__(self, part: StridedSlice) -> Int:\n        return 2\n\ndef main():\n    var probe = Probe()\n    print(probe[1:5], probe[1:5:2], probe[::])\n";
-    assert_eq!(parity(src), "1 2 2\n");
+    let src = "from std.builtin.builtin_slice import ContiguousSlice, StridedSlice\n\n@fieldwise_init\nstruct Probe:\n    def __getitem__(self, part: ContiguousSlice) -> Int:\n        return 1\n    def __getitem__(self, part: StridedSlice) -> Int:\n        return 2\n\ndef main():\n    var probe = Probe()\n    print(probe[1:5], probe[1:5:2], probe[::])\n";
+    assert_eq!(parity(src), "1 2 1\n");
 }
 
 #[test]

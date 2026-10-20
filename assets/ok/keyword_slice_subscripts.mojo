@@ -2,7 +2,7 @@
 # value is a slice binds a keyword-only slice-descriptor `__getitem__`
 # parameter through ordinary structural call binding. Omitted bounds are
 # preserved, and the keyword name — not the descriptor type — picks the
-# overload. `Slice` is the upstream descriptor; Mojito's narrower
+# overload. `Slice` is the prelude's descriptor; upstream's import-only
 # `ContiguousSlice`/`StridedSlice` kinds are exercised by the phase tests and
 # by the `slice-descriptor-kinds` conformance case.
 struct Grid:

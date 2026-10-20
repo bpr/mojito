@@ -37,7 +37,26 @@ impl SliceKind {
             Self::StridedSlice => "StridedSlice",
         }
     }
+
+    /// The kind a source type name spells: the prelude's bare `Slice`, or
+    /// the linked spelling of a kind `std.builtin.builtin_slice` exports,
+    /// which only an import binds, as upstream's prelude exports `Slice`
+    /// alone.
+    pub fn of_source_name(name: &str) -> Option<Self> {
+        match name {
+            "Slice" => Some(Self::Slice),
+            CONTIGUOUS_SLICE_LINKED => Some(Self::ContiguousSlice),
+            STRIDED_SLICE_LINKED => Some(Self::StridedSlice),
+            _ => None,
+        }
+    }
 }
+
+/// The linked spelling the module table gives an imported `ContiguousSlice`.
+pub const CONTIGUOUS_SLICE_LINKED: &str = "__module$std$builtin$builtin$slice$ContiguousSlice";
+
+/// The linked spelling the module table gives an imported `StridedSlice`.
+pub const STRIDED_SLICE_LINKED: &str = "__module$std$builtin$builtin$slice$StridedSlice";
 
 /// A loan-transfer effect inferred from a callable's body: an accepted store
 /// into an outliving destination (`self` or a parameter) whose loan roots at
@@ -2529,6 +2548,24 @@ pub fn default_literal(ty: &Ty) -> Ty {
     }
 }
 
+/// Whether a slice literal of descriptor type `literal` binds a parameter
+/// of type `param`.
+///
+/// Upstream's literal calls the parameter type's `__slice_literal__`
+/// constructor, which `Slice` declares beside the kind the literal selects.
+/// A descriptor *value* never widens to `Slice` ([`coerces`]).
+pub fn slice_literal_binds(literal: &Ty, param: &Ty) -> bool {
+    match (literal.kind(), param.kind()) {
+        (TyKind::Struct(from, from_args), TyKind::Struct(to, to_args)) => {
+            from_args.is_empty()
+                && to_args.is_empty()
+                && matches!(from.as_str(), "ContiguousSlice" | "StridedSlice")
+                && (to == from || to == "Slice")
+        }
+        _ => false,
+    }
+}
+
 /// Whether a value of type `from` can be used where `to` is required.
 ///
 /// Only the literal types coerce (to the concrete numeric types, or
@@ -2546,14 +2583,6 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         return true;
     }
     match (from.kind(), to.kind()) {
-        (TyKind::Struct(from, from_args), TyKind::Struct(to, to_args))
-            if matches!(from.as_str(), "ContiguousSlice" | "StridedSlice")
-                && to == "Slice"
-                && from_args.is_empty()
-                && to_args.is_empty() =>
-        {
-            true
-        }
         // The checked analogue of upstream's `@implicit StridedSlice(other:
         // Slice)`: a `Slice`-typed descriptor value selects the strided
         // (normalizing) overloads. A contiguous literal does not widen this

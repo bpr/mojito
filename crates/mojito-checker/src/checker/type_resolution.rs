@@ -803,19 +803,18 @@ impl Checker {
         if name == "Some"
             && args.len() == 1
             && let Some(trait_name) = existential_trait
+            && (COMPILER_TRAITS.contains(&trait_name.as_str())
+                || self.traits.contains_key(trait_name))
         {
-            let trait_name = mojito_ast::ast::canonical_trait_name(trait_name);
-            if COMPILER_TRAITS.contains(&trait_name) || self.traits.contains_key(trait_name) {
-                return Ok(Some((
-                    TyKind::Param {
-                        binder: synthetic_binder(&format!("Some[{trait_name}]")),
-                        bounds: vec![trait_name.to_string()],
-                        callable_bound: None,
-                    }
-                    .into(),
-                    vec![None],
-                )));
-            }
+            return Ok(Some((
+                TyKind::Param {
+                    binder: synthetic_binder(&format!("Some[{trait_name}]")),
+                    bounds: vec![trait_name.clone()],
+                    callable_bound: None,
+                }
+                .into(),
+                vec![None],
+            )));
         }
         if name == "Never" && args.is_empty() {
             return Ok(Some((Ty::never(), Vec::new())));
@@ -823,9 +822,11 @@ impl Checker {
         if name == "NoneType" && args.is_empty() {
             return Ok(Some((Ty::none(), Vec::new())));
         }
-        if matches!(name, "Slice" | "ContiguousSlice" | "StridedSlice") && args.is_empty() {
+        if let Some(kind) = mojito_types::types::SliceKind::of_source_name(name)
+            && args.is_empty()
+        {
             return Ok(Some((
-                TyKind::Struct(name.to_string(), Vec::new()).into(),
+                TyKind::Struct(kind.type_name().to_string(), Vec::new()).into(),
                 Vec::new(),
             )));
         }

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1157**.
+Next free ID: **R1166**.
 
 ## Ordered Work
 
@@ -1789,25 +1789,27 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R34 `@explicit_destroy` is accepted on a type that is `Deinitable`
-  unconditionally**
-
-  Problem: Mojito accepts `@explicit_destroy` on `struct Ticket(Movable)`,
-  while the pin rejects it: "@explicit_destroy is not valid on `struct` with
-  unconditional conformance to `Deinitable`".
-  - Mojito accepts a program the pin rejects, so this is a divergence.
-  - The pin wants a `Deinitable where False` conformance beside the
-    decorator, which every bundled explicit-destroy struct already spells.
-  - Probe: `conformance/probes/explicit_destroy_without_deinitable_opt_out.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R536 Copying out of a `ref` binding keeps the binding's loan**
 
   Problem: `ref a = left; var t: Int = a; left = 9; print(t, left)` is rejected with "access to 'left' conflicts with live reference 't'"; the pin prints `4 9`.
   - The same holds for `var t = a`, `(a, 5)`, `[a, 5]`, and an `Int`-returning call `keep(a, 5)`.
   - The copy is an owned `Int`, so it carries no loan on `left`.
   - Found while planning R529 (2026-10-09).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1160 An element store while a contiguous `List` slice is live is
+  rejected**
+
+  Problem: `var v = xs[:]; xs[0] = 9; print(v)` is rejected ("access to
+  'xs' conflicts with live reference 'v'"), where the pin prints
+  `[9, 1, 2, 3, 4]`.
+  - The slice is a `Span` over `origin_of(xs)._get_owned_interior[
+    "element"]`, and an element store does not move the elements.
+  - Distinct from R1155, which is `Span(list)` followed by a structural
+    mutation.
+  - Probe: `conformance/probes/list_slice_span_element_store.mojo`.
+  - Found while landing R192 (2026-10-19).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -3010,16 +3012,88 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R943 A documentation decorator on a trait method is rejected**
+- [ ] **R1159 A `None` slice bound or step is rejected**
 
-  Problem: `@doc_hidden` or `@stable(since="1.0")` on a trait method is
-  accepted at the pin, but Mojito rejects it as an unsupported
-  trait-method decorator.
-  - The checker accepts only inline-level decorators on a trait method
-    (`check_trait`), so an unknown one stays an error as at the pin.
-  - The fix accepts the pin's documentation decorators by name and keeps
-    rejecting the rest.
-  - Found while landing R914 (2026-10-14).
+  Problem: `xs[None:3]` and `xs[1:5:None]` are rejected, where the pin
+  treats `None` as an absent bound and prints `[0, 1, 2]` and
+  `[1, 2, 3, 4]`.
+  - `xs[None:3]` is a parse error ("a slice bound must be an expression").
+  - `xs[1:5:None]` fails the check ("type mismatch for slice bound:
+    expected Int, found None", `check_slice_bounds`).
+  - Upstream's literal passes each bound to an `Optional[Int]` or
+    `NoneType` constructor parameter, so a `None` step selects
+    `ContiguousSlice`.
+  - Probe: `conformance/probes/slice_none_bound.mojo`.
+  - Found while landing R192 (2026-10-19).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1161 `@align(n)` on a struct is rejected**
+
+  Problem: `@align(16)` on a struct is reported as an unsupported
+  decorator, where the pin raises the struct's alignment and size
+  (`size_of[A]()` prints `16` for one `Int` field).
+  - `checker/decorators.rs` validates the argument count and then rejects
+    the decorator.
+  - Layout alignment is not a declaration fact `mojito-native-core`'s
+    layout reads, nor one the VM's size queries see.
+  - Probe: `conformance/probes/decorator_align.mojo`.
+  - Found while landing R192 (2026-10-19).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1162 `@unavailable` on a function or method is rejected**
+
+  Problem: `@unavailable("use g instead")` over a `...`-bodied `def` is
+  reported as an unsupported decorator, where the pin accepts the
+  declaration and rejects each use with the decorator's message.
+  - At the pin a body other than `...` is an error ("unexpected function
+    body in @unavailable function declaration, use '...'").
+  - `checker/decorators.rs` validates the arguments and then rejects the
+    decorator.
+  - Probe: `conformance/probes/decorator_unavailable.mojo`.
+  - Found while landing R192 (2026-10-19).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1163 `@fieldwise_init("implicit")` is rejected**
+
+  Problem: `@fieldwise_init("implicit")` is reported as unsupported, where
+  the pin makes the synthesized fieldwise initializer `@implicit`, so
+  `var s: S = 3` runs for a one-field struct.
+  - The parser's `fieldwise_init` flag carries no implicit bit, and the
+    synthesized `__init__` carries no `@implicit` decorator.
+  - Probe: `conformance/probes/fieldwise_init_implicit.mojo`.
+  - Found while landing R192 (2026-10-19).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1164 The check emits none of the pin's decorator warnings**
+
+  Problem: the pin warns at each use of a `@deprecated` declaration (with
+  its message or its `use=` replacement), at a `@parameter` ("'@parameter'
+  is deprecated; use '@__parameter'"), and at an `@export` without an
+  `abi()` effect, where Mojito prints nothing.
+  - The checker's warning channel already carries the match-coverage
+    warnings the CLI prints.
+  - `checker/decorators.rs` accepts all three decorators silently.
+  - Probe: `conformance/probes/decorator_warnings.mojo`.
+  - Found while landing R192 (2026-10-19).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1165 A trait method's caller-contract decorators are rejected**
+
+  Problem: `@__unsafe_nested_origins_read_only`, `@__parameter` or
+  `@parameter`, and `@implicit` on an `__init__` requirement are accepted
+  on a trait method at the pin, but Mojito reports each as unsupported.
+  - `checker/decorators.rs` accepts only the inline levels and the
+    documentation decorators at the trait-method site.
+  - A requirement would need to carry the contract, and conformance would
+    need to compare it with the implementing method's.
+  - `@staticmethod` there is R942, and `@export` R936.
+  - Probe: `conformance/probes/trait_method_decorators.mojo`.
+  - Found while landing R192 (2026-10-19).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7197,22 +7271,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R192 Mojito keeps split slice kinds, unknown struct decorators and
-  the `ImplicitlyDeletable` alias, which the pin has dropped or never had**
-
-  Problem: three spellings the pin has dropped or never had.
-  - Mojito splits upstream's single `Slice` into
-    `ContiguousSlice`/`StridedSlice` and overloads subscripts on the kind.
-  - Mojito ignores an unmodeled struct decorator where the pin rejects an
-    unknown one (`@value` is now unknown there).
-  - Mojito still normalizes `ImplicitlyDeletable` to `Deinitable`, which
-    the pin has removed.
-  - Each is a name or a type to withdraw, with stdlib and fixture fallout.
-  - Ledger name: `slice-descriptor-kinds`, `unmodeled-struct-decorator`,
-    `implicitly-deletable-alias`.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R193 Two live interior references from `ref self` accessors on one
   owner are accepted, though the pin invalidates the first**
 
@@ -7591,6 +7649,43 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R605 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R1157 `ContiguousSlice` and `StridedSlice` are compiler intrinsics,
+  where upstream declares them as library structs**
+
+  Problem: `ContiguousSlice(1, 3, None)`, `StridedSlice(1, 5, 2)`, and
+  `var t: StridedSlice = Slice(1, 4)` are rejected ("Undefined variable"),
+  where the pin runs them.
+  - Upstream declares both in `builtin_slice.mojo`, each with a
+    `__slice_literal__` constructor a slice literal calls.
+  - Mojito's kinds are `TyKind::Struct` names the checker resolves from
+    their linked spellings (`SliceKind::of_source_name`), with no
+    declaration behind them.
+  - Port both as library structs in `stdlib/std/builtin/builtin_slice.mojo`,
+    and bind a literal through the parameter type's `__slice_literal__`
+    constructor in place of `slice_literal_binds`.
+  - Probe: `conformance/probes/slice_kind_construction.mojo`.
+  - Found while landing R192 (2026-10-19).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R1158 `Slice` is a compiler intrinsic, and MIR carries a descriptor
+  `SliceKind`**
+
+  Problem: upstream's `Slice` is a library struct, where Mojito's is a
+  checker intrinsic whose values MIR, the VM, and the Pliron lowering
+  build as a dedicated descriptor kind.
+  - Port `Slice` to `builtin_slice.mojo` beside the two kinds.
+  - Retire the descriptor `SliceKind` in MIR, the VM's descriptor value,
+    and the Pliron descriptor lowering, so a slice is an ordinary struct
+    value.
+  - Natively `String(Slice(1, 3))` writes the raw layout the elaborator
+    gives the intrinsic (`Slice(start=1, end=3, step=0, flags=3)`), where
+    the VM and the pin write `Slice(1, 3, None)`.
+  - Probe: `conformance/probes/slice_string_native.mojo`.
+  - Found while landing R192 (2026-10-19).
+  - Depends on R1157, which ports the two kinds first.
+  - Model: Fable, Planned.
 
 - [ ] **R705 `Equatable` and `Comparable` are compiler-known, where
   upstream's library declares them**

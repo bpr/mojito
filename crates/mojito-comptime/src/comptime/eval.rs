@@ -424,10 +424,6 @@ impl Elab<'_> {
                         "conforms_to requires a trait name".to_string(),
                     ));
                 };
-                let trait_names: Vec<&str> = trait_names
-                    .into_iter()
-                    .map(mojito_ast::ast::canonical_trait_name)
-                    .collect();
                 let values = match pack_values_projection(&args[0]) {
                     Some(pack) => scope.get(pack).cloned().ok_or_else(|| {
                         ComptimeError::NotComptime(format!(
@@ -955,7 +951,7 @@ impl Elab<'_> {
         };
         match field {
             "all_conforms_to" => {
-                let trait_name = mojito_ast::ast::canonical_trait_name(single_name()?);
+                let trait_name = single_name()?;
                 Ok(CtValue::Bool(types.iter().all(|ty| {
                     self.conformance.require(ty, trait_name).is_ok()
                 })))

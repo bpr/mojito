@@ -3,9 +3,9 @@
 //! trait-method/associated-member lookup. Extracted from `checker.rs`;
 //! see `docs/symbol-map.md`.
 
+use super::decorators::DecoratorSite;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_checked::declaration::InlineLevel;
 use mojito_types::conformance::{LIFECYCLE_TRAITS, StructTraitRule, struct_trait_rule};
 use mojito_types::types::TyKind;
 
@@ -157,13 +157,12 @@ impl Checker {
                 }
             }
             for m in methods {
-                if let Some(decorator) = m.decorators.iter().find(|d| !InlineLevel::names(d)) {
-                    return Err(TypeError::Unsupported(format!(
-                        "decorator '@{}' on a trait method",
-                        decorator.path.join(".")
-                    )));
-                }
-                InlineLevel::of(&m.decorators)?;
+                self.check_decorators(
+                    DecoratorSite::TraitMethod {
+                        init: m.name == "__init__",
+                    },
+                    &m.decorators,
+                )?;
                 self.validate_origin_signature(&m.type_params, &m.params, m.self_origin.as_ref())?;
                 if ct_members.contains_key(&m.name) {
                     return Err(TypeError::Redeclaration(m.name.clone()));
@@ -389,26 +388,18 @@ impl Checker {
             decls.clone(),
         );
 
-        let explicit_destroy_message = declaration
-            .decorators
-            .iter()
-            .find(|decorator| decorator.path.len() == 1 && decorator.path[0] == "explicit_destroy")
-            .map(|decorator| {
-                if !decorator.kwargs.is_empty() || decorator.args.len() != 1 {
-                    return Err(TypeError::Unsupported(
-                        "@explicit_destroy requires exactly one positional string message"
-                            .to_string(),
-                    ));
-                }
-                match decorator.args.first().map(|arg| &arg.kind) {
-                    Some(ExprKind::Str(message)) => Ok(message.clone()),
-                    Some(_) => Err(TypeError::Unsupported(
-                        "@explicit_destroy message must be a string literal".to_string(),
-                    )),
-                    None => unreachable!("decorator arity was checked above"),
-                }
-            })
-            .transpose()?;
+        let explicit_destroy_message = self
+            .check_decorators(
+                DecoratorSite::Struct {
+                    name,
+                    conditional_deinitable: declaration
+                        .conformance_conditions
+                        .iter()
+                        .any(|(trait_name, _)| trait_name == "Deinitable"),
+                },
+                declaration.decorators,
+            )?
+            .explicit_destroy;
         let explicit_destructors = declaration
             .methods
             .iter()

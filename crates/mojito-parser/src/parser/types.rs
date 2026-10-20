@@ -636,7 +636,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     let first_bound = if fixed.is_some() {
                         "Origin".to_string()
                     } else {
-                        mojito_ast::ast::canonical_trait_name(&bound).to_string()
+                        bound.clone()
                     };
                     (
                         first_bound,
@@ -700,7 +700,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             while matches!(self.peek_token()?, Some(Token::Amp)) {
                 self.next_token()?; // consume '&'
                 let bound = self.expect_identifier("Expected a trait name after '&'")?;
-                bounds.push(mojito_ast::ast::canonical_trait_name(&bound).to_string());
+                bounds.push(bound);
             }
             if matches!(self.peek_token()?, Some(Token::Identifier(word)) if word == "where") {
                 return Err(ParseError::UnexpectedToken(

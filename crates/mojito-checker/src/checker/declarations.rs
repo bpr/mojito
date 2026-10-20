@@ -1,9 +1,9 @@
 //! Declaration collection, signature construction, and body-checking support.
 
+use super::decorators::DecoratorSite;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::DeclaredParam;
-use mojito_checked::declaration::InlineLevel;
 use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy};
 
@@ -1316,7 +1316,12 @@ impl Checker {
         m: &Method,
         effect_key: String,
     ) -> Result<(), TypeError> {
-        InlineLevel::of(&m.decorators)?;
+        self.check_decorators(
+            DecoratorSite::Method {
+                init: m.name == "__init__",
+            },
+            &m.decorators,
+        )?;
         let is_implicit = m
             .decorators
             .iter()

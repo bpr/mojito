@@ -2975,6 +2975,9 @@ struct SubscriptResolution {
     return_type: Ty,
     lowered_name: Option<String>,
     value_keyword: bool,
+    /// Each index argument's slice-literal kind, as the selected parameter
+    /// binds it.
+    descriptors: Vec<Option<mojito_types::types::SliceKind>>,
 }
 
 type SplitCallableSpecialization = (
@@ -3029,6 +3032,8 @@ pub use mojito_symbol::symbol::callable_contract_target;
 pub use mojito_types::types::{callable_bound_accepts, callable_contract_ty};
 
 mod traits;
+
+mod decorators;
 
 mod inference;
 

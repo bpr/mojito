@@ -8,6 +8,7 @@
 
 from std.collections.list import List
 
+from std.builtin.builtin_slice import ContiguousSlice
 from std.iter import Iterable, Iterator, StopIteration
 from std.string import String, StringSpan
 

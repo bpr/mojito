@@ -86,9 +86,9 @@ copyable-iterator-refinement-reverse	reject	conformance/fixtures/copyable_iterat
 struct-methods	run	conformance/fixtures/struct_methods.mojo
 lifecycle-initialization	run	assets/ok/init_out_self.mojo
 unified-lifecycle	run	conformance/fixtures/unified_lifecycle.mojo
-unmodeled-struct-decorator	mojito-only	conformance/fixtures/unmodeled_struct_decorator.mojo
+unmodeled-struct-decorator	reject	conformance/fixtures/unmodeled_struct_decorator.mojo
 general-decorators	run	assets/ok/decorators.mojo
-implicitly-deletable-alias	mojito-only	conformance/fixtures/implicitly_deletable_alias.mojo
+implicitly-deletable-alias	reject	conformance/fixtures/implicitly_deletable_alias.mojo
 deprecated-del-spelling	run	assets/ok/lifecycle_deprecated_spellings.mojo
 native-tuple-field-destruction	run	conformance/fixtures/native_tuple_field_destruction.mojo
 current-var-convention	run	conformance/fixtures/current_var_convention.mojo
@@ -324,7 +324,10 @@ tuple-hashable	run	assets/ok/tuple_hashable_dict_key.mojo
 tuple-unhashable-key	reject	assets/type_error/tuple_unhashable_element_key.mojo
 slice-descriptor-protocols	run	assets/ok/slice_descriptor_protocols.mojo
 contiguous-slice-not-equatable	reject	assets/type_error/contiguous_slice_not_equatable.mojo
-slice-descriptor-kinds	mojito-only	conformance/fixtures/slice_descriptor_kinds.mojo
+slice-descriptor-kinds	run	conformance/fixtures/slice_descriptor_kinds.mojo
+slice-kind-names-need-import	reject	conformance/fixtures/slice_kind_names_need_import.mojo
+slice-kind-does-not-widen	reject	conformance/fixtures/slice_kind_does_not_widen.mojo
+strided-slice-has-no-bounds	reject	conformance/fixtures/strided_slice_has_no_bounds.mojo
 keyword-slice-subscripts	run	assets/ok/keyword_slice_subscripts.mojo
 optional-value-protocols	run	assets/ok/optional_value_protocols.mojo
 optional-dict-keys	run	assets/ok/optional_dict_keys.mojo

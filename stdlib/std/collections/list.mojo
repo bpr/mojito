@@ -7,6 +7,7 @@
 # List owns.
 
 from std.string import check_slice_bounds
+from std.builtin.builtin_slice import ContiguousSlice, StridedSlice
 from std.span import Span
 
 from std.memory.alloc import unsafe_alloc

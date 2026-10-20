@@ -140,6 +140,28 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Decorators are validated against the declaration they decorate, as the
+  pin resolves each decorator by name per declaration kind
+  (`checker/decorators.rs`): `@value`, `@frob`, `@always_inline` on a
+  struct, or `@fieldwise_init` on a `def` is rejected with the pin's
+  "use of unknown declaration" text, a removed `@register_passable` with
+  its removal text, and malformed `@deprecated`, `@stable`, `@doc_hidden`,
+  `@fieldwise_init`, `@explicit_destroy`, and `@align` arguments with the
+  pin's texts. A trait method now accepts `@doc_hidden`, `@stable`, and
+  `@deprecated` (closes R943), and `@explicit_destroy` needs a conditional
+  `Deinitable` conformance (closes R34). `@align`, `@unavailable`,
+  `@export`, and `@fieldwise_init("implicit")` are unsupported (R1161–R1163,
+  R936).
+- `ImplicitlyDeletable`, which the pin has removed, is an unknown trait
+  rather than a spelling of `Deinitable`.
+- `ContiguousSlice` and `StridedSlice` are visible only where an import
+  from `std.builtin.builtin_slice` binds them, as on the pin, whose prelude
+  exports `Slice` alone. A slice literal's step value, not a second colon,
+  selects `StridedSlice`, so `x[::]` and `x[a:b:]` are contiguous; a
+  literal bound to a `Slice` parameter builds a `Slice`; a descriptor value
+  no longer converts to `Slice`; and `StridedSlice` exposes no bounds and
+  `ContiguousSlice` no `step`, matching upstream's declarations (R192).
+
 - A contiguous `List` slice (`xs[a:b]`) is a `Span` borrowing the list's
   owned elements, as upstream's `List.__getitem__(ref self,
   ContiguousSlice)` returns, rather than a copied `List`. A store through

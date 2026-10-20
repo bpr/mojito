@@ -97,10 +97,9 @@ impl Checker {
                         "associated type bounds cannot take arguments".to_string(),
                     ));
                 }
-                let bound = mojito_ast::ast::canonical_trait_name(bound);
                 self.check_trait_name(bound)?;
                 if !bounds.iter().any(|existing| existing == bound) {
-                    bounds.push(bound.to_string());
+                    bounds.push(bound.clone());
                 }
             }
             return Ok(CtMemberReq::Type {
@@ -110,15 +109,13 @@ impl Checker {
         }
         if let SourceType::Named(name, args) = ty
             && args.is_empty()
+            && (COMPILER_TRAITS.contains(&name.as_str()) || self.traits.contains_key(name))
         {
-            let name = mojito_ast::ast::canonical_trait_name(name);
-            if COMPILER_TRAITS.contains(&name) || self.traits.contains_key(name) {
-                self.check_trait_name(name)?;
-                return Ok(CtMemberReq::Type {
-                    bounds: vec![name.to_string()],
-                    params: params.to_vec(),
-                });
-            }
+            self.check_trait_name(name)?;
+            return Ok(CtMemberReq::Type {
+                bounds: vec![name.clone()],
+                params: params.to_vec(),
+            });
         }
         Ok(CtMemberReq::Value(self.ty_from_anno(ty)?))
     }
@@ -1847,17 +1844,16 @@ impl Checker {
                         "conforms_to requires a trait name".to_string(),
                     ));
                 };
-                let trait_name = mojito_ast::ast::canonical_trait_name(trait_name);
                 self.check_trait_name(trait_name)?;
                 if pack {
                     GenericConstraint::ConformsPack {
                         param,
-                        trait_name: trait_name.to_string(),
+                        trait_name: trait_name.clone(),
                     }
                 } else {
                     GenericConstraint::Conforms {
                         param,
-                        trait_name: trait_name.to_string(),
+                        trait_name: trait_name.clone(),
                     }
                 }
             }
@@ -1912,9 +1908,7 @@ impl Checker {
                         kind: ExprKind::Identifier(name),
                         ..
                     })
-                    | mojito_ast::ast::ParamArg::Type(SourceType::Named(name, _)) => {
-                        mojito_ast::ast::canonical_trait_name(name)
-                    }
+                    | mojito_ast::ast::ParamArg::Type(SourceType::Named(name, _)) => name.as_str(),
                     _ => {
                         return Err(TypeError::Unsupported(
                             "TypeList.all_conforms_to requires a trait name".to_string(),
@@ -3472,5 +3466,5 @@ fn pack_conformance_atom(expr: &Expr) -> Option<(&str, &str)> {
         ] => name,
         _ => return None,
     };
-    Some((pack, mojito_ast::ast::canonical_trait_name(trait_name)))
+    Some((pack, trait_name))
 }

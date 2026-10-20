@@ -1,6 +1,6 @@
 # `ImplicitlyDeletable` was upstream's spelling of `Deinitable` before the
-# rename; Mojito still normalizes it at parse time, and the pin no longer
-# knows the name at all.
+# rename. The pin no longer knows the name ("use of unknown declaration
+# 'ImplicitlyDeletable'"), and Mojito rejects it as an unknown trait too.
 struct Handle(Movable, ImplicitlyDeletable where False):
     var id: Int
 

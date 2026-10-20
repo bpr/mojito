@@ -401,12 +401,9 @@ impl Checker {
                     let Some(operand) = operand else {
                         return Ok(None);
                     };
-                    let conforms = trait_names.iter().all(|trait_name| {
-                        self.conforms_to(
-                            &operand,
-                            mojito_ast::ast::canonical_trait_name(trait_name),
-                        )
-                    });
+                    let conforms = trait_names
+                        .iter()
+                        .all(|trait_name| self.conforms_to(&operand, trait_name));
                     let constraint = GenericConstraint::Bool(conforms);
                     self.record_comptime_condition(cond, &constraint);
                     return Ok(Some(constraint));
@@ -415,10 +412,7 @@ impl Checker {
                 for trait_name in trait_names {
                     let conforms = self
                         .param_context
-                        .conforms(
-                            dependent.expr(),
-                            mojito_ast::ast::canonical_trait_name(trait_name),
-                        )
+                        .conforms(dependent.expr(), trait_name)
                         .map_err(param_error)?;
                     propositions.push(GenericConstraint::Eq(
                         ConstraintOperand::Expr(conforms),
@@ -558,12 +552,11 @@ impl Checker {
                     }
                     _ => return Ok(()),
                 };
-                proved.extend(trait_names.into_iter().map(|trait_name| {
-                    (
-                        key.clone(),
-                        mojito_ast::ast::canonical_trait_name(trait_name).to_string(),
-                    )
-                }));
+                proved.extend(
+                    trait_names
+                        .into_iter()
+                        .map(|trait_name| (key.clone(), trait_name.to_string())),
+                );
                 Ok(())
             }
             _ => Ok(()),

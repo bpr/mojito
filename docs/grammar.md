@@ -260,7 +260,7 @@ artifacts and imports from stdin remain unsupported.
 ```
 function_def: decorators 'def' NAME [params_decl] '(' [params] ')' function_effect* [capture_list] ['->' type] where_clause* ':' block   # a `@__parameter`/`@parameter` def takes no capture_list
 decorators: decorator*
-decorator: '@' dotted_name ['(' [args] ')'] NEWLINE   # general — any name; the checker acts on a few (see Decorators below)
+decorator: '@' dotted_name ['(' [args] ')'] NEWLINE   # general — any name; the checker validates each site (see Decorators below)
 dotted_name: NAME ('.' NAME)*
 params: ','.param_item+ [',']
 param_item:
@@ -584,8 +584,10 @@ implementation may satisfy one; a raising implementation may not widen it.
 A trait method, requirement or default, may carry decorators, parsed as a struct
 method's are; the checker accepts the inline-level ones (`@always_inline`,
 `@no_inline`, `@inline(level)`), validated as a function's are, and a default's
-member function takes the level they name. Any other decorator on a trait method
-is rejected as unsupported.
+member function takes the level they name, and the documentation ones
+(`@doc_hidden`, `@stable`, `@deprecated`). `@staticmethod`, `@export`,
+`@__parameter`/`@parameter`, and `@__unsafe_nested_origins_read_only`, which the
+pin accepts there, are unsupported; any other name is rejected as at the pin.
 
 Two further valid-Mojo trait forms are parsed but rejected by the checker:
 **trait inheritance / refinement** (`trait Bird(Animal, Named):` — a
@@ -613,10 +615,19 @@ least one member; fields and methods may interleave.
   They are parsed into the AST, and the parser acts on `@fieldwise_init` only: it generates
   a constructor taking the fields in declaration order, so `NAME(v1, v2, ...)` builds an
   instance (an ordinary call — see `primary`). A struct without it has no constructor (a
-  checker error to construct). The checker acts on `@implicit`, `@staticmethod`,
-  `@explicit_destroy`, `@__parameter`/`@parameter`, and
-  `@__unsafe_nested_origins_read_only` (argument exclusivity, `docs/features.md`); every
-  other decorator is recorded and ignored.
+  checker error to construct). The checker validates every decorator against the site
+  it decorates, as the pin resolves a decorator by name for each declaration kind
+  (`checker/decorators.rs`). Every site accepts `@doc_hidden`, `@stable(since=…)` or
+  `@stable(recursive=…)`, and `@deprecated(message | reason=… | use=…)`, with the
+  pin's argument checks. A struct also accepts `@fieldwise_init` and
+  `@explicit_destroy("message")`, which needs a conditional `Deinitable` conformance.
+  A `def` or method also accepts the inline levels, `@__parameter`/`@parameter`, and
+  `@__unsafe_nested_origins_read_only` (argument exclusivity, `docs/features.md`); a
+  method also `@staticmethod`, and an `__init__` `@implicit`. `@align(n)`,
+  `@unavailable`, `@export`, and `@fieldwise_init("implicit")` are unsupported. A
+  removed `@register_passable` gets the pin's removal text; any other name is an
+  "unsupported compiler decorator" when it names a declaration and a "use of unknown
+  declaration" otherwise.
 - **Dunder methods** (`__init__`, `__eq__`, `__add__`, …) are ordinary methods by name and
   parse as such. **Receiver conventions** `imm`/`mut`/`var`/`out`/`ref self` participate
   in checking and lowering, including lifecycle `out self` and origin-bearing reference
@@ -969,8 +980,11 @@ Notes:
   `s[byte=:b]`, `s[byte=::2]`) is a **keyword slice**: the slice becomes a
   `ContiguousSlice`/`StridedSlice` descriptor bound to a keyword-only
   `__getitem__` parameter, read-only like every nominal keyword subscript.
-  A slice preserves omitted bounds and whether a stride was written, selecting
-  `ContiguousSlice` or `StridedSlice`; mixed/multiple arguments dispatch through
+  A slice preserves omitted bounds; a step value selects `StridedSlice` and its
+  absence `ContiguousSlice`, a second colon with no step changing nothing, as
+  upstream's `__slice_literal__` rule has it, and either binds a `Slice`
+  parameter. The two kinds are import-only (`from std.builtin.builtin_slice
+  import ContiguousSlice, StridedSlice`); `Slice` is a prelude name. Mixed/multiple arguments dispatch through
   variadic `__getitem__`/`__setitem__`. Nominal List slicing receives the same
   checked descriptor through its ordinary `__getitem__` as any other user
   receiver; it is not a VM collection shortcut. Lists, tuples, SIMD values,
@@ -1290,9 +1304,10 @@ List is not an implicit copy.
 - **Index read**: `xs[i]` (`i` an `Int`, in `0..len`) → the element (type `T`). Negative
   indices are not supported yet; a runtime out-of-range index is an error.
 - **Slice read**: `xs[start:stop]` or `xs[start:stop:step]` preserves omitted,
-  negative, and strided bounds in a `ContiguousSlice` or `StridedSlice`
-  descriptor and invokes List's ordinary checked `__getitem__`; the bundled
-  proof API returns an eager `List[T]` copy. The contiguous overload is
+  negative, and strided bounds in a `ContiguousSlice` (no step value) or
+  `StridedSlice` (a step value) descriptor and invokes List's ordinary checked
+  `__getitem__`; the contiguous overload returns a `Span` over the list, the
+  strided one an eager `List[T]` copy. The contiguous overload is
   strict — a negative, out-of-range, or reversed bound aborts (an uncatchable
   trap) instead of normalizing; only strided slicing keeps
   `StridedSlice.indices()` normalization.

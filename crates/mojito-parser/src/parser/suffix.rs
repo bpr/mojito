@@ -29,12 +29,11 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         let mut items = Vec::new();
         loop {
             if matches!(self.peek_token()?, Some(Token::Colon)) {
-                let (upper, step, explicit_step) = self.parse_slice_components()?;
+                let (upper, step) = self.parse_slice_components()?;
                 items.push(ParsedBracketItem::Slice {
                     lower: None,
                     upper,
                     step,
-                    explicit_step,
                 });
             } else {
                 let mut argument = self.parse_param_arg()?;
@@ -44,13 +43,12 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     // A ':' directly after '=' is a keyword slice with an
                     // omitted lower bound (`s[byte=:b]`).
                     if matches!(self.peek_token()?, Some(Token::Colon)) {
-                        let (upper, step, explicit_step) = self.parse_slice_components()?;
+                        let (upper, step) = self.parse_slice_components()?;
                         items.push(ParsedBracketItem::KeywordSlice {
                             name,
                             lower: None,
                             upper,
                             step,
-                            explicit_step,
                         });
                         if !matches!(self.peek_token()?, Some(Token::Comma)) {
                             break;
@@ -71,12 +69,11 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 if matches!(self.peek_token()?, Some(Token::Colon)) {
                     match argument {
                         mojito_ast::ast::ParamArg::Value(value) => {
-                            let (upper, step, explicit_step) = self.parse_slice_components()?;
+                            let (upper, step) = self.parse_slice_components()?;
                             items.push(ParsedBracketItem::Slice {
                                 lower: Some(Box::new(value)),
                                 upper,
                                 step,
-                                explicit_step,
                             });
                         }
                         // `s[byte=a:b]` — a keyword slice whose lower bound
@@ -87,13 +84,12 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                             let mojito_ast::ast::ParamArg::Value(lower) = *value else {
                                 unreachable!("guard established a value argument");
                             };
-                            let (upper, step, explicit_step) = self.parse_slice_components()?;
+                            let (upper, step) = self.parse_slice_components()?;
                             items.push(ParsedBracketItem::KeywordSlice {
                                 name,
                                 lower: Some(Box::new(lower)),
                                 upper,
                                 step,
-                                explicit_step,
                             });
                         }
                         _ => {
@@ -173,48 +169,29 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                             "a mixed subscript argument must be an expression".into(),
                         ));
                     }
-                    ParsedBracketItem::Slice {
-                        lower,
-                        upper,
-                        step,
-                        explicit_step,
-                    } => SubscriptArg::Slice {
-                        lower,
-                        upper,
-                        step,
-                        explicit_step,
-                    },
+                    ParsedBracketItem::Slice { lower, upper, step } => {
+                        SubscriptArg::Slice { lower, upper, step }
+                    }
                     ParsedBracketItem::KeywordSlice {
                         name,
                         lower,
                         upper,
                         step,
-                        explicit_step,
                     } => SubscriptArg::KeywordSlice {
                         name,
                         lower,
                         upper,
                         step,
-                        explicit_step,
                     },
                 });
             }
-            if let [
-                SubscriptArg::Slice {
-                    lower,
-                    upper,
-                    step,
-                    explicit_step,
-                },
-            ] = arguments.as_slice()
-            {
+            if let [SubscriptArg::Slice { lower, upper, step }] = arguments.as_slice() {
                 return Ok(self.node(
                     ExprKind::Slice {
                         object: Box::new(object),
                         lower: lower.clone(),
                         upper: upper.clone(),
                         step: step.clone(),
-                        explicit_step: *explicit_step,
                     },
                     start,
                 ));
@@ -432,8 +409,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     }
 
     /// Parse the tail after the first `:` of one slice item. Comma ends the item
-    /// for a multi-dimensional subscript; a second colon is retained even when
-    /// its step expression is omitted.
+    /// for a multi-dimensional subscript; a second colon with no step
+    /// expression is accepted and, as upstream, means the same as none.
     pub(super) fn parse_slice_components(&mut self) -> Result<ParsedSliceTail, ParseError> {
         self.expect(&Token::Colon, "Expected ':' in a slice")?;
         let upper = if matches!(
@@ -444,8 +421,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         } else {
             Some(Box::new(self.parse_expression(Precedence::Lowest)?))
         };
-        let explicit_step = matches!(self.peek_token()?, Some(Token::Colon));
-        let step = if explicit_step {
+        let step = if matches!(self.peek_token()?, Some(Token::Colon)) {
             self.next_token()?;
             if matches!(self.peek_token()?, Some(Token::Comma | Token::RBracket)) {
                 None
@@ -455,7 +431,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         } else {
             None
         };
-        Ok((upper, step, explicit_step))
+        Ok((upper, step))
     }
 
     /// Whether the next token begins a comparison operator (`== != < > <= >=`,

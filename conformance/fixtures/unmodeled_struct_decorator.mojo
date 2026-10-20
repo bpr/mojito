@@ -1,5 +1,5 @@
-# Mojito parses an unmodeled struct decorator and ignores it; the pin rejects
-# a decorator it does not know, and `@value` is one it has removed.
+# `@value` is a decorator the pin has removed, so both compilers reject it as
+# any decorator unknown at its site: "use of unknown declaration 'value'".
 @value
 @fieldwise_init
 struct Point:

@@ -2,9 +2,9 @@
 //! entry, block scoping, the `check_stmt` statement dispatcher, and parameter
 //! type lowering. Extracted from `checker.rs`; see `docs/symbol-map.md`.
 
+use super::decorators::DecoratorSite;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_checked::declaration::InlineLevel;
 use mojito_common::timing;
 use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy, TransferSet};
@@ -2295,7 +2295,6 @@ impl Checker {
             ));
         }
         reject_default_lambdas(params)?;
-        InlineLevel::of(decorators)?;
         if RESERVED_FUNCTION_NAMES.contains(&name.as_str()) {
             return Err(TypeError::ReservedName(name.clone()));
         }
@@ -2307,6 +2306,9 @@ impl Checker {
         // ownership with `var` instead. A trait member is a method of its
         // trait, whose receiver may be `deinit`.
         let trait_member = std::mem::take(&mut self.checking_trait_member);
+        if !trait_member {
+            self.check_decorators(DecoratorSite::Function, decorators)?;
+        }
         if let Some(param) = params
             .iter()
             .skip(usize::from(trait_member))

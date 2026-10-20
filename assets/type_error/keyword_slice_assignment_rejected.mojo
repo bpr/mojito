@@ -1,6 +1,8 @@
 # expect: keyword subscripts are read-only
 # Keyword slice assignment is rejected like every keyword subscript
 # assignment.
+from std.builtin.builtin_slice import ContiguousSlice
+
 struct Grid:
     var base: Int
 

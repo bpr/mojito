@@ -1818,6 +1818,15 @@ fn rejects_unknown_trait_in_conformance_list() {
 }
 
 #[test]
+fn rejects_the_removed_implicitly_deletable_spelling() {
+    // The pin no longer knows `ImplicitlyDeletable` in either position.
+    let e = err("struct Handle(Movable, ImplicitlyDeletable where False):\n    var id: Int\n");
+    assert_eq!(e, TypeError::UnknownTrait("ImplicitlyDeletable".into()));
+    let e = err("def consume[T: Movable & ImplicitlyDeletable](var value: T):\n    pass\n");
+    assert_eq!(e, TypeError::UnknownTrait("ImplicitlyDeletable".into()));
+}
+
+#[test]
 fn rejects_bounded_type_parameter_forwarded_to_stronger_bound() {
     // `T: AnyType` cannot be passed where `Quackable` is required.
     let e = err_std(
@@ -3948,16 +3957,52 @@ fn ternary_chained_comparison_and_unpacking_type_check() {
     ));
 }
 
-// --- Decorators + dunder / receiver conventions (parse-only; semantics deferred) ---
+// --- Decorators + dunder / receiver conventions ---
 
 #[test]
 fn accepts_decorators_and_plain_dunders() {
-    // Unmodeled decorators on a def/struct are ignored by the checker.
     ok("@always_inline\ndef f(x: Int) -> Int:\n    return x\n\nvar z: Int = f(1)\n");
-    ok("@value\n@fieldwise_init\nstruct P:\n    var x: Int\n\nvar p: P = P(1)\n");
+    ok(
+        "@doc_hidden\n@stable(since=\"1.0\")\n@deprecated(\"old\")\n@fieldwise_init\nstruct P:\n    var x: Int\n\nvar p: P = P(1)\n",
+    );
     // A dunder method with a plain `self` type-checks like any method.
     ok(
         "@fieldwise_init\nstruct V:\n    var x: Int\n\n    def __eq__(self, o: V) -> Bool:\n        return self.x == o.x\n",
+    );
+}
+
+#[test]
+fn decorators_unknown_at_their_site_are_rejected_as_at_the_pin() {
+    let invalid = |source: &str| match err(source) {
+        TypeError::InvalidDecorator(message) => message,
+        other => panic!("expected an invalid decorator, found {other:?}"),
+    };
+    let structure = |decorator: &str| format!("{decorator}\nstruct P:\n    var x: Int\n");
+    let def = |decorator: &str| format!("{decorator}\ndef f(x: Int) -> Int:\n    return x\n");
+    assert_eq!(
+        invalid(&structure("@value")),
+        "use of unknown declaration 'value'"
+    );
+    assert_eq!(
+        invalid(&structure("@always_inline")),
+        "use of unknown declaration 'always_inline'"
+    );
+    assert_eq!(
+        invalid(&structure("@register_passable")),
+        "decorator @register_passable is removed, conform to RegisterPassable trait instead"
+    );
+    assert_eq!(invalid(&def("@frob")), "use of unknown declaration 'frob'");
+    assert_eq!(
+        invalid(&def("@fieldwise_init")),
+        "use of unknown declaration 'fieldwise_init'"
+    );
+    assert_eq!(
+        invalid(&def("@staticmethod")),
+        "only methods on structs may be declared static"
+    );
+    assert_eq!(
+        invalid(&def("@deprecated")),
+        "@deprecated requires a reason message or a replacement symbol (with 'use')"
     );
 }
 
@@ -4013,10 +4058,12 @@ fn trait_method_inline_decorators_match_the_pin() {
         invalid(&trait_method("@always_inline\n    @no_inline", "...")),
         "function has conflicting inline level from a previous '@no_inline' decorator"
     );
-    assert!(matches!(
-        err(&trait_method("@doc_hidden", "...")),
-        TypeError::Unsupported(message) if message == "decorator '@doc_hidden' on a trait method"
-    ));
+    ok(&trait_method("@doc_hidden", "..."));
+    ok(&trait_method("@stable(since=\"1.0\")", "..."));
+    assert_eq!(
+        invalid(&trait_method("@frob", "...")),
+        "use of unknown declaration 'frob'"
+    );
 }
 
 #[test]
@@ -4331,11 +4378,17 @@ fn owned_self_and_owned_params_are_accepted() {
 
 #[test]
 fn nightly_implicit_deletion_controls_linearity_independently_of_the_decorator() {
-    // The decorator only customizes a diagnostic. Without an explicit false
-    // conformance, the ordinary ASAP destruction path remains available.
+    // The decorator only customizes a diagnostic. Where the conditional
+    // conformance holds, the ordinary ASAP destruction path remains available.
     ok(
-        "@explicit_destroy(\"unused diagnostic\")\n@fieldwise_init\nstruct Ordinary:\n    var id: Int\n\ndef main():\n    var value = Ordinary(1)\n",
+        "@explicit_destroy(\"unused diagnostic\")\n@fieldwise_init\nstruct Ordinary[T: Movable](Deinitable where conforms_to(T, Deinitable)):\n    var id: Int\n\ndef main():\n    var value = Ordinary[Int](1)\n",
     );
+    // The decorator needs a conditional `Deinitable` conformance.
+    assert!(matches!(
+        err("@explicit_destroy(\"unused diagnostic\")\n@fieldwise_init\nstruct Ordinary:\n    var id: Int\n"),
+        TypeError::InvalidDecorator(message)
+            if message == "@explicit_destroy is not valid on `struct` with unconditional conformance to `Deinitable`"
+    ));
 
     let error = err(
         "struct Linear(Deinitable where False):\n    def __init__(out self):\n        pass\n    def close(deinit self):\n        pass\n\ndef main():\n    var value = Linear()\n",
@@ -4372,9 +4425,9 @@ fn conditional_deletability_is_retained_at_checked_binding_sites() {
 #[test]
 fn explicit_destroy_requires_a_diagnostic_message() {
     assert!(matches!(
-        err("@explicit_destroy\nstruct Resource:\n    pass\n"),
-        TypeError::Unsupported(message)
-            if message.contains("requires exactly one positional string message")
+        err("@explicit_destroy\nstruct Resource(Deinitable where False):\n    pass\n"),
+        TypeError::InvalidDecorator(message)
+            if message == "@explicit_destroy requires an argument: `@explicit_destroy(\"...\")`"
     ));
 }
 
@@ -5092,7 +5145,7 @@ fn slice_literals_do_not_use_user_implicit_conversions() {
     ));
     let source = include_str!("../conformance/fixtures/slice_implicit_conversion_rejected.mojo");
     assert!(matches!(
-        err(source),
+        err_std(source),
         TypeError::BadCall { .. } | TypeError::TypeMismatch { .. }
     ));
 }

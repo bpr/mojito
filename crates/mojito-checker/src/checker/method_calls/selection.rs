@@ -73,9 +73,10 @@ impl Checker {
             };
             if let Some(expected) = resolved.param_types.get(index) {
                 let actual = self.infer_with_expected(expression, expected, true)?;
-                if !self.has_index_normalization(expression, expected)
-                    && !self.record_implicit_conversion(expression, &actual, expected)?
-                {
+                let binds = self.has_index_normalization(expression, expected)
+                    || self.binds_slice_literal(expression, &actual, expected)
+                    || self.record_implicit_conversion(expression, &actual, expected)?;
+                if !binds {
                     return Err(TypeError::TypeMismatch {
                         expected: expected.to_string(),
                         found: actual.to_string(),
@@ -388,8 +389,10 @@ impl Checker {
                 ArgSlot::Default => continue,
             };
             let actual = self.infer_with_expected(expression, &params[index], false)?;
-            if !self.has_index_normalization(expression, &params[index])
-                && !self.value_coerces(&actual, &params[index])
+            let binds = self.has_index_normalization(expression, &params[index])
+                || self.value_coerces(&actual, &params[index])
+                || self.binds_slice_literal(expression, &actual, &params[index]);
+            if !binds
                 && (self.is_synthetic_slice_descriptor(expression)
                     || self
                         .implicit_conversion_target(&actual, &params[index])?
