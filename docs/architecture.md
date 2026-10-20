@@ -2578,8 +2578,8 @@ A `match` is an `HirInstr::Match` (`hlcf.match`): one region per case,
 holding its tests as nested `If` ops whose failing arms end in
 `Terminator::MatchNext`, its bindings, its guard, and its body, ended by
 `Terminator::MatchComplete`, then an else region ended by `Yield` for the
-fall-through when no case matched (the statement form lands by slice,
-`match-case-plan.md`).
+fall-through when no case matched (enum-case and sequence patterns land by
+roadmap entry, R1132–R1140).
 No HIR terminator jumps between blocks, so `Cfg::g` holds no edge. HIR
 lowers only a body's live statements (`CheckedTables::live_statements`):
 the statements after a `return`, `break`, `continue`, or `raise` are erased

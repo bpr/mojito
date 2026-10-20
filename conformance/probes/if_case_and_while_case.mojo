@@ -16,9 +16,8 @@
 #   irrefutable 0
 #
 # Observed 2026-10-17 against `Mojo 1.2.0.dev2026101705 (46f49943)`.
-# Mojito: runs every part but the `[a, b]` sequence pattern (slice M12 of
-# `match-case-plan.md`); `assets/ok/if_case_elif_chains_and_while_case.mojo`
-# covers the rest.
+# Mojito: runs every part but the `[a, b]` sequence pattern (R1135);
+# `assets/ok/if_case_elif_chains_and_while_case.mojo` covers the rest.
 # When Mojito runs it, promote this file to `assets/ok/` with its manifest rows.
 #
 # Run:    mojo run if_case_and_while_case.mojo

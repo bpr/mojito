@@ -18,8 +18,8 @@ to evolve under the `0.x` compatibility rules.
   carries them as `MatchPattern`, `DestructureTarget`, and `Condition`,
   every walker and the checked mirror (`CheckedPattern`, `CheckedTarget`,
   `CheckedCondition`) see them, and the checker rejects each form with a
-  contextual "unsupported feature" until its slice lands
-  (`match-case-plan.md`). `docs/notes/pattern-matching-evidence.md` and
+  contextual "unsupported feature" until its roadmap entry lands
+  (R1132–R1140). `docs/notes/pattern-matching-evidence.md` and
   twenty `conformance/probes/match_*`/`destructure_*`/`if_case_*` probes
   record the pin's behavior for the slices that follow.
 

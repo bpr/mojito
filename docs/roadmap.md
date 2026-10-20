@@ -2581,21 +2581,114 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1135 Fixed-length sequence patterns test the length first**
+
+  Problem: `case [a, b]` and `case []` are rejected ("sequence patterns"),
+  where the pin tests `len(subject)` and then subscripts each element over
+  any `Sized` subscriptable subject.
+  - The pattern compiles to one length test (the subject's `__len__`
+    against the pattern's arity) that dominates every element access,
+    then each element pattern over the subject's `__getitem__(i)` result,
+    as a tuple pattern compiles over the tuple accessor.
+  - A wrong length advances to the next case. An error a getter raises
+    propagates.
+  - The subject's bounds decide: a generic subject uses its declared
+    `Sized` and subscript requirements, not duck typing. A subject
+    missing either rejects.
+  - Stop: empty, singleton, and nested patterns run over `List` and a
+    custom `Sized` collection, and a wrong length subscripts nothing.
+  - Probe: `conformance/probes/match_sequence_custom_sized.mojo`;
+    `if_case_and_while_case.mojo` keeps its `[a, b]` part for this entry.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1136 Sequence destructuring assigns after a raising length check**
+
+  Problem: `var [a, b] = values` parses but is rejected, where the pin
+  stores nothing and raises `list pattern does not match value length` on
+  a wrong length, inside a raising context.
+  - `DestructureTargetKind::Sequence` goes through `check_destructure`
+    (`checker/destructure.rs`) with R1135's decomposition, assignment's
+    raise replacing the next-case failure: the length test comes before
+    any store, and the statement needs a raising context, as at the pin.
+  - The tuple plan's ordering holds: destinations' subexpressions first,
+    the value once, then each element.
+  - Stop: `var [a, b] = values` and mixed place targets run, a wrong
+    length is caught by `try`, a literal target rejects, and destructuring
+    a temporary or loan-carrying collection keeps its owners alive.
+  - Probe: `conformance/probes/destructure_list_wrong_length_raises.mojo`.
+  - Depends on R1135.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1137 Starred sequence patterns and targets slice the remainder**
+
+  Problem: `case [first, *rest]` and `var [a, *middle, b] = values` are
+  rejected, where the pin tests a minimum length, binds the prefix and
+  suffix elements, and gives `*name` the checked slice of the rest.
+  - The length test becomes `len(subject) >= prefix + suffix`. Prefix
+    elements read by index, suffix elements by `len - k`, and `*name` is
+    the ordinary checked slice expression over the subject, with that
+    operation's result type and origin: a `Span` borrowing a `List`.
+  - `*_` performs no slice. A second star rejects.
+  - Stop: leading, trailing, middle, and empty remainders run, a too-short
+    subject fails the match and raises in assignment, mutating or moving
+    the source while a remainder borrows it follows the pin, and a
+    remainder cannot escape a dead temporary.
+  - Probe: `conformance/probes/destructure_starred_slice.mojo`.
+  - Depends on R1136.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1138 `for` and comprehension targets destructure each element**
+
+  Problem: `for a, b in pairs`, `for (var a, _) in pairs`, and
+  `[a * b for a, b in pairs]` are parse errors, where the pin binds each
+  element through a recursive target with immutable default bindings.
+  - `StmtKind::For` and `ComprehensionClause` take a `DestructureTarget`
+    (`docs/grammar.md` first). The checker binds the yielded value to a
+    hidden per-iteration name and destructures it with
+    `check_destructure`, reusing the iterator-result adaptation and the
+    tuple accessor contract.
+  - A yielded reference is not copied to unpack it. Each iteration's
+    bindings keep their own identities, so a closure captures that
+    iteration's values.
+  - `for ref (a, b)` leaves `a` immutable, as at the pin.
+  - Sequence targets (`for [a, *rest] in rows`) use R1137's decomposition.
+  - Stop: tuple-yielding iteration, nested mixed targets, a comprehension,
+    `continue`/`break` cleanup, and closure capture run. A missing tuple
+    structure and a reference escaping its iterator's owner reject.
+  - Depends on R1137 (the sequence target decomposition).
+  - Model: Fable, Not Planned.
+
 - [ ] **R1132 `EnumLike` is a library protocol the checker reads, not a
   spelling**
 
   Problem: `match` has no enum-case patterns because Mojito has no
   `EnumLike` trait, where the pin's `Optional` and `Bool` conform through
-  `_enum_case_names`, `_enum_case_types`, `_get_enum_discriminant`, and
+  `_enum_case_names`, `_enum_case_types`, `_enum_is_exhaustive`,
+  `_enum_elt_type_for_case[id]`, `_get_enum_discriminant`, and
   `_unsafe_get_enum_payload[id]`.
-  - Slice M9 of `match-case-plan.md` (D5): port the trait under
-    `stdlib/std/builtin/`, validate a conformer's metadata (lengths,
-    duplicate or unknown names, payload arity), and give `Optional` and
-    `Bool` the members over their existing storage.
-  - The protocol's spellings need the raw parameter-list type and the
-    `TypeList` dependent read; refine R807/R1168 into session-sized work if
-    the port exposes more.
-  - Depends on R807 and R1168 (the raw-list and dependent-member spellings).
+  - Port upstream's `stdlib/std/builtin/enum_like.mojo` under
+    `stdlib/std/builtin/` as an ordinary declaration the prelude exports:
+    the case names are a raw list of `` __mlir_type.`!kgen.string` ``, the
+    payload types a raw list of `AnyType` with `NoneType` as the
+    no-payload marker, `_enum_is_exhaustive` defaults to `True`, and the
+    payload type of case `id` reads
+    `TypeList[Trait=AnyType, Self._enum_case_types]()[id]`.
+  - Give `Optional` and `Bool` the members as upstream's `optional.mojo`
+    and `bool.mojo` spell them (`ParameterList.of[...]` names,
+    `TypeList.of[...]` types, the discriminant, a `rebind` payload getter
+    over the existing storage), changing neither runtime representation.
+  - The checker reads a conformer's metadata by its declared conformance
+    and nominal identity, never by the spelling `.Some`: the two lists
+    agree in length, no case name repeats, every case has a payload type,
+    and the two methods exist.
+  - Malformed metadata and a missing method reject with contextual texts.
+    A symbolic `T: EnumLike` subject is a stated subset boundary, as the
+    pin cannot read its metadata either, not a per-instance re-check.
+  - Stop: a hand-written enum-like struct and `Optional` satisfy the same
+    protocol, and the metadata survives the build-time `std` package.
+  - Depends on R1168 (the bundled `TypeList` with the trait parameter the
+    payload read spells).
   - Model: Fable, Planned.
 
 - [ ] **R1133 Enum case patterns select by discriminant and payload**
@@ -2603,13 +2696,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   Problem: `case .Some(x)`, `case Optional.None`, and `case .Some(ref s)`
   are rejected ("enum case patterns"), where the pin tests the
   discriminant and binds the payload through the selected getter.
-  - Slice M10 of `match-case-plan.md`: `MatchPatternKind::Call` with a
-    leading-dot or qualified head and `Head` compile to a discriminant test
-    and a payload sub-subject (`checker/patterns.rs`); a nullary case never
-    touches a payload.
+  - A `MatchPatternKind::Call` with a leading-dot or qualified head, and a
+    bare `.None`, compile in `checker/patterns.rs` to an equality test of
+    `_get_enum_discriminant()` against the case's index, then the
+    argument pattern over the sub-subject `_unsafe_get_enum_payload[id]()`
+    (a new `Step`), a nullary case touching no payload.
+  - A qualified unbound family (`Optional.Some`) denotes the subject's own
+    `Optional[Int]` where the pin permits it. `Other.Some` over an
+    `Optional` subject rejects and is never a downcast.
+  - A payload `ref` binding keeps the subject's capability: a write through
+    `.Some(ref s)` over a mutable place lands in the place.
+  - Fixtures: `Optional` `Some`/`None`, a custom type with other case
+    names, a payload getter that records its access, a generic `Optional`
+    instance, and a refined payload failure (`.Some(0)`) followed by a
+    whole-constructor case.
   - Rejections with the pin's texts: an unknown case, `.None(x)`,
-    `.Some()`, a qualified head of another family, a parametric enum
-    subject.
+    `.Some()`, a wrong qualified owner, a subject that is not `EnumLike`.
   - Probe: `conformance/probes/match_optional_enum_cases.mojo`.
   - Depends on R1132.
   - Model: Fable, Not Planned.
@@ -2621,62 +2723,28 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   `Optional` without a `.None` case and a `(Bool, Int)` product with a
   correlated wildcard warn nothing, where the pin reports the missing
   cells.
-  - Slice M11 of `match-case-plan.md` (D6): closed and open `EnumLike`
-    alternatives, payload refinement (`Some(0)` covers no whole `Some`,
-    `Some(_)` makes later refinements unreachable), finite struct products,
-    the 1024-cell cap with its "add a catch-all" warning.
-  - Named analysis tests for the cap and checked multiplication.
+  - A closed `EnumLike`, `Bool` included, is the set of its constructors.
+    An open one (`_enum_is_exhaustive = False`) keeps an unknown
+    remainder that only an unguarded wildcard or binding closes.
+  - A finite tuple or struct product is its Cartesian cells, never
+    independent field masks. An omitted struct field is a wildcard, and
+    an open leaf keeps the product open.
+  - A constructor is covered only by an irrefutable payload pattern:
+    `Some(0)` covers no whole `Some`, and `Some(_)` makes a later
+    refinement unreachable. `|` unions its alternatives. A guard adds
+    nothing, even a constant `True`.
+  - An open subject (`Int`, `String`) tracks duplicate root literal
+    spellings only, with no `4` versus `0x4` canonicalization and no
+    payload-domain solver. Sequence patterns cover nothing but through a
+    catch-all.
+  - A product above 1024 cells warns to add a catch-all and keeps the
+    fall-through until coverage is proven. Multiply with overflow checks
+    before allocating cells.
+  - Stop: `(True, True)` plus `(False, False)` warns the two missing
+    cells, correlated wildcards finish coverage, and an open enum keeps
+    its catch-all path. Warning order is stable across packaging.
+  - Named analysis tests pin the cap and the overflow check.
   - Depends on R1133.
-  - Model: Fable, Not Planned.
-
-- [ ] **R1135 Fixed-length sequence patterns test the length first**
-
-  Problem: `case [a, b]` and `case []` are rejected ("sequence patterns"),
-  where the pin tests `len(subject)` and then subscripts each element over
-  any `Sized` subscriptable subject.
-  - Slice M12 of `match-case-plan.md`: a length test dominating the element
-    accesses, a wrong length advancing to the next case, getter errors
-    propagating.
-  - Probe: `conformance/probes/match_sequence_custom_sized.mojo`;
-    `if_case_and_while_case.mojo` keeps its `[a, b]` part for this slice.
-  - Depends on R1051 (a real `Sized` requirement).
-  - Model: Fable, Not Planned.
-
-- [ ] **R1136 Sequence destructuring assigns after a raising length check**
-
-  Problem: `var [a, b] = values` parses but is rejected, where the pin
-  stores nothing and raises `list pattern does not match value length` on
-  a wrong length, inside a raising context.
-  - Slice M13 of `match-case-plan.md`: `DestructureTargetKind::Sequence`
-    through `check_destructure`, with assignment's raise instead of a
-    next-case failure.
-  - Probe: `conformance/probes/destructure_list_wrong_length_raises.mojo`.
-  - Depends on R1135.
-  - Model: Fable, Not Planned.
-
-- [ ] **R1137 Starred sequence patterns and targets slice the remainder**
-
-  Problem: `case [first, *rest]` and `var [a, *middle, b] = values` are
-  rejected, where the pin tests a minimum length, binds the prefix and
-  suffix elements, and gives `*name` the checked slice of the rest (a
-  borrowing `Span` where the slice is one).
-  - Slice M14 of `match-case-plan.md`. `*_` performs no slice.
-  - Probe: `conformance/probes/destructure_starred_slice.mojo`.
-  - Depends on R1136 and R192 (the slice descriptor correction).
-  - Model: Fable, Not Planned.
-
-- [ ] **R1138 `for` and comprehension targets destructure each element**
-
-  Problem: `for a, b in pairs`, `for (var a, _) in pairs`, and
-  `[a * b for a, b in pairs]` are parse errors, where the pin binds each
-  element through a recursive target with immutable default bindings.
-  - Slice M17 of `match-case-plan.md`: `StmtKind::For` and
-    `ComprehensionClause` take a `DestructureTarget`; the checker binds the
-    yielded value to a hidden per-iteration name and destructures it with
-    `check_destructure`; a yielded reference is not copied to unpack it.
-  - `for ref (a, b)` leaves `a` immutable, as at the pin.
-  - Sequence targets wait for R1136/R1137.
-  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R1139 `comptime match` folds in the parameter conditional chain**
@@ -2684,10 +2752,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   Problem: `comptime match` statements are rejected ("'comptime match'
   statements"), where the pin matches a parameter subject by type equality
   (`case == Int`), literals, tuples, bindings, `|`, `as`, and guards.
-  - Slice M18 of `match-case-plan.md` (D7): the checked lowering joins the
-    existing `comptime if` chain (`check_comptime_condition`, `ParamExpr`,
-    `native::mono`), a CTFE subject demanded once; dynamic subjects and
-    guards and `var` bindings reject with the pin's texts.
+  - The same checked commands compile to parameter comparisons and their
+    conjunctions, joining the existing `comptime if` chain:
+    `check_comptime_condition`, `ParamExpr`, type refinement, and
+    `native::mono`, which selects the case. A matched compile-time value
+    is bound in the arm's parameter environment before its guard.
+  - `case == Int` is ordinary parameter type equality. A subject that is
+    a CTFE application is demanded once and shared across the conditions.
+  - No folding of an applying subject in `mojito-comptime`, no cloned AST
+    arms, and no pattern evaluator over runtime values. Unselected bodies
+    are still checked once.
+  - A dynamic subject, a dynamic guard, a `var` binding, and an accessor
+    call in the pattern reject with the pin's texts.
+  - Stop: type equality, value parameters, tuple bindings, `|`, `as`, and
+    guards run in plain and generic functions, untaken-arm diagnostics
+    agree with the pin, and the textual MIR round-trip keeps the
+    parametric conditions.
   - Probe: `conformance/probes/comptime_match_forms.mojo`.
   - Depends on R1134.
   - Model: Fable, Planned.
@@ -2698,49 +2778,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   emits one program per case), where upstream's `findClusterSize` /
   `emitClusteredCases` share a safe leading literal or tag test across
   neighbouring cases.
-  - Slice M19 of `match-case-plan.md`: share only dominance-safe tests,
-    keep order within residual cases, never share an effectful equality or
-    getter call; audit textual MIR round-trips, source locations, and dead
-    arms, and retire the transitional diagnostics the slices left.
+  - Share only dominance-safe tests: a leading literal of a trivial type
+    or an enum tag. Keep the order within the residual cases, and never
+    share an effectful equality or getter call.
+  - Stop: a repeated-tag and a repeated-literal fixture produce shared
+    tests with unchanged effect and lifecycle traces, and an
+    effectful-equality fixture stays ordered.
+  - Completion audit of the feature: the package and textual MIR
+    round-trips, source locations, dead arms, and `docs/features.md`.
+    Retire the transitional "until its slice lands" rejections whose
+    slice has landed.
+  - Mapping patterns stay rejected, as upstream's proposal excludes them:
+    record the deferral in `docs/non-goals.md` with upstream's
+    implementation as the reopening criterion.
   - Depends on R1139, R1137, and R1138.
   - Model: Fable, Not Planned.
-
-- [ ] **R1141 Bare and `ref` bindings in `|` alternatives join their
-  references**
-
-  Problem: `case (x, 2) | (1, x)` is rejected ("a bare or 'ref' binding in
-  a '|' alternative"), where the pin binds `x` as one immutable reference
-  to whichever element matched.
-  - Only `var` bindings join today (`Join` in `checker/patterns.rs`: the
-    first alternative declares, the later ones assign one slot).
-  - A reference join needs the runtime-handle representation in both
-    alternatives (`runtime_aliases` in `mir/lower_stmt.rs`) with the union
-    of their loans, since a static alias names one place.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
-- [ ] **R1142 A nominal subscript is a destructuring target**
-
-  Problem: `(xs[0], xs[1]) = pair` is rejected ("a nominal subscript
-  (`xs[i]`) as a destructuring target"), where the pin stores each element
-  through `__setitem__`.
-  - `checker/destructure.rs` rejects the leaf because the extraction plan's
-    element store has no `__setitem__` path; the plain `xs[i] = v` store
-    has one (`lower_subscript_set`).
-  - Fixture to add beside `assets/ok/destructure_swap_and_places.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1143 `comptime if case` tests a pattern at compile time**
-
-  Problem: `comptime if case pattern = value:` is a parse error, where the
-  pin accepts it and requires the binding to be a compile-time value
-  (`variable binding ... in 'comptime if case' must be a compile-time
-  value`).
-  - The parser rejects it in `parser/stmts.rs` beside `comptime match`;
-    the checked lowering is R1139's chain with a one-case condition.
-  - Depends on R1139.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1119 `Defaultable` supplies a default `__init__()`**
 

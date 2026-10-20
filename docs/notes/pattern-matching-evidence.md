@@ -1,6 +1,6 @@
 # Pattern matching: pinned evidence
 
-Evidence for `match-case-plan.md` slice M0, gathered 2026-10-17 against
+Evidence for the pattern-matching entries (R1132–R1143), gathered 2026-10-17 against
 `Mojo 1.2.0.dev2026101705 (46f49943)` (upstream checkout `cfd79ca736`).
 Every row names the probe that pins it; runnable probes live under
 `conformance/probes/match_*.mojo`, `destructure_*.mojo`, `if_case_*.mojo`,
@@ -100,7 +100,7 @@ has today:
 
 `Optional` and `Bool` conform upstream through those spellings; Mojito's
 `Optional` keeps its payload storage and gains the three members once the
-spellings exist (slice M9).
+spellings exist (R1132).
 
 ## Settled uncertainties from the plan
 

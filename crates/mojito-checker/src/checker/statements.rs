@@ -465,8 +465,8 @@ impl Checker {
         Ok(())
     }
 
-    /// The boolean expression of a condition. A `case` condition's test is
-    /// slice M15's; until it lands the statement is rejected here.
+    /// The boolean expression of a condition. A `case` condition reaching
+    /// here is a `comptime if case`, rejected until R1143 lands.
     pub(super) fn boolean_condition<'c>(
         condition: &'c mojito_ast::ast::Condition,
         statement: &str,

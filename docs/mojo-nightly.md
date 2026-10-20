@@ -92,9 +92,9 @@ conflicting signature"), so the fixture spells `c_int(1)` and
 name/`as`/`var`/`ref` bindings, tuple, struct, and list patterns,
 `.Some(x)` cases of `EnumLike` types, explicit `== value` patterns, and
 `comptime match`; `if case`/`while case`; `var [first, *middle, last] =
-values`. The window's one large feature has its plan, `match-case-plan.md`:
-its landed slices run `match`, `if case`, and `while case`, and R1132–R1143
-are the slices and residues that remain.
+values`. The window's one large feature landed in slices: `match`, `if
+case`, and `while case` run, and R1132–R1143 are the entries and residues
+that remain (enum cases, sequences, iteration targets, `comptime match`).
 
 ### 4. `where <cond> else "<message>"` and `not <Trait>`
 
