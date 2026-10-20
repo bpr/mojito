@@ -599,6 +599,11 @@ pub enum TyKind {
     /// list is the bound's canonical trait set ([`trait_set`]). It is
     /// compile-time only; no runtime register holds one.
     AnyTrait(Vec<String>),
+    /// Upstream's KGEN metatype `!kgen.type` (`_MLIR.KGENTypeType`), the
+    /// type of every type and trait, displayed `__TypeOfAllTypes`. A
+    /// parameter it types is a type binder bound by [`TYPE_OF_ALL_TYPES`].
+    /// It is compile-time only; no runtime register holds one.
+    TypeType,
     /// Compiler-private `__RuntimeTuple[T1, ..., Tn]` storage. Public
     /// `Tuple[T1, ..., Tn]` values are nominal standard-library structs.
     Tuple(Vec<Ty>),
@@ -1025,6 +1030,11 @@ pub const SET_TYPE_NAME: &str = "Set";
 pub const DICT_TYPE_NAME: &str = "Dict";
 
 pub const TUPLE_TYPE_NAME: &str = "Tuple";
+
+/// The bound of a type binder whose type is upstream's `!kgen.type`
+/// ([`TyKind::TypeType`]), the name the pin prints for it: every type
+/// satisfies it, and it implies no trait, not even `AnyType`.
+pub const TYPE_OF_ALL_TYPES: &str = "__TypeOfAllTypes";
 
 pub const TSTRING_TYPE_NAME: &str = "TString";
 /// The public `Variant` struct's name.
@@ -2192,6 +2202,7 @@ impl fmt::Display for TyKind {
             Self::ComptimeList(elem) => write!(f, "<comptime-list[{elem}]>"),
             Self::ParamList(elem) => write!(f, "KGENParamList[{elem}]"),
             Self::AnyTrait(traits) => write!(f, "AnyTrait[{}]", traits.join(" & ")),
+            Self::TypeType => write!(f, "{TYPE_OF_ALL_TYPES}"),
             Self::Tuple(elems) => {
                 write!(f, "Tuple[")?;
                 for (i, t) in elems.iter().enumerate() {
@@ -2617,6 +2628,7 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         (TyKind::ComptimeList(a), TyKind::ComptimeList(b)) => coerces(a, b),
         (TyKind::ParamList(a), TyKind::ParamList(b)) => a == b,
         (TyKind::AnyTrait(a), TyKind::AnyTrait(b)) => a == b,
+        (TyKind::TypeType, TyKind::TypeType) => true,
         (
             TyKind::Pointer {
                 element: a,
@@ -3677,6 +3689,7 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
         | TyKind::Infer
         | TyKind::Dtype
         | TyKind::AnyTrait(_)
+        | TyKind::TypeType
         | TyKind::SelfType
         | TyKind::Error => ty.clone(),
     })
@@ -4153,6 +4166,7 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         TyKind::Simd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
         TyKind::Dtype
         | TyKind::AnyTrait(_)
+        | TyKind::TypeType
         | TyKind::Int
         | TyKind::UInt
         | TyKind::Bool

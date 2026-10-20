@@ -462,16 +462,18 @@ impl Checker {
                 None => return Err(TypeError::UnknownSelfParam("Self".to_string())),
             },
             // Upstream's `Indexer` requirement returns `__mlir_type.index`;
-            // the VM represents that index as `Int`. Every other MLIR type
-            // spelling is outside the subset.
+            // the VM represents that index as `Int`. `!kgen.type` is the
+            // metatype of every type. Every other MLIR type spelling is
+            // outside the subset.
             SourceType::Assoc { base, name, args }
                 if matches!(base.as_ref(), SourceType::Named(base, base_args)
                     if base == "__mlir_type" && base_args.is_empty()) =>
             {
-                if name != "index" || !args.is_empty() {
-                    return Err(unsupported_mlir_type());
+                match (name.as_str(), args.is_empty()) {
+                    ("index", true) => Ty::int(),
+                    ("!kgen.type", true) => TyKind::TypeType.into(),
+                    _ => return Err(unsupported_mlir_type()),
                 }
-                Ty::int()
             }
             SourceType::Assoc { base, name, .. } => {
                 let base_ty = self.ty_from_anno(base)?;
@@ -2130,6 +2132,23 @@ impl Checker {
                         self.ty_from_anno(&SourceType::Named(applied.clone(), args.clone()))?,
                         Some(expression.source_span()),
                     ),
+                    // A struct's type member (`g[M.E]()`, `k[_MLIR.KGENTypeType]()`).
+                    ParamArg::Value(
+                        expression @ Expr {
+                            kind: ExprKind::Member { object, field },
+                            ..
+                        },
+                    ) if matches!(&object.kind, ExprKind::Identifier(base) if base != "Self") => {
+                        let ExprKind::Identifier(base) = &object.kind else {
+                            unreachable!("guarded above");
+                        };
+                        let member = SourceType::Assoc {
+                            base: Box::new(SourceType::Named(base.clone(), Vec::new())),
+                            name: field.clone(),
+                            args: Vec::new(),
+                        };
+                        (self.ty_from_anno(&member)?, Some(expression.source_span()))
+                    }
                     ParamArg::Value(_) => {
                         return Err(TypeError::TypeMismatch {
                             expected: "a type".to_string(),
@@ -2361,6 +2380,15 @@ impl Checker {
             });
         }
         let (element, attributes) = self.collection_type_arguments("List", args)?;
+        // `List[T: AnyType]`: only a `!kgen.type` binder falls short.
+        if !self.conforms_to(&element[0], "AnyType") {
+            return Err(TypeError::TraitNotSatisfied {
+                param: "T".to_string(),
+                ty: element[0].to_string(),
+                trait_name: "AnyType".to_string(),
+                reason: None,
+            });
+        }
         Ok((list_type(element[0].clone()), attributes))
     }
 
@@ -3480,6 +3508,7 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         | TyKind::FloatLiteral
         | TyKind::Dtype
         | TyKind::AnyTrait(_)
+        | TyKind::TypeType
         | TyKind::Error => false,
         TyKind::Func(_) | TyKind::GenericFunc(_) => ty
             .callable()
@@ -3579,7 +3608,8 @@ fn origin_has_subtree_tail(origin: &mojito_types::origin::PointerOrigin) -> bool
 fn unsupported_mlir_type() -> TypeError {
     TypeError::Unsupported(
         "this MLIR type spelling is outside the supported subset; only \
-         '__mlir_type.index' and '__mlir_type[`!kgen.param_list<`, T, `>`]' are accepted"
+         '__mlir_type.index', '__mlir_type.`!kgen.type`', and \
+         '__mlir_type[`!kgen.param_list<`, T, `>`]' are accepted"
             .to_string(),
     )
 }

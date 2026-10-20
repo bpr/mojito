@@ -2176,6 +2176,31 @@ fn trait_metatypes_and_values_round_trip() {
     assert!(text.contains("ct_trait([Hashable, Copyable])"), "{text}");
 }
 
+/// Schema 1.77 spells upstream's `!kgen.type` metatype `TypeType`, and a
+/// type value of it `ct_type(TypeType)`.
+#[test]
+fn kgen_type_metatype_round_trips() {
+    let ty = Ty::new(TyKind::TypeType);
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            vec![ty.clone(), Ty::none()],
+            vec![
+                MirInstr::ConstructType {
+                    dest: Reg(0),
+                    ty: ty.clone(),
+                },
+                MirInstr::Const {
+                    dest: Reg(1),
+                    k: Const::Value(mojito_types::ct::CtValue::Type(ty)),
+                },
+            ],
+        ),
+    )]);
+    assert_reprints(&program);
+    assert!(write::program(&program).contains("TypeType"));
+}
+
 /// Schema 1.34 carries the static address of a parameter list's elements,
 /// the list a template's parameter or an instance's closed tuple.
 #[test]

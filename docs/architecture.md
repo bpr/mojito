@@ -333,8 +333,8 @@ import (every compilation that links the bundled library):
   package's traits, borrowed, and the program's own statements
   (`Compiler::compile_importing`). `comptime::prepare_importing` rewrites
   the own statements alone, reading the package's traits, which a
-  conformer inherits defaults from, and its SIMD aliases as its build
-  elaborated them. `comptime::elaborate_importing` elaborates them alone
+  conformer inherits defaults from, and its SIMD and `!kgen.type` aliases
+  as its build elaborated them. `comptime::elaborate_importing` elaborates them alone
   (`comptime::ImportedScope`): a name its module environment
   (`comptime::ConstEnv`), generic aliases, or module type aliases miss is
   the reached package's constant of that name, decoded with its

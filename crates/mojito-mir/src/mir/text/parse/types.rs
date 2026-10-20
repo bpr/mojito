@@ -21,6 +21,7 @@ impl Decoder {
                 "FloatLiteral" => Ty::float_literal(),
                 "Infer" => Ty::infer(),
                 "DType" => Ty::dtype(),
+                "TypeType" => TyKind::TypeType.into(),
                 "Self" => Ty::self_type(),
                 "Error" => Ty::error(),
                 other => {

@@ -4,9 +4,9 @@
 # time, and its iterator.
 #
 # `ParameterList`'s `values` is upstream's one raw `KGENParamListType[type]`
-# parameter, and a pack's `vs.values` is that list. `_MLIR` bounds
-# `KGENParamListType`'s element by `AnyType`, not upstream's
-# `Self.KGENTypeType` (`!kgen.type`), and declares no `POPArrayType`.
+# parameter, and a pack's `vs.values` is that list. `_MLIR` declares no
+# `POPArrayType`, whose one upstream use is `VariadicList`'s compiler-built
+# constructor.
 # `get_span` addresses the elements through the compiler-private
 # `__param_list_address[values]()`, which stands for upstream's
 # `global_constant` over `#pop.variadic_to_array`. `write_repr_to` writes
@@ -19,7 +19,9 @@ from std.span import Span
 
 
 struct _MLIR:
-    comptime KGENParamListType[elt_type: AnyType] = __mlir_type[
+    comptime KGENTypeType = __mlir_type.`!kgen.type`
+
+    comptime KGENParamListType[elt_type: Self.KGENTypeType] = __mlir_type[
         `!kgen.param_list<`, elt_type, `>`
     ]
 

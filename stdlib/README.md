@@ -73,7 +73,8 @@ point, as upstream's toolchain does.
   for` iterator at compile time. The prelude links them for their bodies:
   the compiler names them by module path, and no user spelling reaches
   them.
-- `std/builtin/variadics.mojo` — upstream's `_MLIR.KGENParamListType[T]`
+- `std/builtin/variadics.mojo` — upstream's `_MLIR.KGENTypeType`
+  (`!kgen.type`) and `_MLIR.KGENParamListType[elt_type: Self.KGENTypeType]`
   raw-list alias, `ParameterList[type: AnyType, //, values:
   _MLIR.KGENParamListType[type]]`, the zero-sized value a homogeneous value
   pack is when read at run time (`ParameterList[vs.values]()`), and its

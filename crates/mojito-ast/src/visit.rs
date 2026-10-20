@@ -831,6 +831,9 @@ pub trait MutVisitor {
 
     /// A destructuring target, reported after its children.
     fn visit_target_mut(&mut self, _target: &mut DestructureTarget) {}
+
+    /// A compile-time parameter declaration, reported before its children.
+    fn visit_type_param_mut(&mut self, _parameter: &mut TypeParam) {}
 }
 
 /// Walk every statement, expression, and annotation of a block in place.
@@ -1376,6 +1379,7 @@ fn walk_param_args_mut<V: MutVisitor>(visitor: &mut V, args: &mut [ParamArg]) {
 
 fn walk_type_params_mut<V: MutVisitor>(visitor: &mut V, params: &mut [TypeParam]) {
     for param in params {
+        visitor.visit_type_param_mut(param);
         if let Some(ty) = &mut param.value_type {
             walk_type_mut(visitor, ty);
         }

@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A parameter typed by upstream's KGEN metatype `` __mlir_type.`!kgen.type` ``
+  (`__TypeOfAllTypes`) binds a type, as on the pin: spelled directly,
+  through a module alias, or through a struct's member alias (`elt_type:
+  Self.KGENTypeType`), it prepares as a type binder that every type
+  satisfies and that implies no trait, so `List[U]` over one is rejected
+  with the pin's verdict. The bundled `_MLIR` now declares upstream's
+  `KGENTypeType` and bounds `KGENParamListType`'s element by it, and a
+  struct's type member is an explicit type argument (`g[M.E]()`)
+  (`assets/ok/kgen_type_type_parameter.mojo`). MIR text schema 1.77 spells
+  the metatype `TypeType`, and the package format is 72. This closes R1150.
+
 - A trait is a compile-time value, as on the pin: `def g[Tr:
   type_of(AnyType)]()` and `struct W[Tr: type_of(Copyable) = Copyable, //,
   n: Int]` declare a value parameter of the trait metatype

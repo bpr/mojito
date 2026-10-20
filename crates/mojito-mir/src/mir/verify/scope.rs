@@ -686,6 +686,7 @@ impl ScopeCx<'_> {
             | TyKind::Infer
             | TyKind::Dtype
             | TyKind::AnyTrait(_)
+            | TyKind::TypeType
             | TyKind::SelfType
             | TyKind::Error => {}
         }

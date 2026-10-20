@@ -774,6 +774,14 @@ impl Checker {
             {
                 Ok(CtValue::Dtype(dtype))
             }
+            // Upstream's KGEN metatype (`comptime KGENTypeType =
+            // __mlir_type.`!kgen.type``).
+            ExprKind::Member { object, field }
+                if field == "!kgen.type"
+                    && matches!(&object.kind, ExprKind::Identifier(name) if name == "__mlir_type") =>
+            {
+                Ok(CtValue::Type(TyKind::TypeType.into()))
+            }
             ExprKind::Member { object, field } => {
                 if let ExprKind::Identifier(s) = &object.kind
                     && s == "Self"

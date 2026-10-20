@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.76
+mojito-mir 1.77
 ```
 
-The writer emits 1.76. The reader accepts 1.0 through 1.76; *Schema 1.0*
+The writer emits 1.77. The reader accepts 1.0 through 1.77; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -810,6 +810,11 @@ register, slot, or signature that holds one.
 as a value, over its canonical trait set. Like `param_list`, it types
 compile-time parameter declarations only.
 
+`TypeType` (schema 1.77) is upstream's KGEN metatype `!kgen.type`
+(`_MLIR.KGENTypeType`), the type of every type and trait, which the pin prints
+`__TypeOfAllTypes`. It is compile-time only, as `any_trait` is; a type binder
+it types records the bound `__TypeOfAllTypes`.
+
 `ParamDecl` is
 `type_param { owner, slot, name, bounds, callable_bound, default, infer_only, variadic, constraints }`
 or
@@ -1071,10 +1076,10 @@ lowering unit, one record per library declaration, and one module table
 holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 71`.
+MLIR bytecode throughout. The format line is `mojito-package 72`.
 
 ```text
-mojito-package 71
+mojito-package 72
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode, then the type section>

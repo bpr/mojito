@@ -1,11 +1,11 @@
 //! Synthesized conformance methods: `Copyable.copy` and
 //! `Hashable.__hash__` bodies, plus upstream's `SIMD[_, _]` parameter
-//! desugar, the vector-alias bound fold, and the value reading of a
-//! `Self.`-spelled `materialize` operand.
+//! desugar, the vector-alias bound fold, the `!kgen.type` binder fold, and
+//! the value reading of a `Self.`-spelled `materialize` operand.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::TyKind;
+use mojito_types::types::{TYPE_OF_ALL_TYPES, TyKind};
 
 /// Materialize the `Copyable` trait's default `copy` method (current Mojo:
 /// `def copy(self) -> Self: return Self(copy=self)`; overriding it is not
@@ -368,6 +368,64 @@ pub(super) fn fold_simd_alias_bounds(
     }
 }
 
+/// Fold every parameter whose type is upstream's KGEN metatype
+/// `` __mlir_type.`!kgen.type` `` into a type binder bounded by
+/// [`TYPE_OF_ALL_TYPES`], as upstream binds a type to such a parameter:
+/// spelled directly, through a module alias of it (the program's own or an
+/// imported package's), or through a member alias of it on one of the
+/// program's own structs (`elt_type: Self.KGENTypeType`, `T:
+/// _MLIR.KGENTypeType`). The bound itself names no declaration, so a
+/// parameter spelling it is rejected, as at the pin.
+pub(super) fn fold_type_type_parameters(
+    program: &mut [Stmt],
+    installed: Option<&InstalledInterfaces>,
+) -> Result<(), ComptimeError> {
+    let module_aliases: HashSet<String> = program
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            StmtKind::Comptime {
+                name,
+                type_params,
+                value,
+                ..
+            } if type_params.is_empty() && spells_type_type(value) => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+    let members: HashMap<String, HashSet<String>> = program
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            StmtKind::Struct {
+                name, associated, ..
+            } => Some((
+                name.clone(),
+                associated
+                    .iter()
+                    .filter(|member| member.params.is_empty() && spells_type_type(&member.value))
+                    .map(|member| member.name.clone())
+                    .collect::<HashSet<_>>(),
+            )),
+            _ => None,
+        })
+        .filter(|(_, aliases)| !aliases.is_empty())
+        .collect();
+    let mut fold = TypeTypeFold {
+        module_aliases: &module_aliases,
+        installed,
+        members: &members,
+        own: None,
+        error: None,
+    };
+    for statement in program {
+        fold.own = match &statement.kind {
+            StmtKind::Struct { name, .. } => members.get(name),
+            _ => None,
+        };
+        mojito_ast::visit::walk_stmt_mut(&mut fold, statement);
+    }
+    fold.error.map_or(Ok(()), Err)
+}
+
 /// The value expression a `Self.`-rooted type spelling denotes
 /// ([`read_materialize_self_operands`]).
 fn self_value_operand(operand: &Type, span: Span) -> Option<Expr> {
@@ -387,5 +445,74 @@ fn self_value_operand(operand: &Type, span: Span) -> Option<Expr> {
             span,
         )),
         _ => None,
+    }
+}
+
+/// Whether `expr` spells upstream's `` __mlir_type.`!kgen.type` ``.
+fn spells_type_type(expr: &Expr) -> bool {
+    matches!(&expr.kind, ExprKind::Member { object, field }
+        if field == "!kgen.type"
+            && matches!(&object.kind, ExprKind::Identifier(name) if name == "__mlir_type"))
+}
+
+/// The [`fold_type_type_parameters`] walk: the program's `!kgen.type`
+/// aliases, and those of the struct being walked, which `Self.` names.
+struct TypeTypeFold<'a> {
+    module_aliases: &'a HashSet<String>,
+    installed: Option<&'a InstalledInterfaces>,
+    members: &'a HashMap<String, HashSet<String>>,
+    own: Option<&'a HashSet<String>>,
+    error: Option<ComptimeError>,
+}
+
+impl TypeTypeFold<'_> {
+    fn denotes_type_type(&self, parameter: &TypeParam) -> bool {
+        match &parameter.value_type {
+            Some(Type::Assoc { base, name, args }) if args.is_empty() => match base.as_ref() {
+                Type::Named(base, base_args) if base_args.is_empty() => {
+                    (base == "__mlir_type" && name == "!kgen.type")
+                        || self
+                            .members
+                            .get(base)
+                            .is_some_and(|aliases| aliases.contains(name))
+                }
+                _ => false,
+            },
+            Some(Type::SelfParam(name)) => self.own.is_some_and(|aliases| aliases.contains(name)),
+            Some(_) => false,
+            None => match parameter.bounds.as_slice() {
+                [only] => {
+                    self.module_aliases.contains(only)
+                        || self
+                            .installed
+                            .and_then(|installed| installed.elaborated(only))
+                            .is_some_and(|constant| {
+                                matches!(constant, ElaboratedConstant::Value(CtValue::Type(ty))
+                                    if matches!(ty.kind(), TyKind::TypeType))
+                            })
+                }
+                _ => false,
+            },
+        }
+    }
+}
+
+impl mojito_ast::visit::MutVisitor for TypeTypeFold<'_> {
+    fn visit_type_param_mut(&mut self, parameter: &mut TypeParam) {
+        if parameter.value_type.is_none()
+            && parameter
+                .bounds
+                .iter()
+                .any(|bound| bound == TYPE_OF_ALL_TYPES)
+        {
+            self.error.get_or_insert_with(|| {
+                ComptimeError::Type(mojito_common::error::TypeError::UnknownTrait(
+                    TYPE_OF_ALL_TYPES.to_string(),
+                ))
+            });
+        } else if self.denotes_type_type(parameter) {
+            parameter.value_type = None;
+            parameter.bounds = vec![TYPE_OF_ALL_TYPES.to_string()];
+        }
     }
 }

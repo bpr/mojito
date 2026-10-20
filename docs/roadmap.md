@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1174**.
+Next free ID: **R1175**.
 
 ## Ordered Work
 
@@ -4790,6 +4790,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (`raw: _MLIR.KGENParamListType[t]`), but only with an identifier
     argument: `raw: _MLIR.KGENParamListType[Int]` and `M.Buf[3]` fail
     with the same "exactly one compile-time value index".
+  - Probe: a member-alias argument, `raw: M.ListOf[M.KGENTypeType]` over
+    a struct `M` whose `ListOf[elt_type: Self.KGENTypeType]` is upstream's
+    raw list, stops with "unsupported associated comptime member access".
   - Update `docs/grammar.md` first.
   - It blocks `ParameterList.of` (R809).
   - Found while planning R493 (2026-10-13).
@@ -4830,20 +4833,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1150 `_MLIR.KGENParamListType`'s element bound is `AnyType`, not
-  upstream's `!kgen.type`**
+- [ ] **R1174 A parameter typed by an imported package struct's
+  `!kgen.type` alias is a value parameter**
 
-  Problem: upstream bounds the alias's `elt_type` by `Self.KGENTypeType =
-  __mlir_type.`!kgen.type``, the meta-type of types, where the bundled
-  `stdlib/std/builtin/variadics.mojo` port bounds it by `AnyType`.
-  - `__mlir_type.`!kgen.type`` is outside the subset
-    (`Checker::mlir_param_list_type` and the `__mlir_type.index` arm of
-    `checker/type_resolution.rs`), and a parameter bounded by an alias of
-    it would classify as a value parameter, not a type parameter.
-  - Upstream's `_MLIR.POPArrayType` is not ported either.
-  - Related to R1167: upstream's `TypeList` is a `KGENParamListType` of a
-    trait.
-  - Found while landing R807 (2026-10-19).
+  Problem: `def k[T: _MLIR.KGENTypeType]()` in a user module stops with
+  "type mismatch for value parameter 'T': expected a value, found a type",
+  where the pin binds `k[Int]()` and `k[_MLIR.KGENTypeType]()` and prints
+  `2` for each.
+  - `fold_type_type_parameters` (`comptime/synth.rs`) makes a
+    `!kgen.type`-typed parameter a `__TypeOfAllTypes` type binder before
+    any phase classifies it, but sees only the program's own structs'
+    member aliases.
+  - `prepare_importing` reads an installed package's module constants
+    (`InstalledInterfaces::elaborated`) and no package struct's members, so
+    the bundled `_MLIR`'s alias is folded only in the library's own build.
+  - Probe: `conformance/probes/kgen_type_imported_member_alias.mojo`.
+  - Found while landing R1150 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4860,6 +4865,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     type 'AnyType'".
   - An infer-only trait binder must solve from a raw list's type, as
     `TypeList[Ts.values]` solves `Trait` from `Ts`'s bound.
+  - Probe: a trait argument to a `!kgen.type` binder, `k[Copyable]()` over
+    `def k[T: __mlir_type.`!kgen.type`]()`, prints `2` at the pin and stops
+    with "unknown type 'Copyable'": a type binder's argument is a type
+    (`TyArg::Ty`), and a trait has no such form.
   - Found while planning R805 (2026-10-19).
   - Depends on R1166, R1150 (the raw list's `!kgen.type` element), and R449
     (`g[Tr=Copyable, Int]()` supplies an infer-only binder by keyword before
@@ -8077,6 +8086,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Closing it declares the pack in the bundled
     `stdlib/std/builtin/variadics.mojo`, beside `ParameterList`, and deletes
     the cursor and the pack arms of `HasNext`/`Next`.
+  - Upstream's `_MLIR.POPArrayType` (`!pop.array<size, T>`) is not in the
+    bundled `_MLIR`: its one upstream use is the compiler-built
+    constructor of that nominal pack.
   - Found while landing R734 (2026-10-13).
   - Depends on nothing.
   - Model: Fable, Planned.

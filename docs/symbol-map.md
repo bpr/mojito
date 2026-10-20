@@ -1063,7 +1063,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   its trait, whose body the elaborator's trait arm elaborates as its
   member's (`checker::trait_member_declaration`);
   `prepare_importing` prepares an importer's own statements beside the
-  package's elaborated SIMD aliases, reading no package declaration; `elaborate_prepared` and
+  package's elaborated SIMD and `!kgen.type` aliases, reading no package declaration; `elaborate_prepared` and
   `elaborate_importing` (an importer's own statements, `ImportedScope`
   under its module environment: a name the own frame misses is the
   installed package's constant, decoded on first lookup through
@@ -1757,6 +1757,18 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   the metatype (`verify/concrete.rs`).
 - The elaborator classifies the binder by `any_trait_source_type`
   (`mojito-comptime`, `comptime.rs`).
+- Upstream's KGEN metatype `` __mlir_type.`!kgen.type` `` is
+  `TyKind::TypeType` (displayed `__TypeOfAllTypes`), the value of a
+  `comptime` alias of it (`Checker::eval_associated_ct`, `constraints.rs`;
+  `Elab::eval`, `comptime/eval.rs`) and of the annotation
+  (`resolve_ty_from_anno_at_depth`). A parameter it types is a type binder:
+  `fold_type_type_parameters` (`comptime/synth.rs`, run by
+  `prepare_importing` over a new `MutVisitor::visit_type_param_mut` hook)
+  rewrites one spelled directly, through a module alias (the program's own
+  or the package's elaborated one), or through one of the program's own
+  structs' member aliases to the bound `types::TYPE_OF_ALL_TYPES`, which
+  `Checker::conforms_to` grants every type and `trait_implies` lets imply
+  no other trait.
 
 ## The compile-time branch and the request path (2026-10-03)
 

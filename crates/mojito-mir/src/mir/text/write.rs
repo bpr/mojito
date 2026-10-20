@@ -2011,6 +2011,7 @@ fn ty_value(ty: &Ty) -> String {
         TyKind::FloatLiteral => "FloatLiteral".into(),
         TyKind::Infer => "Infer".into(),
         TyKind::Dtype => "DType".into(),
+        TyKind::TypeType => "TypeType".into(),
         TyKind::SelfType => "Self".into(),
         TyKind::Error => "Error".into(),
         TyKind::Func(func) => {

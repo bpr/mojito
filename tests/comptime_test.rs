@@ -1673,3 +1673,39 @@ fn comptime_scalar_conversions_follow_the_builtin_rule() {
     let err = run(huge).unwrap_err();
     assert!(err.contains("is not a compile-time value"), "{err}");
 }
+
+#[test]
+fn a_kgen_type_parameter_prepares_as_a_type_of_all_types_binder() {
+    // Upstream's `!kgen.type` is the type of every type, so a parameter it
+    // types binds a type: spelled directly, through a module alias, or
+    // through a struct's member alias, each prepares as a type binder bounded
+    // by `__TypeOfAllTypes`, while an `Int` parameter stays a value.
+    let src = "comptime KT = __mlir_type.`!kgen.type`\n\nstruct M:\n    comptime K = __mlir_type.`!kgen.type`\n    comptime L[e: Self.K] = __mlir_type[`!kgen.param_list<`, e, `>`]\n\ndef f[A: __mlir_type.`!kgen.type`, B: KT, C: M.K, n: Int]():\n    pass\n";
+    let prepared = mojito::comptime::prepare(parse(src).unwrap()).unwrap();
+    let binder = |parameter: &mojito::ast::TypeParam| {
+        parameter.value_type.is_none() && parameter.bounds == ["__TypeOfAllTypes"]
+    };
+    let function = prepared
+        .iter()
+        .find_map(|stmt| match &stmt.kind {
+            mojito::ast::StmtKind::Def { type_params, .. } => Some(type_params),
+            _ => None,
+        })
+        .expect("the function");
+    assert_eq!(
+        function.iter().map(binder).collect::<Vec<_>>(),
+        [true, true, true, false]
+    );
+    let member = prepared
+        .iter()
+        .find_map(|stmt| match &stmt.kind {
+            mojito::ast::StmtKind::Struct { associated, .. } => {
+                associated.iter().find(|member| member.name == "L")
+            }
+            _ => None,
+        })
+        .expect("the member alias");
+    assert!(binder(&member.params[0]));
+    let spelled = "def k[T: __TypeOfAllTypes]():\n    pass\n";
+    assert!(mojito::comptime::prepare(parse(spelled).unwrap()).is_err());
+}

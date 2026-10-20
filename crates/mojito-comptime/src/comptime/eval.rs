@@ -98,6 +98,13 @@ impl Elab<'_> {
                 {
                     return Ok(CtValue::Dtype(dtype));
                 }
+                // Upstream's KGEN metatype `` __mlir_type.`!kgen.type` ``.
+                if let ExprKind::Identifier(name) = &object.kind
+                    && name == "__mlir_type"
+                    && field == "!kgen.type"
+                {
+                    return Ok(CtValue::Type(TyKind::TypeType.into()));
+                }
                 match self.eval(object, scope)? {
                     CtValue::Type(ty) => self.associated_value(&ty, field),
                     CtValue::Reflected(ty) if field == "T" => Ok(CtValue::Type(ty)),

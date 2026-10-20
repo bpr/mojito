@@ -7,7 +7,7 @@ use super::decorators::DecoratorSite;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::conformance::{LIFECYCLE_TRAITS, StructTraitRule, struct_trait_rule};
-use mojito_types::types::TyKind;
+use mojito_types::types::{TYPE_OF_ALL_TYPES, TyKind};
 
 /// How a consuming position takes its value: an ownership **move** into new
 /// storage (gated on `Movable`), or a **deinit** binding — consumption by a
@@ -37,6 +37,7 @@ impl Checker {
     /// far, or a same-module trait predeclared ahead of the struct shells.
     pub(super) fn check_trait_name(&self, name: &str) -> Result<(), TypeError> {
         if COMPILER_TRAITS.contains(&name)
+            || name == TYPE_OF_ALL_TYPES
             || self.traits.contains_key(name)
             || self.predeclared_traits.contains(name)
         {
@@ -1803,10 +1804,18 @@ impl Checker {
         if self.has_assumed_conformance(ty, tr) {
             return true;
         }
-        if let TyKind::Param { bounds, .. } = ty.kind()
-            && bounds.iter().any(|bound| bound == tr)
-        {
+        // Every type is a `!kgen.type`, while a binder of it implies no
+        // trait, not even `AnyType`.
+        if tr == TYPE_OF_ALL_TYPES {
             return true;
+        }
+        if let TyKind::Param { bounds, .. } = ty.kind() {
+            if bounds.iter().any(|bound| bound == tr) {
+                return true;
+            }
+            if matches!(bounds.as_slice(), [only] if only == TYPE_OF_ALL_TYPES) {
+                return false;
+            }
         }
         if COMPILER_TRAITS.contains(&tr) && !self.traits.contains_key(tr) {
             // A hashed leaf is recorded as it is proved, so `is_hashable`
@@ -2281,12 +2290,15 @@ impl Checker {
     }
 
     /// Whether the trait `available` is `required` or implies it: every trait
-    /// refines `AnyType`, beside its declared and built-in refinements.
+    /// refines `AnyType`, beside its declared and built-in refinements. Every
+    /// bound implies `!kgen.type`'s, which implies nothing else.
     pub(super) fn trait_implies(&self, available: &str, required: &str) -> bool {
         available == required
-            || required == "AnyType"
-            || self.trait_refines(available, required)
-            || builtin_trait_implies(available, required)
+            || required == TYPE_OF_ALL_TYPES
+            || (available != TYPE_OF_ALL_TYPES
+                && (required == "AnyType"
+                    || self.trait_refines(available, required)
+                    || builtin_trait_implies(available, required)))
     }
 
     /// Explain the first actionable reason a built-in bound failed. This is
