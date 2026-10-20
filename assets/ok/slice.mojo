@@ -4,9 +4,8 @@
 # bounds, negative step reverses). String-family positional slicing —
 # including StringLiteral values — was removed at the audited head; the
 # nominal String's keyword slicing is pinned by the nominal_string_* fixtures.
-# A contiguous slice is read where it is taken: Mojito's is an owned `List`
-# and upstream's a borrowing `Span`, which the `contiguous-slice-result`
-# conformance case records.
+# A contiguous slice is a `Span` borrowing the list's elements; a strided
+# slice is a copied `List`.
 def main():
     var xs: List[Int] = [0, 1, 2, 3, 4]
     var mid = xs[1:3]

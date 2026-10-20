@@ -147,7 +147,10 @@ point, as upstream's toolchain does.
   length, constructed from `ref [origin] list: List[T]` so the source stays
   lent while any copy of the view lives. Element access is a reference
   result with abort bounds; the strict `ContiguousSlice` overload returns a
-  sub-view; there is no strided slicing.
+  sub-view; there is no strided slicing. It is `Boolable`, `Sized`, and
+  conditionally `Writable`, with `==`/`!=` and `in` over `Equatable`
+  elements. `List`'s own `ContiguousSlice` overload returns a `Span` over
+  the list's owned elements, as upstream's does.
 - `std/os/` — upstream's `os` package subset: `os.mojo` (`sep`, `SEEK_*`,
   `listdir` over a private `opendir`/`readdir` stream read as glibc `dirent`
   bytes, `mkdir`/`makedirs`, `remove`/`unlink`, `rmdir`/`removedirs`, and

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1153**.
+Next free ID: **R1157**.
 
 ## Ordered Work
 
@@ -1687,34 +1687,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R496 A reference returned through a temporary `Span` is stale on
-  the VM**
-
-  Problem: `def first(ref l: List[Int]) -> ref[l] Int: return Span(l)[0]`
-  stops on the VM with "stale reference to frame N", where the pin prints
-  the element.
-  - A VM reference handle is a frame slot plus a projection, so an element
-    reached through the temporary span's pointer stays rooted at the slot
-    the body drops before it returns.
-  - A result bound to a `ref[ImmStaticOrigin]` register is already
-    forwarded as the element's heap pointer
-    (`VmBackend::static_reference_result`), which serves
-    `ParameterList.__getitem__`.
-  - The general fix is a reference handle that designates heap storage
-    whenever its projection crosses a pointer.
-  - Since R1078 a `ref.make` into a static-origin register is forwarded
-    the same way, so an inlined `Span.__getitem__` over a temporary span
-    survives too, and a place projected from a pointer slot (`q[i]._size`,
-    a span member inlined at a pointee place) reads and writes the pointee
-    (`references::pointer_element`).
-  - Probe: a reference to a part of a heap element that is not itself a
-    pointer's element (`q[i].field` taken by `ref`, as `Optional.value`
-    inlined at a pointee place makes it) stops with "a reference within a
-    heap element", since a handle rooted in the heap has no form.
-  - Found while landing R325 (2026-10-08).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R535 A `ref` field of a list element prints its handle inside `print`**
 
   Problem: over `l = [RefOne(a)]`, where `RefOne` holds `var value: ref[o] Int`, `print(l[0].value)` prints `<ref 1:0>` instead of `4`.
@@ -2264,6 +2236,27 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1156 An argument bound to an unbound-origin parameter carries no
+  origin into argument exclusivity**
+
+  Problem: `f(Span(xs), Span(xs))` over `def f(a: Span[Int, _], b:
+  Span[Int, _])` and a `var xs` runs, where the pin rejects it with
+  "aliasing values passed mutably to 'a' argument and passed mutably to
+  'b' argument in 'f' call".
+  - The same call is judged when the parameters spell a bound origin
+    (`rhs: Box[Self.o]`).
+  - `check_argument_origin_exclusivity` records carried places from the
+    declared and bound parameter types, and an unbound `_` slot carries
+    none; the argument's own type carries the origin.
+  - Probe: `conformance/probes/unbound_origin_arguments_alias.mojo`.
+  - Probe: `conformance/probes/list_slices_compared_alias.mojo`,
+    `xs[0:2] != xs[1:3]` through `Span.__ne__(self, rhs: Span[Self.T, _])`.
+  - Probe: `b.any(Span(xs))` over a method `any(self, rhs: Span[Int, _])`
+    of a struct holding `Span(xs)`.
+  - Found while landing R190 (2026-10-19).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R125 `len` of a list reached through a pointer field does not run**
 
   Problem: `print(len(c.item[]))` with `c.item` a
@@ -2355,6 +2348,9 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Moving the owner (`var g = h^`) under such a view reports the stale view,
     where the pin reports "use of uninitialized value 'h'".
   - Found while closing the `self` field store under a live view (2026-10-04).
+  - Probe: `assets/ownership_error/list_slice_used_after_clear.mojo`, a
+    `List` slice used after `xs.clear()`: the pin reports the invalidated
+    `xs["element"]`, Mojito the conflict with the whole of `xs`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2664,8 +2660,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   borrowing `Span` where the slice is one).
   - Slice M14 of `match-case-plan.md`. `*_` performs no slice.
   - Probe: `conformance/probes/destructure_starred_slice.mojo`.
-  - Depends on R1136, R190 (a borrowing slice result), and R192 (the slice
-    descriptor correction).
+  - Depends on R1136 and R192 (the slice descriptor correction).
   - Model: Fable, Not Planned.
 
 - [ ] **R1138 `for` and comprehension targets destructure each element**
@@ -3705,6 +3700,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - `{}` and `{a, b}` at a runtime contextual type landed on 2026-10-05
     (`checker/initializer_list.rs`).
   - The parser's `brace_literal` and `comptime/elab.rs` are the two sites.
+  - The bundled `List.__getitem__(ContiguousSlice)` spells
+    `Span[...](unsafe_ptr=..., length=...)` where upstream returns
+    `{unsafe_ptr = ..., length = ...}`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6672,6 +6670,22 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Planned.
 
+- [ ] **R1153 An owned-interior origin converts to its base origin**
+
+  Problem: a value over `origin_of(xs)._get_owned_interior["element"]`
+  converts silently to the same type over `origin_of(xs)`, where the pin
+  rejects the conversion ("cannot implicitly convert 'Span[Int,
+  origin_of(xs["element"])]' value to 'Span[Int, origin_of(xs)]'").
+  - Probe: `conformance/probes/list_slice_returned_as_whole_origin.mojo`,
+    a `List` slice returned as `Span[Int, origin_of(xs)]`.
+  - Probe: `conformance/probes/string_view_returned_as_whole_origin.mojo`,
+    `s.rstrip()` returned as `StringSlice[origin_of(s)]`.
+  - Not root-caused: `Origin::coerces_to` itself keeps the interior path
+    (`mojito-types/src/origin.rs`), so the acceptance lies elsewhere.
+  - Found while landing R190 (2026-10-19).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R166 Unpack-assigning a call over a view of the assigned local is
   rejected as a conflict the pin does not see**
 
@@ -6940,6 +6954,27 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Planned.
 
+- [ ] **R1155 `Span`'s data pointer and `List.unsafe_ptr` name the owned
+  interior, so `Span(list)` is invalidated where the pin's is not**
+
+  Problem: `var ys = Span(xs); xs.clear(); print(len(ys))` is rejected
+  ("access to 'xs' conflicts with live reference 'ys'"), where the pin
+  prints `3`.
+  - Mojito's `Span._data` is `Pointer[T, origin._get_owned_interior[
+    "element"]]` and `List.unsafe_ptr()` returns the interior pointer;
+    upstream's `_data` is `Pointer[T, origin]`, `unsafe_ptr()` returns
+    `Pointer[T, origin]`, and a separate `_unsafe_interior_ptr()` serves
+    `List.__getitem__(ContiguousSlice)`.
+  - Upstream's `Span(list)` rebinds the list's pointer to
+    `origin_of(list)` (a TODO there), so the view does not borrow the
+    elements' generation.
+  - A slice span `Span[T, interior(o)]` therefore carries a doubly
+    interior data pointer inside Mojito; no probe observes it.
+  - Probe: `conformance/probes/span_of_list_survives_clear.mojo`.
+  - Found while landing R190 (2026-10-19).
+  - Depends on R177.
+  - Model: Fable, Not Planned.
+
 - [ ] **R178 Mojito's `for` yields the iterable's `Element` where the pin
   yields the iterator's `Iter.Element`**
 
@@ -7144,22 +7179,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - An API shape change with display and iteration fallout across every
     `split` caller.
   - Ledger name: `split-returns-owned-strings`.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
-- [ ] **R190 A contiguous `List` slice is an owned `List` where the pin
-  returns a borrowing `Span`**
-
-  Problem: a contiguous `List` slice is an owned `List` in Mojito and a
-  borrowing `Span` upstream, so only Mojito returns one from a `->
-  List[Int]` function.
-  - The call-result aliasing rule rides on it: upstream rejects `xs =
-    rebuild(xs[0:1])` because the slice views `xs`'s owned elements.
-  - Mojito's copy borrows nothing and runs.
-  - Pinned by `conformance/probes/list_slice_copies.mojo`.
-  - The return type of `List.__getitem__(ContiguousSlice)` changes, and
-    every caller that owns the result moves with it.
-  - Ledger name: `contiguous-slice-result`.
   - Depends on nothing.
   - Model: Fable, Planned.
 
@@ -7478,22 +7497,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `KeyElement`-shaped declaration; `d.keys()` or a copy into a `var kk: K`
     is accepted by both.
   - Probe: `conformance/probes/dict_entry_key_keeps_caller_bound.mojo`.
-  - Found while landing R774 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R816 A contiguous `List` slice is a copy, not a borrowing `Span`**
-
-  Problem: `var ys = xs[1:3]; xs.clear(); print(len(ys))` prints 2 in
-  Mojito, where the pin reports "use of invalidated interior reference
-  'xs["element"]'".
-  - The bundled `List.__getitem__(ContiguousSlice)` returns `Self`, where
-    upstream's returns a `Span` over the list's elements.
-  - Following the pin changes every caller that keeps the slice past a
-    mutation of the list.
-  - Probe: `conformance/probes/list_slice_borrows_the_list.mojo`.
-  - Probe: `m = ls[0:1]` over a `List[S]` whose copy constructor prints;
-    `m[0].v` copies nothing on the pin, where Mojito runs the copy.
   - Found while landing R774 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -8095,6 +8098,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     bump the package format.
   - Check whether R242 and R726 stem from the dropped binders; unverified.
   - Found while landing R631 (2026-10-13).
+  - Probe: `Self.mut` in a method of `struct V[mut: Bool, //, origin:
+    Origin[mut=mut]]` is rejected ("'Self.mut' is not a type parameter of
+    the enclosing struct"), where the pin reads it. The bundled `Span` has
+    no `write_repr_to` for it, so `repr(Span(xs))` is the reflective
+    default where the pin prints `Span[mut=True, SIMD[DType.int, 1]]([Int(1),
+    Int(2)])`.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -8792,6 +8801,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - `Writer` moved to the bundled `std/format/__init__.mojo` with R414, so
     this is the remaining half of that module.
   - Found while landing R414 (2026-10-06).
+  - Probe: `repr(P[Int](1))` over `struct P[T: AnyType](Writable)` with
+    only a `write_to` prints the elaborated instance name
+    `P$mono$TInt(x=Int(1))`, where upstream's default body prints
+    `P[SIMD[DType.int, 1]](x=Int(1))`.
   - Depends on nothing.
   - Model: Fable, Planned.
 
@@ -9197,8 +9210,24 @@ residue found inside a task moves to the task that owns its fix.
   returns a `Span` over the selected elements whose mutability follows the
   array reference.
   - The bundled `Array` has element subscripts only; `List` already slices
-    through `ContiguousSlice`.
+    into a `Span` through `ContiguousSlice`.
   - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1154 `List` has no constructor from an iterable**
+
+  Problem: `List(xs[1:3])` is rejected ("no constructor overload matches
+  the supplied arguments"), where the pin copies the iterable's elements
+  into a new list, the way Mojo owns a slice.
+  - Upstream's overload is `__init__[IterableType: Iterable](ref iterable:
+    IterableType, out self: List[IterableType.IteratorType[
+    origin_of(iterable)].Element])`.
+  - The parser takes a method's receiver only as its first parameter
+    (`parser/items.rs`: "a receiver convention must be followed by
+    'self'"), so the overload does not parse.
+  - Probe: `conformance/probes/list_from_iterable.mojo`.
+  - Found while landing R190 (2026-10-19).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -1679,7 +1679,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   private constant global (`ModuleShared::intern_param_list`,
   `lower_param_list_address`). A `ref[ImmStaticOrigin]` result the VM
   reaches through such a temporary span is forwarded as its heap pointer
-  (`VmBackend::static_reference_result`). A pack spread
+  (`VmBackend::heap_reference_result`); any other reference reached
+  through a heap pointer is rooted at that pointer, interned in
+  `VmBackend::pointer_roots` and addressed as frame `POINTER_ROOT_FRAME`
+  through `frame_variable` (`VmBackend::pointer_root`), so it outlives the
+  slot that held the pointer. A pack spread
   whole into brackets (`Pack[*vs]`, `total[*vs]()`) binds the callee's pack
   to it (`Checker::value_pack_spread`, read by the bracket binding in
   `checker/declarations.rs`); MIR

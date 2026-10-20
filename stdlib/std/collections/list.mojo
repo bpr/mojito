@@ -7,6 +7,7 @@
 # List owns.
 
 from std.string import check_slice_bounds
+from std.span import Span
 
 from std.memory.alloc import unsafe_alloc
 
@@ -350,23 +351,24 @@ struct List[T: AnyType](
         return result^
 
     # Strict contiguous slice (current Mojo bounds): negative, out-of-range,
-    # or reversed bounds abort instead of normalizing. Strided slicing (and a
-    # `Slice`-typed descriptor value, which widens to `StridedSlice` like
-    # upstream's implicit conversion) keeps `indices()` normalization through
-    # the overload above; omitted bounds default to the full extent.
+    # or reversed bounds abort instead of normalizing, and the result is a
+    # sub-view borrowing the list's owned elements, not a copy. Strided
+    # slicing (and a `Slice`-typed descriptor value, which widens to
+    # `StridedSlice` like upstream's implicit conversion) keeps `indices()`
+    # normalization and copies through the overload above; omitted bounds
+    # default to the full extent.
+    @__unsafe_nested_origins_read_only
     @inline(.always)
-    def __getitem__(self, slice: ContiguousSlice) -> Self where conforms_to(
-        Self.T, Copyable
-    ) and conforms_to(Self.T, Movable):
+    def __getitem__(
+        ref self, slice: ContiguousSlice
+    ) -> Span[Self.T, origin_of(self)._get_owned_interior["element"]]:
         var start = slice.start.or_else(0)
         var end = slice.end.or_else(self.size)
         check_slice_bounds(start, end, self.size)
-        var result = List[Self.T]()
-        var i = start
-        while i < end:
-            result.append(self._get_copy(i))
-            i += 1
-        return result^
+        return Span[Self.T, origin_of(self)._get_owned_interior["element"]](
+            unsafe_ptr=self.unsafe_ptr().unsafe_offset(start),
+            length=end - start,
+        )
 
     # Upstream's `List` has no `__setitem__`: `xs[i] = v` stores through the
     # reference `__getitem__` returns, which is declared read-only over nested

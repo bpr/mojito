@@ -116,6 +116,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A temporary view operand of an operator (`s.rstrip() == "  ab"`,
+  `s[byte=0:2] == s[byte=0:2]`) keeps its source alive through the
+  comparison, as a call argument does, instead of stopping the VM with
+  "use after Pointer deallocation" when the read was the source's last
+  use. On the VM, a reference reached through a heap pointer designates
+  the heap element rather than the slot holding the pointer, so an element
+  read through a span (`w[1]`, `xs[1:3][1]`) outlives the span, a
+  reference returned through a temporary span (`return Span(l)[0]`) is no
+  longer stale, and an accessor inlined at a pointee place (`p[1].get_b()`)
+  returns a reference to the element's field.
+
 - Linking renames the base of a dependent type projection (`M.Wrap[t]`),
   so a linked module, the bundled library among them, may spell one over
   its own struct.
@@ -128,6 +139,16 @@ to evolve under the `0.x` compatibility rules.
   the referent is not a conflict.
 
 ### Changed
+
+- A contiguous `List` slice (`xs[a:b]`) is a `Span` borrowing the list's
+  owned elements, as upstream's `List.__getitem__(ref self,
+  ContiguousSlice)` returns, rather than a copied `List`. A store through
+  it shows in the list, clearing the list while it lives is rejected, and
+  `xs = rebuild(xs[0:1])` rejects with the pin's aliasing text; owning
+  one through `List(xs[a:b])` waits on R1154. `Span` gains upstream's `__bool__`,
+  `__eq__`/`__ne__`, `__contains__`, and conditional `Writable`, so a
+  slice prints and compares as the copied list did. `Span`'s `repr`
+  is not upstream's yet (R761).
 
 - The differential pin is now Mojo `1.2.0.dev2026101705` (upstream
   `cfd79ca736`, 2026-10-17), whose window released `match`/`case` pattern

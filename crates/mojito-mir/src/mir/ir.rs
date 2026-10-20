@@ -2099,8 +2099,8 @@ pub enum MirInstr {
         call: Option<Box<MirSubscriptCall>>,
         intrinsic: Option<MirIntrinsicSubscript>,
     },
-    /// Slice `object[lower:upper:step]` → a new value. Each bound is
-    /// optional (absent = a direction-aware default).
+    /// Slice `object[lower:upper:step]` → what the selected `__getitem__`
+    /// returns. Each bound is optional (absent = a direction-aware default).
     Slice {
         dest: Reg,
         object: Reg,

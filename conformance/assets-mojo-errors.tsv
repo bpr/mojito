@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	624
+# swept-count	626
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -71,6 +71,7 @@ assets/ownership_error/list_element_view_stale_after_append.mojo	compile-reject	
 assets/ownership_error/list_element_view_stale_after_inplace_update.mojo	compile-reject	agree	error: use of invalidated interior reference 'ys["element"]["bytes"]'
 assets/ownership_error/list_element_view_stale_after_store.mojo	compile-reject	agree	error: use of invalidated interior reference 'ys["element"]["bytes"]'
 assets/ownership_error/list_extend_consumes.mojo	compile-reject	agree	error: use of uninitialized value 'b'
+assets/ownership_error/list_slice_used_after_clear.mojo	compile-reject	agree	error: use of invalidated interior reference 'xs["element"]'
 assets/ownership_error/method_on_moved.mojo	compile-reject	agree	error: use of uninitialized value 'p'
 assets/ownership_error/move_in_loop.mojo	compile-reject	agree	error: use of uninitialized value 'a'
 assets/ownership_error/mut_parameter_read_after_transfer.mojo	compile-reject	agree	error: use of uninitialized value 'x'
@@ -386,6 +387,7 @@ assets/type_error/linear_parameter_abandoned_on_raise.mojo	compile-reject	agree	
 assets/type_error/list_anytype_append_requires_movable.mojo	compile-reject	agree	error: invalid call to 'append': violated constraint
 assets/type_error/list_element_not_hashable.mojo	compile-reject	agree	error: no matching function in call to 'hash'
 assets/type_error/list_explicit_params_with_elements.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/list_slice_assigned_over_source.mojo	compile-reject	agree	error: aliasing values passed immutably to 'v' argument and constructed as a result in 'rebuild' call
 assets/type_error/loop_binding_consuming_non_implicit.mojo	compile-reject	agree	error: failed to infer parameter 'origin', specify the parameter or use '_' or '...' to unbind the parameter explicitly
 assets/type_error/loop_immutable_binding_mutation.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
 assets/type_error/mapping_key_ref_write.mojo	runs	subset	the pin runs it;Mojito rejects: must be mutable

@@ -124,9 +124,17 @@ impl<'a> Flatten<'a> {
     /// argument's does, so it dies when the dunder returns; anything else is
     /// an ordinary value. Inside an operator's setup frame
     /// ([`Self::open_call_setup`]) a simple place's read is deferred to the
-    /// frame's setup.
-    pub(super) fn lower_operator_operand(&mut self, expression: Node<'a>) -> Reg {
-        self.lower_setup_operand(expression, None, false, |this| {
+    /// frame's setup. A temporary view operand anchors its loans as a call
+    /// argument does, under the anchor permission of `operator`, the
+    /// operator's own checked call, so its source outlives the dunder.
+    pub(super) fn lower_operator_operand(
+        &mut self,
+        operator: Node<'a>,
+        expression: Node<'a>,
+    ) -> Reg {
+        let saved_anchor_permission = self.allow_argument_anchors;
+        self.allow_argument_anchors = operator.call_anchors_arguments();
+        let value = self.lower_setup_operand(expression, None, false, |this| {
             let borrowed = expression.adjustments().iter().any(|adjustment| {
                 matches!(
                     adjustment,
@@ -138,9 +146,17 @@ impl<'a> Flatten<'a> {
                 .flatten()
                 .unwrap_or_else(|| {
                     let value = this.expr(expression);
+                    this.anchor_temporary_argument(
+                        expression,
+                        value,
+                        expression.adjustments(),
+                        false,
+                    );
                     this.bind_read_temporary(expression, value)
                 })
-        })
+        });
+        self.allow_argument_anchors = saved_anchor_permission;
+        value
     }
 
     /// Bind `value`, the lowered `expression`, through
@@ -1905,16 +1921,17 @@ impl<'a> Flatten<'a> {
     /// reference/pointer handles stay unanchored: a `LoadPlace` read out of
     /// the hidden slot would dereference the handle.
     /// Scope: only a plain `Call` or method-call temporary (a view result
-    /// such as `s.strip()`) in a call's argument list anchors (see
-    /// `allow_argument_anchors`) — every other consumer carries the
-    /// temporary's loans through its own channel, and an extra anchor is a
-    /// conflicting duplicate borrow.
+    /// such as `s.strip()`) in a call's argument list or an operator's
+    /// operands anchors (see `allow_argument_anchors`) — every other consumer
+    /// carries the temporary's loans through its own channel, and an extra
+    /// anchor is a conflicting duplicate borrow.
     /// A subscript view temporary (`s[byte=a:b]`, a `Span` slice) borrows its
     /// source through the subscript's own borrow fact and no consumer channel
     /// retains it — a plain call, a method call, and a construction alike
     /// would drop the source before the call runs when the argument is the
-    /// source's last use — so it anchors in every argument list: one loan on
-    /// the source, never a duplicate of a channel that does not exist.
+    /// source's last use — so it anchors in every argument list and operand:
+    /// one loan on the source, never a duplicate of a channel that does not
+    /// exist.
     pub(super) fn anchor_temporary_argument(
         &mut self,
         expression: Node<'a>,

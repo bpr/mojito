@@ -100,11 +100,22 @@ pub struct VmBackend {
     /// parameter-domain value — addressed by a [`Value::Ref`] rooted at
     /// [`COMPTIME_MEMORY_FRAME`].
     comptime_memory: Vec<Value>,
+    /// The heap pointers references into a container's owned interior are
+    /// rooted at, interned by allocation and offset and addressed by a
+    /// [`Value::Ref`] rooted at [`POINTER_ROOT_FRAME`]: such a reference
+    /// designates the heap element, so it outlives the slot (a temporary
+    /// `Span`) that held the pointer reaching it.
+    pointer_roots: Vec<Value>,
+    pointer_root_slots: HashMap<(u64, i64), usize>,
 }
 
 /// The reserved frame id of compile-time memory. Frame ids count up from zero,
 /// so no live frame ever takes it.
 pub(super) const COMPTIME_MEMORY_FRAME: u64 = u64::MAX;
+
+/// The reserved frame id of the interned heap pointers
+/// ([`VmBackend::pointer_root`]), beside [`COMPTIME_MEMORY_FRAME`].
+pub(super) const POINTER_ROOT_FRAME: u64 = u64::MAX - 1;
 
 impl VmBackend {
     pub fn new() -> Self {
@@ -490,6 +501,19 @@ impl VmBackend {
     /// Final top-level bindings, for the CLI `run` dump.
     pub fn bindings(&self) -> Vec<(String, Value)> {
         self.bindings.clone()
+    }
+
+    /// The slot of [`POINTER_ROOT_FRAME`] holding the heap pointer
+    /// `allocation`+`offset`, interned on first use.
+    pub(super) fn pointer_root(&mut self, allocation: u64, offset: i64) -> usize {
+        *self
+            .pointer_root_slots
+            .entry((allocation, offset))
+            .or_insert_with(|| {
+                self.pointer_roots
+                    .push(Value::Pointer { allocation, offset });
+                self.pointer_roots.len() - 1
+            })
     }
 
     /// Move `value` into compile-time memory, which is never destroyed, and

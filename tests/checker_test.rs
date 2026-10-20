@@ -3915,7 +3915,13 @@ fn expression_surface_type_checks() {
     // Ternary, chained comparison, and slices are implemented too.
     ok_std("var m: Int = 1 if True else 2\nprint(m)\n");
     ok_std("var t: Bool = 0 < 1 < 2\nprint(t)\n");
-    ok_std("var xs: List[Int] = [1, 2, 3]\nvar ys: List[Int] = xs[0:2]\nprint(ys)\n");
+    ok_std("var xs: List[Int] = [1, 2, 3]\nvar ys = xs[0:2]\nprint(ys)\n");
+    // A contiguous List slice borrows a Span; it is not an owned List.
+    let error = err_std("var xs: List[Int] = [1, 2, 3]\nvar ys: List[Int] = xs[0:2]\n");
+    assert!(
+        format!("{error:?}").contains("Span"),
+        "expected a Span mismatch, got {error:?}"
+    );
     // A lone comparison is unaffected (still type-checks).
     ok_std("var b: Bool = 1 < 2\n");
 }

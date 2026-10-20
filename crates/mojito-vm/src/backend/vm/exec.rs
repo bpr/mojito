@@ -49,25 +49,36 @@ impl VmBackend {
                     // `Span` member's element reference inlined at the
                     // pointee place `q[i]`) is the heap address the pointee's
                     // own pointer gives it; one to any other part of a heap
-                    // element has no handle here.
+                    // element (`q[i].field`) is rooted at the pointer to the
+                    // element ([`Self::pointer_root`]).
                     if let Some((element, suffix)) =
                         super::references::pointer_element(&root, place, regs)?
+                        && let Value::Pointer {
+                            allocation: element_allocation,
+                            offset: element_offset,
+                        } = element
                     {
                         let referent = self.read_reference(&element, frame_id, vars)?;
-                        let Some(ReferencePointerBoundary {
+                        let boundary = self.reference_pointer_boundary(&referent, &suffix)?;
+                        regs[dest.0 as usize] = if let Some(ReferencePointerBoundary {
                             allocation,
                             offset,
                             index,
                             suffix: [],
-                        }) = self.reference_pointer_boundary(&referent, &suffix)?
-                        else {
-                            return Err(RuntimeError::Unsupported(
-                                "vm: a reference within a heap element".to_string(),
-                            ));
-                        };
-                        regs[dest.0 as usize] = Value::Pointer {
-                            allocation,
-                            offset: offset + index as i64,
+                        }) = boundary
+                        {
+                            Value::Pointer {
+                                allocation,
+                                offset: offset + index as i64,
+                            }
+                        } else {
+                            Value::Ref {
+                                frame: POINTER_ROOT_FRAME,
+                                slot: self.pointer_root(element_allocation, element_offset),
+                                projection: std::iter::once(RefProjection::Index(0))
+                                    .chain(suffix)
+                                    .collect(),
+                            }
                         };
                         return Ok(Flow::Normal);
                     }
@@ -100,14 +111,12 @@ impl VmBackend {
                     slot,
                     projection,
                 };
-                // A static-origin reference to an element reached through a
-                // pointer the place holds (`span._data[i]` of a `Span[T,
-                // ImmStaticOrigin]`) is the element's heap address, as such
-                // a call result is: it outlives the storage holding the
-                // pointer.
+                // A reference to an element reached through a pointer the
+                // place holds (`span._data[i]`) designates the heap element,
+                // as such a call result does: it outlives the storage
+                // holding the pointer.
                 let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
-                regs[dest.0 as usize] =
-                    self.static_reference_result(handle, target, frame_id, vars);
+                regs[dest.0 as usize] = self.heap_reference_result(handle, target, frame_id, vars);
             }
             MirInstr::ReadRef { dest, reference } => {
                 let handle = regs[reference.0 as usize].clone();
@@ -974,7 +983,7 @@ impl VmBackend {
                         },
                     )?;
                     let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
-                    let result = self.static_reference_result(result, target, frame_id, vars);
+                    let result = self.heap_reference_result(result, target, frame_id, vars);
                     regs[dest.0 as usize] =
                         self.materialize_checked_result(prog, result, target)?;
                 } else {
@@ -1652,7 +1661,7 @@ impl VmBackend {
                     && let pointer @ Value::Pointer { .. } = &vars[place.root as usize]
                 {
                     // A reference binding of a static-origin call result holds
-                    // the element's heap pointer (`static_reference_result`).
+                    // the element's heap pointer (`heap_reference_result`).
                     let referent = self.read_reference(pointer, frame_id, vars)?;
                     let projection = super::references::place_projection_segments(place, regs)?;
                     self.read_reference_projection(frame_id, vars, &referent, &projection)?

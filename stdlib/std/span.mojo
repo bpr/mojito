@@ -9,9 +9,6 @@
 from std.collections.list import List
 
 from std.iter import Iterable, Iterator, StopIteration
-
-
-
 from std.string import String, StringSpan
 
 # The audited head's strict-slice abort messages with the index and valid
@@ -50,7 +47,12 @@ def _check_span_slice_bounds(start: Int, end: Int, length: Int):
 
 
 struct Span[mut: Bool, //, T: AnyType, origin: Origin[mut=mut]](
-    ImplicitlyCopyable, Iterable where conforms_to(T, Copyable), Movable
+    Boolable,
+    ImplicitlyCopyable,
+    Iterable where conforms_to(T, Copyable),
+    Movable,
+    Sized,
+    Writable where conforms_to(T, Writable),
 ):
     comptime Element = Self.T
     comptime IteratorType[
@@ -85,6 +87,53 @@ struct Span[mut: Bool, //, T: AnyType, origin: Origin[mut=mut]](
     @always_inline("builtin")
     def __len__(self) -> Int:
         return self._size
+
+    def __bool__(self) -> Bool:
+        return self._size > 0
+
+    # Element-wise equality over spans of any origin, reading neither span's
+    # nested origins.
+    @__unsafe_nested_origins_read_only
+    def __eq__(self, rhs: Span[Self.T, _]) -> Bool where conforms_to(
+        Self.T, Equatable
+    ):
+        if len(self) != len(rhs):
+            return False
+        var i = 0
+        while i < self._size:
+            if self._data[i] != rhs._data[i]:
+                return False
+            i += 1
+        return True
+
+    @inline(.always)
+    def __ne__(self, rhs: Span[Self.T, _]) -> Bool where conforms_to(
+        Self.T, Equatable
+    ):
+        return not self == rhs
+
+    def __contains__(self, value: Self.T) -> Bool where conforms_to(
+        Self.T, Equatable
+    ):
+        var i = 0
+        while i < self._size:
+            if self._data[i] == value:
+                return True
+            i += 1
+        return False
+
+    @inline(.never)
+    def write_to(self, mut writer: Some[Writer]) where conforms_to(
+        Self.T, Writable
+    ):
+        writer.write("[")
+        var i = 0
+        while i < self._size:
+            if i > 0:
+                writer.write(", ")
+            writer.write(self._data[i])
+            i += 1
+        writer.write("]")
 
     # The span's data pointer, carrying the span's own origin (a libc
     # buffer argument).

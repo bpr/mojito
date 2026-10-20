@@ -1401,8 +1401,8 @@ impl Checker {
             ExprKind::Compare { first, rest } => {
                 self.infer_compare_chain(expr.source_span(), first, rest)
             }
-            // Slice `object[lower:upper:step]` on a `List`/`String`: each present
-            // bound must be `Int`; the result is the same sequence type.
+            // Slice `object[lower:upper:step]`: each present bound must be
+            // `Int`; the result is what the selected `__getitem__` returns.
             ExprKind::Slice {
                 object,
                 lower,

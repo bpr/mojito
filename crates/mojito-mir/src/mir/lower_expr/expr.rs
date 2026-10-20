@@ -265,8 +265,8 @@ impl<'a> Flatten<'a> {
         // Operands left-to-right (evaluation order is explicit), each place
         // operand read at the operator call's setup.
         self.open_call_setup();
-        let ra = self.lower_operator_operand(a);
-        let rb = self.lower_operator_operand(b);
+        let ra = self.lower_operator_operand(node, a);
+        let rb = self.lower_operator_operand(node, b);
         self.close_call_setup(None);
         let resolved = node.resolved_callable();
         // A reflected operator (checker-marked) runs on the RIGHT
@@ -564,7 +564,8 @@ impl<'a> Flatten<'a> {
                 self.variant_project_index(node, node.object()?)
             }
             CheckedOp::Index { .. } => self.index_expr(node, node.object()?, node.index()?),
-            // Slice `object[lower:upper:step]` → a new List/String.
+            // Slice `object[lower:upper:step]` → the selected `__getitem__`'s
+            // result.
             CheckedOp::Slice {
                 lower, upper, step, ..
             } => self.slice_expr(
@@ -702,7 +703,7 @@ impl<'a> Flatten<'a> {
 
     /// Prefix operator `op` applied to `value`, the operand of node `node`.
     fn prefix_op(&mut self, node: Node<'a>, op: PrefixOp, value: Node<'a>) -> Reg {
-        let ra = self.lower_operator_operand(value);
+        let ra = self.lower_operator_operand(node, value);
         // `not x` on a struct or a numeric scalar is
         // `not x.__bool__()`: convert through the explicit `Bool(x)`
         // call so the negation is scalar on both backends.

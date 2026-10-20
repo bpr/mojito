@@ -13,11 +13,15 @@ const MAX_REF_HOPS: usize = 64;
 
 impl VmBackend {
     /// The variable `slot` of the live frame `frame`, or of compile-time
-    /// memory when `frame` is [`COMPTIME_MEMORY_FRAME`]: the storage a
+    /// memory when `frame` is [`COMPTIME_MEMORY_FRAME`], or of the interned
+    /// heap pointers when it is [`POINTER_ROOT_FRAME`]: the storage a
     /// reference handle rooted outside the current frame designates.
     pub(super) fn frame_variable(&self, frame: u64, slot: usize) -> Option<&Value> {
         if frame == COMPTIME_MEMORY_FRAME {
             return self.comptime_memory.get(slot);
+        }
+        if frame == POINTER_ROOT_FRAME {
+            return self.pointer_roots.get(slot);
         }
         self.frames
             .iter()
@@ -29,6 +33,9 @@ impl VmBackend {
     pub(super) fn frame_variable_mut(&mut self, frame: u64, slot: usize) -> Option<&mut Value> {
         if frame == COMPTIME_MEMORY_FRAME {
             return self.comptime_memory.get_mut(slot);
+        }
+        if frame == POINTER_ROOT_FRAME {
+            return self.pointer_roots.get_mut(slot);
         }
         self.frames
             .iter_mut()
@@ -87,26 +94,26 @@ impl VmBackend {
     /// variables are still live. A handle rooted at borrowed storage outside
     /// the frame is unchanged; one rooted here is re-rooted at the storage it
     /// projects through, exactly like a directly returned handle.
-    /// A call result, or a reference made in place, bound to a static-origin
-    /// reference register (`ref[ImmStaticOrigin]`). When it was reached
-    /// through a heap pointer held in a slot — a temporary `Span` over static
-    /// elements, which the body drops before it returns, or before the
-    /// caller it was inlined into reads the reference — it designates the
-    /// heap element, never that slot, so it is forwarded as the element's
-    /// pointer.
-    pub(super) fn static_reference_result(
-        &self,
+    /// A call result, or a reference made in place, bound to a reference
+    /// register. When it was reached through a heap pointer held in a slot
+    /// — a temporary `Span` over a list's elements or over static ones,
+    /// which the body drops before it returns, or before the caller it was
+    /// inlined into reads the reference — it designates the heap element,
+    /// never that slot. A static-origin element is forwarded as the
+    /// element's pointer; any other is rooted at the interned pointer
+    /// reaching it ([`Self::pointer_root`]), so it still projects into the
+    /// element.
+    pub(super) fn heap_reference_result(
+        &mut self,
         value: Value,
         target: Option<&Ty>,
         current: FrameId,
         current_variables: &[Value],
     ) -> Value {
-        if !matches!(
-            target.map(Ty::kind),
-            Some(TyKind::Ref(reference)) if reference.origin == mojito_types::origin::Origin::Static
-        ) {
+        let Some(TyKind::Ref(reference)) = target.map(Ty::kind) else {
             return value;
-        }
+        };
+        let static_origin = reference.origin == mojito_types::origin::Origin::Static;
         let Value::Ref {
             frame,
             slot,
@@ -120,15 +127,31 @@ impl VmBackend {
         } else {
             self.frame_variable(*frame, *slot)
         };
-        match root.map(|root| self.reference_pointer_boundary(root, projection)) {
-            Some(Ok(Some(ReferencePointerBoundary {
-                allocation,
-                offset,
-                index,
-                suffix: [],
-            }))) => Value::Pointer {
-                allocation,
-                offset: offset + index as i64,
+        let boundary = root
+            .map(|root| self.reference_pointer_boundary(root, projection))
+            .and_then(Result::ok)
+            .flatten()
+            .map(|boundary| {
+                (
+                    boundary.allocation,
+                    boundary.offset,
+                    boundary.index,
+                    boundary.suffix.to_vec(),
+                )
+            });
+        match boundary {
+            Some((allocation, offset, index, suffix)) if static_origin && suffix.is_empty() => {
+                Value::Pointer {
+                    allocation,
+                    offset: offset + index as i64,
+                }
+            }
+            Some((allocation, offset, index, suffix)) if !static_origin => Value::Ref {
+                frame: POINTER_ROOT_FRAME,
+                slot: self.pointer_root(allocation, offset),
+                projection: std::iter::once(RefProjection::Index(index))
+                    .chain(suffix)
+                    .collect(),
             },
             _ => value,
         }

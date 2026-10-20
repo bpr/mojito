@@ -1,5 +1,5 @@
-# A contiguous `List` slice is an owned `List` in Mojito and a borrowing
-# `Span` upstream, so only Mojito returns one from a `-> List[Int]` function.
+# A contiguous `List` slice is a `Span` borrowing the list's owned elements,
+# so both compilers reject returning it as an owned `List[Int]`.
 def mid(xs: List[Int]) -> List[Int]:
     return xs[1:3]
 

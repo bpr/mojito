@@ -754,9 +754,9 @@ impl<'a> Flatten<'a> {
         let (op, operand) = rest[index];
         self.open_call_setup();
         let left = match prev {
-            None => self.lower_operator_operand(first),
+            None => self.lower_operator_operand(chain, first),
             Some(ChainMiddle::Read(value)) => value,
-            Some(ChainMiddle::Place(place)) => self.lower_operator_operand(place),
+            Some(ChainMiddle::Place(place)) => self.lower_operator_operand(chain, place),
             Some(ChainMiddle::Slot(variable, ty)) => {
                 let read = self.fresh_typed(sp.clone(), Some(variable), ty.clone());
                 self.emit(MirInstr::LoadPlace {
@@ -766,7 +766,7 @@ impl<'a> Flatten<'a> {
                 read
             }
         };
-        let cur = self.lower_operator_operand(operand);
+        let cur = self.lower_operator_operand(chain, operand);
         self.close_call_setup(None);
         let link = links.get(index);
         let resolved = link.and_then(|link| link.target.clone());

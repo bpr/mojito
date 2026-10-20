@@ -943,11 +943,6 @@ impl Checker {
                         .to_string(),
                 ));
             }
-            TyKind::Struct(name, _)
-                if !self.structs.contains_key(name) && list_element(&object_type).is_some() =>
-            {
-                object_type.clone()
-            }
             // Positional String slicing was removed in current Mojo (like
             // bare positional `s[i]`): the byte or codepoint unit is spelled
             // explicitly through a keyword slice.
