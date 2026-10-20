@@ -345,13 +345,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     start,
                 ))
             }
-            Ok([other]) => Ok(self.node(
-                ExprKind::TypeApply {
-                    name: call_name(object)?,
-                    args: vec![other],
-                },
-                start,
-            )),
+            Ok([other]) => self.parameter_application(object, vec![other], start),
             // `origin_of(...)` has no runtime value, so a bracket list that
             // contains one cannot be a multi-dimensional subscript. This is
             // the multi-argument counterpart of the single-origin case above:
@@ -398,13 +392,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     start,
                 ))
             }
-            Err(param_args) => Ok(self.node(
-                ExprKind::TypeApply {
-                    name: call_name(object)?,
-                    args: param_args,
-                },
-                start,
-            )),
+            Err(param_args) => self.parameter_application(object, param_args, start),
         }
     }
 
@@ -609,5 +597,56 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 "Expected newline, ';', or EOF at the end of statement".into(),
             )),
         }
+    }
+
+    /// `object[args]` as a compile-time parameter application: a named
+    /// callee's `TypeApply`, or the subscript of a type's member
+    /// (`S[Int].Of[Bool]`, `P.plus[1, 2]`), which the checker reads as the
+    /// member's application, a type argument as the type value it spells.
+    fn parameter_application(
+        &self,
+        object: Expr,
+        args: Vec<mojito_ast::ast::ParamArg>,
+        start: usize,
+    ) -> Result<Expr, ParseError> {
+        let member_of_type = matches!(&object.kind, ExprKind::Member { object, .. }
+            if object.type_spelling().is_some());
+        if !member_of_type {
+            let name = call_name(object)?;
+            return Ok(self.node(ExprKind::TypeApply { name, args }, start));
+        }
+        let span = (start, self.last_span.1);
+        let index = |argument: mojito_ast::ast::ParamArg| match argument {
+            mojito_ast::ast::ParamArg::Value(value) => Ok(value),
+            mojito_ast::ast::ParamArg::Type(ty) => Ok(Expr::new(ExprKind::TypeValue(ty), span)),
+            mojito_ast::ast::ParamArg::Named { .. } => Err(ParseError::UnexpectedToken(
+                Token::RBracket,
+                "a keyword argument takes one compile-time value".to_string(),
+            )),
+        };
+        let indices = args
+            .into_iter()
+            .map(|argument| match argument {
+                mojito_ast::ast::ParamArg::Named { name, value } => {
+                    index(*value).map(|value| SubscriptArg::Keyword { name, value })
+                }
+                argument => index(argument).map(SubscriptArg::Index),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let kind = match <[_; 1]>::try_from(indices) {
+            Ok([SubscriptArg::Index(index)]) => ExprKind::Index {
+                object: Box::new(object),
+                index: Box::new(index),
+            },
+            Ok(indices) => ExprKind::MultiIndex {
+                object: Box::new(object),
+                args: indices.into(),
+            },
+            Err(indices) => ExprKind::MultiIndex {
+                object: Box::new(object),
+                args: indices,
+            },
+        };
+        Ok(self.node(kind, start))
     }
 }

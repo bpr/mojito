@@ -668,16 +668,26 @@ impl Elab<'_> {
                     "unknown compile-time type Self.{name}"
                 ))),
             },
-            Type::Assoc { base, name, .. } => {
-                if let Type::Named(binding, args) = &**base
-                    && args.is_empty()
+            Type::Assoc { base, name, args } => {
+                if let Type::Named(binding, base_args) = &**base
+                    && base_args.is_empty()
                     && name == "T"
                     && let Some(CtValue::Reflected(ty)) = scope.get(binding)
                 {
                     return Ok(ty.clone());
                 }
                 let base = self.type_from_anno(base, scope)?;
-                match self.associated_value(&base, name)? {
+                let member_args = args
+                    .iter()
+                    .map(|arg| match arg {
+                        ParamArg::Type(ty) => self.type_from_anno(ty, scope).map(CtValue::Type),
+                        ParamArg::Value(value) => self.eval(value, scope),
+                        ParamArg::Named { .. } => Err(ComptimeError::NotComptime(
+                            "a keyword argument of a member application".to_string(),
+                        )),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                match self.associated_value_at(&base, name, &member_args)? {
                     CtValue::Type(ty) => Ok(ty),
                     _ => Err(ComptimeError::NotComptime(format!(
                         "{base}.{name} is not type-valued"

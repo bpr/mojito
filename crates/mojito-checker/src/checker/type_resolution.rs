@@ -476,9 +476,13 @@ impl Checker {
                     _ => return Err(unsupported_mlir_type()),
                 }
             }
-            SourceType::Assoc { base, name, .. } => {
+            SourceType::Assoc { base, name, args } => {
                 let base_ty = self.ty_from_anno(base)?;
-                self.associated_type_from_base(&base_ty, name, &[])?
+                if args.is_empty() {
+                    self.associated_type_from_base(&base_ty, name, &[])?
+                } else {
+                    self.member_application(&base_ty, name, args)?
+                }
             }
             // A compile-time value is a type only through a subscript, as at
             // the pin ("expected a type, not a value").
@@ -498,7 +502,7 @@ impl Checker {
                 self.parameterized_assoc_application(
                     &ty,
                     "__getitem_param__",
-                    std::slice::from_ref(index),
+                    &[mojito_ast::ast::ParamArg::Value(index.as_ref().clone())],
                 )?
                 .ok_or_else(|| TypeError::NotIndexable(ty.to_string()))?
             }
@@ -545,7 +549,7 @@ impl Checker {
                         self.parameterized_assoc_application(
                             &base,
                             name,
-                            std::slice::from_ref(index),
+                            &[mojito_ast::ast::ParamArg::Value(index.as_ref().clone())],
                         )?
                     }
                     // `C.IteratorType[..]` — a bounded type parameter or other base.
@@ -559,7 +563,7 @@ impl Checker {
                         Ok(base_ty) => self.parameterized_assoc_application(
                             &base_ty,
                             name,
-                            std::slice::from_ref(index),
+                            &[mojito_ast::ast::ParamArg::Value(index.as_ref().clone())],
                         )?,
                         Err(_) => None,
                     },
@@ -617,7 +621,7 @@ impl Checker {
         &self,
         base_ty: &Ty,
         name: &str,
-        args: &[Expr],
+        args: &[mojito_ast::ast::ParamArg],
     ) -> Result<Option<Ty>, TypeError> {
         let Some(params) = self.parameterized_assoc_params(base_ty, name) else {
             return Ok(None);
@@ -664,6 +668,47 @@ impl Checker {
         ))
     }
 
+    /// `base.name[args]` over a whole bracket list (`S[Int].Of[Bool]`,
+    /// `M.Pair[1, 2]`). A struct's parameterized type member binds the list
+    /// through the contract an alias application uses (keywords, defaults,
+    /// bounds); an abstract base lowers each argument at its declared
+    /// parameter.
+    fn member_application(
+        &self,
+        base_ty: &Ty,
+        name: &str,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<Ty, TypeError> {
+        if let TyKind::Struct(struct_name, _) = base_ty.kind()
+            && let Some(member) = self
+                .structs
+                .get(struct_name)
+                .and_then(|info| info.parameterized_associated.get(name))
+            && let MemberTemplate::Type { decls, .. } = &member.template
+        {
+            let explicit: Option<Vec<usize>> = member
+                .params
+                .iter()
+                .filter(|param| !param.infer_only)
+                .map(|param| decls.iter().position(|decl| decl.name() == param.name))
+                .collect();
+            if let Some(explicit) = explicit {
+                let label = format!("{base_ty}.{name}");
+                let bound = self.resolve_use_params(&label, decls, args, &[], &[])?;
+                let arguments: Vec<TyArg> = explicit
+                    .into_iter()
+                    .map(|index| bound.arguments[index].clone())
+                    .collect();
+                return self.associated_type_from_base(base_ty, name, &arguments);
+            }
+        }
+        self.parameterized_assoc_application(base_ty, name, args)?
+            .ok_or_else(|| TypeError::NoSuchAssociatedType {
+                object_type: base_ty.to_string(),
+                member: name.to_string(),
+            })
+    }
+
     /// Lower one application argument of a parameterized associated type into a
     /// checked `TyArg`, dispatched by the declared parameter's kind: an origin
     /// parameter takes an `origin_of(...)`/builtin origin, a value parameter a
@@ -671,40 +716,59 @@ impl Checker {
     fn lower_assoc_application_arg(
         &self,
         param: &mojito_ast::ast::TypeParam,
-        arg: &Expr,
+        argument: &mojito_ast::ast::ParamArg,
     ) -> Result<TyArg, TypeError> {
         use mojito_ast::ast::ParamArg;
         if is_origin_parameter(param) {
-            let argument = ParamArg::Value(arg.clone());
-            return match self.explicit_origin_argument(&argument) {
+            return match self.explicit_origin_argument(argument) {
                 Ok(origin) => Ok(TyArg::Origin(origin)),
                 // A signature may name a parameter's place only the body can
                 // resolve (`C.IteratorType[origin_of(items)]`), as a struct
                 // application's origin tail may: it is left to the call.
                 Err(_)
                     if self.signature_origin_leniency.get()
-                        && syntactic_origin_argument(&argument) =>
+                        && syntactic_origin_argument(argument) =>
                 {
                     Ok(TyArg::Origin(mojito_types::origin::Origin::Unbound))
                 }
                 Err(error) => Err(error),
             };
         }
+        let arg = match argument {
+            ParamArg::Value(arg) => arg,
+            ParamArg::Type(_) if is_value_parameter(param) => {
+                return Err(TypeError::TypeMismatch {
+                    expected: "a value".to_string(),
+                    found: "a type".to_string(),
+                    context: format!("associated value parameter '{}'", param.name),
+                });
+            }
+            ParamArg::Type(ty) => return self.ty_from_anno(ty).map(TyArg::Ty),
+            ParamArg::Named { name, .. } => {
+                return Err(TypeError::Unsupported(format!(
+                    "the keyword argument '{name}=' of an associated member application"
+                )));
+            }
+        };
         if is_value_parameter(param) {
             return Ok(TyArg::Val(self.eval_associated_ct(arg, &HashMap::new())?));
         }
         // A `!kgen.type` binder takes a trait as a type
         // (`_MLIR.KGENParamListType[Tr]`).
         if matches!(param.bounds.as_slice(), [only] if only == TYPE_OF_ALL_TYPES)
-            && let Some(ty) = self.trait_type_arg(&ParamArg::Value(arg.clone()))
+            && let Some(ty) = self.trait_type_arg(argument)
         {
             return ty.map(TyArg::Ty);
         }
-        // A type parameter: a bare identifier names a type; otherwise the
-        // argument must evaluate to a compile-time type value.
+        // A type parameter: a bare identifier or a type-shaped member chain
+        // (`M.KGENTypeType`) names a type; otherwise the argument must
+        // evaluate to a compile-time type value.
         let ty = match &arg.kind {
             ExprKind::Identifier(id) => {
                 self.ty_from_anno(&SourceType::Named(id.clone(), Vec::new()))?
+            }
+            ExprKind::Member { .. } if let Some(spelled) = arg.type_spelling() => {
+                self.ty_from_anno(&spelled)?
             }
             _ => match self.eval_associated_ct(arg, &HashMap::new())? {
                 CtValue::Type(ty) => ty,
@@ -2281,21 +2345,14 @@ impl Checker {
                         )?)?,
                         Some(expression.source_span()),
                     ),
-                    // A struct's type member (`g[M.E]()`, `k[_MLIR.KGENTypeType]()`).
-                    ParamArg::Value(
-                        expression @ Expr {
-                            kind: ExprKind::Member { object, field },
-                            ..
-                        },
-                    ) if matches!(&object.kind, ExprKind::Identifier(base) if base != "Self") => {
-                        let ExprKind::Identifier(base) = &object.kind else {
-                            unreachable!("guarded above");
-                        };
-                        let member = SourceType::Assoc {
-                            base: Box::new(SourceType::Named(base.clone(), Vec::new())),
-                            name: field.clone(),
-                            args: Vec::new(),
-                        };
+                    // A struct's type member (`g[M.E]()`,
+                    // `k[_MLIR.KGENTypeType]()`) or its application
+                    // (`size[S[Int].Of[Bool]]()`).
+                    ParamArg::Value(expression)
+                        if let Some(member) =
+                            super::constraints::member_source_type(expression)
+                                .filter(|member| !matches!(member, SourceType::SelfParam(_))) =>
+                    {
                         (self.ty_from_anno(&member)?, Some(expression.source_span()))
                     }
                     ParamArg::Value(_) => {
@@ -3123,23 +3180,50 @@ impl Checker {
     }
 
     /// The type of the compile-time value a type expression subscripts: a
-    /// struct construction (`TypeList[Ts.values]()`) whose struct has an
-    /// `__init__` taking no argument.
+    /// struct construction (`TypeList[Ts.values]()`), or one through a
+    /// type's parameterized member (`M.List[Bool, Int]()`), whose struct has
+    /// an `__init__` taking no argument.
     fn compile_time_value_type(&self, value: &Expr) -> Result<Ty, TypeError> {
-        let ExprKind::Call {
-            name,
-            param_args,
-            args,
-            kwargs,
-        } = &value.kind
-        else {
-            return Err(TypeError::Unsupported(
-                "a subscript in a type takes a struct construction".to_string(),
-            ));
-        };
-        let info = self.structs.get(name).ok_or_else(|| {
+        let not_construction = || {
             TypeError::Unsupported("a subscript in a type takes a struct construction".to_string())
-        })?;
+        };
+        let (ty, name, args, kwargs) = match &value.kind {
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if self.structs.contains_key(name) => (
+                self.applied_type(name, param_args)?.0,
+                name.clone(),
+                args,
+                kwargs,
+            ),
+            ExprKind::Invoke {
+                callee,
+                param_args,
+                args,
+                kwargs,
+            } => {
+                let ExprKind::Member { object, field } = &callee.kind else {
+                    return Err(not_construction());
+                };
+                let base = object.type_spelling().ok_or_else(not_construction)?;
+                let member = SourceType::Assoc {
+                    base: Box::new(base),
+                    name: field.clone(),
+                    args: param_args.clone(),
+                };
+                let ty = self.ty_from_anno(&member)?;
+                let TyKind::Struct(name, _) = ty.kind() else {
+                    return Err(not_construction());
+                };
+                let name = name.clone();
+                (ty, name, args, kwargs)
+            }
+            _ => return Err(not_construction()),
+        };
+        let info = self.structs.get(&name).ok_or_else(not_construction)?;
         if !args.is_empty() || !kwargs.is_empty() {
             return Err(TypeError::Unsupported(
                 "a type expression subscripts a construction that takes no arguments".to_string(),
@@ -3152,11 +3236,11 @@ impl Checker {
         }) || (info.fieldwise_init && info.declared_field_names.is_empty());
         if !nullary {
             return Err(TypeError::BadCall {
-                func: name.clone(),
+                func: name,
                 reason: "no '__init__' overload takes no arguments".to_string(),
             });
         }
-        Ok(self.applied_type(name, param_args)?.0)
+        Ok(ty)
     }
 
     /// Whether a nearer type parameter shadows the pack `*Ts`: a nested

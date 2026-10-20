@@ -993,6 +993,39 @@ fn rejects_wrong_type_argument_count() {
 }
 
 #[test]
+fn binds_a_member_application_through_its_parameter_list() {
+    let members = "struct S[T: AnyType]:\n    comptime Of[U: AnyType] = Int\n\n\
+                   struct P:\n    comptime Buf[n: Int] = SIMD[DType.int64, n]\n    \
+                   comptime Two[a: Int, b: Int] = a + b\n\n";
+    ok(&format!(
+        "{members}def main():\n    var a: S[Int].Of[Bool] = 1\n    \
+         var b: P.Buf[2] = SIMD[DType.int64, 2](1)\n    var c: Int = P.Two[1, b=2]\n"
+    ));
+    let e = err(&format!(
+        "{members}def main():\n    var a: S[Int].Of[Bool, Int] = 1\n"
+    ));
+    assert!(
+        matches!(
+            e,
+            TypeError::WrongTypeArgCount {
+                expected: 1,
+                got: 2,
+                ..
+            }
+        ),
+        "got {e:?}"
+    );
+    let e = err(&format!(
+        "{members}def main():\n    var b: P.Buf[Bool] = 1\n"
+    ));
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
+    let e = err(&format!(
+        "{members}def main():\n    var c: Int = P.Two[1, c=2]\n"
+    ));
+    assert!(matches!(e, TypeError::Unsupported(_)), "got {e:?}");
+}
+
+#[test]
 fn rejects_type_arguments_on_non_generic_struct() {
     let e = err("@fieldwise_init\nstruct Point:\n    var x: Int\n\nvar p: Point[Int] = Point(1)\n");
     assert!(

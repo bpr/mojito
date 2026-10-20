@@ -383,6 +383,7 @@ assets/ok/math_module_rounding.mojo	main	exe-differential	sanitized
 assets/ok/maybe_uninit_predicates.mojo	main	exe-differential	sanitized
 assets/ok/maybe_uninit_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/maybe_uninit_write.mojo	main	exe-differential	sanitized
+assets/ok/member_alias_application.mojo	main	exe-differential	sanitized
 assets/ok/member_call_unread_struct_parameter_instances.mojo	main	exe-differential	sanitized
 assets/ok/method_mut_param.mojo	main	exe-differential	sanitized
 assets/ok/method_named_result.mojo	main	exe-differential	sanitized

@@ -8,7 +8,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// like `C.Element`, or a named type optionally applied to type arguments
     /// (`Pair[Int]`).
     pub(super) fn parse_type(&mut self) -> Result<Type, ParseError> {
-        let ty = match self.next_token()? {
+        let token = self.next_token()?;
+        let start = self.last_span.0;
+        let ty = match token {
             // A variadic type-pack reference in `*args: *ArgTypes`. Inside a
             // struct, current Mojo spells the struct's own pack `*Self.Ts`;
             // the qualified spread keeps its own node so the elaborator can
@@ -64,7 +66,6 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 // Any other identifier names a struct type or an in-scope type
                 // parameter (the checker decides), optionally with parameter args.
                 _ => {
-                    let start = self.last_span.0;
                     let args = if matches!(self.peek_token()?, Some(Token::LBracket)) {
                         self.parse_param_args()?
                     } else {
@@ -94,14 +95,18 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             )),
         }?;
 
-        self.parse_type_assoc_tail(ty)
+        self.parse_type_assoc_tail(ty, start)
     }
 
     /// Parse zero or more structured projections after a type atom. Associated
     /// lookup and dependent indexing deliberately remain distinct AST nodes so
     /// later phases never have to recover either operation from a flattened
     /// source spelling.
-    pub(super) fn parse_type_assoc_tail(&mut self, mut ty: Type) -> Result<Type, ParseError> {
+    pub(super) fn parse_type_assoc_tail(
+        &mut self,
+        mut ty: Type,
+        start: usize,
+    ) -> Result<Type, ParseError> {
         loop {
             if matches!(self.peek_token()?, Some(Token::Dot)) {
                 self.next_token()?; // consume '.'
@@ -114,20 +119,26 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 continue;
             }
             if matches!(self.peek_token()?, Some(Token::LBracket)) {
-                let start = self.last_span.0;
+                let bracket = self.last_span.0;
                 let arguments = self.parse_param_args()?;
                 // A qualified struct binder (`Self.o`) in the index position
                 // parses as a type; it is the same compile-time value the bare
                 // `o` spelling produces.
                 let rematerialized = match arguments.as_slice() {
                     [mojito_ast::ast::ParamArg::Type(inner @ Type::SelfParam(_))] => {
-                        self.rematerialize_self_param_chain(inner, start)
+                        self.rematerialize_self_param_chain(inner, bracket)
                     }
                     _ => None,
                 };
-                let index = match (&rematerialized, arguments.as_slice()) {
-                    (Some(expression), _) => expression,
-                    (None, [mojito_ast::ast::ParamArg::Value(index)]) => index,
+                let index = match (&rematerialized, arguments.as_slice(), &mut ty) {
+                    (Some(expression), ..) => expression,
+                    (None, [mojito_ast::ast::ParamArg::Value(index)], _) => index,
+                    // A parameterized member applied to its bracket list
+                    // (`S[Int].Of[Bool]`, `M.Pair[1, 2]`).
+                    (None, _, Type::Assoc { args, .. }) if args.is_empty() => {
+                        *args = arguments;
+                        continue;
+                    }
                     _ => {
                         return Err(ParseError::UnexpectedToken(
                             Token::RBracket,
@@ -141,6 +152,35 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     base: Box::new(ty),
                     index: Box::new(index.clone()),
                 };
+                continue;
+            }
+            // A construction through an applied member (`TypeList.of[Trait=
+            // AnyType, Bool, Int]()`), the value a following subscript reads.
+            if let Type::Assoc { base, name, args } = &ty
+                && !args.is_empty()
+                && matches!(self.peek_token()?, Some(Token::LParen))
+                && let Some(receiver) = type_spelling_expression(base, (start, self.last_span.1))
+            {
+                let callee = Expr::new(
+                    ExprKind::Member {
+                        object: Box::new(receiver),
+                        field: name.clone(),
+                    },
+                    (start, self.last_span.1),
+                );
+                let param_args = args.clone();
+                self.next_token()?;
+                let (call_args, kwargs) = self.parse_call_args()?;
+                self.expect(&Token::RParen, "Expected ')' after arguments")?;
+                ty = Type::Value(Box::new(Expr::new(
+                    ExprKind::Invoke {
+                        callee: Box::new(callee),
+                        param_args,
+                        args: call_args,
+                        kwargs,
+                    },
+                    (start, self.last_span.1),
+                )));
                 continue;
             }
             break;
@@ -713,8 +753,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             } else if callable_bound.is_none() && matches!(self.peek_token()?, Some(Token::Dot)) {
                 // `x: M.A` or `raw: _MLIR.KGENParamListType[t]` is a value
                 // parameter typed by a qualified type.
-                let qualified =
-                    self.parse_type_assoc_tail(Type::Named(spelled_bound.clone(), Vec::new()))?;
+                let start = self.last_span.0;
+                let qualified = self
+                    .parse_type_assoc_tail(Type::Named(spelled_bound.clone(), Vec::new()), start)?;
                 value_type = Some(qualified);
                 spelled_bound
             } else {

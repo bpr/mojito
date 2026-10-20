@@ -3,7 +3,8 @@ use mojito::ast::{
     Condition, Decorator, DestructureTarget, DestructureTargetKind, Expr, ExprKind, FnParam,
     FunctionTypeParam, ImportName, ImportNames, InfixOp, KwArg, MatchPattern, MatchPatternKind,
     Method, Param, ParamArg, ParamKind, PrefixOp, SequencePattern, SequenceTarget, Stmt, StmtKind,
-    StructComptime, TStringPart, TraitComptime, TraitMethod, Type, TypeParam, WithItem,
+    StructComptime, SubscriptArg, TStringPart, TraitComptime, TraitMethod, Type, TypeParam,
+    WithItem,
 };
 use mojito::{FloatLiteral, Lexer, Parser, parse_diagnostics};
 
@@ -867,6 +868,106 @@ fn parses_value_parameters_typed_by_qualified_types() {
             index: Box::new(Expr::from(ExprKind::Identifier("t".into()))),
         })
     );
+}
+
+#[test]
+fn parses_a_member_application_in_type_position() {
+    let statements = parse(
+        "def f[raw: _MLIR.KGENParamListType[Int]](x: S[Int].Of[Bool], y: M.Buf[3]):\n    \
+         var z: M.Of[Int]()[0] = 4\n",
+    );
+    let StmtKind::Def {
+        type_params,
+        params,
+        body,
+        ..
+    } = &statements[0].kind
+    else {
+        panic!("expected def");
+    };
+    let assoc = |base: Type, name: &str, args: Vec<ParamArg>| Type::Assoc {
+        base: Box::new(base),
+        name: name.into(),
+        args,
+    };
+    assert_eq!(
+        type_params[0].value_type,
+        Some(assoc(
+            Type::Named("_MLIR".into(), vec![]),
+            "KGENParamListType",
+            vec![ParamArg::Type(Type::Int)],
+        ))
+    );
+    assert_eq!(
+        params[0].ty,
+        assoc(
+            Type::Named("S".into(), vec![ParamArg::Type(Type::Int)]),
+            "Of",
+            vec![ParamArg::Type(Type::Bool)],
+        )
+    );
+    // A single value index stays the subscript the checker reads either way.
+    assert_eq!(
+        params[1].ty,
+        Type::IndexedProjection {
+            base: Box::new(assoc(Type::Named("M".into(), vec![]), "Buf", vec![])),
+            index: int(3),
+        }
+    );
+    let StmtKind::VarDecl { ty: Some(ty), .. } = &body[0].kind else {
+        panic!("expected a var declaration");
+    };
+    assert!(matches!(ty, Type::IndexedProjection { base, .. }
+        if matches!(base.as_ref(), Type::Value(value)
+            if matches!(&value.kind, ExprKind::Invoke { callee, param_args, args, .. }
+                if args.is_empty()
+                    && param_args == &[ParamArg::Type(Type::Int)]
+                    && matches!(&callee.kind, ExprKind::Member { field, .. } if field == "Of")))));
+}
+
+#[test]
+fn rejects_a_bracket_list_after_a_projection_that_is_no_member() {
+    let mut parser = Parser::new(Lexer::new("def f(x: Self.Ts[1, 2]):\n    pass\n"));
+    assert!(parser.parse_program().is_err());
+}
+
+#[test]
+fn parses_a_member_application_in_expression_position_as_a_subscript() {
+    let member = |object: ExprKind, field: &str| {
+        bx(ExprKind::Member {
+            object: bx(object),
+            field: field.into(),
+        })
+    };
+    assert_eq!(
+        parse_expr("S[Int].Of[Bool]\n").kind,
+        ExprKind::Index {
+            object: member(
+                ExprKind::TypeApply {
+                    name: "S".into(),
+                    args: vec![ParamArg::Type(Type::Int)],
+                },
+                "Of",
+            ),
+            index: bx(ExprKind::TypeValue(Type::Bool)),
+        }
+    );
+    assert_eq!(
+        parse_expr("P.two[1, b=2]\n").kind,
+        ExprKind::MultiIndex {
+            object: member(ExprKind::Identifier("P".into()), "two"),
+            args: vec![
+                SubscriptArg::Index(*int(1)),
+                SubscriptArg::Keyword {
+                    name: "b".into(),
+                    value: *int(2),
+                },
+            ],
+        }
+    );
+    // A value-rooted member takes no type argument.
+    let mut parser = Parser::new(Lexer::new("x.f[Int]\n"));
+    assert!(parser.parse_program().is_err());
 }
 
 #[test]

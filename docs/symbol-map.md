@@ -719,7 +719,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   type template shared by parameterized associated members and generic
   comptime aliases (`MemberTemplate::Type`, keeping the member's classified
   binders, which `type_resolution.rs:resolve_parameterized_member` binds by
-  identity through `generics::AssocBindings::ids`); `lower_parametric_value` lowers a value body to its
+  identity through `generics::AssocBindings::ids`). A member application
+  read through a type (`S[Int].Of[Bool]`) is `Type::Assoc` with arguments
+  in type position (`parse_type_assoc_tail`), which
+  `type_resolution.rs:member_application` binds through
+  `resolve_use_params`, and a subscript of the member in an expression
+  (`parser/suffix.rs:parameter_application`, whose base
+  `ast::Expr::type_spelling` reads as a type); `constraints.rs:
+  member_source_type` reads that subscript as the type it spells, and
+  `subscript_param_args` reads a type-valued index as a type argument.
+  `lower_parametric_value` lowers a value body to its
   template (`MemberTemplate::Value`, `AliasBody::Value` in `checker.rs`), and
   `apply_parametric_value` binds an application through `resolve_use_params`.
   `parametric_value_application` recognizes every application shape

@@ -4,7 +4,7 @@
 #   2
 #
 # Observed 2026-10-20 against `Mojo 1.2.0.dev2026101705 (46f49943)`.
-# Mojito: fails to parse ("only named functions can be called, found Member").
+# Mojito: parses since R806, then stops with "unsupported associated comptime member access": `TypeList.of` is no alias yet (R1186).
 # When Mojito runs it, promote it to `assets/ok/` with its manifest rows.
 #
 # Run:    mojo run typelist_of_values.mojo

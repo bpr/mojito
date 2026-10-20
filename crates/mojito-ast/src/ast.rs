@@ -1803,6 +1803,36 @@ impl Expr {
     pub fn source_span(&self) -> mojito_common::token::SourceSpan {
         mojito_common::token::SourceSpan::syntax(self.source.clone(), self.span, self.syntax_id)
     }
+
+    /// The type a type-shaped expression spells: a capitalized name, `Self`,
+    /// a parameter application (`S[Int]`), or a member chain rooted at one
+    /// (`M.Inner`, `Self.T`). `None` for a value-shaped expression, whose
+    /// lowercase root names a binding.
+    pub fn type_spelling(&self) -> Option<Type> {
+        match &self.kind {
+            ExprKind::Identifier(name) if name == "Self" => Some(Type::SelfType),
+            ExprKind::Identifier(name) if !name.chars().next()?.is_lowercase() => {
+                Some(match name.as_str() {
+                    "Int" => Type::Int,
+                    "UInt" => Type::UInt,
+                    "Bool" => Type::Bool,
+                    "StringLiteral" => Type::StringLiteral,
+                    "Float64" => Type::Float64,
+                    _ => Type::Named(name.clone(), Vec::new()),
+                })
+            }
+            ExprKind::TypeApply { name, args } => Some(Type::Named(name.clone(), args.clone())),
+            ExprKind::Member { object, field } => Some(match object.type_spelling()? {
+                Type::SelfType => Type::SelfParam(field.clone()),
+                base => Type::Assoc {
+                    base: Box::new(base),
+                    name: field.clone(),
+                    args: Vec::new(),
+                },
+            }),
+            _ => None,
+        }
+    }
 }
 
 /// Wrap a bare [`ExprKind`] into an [`Expr`] with a dummy span. Convenient for

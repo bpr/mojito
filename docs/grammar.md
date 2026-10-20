@@ -392,10 +392,11 @@ A value parameter's `type` may be an earlier type parameter of the same list
 `Self.NAME` naming the enclosing struct's type parameter (`def pick[v:
 Self.T](self)`); the parser records `Self.NAME` as the value type, and the
 checker reads a lone bound naming an earlier type binder as that binder's type.
-A qualified type, `NAME ('.' NAME)+ ['[' expression ']']`, is a value
+A qualified type, `NAME ('.' NAME)+ [param_args]`, is a value
 parameter's type too (`[x: M.A]`, `[t: AnyType, //, raw:
-_MLIR.KGENParamListType[t]]`); the parser records it as the same associated
-lookup or dependent projection a type annotation produces.
+_MLIR.KGENParamListType[t]]`, `[raw: _MLIR.KGENParamListType[Int]]`); the
+parser records it as the same associated lookup, member application, or
+dependent projection a type annotation produces.
 
 A **trait-valued parameter** is a value parameter typed by the trait
 metatype, spelled `type_of(Trait)` (`[Tr: type_of(AnyType)]`, `[Tr:
@@ -980,6 +981,12 @@ Notes:
   to a function; an origin-generic function can therefore be materialized as
   `borrow[origin_of(value)]` and invoked later through its origin-specialized
   callable type.
+  Over a member of a type (`S[Int].Of[Bool]`, `P.plus[1, 2]`,
+  `P.plus[a=1]`), whose base is a capitalized name, `Self`, a parameter
+  application, or a member chain of one, the brackets are a subscript too,
+  any argument the bracket parses as a type kept as the type value it
+  spells: the checker reads the subscript as the member's application, as
+  at the pin.
   A **named** bracket argument follows the same lowercase-name convention as
   mixed runtime subscripts: over a lowercase (value) base, `s[byte=i]` is a
   keyword subscript dispatching to a keyword-only `__getitem__`/`__setitem__`
@@ -1044,8 +1051,9 @@ type:
     | '__mlir_type' '.' 'index'    # the Indexer requirement's return spelling (the only `__mlir_type` form accepted)
     | 'type_of' '(' expression ')' # the type of a compile-time expression (`type_of(AnyType)`, the trait metatype)
     | NAME [param_args] '(' [call_args] ')'  # a compile-time value (a struct construction); a type only through a subscript
+    | type '.' NAME param_args '(' [call_args] ')'  # a construction through a type's parameterized member
     | type type_projection        # a member or a subscript of a type, or of a construction
-type_projection: '.' NAME | '[' expression ']'
+type_projection: '.' NAME | '.' NAME param_args | '[' expression ']'
 function_type: 'def' [params_decl] '(' [','.function_type_param+] ')' fn_effect* '->' type
 function_type_param:
     | 'var' '**' NAME ':' type
@@ -1085,8 +1093,19 @@ The checker accepts a trait or a `&` composition of traits, whose type is
 the trait metatype (displayed `AnyTrait[Copyable]`, which has no source
 spelling). `type_of` of a value or of a struct type (`var y: type_of(x) =
 3`) is a checker error.
+A **member application** `type '.' NAME param_args` reads a type's
+parameterized `comptime` member (`S[Int].Of[Bool]`, `M.Pair[A, B]`,
+`_MLIR.KGENParamListType[Int]`) and parses into `Type::Assoc` with the
+bracket list as its arguments, which the checker binds as an alias
+application binds its list. A single compile-time value after a member
+(`M.Buf[3]`, `Self.Ts[i]`) stays a `type_projection` subscript, which the
+checker reads as the member's application when the member is
+parameterized and as a dependent index otherwise.
 A struct **construction** in type position (`TypeList[Trait=AnyType,
 Ts.values]()`) parses into `Type::Value`, a compile-time value kept whole.
+A construction through an applied member (`M.Of[Int]()`,
+`TypeList.of[Trait=AnyType, Bool, Int]()`) is one too, kept as the call the
+expression grammar parses.
 It is a type only as the base of a subscript: `TypeList[Trait=AnyType,
 Ts.values]()[i]` reads the construction's `__getitem_param__[i]`, as at the
 pin, in a parameter, a result, a local annotation, and a bracket type

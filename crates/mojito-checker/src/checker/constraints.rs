@@ -3441,16 +3441,59 @@ pub(super) fn assoc_body_source_type(value: &Expr) -> Result<SourceType, TypeErr
         }
         // A type application such as `List[T]` parses as a subscript over the
         // type's name; recover the parameter-argument list from the index.
-        ExprKind::Index { object, index } => {
-            let ExprKind::Identifier(name) = &object.kind else {
-                return Err(unsupported_assoc_body());
-            };
+        ExprKind::Index { object, index } if let ExprKind::Identifier(name) = &object.kind => {
             Ok(SourceType::Named(name.clone(), subscript_param_args(index)))
         }
         ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(s) if s == "Self") => {
             Ok(SourceType::SelfParam(field.clone()))
         }
-        _ => Err(unsupported_assoc_body()),
+        // Another type's member or its application (`R.Of[Bool]`,
+        // `_MLIR.KGENParamListType[Self.type]`).
+        _ => member_source_type(value).ok_or_else(unsupported_assoc_body),
+    }
+}
+
+/// The type a member read through a type spells as an expression: the
+/// member (`M.E`, `S[Int].X`) or its application (`S[Int].Of[Bool]`,
+/// `M.Pair[A, B]`, `M.Buf[n]`). `None` for any other expression.
+pub(super) fn member_source_type(expr: &Expr) -> Option<SourceType> {
+    // A lowercase root (a type parameter `t`) is a type here too.
+    let member = |object: &Expr| {
+        let ExprKind::Member {
+            object: base,
+            field,
+        } = &object.kind
+        else {
+            return None;
+        };
+        let base = base.type_spelling().or_else(|| match &base.kind {
+            ExprKind::Identifier(name) => Some(SourceType::Named(name.clone(), Vec::new())),
+            _ => None,
+        })?;
+        Some(match base {
+            SourceType::SelfType => SourceType::SelfParam(field.clone()),
+            base => SourceType::Assoc {
+                base: Box::new(base),
+                name: field.clone(),
+                args: Vec::new(),
+            },
+        })
+    };
+    let applied = |object: &Expr, args: Vec<mojito_ast::ast::ParamArg>| match member(object)? {
+        SourceType::Assoc { base, name, .. } => Some(SourceType::Assoc { base, name, args }),
+        _ => None,
+    };
+    match &expr.kind {
+        ExprKind::Member { .. } => member(expr),
+        ExprKind::Index { object, index } if !matches!(index.kind, ExprKind::TypeValue(_)) => {
+            Some(SourceType::IndexedProjection {
+                base: Box::new(member(object)?),
+                index: index.clone(),
+            })
+        }
+        ExprKind::Index { object, index } => applied(object, subscript_param_args(index)),
+        ExprKind::MultiIndex { object, args } => applied(object, multi_subscript_param_args(args)?),
+        _ => None,
     }
 }
 
@@ -3458,12 +3501,8 @@ pub(super) fn assoc_body_source_type(value: &Expr) -> Result<SourceType, TypeErr
 /// of a tuple index, else the index itself.
 pub(super) fn subscript_param_args(index: &Expr) -> Vec<mojito_ast::ast::ParamArg> {
     match &index.kind {
-        ExprKind::TupleLit(elements) => elements
-            .iter()
-            .cloned()
-            .map(mojito_ast::ast::ParamArg::Value)
-            .collect(),
-        _ => vec![mojito_ast::ast::ParamArg::Value(index.clone())],
+        ExprKind::TupleLit(elements) => elements.iter().map(subscript_param_arg).collect(),
+        _ => vec![subscript_param_arg(index)],
     }
 }
 
@@ -3472,14 +3511,23 @@ pub(super) fn subscript_param_args(index: &Expr) -> Vec<mojito_ast::ast::ParamAr
 fn multi_subscript_param_args(args: &[SubscriptArg]) -> Option<Vec<mojito_ast::ast::ParamArg>> {
     args.iter()
         .map(|argument| match argument {
-            SubscriptArg::Index(value) => Some(mojito_ast::ast::ParamArg::Value(value.clone())),
+            SubscriptArg::Index(value) => Some(subscript_param_arg(value)),
             SubscriptArg::Keyword { name, value } => Some(mojito_ast::ast::ParamArg::Named {
                 name: name.clone(),
-                value: Box::new(mojito_ast::ast::ParamArg::Value(value.clone())),
+                value: Box::new(subscript_param_arg(value)),
             }),
             SubscriptArg::Slice { .. } | SubscriptArg::KeywordSlice { .. } => None,
         })
         .collect()
+}
+
+/// One subscript index as a compile-time argument: a type the subscript
+/// spells (`P.sz[Int]`) is a type argument.
+fn subscript_param_arg(index: &Expr) -> mojito_ast::ast::ParamArg {
+    match &index.kind {
+        ExprKind::TypeValue(ty) => mojito_ast::ast::ParamArg::Type(ty.clone()),
+        _ => mojito_ast::ast::ParamArg::Value(index.clone()),
+    }
 }
 
 /// The pack a `.values` projection names: `Ts.values` (a `def`'s own pack)

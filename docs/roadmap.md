@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1204**.
+Next free ID: **R1206**.
 
 ## Ordered Work
 
@@ -3464,6 +3464,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The annotation spelling works: `var made: Holder[7].Same = Sized[7]()`.
   - The alias now binds the instance's value parameters
     (`associated_type_from_base`), so only the call path is missing.
+  - Probe: a parameterized member's construction, `S[Int].Of[Bool](3, 4)`
+    over `comptime Of[U: AnyType] = Tuple[Int, Int]`, fails with "a
+    parameterized type is not a value", where the pin prints `4`; the
+    annotation `var b: S[Int].Of[Bool]` runs since R806.
+  - Probe: a generic module alias's construction, `W[Int](8)` over
+    `comptime W[T: AnyType] = Pt[T]`, fails with "Undefined variable 'W'",
+    where the pin constructs `Pt[Int]`.
   - Depends on R59, which finds the pass that reads a bare type name as a
     value; the alias call needs the same answer.
   - Model: Opus, Planned.
@@ -4861,31 +4868,44 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     R1202 (the default closing at a conformer).
   - Model: Opus, Not Planned.
 
-- [ ] **R806 A parameterized alias read through a struct is not parsed**
+- [ ] **R1204 A `comptime` member cannot be read through a parameterized
+  struct left unbound**
 
-  Problem: `S.Of[Bool]`, `S[Int].Of[Bool]`, and `ParameterList.of[4, 5, 6]`
-  are rejected, where the pin reads a struct's parameterized `comptime`
-  alias this way.
-  - The expression parser stops at `call_name` (`parser.rs`): "only named
-    functions can be called, found Member".
-  - In type position, `var a: S[Int].Of[Bool]` fails with "a dependent type
-    projection requires exactly one compile-time value index".
-  - With call parentheses, `S[Int].Of[Bool]()` fails in the checker with
-    "a parameterized type is not a value".
-  - A parameter annotation may name a struct's member since R807
-    (`raw: _MLIR.KGENParamListType[t]`), but only with an identifier
-    argument: `raw: _MLIR.KGENParamListType[Int]` and `M.Buf[3]` fail
-    with the same "exactly one compile-time value index".
-  - Probe: a member-alias argument, `raw: M.ListOf[M.KGENTypeType]` over
-    a struct `M` whose `ListOf[elt_type: Self.KGENTypeType]` is upstream's
-    raw list, stops with "unsupported associated comptime member access".
-  - Probe: a construction through a qualified alias in type position,
-    `var y: TypeList.of[Trait=AnyType, Bool, Int]()[1] = 4`, fails with the
-    same "exactly one compile-time value index", where the pin prints `4`.
-    The type grammar's construction takes only `NAME [param_args] '('`.
-  - Update `docs/grammar.md` first.
-  - It blocks `ParameterList.of` (R809).
-  - Found while planning R493 (2026-10-13).
+  Problem: over `struct S[T: AnyType]` with `comptime n = 3`, `comptime m =
+  S.n` stops with "type 'S' expects 1 compile-time argument(s), got 0",
+  where the pin reads a member that does not depend on the unbound
+  parameters and prints `3`.
+  - The pin rejects only a member that does: `S.Y` for `comptime Y =
+    Self.T` is "cannot access comptime member 'Y' with unbound parameter
+    'S.T'".
+  - The pre-check elaborator applies the bare name at fixed arity
+    (`Elab::type_from_name`, `comptime/elab.rs`), and the checker's
+    `ty_from_anno` of the base cannot infer the parameters.
+  - Probe: `print(S.n)` fails with "Undefined variable 'S'".
+  - Probe: `var d: S.Of[Bool] = (5, 6)` over `comptime Of[U: AnyType] =
+    Tuple[Int, Int]`, and `comptime B = S.Of[Bool]`, fail the same way.
+  - Upstream's `TypeList.of` and `ParameterList.of` are read through the
+    unbound struct, so R1186 and R809 need it.
+  - Found while landing R806 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1205 A generic alias's variadic parameter is not bound as a pack**
+
+  Problem: `comptime T2[*Ts: Copyable] = Tuple[*Ts]` makes `var y: T2[Int,
+  Bool] = (1, True)` fail with "expected Tuple[*Ts], found Tuple[Int,
+  Bool]", where the pin prints `1`.
+  - The application leaves the body's `*Ts` and `Ts.values` unsubstituted
+    (`Checker::resolve_comptime_alias`, `checker/type_resolution.rs`).
+  - Probe: `comptime L[*Ts: AnyType] = TypeList[Trait=AnyType, Ts.values]`
+    makes `var y: L[Bool, Int]()[1] = 4` fail with "unsupported associated
+    comptime member access", where the pin prints `4`.
+  - Probe: the same member on a struct, `M.L[Bool, Int]()[1]`, fails the
+    same way.
+  - Upstream's `TypeList.of[Trait, //, *Ts: Trait]` and
+    `ParameterList.of[type, //, *values: type]` are such aliases, so R1186
+    and R809 need it.
+  - Found while landing R806 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4913,6 +4933,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     = _MLIR.KGENParamListType[Self.type]`, stops packaging with "not an
     associated comptime expression". It keeps `_mlir_type` off the bundled
     `ParameterList` and `TypeList`.
+  - Probe: the same over a user struct, `comptime Same = R.Of[Bool]` beside
+    `comptime Of[T: AnyType] = Tuple[Int, Int]`, fails with "not an
+    associated comptime expression", where the pin runs `var r: R.Same`.
+    A parameterized member's body (`comptime Same[T: AnyType] = R.Of[T]`)
+    reads it since R806.
   - Probe: the subscript spelling in a local `comptime`, `comptime T =
     TypeList[Trait=AnyType, Ts.values]()[1]`, fails with "type
     'TypeList[AnyType, Ts]' cannot be indexed here", where the pin runs it.
@@ -10045,17 +10070,18 @@ residue found inside a task moves to the task that owns its fix.
   - Probe: `conformance/probes/kgen_string_literal_value.mojo`, an `of`
     over `"None".value` and `"Some".value`.
   - Found while planning R493 (2026-10-13).
-  - Depends on R806 (the alias read through the struct) and R807 (the raw
-    `values` parameter).
+  - Depends on R806 (the alias read through the struct), R807 (the raw
+    `values` parameter), R1204 (the read through the unbound
+    `ParameterList`), and R1205 (the variadic `*values`).
   - Model: Opus, Not Planned.
 
 - [ ] **R1186 `TypeList.of` is a spelling rule, not upstream's alias, so
   its `.values` cannot be read**
 
-  Problem: `TypeList.of[Trait=AnyType, NoneType, Int].values` fails to
-  parse ("only named functions can be called, found Member"), where
-  upstream's `std/builtin/variadics.mojo` declares `of` as an alias whose
-  `.values` reads the raw list.
+  Problem: `TypeList.of[Trait=AnyType, NoneType, Int].values` fails with
+  "unsupported associated comptime member access", where upstream's
+  `std/builtin/variadics.mojo` declares `of` as an alias whose `.values`
+  reads the raw list.
   - `TypeList.of[...]()` runs, because `Checker::typelist_receiver` and
     `comptime/eval.rs:eval_typelist_of` answer the spelling.
   - Upstream: `comptime of[Trait: type_of(AnyType), //, *Ts: Trait] =
@@ -10067,9 +10093,13 @@ residue found inside a task moves to the task that owns its fix.
   - Probe: `conformance/probes/typelist_value_subscript_type.mojo`, whose
     closed annotation reads `TypeList.of[...].values` inside a subscripted
     construction.
+  - Probe: a construction through the alias in type position, `var y:
+    TypeList.of[Trait=AnyType, Bool, Int]()[1] = 4`, fails with "cannot
+    infer type parameter 'Trait' of 'TypeList'", where the pin prints `4`.
   - Found while planning R1132 (2026-10-20).
-  - Depends on R806 (an alias read through the struct) and R1184 (the
-    `Trait=` keyword in the receiver).
+  - Depends on R806 (an alias read through the struct), R1184 (the
+    `Trait=` keyword in the receiver), R1204 (the read through the unbound
+    `TypeList`), and R1205 (the alias's variadic `*Ts`).
   - Model: Opus, Not Planned.
 
 - [ ] **R810 `ParameterList.reduce`, `any`, `all`, and `contains` are not

@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A struct's parameterized `comptime` member is read through the struct,
+  as on the pin: `S[Int].Of[Bool]`, `P.Pair[A, B]`, and
+  `_MLIR.KGENParamListType[Int]` are types whose bracket list binds as an
+  alias application's does, `P.Two[1, b=2]` and `P.sz[Int]` are compile-time
+  expressions, `M.Of[Int]()[0]` subscripts a construction through the
+  member, and a parameterized member's body may apply another type's member
+  (`assets/ok/member_alias_application.mojo`). This closes R806;
+  construction through the member stays R60, and a read through an unbound
+  struct and an alias's variadic parameter are filed as R1204 and R1205.
 - A subscript of a `TypeList[...]()` construction is a type, as on the pin,
   which reads it as the construction's `__getitem_param__[i]`: a parameter,
   a `ref` result, a local annotation, and a `rebind` target spell

@@ -120,6 +120,35 @@ fn call_name(callee: Expr) -> Result<String, ParseError> {
     }
 }
 
+/// The expression a type spelling denotes as a callee's receiver, the
+/// inverse of [`Expr::type_spelling`]: `TypeList.of` in the qualified
+/// construction `TypeList.of[...]()` a type annotation spells.
+fn type_spelling_expression(ty: &Type, span: Span) -> Option<Expr> {
+    let kind = match ty {
+        Type::Int => ExprKind::Identifier("Int".to_string()),
+        Type::UInt => ExprKind::Identifier("UInt".to_string()),
+        Type::Bool => ExprKind::Identifier("Bool".to_string()),
+        Type::StringLiteral => ExprKind::Identifier("StringLiteral".to_string()),
+        Type::Float64 => ExprKind::Identifier("Float64".to_string()),
+        Type::SelfType => ExprKind::Identifier("Self".to_string()),
+        Type::Named(name, args) if args.is_empty() => ExprKind::Identifier(name.clone()),
+        Type::Named(name, args) => ExprKind::TypeApply {
+            name: name.clone(),
+            args: args.clone(),
+        },
+        Type::SelfParam(name) if !name.starts_with('*') => ExprKind::Member {
+            object: Box::new(Expr::new(ExprKind::Identifier("Self".to_string()), span)),
+            field: name.clone(),
+        },
+        Type::Assoc { base, name, args } if args.is_empty() => ExprKind::Member {
+            object: Box::new(type_spelling_expression(base, span)?),
+            field: name.clone(),
+        },
+        _ => return None,
+    };
+    Some(Expr::new(kind, span))
+}
+
 /// Whether a value-shaped bracket argument is unambiguously an Origin
 /// specialization rather than a runtime subscript. Most compile-time values
 /// cannot be distinguished syntactically from indices; `origin_of(...)` can,
