@@ -842,9 +842,20 @@ impl Decoder {
                 "param_type_member" => {
                     let subject = self.req(value, fields, "subject", Self::param_expr)?;
                     let name = self.req(value, fields, "name", Self::symbol)?;
+                    // Schema 1.80 writes a parameterized member's bound
+                    // arguments; an unparameterized read has none.
+                    let args: Vec<ParamExpr> = match self.field(fields, "args") {
+                        Ok(args_value) => self
+                            .list(args_value)
+                            .ok()?
+                            .iter()
+                            .map(|arg| self.param_expr(arg))
+                            .collect::<Option<_>>()?,
+                        Err(()) => Vec::new(),
+                    };
                     let meta = self.req(value, fields, "type", Self::meta_ty)?;
-                    self.unknown(fields, &["subject", "name", "type"]);
-                    Some(self.context.type_member(&subject, &name, meta))
+                    self.unknown(fields, &["subject", "name", "args", "type"]);
+                    Some(self.context.type_member(&subject, &name, &args, meta))
                 }
                 "param_apply" => {
                     let function = self.req(value, fields, "function", Self::string)?;

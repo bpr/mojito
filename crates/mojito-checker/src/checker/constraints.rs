@@ -513,8 +513,10 @@ impl Checker {
 
     /// The parameterized value member `field` of the struct `object` names,
     /// applied to `args` at the struct's arguments; the member's own
-    /// `where` clauses are checked against both. `None` when `object` names
-    /// no struct or `field` is no parameterized value member of it.
+    /// `where` clauses are checked against both. Through a type parameter
+    /// (`T.get[0]`) it is the bound's generator requirement applied, which
+    /// the elaborator answers per instance. `None` when `object` names no
+    /// type or `field` is no parameterized value member of it.
     pub(super) fn parameterized_member_value(
         &self,
         object: &Expr,
@@ -522,6 +524,10 @@ impl Checker {
         args: &[mojito_ast::ast::ParamArg],
     ) -> Option<Result<ParamExpr, TypeError>> {
         let subject = self.member_subject(object)?;
+        if let TyKind::Param { bounds, .. } = subject.kind() {
+            let (params, result) = self.lookup_trait_generator(bounds, field)?;
+            return Some(self.generator_application(&subject, field, params, result, args));
+        }
         let TyKind::Struct(name, arguments) = subject.kind() else {
             return None;
         };
@@ -545,6 +551,42 @@ impl Checker {
             self.reject_generator_dependence(object, field, &value)?;
             Ok(value)
         })())
+    }
+
+    /// A bound's generator requirement `field` (`comptime get[idx: Int]:
+    /// Int`) applied through the type parameter `subject` to `args`: bound
+    /// against the requirement's own parameters (arity, keywords by its
+    /// names, kinds, `where` clauses), the read the elaborator answers from
+    /// the instance's member.
+    fn generator_application(
+        &self,
+        subject: &Ty,
+        field: &str,
+        params: &[ParamDecl],
+        result: &Ty,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<ParamExpr, TypeError> {
+        let label = format!("{subject}.{field}");
+        let arguments = self
+            .resolve_use_params(&label, params, args, &[], &[])?
+            .arguments;
+        let context = &self.param_context;
+        let arguments = arguments
+            .into_iter()
+            .map(|argument| match argument {
+                TyArg::Ty(ty) => Ok(context.type_shape(ty)),
+                TyArg::Val(value) => context.constant(value).map_err(param_error),
+                TyArg::Origin(_) => Err(TypeError::Unsupported(
+                    "origin parameters on a parameterized comptime value".to_string(),
+                )),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(context.type_member(
+            &context.type_shape(subject.clone()),
+            field,
+            &arguments,
+            mojito_types::param_expr::MetaTy::value(result.clone()),
+        ))
     }
 
     /// A struct's parameterized value member at the struct's `arguments`
@@ -1701,8 +1743,17 @@ impl Checker {
                     return Some(Ok(self.param_context.type_member(
                         &subject,
                         field,
+                        &[],
                         mojito_types::param_expr::MetaTy::value(ty),
                     )));
+                }
+                // A generator is applied, never read whole.
+                if let Some((params, _)) = self.lookup_trait_generator(bounds, field) {
+                    return Some(Err(TypeError::WrongTypeArgCount {
+                        name: format!("{subject}.{field}"),
+                        expected: params.len(),
+                        got: 0,
+                    }));
                 }
                 let declared = bounds
                     .iter()

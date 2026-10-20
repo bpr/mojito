@@ -1654,7 +1654,20 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `ConformanceFacts::associated_values` → `MirStructDeclaration::associated_values`
   (`Checker::conformance_facts`, `traits.rs`), and `native::mono` answers
   the node per instance (`type_member_answer`, `mono/symbolic.rs`, over
-  `StructShape::values`). A read's declared type is
+  `StructShape::values`). A trait's parameterized value requirement is
+  `CtMemberReq::Generator` (`checker/overload_support.rs`, built by
+  `Checker::generator_requirement` in `traits.rs`, merged and matched by
+  `same_generator_signature` in `traits_support.rs`); a read through a
+  bound (`T.get[0]`) is `Checker::generator_application`
+  (`constraints.rs`, from `parameterized_member_value` over
+  `lookup_trait_generator`), a `TypeMember` node with the bound
+  arguments. The conformer's member crosses the waist as
+  `ParameterizedAssociatedValue` (`mojito-checked/src/declaration.rs`,
+  built by `ParameterizedMember::checked_value_fact`) in
+  `ConformanceFacts::parameterized_values` →
+  `MirStructDeclaration::parameterized_associated_values`, and
+  `type_member_answer` binds the arguments to its parameters by position
+  (`StructShape::parameterized_values`). A read's declared type is
   `Checker::member_value_type`: the bound's requirement, or on a struct
   the annotation `StructInfo::associated_value_types` keeps, at the
   application's arguments. Bracket binding (`resolve_param_arg`,

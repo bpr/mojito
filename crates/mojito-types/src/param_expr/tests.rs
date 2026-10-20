@@ -736,12 +736,12 @@ fn answered_reflection_closes_its_enclosing_expression() {
 fn answered_type_member_closes_its_enclosing_expression() {
     let context = ParamContext::new();
     let subject = context.register(ParamId::new("read", 0), "T", MetaTy::Type);
-    let member = context.type_member(&subject, "K", MetaTy::int());
+    let member = context.type_member(&subject, "K", &[], MetaTy::int());
     let sum = infix(&context, InfixOp::Add, &member, &literal(&context, 3));
     assert_eq!(sum.to_string(), "T.K + 3");
 
     let answered = context
-        .answer_type_members(&sum, &mut |_, name| {
+        .answer_type_members(&sum, &mut |_, name, _| {
             assert_eq!(name, "K");
             Ok(Some(CtValue::IntLiteral(IntLiteral::from(7))))
         })
@@ -749,7 +749,7 @@ fn answered_type_member_closes_its_enclosing_expression() {
     assert_eq!(answered.as_constant(), Some(&CtValue::Int(10)));
 
     let kept = context
-        .answer_type_members(&sum, &mut |_, _| Ok(None))
+        .answer_type_members(&sum, &mut |_, _, _| Ok(None))
         .expect("rebuilds");
     assert_eq!(kept, sum);
 

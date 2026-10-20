@@ -990,6 +990,7 @@ assets/ok/trait_default_refinement.mojo	main	exe-differential	sanitized
 assets/ok/trait_default_wrapper_conventions.mojo	main	exe-differential	sanitized
 assets/ok/trait_inheritance.mojo	main	exe-differential	sanitized
 assets/ok/trait_method_binder_spelling.mojo	main	exe-differential	sanitized
+assets/ok/trait_parameterized_value_requirement.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_constant_default.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_default_from_caller_parameter.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_parameter_default.mojo	main	exe-differential	sanitized

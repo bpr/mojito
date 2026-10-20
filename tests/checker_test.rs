@@ -7021,15 +7021,30 @@ fn parameterized_comptime_values_bind_at_each_application() {
         err("comptime twice[n: Int] where n > 0 = n * 2\n\ndef main():\n    print(twice[0])\n"),
         TypeError::BadCall { .. }
     ));
-    // A trait's parameterized value requirement is rejected explicitly.
-    let TypeError::Unsupported(message) = err("trait HasGet:\n    comptime get[idx: Int]: Int\n")
-    else {
-        panic!("expected a parameterized value requirement rejection");
-    };
-    assert_eq!(
-        message,
-        "a trait's parameterized compile-time value requirement"
+    // A trait's parameterized value requirement is a generator a bound
+    // reads applied, its conformer's member matched by signature, the
+    // parameter's spelling aside.
+    ok_std(
+        "trait HasGet:\n    comptime get[idx: Int]: Int\n\ntrait HasMore(HasGet):\n    comptime size: Int\n\nstruct S[*values: Int](HasMore):\n    comptime get[i: Int]: Int = Self.values[i]\n    comptime size: Int = 2\n\ndef use[T: HasMore]() -> Int:\n    var total = T.get[idx=0]\n    comptime for i in range(T.size):\n        total += T.get[i]\n    return total\n\ndef main():\n    print(use[S[4, 5]]())\n",
     );
+    // A conformer's member of another result type does not witness it.
+    assert!(matches!(
+        err(
+            "trait HasGet:\n    comptime get[idx: Int]: Int\n\nstruct A(HasGet):\n    comptime get[idx: Int]: Bool = True\n",
+        ),
+        TypeError::TraitComptimeMemberMismatch { member, .. } if member == "get"
+    ));
+    // Read through a bound, the generator is applied, never read whole.
+    assert!(matches!(
+        err(
+            "trait HasGet:\n    comptime get[idx: Int]: Int\n\ndef use[T: HasGet]():\n    print(T.get)\n",
+        ),
+        TypeError::WrongTypeArgCount {
+            expected: 1,
+            got: 0,
+            ..
+        }
+    ));
 }
 
 #[test]

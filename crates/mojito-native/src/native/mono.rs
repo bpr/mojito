@@ -559,6 +559,7 @@ struct StructShape {
     members: Vec<(String, Ty)>,
     parameterized: Vec<mojito_checked::declaration::ParameterizedAssociatedType>,
     values: Vec<(String, ParamExpr)>,
+    parameterized_values: Vec<mojito_checked::declaration::ParameterizedAssociatedValue>,
     fields: Vec<(String, Ty)>,
 }
 

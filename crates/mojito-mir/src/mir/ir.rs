@@ -3521,6 +3521,7 @@ mod tests {
                 associated_types: Vec::new(),
                 parameterized_associated_types: Vec::new(),
                 associated_values: Vec::new(),
+                parameterized_associated_values: Vec::new(),
                 members: Vec::new(),
             };
         let struct_ty = |name: &str| Ty::new(TyKind::Struct(name.into(), Vec::new()));

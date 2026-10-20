@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1208**.
+Next free ID: **R1209**.
 
 ## Ordered Work
 
@@ -4840,30 +4840,30 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1146 A trait cannot require a parameterized `comptime` value**
+- [ ] **R1208 A parameterized `comptime` value's declared type cannot read
+  the member's own parameters**
 
-  Problem: a trait requirement `comptime get[idx: Int]: Int`, read through
-  a bound type parameter as `T.get[0]` in `def use[T: HasGet]()`, prints
-  the element at the pin, while Mojito rejects the requirement with "a
-  trait's parameterized compile-time value requirement".
-  - A struct's parameterized value member is a checker template
-    (`MemberTemplate::Value`), answered at every read, so the checked
-    `StructDeclaration` carries none and the elaborator cannot answer a
-    read through `T`.
-  - The work: a parameterized `CtMemberReq::Value` and its conformance
-    check (`checker/traits.rs`), arguments on `ParamKind::TypeMember` in
-    `mojito-types/src/param_expr.rs`, a parameterized value fact on
-    `StructDeclaration` with its MIR text writer and parser (a schema bump),
-    and the answer in `native/mono/symbolic.rs`'s `type_member_answer`.
-  - Probe: `trait HasGet` above, conformed to by `struct S[*values: Int]`
-    defining `comptime get[idx: Int]: Int = Self.values[idx]`;
-    `use[S[4, 5]]()` prints `4` at the pin.
-  - Found while landing R801 (2026-10-19).
+  Problem: `comptime get[n: Int]: SIMD[DType.int32, n] =
+  SIMD[DType.int32, n](7)` in `struct A`, read as `A.get[2]`, prints `[7,
+  7]` at the pin, while Mojito stops with "not a compile-time Int constant:
+  n".
+  - The annotation resolves before the member's own parameters are in scope
+    (`Checker::ct_member_req_from_anno`, `checker/constraints.rs`).
+  - A trait requirement has the same gap: `comptime get[n: Int]:
+    SIMD[DType.int32, n]` in `trait HasGet`, read through a bound as
+    `T.get[2]`, prints `[5, 5]` at the pin.
+  - The requirement's result type must then be substituted with the read's
+    arguments (`Checker::generator_application`), and conformance must
+    compare result types with the two binder lists aligned by position
+    (`same_generator_signature`, `checker/traits_support.rs`).
+  - Probe: `comptime get[T: AnyType]: T` in a trait is rejected with
+    "unknown type 'T'", where the pin accepts the trait.
+  - Found while landing R1146 (2026-10-20).
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Opus, Not Planned.
 
-- [ ] **R1187 A trait's parameterized type-valued `comptime` requirement
-  cannot declare a default**
+- [ ] **R1187 A trait's parameterized `comptime` requirement cannot
+  declare a default**
 
   Problem: upstream's `EnumLike` declares `comptime
   _enum_elt_type_for_case[id: Int]: AnyType = TypeList[Trait=AnyType,
@@ -4871,15 +4871,18 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   `Optional[String]._enum_elt_type_for_case[1]` is `String` for a
   conformer that omits the member.
   - A monomorphic requirement's default is synthesized as the omitting
-    conformer's member (`Checker::collect_comptime_defaults`), and R1146 is
-    the parameterized value requirement. This one is type-valued,
-    parameterized, and defaulted, instantiated at the conformer.
+    conformer's member (`Checker::collect_comptime_defaults`), but a
+    parameterized one, type- or value-valued, is rejected in
+    `Checker::check_trait` before anything synthesizes it.
   - A generic read through `T._enum_elt_type_for_case[i]` also needs
     R666.
   - Probe: `comptime E[id: Int]: AnyType = Int` in `trait HasE` is
     rejected ("a default for a trait's parameterized compile-time
     requirement"), and the pin runs `var x: Q.E[0] = 3` over `struct
     Q(HasE)`, which omits `E`.
+  - Probe: the value-valued sibling `comptime get[idx: Int]: Int = idx +
+    1` in `trait HasGet`, read as `T.get[5]` over a conformer that omits
+    it, prints `6` at the pin and is rejected the same way.
   - Found while planning R1132 (2026-10-20).
   - Depends on R505, R1146, R1185 (the default's type expression), and
     R1202 (the default closing at a conformer).
@@ -5357,6 +5360,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (`checker/constraints.rs`), not a parameter type.
   - The work covers the parser (`docs/grammar.md` first), the checker's
     parameter type, and the elaborator's application of a generator.
+  - Probe: a parameterized member bound unapplied as a generator value,
+    `comptime g = T.get` then `g[4]` through a bound `T: HasGet`, prints
+    `8` at the pin, where Mojito rejects the read with "type 'T.get'
+    expects 1 type argument(s), got 0"; the concrete `comptime g = A.get`
+    is rejected likewise.
   - A session should plan this first and split it if it does not fit.
   - Found while planning R493 (2026-10-13).
   - Depends on R801, since a generator's body is a parameterized `comptime`

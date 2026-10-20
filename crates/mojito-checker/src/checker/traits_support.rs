@@ -41,10 +41,61 @@ pub(super) fn merge_associated_requirement(
             Ok(())
         }
         (CtMemberReq::Value(left), CtMemberReq::Value(right)) if left == right => Ok(()),
+        (
+            CtMemberReq::Generator { params, result },
+            CtMemberReq::Generator {
+                params: more_params,
+                result: more_result,
+            },
+        ) if result == more_result && same_generator_signature(params, more_params) => Ok(()),
         _ => Err(TypeError::Unsupported(format!(
             "conflicting inherited associated member '{member}'"
         ))),
     }
+}
+
+/// Whether two generators' parameter lists declare the same signature:
+/// position by position the same kind, declared type or bounds,
+/// infer-only and variadic markers, as upstream compares generator types.
+/// Names are the declarations' own and do not take part.
+pub(super) fn same_generator_signature(left: &[ParamDecl], right: &[ParamDecl]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|pair| match pair {
+            (
+                ParamDecl::Type {
+                    bounds,
+                    infer_only,
+                    variadic,
+                    ..
+                },
+                ParamDecl::Type {
+                    bounds: more_bounds,
+                    infer_only: more_infer_only,
+                    variadic: more_variadic,
+                    ..
+                },
+            ) => {
+                bounds.len() == more_bounds.len()
+                    && bounds.iter().all(|bound| more_bounds.contains(bound))
+                    && infer_only == more_infer_only
+                    && variadic == more_variadic
+            }
+            (
+                ParamDecl::Value {
+                    ty,
+                    infer_only,
+                    variadic,
+                    ..
+                },
+                ParamDecl::Value {
+                    ty: more_ty,
+                    infer_only: more_infer_only,
+                    variadic: more_variadic,
+                    ..
+                },
+            ) => ty == more_ty && infer_only == more_infer_only && variadic == more_variadic,
+            _ => false,
+        })
 }
 
 pub(super) fn compare_ct_integers(op: InfixOp, left: &CtValue, right: &CtValue) -> Option<bool> {

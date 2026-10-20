@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.79
+mojito-mir 1.80
 ```
 
-The writer emits 1.79. The reader accepts 1.0 through 1.79; *Schema 1.0*
+The writer emits 1.80. The reader accepts 1.0 through 1.80; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -454,6 +454,17 @@ undeclared with no obligated field. `associated_types` contains
 `associated_values` contains `associated_value { name: symbol, value:
 param-expr }` records sorted by name.
 
+A struct that declares a parameterized compile-time value member (`comptime
+get[idx: Int]: Int = Self.values[idx]`) carries
+`parameterized_associated_values: [parameterized_associated_value { name:
+symbol, params: [param-decl...], value: param-expr }, ...]` after
+`associated_values` (schema 1.80), sorted by name: upstream's generator,
+its body over the struct's binders and its own `params`, every one in
+declaration order. The elaborator answers a `param_type_member` read with
+arguments (`T.get[0]`) from it, binding the read's arguments to `params`
+by position, so elaborated MIR carries none. An older artifact, or a
+struct that declares none, omits the field.
+
 A struct that owns a lifecycle member carries `members: [member { name:
 symbol, symbol: symbol }, ...]` after `associated_values` (schema 1.65):
 its member table, sorted by name, then symbol, naming the function that
@@ -723,7 +734,7 @@ param_list_tabulate { count, element }
 param_list_concat { lists: [param-expr...] }
 param_field     { base, name: symbol, type: meta }
 param_reflect   { subject, query }
-param_type_member { subject, name: symbol, type: meta }
+param_type_member { subject, name: symbol, args: [param-expr...], type: meta }
 param_pack_query { pack, query }
 param_apply     { function: "symbol", type: meta, args: [param-expr...] }
 ```
@@ -743,7 +754,8 @@ that is still a parameter (schema 1.27), `param_reflect` a reflection query over
 (`is_struct()`, `field_count()`, `field_names()`, `field_types()`,
 `field_index["name"]()`, `field["name"].T`), `param_type_member` a
 compile-time value member of a symbolic subject type (`T.K`, schema 1.36),
-and `param_apply` a compile-time
+applied to `args` when the member is parameterized (`T.get[0]`; schema
+1.80, written only when non-empty), and `param_apply` a compile-time
 application of a callable symbol, never folded (schema 1.14;
 `docs/notes/param-expr-attributes.md` §Register types). Only the elaborator
 below MIR evaluates one; a 1.37 artifact's `evaluated` field is read and

@@ -268,6 +268,19 @@ fn write_structs(output: &mut String, declarations: &[MirStructDeclaration]) {
                 })),
             ),
         ];
+        // Schema 1.80 carries the parameterized value members, written only
+        // when the struct declares one.
+        if !declaration.parameterized_associated_values.is_empty() {
+            entries.push((
+                "parameterized_associated_values",
+                list(
+                    declaration
+                        .parameterized_associated_values
+                        .iter()
+                        .map(parameterized_associated_value),
+                ),
+            ));
+        }
         // Schema 1.65 carries the member table, written only when the
         // struct owns a lifecycle member.
         if !declaration.members.is_empty() {
@@ -1879,6 +1892,18 @@ fn parameterized_associated_type(
         ],
     )
 }
+fn parameterized_associated_value(
+    value: &mojito_checked::declaration::ParameterizedAssociatedValue,
+) -> String {
+    record(
+        "parameterized_associated_value",
+        &[
+            ("name", symbol(&value.name)),
+            ("params", list(value.params.iter().map(param_decl))),
+            ("value", param_expr(&value.body)),
+        ],
+    )
+}
 fn binder_ref(value: &mojito_types::param_expr::ParamRef) -> String {
     record(
         "binder",
@@ -2591,14 +2616,18 @@ fn param_expr(value: &ParamExpr) -> String {
                 ("query", symbol(&query.to_string())),
             ],
         ),
-        ParamKind::TypeMember { subject, name } => record(
-            "param_type_member",
-            &[
-                ("subject", param_expr(subject)),
-                ("name", symbol(name)),
-                meta,
-            ],
-        ),
+        ParamKind::TypeMember {
+            subject,
+            name,
+            args,
+        } => {
+            let mut fields = vec![("subject", param_expr(subject)), ("name", symbol(name))];
+            if !args.is_empty() {
+                fields.push(("args", list(args.iter().map(param_expr))));
+            }
+            fields.push(meta);
+            record("param_type_member", &fields)
+        }
         ParamKind::PackQuery { pack, query } => record(
             "param_pack_query",
             &[("pack", binder_ref(pack)), ("query", pack_query(query))],

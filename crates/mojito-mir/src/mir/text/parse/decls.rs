@@ -263,6 +263,33 @@ impl Decoder {
                     .collect()
             })
             .unwrap_or_default();
+        // Schema 1.80 carries the parameterized value members; an older
+        // artifact, or a struct that declares none, has none.
+        let parameterized_associated_values = self
+            .field(fields, "parameterized_associated_values")
+            .ok()
+            .and_then(|members| self.list(members).ok())
+            .map(|members| {
+                members
+                    .iter()
+                    .filter_map(|member| {
+                        let member_fields =
+                            self.record(member, "parameterized_associated_value").ok()?;
+                        let name = self.req(member, member_fields, "name", Self::symbol);
+                        let params = self.req(member, member_fields, "params", |d, v| {
+                            Some(d.param_decls(v))
+                        });
+                        let body = self.req(member, member_fields, "value", Self::param_expr);
+                        self.unknown(member_fields, &["name", "params", "value"]);
+                        Some(mojito_checked::declaration::ParameterizedAssociatedValue {
+                            name: name?,
+                            params: params?,
+                            body: body?,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         // Schema 1.65 carries the member table; an artifact without one
         // owns no lifecycle member.
         let members = self
@@ -302,6 +329,7 @@ impl Decoder {
                 "associated_types",
                 "parameterized_associated_types",
                 "associated_values",
+                "parameterized_associated_values",
                 "members",
             ],
         );
@@ -318,6 +346,7 @@ impl Decoder {
             associated_types,
             parameterized_associated_types,
             associated_values,
+            parameterized_associated_values,
             members,
         })
     }

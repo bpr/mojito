@@ -1909,10 +1909,12 @@ impl Checker {
                     args: Vec::new(),
                 }
                 .into()),
-                CtMemberReq::Value(_) => Err(TypeError::NoSuchAssociatedType {
-                    object_type: "Self".to_string(),
-                    member: name.to_string(),
-                }),
+                CtMemberReq::Value(_) | CtMemberReq::Generator { .. } => {
+                    Err(TypeError::NoSuchAssociatedType {
+                        object_type: "Self".to_string(),
+                        member: name.to_string(),
+                    })
+                }
             };
         }
         let Some(self_ty) = &self.self_ty else {

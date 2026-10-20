@@ -748,17 +748,26 @@ impl ParamContext {
     }
 
     /// The compile-time value member `name` of a subject type (`T.K` for a
-    /// type parameter `T` whose bound requires `comptime K: Int`), typed by
+    /// type parameter `T` whose bound requires `comptime K: Int`), applied
+    /// to `args` when the member is parameterized (`T.get[0]`), typed by
     /// `meta`, the member's declared value type. It folds nothing: the
     /// checker answers a closed subject from its struct table, and the
     /// elaborator answers one per instance.
-    pub fn type_member(&self, subject: &ParamExpr, name: &str, meta: MetaTy) -> ParamExpr {
+    pub fn type_member(
+        &self,
+        subject: &ParamExpr,
+        name: &str,
+        args: &[ParamExpr],
+        meta: MetaTy,
+    ) -> ParamExpr {
         let subject = self.intern(subject);
+        let args = args.iter().map(|arg| self.intern(arg)).collect();
         self.make(
             meta,
             ParamKind::TypeMember {
                 subject,
                 name: name.to_string(),
+                args,
             },
         )
     }
@@ -879,8 +888,16 @@ impl ParamContext {
             ParamKind::Reflect { subject, query } => {
                 self.reflect_query(&self.fold(subject)?, query.clone())
             }
-            ParamKind::TypeMember { subject, name } => {
-                self.type_member(&self.fold(subject)?, name, expr.meta().clone())
+            ParamKind::TypeMember {
+                subject,
+                name,
+                args,
+            } => {
+                let args: Vec<ParamExpr> = args
+                    .iter()
+                    .map(|arg| self.fold(arg))
+                    .collect::<Result<_, _>>()?;
+                self.type_member(&self.fold(subject)?, name, &args, expr.meta().clone())
             }
             ParamKind::Apply { function, args } => {
                 let args: Vec<ParamExpr> = args
@@ -920,7 +937,11 @@ impl ParamContext {
         oracle: &mut TypeMemberOracle<'_>,
     ) -> Result<ParamExpr, ParamError> {
         self.answer_queries(expr, &mut |node| match node.kind() {
-            ParamKind::TypeMember { subject, name } => Ok(oracle(subject, name)?.map(|value| {
+            ParamKind::TypeMember {
+                subject,
+                name,
+                args,
+            } => Ok(oracle(subject, name, args)?.map(|value| {
                 node.meta()
                     .as_value()
                     .and_then(|ty| value.clone().materialize_as(ty))
@@ -1036,11 +1057,22 @@ impl ParamContext {
             ParamKind::Reflect { subject, query } => {
                 self.reflect_query(&self.answer_queries(subject, answer)?, query.clone())
             }
-            ParamKind::TypeMember { subject, name } => self.type_member(
-                &self.answer_queries(subject, answer)?,
+            ParamKind::TypeMember {
+                subject,
                 name,
-                expr.meta().clone(),
-            ),
+                args,
+            } => {
+                let args: Vec<ParamExpr> = args
+                    .iter()
+                    .map(|arg| self.answer_queries(arg, answer))
+                    .collect::<Result<_, _>>()?;
+                self.type_member(
+                    &self.answer_queries(subject, answer)?,
+                    name,
+                    &args,
+                    expr.meta().clone(),
+                )
+            }
             ParamKind::Op { op, operands } => {
                 let operands: Vec<ParamExpr> = operands
                     .iter()
@@ -1509,11 +1541,22 @@ impl ParamContext {
                 &self.replace_at(subject, bindings, depth, memo)?,
                 query.clone(),
             ),
-            ParamKind::TypeMember { subject, name } => self.type_member(
-                &self.replace_at(subject, bindings, depth, memo)?,
+            ParamKind::TypeMember {
+                subject,
                 name,
-                expr.meta().clone(),
-            ),
+                args,
+            } => {
+                let args: Vec<ParamExpr> = args
+                    .iter()
+                    .map(|arg| self.replace_at(arg, bindings, depth, memo))
+                    .collect::<Result<_, _>>()?;
+                self.type_member(
+                    &self.replace_at(subject, bindings, depth, memo)?,
+                    name,
+                    &args,
+                    expr.meta().clone(),
+                )
+            }
             ParamKind::ListTabulate { count, element } => self.list_tabulate(
                 &self.replace_at(count, bindings, depth, memo)?,
                 &self.replace_at(element, bindings, depth + 1, memo)?,
@@ -1658,8 +1701,21 @@ impl ParamContext {
             ParamKind::Reflect { subject, query } => {
                 self.reflect_query(&self.shift(subject, cutoff, by)?, query.clone())
             }
-            ParamKind::TypeMember { subject, name } => {
-                self.type_member(&self.shift(subject, cutoff, by)?, name, expr.meta().clone())
+            ParamKind::TypeMember {
+                subject,
+                name,
+                args,
+            } => {
+                let args: Vec<ParamExpr> = args
+                    .iter()
+                    .map(|arg| self.shift(arg, cutoff, by))
+                    .collect::<Result<_, _>>()?;
+                self.type_member(
+                    &self.shift(subject, cutoff, by)?,
+                    name,
+                    &args,
+                    expr.meta().clone(),
+                )
             }
             ParamKind::Apply { function, args } => {
                 let args: Vec<ParamExpr> = args
@@ -1884,8 +1940,10 @@ impl ParamExpr {
             ParamKind::Conforms { subject, .. }
             | ParamKind::Trivial { subject, .. }
             | ParamKind::Reflect { subject, .. }
-            | ParamKind::TypeMember { subject, .. }
             | ParamKind::Field { base: subject, .. } => vec![subject],
+            ParamKind::TypeMember { subject, args, .. } => {
+                std::iter::once(subject).chain(args).collect()
+            }
             ParamKind::Select { index, .. } => vec![index],
             ParamKind::ListGet { list, index } => vec![list, index],
             ParamKind::ListTabulate { count, element } => vec![count, element],
@@ -2098,7 +2156,13 @@ pub enum ParamKind {
     /// parameter (`T.K`, `Self.T.K`), typed by the member's declared value
     /// type. The checker answers a closed subject from its struct table;
     /// the elaborator answers one per instance from the struct's members.
-    TypeMember { subject: ParamExpr, name: String },
+    /// `args` are a parameterized member's bound arguments in its
+    /// declaration order (`T.get[0]`), empty for an unparameterized one.
+    TypeMember {
+        subject: ParamExpr,
+        name: String,
+        args: Vec<ParamExpr>,
+    },
     /// A bound-pack query the checker's concrete pack logic resolves; the
     /// pack is named by its binder's identity.
     PackQuery { pack: ParamRef, query: PackQuery },
@@ -2790,10 +2854,10 @@ pub type ReflectOracle<'a> =
     dyn FnMut(&ParamExpr, &ReflectQuery) -> Result<Option<CtValue>, ParamError> + 'a;
 
 /// What answers a type member read over a subject at an instance: the
-/// subject and the member's name, to its value, or `None` to leave the
-/// read as it is.
+/// subject, the member's name, and a parameterized member's bound
+/// arguments, to its value, or `None` to leave the read as it is.
 pub type TypeMemberOracle<'a> =
-    dyn FnMut(&ParamExpr, &str) -> Result<Option<CtValue>, ParamError> + 'a;
+    dyn FnMut(&ParamExpr, &str, &[ParamExpr]) -> Result<Option<CtValue>, ParamError> + 'a;
 
 /// What answers a compile-time application for
 /// [`ParamContext::answer_applications`]: the applied function and its
@@ -3617,7 +3681,24 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
         ParamKind::ListGet { list, index } => write!(f, "{list}[{index}]"),
         ParamKind::Field { base, name } => write!(f, "{base}.{name}"),
         ParamKind::Reflect { subject, query } => write!(f, "reflect[{subject}].{query}"),
-        ParamKind::TypeMember { subject, name } => write!(f, "{subject}.{name}"),
+        ParamKind::TypeMember {
+            subject,
+            name,
+            args,
+        } => {
+            write!(f, "{subject}.{name}")?;
+            if !args.is_empty() {
+                write!(f, "[")?;
+                for (position, arg) in args.iter().enumerate() {
+                    if position > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{arg}")?;
+                }
+                write!(f, "]")?;
+            }
+            Ok(())
+        }
         ParamKind::PackQuery { pack, query } => match query {
             PackQuery::Length => write!(f, "TypeList[{pack}.values]().length"),
             PackQuery::Conforms(trait_name) => {

@@ -83,11 +83,15 @@ fn reflection_answer(
 
 /// The value of the compile-time member `name` of `subject` at the
 /// instance: the source struct's member, evaluated under the struct
-/// instance's own bindings (`Self.n + 1` of `B[4]` to `5`). A subject the
-/// bindings leave symbolic keeps the read.
+/// instance's own bindings (`Self.n + 1` of `B[4]` to `5`); a
+/// parameterized member's body also binds its own parameters to `args` by
+/// position, each evaluated under the reader's `bindings` (`get[0]` of
+/// `S[4, 5]` to `4`). A subject or type argument the bindings leave
+/// symbolic keeps the read.
 fn type_member_answer(
     subject: &ParamExpr,
     name: &str,
+    args: &[ParamExpr],
     bindings: &Bindings,
 ) -> Result<Option<CtValue>, ParamError> {
     let subject = match subject.kind() {
@@ -105,6 +109,43 @@ fn type_member_answer(
     let Some(instance) = struct_instance(&subject, bindings).map_err(unsupported)? else {
         return Ok(None);
     };
+    if !args.is_empty() {
+        let member = instance
+            .shape
+            .parameterized_values
+            .iter()
+            .find(|member| member.name == name)
+            .ok_or_else(|| {
+                ParamError::Unsupported(format!("`{subject}` has no compile-time member `{name}`"))
+            })?;
+        if member.params.len() != args.len() {
+            return Err(ParamError::Unsupported(format!(
+                "`{subject}.{name}` takes {} compile-time argument(s), got {}",
+                member.params.len(),
+                args.len()
+            )));
+        }
+        let mut arguments = Vec::with_capacity(args.len());
+        for arg in args {
+            let argument = match arg.kind() {
+                ParamKind::TypeShape(ty) | ParamKind::Constant(CtValue::Type(ty)) => {
+                    let ty = substitute_ty(ty, bindings).map_err(unsupported)?;
+                    if is_symbolic(&ty) {
+                        return Ok(None);
+                    }
+                    TyArg::Ty(ty)
+                }
+                _ => TyArg::Val(eval_ct(arg, bindings).map_err(unsupported)?),
+            };
+            arguments.push(argument);
+        }
+        let mut member_bindings = instance.bindings.clone();
+        bind_ty_args(&member.params, &arguments, &mut member_bindings)
+            .map_err(ParamError::Unsupported)?;
+        return eval_ct(&member.body, &member_bindings)
+            .map(Some)
+            .map_err(unsupported);
+    }
     let (_, value) = instance
         .shape
         .values
@@ -349,8 +390,8 @@ fn eval_ct_at(expr: &ParamExpr, bindings: &Bindings, reached: bool) -> Result<Ct
             })
         })
         .and_then(|answered| {
-            context.answer_type_members(&answered, &mut |subject, name| {
-                type_member_answer(subject, name, bindings)
+            context.answer_type_members(&answered, &mut |subject, name, args| {
+                type_member_answer(subject, name, args, bindings)
             })
         })
         .and_then(|answered| match &bindings.applications {

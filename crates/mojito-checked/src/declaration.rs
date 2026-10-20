@@ -65,6 +65,11 @@ pub struct StructDeclaration {
     /// binders: the elaborator answers `T.K` from them once `T` is bound to
     /// an instance, so elaborated MIR carries none.
     pub associated_values: Vec<(String, ParamExpr)>,
+    /// The struct's parameterized compile-time value members (`get` of
+    /// `comptime get[idx: Int]: Int = Self.values[idx]`), sorted by member:
+    /// the elaborator answers `T.get[0]` from them once `T` is bound to an
+    /// instance, so elaborated MIR carries none.
+    pub parameterized_associated_values: Vec<ParameterizedAssociatedValue>,
     /// The symbols of the members the struct owns that a backend finds
     /// from a value's type, sorted by key, as upstream's struct nests its
     /// member functions: in a template, the lifecycle members it declares
@@ -90,6 +95,19 @@ pub struct ParameterizedAssociatedType {
     /// The member's explicit parameters, in application order.
     pub params: Vec<AssociatedParameter>,
     pub template: Ty,
+}
+
+/// A compile-time value member with parameters of its own, upstream's
+/// generator.
+///
+/// `comptime get[idx: Int]: Int = Self.values[idx]` is its body over the
+/// struct's binders and its own `params`, every one of them in declaration
+/// order, which an application binds by position.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ParameterizedAssociatedValue {
+    pub name: String,
+    pub params: Vec<ParamDecl>,
+    pub body: ParamExpr,
 }
 
 /// One explicit parameter of a [`ParameterizedAssociatedType`], keyed as its

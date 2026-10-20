@@ -2624,8 +2624,8 @@ struct ParameterizedMember {
 impl ParameterizedMember {
     /// The member as the checked declaration fact names it: its explicit
     /// parameters keyed exactly as `resolve_parameterized_member` binds an
-    /// application's arguments. `None` for a value member, which the check
-    /// answers at every read.
+    /// application's arguments. `None` for a value member, which is
+    /// [`Self::checked_value_fact`].
     fn checked_fact(
         &self,
         name: &str,
@@ -2656,6 +2656,24 @@ impl ParameterizedMember {
             name: name.to_string(),
             params,
             template: template.clone(),
+        })
+    }
+
+    /// A value member as the checked declaration fact names it, which the
+    /// elaborator answers a read through a bound from (`T.get[0]`); the
+    /// check answers a read through the struct itself. `None` for a type
+    /// member.
+    fn checked_value_fact(
+        &self,
+        name: &str,
+    ) -> Option<mojito_checked::declaration::ParameterizedAssociatedValue> {
+        let MemberTemplate::Value { decls, body } = &self.template else {
+            return None;
+        };
+        Some(mojito_checked::declaration::ParameterizedAssociatedValue {
+            name: name.to_string(),
+            params: decls.clone(),
+            body: body.clone(),
         })
     }
 }

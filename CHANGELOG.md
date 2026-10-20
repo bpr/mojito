@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A trait may require a parameterized `comptime` value (`comptime
+  get[idx: Int]: Int`), as on the pin: a conformer's member witnesses it
+  when its parameters and result match the requirement's by position,
+  names aside, and a read through a bound (`T.get[0]`, `T.get[idx=5]`,
+  `T.get[i]` under `comptime for`) is checked against the requirement and
+  answered per instance from the conformer's member, carried across the
+  MIR waist in a new struct declaration field (text schema 1.80)
+  (`assets/ok/trait_parameterized_value_requirement.mojo`). This closes
+  R1146.
 - A trait's `comptime` requirement may declare a default (`comptime K: Int
   = 3`, `comptime E: AnyType = Int`), as on the pin: a conformer that
   omits the member takes the default, read with `Self` as that conformer

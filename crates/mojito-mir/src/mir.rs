@@ -1340,6 +1340,12 @@ fn struct_declaration(
             .get(name)
             .cloned()
             .unwrap_or_default(),
+        parameterized_associated_values: checked
+            .conformances()
+            .parameterized_values
+            .get(name)
+            .cloned()
+            .unwrap_or_default(),
         members: Vec::new(),
     })
 }

@@ -3297,7 +3297,14 @@ elaborator binds; the checker records it as `SemanticAdjustment::ParamValue`
 (`ParamContext::answer_type_members` with `type_member_answer`,
 `mono/symbolic.rs`), evaluating the member under the bound instance's own
 bindings. A read on a closed type (`A.K`, `B[4].K`, `Self.K`) folds in the
-checker. Elaborated MIR carries no value members.
+checker. A parameterized value member, upstream's generator, rides in
+`MirStructDeclaration.parameterized_associated_values`
+(`ConformanceFacts::parameterized_values`, text schema 1.80): its body over
+the struct's binders and its own parameters. A read through a bound
+(`T.get[0]`) is a `TypeMember` node carrying the arguments the checker
+bound against the trait's requirement, which `type_member_answer` binds to
+the conformer's parameters by position before evaluating the body under
+the instance. Elaborated MIR carries no value members.
 
 A generic `def` call carries the compile-time arguments the checker solved,
 in declaration order and in the caller's binder scope

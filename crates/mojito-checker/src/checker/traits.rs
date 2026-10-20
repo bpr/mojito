@@ -186,12 +186,12 @@ impl Checker {
             }
         }
         for member in comptime_members {
-            let requirement = self.ct_member_req_from_anno(&member.params, &member.ty)?;
-            if matches!(requirement, CtMemberReq::Value(_)) && !member.params.is_empty() {
-                return Err(TypeError::Unsupported(
-                    "a trait's parameterized compile-time value requirement".to_string(),
-                ));
-            }
+            let requirement = match self.ct_member_req_from_anno(&member.params, &member.ty)? {
+                CtMemberReq::Value(result) if !member.params.is_empty() => {
+                    self.generator_requirement(name, member, result)?
+                }
+                requirement => requirement,
+            };
             if member.default.is_some() && !member.params.is_empty() {
                 return Err(TypeError::Unsupported(
                     "a default for a trait's parameterized compile-time requirement".to_string(),
@@ -1215,6 +1215,24 @@ impl Checker {
             // require the definition's explicit parameter count to match the
             // requirement's, and that the requirement is itself parameterized.
             if let Some(parameterized) = struct_info.parameterized_associated.get(member) {
+                // A parameterized value witnesses a generator requirement
+                // when its signature and result type match it.
+                if let (
+                    CtMemberReq::Generator { params, result },
+                    MemberTemplate::Value { decls, body },
+                ) = (req, &parameterized.template)
+                {
+                    if !same_generator_signature(params, decls)
+                        || !generator_result_satisfies(body, result)
+                    {
+                        return Err(TypeError::TraitComptimeMemberMismatch {
+                            struct_name: name.to_string(),
+                            trait_name: tr.to_string(),
+                            member: member.clone(),
+                        });
+                    }
+                    continue;
+                }
                 let (CtMemberReq::Type { bounds, params }, MemberTemplate::Type { .. }) =
                     (req, &parameterized.template)
                 else {
@@ -1609,6 +1627,8 @@ impl Checker {
                     self.conforms_to_under_assumption(ty, bound, conformance_assumption)
                 })
             }
+            // An unparameterized member is no generator.
+            CtMemberReq::Generator { .. } => false,
         }
     }
 
@@ -2111,6 +2131,19 @@ impl Checker {
             })
             .filter(|(_, members)| !members.is_empty())
             .collect();
+        let parameterized_values = own
+            .iter()
+            .map(|(name, info)| {
+                let mut members = info
+                    .parameterized_associated
+                    .iter()
+                    .filter_map(|(member, declared)| declared.checked_value_fact(member))
+                    .collect::<Vec<_>>();
+                members.sort_by(|left, right| left.name.cmp(&right.name));
+                (name.clone(), members)
+            })
+            .filter(|(_, members)| !members.is_empty())
+            .collect();
         mojito_checked::checked::ConformanceFacts {
             traits,
             structs,
@@ -2118,6 +2151,7 @@ impl Checker {
             associated,
             parameterized_associated,
             associated_values,
+            parameterized_values,
         }
     }
 
@@ -3273,6 +3307,25 @@ impl Checker {
             })
     }
 
+    /// The parameterized value requirement `member` of a bound trait
+    /// (`comptime get[idx: Int]: Int`): its declared parameters and result
+    /// type.
+    pub(super) fn lookup_trait_generator(
+        &self,
+        bounds: &[String],
+        member: &str,
+    ) -> Option<(&[ParamDecl], &Ty)> {
+        bounds
+            .iter()
+            .filter_map(|b| self.traits.get(b))
+            .find_map(|info| match info.comptime_members.get(member) {
+                Some(CtMemberReq::Generator { params, result }) => {
+                    Some((params.as_slice(), result))
+                }
+                _ => None,
+            })
+    }
+
     /// Find a value-valued associated comptime member required by a bound trait.
     pub(super) fn lookup_trait_assoc_value_ty(
         &self,
@@ -3338,6 +3391,43 @@ impl Checker {
 
     /// Whether a default is an expression over the method's value
     /// parameters, literals, and module constants alone.
+    /// A trait's parameterized value requirement as the generator type it
+    /// declares: its parameters classified under `Trait.member`, beside its
+    /// `result`. Origin parameters are rejected, as on a struct's
+    /// parameterized value member.
+    fn generator_requirement(
+        &mut self,
+        trait_name: &str,
+        member: &TraitComptime,
+        result: Ty,
+    ) -> Result<CtMemberReq, TypeError> {
+        if member.params.iter().any(|parameter| {
+            parameter.is_origin_mutability_binder(&member.params)
+                || matches!(
+                    constraints::assoc_param_kind(parameter),
+                    constraints::AssocParamKind::Origin
+                )
+        }) {
+            return Err(TypeError::Unsupported(
+                "origin parameters on a parameterized comptime value".to_string(),
+            ));
+        }
+        let owner = format!("{}.{}", binder_owner(trait_name), member.name);
+        let mut params = self.classify_params(&owner, &member.params)?;
+        // The requirement's `where` clauses close its parameter list, as a
+        // generic alias's do, so an application through a bound checks them.
+        for condition in &member.where_clauses {
+            let constraint = self.compile_where_clause(condition)?.bind(&[&params]);
+            if let Some(
+                ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. },
+            ) = params.last_mut()
+            {
+                constraints.push(constraint);
+            }
+        }
+        Ok(CtMemberReq::Generator { params, result })
+    }
+
     fn parameter_default_shape(&self, default: &Expr, decls: &[ParamDecl]) -> bool {
         match &default.kind {
             ExprKind::Identifier(name) => match decls.iter().find(|decl| decl.name() == name) {
@@ -3374,6 +3464,19 @@ pub(super) fn refines_trait(
 /// and complete for the accepted subset: only the direct self-rooted field
 /// subscript form is a legal write target through such a field (alias forms
 /// stay rejected by the reborrow rules), so no checked facts are needed.
+/// Whether a parameterized value member's `body` is of the generator
+/// requirement's `result` type: its value type coerces to it, or its
+/// literal materializes as it (`comptime get[idx: Int] = 8` for `Int`).
+fn generator_result_satisfies(body: &ParamExpr, result: &Ty) -> bool {
+    match body.as_constant() {
+        Some(value) => value.clone().materialize_as(result).is_some(),
+        None => body
+            .meta()
+            .as_value()
+            .is_some_and(|actual| coerces(actual, result)),
+    }
+}
+
 fn parametric_origin_writes_in_body(
     body: &[mojito_ast::ast::Stmt],
     fields: &[(String, Ty)],

@@ -3885,6 +3885,11 @@ pub struct ConformanceFacts {
     /// binders (`Self.n + 1`). The elaborator answers `T.K` from them once
     /// `T` is bound to an instance.
     pub associated_values: HashMap<String, Vec<(String, mojito_types::param_expr::ParamExpr)>>,
+    /// Each struct's parameterized compile-time value members (`get` of
+    /// `comptime get[idx: Int]: Int`), sorted by member; see
+    /// [`crate::declaration::StructDeclaration::parameterized_associated_values`].
+    pub parameterized_values:
+        HashMap<String, Vec<crate::declaration::ParameterizedAssociatedValue>>,
 }
 
 /// One struct's conformance to one trait: it holds for the instances whose

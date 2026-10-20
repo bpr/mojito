@@ -1526,10 +1526,13 @@ fn declaration_metadata_reprints_byte_identically() {
                         .into(),
                     ),
                     "K",
+                    &[],
                     MetaTy::int(),
                 ),
             ),
+            ("First".into(), generator_read()),
         ],
+        parameterized_associated_values: vec![generator_member()],
         members: vec![crate::mir::MirStructMember {
             member: "__deinit__".into(),
             symbol: "Box.__deinit__".into(),
@@ -1548,6 +1551,7 @@ fn declaration_metadata_reprints_byte_identically() {
         associated_types: Vec::new(),
         parameterized_associated_types: Vec::new(),
         associated_values: Vec::new(),
+        parameterized_associated_values: Vec::new(),
         members: Vec::new(),
     };
     let add = MirFunctionDeclaration {
@@ -1704,6 +1708,43 @@ fn declaration_metadata_reprints_byte_identically() {
         imported: None,
     };
     assert_reprints(&program);
+}
+
+/// A parameterized value member read through a bound, `T.get[0]`.
+fn generator_read() -> ParamExpr {
+    let context = ParamContext::detached();
+    context.type_member(
+        &context.type_shape(
+            TyKind::Param {
+                binder: test_binder("T"),
+                bounds: vec!["HasGet".into()],
+                callable_bound: None,
+            }
+            .into(),
+        ),
+        "get",
+        &[constant(CtValue::Int(0))],
+        MetaTy::int(),
+    )
+}
+
+/// A conformer's parameterized value member, `comptime get[idx: Int]: Int
+/// = idx`.
+fn generator_member() -> mojito_checked::declaration::ParameterizedAssociatedValue {
+    mojito_checked::declaration::ParameterizedAssociatedValue {
+        name: "get".into(),
+        params: vec![ParamDecl::Value {
+            id: test_id("idx"),
+            name: "idx".into(),
+            ty: Ty::int(),
+            default: None,
+            callable_default: None,
+            infer_only: false,
+            variadic: false,
+            constraints: Vec::new(),
+        }],
+        body: ParamContext::detached().decl_ref(test_id("idx"), "idx", MetaTy::int()),
+    }
 }
 
 #[test]

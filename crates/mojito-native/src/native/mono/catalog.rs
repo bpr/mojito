@@ -140,6 +140,7 @@ impl StructCatalog {
                             members: Vec::new(),
                             parameterized: Vec::new(),
                             values: Vec::new(),
+                            parameterized_values: Vec::new(),
                             fields: Vec::new(),
                         },
                     )
@@ -195,6 +196,7 @@ impl StructShape {
             members: declaration.associated_types.clone(),
             parameterized: declaration.parameterized_associated_types.clone(),
             values: declaration.associated_values.clone(),
+            parameterized_values: declaration.parameterized_associated_values.clone(),
             fields: declaration.fields.clone(),
         }
     }
