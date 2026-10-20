@@ -267,6 +267,7 @@ assets/ok/function_type_where_unconstrained_actual.mojo	-	ineligible	no-scalar-e
 assets/ok/function_typed_kwargs.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/function_value_array_display.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/function_value_array_element_binding.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/generic_alias_type_pack.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_constructor_literal_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_copyable_iterator_refinement.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_ctfe_associated_value.mojo	-	ineligible	no-scalar-entry-shape

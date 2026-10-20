@@ -2037,19 +2037,27 @@ impl Checker {
         let mut values = HashMap::new();
         let mut ids = mojito_types::param_expr::ParamBindings::new();
         for (decl, argument) in alias.decls.iter().zip(&tyargs) {
+            if let Some(list) = self.forwarded_type_pack(decl, argument) {
+                ids.bind(decl.id().clone(), list);
+            }
             match (decl, argument) {
                 (ParamDecl::Type { id, .. }, TyArg::Ty(ty)) => {
                     types.insert(id.clone(), ty.clone());
                 }
-                (ParamDecl::Value { id, name, .. }, TyArg::Val(value)) => {
+                // A type pack binds its element list: `Ts.values` reads it.
+                (ParamDecl::Type { id, .. } | ParamDecl::Value { id, .. }, TyArg::Val(value)) => {
                     if let Ok(bound) = self.param_context.constant(value.clone()) {
                         ids.bind(id.clone(), bound);
                     }
-                    values.insert(name.clone(), value.clone());
+                    if let ParamDecl::Value { name, .. } = decl {
+                        values.insert(name.clone(), value.clone());
+                    }
                 }
                 _ => {}
             }
         }
+        // A spread of a type pack (`Tuple[*Ts]`) expands to its elements.
+        let template = super::generics::expand_solved_packs(template, &alias.decls, &tyargs);
         let bindings = AssocBindings {
             types,
             values,
@@ -2061,7 +2069,7 @@ impl Checker {
         // application must re-select the executable nominal implementation so
         // discovery can materialize it.
         Ok((
-            self.resolve_assoc_ty(&substitute_assoc(template, &bindings)),
+            self.resolve_assoc_ty(&substitute_assoc(&template, &bindings)),
             attributes,
         ))
     }
@@ -2161,13 +2169,28 @@ impl Checker {
                 .map(|parameter| parameter.name.as_str())
                 .zip(args),
         )?;
+        // A spread of the member's own type pack (`Tuple[*Ts]`) expands to
+        // its elements.
+        let (packs, elements): (Vec<ParamDecl>, Vec<TyArg>) = member
+            .params
+            .iter()
+            .filter(|parameter| !parameter.infer_only)
+            .zip(args)
+            .filter_map(|(parameter, argument)| {
+                decls
+                    .iter()
+                    .find(|decl| decl.name() == parameter.name)
+                    .map(|decl| (decl.clone(), argument.clone()))
+            })
+            .unzip();
+        let template = super::generics::expand_solved_packs(template, &packs, &elements);
         let bindings = AssocBindings {
             types,
             values,
             ids,
             origins,
         };
-        Ok(self.resolve_assoc_ty(&substitute_assoc(template, &bindings)))
+        Ok(self.resolve_assoc_ty(&substitute_assoc(&template, &bindings)))
     }
 
     pub(super) fn resolve_assoc_ty(&self, ty: &Ty) -> Ty {
@@ -3222,8 +3245,9 @@ impl Checker {
 
     /// The type of the compile-time value a type expression subscripts: a
     /// struct construction (`TypeList[Ts.values]()`), or one through a
-    /// type's parameterized member (`M.List[Bool, Int]()`), whose struct has
-    /// an `__init__` taking no argument.
+    /// type's parameterized member (`M.List[Bool, Int]()`) or a generic
+    /// alias (`L[Bool, Int]()`), whose struct has an `__init__` taking no
+    /// argument.
     fn compile_time_value_type(&self, value: &Expr) -> Result<Ty, TypeError> {
         let not_construction = || {
             TypeError::Unsupported("a subscript in a type takes a struct construction".to_string())
@@ -3240,6 +3264,21 @@ impl Checker {
                 args,
                 kwargs,
             ),
+            // A construction through a generic alias (`L[Bool, Int]()`)
+            // constructs the struct its application denotes.
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if self.comptime_aliases.contains_key(name) => {
+                let ty = self.applied_type(name, param_args)?.0;
+                let TyKind::Struct(name, _) = ty.kind() else {
+                    return Err(not_construction());
+                };
+                let name = name.clone();
+                (ty, name, args, kwargs)
+            }
             ExprKind::Invoke {
                 callee,
                 param_args,

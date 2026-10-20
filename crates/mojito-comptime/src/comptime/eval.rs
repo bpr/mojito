@@ -885,6 +885,13 @@ impl Elab<'_> {
         let alias = self.generic_alias(name).ok_or_else(|| {
             ComptimeError::NotComptime(format!("`{name}` is not a generic comptime alias"))
         })?;
+        // A pack binds as the list the check builds; the elaborator folds
+        // the application.
+        if alias.params.iter().any(|param| param.name.starts_with('*')) {
+            return Err(not_evaluated_here(&format!(
+                "an application of the variadic alias '{name}'"
+            )));
+        }
         if values.len() != alias.params.len() {
             return Err(ComptimeError::Arity(format!(
                 "{name}[...] takes exactly {} argument(s)",

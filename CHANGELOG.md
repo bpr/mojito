@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A generic alias's variadic parameter binds as a pack, as on the pin:
+  `comptime T2[*Ts: Copyable] = Tuple[*Ts]` makes `T2[Int, Bool]` the
+  tuple `Tuple[Int, Bool]`, `L[Bool, Int]()[1]` reads the `Ts.values` list
+  a `TypeList` body binds, a value body such as `Ts.length` or `vs[0]`
+  folds, a caller's own pack forwards whole (`Len[*Ts]`), and a struct's
+  parameterized member binds its own pack the same way
+  (`assets/ok/generic_alias_type_pack.mojo`). This closes R1205;
+  construction through such an alias joins R60, and a value body over a
+  construction joins R1194.
 - A `comptime` member is read through a parameterized struct left unbound,
   as on the pin: `S.n`, `S.plus[4]`, `var d: S.Of[Bool]`, and `comptime B
   = S.Of[Int]` read a member that does not depend on the struct's

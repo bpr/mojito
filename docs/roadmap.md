@@ -3471,6 +3471,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: a generic module alias's construction, `W[Int](8)` over
     `comptime W[T: AnyType] = Pt[T]`, fails with "Undefined variable 'W'",
     where the pin constructs `Pt[Int]`.
+  - Probe: over a pack, `T2[Int, Bool](1, True)` for `comptime T2[*Ts:
+    Copyable] = Tuple[*Ts]`, and `comptime for v in V[1, 2, 3]()` for
+    `comptime V[*vs: Int] = ParameterList[vs.values]`, fail with
+    "Undefined variable", where the pin prints `True` and `1 2 3`.
+  - Probe: a local `comptime a = A[4]()` over `comptime A[k: Int] = W[k]`
+    fails with "a compile-time call of 'A' is not evaluated above the
+    check", where the pin constructs `W[4]`.
   - Depends on R59, which finds the pass that reads a bare type name as a
     value; the alias call needs the same answer.
   - Model: Opus, Planned.
@@ -4890,25 +4897,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1205 A generic alias's variadic parameter is not bound as a pack**
-
-  Problem: `comptime T2[*Ts: Copyable] = Tuple[*Ts]` makes `var y: T2[Int,
-  Bool] = (1, True)` fail with "expected Tuple[*Ts], found Tuple[Int,
-  Bool]", where the pin prints `1`.
-  - The application leaves the body's `*Ts` and `Ts.values` unsubstituted
-    (`Checker::resolve_comptime_alias`, `checker/type_resolution.rs`).
-  - Probe: `comptime L[*Ts: AnyType] = TypeList[Trait=AnyType, Ts.values]`
-    makes `var y: L[Bool, Int]()[1] = 4` fail with "unsupported associated
-    comptime member access", where the pin prints `4`.
-  - Probe: the same member on a struct, `M.L[Bool, Int]()[1]`, fails the
-    same way.
-  - Upstream's `TypeList.of[Trait, //, *Ts: Trait]` and
-    `ParameterList.of[type, //, *values: type]` are such aliases, so R1186
-    and R809 need it.
-  - Found while landing R806 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1178 A struct's type-valued parameterized `comptime` member is
   not read in a compile-time expression**
 
@@ -5056,6 +5044,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     pack.
   - Upstream reads a `comptime` member through an instance on the
     instance's type.
+  - Probe: a value alias's body over a construction, `comptime Count[*Ts:
+    AnyType] = TypeList[Trait=AnyType, Ts.values]().length`, is rejected
+    at the declaration with "a variadic pack on a Bool-bodied comptime
+    alias parameter", where the pin prints `3` for `Count[Int, Bool,
+    Float64]`: `Checker::lower_parametric_value` reads the body through
+    `compile_dependent_ct_expr`, which gives up on the construction.
   - Found while landing R1184 (2026-10-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.

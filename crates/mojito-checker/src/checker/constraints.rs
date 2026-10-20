@@ -325,11 +325,7 @@ impl Checker {
         // resolve to `Origin::Param` via `enclosing_type_params`; value
         // parameters resolve to a symbolic `CtValue::Expr` through the value
         // scope `decls` open.
-        let depth = self.tparams.len();
-        self.vparams.truncate(depth);
-        self.vparams.resize_with(depth, HashMap::new);
-        self.vparams.push(super::annotations::value_scope(decls));
-        self.tparams.push(scope);
+        self.push_param_scope_as(decls, scope);
         let saved = self.enclosing_type_params.len();
         self.enclosing_type_params.extend(params.iter().cloned());
         // The body's own occurrence records what it resolved to, under the
@@ -462,6 +458,26 @@ impl Checker {
             )
             .map(|(value, _)| value),
         )
+    }
+
+    /// Whether `expr` applies a value-bodied generic alias (`First[5, 6]`),
+    /// in either spelling the parser gives an application.
+    pub(super) fn applies_value_alias(&self, expr: &Expr) -> bool {
+        let name = match &expr.kind {
+            ExprKind::TypeApply { name, .. } => name,
+            ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. } => {
+                match &object.kind {
+                    ExprKind::Identifier(name) => name,
+                    _ => return false,
+                }
+            }
+            _ => return false,
+        };
+        self.lookup(name).is_none()
+            && self
+                .comptime_aliases
+                .get(name)
+                .is_some_and(|alias| matches!(alias.body, AliasBody::Value(_)))
     }
 
     /// The parameterized value member `field` of the struct `object` names,
@@ -1209,6 +1225,12 @@ impl Checker {
     /// level for level beside them, its value parameters. `tparams.pop()`
     /// closes both, since a value scope deeper than the type scopes is dead.
     pub(super) fn push_param_scope(&mut self, decls: &[ParamDecl]) {
+        self.push_param_scope_as(decls, type_scope(decls));
+    }
+
+    /// [`Self::push_param_scope`] with the type binders `scope` spells,
+    /// as a `comptime` member's own binders are keyed by member.
+    pub(super) fn push_param_scope_as(&mut self, decls: &[ParamDecl], scope: HashMap<String, Ty>) {
         let depth = self.tparams.len();
         self.vparams.truncate(depth);
         self.vparams.resize_with(depth, HashMap::new);
@@ -1219,7 +1241,36 @@ impl Checker {
         self.value_packs.truncate(depth);
         self.value_packs.resize_with(depth, HashSet::new);
         self.value_packs.push(value_pack_scope(decls));
-        self.tparams.push(type_scope(decls));
+        self.tparams.push(scope);
+    }
+
+    /// The list a type pack `decl` binds when its argument forwards a pack
+    /// whole (`Len[*Ts]`): the forwarding declaration's own pack, or a list
+    /// computed from packs (`*Ts.reverse()`). `None` for any other binding.
+    pub(super) fn forwarded_type_pack(
+        &self,
+        decl: &ParamDecl,
+        argument: &TyArg,
+    ) -> Option<ParamExpr> {
+        let (ParamDecl::Type { variadic: true, .. }, TyArg::Ty(ty)) = (decl, argument) else {
+            return None;
+        };
+        if let Some(list) = mojito_types::types::list_spread(ty) {
+            return Some(list.clone());
+        }
+        let TyKind::Param { binder, .. } =
+            mojito_types::types::pack_spread(std::slice::from_ref(ty))?.kind()
+        else {
+            return None;
+        };
+        Some(
+            self.param_context
+                .intern(&ParamContext::detached().decl_ref(
+                    binder.id.clone(),
+                    binder.name.trim_start_matches('*'),
+                    mojito_types::param_expr::MetaTy::type_list(),
+                )),
+        )
     }
 
     /// The parameter-list reference a bare name denotes when it is a
@@ -3324,6 +3375,9 @@ impl Checker {
         arguments: &[TyArg],
     ) -> Result<(), TypeError> {
         for (decl, argument) in decls.iter().zip(arguments) {
+            if let Some(list) = self.forwarded_type_pack(decl, argument) {
+                bindings.bind(decl.id().clone(), list);
+            }
             match (decl, argument) {
                 (ParamDecl::Type { id, .. }, TyArg::Ty(ty)) => {
                     bindings.bind_type(id.clone(), ty.clone());

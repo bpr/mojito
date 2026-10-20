@@ -1147,7 +1147,9 @@ impl Elab<'_> {
     /// Whether a module constant's initializer is an application the check
     /// binds ([`CtMarker::Applied`]): it applies a callable, asks a layout
     /// (`size_of[T]()`), reads an applied constant, or calls a method of a
-    /// value binding (`s.byte_length()`), which the pin's interpreter runs.
+    /// value binding (`s.byte_length()`), which the pin's interpreter runs,
+    /// or applies a generic alias over a pack, whose list only the check
+    /// binds.
     fn applied_initializer(&self, expression: &Expr, env: &ConstEnv<'_>) -> bool {
         self.applies_callable(expression)
             || asks_layout(expression)
@@ -1155,6 +1157,11 @@ impl Elab<'_> {
                 matches!(env.get(name), Some(CtValue::Marker(CtMarker::Applied)))
             })
             || calls_value_method(expression, env)
+            || applies_alias(expression, &|name| {
+                self.generic_alias(name).is_some_and(|alias| {
+                    alias.params.iter().any(|param| param.name.starts_with('*'))
+                })
+            })
     }
 }
 
@@ -1493,6 +1500,36 @@ pub(super) fn expression_names_any(expression: &Expr, names: &dyn Fn(&str) -> bo
 
     let mut finder = Finder {
         names,
+        found: false,
+    };
+    mojito_ast::visit::walk_expr(&mut finder, expression);
+    finder.found
+}
+
+/// Whether `expression` applies a generic alias `aliases` accepts, in
+/// either spelling the parser gives an application (`A[x]`, `A[x, y]`).
+fn applies_alias(expression: &Expr, aliases: &dyn Fn(&str) -> bool) -> bool {
+    struct Finder<'a> {
+        aliases: &'a dyn Fn(&str) -> bool,
+        found: bool,
+    }
+
+    impl mojito_ast::visit::Visitor for Finder<'_> {
+        fn visit_expr(&mut self, expr: &Expr) {
+            match &expr.kind {
+                ExprKind::TypeApply { name, .. } => self.found |= (self.aliases)(name),
+                ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. } => {
+                    if let ExprKind::Identifier(name) = &object.kind {
+                        self.found |= (self.aliases)(name);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut finder = Finder {
+        aliases,
         found: false,
     };
     mojito_ast::visit::walk_expr(&mut finder, expression);

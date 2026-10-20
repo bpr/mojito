@@ -1708,10 +1708,14 @@ impl Checker {
                     return Ok(());
                 }
                 // A type name takes the alias route; an alias of a value
-                // binder (`comptime lane = dt`) or of an applied module
-                // constant (`comptime E = D`) is the ordinary path below.
+                // binder (`comptime lane = dt`), of an applied module
+                // constant (`comptime E = D`), or of a value alias's
+                // application (`comptime n = First[5, 6]`) is the ordinary
+                // path below.
                 let value_alias = self.names_value_binder(value)
-                    || (type_params.is_empty() && self.names_applied_module_constant(value));
+                    || (type_params.is_empty()
+                        && (self.names_applied_module_constant(value)
+                            || self.applies_value_alias(value)));
                 if !value_alias
                     && (!type_params.is_empty()
                         || self.comptime_aliases.contains_key(name)
@@ -3280,10 +3284,15 @@ impl Checker {
                     &source_ty,
                 ) {
                     Ok(template) => AliasBody::Type(template),
-                    Err(type_error) => AliasBody::Predicate(Box::new(
-                        self.compile_predicate_alias_body(&decls, value)
-                            .map_err(|_| type_error)?,
-                    )),
+                    // A type-shaped body over a pack (`Ts.length`, `vs[0]`)
+                    // may still be a proposition or a value.
+                    Err(type_error) => match self.compile_predicate_alias_body(&decls, value) {
+                        Ok(constraint) => AliasBody::Predicate(Box::new(constraint)),
+                        Err(_) => AliasBody::Value(
+                            self.lower_parametric_value(&decls, value, None)
+                                .map_err(|_| type_error)?,
+                        ),
+                    },
                 }
             }
             (Err(_), None) => match self.compile_predicate_alias_body(&decls, value) {
