@@ -15,7 +15,8 @@
 # `#kgen.is_refined_type`), and the list vocabulary (`tabulate`, `splat`,
 # `_concat`, `reduce`, `any`, `all`, `all_conforms_to`, `contains`, `map`,
 # `filter_idx`, `reverse`, `slice`), which the compiler still answers by
-# spelling. `of` is upstream's alias.
+# spelling. `TypeList.of` and `ParameterList.of`/`empty_of` are upstream's
+# aliases.
 #
 # `ParameterList`'s `values` is upstream's one raw `KGENParamListType[type]`
 # parameter, and a pack's `vs.values` is that list. `_MLIR` declares no
@@ -191,6 +192,23 @@ struct ParameterList[type: AnyType, //, values: _MLIR.KGENParamListType[type]](
     def __init__(out self):
         """Constructs a ParameterList."""
         pass
+
+    comptime empty_of[type: AnyType] = Self.of[type=type]
+    """Form an empty compile-time list of values some element type.
+
+    Parameters:
+        type: The type of the elements in the list.
+    """
+
+    comptime of[type: AnyType, //, *values: type] = ParameterList[
+        type=type, values.values
+    ]
+    """Form a compile-time list of values with some elements, uninstantiated.
+
+    Parameters:
+        type: The type of the elements in the list.
+        values: The values in the list.
+    """
 
     # ===-------------------------------------------------------------------===#
     # Other

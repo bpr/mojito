@@ -2,7 +2,9 @@
 //! and `comptime(e)` fold to the literal form of their value, and a `comptime(e)`
 //! that evaluates to a collection (`Array`, `Dict`, `Set` are not implicitly
 //! copyable) is rejected with upstream's diagnostic. No collection binding
-//! reaches this pass: the check binds every one as an application.
+//! reaches this pass: the check binds every one as an application. A
+//! construction through a struct's type member (`ParameterList.of[4, 5]()`)
+//! becomes the construction of the struct the member names.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -276,6 +278,30 @@ impl Elab<'_> {
             *expr = literal;
             return Ok(());
         }
+        // A construction through a struct's type member (`S.Of[Int]()`,
+        // `ParameterList.of[4, 5]()`) constructs the struct the member
+        // names, as a construction through any alias does.
+        if let ExprKind::Invoke {
+            callee,
+            param_args,
+            args,
+            kwargs,
+        } = &expr.kind
+            && let ExprKind::Member { object, .. } = &callee.kind
+            && (self.generator_base(object, env).is_some()
+                || matches!(self.eval(object, env), Ok(CtValue::Type(_))))
+            && let Some(applied) = member_application(callee, param_args)
+            && let Ok(CtValue::Type(ty)) = self.eval(&applied, env)
+            && let Some((target, spelled)) = self.type_construction(&applied, &ty)
+        {
+            expr.kind = ExprKind::Call {
+                name: target,
+                param_args: spelled,
+                args: args.clone(),
+                kwargs: kwargs.clone(),
+            };
+        }
+        let span = expr.span;
         match &mut expr.kind {
             // `materialize[X]()`: the literal form of a binding, or of a
             // compile-time expression over the bindings (`names[i]`). An
@@ -354,7 +380,24 @@ impl Elab<'_> {
                 self.cross_expr(left, env, shadowed)?;
                 self.cross_expr(right, env, shadowed)
             }
-            ExprKind::Call { args, kwargs, .. } => {
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } => {
+                // A construction through a binding of a type no source
+                // spelling names, which the check keeps (`comptime Ints =
+                // ParameterList.of[4, 5]` then `Ints()`).
+                if param_args.is_empty()
+                    && let Some(CtValue::Type(ty)) = binding(name)
+                    && self.binds_raw_list(ty)
+                    && let Some((target, spelled)) = self
+                        .type_construction(&Expr::new(ExprKind::Identifier(name.clone()), span), ty)
+                {
+                    *name = target;
+                    *param_args = spelled;
+                }
                 for argument in args {
                     self.cross_expr(argument, env, shadowed)?;
                 }
@@ -496,6 +539,58 @@ impl Elab<'_> {
                 Ok(())
             }
         }
+    }
+
+    /// The construction a call through `applied`, a type that names a
+    /// struct (`S.Of[Int]`), spells: the struct at the type's source
+    /// spelling. A struct over a raw parameter list (`ParameterList.of[4,
+    /// 5]`, or a `comptime` binding of one), whose list has no source
+    /// spelling, spells each parameter by keyword, a type as itself and a
+    /// value read off `applied` (`ParameterList[type=Int,
+    /// values=ParameterList.of[4, 5].values]`). `None` for any other type.
+    fn type_construction(&self, applied: &Expr, ty: &Ty) -> Option<(String, Vec<ParamArg>)> {
+        let TyKind::Struct(target, arguments) = ty.kind() else {
+            return None;
+        };
+        if !self.binds_raw_list(ty) {
+            return match source_type_from_ty(ty)? {
+                Type::Named(name, args) => Some((name, args)),
+                _ => None,
+            };
+        }
+        let decls = self.ct_struct(target)?.decls();
+        if decls.len() != arguments.len() {
+            return None;
+        }
+        let spelled = decls
+            .iter()
+            .zip(arguments)
+            .map(|(decl, argument)| {
+                let value = match (decl, argument) {
+                    (_, TyArg::Origin(_)) => return None,
+                    (
+                        ParamDecl::Type { variadic: true, .. }
+                        | ParamDecl::Value { variadic: true, .. },
+                        _,
+                    ) => return None,
+                    (ParamDecl::Type { .. }, TyArg::Ty(ty)) => {
+                        ParamArg::Type(mojito_types::ct::source_type(ty, applied.span)?)
+                    }
+                    (_, _) => ParamArg::Value(Expr::new(
+                        ExprKind::Member {
+                            object: Box::new(applied.clone()),
+                            field: decl.name().to_string(),
+                        },
+                        applied.span,
+                    )),
+                };
+                Some(ParamArg::Named {
+                    name: decl.name().to_string(),
+                    value: Box::new(value),
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some((target.clone(), spelled))
     }
 }
 
@@ -671,4 +766,36 @@ fn collect_runtime_locals(stmts: &[Stmt], out: &mut HashSet<String>) {
             _ => {}
         }
     }
+}
+
+/// The member application an invocation's callee and bracket list spell
+/// (`ParameterList.of[4, 5]` of `ParameterList.of[4, 5]()`), as a
+/// compile-time expression. `None` when a bracket argument is no value or
+/// keyword.
+fn member_application(callee: &Expr, param_args: &[ParamArg]) -> Option<Expr> {
+    if param_args.is_empty() {
+        return None;
+    }
+    let argument = |argument: &ParamArg| match argument {
+        ParamArg::Value(value) => Some(value.clone()),
+        ParamArg::Type(ty) => Some(Expr::new(ExprKind::TypeValue(ty.clone()), callee.span)),
+        ParamArg::Named { .. } => None,
+    };
+    let args = param_args
+        .iter()
+        .map(|parameter| match parameter {
+            ParamArg::Named { name, value } => argument(value).map(|value| SubscriptArg::Keyword {
+                name: name.clone(),
+                value,
+            }),
+            positional => argument(positional).map(SubscriptArg::Index),
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(Expr::new(
+        ExprKind::MultiIndex {
+            object: Box::new(callee.clone()),
+            args,
+        },
+        callee.span,
+    ))
 }

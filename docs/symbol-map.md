@@ -1175,7 +1175,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   literals, and so does a reflection query over a closed handle
   (`reflection_query`: `r.field_count()`, `reflect[T].field_index["x"]()`);
   a `comptime(e)` operand that evaluates to a collection is rejected with
-  upstream's `ImplicitlyCopyable` text; runtime locals shadow). The check
+  upstream's `ImplicitlyCopyable` text; runtime locals shadow). A
+  construction through a struct's parameterized type member
+  (`ParameterList.of[4, 5]()`, `S[Int].Of[Bool](3, 4)`) is expanded there
+  to the named struct's own construction (`Elab::type_construction`),
+  a struct over a raw list (`Elab::binds_raw_list`) spelling each
+  parameter by keyword as a read off the applied member, since a closed
+  raw list has no source spelling; a `comptime` binding of such a type or
+  of a raw list read (`Elab::reads_raw_list`) stays for the check, which
+  inlines the read at its uses (`Checker::reads_raw_list`). The check
   owns every other crossing rejection (`Checker::reject_display_crossing`).
 - No method or `def` is cloned, per call or per instance: a `comptime
   if`/`comptime for` over a method's own binders or its struct's stays in
@@ -1673,8 +1681,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Checker::member_value_type`: the bound's requirement, or on a struct
   the annotation `StructInfo::associated_value_types` keeps (or an
   unannotated raw-list body's own type), at the application's arguments.
-  `check_struct_associated` installs each member into the struct's shell
-  as it resolves, so a later member reads it through `Self`, and
+  `check_struct_associated` resolves the members in `read_order` (each
+  after the siblings it reads through `Self`, the pin's any-order reads)
+  and installs each into the struct's shell as it resolves, so a member
+  reads it through `Self`, and
   `type_member_value`'s `TyKind::SelfType` arm reads a trait's own value
   requirement in its scope. A member spelled as a type in a value slot
   (`Box[Self.n]`, `Self.T.K`) is the read

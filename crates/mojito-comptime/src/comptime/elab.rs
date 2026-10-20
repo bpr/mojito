@@ -120,6 +120,7 @@ impl Elab<'_> {
             } = &stmt.kind
                 && type_params.is_empty()
                 && let Some((value, source)) = env.get(name).and_then(type_alias)
+                && !matches!(&value, CtValue::Type(ty) if self.binds_raw_list(ty))
             {
                 type_aliases.insert(name.clone(), value);
                 source_aliases.insert(name.clone(), source);
@@ -232,11 +233,18 @@ impl Elab<'_> {
                 // a reflection handle such an initializer may name
                 // (`comptime types = r.field_types()`). So does a type no
                 // source spelling names (`TypeList.of[Trait=AnyType, Int]`,
-                // whose raw list has none), and at module scope a struct
-                // application of one.
+                // whose raw list has none, nor `ParameterList.of[4, 5]`'s,
+                // whose list materializes as a tuple), at module scope a
+                // struct application of one, and a raw list read off a
+                // struct's parameter (`ParameterList.of[4, 5].values`).
+                if self.reads_raw_list(value, env) {
+                    out.push(stmt.clone());
+                    return Ok(());
+                }
                 let unspelled = |value: &CtValue| {
                     matches!(value, CtValue::Type(ty)
-                        if mojito_types::ct::source_type(ty, span).is_none()
+                        if (mojito_types::ct::source_type(ty, span).is_none()
+                            || self.binds_raw_list(ty))
                             && (in_fn || matches!(ty.kind(), TyKind::Struct(..))))
                 };
                 if env.get(name).is_some_and(|value| {
@@ -1097,6 +1105,24 @@ impl Elab<'_> {
                 "type '{base}' has no compile-time member '{member}'"
             )));
         };
+        // A struct's own parameter is a member of each instance
+        // (`S[3].n`, `ParameterList.of[4, 5].values`).
+        if member_args.is_empty()
+            && let Some(view) = self.ct_struct(name)
+            && let Some(argument) = view
+                .decls()
+                .iter()
+                .position(|decl| decl.name().trim_start_matches('*') == member)
+                .and_then(|slot| args.get(slot))
+        {
+            return match argument {
+                TyArg::Ty(ty) => Ok(CtValue::Type(ty.clone())),
+                TyArg::Val(value) => Ok(value.clone()),
+                TyArg::Origin(_) => Err(ComptimeError::NotComptime(format!(
+                    "the origin parameter '{member}' of '{base}' is not a compile-time value"
+                ))),
+            };
+        }
         let info = match self.ct_struct(name) {
             Some(StructView::Own(info)) => info,
             Some(StructView::Package(_)) if !member_args.is_empty() => {
@@ -1199,6 +1225,43 @@ impl Elab<'_> {
                     alias.params.iter().any(|param| param.name.starts_with('*'))
                 })
             })
+    }
+
+    /// Whether `ty` is an application of a struct over a raw parameter list
+    /// (`ParameterList`'s `values: _MLIR.KGENParamListType[type]`), which no
+    /// source spelling binds.
+    pub(super) fn binds_raw_list(&self, ty: &Ty) -> bool {
+        let TyKind::Struct(name, _) = ty.kind() else {
+            return false;
+        };
+        self.ct_struct(name).is_some_and(|info| {
+            info.decls().iter().any(|decl| {
+                matches!(decl, ParamDecl::Value { ty, .. }
+                    if matches!(ty.kind(), TyKind::ParamList(_)))
+            })
+        })
+    }
+
+    /// Whether `expression` reads a raw-list parameter of a struct type
+    /// (`ParameterList.of[4, 5].values`), a list whose closed form is a
+    /// tuple no source spelling binds back to the list.
+    fn reads_raw_list(&self, expression: &Expr, env: &ConstEnv<'_>) -> bool {
+        let ExprKind::Member { object, field } = &expression.kind else {
+            return false;
+        };
+        let Ok(CtValue::Type(ty)) = self.eval(object, env) else {
+            return false;
+        };
+        let TyKind::Struct(name, _) = ty.kind() else {
+            return false;
+        };
+        self.ct_struct(name).is_some_and(|info| {
+            info.decls().iter().any(|decl| {
+                matches!(decl, ParamDecl::Value { name, ty, .. }
+                    if name.trim_start_matches('*') == field
+                        && matches!(ty.kind(), TyKind::ParamList(_)))
+            })
+        })
     }
 
     /// One bracket argument as a compile-time value: a type, a value, or a

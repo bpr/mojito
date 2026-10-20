@@ -1175,8 +1175,13 @@ impl Checker {
         annotation: Option<&SourceType>,
         value: &Expr,
     ) -> Result<bool, TypeError> {
-        // A string literal's KGEN string is compile-time only before any
-        // probe below types it as a template's expression.
+        // A string literal's KGEN string, or a closed raw list read off a
+        // struct's parameter, is compile-time only before any probe below
+        // types it as a template's expression.
+        if self.reads_raw_list(value) {
+            self.check_raw_list_annotation(name, annotation, value)?;
+            return self.bind_compile_time_only_value(name, value);
+        }
         if self.reads_literal_value(value) {
             return self.bind_compile_time_only_value(name, value);
         }
@@ -1286,12 +1291,37 @@ impl Checker {
         Ok(false)
     }
 
+    /// Require a raw list binding's annotation, if any, to name the list's
+    /// type (`comptime raw: _MLIR.KGENParamListType[Int] =
+    /// ParameterList.of[4, 5].values`).
+    fn check_raw_list_annotation(
+        &self,
+        name: &str,
+        annotation: Option<&SourceType>,
+        value: &Expr,
+    ) -> Result<(), TypeError> {
+        let (Some(annotation), Some(found)) = (annotation, self.member_value_type(value)) else {
+            return Ok(());
+        };
+        let expected =
+            self.resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)?;
+        if coerces(&found, &expected) || self.param_list_converts(&found, &expected) {
+            return Ok(());
+        }
+        Err(TypeError::TypeMismatch {
+            expected: expected.to_string(),
+            found: found.to_string(),
+            context: format!("comptime '{name}'"),
+        })
+    }
+
     /// Bind a reflection handle (`reflect[T]`, `r.field["x"]`), a reflected
     /// list (`r.field_names()`), a
     /// type list computed from the body's packs
-    /// (`TypeList._concat[Self.Ts.values, OtherTs.values]()`), or a string
-    /// literal's KGEN string (`"None".value`): a compile-time-only value
-    /// inlined at its uses. `false` when `value` is none of these.
+    /// (`TypeList._concat[Self.Ts.values, OtherTs.values]()`), a string
+    /// literal's KGEN string (`"None".value`), or a closed raw list
+    /// (`ParameterList.of[4, 5].values`): a compile-time-only value inlined
+    /// at its uses. `false` when `value` is none of these.
     fn bind_compile_time_only_value(
         &mut self,
         name: &str,
@@ -1300,7 +1330,8 @@ impl Checker {
         if !(matches!(self.reflection_handle(value), Ok(Some(_)))
             || matches!(self.reflection_list(value), Ok(Some(_)))
             || matches!(self.type_list_operand(value), Ok(Some(_)))
-            || self.reads_literal_value(value))
+            || self.reads_literal_value(value)
+            || self.reads_raw_list(value))
         {
             return Ok(false);
         }

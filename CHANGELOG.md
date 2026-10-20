@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `ParameterList.of` and `ParameterList.empty_of` are ported as upstream's
+  aliases, as on the pin: `ParameterList.of[4, 5, 6]` infers `Int` from
+  its values (or takes `type=` by keyword), a read through it is a type,
+  `ParameterList.of[4, 5, 6]()` and `ParameterList.empty_of[Int]()`
+  construct, and a closed list's `.values` binds in a module or local
+  `comptime` and feeds `ParameterList[raw]`, natively too, where a static
+  list of `Int8`, `Float32`, or other one-lane `SIMD` elements now lays out
+  (`assets/ok/parameter_list_of_alias.mojo`). A construction through any
+  struct's parameterized type member (`S[Int].Of[Bool](3, 4)`) constructs
+  the struct it names (`assets/ok/struct_member_alias_construction.mojo`),
+  a struct's `comptime` members read one another in any order
+  (`assets/ok/struct_comptime_member_read_order.mojo`), and a struct
+  parameter reads through a type in a compile-time expression (`comptime c
+  = S[7].n`; `assets/ok/struct_parameter_comptime_read.mojo`). This closes
+  R809, R1207, and R1209.
 - A trait's parameterized `comptime` requirement may declare a default,
   value- or type-valued, as on the pin: a conformer that omits the member
   takes it with the requirement's parameters and `where` clauses, read

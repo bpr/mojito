@@ -2569,9 +2569,13 @@ impl Checker {
                         });
                     }
                     self.record_literal_materializations(expr, &actual, ty)?;
-                    // A type list (`Ts.values`) or a KGEN string has no
-                    // run-time form.
-                    if value.is_compile_time_only() {
+                    // A type list (`Ts.values`), a closed raw list of
+                    // values, or a KGEN string has no run-time form.
+                    let closed_value_list = matches!(&value, CtValue::Tuple(elements)
+                        if !elements.iter().any(|element| matches!(element, CtValue::Type(_))));
+                    if value.is_compile_time_only()
+                        || (closed_value_list && matches!(ty.kind(), TyKind::ParamList(_)))
+                    {
                         self.record_at(expr.source_span()).argument_attribute =
                             Some(TyArg::Val(value.clone()));
                     }

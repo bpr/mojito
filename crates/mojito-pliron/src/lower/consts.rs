@@ -106,6 +106,10 @@ impl FnLowering<'_> {
                 }
                 (TyKind::Bool, CtValue::Bool(value)) => Some(vec![u8::from(*value)]),
                 (TyKind::Dtype, CtValue::Dtype(dtype)) => Some(vec![dtype.code()]),
+                (ty, value) if let Some(dtype) = scalar_simd_dtype(ty) => {
+                    mojito_types::ct::CtLane::from_value(value, dtype)
+                        .map(|lane| scalar_lane_bytes(dtype, &lane))
+                }
                 _ => None,
             };
             let Some(encoded) = encoded else {
@@ -118,6 +122,7 @@ impl FnLowering<'_> {
         }
         let align = match element.kind() {
             TyKind::Bool | TyKind::Dtype => 1,
+            ty if let Some(dtype) = scalar_simd_dtype(ty) => lane_bytes(dtype) as u32,
             _ => 8,
         };
         let global = self.shared.intern_param_list(ctx, &bytes, align);
@@ -588,4 +593,27 @@ impl FnLowering<'_> {
             )),
         }
     }
+}
+
+/// The bytes one lane of `dtype` occupies in memory (a `bool` lane is a
+/// byte).
+const fn lane_bytes(dtype: Dtype) -> usize {
+    (dtype.bit_width() as usize).div_ceil(8)
+}
+
+/// One scalar lane of `dtype` at its native layout, little-endian, the bits
+/// the VM keeps for it: an integer wrapped to the lane, a float rounded to
+/// it.
+fn scalar_lane_bytes(dtype: Dtype, lane: &mojito_types::ct::CtLane) -> Vec<u8> {
+    use mojito_types::ct::CtLane;
+    let bits = match lane {
+        CtLane::Int(value) => *value as u64,
+        CtLane::Float(bits) => match dtype {
+            Dtype::Float16 => u64::from(mojito_common::float::f16_bits(f64::from_bits(*bits))),
+            Dtype::Float32 => u64::from((f64::from_bits(*bits) as f32).to_bits()),
+            _ => *bits,
+        },
+        CtLane::Bool(value) => u64::from(*value),
+    };
+    bits.to_le_bytes()[..lane_bytes(dtype)].to_vec()
 }

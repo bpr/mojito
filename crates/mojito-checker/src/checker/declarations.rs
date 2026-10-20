@@ -3273,6 +3273,12 @@ impl Checker {
             |index| bound[index].is_empty(),
             |_, _| None,
         )?;
+        let mut subst = TySubst::new();
+        self.solve_binders_from_values(decls, &mut subst, |index, declared| {
+            bound[index]
+                .first()
+                .and_then(|value| self.ct_value_ty(value, declared))
+        })?;
         decls
             .iter()
             .zip(&bound)
@@ -3308,6 +3314,7 @@ impl Checker {
                 (_, []) => trait_solutions
                     .get(decl.id())
                     .map(|solved| TyArg::Val(solved.clone()))
+                    .or_else(|| subst.get(decl.id()).map(|ty| TyArg::Ty(ty.clone())))
                     .ok_or_else(|| TypeError::CannotInferTypeParam {
                         name: name.to_string(),
                         param: decl.name().to_string(),

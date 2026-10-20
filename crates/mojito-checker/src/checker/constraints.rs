@@ -146,7 +146,8 @@ impl Checker {
             Some(TyKind::Struct(name, _)) => name.clone(),
             _ => "Self".to_string(),
         };
-        for member in associated.iter().chain(&defaults) {
+        let members: Vec<&StructComptime> = associated.iter().chain(&defaults).collect();
+        for member in read_order(&members) {
             if out.contains_key(&member.name) || parameterized.contains_key(&member.name) {
                 return Err(TypeError::Redeclaration(member.name.clone()));
             }
@@ -706,9 +707,10 @@ impl Checker {
                     return Ok(CtValue::Expr(reference));
                 }
                 // A local `comptime` binding of a string literal's KGEN
-                // string (`comptime v = "None".value`) is inlined.
+                // string (`comptime v = "None".value`) or of a closed raw
+                // list is inlined.
                 if let Some(bound) = self.local_comptime_value(name)
-                    && self.reads_literal_value(bound)
+                    && (self.reads_literal_value(bound) || self.reads_raw_list(bound))
                 {
                     return self.eval_associated_ct(bound, associated);
                 }
@@ -1891,8 +1893,15 @@ impl Checker {
     /// `TypeList.of[Trait=AnyType, Int].values`), at the type's arguments.
     /// `None` when `expr` reads no member whose annotation names a type; a
     /// pack's `ParameterList` / `TypeList` members type through their
-    /// values.
+    /// values. A local `comptime` binding of a raw list read types as the
+    /// read.
     pub(super) fn member_value_type(&self, expr: &Expr) -> Option<Ty> {
+        if let ExprKind::Identifier(name) = &expr.kind {
+            return self
+                .local_comptime_value(name)
+                .filter(|bound| self.reads_raw_list(bound))
+                .and_then(|bound| self.member_value_type(bound));
+        }
         let ExprKind::Member { object, field } = &expr.kind else {
             return None;
         };
@@ -2408,6 +2417,16 @@ impl Checker {
             && self
                 .eval_associated_ct(expr, &HashMap::new())
                 .is_ok_and(|value| matches!(value, CtValue::KgenString(_)))
+    }
+
+    /// Whether `expr` reads a closed raw list off a struct's parameter
+    /// (`ParameterList.of[4, 5].values`), a compile-time-only value.
+    pub(super) fn reads_raw_list(&self, expr: &Expr) -> bool {
+        self.member_value_type(expr)
+            .is_some_and(|ty| matches!(ty.kind(), TyKind::ParamList(_)))
+            && self
+                .eval_associated_ct(expr, &HashMap::new())
+                .is_ok_and(|value| matches!(value, CtValue::Tuple(_)))
     }
 
     /// The list a spread's operand denotes (`Ts.reverse()` in
@@ -3779,6 +3798,12 @@ pub(super) fn member_source_type(expr: &Expr) -> Option<SourceType> {
     };
     let applied = |object: &Expr, args: Vec<mojito_ast::ast::ParamArg>| match member(object)? {
         SourceType::Assoc { base, name, .. } => Some(SourceType::Assoc { base, name, args }),
+        // A sibling member's application (`Self.of[type=type]`).
+        SourceType::SelfParam(name) => Some(SourceType::Assoc {
+            base: Box::new(SourceType::SelfType),
+            name,
+            args,
+        }),
         _ => None,
     };
     match &expr.kind {
@@ -3995,4 +4020,62 @@ fn pack_conformance_atom(expr: &Expr) -> Option<(&str, &str)> {
         _ => return None,
     };
     Some((pack, trait_name))
+}
+
+/// `members` in an order that resolves each after the siblings it reads
+/// through `Self` (`comptime X = Self.K + 1` above `comptime K = 3`,
+/// `comptime empty_of[type: AnyType] = Self.of[type=type]` above `of`), as
+/// the pin reads a struct's members in any order: declaration order among
+/// independent members, and for the members of a cycle.
+fn read_order<'m>(members: &[&'m StructComptime]) -> Vec<&'m StructComptime> {
+    let reads: Vec<HashSet<String>> = members.iter().map(|member| self_reads(member)).collect();
+    let mut placed = vec![false; members.len()];
+    let mut order = Vec::with_capacity(members.len());
+    let ready = |index: usize, placed: &[bool]| {
+        reads[index].iter().all(|name| {
+            members
+                .iter()
+                .zip(placed)
+                .enumerate()
+                .all(|(other, (member, done))| other == index || *done || member.name != *name)
+        })
+    };
+    while let Some(next) = (0..members.len())
+        .find(|&index| !placed[index] && ready(index, &placed))
+        .or_else(|| placed.iter().position(|done| !done))
+    {
+        placed[next] = true;
+        order.push(members[next]);
+    }
+    order
+}
+
+/// The sibling members a struct `comptime` member reads through `Self`:
+/// `Self.K` in its body or clauses, `Self.K` or `Self.Of[..]` in a type.
+fn self_reads(member: &StructComptime) -> HashSet<String> {
+    struct Reads(HashSet<String>);
+    impl mojito_ast::visit::Visitor for Reads {
+        fn visit_expr(&mut self, expr: &Expr) {
+            if let ExprKind::Member { object, field } = &expr.kind
+                && matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
+            {
+                self.0.insert(field.clone());
+            }
+        }
+
+        fn visit_type(&mut self, ty: &SourceType) {
+            match ty {
+                SourceType::SelfParam(name) => {
+                    self.0.insert(name.trim_start_matches('*').to_string());
+                }
+                SourceType::Assoc { base, name, .. } if matches!(**base, SourceType::SelfType) => {
+                    self.0.insert(name.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut reads = Reads(HashSet::new());
+    mojito_ast::visit::walk_struct_comptime(&mut reads, member);
+    reads.0
 }

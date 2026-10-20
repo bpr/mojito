@@ -3468,10 +3468,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The annotation spelling works: `var made: Holder[7].Same = Sized[7]()`.
   - The alias now binds the instance's value parameters
     (`associated_type_from_base`), so only the call path is missing.
-  - Probe: a parameterized member's construction, `S[Int].Of[Bool](3, 4)`
-    over `comptime Of[U: AnyType] = Tuple[Int, Int]`, fails with "a
-    parameterized type is not a value", where the pin prints `4`; the
-    annotation `var b: S[Int].Of[Bool]` runs since R806.
   - Probe: a generic module alias's construction, `W[Int](8)` over
     `comptime W[T: AnyType] = Pt[T]`, fails with "Undefined variable 'W'",
     where the pin constructs `Pt[Int]`.
@@ -3484,7 +3480,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     check", where the pin constructs `W[4]`.
   - Probe: a run-time construction through a struct's member alias, `var t
     = TypeList.of[Trait=AnyType, Int, Bool]()` then `print(len(t))`, fails
-    with "Undefined variable 'TypeList'", where the pin prints `2`.
+    with "Undefined variable 'TypeList'", where the pin prints `2`. The
+    elaborator expands it to `TypeList[Trait=..., values=TypeList.of[...]
+    .values]()` (`Elab::type_construction`), whose closed type list
+    `resolve_param_arg` does not record as an attribute: recorded, MIR
+    emits it as an untyped constant.
   - Probe: a construction through a non-generic struct's member alias,
     `S.V(1)` over `comptime V = SIMD[DType.int64, Self.w]`, fails with
     "Undefined variable 'S'", where the pin prints `[1, 1, 1, 1]`.
@@ -4899,26 +4899,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1209 The pre-check elaborator does not read a struct parameter
-  through a type**
-
-  Problem: `comptime c = S[7].n` over `struct S[n: Int]` stops with "type
-  'S[7]' has no compile-time member 'n'", where the pin prints `7`.
-  - The elaborator's member read through a struct type
-    (`Elab::associated_value_at`, `comptime/elab.rs`) looks only at the
-    struct's `comptime` members, never its parameters.
-  - The check reads the same parameter: `print(S[7].n)` prints `7`, through
-    `Checker::struct_parameter_at`.
-  - Probe: a `TypeList.of` alias's `values` in a module or local
-    `comptime`, `comptime c = TypeList.of[Trait=AnyType, NoneType,
-    Int].values` read as `TypeList[c].length`, fails with "type
-    'TypeList[AnyType, (None, Int)]' has no associated type 'values'",
-    where the pin prints `2`: a package struct's read
-    (`Elab::generator_type_member`) asks only for a type member.
-  - Found while landing R1196 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1178 A struct's type-valued parameterized `comptime` member is
   not read in a compile-time expression**
 
@@ -5110,24 +5090,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     taking it fails later with "comptime member 'K' does not match the
     requirement".
   - Found while landing R1184 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1207 A struct's `comptime` member cannot read a member declared
-  after it**
-
-  Problem: `comptime X = Self.K + 1` above `comptime K = 3` stops with
-  "'Self.K' is not a type parameter of the enclosing struct", where the
-  pin prints `4` for `D.X`, as it reads a struct's members in any order.
-  - `check_struct_associated` (`checker/constraints.rs`) evaluates the
-    members eagerly in declaration order, each against the map of those
-    before it.
-  - A trait requirement's default is read after the conformer's own
-    members, so an own member reading a defaulted one fails the same way.
-  - Probe: `struct D(HasK)` declaring `comptime X = Self.K + 1` beside
-    `trait HasK` with `comptime K: Int = 3`, where the pin prints `4` for
-    `D.X`.
-  - Found while landing R505 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -5532,6 +5494,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     already uses for a `[s: String]` read; the checker then accepts the
     `Str` against the `String` struct in one shared rule.
   - The rejection lives in `Checker::solve_binders_from_values`.
+  - Probe: `ParameterList.of["foo", "bar"]` fails the same way, for
+    `values` typed by `type`, where the pin solves `type = String` and
+    prints `(foo, bar)` for its construction.
   - Found while landing R446 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5557,7 +5522,19 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     without skipping infer-only binders. Probe: `comptime n =
     TypeList[S[Int, Bool]._types].length` in `main` stops with "type
     'TypeList' expects 2 compile-time argument(s), got 1", where the pin
-    prints `2`. R207 is the variadic half of the same function.
+    prints `2`; so does `comptime n = ParameterList[c].size` over a
+    module `comptime c = ParameterList.of[1, 2].values` ("type
+    'ParameterList' expects 2 compile-time argument(s), got 1"). R207 is
+    the variadic half of the same function.
+  - `Elab::bind_subscript_arguments` (`comptime/eval.rs`) binds a user
+    struct's member application positionally, with no infer-only binder
+    or pack. Probe: over `struct PL` declaring upstream's `comptime
+    of[type: AnyType, //, *values: type] = ParameterList[type=type,
+    values.values]`, `comptime Ints = PL.of[4, 5, 6]` stops with "a
+    compile-time parameter bound twice or past the last", and
+    `PL.of[4, 5, 6]()` with "Undefined variable 'PL'", where the pin
+    prints `(4, 5, 6)`; the bundled `ParameterList.of` binds through
+    `Checker::bind_closed_bracket_list`.
   - MIR lists carry erased origin arguments with no value, which the MIR
     adapters must keep aligned.
   - Found while landing R449 (2026-10-20).
@@ -10083,21 +10060,6 @@ residue found inside a task moves to the task that owns its fix.
   - Add both to `stdlib/std/iter.mojo` beside `next`.
   - Found while landing R665 (2026-10-13).
   - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R809 `ParameterList.of` and `empty_of` are not ported**
-
-  Problem: `comptime Ints = ParameterList.of[4, 5, 6]` is rejected, where
-  the pin's `std/builtin/variadics.mojo` declares both aliases.
-  - Upstream: `of[type: AnyType, //, *values: type] =
-    ParameterList[type=type, values.values]`, and `empty_of[type] =
-    Self.of[type=type]`.
-  - Probe: `conformance/probes/kgen_string_literal_value.mojo`, an `of`
-    over `"None".value` and `"Some".value`.
-  - Found while planning R493 (2026-10-13).
-  - Depends on R806 (the alias read through the struct), R807 (the raw
-    `values` parameter), R1204 (the read through the unbound
-    `ParameterList`), and R1205 (the variadic `*values`).
   - Model: Opus, Not Planned.
 
 - [ ] **R810 `ParameterList.reduce`, `any`, `all`, and `contains` are not
