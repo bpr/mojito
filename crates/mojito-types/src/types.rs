@@ -3228,6 +3228,18 @@ pub fn canonical_generic_signature(
                     }
                     .into(),
                 );
+                // A pack is a parameter list a dependent type reads
+                // (`Us[1]`), so its references there become the slot too.
+                if *variadic {
+                    value_slots.bind(
+                        id.clone(),
+                        ParamContext::detached().decl_ref(
+                            canonical_id.clone(),
+                            &canonical_name,
+                            decl.binder_meta(),
+                        ),
+                    );
+                }
                 binders.insert(
                     id.clone(),
                     ParamRef {
@@ -5314,5 +5326,51 @@ mod parameter_replacement_tests {
         );
         bindings.bind_type(t.id.clone(), Ty::int());
         assert!(replace_constraint_parameters(&context, &conforms(t), &bindings).is_err());
+    }
+}
+
+#[cfg(test)]
+mod canonical_signature_tests {
+    use super::*;
+    use crate::param_expr::ParamId;
+
+    /// The canonical parameter type of `def get[*Us](x: Us[index])` whose
+    /// pack `Us` the declaration `owner` declares.
+    fn pack_element_signature(owner: &str, index: i64) -> Ty {
+        let context = ParamContext::detached();
+        let pack = ParamDecl::Type {
+            id: ParamId::new(owner, 0),
+            name: "*Us".to_string(),
+            bounds: vec!["AnyType".to_string()],
+            trait_param: None,
+            callable_bound: None,
+            default: None,
+            infer_only: false,
+            variadic: true,
+            constraints: Vec::new(),
+        };
+        let element = context
+            .list_get(
+                &context.decl_ref(ParamId::new(owner, 0), "Us", pack.binder_meta()),
+                &context.constant(CtValue::Int(index)).expect("a constant"),
+            )
+            .expect("an element");
+        let (_, params) = canonical_generic_signature(
+            &[pack],
+            &[TyKind::Dependent(DependentType::Parameter(element)).into()],
+        );
+        params.into_iter().next().expect("one parameter")
+    }
+
+    #[test]
+    fn a_pack_read_by_a_dependent_type_is_its_signature_slot() {
+        assert_eq!(
+            pack_element_signature("Getter.get", 1),
+            pack_element_signature("S.get", 1)
+        );
+        assert_ne!(
+            pack_element_signature("Getter.get", 1),
+            pack_element_signature("S.get", 0)
+        );
     }
 }

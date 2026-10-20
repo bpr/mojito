@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A trait requirement whose signature reads an element of the method's own
+  pack (`def get[*Us: AnyType](self, ref x: Us[1])`, or
+  `TypeList[Us.values]()[1]`) now matches a witness reading the same
+  element under any pack name, as on the pin, while one reading another
+  element is still rejected
+  (`assets/ok/trait_requirement_indexes_own_pack.mojo`,
+  `assets/type_error/trait_requirement_pack_element_mismatch.mojo`). This
+  closes R1198.
 - A `TypeList` element read through a bound's raw-list member
   (`TypeList[Trait=AnyType, T._types]()[0]`, or `.__getitem_param__[0]`)
   keeps its type in the body, with the trait the member's list declares as

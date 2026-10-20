@@ -1008,6 +1008,7 @@ assets/ok/trait_parameterized_comptime_default.mojo	main	exe-differential	saniti
 assets/ok/trait_parameterized_value_requirement.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_constant_default.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_default_from_caller_parameter.mojo	main	exe-differential	sanitized
+assets/ok/trait_requirement_indexes_own_pack.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_parameter_default.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_variadic_collector.mojo	main	exe-differential	sanitized
 assets/ok/trait_value_member_comptime_position.mojo	main	exe-differential	sanitized

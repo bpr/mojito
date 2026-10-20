@@ -1008,6 +1008,7 @@ assets/ok/trait_parameterized_comptime_default.mojo	-	ineligible	no-scalar-entry
 assets/ok/trait_parameterized_value_requirement.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_constant_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_default_from_caller_parameter.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/trait_requirement_indexes_own_pack.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_parameter_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_variadic_collector.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_value_member_comptime_position.mojo	-	ineligible	no-scalar-entry-shape

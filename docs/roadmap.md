@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1220**.
+Next free ID: **R1221**.
 
 ## Ordered Work
 
@@ -4036,26 +4036,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1198 A trait requirement whose signature indexes the method's own
-  pack never matches its witness**
-
-  Problem: `def get[*Us: AnyType](self, ref x: Us[1]) -> Int` in a trait,
-  and the same method in a conformer, fail with "struct 'S' method 'get'
-  does not match the signature required by trait 'Getter'", where the pin
-  prints `9`.
-  - `canonical_generic_signature` (`mojito-types/src/types.rs`)
-    substitutes `TyKind::Param` and binds value slots by name, but does not
-    rename a type-pack binder inside a dependent type's `ParamExpr`. The two
-    methods' `Us` stay distinct.
-  - Probe: the parameter spelled `ref x: TypeList[Us.values]()[1]` fails
-    the same way.
-  - Probe: R1132's payload getter, `-> ref[self] TypeList[Trait=AnyType,
-    Self._enum_case_types]()[id]`, as a requirement and a conformer's
-    witness.
-  - Found while landing R1185 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R550 A refining trait cannot restate an inherited requirement**
 
   Problem: `trait D(A)` declaring `def a(self) -> Int: ...` that `A`
@@ -5682,6 +5662,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     serve it.
   - `Box[vs.size]` is the spelling that works today.
   - Found while landing R494 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1220 A `TypeList` proposition over a pack in a signature type is
+  rejected**
+
+  Problem: `def f[*Vs: AnyType](x: B[Vs.contains[Int]()]) -> Int` over
+  `struct B[b: Bool]` fails with "not a compile-time Int constant: not an
+  associated comptime expression", where the pin prints the result.
+  - `compile_dependent_ct_expr` (`checker/constraints.rs`) has an arm for
+    a pack's length (`Vs.length == 2` runs) but none for a proposition,
+    which a body's expression already records as a `ParamKind::PackQuery`.
+  - Adding the arm is not enough: `ParamContext::replace_at` closes only
+    `PackQuery::Length` against a bound pack, so the call then reports
+    "expected B[TypeList[Vs.values]().contains[Int]()], found B[true]".
+  - `all_conforms_to[Tr]()`, `all[P]()`, and `any[P]()` are the same
+    shape.
+  - Probe: the same parameter on a trait requirement and its witness.
+  - Found while landing R1198 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
