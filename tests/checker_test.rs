@@ -7090,25 +7090,26 @@ fn bool_bodied_comptime_aliases_are_predicates() {
 fn typelist_vocabulary_lowers_into_the_constraint_algebra() {
     // The pack adapter compiles to the same pack-constraint forms as
     // `conforms_to(Ts.values, Trait)`; `length`/`size` are Int operands.
-    ok(
+    ok_std(
         "comptime IsSmall[T: AnyType] = IsTriviallyCopyable[T]\n\ndef all_copyable[*Ts: Movable](values: Tuple[*Ts]) -> Int where TypeList[Ts.values]().all_conforms_to[Copyable]():\n    return len(values)\n\ndef all_small[*Ts: Movable](values: Tuple[*Ts]) -> Int where TypeList[Ts.values]().all[IsSmall]():\n    return len(values)\n\ndef has_int[*Ts: Movable](values: Tuple[*Ts]) -> Bool where TypeList[Ts.values]().contains[Int]():\n    return True\n\ndef pair_only[*Ts: Movable](values: Tuple[*Ts]) -> Int where TypeList[Ts.values]().length == 2:\n    return len(values)\n\ndef main():\n    print(1)\n",
     );
 
-    // A concrete `of` list folds eagerly: a failing proposition rejects the
-    // application through the ordinary constraint diagnostic.
-    let e = err(
-        "def gated(x: Int) -> Int where TypeList.of[Int]().contains[Bool]():\n    return x\n\ndef main():\n    print(gated(1))\n",
+    // A concrete `of` list (the bundled `TypeList.of` alias) folds eagerly:
+    // a failing proposition rejects the application through the ordinary
+    // constraint diagnostic.
+    let e = err_std(
+        "def gated(x: Int) -> Int where TypeList.of[Trait=AnyType, Int]().contains[Bool]():\n    return x\n\ndef main():\n    print(gated(1))\n",
     );
     assert!(matches!(e, TypeError::BadCall { .. }), "got {e:?}");
 
     // Upstream removed the deprecated `size` alias of `length` (2026-08);
     // only `length` is a TypeList operand now.
-    ok(
-        "def sized(x: Int) -> Int where TypeList.of[Int, Bool]().length == 2:\n    return x\n\ndef main():\n    print(sized(3))\n",
+    ok_std(
+        "def sized(x: Int) -> Int where TypeList.of[Trait=AnyType, Int, Bool]().length == 2:\n    return x\n\ndef main():\n    print(sized(3))\n",
     );
     assert!(
-        check_source(
-            "def sized(x: Int) -> Int where TypeList.of[Int, Bool]().size == 2:\n    return x\n\ndef main():\n    print(sized(3))\n",
+        check_with_std(
+            "def sized(x: Int) -> Int where TypeList.of[Trait=AnyType, Int, Bool]().size == 2:\n    return x\n\ndef main():\n    print(sized(3))\n",
         )
         .is_err()
     );

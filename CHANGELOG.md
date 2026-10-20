@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `TypeList.of` is the bundled `TypeList`'s upstream alias, `comptime
+  of[Trait: type_of(AnyType), //, *Ts: Trait] = TypeList[Trait=Trait,
+  Ts.values]`, in place of a compiler rule keyed on the spelling: its
+  `.values` reads as a raw list (`TypeList.of[Trait=AnyType, NoneType,
+  Int].values` in a struct member or a construction's bracket list), a
+  subscript of a construction through it is a type, `comptime L =
+  TypeList.of[...]` binds the type, and a template applies it to its own
+  parameters (`assets/ok/typelist_of_alias.mojo`). A struct member's
+  bracket list binds an infer-only parameter by keyword, and a generic
+  alias's pack binds while its elements are still symbolic. `Trait` is no
+  longer ignored: left to inference (`TypeList.of[Int, Bool]()`) it is
+  rejected until R1176 lands. This closes R1186.
 - A generic alias's variadic parameter binds as a pack, as on the pin:
   `comptime T2[*Ts: Copyable] = Tuple[*Ts]` makes `T2[Int, Bool]` the
   tuple `Tuple[Int, Bool]`, `L[Bool, Int]()[1]` reads the `Ts.values` list

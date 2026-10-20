@@ -347,11 +347,20 @@ impl Checker {
         let subscript_application = matches!(&value.kind, ExprKind::Index { object, .. }
                 if matches!(&object.kind, ExprKind::Identifier(base)
                     if self.declared_structs.contains(base)));
+        // A struct member's application (`TypeList.of[Trait=AnyType, Int]`)
+        // names a type the same way.
+        let member_application = matches!(&value.kind,
+            ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. }
+                if matches!(&object.kind, ExprKind::Member { object, .. }
+                    if matches!(&object.kind, ExprKind::Identifier(base)
+                        if self.declared_structs.contains(base)
+                            || self.structs.contains_key(base))));
         if type_params.is_empty() && self.names_applied_module_constant(value) {
             return Ok(());
         }
         if type_params.is_empty()
             && !subscript_application
+            && !member_application
             && !matches!(
                 value.kind,
                 ExprKind::Identifier(_) | ExprKind::TypeApply { .. } | ExprKind::TypeValue(_)

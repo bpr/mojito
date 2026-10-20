@@ -727,16 +727,17 @@ impl Checker {
                 .and_then(|info| info.parameterized_associated.get(name))
             && let MemberTemplate::Type { decls, .. } = &member.template
         {
-            let explicit: Option<Vec<usize>> = member
+            // Every parameter binds, an infer-only one (`Trait` of
+            // `TypeList.of`) from its keyword or the arguments it types.
+            let slots: Option<Vec<usize>> = member
                 .params
                 .iter()
-                .filter(|param| !param.infer_only)
                 .map(|param| decls.iter().position(|decl| decl.name() == param.name))
                 .collect();
-            if let Some(explicit) = explicit {
+            if let Some(slots) = slots {
                 let label = format!("{base_ty}.{name}");
                 let bound = self.resolve_use_params(&label, decls, args, &[], &[])?;
-                let arguments: Vec<TyArg> = explicit
+                let arguments: Vec<TyArg> = slots
                     .into_iter()
                     .map(|index| bound.arguments[index].clone())
                     .collect();
@@ -2046,7 +2047,7 @@ impl Checker {
                 }
                 // A type pack binds its element list: `Ts.values` reads it.
                 (ParamDecl::Type { id, .. } | ParamDecl::Value { id, .. }, TyArg::Val(value)) => {
-                    if let Ok(bound) = self.param_context.constant(value.clone()) {
+                    if let Some(bound) = self.bound_parameter_value(value) {
                         ids.bind(id.clone(), bound);
                     }
                     if let ParamDecl::Value { name, .. } = decl {
@@ -2096,8 +2097,13 @@ impl Checker {
                 context: format!("'{base}.{name}' is a compile-time value member"),
             });
         };
+        // The arguments are the explicit parameters' (an abstract trait
+        // signature's application), or every parameter's when a bracket list
+        // bound them all ([`Self::member_application`]).
+        let every = args.len() == member.params.len();
+        let supplies = |param: &mojito_ast::ast::TypeParam| every || !param.infer_only;
         let explicit = member.params.iter().filter(|p| !p.infer_only).count();
-        if args.len() != explicit {
+        if !every && args.len() != explicit {
             return Ok(TyKind::Assoc {
                 base: base.clone(),
                 name: name.to_string(),
@@ -2123,7 +2129,7 @@ impl Checker {
         let mut ids = mojito_types::param_expr::ParamBindings::new();
         let mut supplied = args.iter();
         for (index, param) in member.params.iter().enumerate() {
-            if param.infer_only {
+            if !supplies(param) {
                 continue;
             }
             let Some(arg) = supplied.next() else { break };
@@ -2146,7 +2152,7 @@ impl Checker {
                         _ => value.clone(),
                     };
                     if let Some(decl) = decl
-                        && let Ok(bound) = self.param_context.constant(value.clone())
+                        && let Some(bound) = self.bound_parameter_value(&value)
                     {
                         ids.bind(decl.id().clone(), bound);
                     }
@@ -2165,7 +2171,7 @@ impl Checker {
             member
                 .params
                 .iter()
-                .filter(|parameter| !parameter.infer_only)
+                .filter(|parameter| supplies(parameter))
                 .map(|parameter| parameter.name.as_str())
                 .zip(args),
         )?;
@@ -2174,7 +2180,7 @@ impl Checker {
         let (packs, elements): (Vec<ParamDecl>, Vec<TyArg>) = member
             .params
             .iter()
-            .filter(|parameter| !parameter.infer_only)
+            .filter(|parameter| supplies(parameter))
             .zip(args)
             .filter_map(|(parameter, argument)| {
                 decls
@@ -3899,6 +3905,25 @@ impl Checker {
             .or_else(|| self.installed_type_alias(name))
             .or_else(|| self.tparams.iter().rev().find_map(|scope| scope.get(name)))
             .cloned()
+    }
+
+    /// The parameter value `value` binds a declaration to: a constant, or a
+    /// type pack's list of element types still symbolic (`Of[T, U]` in a
+    /// template's body).
+    fn bound_parameter_value(&self, value: &CtValue) -> Option<ParamExpr> {
+        self.param_context.constant(value.clone()).ok().or_else(|| {
+            let CtValue::Tuple(elements) = value else {
+                return None;
+            };
+            let types = elements
+                .iter()
+                .map(|element| match element {
+                    CtValue::Type(ty) => Some(ty.clone()),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()?;
+            self.param_context.type_list(types).ok()
+        })
     }
 }
 

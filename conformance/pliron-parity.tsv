@@ -1035,6 +1035,7 @@ assets/ok/type_param_copy_construction.mojo	main	exe-differential	sanitized
 assets/ok/type_predicate_comptime_if.mojo	main	exe-differential	sanitized
 assets/ok/type_receiver_instance_call.mojo	main	exe-differential	sanitized
 assets/ok/typelist_comptime_vocabulary.mojo	main	exe-differential	sanitized
+assets/ok/typelist_of_alias.mojo	main	exe-differential	sanitized
 assets/ok/typelist_over_member_raw_list.mojo	main	exe-differential	sanitized
 assets/ok/typelist_reverse_concat.mojo	main	exe-differential	sanitized
 assets/ok/typelist_self_pack_member_clause.mojo	main	exe-differential	sanitized

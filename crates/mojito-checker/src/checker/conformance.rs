@@ -416,6 +416,15 @@ impl ConformanceOracle {
         if info.decls.is_empty() {
             return None;
         }
+        if !arguments.is_empty() && self.declares_package_type_member(name, member) {
+            let arguments: Vec<_> = arguments
+                .iter()
+                .map(|value| (None, value.clone()))
+                .collect();
+            return self
+                .package_generator_type_member(name, member, &arguments)
+                .map(|ty| ty.map(CtValue::Type));
+        }
         let generator: Ty = TyKind::Struct(name.to_string(), info.self_arguments()).into();
         let value = if arguments.is_empty() {
             self.package_associated_value(&generator, member)
@@ -427,6 +436,59 @@ impl ConformanceOracle {
                 .reject_unbound_dependence(name, member, &value)
                 .map(|()| value)
         }))
+    }
+
+    /// The type the parameterized type member `member` of package struct
+    /// `name`'s generator names at the closed bracket list `arguments`,
+    /// bound as the check binds a source list (keywords, an infer-only
+    /// binder, a pack): `TypeList.of[Trait=AnyType, Int, Bool]`. `None` when
+    /// `member` is no parameterized type member of a package struct.
+    pub fn package_generator_type_member(
+        &self,
+        name: &str,
+        member: &str,
+        arguments: &[(Option<String>, CtValue)],
+    ) -> Option<Result<Ty, TypeError>> {
+        let info = self.package_struct(name)?.0;
+        let definition = info.parameterized_associated.get(member)?;
+        let MemberTemplate::Type { decls, .. } = &definition.template else {
+            return None;
+        };
+        let generator: Ty = TyKind::Struct(name.to_string(), info.self_arguments()).into();
+        Some((|| {
+            let label = format!("{name}.{member}");
+            let bound = self
+                .checker
+                .bind_closed_bracket_list(&label, decls, arguments)?;
+            let arguments = definition
+                .params
+                .iter()
+                .map(|param| {
+                    decls
+                        .iter()
+                        .position(|decl| decl.name() == param.name)
+                        .map(|slot| bound[slot].clone())
+                        .ok_or_else(|| TypeError::NoSuchAssociatedType {
+                            object_type: name.to_string(),
+                            member: member.to_string(),
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let ty = self
+                .checker
+                .associated_type_from_base(&generator, member, &arguments)?;
+            self.checker
+                .reject_unbound_dependence(name, member, &CtValue::Type(ty.clone()))?;
+            Ok(ty)
+        })())
+    }
+
+    /// Whether `member` is a parameterized type member of package struct
+    /// `name` ([`Self::package_generator_type_member`]).
+    pub fn declares_package_type_member(&self, name: &str, member: &str) -> bool {
+        self.package_struct(name)
+            .and_then(|info| info.0.parameterized_associated.get(member))
+            .is_some_and(|definition| matches!(definition.template, MemberTemplate::Type { .. }))
     }
 
     /// The compile-time member `member` of `base`, an instance of a

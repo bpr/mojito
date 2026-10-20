@@ -3478,6 +3478,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: a local `comptime a = A[4]()` over `comptime A[k: Int] = W[k]`
     fails with "a compile-time call of 'A' is not evaluated above the
     check", where the pin constructs `W[4]`.
+  - Probe: a run-time construction through a struct's member alias, `var t
+    = TypeList.of[Trait=AnyType, Int, Bool]()` then `print(len(t))`, fails
+    with "Undefined variable 'TypeList'", where the pin prints `2`.
   - Depends on R59, which finds the pass that reads a bare type name as a
     value; the alias call needs the same answer.
   - Model: Opus, Planned.
@@ -3887,6 +3890,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The bundled `ParameterList.__iter__` spells
     `_ParameterListIter[*ParameterList[Self.values]()](0)` where upstream
     writes `{0}`.
+  - Probe: `var x: TypeList.of[Trait=AnyType, Int, Bool] = {}` and, in
+    `def f[*Ts: AnyType]`, `var x: TypeList[Trait=AnyType, Ts.values] =
+    {}` fail with "cannot emit initializer list for 'TypeList[AnyType,
+    ...]'", where the pin prints `len(x)`: a raw-list argument has no
+    source spelling either.
   - Found while landing R325 (2026-10-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5244,6 +5252,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     no conformance join over the known traits.
   - Upstream's stdlib relies on it in `TypeList.of[...]` without `Trait=`
     (`std/builtin/bool.mojo`, `std/collections/optional.mojo`).
+  - Probe: `TypeList.of[Bool, Int]()[1]` as a local annotation stops with
+    "cannot infer type parameter 'Trait' of 'TypeList[Trait, values].of'",
+    where the pin prints the value; the alias's `Trait` is this binder, and
+    the pin's diagnostic for `TypeList.of[Int]().all[P]()` names the solved
+    `AnyStruct[Int]`.
   - Probes: `var w: W[AnyType] = g[Int]()` over `-> W[Tr]` reports
     "cannot implicitly convert 'W[AnyStruct[Int]]' value to 'W[AnyType]'"
     at the pin, `g[Int, Bool]()` reports `W[Boolable & Comparable &
@@ -6657,6 +6670,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   struct's method stops with "TypeList.all_conforms_to over the computed
   list … whose packs are still parameters".
   - `all`, `any`, and `contains` over such a list are rejected the same way.
+  - Probe: `comptime if TypeList.of[T, U]().contains[T]():` in `def
+    same[T: AnyType, U: AnyType]` (with `Trait=AnyType`) stops with
+    "TypeList.contains over the computed list ... whose packs are still
+    parameters", where the pin prints `True`: the alias over a template's
+    own parameters is such a list.
   - Over a closed list (`TypeList.of[…]().reverse()`) each of them folds.
   - Upstream's `slice`, `splat`, `map`, `filter_idx`, and `reduce` have no
     spelling in Mojito at all.
@@ -6715,6 +6733,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   pin, while Mojito reports "Undefined variable 'E'", and `G(E.k)` reports
   that no constructor overload matches.
   - R279 is the same member read as `Self.k` inside the struct.
+  - Probe: a run-time construction's bracket list reading a member, `var t
+    = TypeList[Trait=AnyType, E.types]()` over a raw-list member, fails
+    with "Undefined variable 'E'", and `TypeList[Trait=AnyType,
+    TypeList.of[Trait=AnyType, Int].values]()` and `TypeList[Trait=AnyType,
+    S[Int, Bool]._types]()` fail the same way, where the pin prints `2 1`;
+    in a type annotation or a `comptime` position each runs.
   - Found while landing R421 (2026-10-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9176,7 +9200,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `comptime/rewrite.rs:fold_pack_typelist_use` and `comptime/eval.rs`.
   - Upstream builds each from `tabulate` or `reduce` with a generator, or
     as an alias (`reverse = TypeList.tabulate[...]`).
-  - `of` is R1186's, since it needs no generator.
   - Port them to `stdlib/std/builtin/variadics.mojo` and delete the rules.
   - Found while landing R1168 (2026-10-20).
   - Depends on R1181 (`tabulate`), R806 (an alias read through the
@@ -10067,33 +10090,6 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on R806 (the alias read through the struct), R807 (the raw
     `values` parameter), R1204 (the read through the unbound
     `ParameterList`), and R1205 (the variadic `*values`).
-  - Model: Opus, Not Planned.
-
-- [ ] **R1186 `TypeList.of` is a spelling rule, not upstream's alias, so
-  its `.values` cannot be read**
-
-  Problem: `TypeList.of[Trait=AnyType, NoneType, Int].values` fails with
-  "unsupported associated comptime member access", where upstream's
-  `std/builtin/variadics.mojo` declares `of` as an alias whose `.values`
-  reads the raw list.
-  - `TypeList.of[...]()` runs, because `Checker::typelist_receiver` and
-    `comptime/eval.rs:eval_typelist_of` answer the spelling.
-  - Upstream: `comptime of[Trait: type_of(AnyType), //, *Ts: Trait] =
-    TypeList[Trait=Trait, Ts.values]`.
-  - Port the alias beside `ParameterList.of` (R809) and delete both
-    spelling rules. It leaves R1182's list, since `of` needs no
-    generator.
-  - Probe: `conformance/probes/typelist_of_values.mojo`.
-  - Probe: `conformance/probes/typelist_value_subscript_type.mojo`, whose
-    closed annotation reads `TypeList.of[...].values` inside a subscripted
-    construction.
-  - Probe: a construction through the alias in type position, `var y:
-    TypeList.of[Trait=AnyType, Bool, Int]()[1] = 4`, fails with "cannot
-    infer type parameter 'Trait' of 'TypeList'", where the pin prints `4`.
-  - Found while planning R1132 (2026-10-20).
-  - Depends on R806 (an alias read through the struct), R1184 (the
-    `Trait=` keyword in the receiver), R1204 (the read through the unbound
-    `TypeList`), and R1205 (the alias's variadic `*Ts`).
   - Model: Opus, Not Planned.
 
 - [ ] **R810 `ParameterList.reduce`, `any`, `all`, and `contains` are not

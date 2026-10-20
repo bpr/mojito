@@ -204,7 +204,8 @@ impl Elab<'_> {
                     field,
                 } = &object.kind
                     && let Some(name) = self.generator_base(base, scope)
-                    && self.declares_parameterized_member(&Self::generator(name), field)
+                    && (self.declares_parameterized_member(&Self::generator(name), field)
+                        || self.conformance.declares_package_type_member(name, field))
                 {
                     let args = match &index.kind {
                         ExprKind::TupleLit(elements) => self.eval_all(elements, scope)?,
@@ -312,12 +313,18 @@ impl Elab<'_> {
                         "unsupported parameterized compile-time callable".to_string(),
                     ));
                 };
-                // `TypeList.of[...]()` — the concrete constructor. Checked
-                // before evaluating the object: `TypeList` is not a value.
-                if matches!(&object.kind, ExprKind::Identifier(name) if name == "TypeList")
-                    && field == "of"
+                // A construction through a package struct's type member
+                // (`TypeList.of[Trait=AnyType, Int]()`): the type it names.
+                // Checked before evaluating the object: `TypeList` is not a
+                // value.
+                if let Some(name) = self.generator_base(object, scope)
+                    && self.conformance.declares_package_type_member(name, field)
                 {
-                    return self.eval_typelist_of(param_args, scope);
+                    let arguments: Vec<_> = param_args.iter().map(keyword_argument).collect();
+                    let ty = self.generator_type_member(name, field, &arguments, scope)?;
+                    return self
+                        .typelist_construction(&ty)
+                        .ok_or_else(|| not_evaluated_here(&format!("a construction of '{ty}'")));
                 }
                 // `TypeList._concat[A.values, B.values]()`: the operands'
                 // elements in order.
@@ -671,6 +678,33 @@ impl Elab<'_> {
             }
             // A parameterized declaration applied with keyword arguments
             // (`twice[n=4]`, `S[2].plus[k=5]`).
+            // A package struct's type member applied through its generator
+            // (`TypeList.of[Trait=AnyType, Int]`).
+            ExprKind::MultiIndex { object, args }
+                if let ExprKind::Member {
+                    object: base,
+                    field,
+                } = &object.kind
+                    && let Some(name) = self.generator_base(base, scope)
+                    && self.conformance.declares_package_type_member(name, field) =>
+            {
+                let arguments = args
+                    .iter()
+                    .map(|argument| match argument {
+                        mojito_ast::ast::SubscriptArg::Index(value) => {
+                            Ok((None, ParamArg::Value(value.clone())))
+                        }
+                        mojito_ast::ast::SubscriptArg::Keyword { name, value } => {
+                            Ok((Some(name.clone()), ParamArg::Value(value.clone())))
+                        }
+                        _ => Err(ComptimeError::NotComptime(
+                            "a slice as a compile-time argument".to_string(),
+                        )),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                self.generator_type_member(name, field, &arguments, scope)
+                    .map(CtValue::Type)
+            }
             ExprKind::MultiIndex { object, args }
                 if let Some(params) = self.keyword_application_params(object, scope) =>
             {
@@ -939,25 +973,6 @@ impl Elab<'_> {
             }
         }
         Ok(())
-    }
-
-    /// Evaluate `TypeList.of[Trait=..., T1, ..., Tn]()` to a compile-time
-    /// `TypeList` value. The optional `Trait=` keyword names the common bound;
-    /// membership is not re-checked here (each element's uses enforce their
-    /// own capabilities).
-    fn eval_typelist_of(
-        &self,
-        param_args: &[ParamArg],
-        scope: &ConstEnv<'_>,
-    ) -> Result<CtValue, ComptimeError> {
-        let mut types = Vec::new();
-        for argument in param_args {
-            match argument {
-                ParamArg::Named { name, .. } if name == "Trait" => {}
-                other => types.push(CtValue::Type(self.param_arg_type(other, scope)?)),
-            }
-        }
-        Ok(make_typelist(types))
     }
 
     /// Evaluate a member call on a compile-time `TypeList` value:
@@ -1423,6 +1438,14 @@ fn not_evaluated_here(what: &str) -> ComptimeError {
     ))
 }
 
+/// A bracket argument beside the keyword it is bound by, if any.
+fn keyword_argument(argument: &ParamArg) -> (Option<String>, ParamArg) {
+    match argument {
+        ParamArg::Named { name, value } => (Some(name.clone()), (**value).clone()),
+        positional => (None, positional.clone()),
+    }
+}
+
 /// Wrap element types as the compile-time `TypeList` value: a marker struct
 /// holding the `values` tuple, so member access and predicates dispatch on
 /// the `TypeList` identity rather than on every plain comptime tuple.
@@ -1434,6 +1457,29 @@ fn make_typelist(types: Vec<CtValue>) -> CtValue {
 }
 
 impl Elab<'_> {
+    /// The compile-time value a construction of `ty` is when `ty` is a
+    /// `TypeList` application: the elements its `values` argument lists.
+    fn typelist_construction(&self, ty: &Ty) -> Option<CtValue> {
+        let TyKind::Struct(name, arguments) = ty.kind() else {
+            return None;
+        };
+        if name != "TypeList" {
+            return None;
+        }
+        let slot = self
+            .ct_struct(name)?
+            .decls()
+            .iter()
+            .position(|decl| decl.name() == "values")?;
+        match arguments.get(slot)? {
+            TyArg::Val(values) => values
+                .as_sequence("TypeList values")
+                .ok()
+                .map(make_typelist),
+            _ => None,
+        }
+    }
+
     /// The `(dtype, width)` a call constructs when it names `SIMD[DType.d, w]`
     /// explicitly or applies a vector-type alias bound in scope (`U256(0)`).
     fn simd_constructor_shape(

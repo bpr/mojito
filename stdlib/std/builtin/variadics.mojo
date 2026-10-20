@@ -12,10 +12,10 @@
 # yet an associated comptime expression here), `_raw_length` and
 # `_get_type_at_index` (`__mlir_type.index` values are outside the subset),
 # the `@implicit` upcast constructor (`#kgen.upcast`,
-# `#kgen.is_refined_type`), and the list vocabulary (`of`, `tabulate`,
-# `splat`, `_concat`, `reduce`, `any`, `all`, `all_conforms_to`, `contains`,
-# `map`, `filter_idx`, `reverse`, `slice`), which the compiler still answers
-# by spelling.
+# `#kgen.is_refined_type`), and the list vocabulary (`tabulate`, `splat`,
+# `_concat`, `reduce`, `any`, `all`, `all_conforms_to`, `contains`, `map`,
+# `filter_idx`, `reverse`, `slice`), which the compiler still answers by
+# spelling. `of` is upstream's alias.
 #
 # `ParameterList`'s `values` is upstream's one raw `KGENParamListType[type]`
 # parameter, and a pack's `vs.values` is that list. `_MLIR` declares no
@@ -77,6 +77,16 @@ struct TypeList[
             The number of elements on the TypeList.
         """
         return Self.length
+
+    comptime of[Trait: type_of(AnyType), //, *Ts: Trait] = TypeList[
+        Trait=Trait, Ts.values
+    ]
+    """Form a compile-time list of types with some elements, uninstantiated.
+
+    Parameters:
+        Trait: The type of the elements in the list.
+        Ts: The types in the list.
+    """
 
 
 @fieldwise_init

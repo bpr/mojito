@@ -230,13 +230,21 @@ impl Elab<'_> {
                 // for the check, which reads a kept condition's proposition
                 // over it (`tl.contains[Int]()`) from its initializer, as does
                 // a reflection handle such an initializer may name
-                // (`comptime types = r.field_types()`).
-                if in_fn
-                    && env.get(name).is_some_and(|value| {
-                        value.typelist_elements().is_some()
-                            || matches!(value, CtValue::Reflected(_))
-                    })
-                {
+                // (`comptime types = r.field_types()`). So does a type no
+                // source spelling names (`TypeList.of[Trait=AnyType, Int]`,
+                // whose raw list has none), and at module scope a struct
+                // application of one.
+                let unspelled = |value: &CtValue| {
+                    matches!(value, CtValue::Type(ty)
+                        if mojito_types::ct::source_type(ty, span).is_none()
+                            && (in_fn || matches!(ty.kind(), TyKind::Struct(..))))
+                };
+                if env.get(name).is_some_and(|value| {
+                    unspelled(value)
+                        || (in_fn
+                            && (value.typelist_elements().is_some()
+                                || matches!(value, CtValue::Reflected(_))))
+                }) {
                     out.push(stmt.clone());
                     return Ok(());
                 }
@@ -993,6 +1001,35 @@ impl Elab<'_> {
         }
     }
 
+    /// The type package struct `name`'s parameterized type member `member`
+    /// names through its generator, its bracket list `arguments` (keyword
+    /// names beside them) evaluated here and bound by the check's rule:
+    /// `TypeList.of[Trait=AnyType, Int, Bool]`.
+    pub(super) fn generator_type_member(
+        &self,
+        name: &str,
+        member: &str,
+        arguments: &[(Option<String>, ParamArg)],
+        scope: &ConstEnv<'_>,
+    ) -> Result<Ty, ComptimeError> {
+        let values = arguments
+            .iter()
+            .map(|(keyword, argument)| Ok((keyword.clone(), self.bracket_value(argument, scope)?)))
+            .collect::<Result<Vec<_>, ComptimeError>>()?;
+        self.conformance
+            .package_generator_type_member(name, member, &values)
+            .unwrap_or_else(|| {
+                Err(TypeError::NoSuchAssociatedType {
+                    object_type: name.to_string(),
+                    member: member.to_string(),
+                })
+            })
+            .map_err(|error| match error {
+                TypeError::UnboundParameterMember { .. } => ComptimeError::Type(error),
+                error => ComptimeError::NotComptime(error.to_string()),
+            })
+    }
+
     /// The generator of struct `name`, no argument bound, as the base the
     /// member reads of [`Self::generator_member`] take.
     pub(super) fn generator(name: &str) -> Ty {
@@ -1162,6 +1199,32 @@ impl Elab<'_> {
                     alias.params.iter().any(|param| param.name.starts_with('*'))
                 })
             })
+    }
+
+    /// One bracket argument as a compile-time value: a type, a value, or a
+    /// trait (`AnyType`, `Copyable & Movable`) a trait-valued binder takes.
+    fn bracket_value(
+        &self,
+        argument: &ParamArg,
+        scope: &ConstEnv<'_>,
+    ) -> Result<CtValue, ComptimeError> {
+        let expr = match argument {
+            ParamArg::Named { value, .. } => return self.bracket_value(value, scope),
+            ParamArg::Type(_) => return self.param_arg_type(argument, scope).map(CtValue::Type),
+            ParamArg::Value(expr) => expr,
+        };
+        let named = matches!(
+            expr.kind,
+            ExprKind::Identifier(_) | ExprKind::TypeApply { .. }
+        );
+        if named && let Ok(ty) = self.param_arg_type(argument, scope) {
+            return Ok(CtValue::Type(ty));
+        }
+        self.eval(expr, scope).or_else(|error| {
+            mojito_ast::ast::trait_conjunction_names(expr)
+                .map(|names| CtValue::Trait(names.into_iter().map(str::to_string).collect()))
+                .ok_or(error)
+        })
     }
 }
 

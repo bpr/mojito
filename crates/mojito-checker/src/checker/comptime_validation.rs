@@ -1752,6 +1752,14 @@ impl Checker {
                     index: index.clone(),
                 })?)
             }
+            // A member application through a type
+            // (`TypeList.of[Trait=AnyType, Int]`).
+            ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. }
+                if matches!(object.kind, ExprKind::Member { .. })
+                    && let Some(ty) = self.member_type_operand(expr) =>
+            {
+                Some(ty)
+            }
             // `tl[i]` over a closed or computed list, then `types[i]`,
             // `r.field_at[i].T`: a reflected field type.
             _ => match self.type_list_element(expr)? {

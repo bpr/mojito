@@ -2147,15 +2147,26 @@ impl Checker {
     }
 
     /// The type a member's object names when it is a type operand (`Int32`,
-    /// `SIMD[DType.int16, 4]`, `Scalar[DType.int8]`) rather than a value.
-    /// `None` when its root names a binding or it names no type.
+    /// `SIMD[DType.int16, 4]`, `Scalar[DType.int8]`, a member application
+    /// `TypeList.of[Trait=AnyType, Int]`) rather than a value. `None` when
+    /// its root names a binding or it names no type.
     pub(super) fn member_type_operand(&self, object: &Expr) -> Option<Ty> {
+        fn applied_member_root(object: &Expr) -> Option<&String> {
+            match &object.kind {
+                ExprKind::Member { object, .. } => match &object.kind {
+                    ExprKind::Identifier(name) => Some(name),
+                    _ => None,
+                },
+                _ => None,
+            }
+        }
         let root = match &object.kind {
             ExprKind::Identifier(name) => Some(name),
             ExprKind::Index { object, .. } => match &object.kind {
                 ExprKind::Identifier(name) => Some(name),
-                _ => return None,
+                _ => Some(applied_member_root(object)?),
             },
+            ExprKind::MultiIndex { object, .. } => Some(applied_member_root(object)?),
             ExprKind::TypeApply { .. } | ExprKind::TypeValue(_) => None,
             _ => return None,
         };

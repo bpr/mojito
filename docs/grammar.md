@@ -1164,8 +1164,9 @@ retained independently on every declaration that accepts a clause (see
 **function_def**).
 
 The same constraint positions accept the current-Mojo `TypeList`
-vocabulary: `TypeList.of[Trait=..., T1, ...]()` (concrete) and
-`TypeList[Ts.values]()` (the pack adapter) carry `length` (deprecated alias
+vocabulary: `TypeList.of[Trait=..., T1, ...]()` (a construction through
+the bundled struct's `of` alias) and `TypeList[Ts.values]()` (the pack
+adapter) carry `length` (deprecated alias
 `size`) as an Int operand and
 `any[P]()`/`all[P]()`/`all_conforms_to[Trait]()`/`contains[T]()` as
 propositions (`P` an `IsTrivially*` spelling or a one-parameter predicate

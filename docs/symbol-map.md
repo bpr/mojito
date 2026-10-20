@@ -584,7 +584,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   Type-level pack algebra lives beside it: `constraints.rs:typelist_receiver`
   reads the compiler-known `TypeList` vocabulary (roadmap R1182) over a
   pack, a `TypeList` construction (bound through `applied_type` as the
-  bundled struct, read at its `values` slot), a `.reverse()`, and a
+  bundled struct, or through a member alias such as `TypeList.of` with
+  `ty_from_anno`, read at its `values` slot by `type_list_construction`), a
+  `.reverse()`, and a
   `TypeList._concat[A.values, B.values]()` as a `TypeListReceiver`
   (`Derived` for a list computed from packs still open),
   `type_list_operand` gives the `ParamExpr` a spread's operand denotes, and
@@ -758,8 +760,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `read_parametric_value`. The `TypeList` vocabulary shares both homes:
   `compile_typelist_proposition`/`typelist_receiver` lower the constraint
   forms (`PackPredicate`/`PackContains`/`PackLength` in `types.rs`), and the
-  elaborator evaluates compile-time TypeList values (`eval_typelist_of`,
-  `eval_typelist_method`, the `make_typelist` marker in `comptime/eval.rs`).
+  elaborator evaluates compile-time TypeList values (`typelist_construction`
+  over the type a construction names, `eval_typelist_method`, the
+  `make_typelist` marker in `comptime/eval.rs`). A package struct's
+  parameterized type member applied through its generator
+  (`TypeList.of[Trait=AnyType, Int]`) is `Elab::generator_type_member`, whose
+  evaluated bracket list `ConformanceOracle::package_generator_type_member`
+  binds with `Checker::bind_closed_bracket_list` (`checker/declarations.rs`,
+  `call::match_parameter_slots`) before `associated_type_from_base`
+  instantiates the member.
 - `checker/operators.rs` and `checker/iteration.rs` own operator/SIMD inference
   and iterator-protocol selection respectively. `iteration.rs` accepts only a
   `StopIteration`-raising `__next__` (upstream's `__has_next__` rejection for a

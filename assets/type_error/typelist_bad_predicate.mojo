@@ -3,7 +3,7 @@
 # type-bodied alias is not one.
 comptime Boxed[T: Copyable & Movable]: AnyType = Tuple[T, T]
 
-def gated(x: Int) -> Int where TypeList.of[Int]().all[Boxed]():
+def gated(x: Int) -> Int where TypeList.of[Trait=AnyType, Int]().all[Boxed]():
     return x
 
 def main():

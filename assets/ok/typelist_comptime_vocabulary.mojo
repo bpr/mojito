@@ -1,5 +1,5 @@
 # The current-Mojo TypeList vocabulary in compile-time positions: the
-# `of` constructor (optional Trait= keyword), `length` (Sized `len` too),
+# `of` alias (its `Trait=` keyword spelled), `length` (Sized `len` too),
 # per-element `any`/`all` predicates (builtin IsTrivially* or a Bool-bodied
 # comptime alias), the `all_conforms_to` trait form, and `contains`.
 from std.traits import IsTriviallyCopyable

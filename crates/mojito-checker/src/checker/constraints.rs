@@ -1712,10 +1712,12 @@ impl Checker {
         }
     }
 
-    /// The declared type of a type's value member read (`T._types` through
-    /// a bound, `S[Int, Bool]._types`), at the type's arguments. `None`
-    /// when `expr` reads no member whose annotation names a type; a pack's
-    /// `ParameterList` / `TypeList` members type through their values.
+    /// The declared type of a type's value member or value parameter read
+    /// (`T._types` through a bound, `S[Int, Bool]._types`,
+    /// `TypeList.of[Trait=AnyType, Int].values`), at the type's arguments.
+    /// `None` when `expr` reads no member whose annotation names a type; a
+    /// pack's `ParameterList` / `TypeList` members type through their
+    /// values.
     pub(super) fn member_value_type(&self, expr: &Expr) -> Option<Ty> {
         let ExprKind::Member { object, field } = &expr.kind else {
             return None;
@@ -1728,7 +1730,12 @@ impl Checker {
             TyKind::Param { bounds, .. } => self.lookup_trait_assoc_value_ty(bounds, field),
             TyKind::Struct(name, arguments) => {
                 let info = self.structs.get(name)?;
-                let declared = info.associated_value_types.get(field)?;
+                let declared = info.associated_value_types.get(field).or_else(|| {
+                    info.decls.iter().find_map(|decl| match decl {
+                        ParamDecl::Value { name, ty, .. } if name == field => Some(ty),
+                        _ => None,
+                    })
+                })?;
                 Some(super::generics::substitute_at(declared, info, arguments))
             }
             _ => None,
@@ -2330,66 +2337,42 @@ impl Checker {
                 && kwargs.is_empty() =>
             {
                 let (ty, _) = self.applied_type(name, param_args)?;
-                let TyKind::Struct(_, arguments) = ty.kind() else {
-                    return Ok(None);
-                };
-                let Some(TyArg::Val(values)) = self
-                    .structs
-                    .get(name)
-                    .and_then(|info| info.decls.iter().position(|decl| decl.name() == "values"))
-                    .and_then(|slot| arguments.get(slot))
-                else {
-                    return Ok(None);
-                };
-                derived(self.param_context.constant(values.clone()))
+                self.type_list_construction(&ty).map_or(Ok(None), |values| {
+                    derived(self.param_context.constant(values))
+                })
             }
+            // A construction through a member alias (`TypeList.of[Trait=
+            // AnyType, Int]()`): the list the type it names binds.
             ExprKind::Invoke {
                 callee,
                 param_args,
                 args,
                 kwargs,
             } if args.is_empty() && kwargs.is_empty() => {
-                let ExprKind::Member { object, field } = &callee.kind else {
+                // The member's base names a struct, applied or not.
+                let ExprKind::Member { object, .. } = &callee.kind else {
                     return Ok(None);
                 };
-                if !matches!(&object.kind, ExprKind::Identifier(name) if name == "TypeList")
-                    || field != "of"
+                let root = match &object.kind {
+                    ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. } => object,
+                    _ => object,
+                };
+                if !matches!(&root.kind, ExprKind::Identifier(name)
+                    if self.lookup(name).is_none() && self.structs.contains_key(name))
                 {
                     return Ok(None);
                 }
-                let mut types = Vec::new();
-                let mut attributes = Vec::with_capacity(param_args.len());
-                for argument in param_args {
-                    let annotation = match argument {
-                        // The optional `Trait=` keyword names the common
-                        // bound; membership is not re-checked here (the
-                        // elements' own uses enforce their capabilities).
-                        mojito_ast::ast::ParamArg::Named { name, .. } if name == "Trait" => {
-                            attributes.push(None);
-                            continue;
-                        }
-                        mojito_ast::ast::ParamArg::Type(annotation) => annotation.clone(),
-                        mojito_ast::ast::ParamArg::Value(Expr {
-                            kind: ExprKind::Identifier(name),
-                            ..
-                        }) => SourceType::Named(name.clone(), Vec::new()),
-                        _ => {
-                            return Err(TypeError::Unsupported(
-                                "TypeList.of takes type arguments".to_string(),
-                            ));
-                        }
-                    };
-                    let element = self.ty_from_anno(&annotation).map_err(|_| {
-                        TypeError::Unsupported(
-                            "a TypeList.of element must be a concrete type in this position"
-                                .to_string(),
-                        )
-                    })?;
-                    attributes.push(bracket_attribute(argument, &TyArg::Ty(element.clone())));
-                    types.push(element);
-                }
-                self.record_bracket_attributes(expr.source_span(), attributes);
-                Ok(Some(TypeListReceiver::Concrete(types)))
+                let Some(SourceType::Assoc { base, name, .. }) = member_source_type(callee) else {
+                    return Ok(None);
+                };
+                let ty = self.ty_from_anno(&SourceType::Assoc {
+                    base,
+                    name,
+                    args: param_args.clone(),
+                })?;
+                self.type_list_construction(&ty).map_or(Ok(None), |values| {
+                    derived(self.param_context.constant(values))
+                })
             }
             _ => Ok(None),
         }
@@ -3394,6 +3377,27 @@ impl Checker {
             }
         }
         Ok(())
+    }
+
+    /// The raw list a construction of `ty` binds when `ty` is a
+    /// `TypeList` application: the argument at its `values` parameter.
+    fn type_list_construction(&self, ty: &Ty) -> Option<CtValue> {
+        let TyKind::Struct(name, arguments) = ty.kind() else {
+            return None;
+        };
+        if name != super::comptime_validation::TYPE_LIST {
+            return None;
+        }
+        let slot = self
+            .structs
+            .get(name)?
+            .decls
+            .iter()
+            .position(|decl| decl.name() == "values")?;
+        match arguments.get(slot)? {
+            TyArg::Val(values) => Some(values.clone()),
+            _ => None,
+        }
     }
 }
 
