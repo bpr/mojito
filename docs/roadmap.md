@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1183**.
+Next free ID: **R1190**.
 
 ## Ordered Work
 
@@ -1668,6 +1668,9 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   `print(p[])` prints `a`'s value in Mojito, where the pin prints `b`'s.
   - `pointer_deref_place` (`crates/mojito-mir/src/mir.rs`) substitutes the
     loan's place for the pointer's target.
+  - Probe: `var p = self.data.unsafe_origin_cast[origin_of(self)]()`,
+    then `return rebind[Int](p[0])` under `-> ref[self] Int`, fails with
+    "returned reference escapes storage outside its declared origin".
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -2494,6 +2497,9 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Spelled `-> ref[origin_of(w)] Int`, the pin rejects it with "cannot
     return reference with incompatible origin", and Mojito keeps its own
     words.
+  - Probe: `return Pointer(to=self.x).unsafe_origin_cast[origin_of(self)]()[]`
+    under `-> ref[self] Int` fails the same way. It is the body of
+    upstream's `Optional._unsafe_get_enum_payload`.
   - Found while landing R672 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -2681,36 +2687,39 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on R1137 (the sequence target decomposition).
   - Model: Fable, Not Planned.
 
-- [ ] **R1132 `EnumLike` is a library protocol the checker reads, not a
-  spelling**
+- [ ] **R1132 `EnumLike` is not declared, so `Optional` has no enum cases**
 
-  Problem: `match` has no enum-case patterns because Mojito has no
-  `EnumLike` trait, where the pin's `Optional` and `Bool` conform through
-  `_enum_case_names`, `_enum_case_types`, `_enum_is_exhaustive`,
-  `_enum_elt_type_for_case[id]`, `_get_enum_discriminant`, and
-  `_unsafe_get_enum_payload[id]`.
-  - Port upstream's `stdlib/std/builtin/enum_like.mojo` under
-    `stdlib/std/builtin/` as an ordinary declaration the prelude exports:
-    the case names are a raw list of `` __mlir_type.`!kgen.string` ``, the
-    payload types a raw list of `AnyType` with `NoneType` as the
-    no-payload marker, `_enum_is_exhaustive` defaults to `True`, and the
-    payload type of case `id` reads
-    `TypeList[Trait=AnyType, Self._enum_case_types]()[id]`.
-  - Give `Optional` and `Bool` the members as upstream's `optional.mojo`
-    and `bool.mojo` spell them (`ParameterList.of[...]` names,
-    `TypeList.of[...]` types, the discriminant, a `rebind` payload getter
-    over the existing storage), changing neither runtime representation.
-  - The checker reads a conformer's metadata by its declared conformance
-    and nominal identity, never by the spelling `.Some`: the two lists
-    agree in length, no case name repeats, every case has a payload type,
-    and the two methods exist.
-  - Malformed metadata and a missing method reject with contextual texts.
-    A symbolic `T: EnumLike` subject is a stated subset boundary, as the
-    pin cannot read its metadata either, not a per-instance re-check.
-  - Stop: a hand-written enum-like struct and `Optional` satisfy the same
-    protocol, and the metadata survives the build-time `std` package.
-  - Depends on R1168 (the bundled `TypeList` with the trait parameter the
-    payload read spells).
+  Problem: `count[Optional[Int]]()` over `def count[T: EnumLike]()` stops
+  with "unknown trait 'EnumLike' in a type-parameter bound", where the pin's
+  `Optional` and `OptionalReg` conform through upstream's
+  `std/builtin/enum_like.mojo`.
+  - Port the trait whole, with upstream's spellings and docstrings, under
+    `stdlib/std/builtin/enum_like.mojo`, and export it from the prelude.
+  - Give `Optional` and `OptionalReg` upstream's members over the existing
+    storage: `ParameterList.of` names, `TypeList.of` payload types, the
+    discriminant, and the `rebind` payload getter through an origin-cast
+    pointer.
+  - The pin validates no metadata at the declaration (three names over two
+    types run, and a repeated name resolves to the first), so neither does
+    Mojito. A conformer missing a member or a method is the ordinary
+    conformance rejection.
+  - The checker's reading of a conformer's cases is R1133's, the
+    construct that consumes it.
+  - `Bool` conforms with its library port (R1189), not by a modelled
+    answer.
+  - Stop: a hand-written enum-like struct and `Optional` run one generic
+    `T: EnumLike` body that reads the discriminant, both list lengths,
+    `_enum_is_exhaustive`, and a payload, from the packaged `std`.
+  - Probe: `conformance/probes/enum_like_optional_bool.mojo` (its `Bool`
+    half needs R1189).
+  - Plan: `R1132-enumlike-is-a-library-protocol-the-plan.md`, Slices 1, 2,
+    and 4.
+  - Depends on R1183 (`!kgen.string` names), R1184 (`TypeList` over a
+    member's raw list), R1185 (the payload getter's result type), R1186
+    (`TypeList.of`), R1187 (the `_enum_elt_type_for_case` default), R809
+    (`ParameterList.of`), R505 (the `_enum_is_exhaustive` default), R74
+    (`comptime assert` in the getter), R679 and R352 (the getter's
+    origin-cast return).
   - Model: Fable, Planned.
 
 - [ ] **R1133 Enum case patterns select by discriminant and payload**
@@ -2718,6 +2727,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   Problem: `case .Some(x)`, `case Optional.None`, and `case .Some(ref s)`
   are rejected ("enum case patterns"), where the pin tests the
   discriminant and binds the payload through the selected getter.
+  - Read a concrete conformer's cases by its declared conformance, never
+    by the spelling `.Some`: names from `_enum_case_names`, payload types
+    from `_enum_case_types`, and `_enum_is_exhaustive`. As at the pin the
+    reading is lazy: a repeated name resolves to the first, and only a
+    payload pattern past the types list fails ("'_enum_case_types' must be
+    a parameter list covering every case").
   - A `MatchPatternKind::Call` with a leading-dot or qualified head, and a
     bare `.None`, compile in `checker/patterns.rs` to an equality test of
     `_get_enum_discriminant()` against the case's index, then the
@@ -2734,6 +2749,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     whole-constructor case.
   - Rejections with the pin's texts: an unknown case, `.None(x)`,
     `.Some()`, a wrong qualified owner, a subject that is not `EnumLike`.
+  - Pin texts recorded while planning R1132: "'Z' is not a case of 'Bad'",
+    "enum case 'A' has no associated value", and "cannot match on a
+    parametric enum type" for a `T: EnumLike` subject.
   - Probe: `conformance/probes/match_optional_enum_cases.mojo`.
   - Depends on R1132.
   - Model: Fable, Not Planned.
@@ -4796,6 +4814,26 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Planned.
 
+- [ ] **R1187 A trait's parameterized type-valued `comptime` requirement
+  cannot declare a default**
+
+  Problem: upstream's `EnumLike` declares `comptime
+  _enum_elt_type_for_case[id: Int]: AnyType = TypeList[Trait=AnyType,
+  Self._enum_case_types]()[id]`, which Mojito cannot parse, and at the pin
+  `Optional[String]._enum_elt_type_for_case[1]` is `String` for a
+  conformer that omits the member.
+  - R505 is the value-member default and R1146 the parameterized value
+    requirement. This one is type-valued, parameterized, and defaulted,
+    instantiated at the conformer.
+  - A generic read through `T._enum_elt_type_for_case[i]` also needs
+    R666.
+  - Probe: `comptime E[id: Int]: AnyType = Int` in `trait HasE` fails to
+    parse ("Expected newline, ';', or EOF"), and the pin runs `var x:
+    Q.E[0] = 3` over `struct Q(HasE)`, which omits `E`.
+  - Found while planning R1132 (2026-10-20).
+  - Depends on R505, R1146, and R1185 (the default's type expression).
+  - Model: Opus, Not Planned.
+
 - [ ] **R806 A parameterized alias read through a struct is not parsed**
 
   Problem: `S.Of[Bool]`, `S[Int].Of[Bool]`, and `ParameterList.of[4, 5, 6]`
@@ -4881,6 +4919,80 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R807 (2026-10-19).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R1183 `!kgen.string` is outside the subset, so a string literal's
+  `.value` cannot be read**
+
+  Problem: ``comptime KGENString = __mlir_type.`!kgen.string` `` fails with
+  "'__mlir_type' is not a compile-time type", and `"None".value` with
+  "compile-time member access '.value' needs a type value", where the pin
+  reads the literal's `!kgen.string` parameter.
+  - As a struct member the alias fails with "unsupported associated
+    comptime member access".
+  - Upstream's `StringLiteral[value: !kgen.string]` exposes the literal's
+    KGEN string as its parameter. Mojito's string literal is modelled.
+  - The MLIR arm of `ty_from_anno` (`checker/type_resolution.rs`) knows
+    only `index` and `!kgen.type`.
+  - Lever: `!kgen.string` becomes a metatype whose compile-time values are
+    the existing `CtValue::Str`, and a literal's `.value` folds to one.
+  - A raw list `_MLIR.KGENParamListType[KGENString]` then holds them, and
+    `ParameterList[...]`'s element reads one.
+  - Converting one to a runtime string (`StaticString(names[i])`) is
+    R432's.
+  - A MIR schema and package format bump.
+  - Probe: `conformance/probes/kgen_string_literal_value.mojo`, which also
+    needs R809.
+  - Found while planning R1132 (2026-10-20).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1184 `TypeList[...]` reads only a pack's own `Ts.values`, not a
+  raw list a `comptime` member holds**
+
+  Problem: `TypeList[Trait=AnyType, S[Int, Bool]._types]().length` and the
+  same over `T._types` through a bound `T: HasTypes` are rejected, where
+  the pin reads the member's list.
+  - `TypeList[Trait=AnyType, Ts.values]().length` stops with "TypeList[...]
+    takes a pack projection ('Ts.values')". Without `Trait=`, or without
+    `()`, it runs.
+  - `TypeList[T._types].length` stops with "Undefined variable
+    'TypeList'".
+  - `Checker::typelist_receiver` and `pack_values_projection`
+    (`checker/constraints.rs`) accept one positional `Ts.values`.
+  - Lever: accept any raw-list parameter expression, keyword `Trait=`
+    included. A struct's raw-list member reads concretely through
+    `struct_member_at`.
+  - Through a bound it reads as `ParamKind::TypeMember` with a raw-list
+    meta, which the elaborator answers per instance from
+    `ConformanceFacts::associated_values`. R500 is the value-member
+    sibling.
+  - Probe: `conformance/probes/typelist_over_member_raw_list.mojo`.
+  - Found while planning R1132 (2026-10-20).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1185 A subscript of a `TypeList` value is not a type expression**
+
+  Problem: a parameter typed `TypeList[Trait=AnyType, Ts.values]()[1]`, and
+  a result type `-> ref[self] TypeList[Trait=AnyType,
+  Self._enum_case_types]()[id]`, fail to parse ("Expected ')' after
+  parameters"), where the pin reads them through `__getitem_param__`.
+  - `docs/grammar.md` first: a type expression takes a postfix `()`
+    followed by `[index]`.
+  - The checker reads it as the instance's `__getitem_param__[index]`, the
+    path R1168 built (`type_pack_element`): a `ListGet` while the list or
+    the index is symbolic, and a `Select` once both are constant.
+  - A trait requirement with that result type is satisfied by a conformer
+    spelling it identically, `Self` substituted and the method's `id`
+    still symbolic.
+  - A generic body's `var x: TypeList[...]()[1] = 3` is rejected at the
+    pin too ("cannot implicitly convert 'IntLiteral[3]' value to
+    'Ts.values[1]'"), since the element stays symbolic.
+  - Probe: `conformance/probes/typelist_value_subscript_type.mojo`. Its
+    closed annotation also needs R1186.
+  - Found while planning R1132 (2026-10-20).
+  - Depends on R1184 (`Trait=` and a non-pack raw list in the receiver).
+  - Model: Fable, Not Planned.
 
 - [ ] **R1174 A parameter typed by an imported package struct's
   `!kgen.type` alias is a value parameter**
@@ -8857,7 +8969,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 - [ ] **R1182 `TypeList`'s list vocabulary is answered by spelling, not by
   the bundled struct's members**
 
-  Problem: `of`, `reverse`, `slice`, `map`, `filter_idx`, `reduce`, `any`,
+  Problem: `reverse`, `slice`, `map`, `filter_idx`, `reduce`, `any`,
   `all`, `all_conforms_to`, and `contains` are compiler rules keyed on the
   name `TypeList`, where upstream declares each on the struct.
   - The checker answers them in `Checker::typelist_receiver` and
@@ -8865,7 +8977,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The pre-check elaborator folds them by spelling in
     `comptime/rewrite.rs:fold_pack_typelist_use` and `comptime/eval.rs`.
   - Upstream builds each from `tabulate` or `reduce` with a generator, or
-    as an alias (`of = TypeList[Trait=Trait, Ts.values]`).
+    as an alias (`reverse = TypeList.tabulate[...]`).
+  - `of` is R1186's, since it needs no generator.
   - Port them to `stdlib/std/builtin/variadics.mojo` and delete the rules.
   - Found while landing R1168 (2026-10-20).
   - Depends on R1181 (`tabulate`), R806 (an alias read through the
@@ -8950,6 +9063,39 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     replace the builtin.
   - Depends on nothing.
   - Model: Fable, Planned.
+
+- [ ] **R1188 `Bool` is a compiler-modelled scalar where upstream's is a
+  library struct**
+
+  Problem: `True.__int__()` fails with "type 'Bool' has no method
+  '__int__'", where the pin runs it, because Mojito answers `Bool`'s
+  members by compiler rules rather than upstream's `bool.mojo`
+  declarations.
+  - `Bool` is `TyKind::Bool`, and its operators, conversions, and traits
+    are checker, VM, and native rules. There is no `struct Bool` under
+    `stdlib/`.
+  - Port it as a library struct over its `i1` storage, the way R1157 and
+    R1158 port the slices.
+  - The planning session splits it into chained one-session entries if
+    one session cannot land it.
+  - Found while planning R1132 (2026-10-20).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R1189 `Bool` does not conform to `EnumLike`**
+
+  Problem: `count[Bool]()` over `def count[T: EnumLike]()` is rejected,
+  where the pin's `Bool` conforms with cases `False` and `True` and no
+  payloads.
+  - Give the ported struct upstream's members (`bool.mojo`): the names
+    and payload types by `ParameterList.of` and `TypeList.of`,
+    `_get_enum_discriminant` returning `self.__int__()`, and the
+    never-called payload getter.
+  - Probe: the `Bool` half of
+    `conformance/probes/enum_like_optional_bool.mojo`.
+  - Found while planning R1132 (2026-10-20).
+  - Depends on R1132 (the trait) and R1188 (a library `Bool`).
+  - Model: Opus, Not Planned.
 
 - [ ] **R324 `reflect[T]` is a compiler builtin where upstream's is a
   stdlib struct over parameter attributes**
@@ -9696,6 +9842,26 @@ residue found inside a task moves to the task that owns its fix.
   - Found while planning R493 (2026-10-13).
   - Depends on R806 (the alias read through the struct) and R807 (the raw
     `values` parameter).
+  - Model: Opus, Not Planned.
+
+- [ ] **R1186 `TypeList.of` is a spelling rule, not upstream's alias, so
+  its `.values` cannot be read**
+
+  Problem: `TypeList.of[Trait=AnyType, NoneType, Int].values` fails to
+  parse ("only named functions can be called, found Member"), where
+  upstream's `std/builtin/variadics.mojo` declares `of` as an alias whose
+  `.values` reads the raw list.
+  - `TypeList.of[...]()` runs, because `Checker::typelist_receiver` and
+    `comptime/eval.rs:eval_typelist_of` answer the spelling.
+  - Upstream: `comptime of[Trait: type_of(AnyType), //, *Ts: Trait] =
+    TypeList[Trait=Trait, Ts.values]`.
+  - Port the alias beside `ParameterList.of` (R809) and delete both
+    spelling rules. It leaves R1182's list, since `of` needs no
+    generator.
+  - Probe: `conformance/probes/typelist_of_values.mojo`.
+  - Found while planning R1132 (2026-10-20).
+  - Depends on R806 (an alias read through the struct) and R1184 (the
+    `Trait=` keyword in the receiver).
   - Model: Opus, Not Planned.
 
 - [ ] **R810 `ParameterList.reduce`, `any`, `all`, and `contains` are not

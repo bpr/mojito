@@ -219,6 +219,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `EnumLike` stays undeclared: upstream's `std/builtin/enum_like.mojo` and
+  the `Optional` members that conform to it use spellings Mojito cannot read
+  yet, so R1132 now names its prerequisites as roadmap entries (`!kgen.string`
+  literal values R1183, `TypeList` over a member's raw list R1184, a
+  `TypeList` value's subscript as a type R1185, `TypeList.of` R1186, a
+  defaulted parameterized trait member R1187), and `Bool` conforms with its
+  library port (R1188, R1189). Following the pin, conformance will validate
+  no case metadata, and reading cases is the patterns' work (R1133).
+
 - `Sized` and `SizedRaising` are upstream's library traits, declared in the
   bundled `std/builtin/len.mojo` and exported by the prelude, rather than
   names the compiler knew without requirements. A bound's `x.__len__()`
