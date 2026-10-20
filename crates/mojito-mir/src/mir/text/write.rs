@@ -1567,6 +1567,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
             fields.extend([("body", blocks_value(body)), ("else", blocks_value(orelse))]);
             record(tag, &fields)
         }
+        MirInstr::ComptimeAssert { cond } => record(tag, &[("condition", constraint(cond))]),
         MirInstr::Match { cases, orelse } => record(
             tag,
             &[

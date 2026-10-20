@@ -1077,6 +1077,11 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
                 rewrite_block(b, subs, into_defs);
             }
         }
+        StmtKind::ComptimeAssert { cond, message } => {
+            std::iter::once(cond)
+                .chain(message)
+                .for_each(|value| rewrite_expr(value, subs));
+        }
         StmtKind::While { cond, body, orelse } => {
             rewrite_condition(cond, subs);
             rewrite_block(body, subs, into_defs);
@@ -1486,6 +1491,11 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
             if let Some(body) = orelse {
                 substitute_type_bindings_in_block(body, subs);
             }
+        }
+        StmtKind::ComptimeAssert { cond, message } => {
+            std::iter::once(cond)
+                .chain(message)
+                .for_each(|value| retype_expr(value, subs));
         }
         StmtKind::While { cond, body, orelse } => {
             retype_condition(cond, subs);

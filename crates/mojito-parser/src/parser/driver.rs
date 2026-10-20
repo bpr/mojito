@@ -158,7 +158,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 }
                 _ => {
                     let statement = self.parse_statement()?;
-                    reject_comptime_if_outside_function(&statement)?;
+                    reject_comptime_statement_outside_function(&statement)?;
                     stmts.push(statement);
                 }
             }
@@ -191,10 +191,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             match token {
                 Token::Eof => break,
                 Token::Newline | Token::Indent | Token::Dedent => self.discard_one(),
-                _ => match self
-                    .parse_statement()
-                    .and_then(|stmt| reject_comptime_if_outside_function(&stmt).map(|()| stmt))
-                {
+                _ => match self.parse_statement().and_then(|stmt| {
+                    reject_comptime_statement_outside_function(&stmt).map(|()| stmt)
+                }) {
                     Ok(stmt) => program.push(stmt),
                     Err(err) => {
                         errors.push(err);
@@ -215,16 +214,15 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     }
 }
 
-/// Upstream requires a `comptime if` to sit inside a function
-/// (`'comptime if' must be contained in a function`); Mojito used to fold one
-/// at module level too. The walk stops at every `def`, so a function body —
-/// including a nested one — keeps the form. A struct body holds fields,
-/// associated aliases, and methods rather than statements, so the form cannot
-/// reach one.
-fn reject_comptime_if_outside_function(statement: &Stmt) -> Result<(), ParseError> {
+/// Upstream requires a `comptime if` or a `comptime assert` to sit inside a
+/// function, with its own wording for each. The walk stops at every `def`, so
+/// a function body — including a nested one — keeps the form. A struct or
+/// trait body holds members rather than statements; its member parser
+/// rejects the assertion itself (`comptime_assert_outside_function`).
+fn reject_comptime_statement_outside_function(statement: &Stmt) -> Result<(), ParseError> {
     let block = |block: &[Stmt]| -> Result<(), ParseError> {
         for statement in block {
-            reject_comptime_if_outside_function(statement)?;
+            reject_comptime_statement_outside_function(statement)?;
         }
         Ok(())
     };
@@ -233,6 +231,9 @@ fn reject_comptime_if_outside_function(statement: &Stmt) -> Result<(), ParseErro
             "'comptime if' must be contained in a function".to_string(),
         )
         .at(statement.span)),
+        StmtKind::ComptimeAssert { .. } => {
+            Err(comptime_assert_outside_function().at(statement.span))
+        }
         // A `def`'s body is exactly where the form belongs.
         StmtKind::Def { .. } => Ok(()),
         StmtKind::If { branches, orelse } => {

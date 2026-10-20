@@ -108,6 +108,14 @@ fn removed_convention_error(word: &str) -> Option<ParseError> {
     })
 }
 
+/// Upstream's placement diagnostic for a `comptime assert` outside a
+/// function body: at module scope, or as a struct or trait member.
+fn comptime_assert_outside_function() -> ParseError {
+    ParseError::Message(
+        "'comptime assert' must be inside a function; move this into a function body".to_string(),
+    )
+}
+
 /// The callee name of a call: the callee must be a bare identifier (closures
 /// can't escape to become arbitrary callee expressions).
 fn call_name(callee: Expr) -> Result<String, ParseError> {

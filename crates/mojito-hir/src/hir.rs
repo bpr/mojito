@@ -206,6 +206,13 @@ pub enum HirInstr {
         arms: Vec<HirRegion>,
         orelse: HirRegion,
     },
+    /// `kgen.param.assert`: a compile-time assertion, its condition a
+    /// compile-time expression MIR lowers as a parameter expression. The
+    /// elaborator judges it per reached instance.
+    ComptimeAssert {
+        cond: HirExpr,
+        message: Option<String>,
+    },
     /// `hlcf.loop`, labelled `label` (unique in its function, as
     /// `LowerSemanticCF` numbers loops): `body` runs until a
     /// [`Terminator::Break`] names it, and [`Terminator::Continue`] starts
@@ -898,6 +905,13 @@ impl Lower {
                 self.comptime_if(id, branches, orelse.as_deref());
             }
             CheckedStmtOp::Scope(body) => self.scoped_block(body),
+            CheckedStmtOp::ComptimeAssert { cond, message } => {
+                let cond = self.expr(*cond);
+                self.push(HirInstr::ComptimeAssert {
+                    cond,
+                    message: message.clone(),
+                });
+            }
             CheckedStmtOp::ComptimeFor { var, iter, body } => {
                 self.comptime_for(var, *iter, s.binding, body);
             }

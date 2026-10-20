@@ -147,6 +147,18 @@ impl<'a> Flatten<'a> {
                     orelse,
                 });
             }
+            HirInstr::ComptimeAssert { cond, message } => {
+                let cond = self.comptime_condition(cond);
+                let cond = match message {
+                    Some(message) => {
+                        GenericConstraint::WithMessage(Box::new(cond), message.clone())
+                    }
+                    None => cond,
+                };
+                self.emit(MirInstr::ComptimeAssert {
+                    cond: Box::new(cond),
+                });
+            }
             HirInstr::Loop { label, body } => {
                 let body = self.hir_region(body);
                 self.emit(MirInstr::Loop {
@@ -2783,7 +2795,8 @@ impl<'a> Flatten<'a> {
             (
                 CheckedStmtOp::With { .. }
                 | CheckedStmtOp::ComptimeIf { .. }
-                | CheckedStmtOp::ComptimeFor { .. },
+                | CheckedStmtOp::ComptimeFor { .. }
+                | CheckedStmtOp::ComptimeAssert { .. },
                 _,
             ) => {
                 self.emit(MirInstr::Unsupported(format!(

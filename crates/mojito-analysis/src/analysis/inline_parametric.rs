@@ -2167,7 +2167,8 @@ fn returns_bound_place(callee: &MirFunction, bindings: &[Binding]) -> bool {
 
 /// Whether the callee has a shape the splice handles: a struct
 /// receiver if any, and blocks of plain control flow with no `try`,
-/// region, or closure.
+/// region, closure, or compile-time assertion (which fails the callee's
+/// own instance).
 fn is_closed(callee: &MirFunction, declaration: &MirFunctionDeclaration) -> bool {
     let receiver_closed = !declaration.has_receiver
         || callee
@@ -2184,6 +2185,7 @@ fn is_closed(callee: &MirFunction, declaration: &MirFunctionDeclaration) -> bool
                         | MirInstr::Loop { .. }
                         | MirInstr::ComptimeIf { .. }
                         | MirInstr::ComptimeFor { .. }
+                        | MirInstr::ComptimeAssert { .. }
                         | MirInstr::Match { .. }
                         | MirInstr::MakeClosure { .. }
                 )

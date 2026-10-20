@@ -132,6 +132,9 @@ impl VmBackend {
             MirInstr::Rebind { .. } => {
                 return Err(parametric_instruction("a value rebind"));
             }
+            MirInstr::ComptimeAssert { .. } => {
+                return Err(parametric_instruction("a compile-time assertion"));
+            }
             MirInstr::If { .. }
             | MirInstr::Loop { .. }
             | MirInstr::ComptimeIf { .. }

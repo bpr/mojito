@@ -52,6 +52,21 @@ impl Specializer<'_> {
     }
 }
 
+/// Report the first `comptime assert` the instance `function` reaches —
+/// one [`Specializer::select_comptime_branches_in`] left, so one that
+/// failed — as upstream's `constraint failed: MESSAGE`, then erase the
+/// rest, which no path reaches.
+pub(super) fn discharge_comptime_asserts(function: &mut MirFunction) -> Result<(), String> {
+    let reached = rebind::reachable(&function.blocks);
+    for (block, reached) in function.blocks.iter_mut().zip(reached) {
+        if reached && let Some(failed) = reached_assert(&block.instrs) {
+            return Err(failed);
+        }
+        erase_asserts(&mut block.instrs);
+    }
+    Ok(())
+}
+
 /// The failure of a parameter constant an unrolled iteration could not
 /// compute ([`Specializer::answer_param_constants`]) whose read the
 /// instance still holds once its branches are decided and its unreached
@@ -84,6 +99,45 @@ pub(super) fn reached_failure(
             } => failures.remove(&dest.0).map_or(Ok(()), Err),
             _ => Ok(()),
         })
+}
+
+/// The failure an assertion in `instructions`, or in a `try` part below
+/// them, reports.
+fn reached_assert(instructions: &[MirInstr]) -> Option<String> {
+    instructions
+        .iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::ComptimeAssert { cond } => Some(match &**cond {
+                GenericConstraint::WithMessage(_, message) => {
+                    format!("constraint failed: {message}")
+                }
+                _ => "constraint failed: ".to_string(),
+            }),
+            MirInstr::Try { .. } => mojito_mir::mir::instruction_regions(instruction)
+                .into_iter()
+                .find_map(|region| {
+                    let reached = rebind::reachable(region);
+                    region
+                        .iter()
+                        .zip(reached)
+                        .filter(|(_, reached)| *reached)
+                        .find_map(|(block, _)| reached_assert(&block.instrs))
+                }),
+            _ => None,
+        })
+}
+
+/// Remove every assertion from `instructions` and the `try` parts below
+/// them.
+fn erase_asserts(instructions: &mut Vec<MirInstr>) {
+    instructions.retain(|instruction| !matches!(instruction, MirInstr::ComptimeAssert { .. }));
+    for instruction in instructions {
+        for region in mojito_mir::mir::instruction_regions_mut(instruction) {
+            for block in region {
+                erase_asserts(&mut block.instrs);
+            }
+        }
+    }
 }
 
 /// The compiler-private call a failed method clone's body makes.

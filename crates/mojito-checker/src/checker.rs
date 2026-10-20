@@ -568,7 +568,7 @@ pub struct Checker {
     /// clauses assume, level for level beside `assumed_conformances`. A
     /// callee's constraint that stays residual is proven only by being one of
     /// these canonical nodes.
-    assumed_propositions: Vec<Vec<ParamExpr>>,
+    assumed_propositions: RefCell<Vec<Vec<ParamExpr>>>,
     /// Source-validation mode (`validate_comptime_templates`): compile-time
     /// control flow is checked with every arm visited and the declaration's
     /// parameters symbolic, and a module-level function or method body
@@ -980,7 +980,7 @@ impl Checker {
             param_context: ParamContext::detached(),
             self_decls: Vec::new(),
             assumed_conformances: RefCell::new(Vec::new()),
-            assumed_propositions: Vec::new(),
+            assumed_propositions: RefCell::new(Vec::new()),
             local_type_aliases: vec![HashMap::new()],
             local_comptime_values: vec![HashMap::new()],
             local_comptime_parameters: vec![HashMap::new()],

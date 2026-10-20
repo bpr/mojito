@@ -373,6 +373,7 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
             visitor.visit_param_ref(binder)?;
             visitor.visit_sequence(source)
         }
+        I::ComptimeAssert { cond } => visitor.visit_constraint(cond),
         I::Match { .. } => Ok(()),
         I::DefVar {
             binding_ty: None, ..

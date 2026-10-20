@@ -2963,6 +2963,15 @@ fn structured_region_ops_and_terminators_reprint() {
             arms: vec![one(Vec::new(), MirTerm::ComptimeYield(Vec::new()))],
             orelse: one(Vec::new(), MirTerm::ComptimeYield(Vec::new())),
         },
+        MirInstr::ComptimeAssert {
+            cond: Box::new(GenericConstraint::Bool(true)),
+        },
+        MirInstr::ComptimeAssert {
+            cond: Box::new(GenericConstraint::WithMessage(
+                Box::new(GenericConstraint::Bool(false)),
+                "positive".to_string(),
+            )),
+        },
         MirInstr::Match {
             cases: vec![
                 one(Vec::new(), MirTerm::MatchNext),
@@ -3014,6 +3023,7 @@ fn structured_region_ops_and_terminators_reprint() {
         "comptime.for {",
         "comptime.for.break {}",
         "comptime.for.continue {}",
+        "comptime.assert {",
         "match {",
         "match.next {}",
         "match.complete {}",

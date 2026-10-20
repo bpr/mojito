@@ -4414,3 +4414,55 @@ fn postfix_transfer_binds_tighter_than_infix_operators() {
         ))
     );
 }
+
+#[test]
+fn parses_comptime_assert_as_its_own_statement() {
+    // `comptime assert cond[, message]`: a parenthesized condition is an
+    // ordinary parenthesized expression, so `assert(c, "m")` asserts a tuple.
+    let body = |source: &str| match parse(source).remove(0).kind {
+        StmtKind::Def { body, .. } => body,
+        other => panic!("expected a def, got {other:?}"),
+    };
+    let asserts = body(
+        "def f():\n    comptime assert n == 3, \"three\"\n    comptime assert (\n        n > 1\n    ), \"above\"\n    comptime assert (n > 1) and (n < 5)\n    comptime assert(True, \"tuple\")\n",
+    );
+    let shapes: Vec<_> = asserts
+        .iter()
+        .map(|stmt| match &stmt.kind {
+            StmtKind::ComptimeAssert { cond, message } => (
+                matches!(cond.kind, ExprKind::TupleLit(_)),
+                message
+                    .as_ref()
+                    .map(|message| matches!(message.kind, ExprKind::Str(_))),
+            ),
+            other => panic!("expected a comptime assert, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        shapes,
+        [
+            (false, Some(true)),
+            (false, Some(true)),
+            (false, None),
+            (true, None)
+        ]
+    );
+}
+
+#[test]
+fn rejects_comptime_assert_outside_a_function() {
+    // The pin: "'comptime assert' must be inside a function; move this into
+    // a function body", at module scope and in a struct or trait body.
+    for source in [
+        "comptime assert True, \"m\"\n",
+        "if True:\n    comptime assert True\n",
+        "struct S:\n    comptime assert True, \"s\"\n",
+        "trait T:\n    comptime assert True, \"t\"\n",
+    ] {
+        let error = mojito::parse(source).unwrap_err().to_string();
+        assert!(
+            error.contains("'comptime assert' must be inside a function"),
+            "missing placement diagnostic for {source:?}: {error}"
+        );
+    }
+}

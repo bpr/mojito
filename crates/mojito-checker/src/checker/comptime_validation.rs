@@ -83,6 +83,30 @@ pub(super) enum ConstantScope<'a> {
     Local,
 }
 
+/// The compile-time test a condition belongs to, which words its
+/// diagnostics as the pin does for each.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum ComptimeTest {
+    If,
+    Assert,
+}
+
+impl ComptimeTest {
+    const fn context(self) -> &'static str {
+        match self {
+            Self::If => "comptime if condition",
+            Self::Assert => "comptime assert condition",
+        }
+    }
+
+    const fn dynamic_value(self) -> &'static str {
+        match self {
+            Self::If => "cannot use a dynamic value in 'comptime if' condition",
+            Self::Assert => "cannot use a dynamic value in 'comptime assert' expression",
+        }
+    }
+}
+
 /// A call argument that forwards a variadic pack whole (`*args`, `*args^`)
 /// while the pack is still a parameter.
 pub(super) struct ForwardedPack {
@@ -239,14 +263,36 @@ impl Checker {
     /// one under `not`/`and`/`or`, that the constraint compiler closes is
     /// recorded on its span (`SemanticAdjustment::ComptimeCondition`) for the
     /// MIR branch; a leaf it does not close — an application, a `Bool`
-    /// binding — MIR lowers as a thunk the elaborator runs.
-    pub(super) fn check_comptime_condition(&self, cond: &Expr) -> Result<(), TypeError> {
+    /// binding — MIR lowers as a thunk the elaborator runs. The recorded
+    /// constraint, its operands bound, when the whole condition closes.
+    pub(super) fn check_comptime_condition(
+        &self,
+        cond: &Expr,
+        test: ComptimeTest,
+    ) -> Result<Option<GenericConstraint>, TypeError> {
         let _position = self.comptime_position();
         let inlined = self.inline_local_comptime_values(cond);
-        if let Some(constraint) = self.check_ct_bool(&inlined)? {
+        Ok(self.check_ct_bool(&inlined, test)?.map(|constraint| {
             self.record_comptime_condition(cond, &constraint);
+            self.bind_constraint(&constraint, &[])
+        }))
+    }
+
+    /// A `comptime assert`: its condition is checked as a `comptime if`
+    /// condition is, never judged here — the elaborator judges it per
+    /// reached instance. The message is a string literal. The condition's
+    /// bound reading, when it closes, for the knowledge it introduces.
+    pub(super) fn check_comptime_assert(
+        &self,
+        cond: &Expr,
+        message: Option<&Expr>,
+    ) -> Result<Option<GenericConstraint>, TypeError> {
+        if message.is_some_and(|message| !matches!(message.kind, ExprKind::Str(_))) {
+            return Err(TypeError::Unsupported(
+                "a 'comptime assert' message other than a string literal".to_string(),
+            ));
         }
-        Ok(())
+        self.check_comptime_condition(cond, ComptimeTest::Assert)
     }
 
     /// Whether the condition of a conditional expression is a parameter
@@ -365,17 +411,21 @@ impl Checker {
     /// parameters in scope, a conformance of a concrete type, or a `Bool`
     /// value expression. The constraint the condition compiles to, when every
     /// leaf does.
-    fn check_ct_bool(&self, cond: &Expr) -> Result<Option<GenericConstraint>, TypeError> {
+    fn check_ct_bool(
+        &self,
+        cond: &Expr,
+        test: ComptimeTest,
+    ) -> Result<Option<GenericConstraint>, TypeError> {
         match &cond.kind {
             ExprKind::Bool(value) => return Ok(Some(GenericConstraint::Bool(*value))),
             ExprKind::Prefix(PrefixOp::Not, inner) => {
                 return Ok(self
-                    .check_ct_bool(inner)?
+                    .check_ct_bool(inner, test)?
                     .map(|inner| GenericConstraint::Not(Box::new(inner))));
             }
             ExprKind::Infix(op @ (InfixOp::And | InfixOp::Or), left, right) => {
-                let left = self.check_ct_bool(left)?;
-                let right = self.check_ct_bool(right)?;
+                let left = self.check_ct_bool(left, test)?;
+                let right = self.check_ct_bool(right, test)?;
                 return Ok(left.zip(right).map(|(left, right)| {
                     if *op == InfixOp::And {
                         GenericConstraint::And(Box::new(left), Box::new(right))
@@ -476,8 +526,14 @@ impl Checker {
             // A local `comptime` binding the elaborator evaluates (`comptime
             // e = L[1]`) is no parameter: the condition runs with it.
             Ok(constraint) if self.names_evaluated_binding(&constraint) => {
-                self.expect_bool(cond, "comptime if condition")?;
-                self.reject_dynamic_condition(cond)?;
+                self.expect_bool(cond, test.context())?;
+                self.reject_dynamic_condition(cond, test)?;
+                Ok(None)
+            }
+            // A runtime local compiles to a parameter no binder declares.
+            Ok(constraint) if self.names_unbound_parameter(&constraint) => {
+                self.expect_bool(cond, test.context())?;
+                self.reject_dynamic_condition(cond, test)?;
                 Ok(None)
             }
             Ok(constraint) => {
@@ -485,9 +541,9 @@ impl Checker {
                 self.record_comptime_condition(cond, &constraint);
                 Ok(Some(constraint))
             }
-            Err(constraint_error) => match self.expect_bool(cond, "comptime if condition") {
+            Err(constraint_error) => match self.expect_bool(cond, test.context()) {
                 Ok(()) => {
-                    self.reject_dynamic_condition(cond)?;
+                    self.reject_dynamic_condition(cond, test)?;
                     Ok(None)
                 }
                 // A condition over types or a `TypeList` has no value
@@ -520,13 +576,11 @@ impl Checker {
     /// A `comptime if` condition the constraint compiler does not close
     /// runs in a function the elaborator evaluates, so it reads compile-time
     /// bindings alone; one over a runtime local is the pin's rejection.
-    fn reject_dynamic_condition(&self, cond: &Expr) -> Result<(), TypeError> {
+    fn reject_dynamic_condition(&self, cond: &Expr, test: ComptimeTest) -> Result<(), TypeError> {
         if self.reads_compile_time_alone(cond) {
             return Ok(());
         }
-        Err(TypeError::Unsupported(
-            "cannot use a dynamic value in 'comptime if' condition".to_string(),
-        ))
+        Err(TypeError::Unsupported(test.dynamic_value().to_string()))
     }
 
     /// The conformances a `comptime if` condition proves of its operands for
@@ -2846,6 +2900,26 @@ impl Checker {
             }
         })
         .is_err()
+    }
+
+    /// Whether a compiled condition names, as a parameter, a name no binder
+    /// in scope declares once its operands are bound.
+    fn names_unbound_parameter(&self, constraint: &GenericConstraint) -> bool {
+        let bound = |reference: &ParamRef| {
+            if reference.is_unbound() {
+                Err(())
+            } else {
+                Ok(reference.clone())
+            }
+        };
+        self.bind_constraint(constraint, &[])
+            .try_map(&bound, &|operand| match operand {
+                ConstraintOperand::Param(reference) | ConstraintOperand::PackLength(reference) => {
+                    bound(reference).map(|_| operand.clone())
+                }
+                _ => Ok(operand.clone()),
+            })
+            .is_err()
     }
 
     /// Visit the name of every `Param` operand of a compiled condition,

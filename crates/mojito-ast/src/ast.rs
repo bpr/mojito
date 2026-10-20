@@ -1681,6 +1681,11 @@ pub enum StmtKind {
         branches: Vec<(Condition, Vec<Stmt>)>,
         orelse: Option<Vec<Stmt>>,
     },
+    /// `comptime assert cond[, message]` — a **compile-time assertion**
+    /// (upstream's `kgen.param.assert`). Allowed only in a function body; the
+    /// elaborator judges it per reached instance, and for the rest of its
+    /// block the asserted condition is known, as a `comptime if` arm's is.
+    ComptimeAssert { cond: Expr, message: Option<Expr> },
     /// `comptime match subject: case ...` — a **compile-time match** over a
     /// parameter value or type. Same shape as `Match`; elaboration selects
     /// one case per instance after every case is checked.
@@ -2405,6 +2410,12 @@ pub fn lambdas_in_stmt<'a>(stmt: &'a Stmt, out: &mut Vec<&'a Expr>) {
             }
         }
         StmtKind::While { cond, .. } => lambdas_in_condition(cond, out),
+        StmtKind::ComptimeAssert { cond, message } => {
+            lambdas_in_expr(cond, out);
+            if let Some(message) = message {
+                lambdas_in_expr(message, out);
+            }
+        }
         StmtKind::For { iter, .. } | StmtKind::ComptimeFor { iter, .. } => {
             lambdas_in_expr(iter, out);
         }
@@ -2911,6 +2922,12 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                     self.block(body);
                     if let Some(body) = orelse {
                         self.block(body);
+                    }
+                }
+                StmtKind::ComptimeAssert { cond, message } => {
+                    self.expr(cond);
+                    if let Some(message) = message {
+                        self.expr(message);
                     }
                 }
                 StmtKind::Match { subject, cases } | StmtKind::ComptimeMatch { subject, cases } => {

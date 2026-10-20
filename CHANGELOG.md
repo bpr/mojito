@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `comptime assert cond[, "message"]` runs, as on the pin: the elaborator
+  judges it per reached instance (once per unrolled `comptime for`
+  iteration) and fails one where it does not hold with `constraint failed:
+  message`, while an untaken arm's or an uninstantiated function's is never
+  judged. For the rest of its block the asserted condition is known, so
+  `comptime assert conforms_to(T, Writable)` licenses `print(x)` and
+  `comptime assert n >= 0` proves a callee's `where n >= 0`; a `comptime if`
+  arm now knows its condition's propositions the same way. Outside a
+  function the form reports the pin's placement error, and a runtime local
+  in the condition (of a `comptime if` too) is the pin's "cannot use a
+  dynamic value" rejection (`assets/ok/comptime_assert_*.mojo`,
+  `assets/type_error/comptime_assert_*.mojo`,
+  `assets/parse_error/comptime_assert_*.mojo`; MIR text 1.81). This closes
+  R74.
 - `ParameterList.of` and `ParameterList.empty_of` are ported as upstream's
   aliases, as on the pin: `ParameterList.of[4, 5, 6]` infers `Int` from
   its values (or takes `type=` by keyword), a read through it is a type,

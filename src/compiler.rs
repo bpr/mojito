@@ -335,6 +335,7 @@ pub fn validate_module_scope(stmts: &[Stmt]) -> Result<(), TypeError> {
             StmtKind::Match { .. } => "match statement",
             StmtKind::ComptimeIf { .. }
             | StmtKind::ComptimeFor { .. }
+            | StmtKind::ComptimeAssert { .. }
             | StmtKind::ComptimeMatch { .. } => "unelaborated compile-time statement",
             StmtKind::If { .. } => "if statement",
             StmtKind::While { .. } => "while statement",

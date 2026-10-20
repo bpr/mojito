@@ -851,6 +851,9 @@ impl Decoder {
                 body: self.req(value, fields, "body", |d, v| Some(d.region_blocks(v)))?,
                 orelse: self.req(value, fields, "else", |d, v| Some(d.region_blocks(v)))?,
             }),
+            "comptime.assert" => Some(MirInstr::ComptimeAssert {
+                cond: Box::new(self.req(value, fields, "condition", Self::constraint)?),
+            }),
             "match" => Some(MirInstr::Match {
                 cases: self.req(value, fields, "cases", |d, v| {
                     let cases = d.list(v).ok()?;

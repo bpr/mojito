@@ -3,6 +3,7 @@
 //! list/tuple/variant construction inference. Extracted from `checker.rs`;
 //! see `docs/symbol-map.md`.
 
+use super::comptime_validation::ComptimeTest;
 use super::traits::RegisterPassability;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -1364,10 +1365,9 @@ impl Checker {
                 else_branch,
             } => {
                 let tt = if self.parameter_valued_condition(cond) {
-                    self.check_comptime_condition(cond)?;
+                    let constraint = self.check_comptime_condition(cond, ComptimeTest::If)?;
                     self.record_at(expr.source_span()).comptime_conditional = true;
-                    let proved = self.conformance_arm_assumptions(cond)?;
-                    self.assumed_conformances.borrow_mut().push(proved);
+                    self.assume_condition(cond, constraint.as_ref())?;
                     let tt = self.infer(then_branch);
                     self.assumed_conformances.borrow_mut().pop();
                     tt?

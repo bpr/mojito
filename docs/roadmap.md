@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1210**.
+Next free ID: **R1212**.
 
 ## Ordered Work
 
@@ -5948,19 +5948,39 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R74 `comptime assert` is not parsed**
+- [ ] **R1210 A `comptime assert` message other than a string literal is
+  rejected**
 
-  Problem: upstream's `comptime assert conforms_to(FT, Hashable)` is a parse
-  error at Mojito.
-  - The pin treats the assertion as a proof: a preceding, same-block
-    `comptime assert conforms_to(X, T)` licenses `T` on `X` exactly as a
-    `comptime if conforms_to(X, T):` arm does (`docs/notes/param-expr-attributes.md`
-    §Reflection queries), and a failing one reports "constraint failed" at
-    the instance.
-  - The checker's arm licensing (`conformance_arm_assumptions`) is the lever;
-    the statement form would push the same atoms for the rest of its block.
+  Problem: `comptime assert n > 5, t"n is {n}"` fails `f[3]` at the pin
+  with `constraint failed: n is 3`, while Mojito rejects the message as
+  unsupported.
+  - The pin evaluates the message per instance, as a compile-time
+    `String` over the instance's parameters.
+  - `GenericConstraint::WithMessage` carries a literal `String`, so the
+    MIR `comptime.assert` has nowhere to put a message expression the
+    elaborator would evaluate.
+  - Probe: a t-string message, `t"n is {n}"`.
+  - Probe: `String("n is ", n)` (`constraint failed: n is 3` at `f[3]`).
+  - Probe: `"lit" + "eral"`, which runs at the pin.
+  - Upstream's stdlib spells such messages at about 20 sites.
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1211 A compile-time condition that is not a `Bool` is not
+  converted**
+
+  Problem: `comptime if 3:` and `comptime assert 3, "int"` run at the pin,
+  which converts the `Int` through `Bool(x)`; Mojito fails with "invalid
+  checked program: MIR function '$comptime$main$0' block 0: return of Int
+  from a function returning Bool".
+  - The checker accepts the condition and records its truthiness
+    conversion (`truthiness_condition`), but the compile-time thunk the
+    condition lowers to (`comptime_condition_of`) returns the operand
+    unconverted.
+  - Probe: `comptime if 3:` in `main`.
+  - Probe: `comptime assert 3, "int"` in `main`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R75 `reflect[T]` over a function's type parameter is rejected**
 
@@ -9031,8 +9051,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Mojito's float range is a separate `_FloatStridedRange`; the pin's
     `_StridedRange[dtype, forward]` takes the float path under `comptime if
     Self.dtype.is_floating_point()`.
-  - The overloads reject a float or `Bool` lane with `comptime assert`,
-    which Mojito does not parse (R74).
+  - The overloads reject a float or `Bool` lane with `comptime assert`.
   - With the overloads in source, `infer_scalar_range`'s spelled
     construction and the checker's range shortcuts (`scalar_range_parts`
     in `iteration.rs`, `indexing.rs`, and `builtins.rs`) go.
@@ -10593,8 +10612,8 @@ residue found inside a task moves to the task that owns its fix.
   - The check itself holds: a storage operation's
     `_get_type_index[T, *Ts]()` fails the instantiation at such a `T` with
     upstream's message (`close_variant_index`, `native::mono`).
-  - Port `_InvalidTypeIndex`, `_get_type_index`, and `_check` verbatim once
-    `comptime assert` parses.
+  - Port `_InvalidTypeIndex`, `_get_type_index`, and `_check` verbatim,
+    now that `comptime assert` runs.
   - Depends on R74.
   - Model: Opus, Not Planned.
 

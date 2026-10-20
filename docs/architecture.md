@@ -867,7 +867,23 @@ the condition — the function's, then the enclosing `comptime for` indices,
 which it reads as parameter references (`Const::Param`) — (`ComptimeThunks`,
 `lower_expression_thunk`), and its branch carries the
 thunk's application, which the elaborator evaluates on the VM
-([`docs/notes/ctfe-request-path.md`](notes/ctfe-request-path.md)). The
+([`docs/notes/ctfe-request-path.md`](notes/ctfe-request-path.md)). A
+`comptime assert cond[, message]` (`StmtKind::ComptimeAssert`, parsed in a
+function body only) crosses the same way, as upstream's
+`kgen.param.assert`: the checker types its condition as a `comptime if`
+condition and never judges it (`Checker::check_comptime_assert`), it rides
+the checked handoff and HIR as `CheckedStmtOp::ComptimeAssert` and
+`HirInstr::ComptimeAssert`, MIR carries it as the straight-line
+`MirInstr::ComptimeAssert` (`comptime.assert`, its message a
+`GenericConstraint::WithMessage`), and `native::mono` decides it with the
+instance's `comptime if`s — so an unrolled `comptime for` copy decides it at
+its own index — dropping one that holds and failing the instance at one
+that does not, if the instance reaches it
+(`failure::discharge_comptime_asserts`), as `constraint failed: MESSAGE`.
+For the rest of its block the checker knows the asserted condition, as it
+knows a `comptime if` arm's (`Checker::assume_condition`: the `conforms_to`
+atoms below, and each conjunct of the residual proposition the condition
+states, which proves a callee's `where` clause). The
 template keeps every `comptime for` in a generic body, as upstream keeps its
 parameter `for` (`comptime/elab.rs::keep_template_comptime_for`, which
 forces a pending module constant the loop iterates): the checker types the body
@@ -1285,8 +1301,9 @@ element `ListGet` of a `field_types()` list, viewed through the same bounded
 spelling). A field type has no declared bound: `T`'s own bound says nothing
 about a field, so a trait use of it is rejected until proved, and a
 `comptime if conforms_to(X, A & B)` condition proves exactly those traits of
-exactly that operand for the arm it guards (`conformance_arm_assumptions`,
-pushed on `assumed_conformances` around the arm), which is what the pin
+exactly that operand for the arm it guards, and a `comptime assert` of it
+for the rest of its block (`conformance_arm_assumptions`, pushed on
+`assumed_conformances` by `assume_condition`), which is what the pin
 licenses for a plain parameter, a pack element, and a field type alike; a
 proof on another index, after the use, in another loop, or in an `or` proves
 nothing. A value read of a query over a parameter

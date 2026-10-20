@@ -3025,7 +3025,7 @@ impl Checker {
     /// of its `where` clauses that is still a proposition once its own
     /// parameters stand for themselves. It is recorded beside the
     /// conformance assumptions about to be pushed, so the same pop closes it.
-    pub(super) fn assume_declared_propositions(&mut self, decls: &[ParamDecl]) {
+    pub(super) fn assume_declared_propositions(&self, decls: &[ParamDecl]) {
         let arguments = params_as_args(decls);
         let environment = ConstraintEnvironment::declared(decls, &arguments);
         let mut assumed = Vec::new();
@@ -3046,7 +3046,7 @@ impl Checker {
     /// [`Self::assume_declared_propositions`] for a method: its own `where`
     /// clauses, over the struct's parameters (`Self.n`) and its own.
     pub(super) fn assume_method_propositions(
-        &mut self,
+        &self,
         method: &mojito_ast::ast::Method,
         method_decls: &[ParamDecl],
     ) {
@@ -3074,11 +3074,33 @@ impl Checker {
     /// Open the proposition level of the conformance assumptions about to be
     /// pushed. Every push site calls this, so a closed level never lingers
     /// under a later declaration.
-    pub(super) fn assume_propositions(&mut self, assumed: Vec<ParamExpr>) {
+    pub(super) fn assume_propositions(&self, assumed: Vec<ParamExpr>) {
         let depth = self.assumed_conformances.borrow().len();
-        self.assumed_propositions.truncate(depth);
-        self.assumed_propositions.resize_with(depth, Vec::new);
-        self.assumed_propositions.push(assumed);
+        let mut propositions = self.assumed_propositions.borrow_mut();
+        propositions.truncate(depth);
+        propositions.resize_with(depth, Vec::new);
+        propositions.push(assumed);
+    }
+
+    /// Open one assumption level holding what the compile-time condition
+    /// `cond` makes known below it, as a `comptime if` arm and the rest of a
+    /// `comptime assert`'s block both know it (the pin's "introducing
+    /// knowledge"): the conformances its `conforms_to` atoms under `and`
+    /// prove, and each conjunct of the residual proposition `constraint`
+    /// (the condition's bound reading, when it closes) states over the
+    /// binders in scope. The caller pops the level.
+    pub(super) fn assume_condition(
+        &self,
+        cond: &Expr,
+        constraint: Option<&GenericConstraint>,
+    ) -> Result<(), TypeError> {
+        let proved = self.conformance_arm_assumptions(cond)?;
+        let assumed = constraint
+            .map(|constraint| self.condition_propositions(constraint))
+            .unwrap_or_default();
+        self.assume_propositions(assumed);
+        self.assumed_conformances.borrow_mut().push(proved);
+        Ok(())
     }
 
     /// Whether every conjunct of a residual proposition is one an enclosing
@@ -3087,11 +3109,58 @@ impl Checker {
     fn assumptions_prove(&self, proposition: &ParamExpr) -> bool {
         conjuncts(proposition).iter().all(|conjunct| {
             self.assumed_propositions
+                .borrow()
                 .iter()
                 .take(self.assumed_conformances.borrow().len())
                 .flatten()
                 .any(|assumed| assumed == conjunct)
         })
+    }
+
+    /// The conjuncts of the residual proposition `constraint` states with
+    /// every binder in scope standing for itself — the enclosing struct's,
+    /// then each open parameter scope's — as a declaration's own `where`
+    /// clause is read inside its body. A verdict the binders decide states
+    /// nothing to assume.
+    fn condition_propositions(&self, constraint: &GenericConstraint) -> Vec<ParamExpr> {
+        let declared = |expression: &ParamExpr| match expression.kind() {
+            mojito_types::param_expr::ParamKind::DeclRef(reference) => Some(reference.id.clone()),
+            _ => None,
+        };
+        let types = self
+            .tparams
+            .iter()
+            .flat_map(HashMap::values)
+            .filter_map(|ty| {
+                let TyKind::Param { binder, .. } = ty.kind() else {
+                    return None;
+                };
+                Some((binder.id.clone(), TyArg::Ty(ty.clone())))
+            });
+        let values = self
+            .vparams
+            .iter()
+            .flat_map(HashMap::values)
+            .filter_map(|value| {
+                declared(value).map(|id| (id, TyArg::Val(CtValue::Expr(value.clone()))))
+            });
+        let arguments: Vec<(ParamId, TyArg)> = self
+            .self_decls
+            .iter()
+            .map(|decl| (decl.id().clone(), decl.own_argument()))
+            .chain(types)
+            .chain(values)
+            .collect();
+        let mut environment = ConstraintEnvironment::default();
+        environment.bound.extend(
+            arguments
+                .iter()
+                .map(|(id, argument)| (id.clone(), argument)),
+        );
+        match self.constraint_verdict(constraint, &environment) {
+            Ok(ConstraintVerdict::Residual(proposition)) => conjuncts(&proposition),
+            _ => Vec::new(),
+        }
     }
 
     /// Require `constraint` at one application. Proven passes and Disproven

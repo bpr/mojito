@@ -299,6 +299,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     ) -> Result<mojito_ast::ast::StructComptime, ParseError> {
         self.expect(&Token::Comptime, "Expected 'comptime'")?;
         let name = self.expect_identifier("Expected a name after 'comptime'")?;
+        if name == "assert" {
+            return Err(comptime_assert_outside_function());
+        }
         // A parameterized associated type: `comptime IteratorType[params] = ...`.
         let params = if matches!(self.peek_token()?, Some(Token::LBracket)) {
             self.parse_type_params()?
@@ -468,6 +471,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     ) -> Result<mojito_ast::ast::TraitComptime, ParseError> {
         self.expect(&Token::Comptime, "Expected 'comptime'")?;
         let name = self.expect_identifier("Expected a name after 'comptime'")?;
+        if name == "assert" {
+            return Err(comptime_assert_outside_function());
+        }
         // A parameterized associated type requirement:
         // `comptime IteratorType[iterable_mut: Bool, //, iterable_origin:
         // Origin[mut=iterable_mut]]: Iterator`.

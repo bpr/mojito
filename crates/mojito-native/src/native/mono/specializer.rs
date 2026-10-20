@@ -981,6 +981,10 @@ impl<'a> Specializer<'a> {
         function.removed_args.clear();
         expand_pack_spreads(&key.template, &mut function)?;
         self.select_comptime_branches(&key.template, &mut function, bindings)?;
+        failure::discharge_comptime_asserts(&mut function).map_err(|construct| MonoError {
+            kind: MonoErrorKind::Instantiation,
+            ..self.error(Some(&key.template), construct)
+        })?;
         self.discharge_instantiation_failures(&key.template, &function)?;
         self.discharge_rebinds(&key.template, &mut function)?;
         self.answer_param_constants(
@@ -1751,7 +1755,10 @@ impl<'a> Specializer<'a> {
     /// the taken arm: the branch becomes a jump, and the untaken arm's blocks
     /// go with the destroys drop elaboration placed at their entry, before
     /// any call in them is enqueued or any type in them verified. The taken
-    /// arm keeps its own entry destroys; no last use is recomputed.
+    /// arm keeps its own entry destroys; no last use is recomputed. Every
+    /// `comptime assert` is decided with them: one that holds goes, and one
+    /// that fails stays, its condition folded to `False`, for
+    /// [`failure::discharge_comptime_asserts`] to report if it is reached.
     fn select_comptime_branches(
         &mut self,
         template: &str,
@@ -1806,6 +1813,22 @@ impl<'a> Specializer<'a> {
                 };
                 block.term = MirTerm::Jump(taken);
                 decided = true;
+            }
+            let mut asserts = Vec::new();
+            for (index, instruction) in block.instrs.iter().enumerate() {
+                if let MirInstr::ComptimeAssert { cond } = instruction {
+                    asserts.push((
+                        index,
+                        self.decide_comptime_condition(template, cond, bindings)?,
+                    ));
+                }
+            }
+            for (index, holds) in asserts.into_iter().rev() {
+                if holds {
+                    block.instrs.remove(index);
+                } else if let MirInstr::ComptimeAssert { cond } = &mut block.instrs[index] {
+                    **cond = folded_false(cond);
+                }
             }
             for instruction in &mut block.instrs {
                 if let MirInstr::Try {
@@ -4596,4 +4619,15 @@ fn for_each_lifecycle_site_mut(
         }
     }
     Ok(())
+}
+
+/// A failed assertion's decided condition: `False`, keeping its message.
+fn folded_false(cond: &GenericConstraint) -> GenericConstraint {
+    match cond {
+        GenericConstraint::WithMessage(_, message) => GenericConstraint::WithMessage(
+            Box::new(GenericConstraint::Bool(false)),
+            message.clone(),
+        ),
+        _ => GenericConstraint::Bool(false),
+    }
 }

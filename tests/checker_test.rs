@@ -8590,3 +8590,66 @@ fn raw_lists_of_traits_solve_and_convert_their_trait_binder() {
         );
     }
 }
+
+#[test]
+fn comptime_assert_licenses_what_it_states_for_the_rest_of_its_block() {
+    // As at the pin, a `comptime assert` makes its condition known below it:
+    // the conformances its `conforms_to` atoms under `and` prove, and the
+    // propositions its conjuncts state, which a callee's `where` reads.
+    ok_std(
+        "def f[T: AnyType](x: T):\n    comptime assert conforms_to(T, Writable) and True\n    print(x)\n\ndef main():\n    f(1)\n",
+    );
+    ok_std(
+        "struct Box[T: AnyType]:\n    def show(self, x: Self.T):\n        comptime assert conforms_to(Self.T, Writable), \"box\"\n        print(x)\n    def __init__(out self):\n        pass\n\ndef main():\n    Box[Int]().show(5)\n",
+    );
+    let callee = "def g[n: Int]() where n >= 0:\n    print(n)\n\n";
+    for body in [
+        "    comptime assert n >= 0, \"nonneg\"\n    g[n]()\n",
+        "    comptime assert n >= 0 and n < 10, \"range\"\n    g[n]()\n",
+        // A `comptime if` arm knows its condition the same way.
+        "    comptime if n >= 0:\n        g[n]()\n",
+    ] {
+        ok_std(&format!(
+            "{callee}def f[n: Int]():\n{body}\ndef main():\n    f[3]()\n"
+        ));
+    }
+}
+
+#[test]
+fn comptime_assert_proves_nothing_before_it_or_outside_its_block() {
+    for body in [
+        "    print(x)\n    comptime assert conforms_to(T, Writable)\n",
+        "    if b:\n        comptime assert conforms_to(T, Writable)\n    print(x)\n",
+        "    comptime assert not conforms_to(T, Writable) or True\n    print(x)\n",
+    ] {
+        let error = err_std(&format!(
+            "def f[T: AnyType](x: T, b: Bool):\n{body}\ndef main():\n    f(1, True)\n"
+        ))
+        .to_string();
+        assert!(
+            error.contains("does not conform to trait 'Writable'"),
+            "{body:?}: {error}"
+        );
+    }
+    let error = err_std(
+        "def g[n: Int]() where n >= 0:\n    print(n)\n\ndef f[n: Int]():\n    g[n]()\n\ndef main():\n    f[3]()\n",
+    )
+    .to_string();
+    assert!(error.contains("lacking evidence"), "{error}");
+}
+
+#[test]
+fn comptime_assert_rejects_a_dynamic_condition_and_a_computed_message() {
+    let dynamic =
+        err_std("def main():\n    var x = 3\n    comptime assert x == 3, \"rt\"\n").to_string();
+    assert!(
+        dynamic.contains("cannot use a dynamic value in 'comptime assert' expression"),
+        "{dynamic}"
+    );
+    let message =
+        err_std("def f[n: Int]():\n    comptime assert n > 0, String(\"n is \", n)\n").to_string();
+    assert!(
+        message.contains("a 'comptime assert' message other than a string literal"),
+        "{message}"
+    );
+}

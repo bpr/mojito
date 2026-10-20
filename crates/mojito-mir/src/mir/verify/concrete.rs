@@ -277,6 +277,11 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
         MirInstr::Rebind { .. } => {
             errors.push(format!("{head} keeps a value rebind in elaborated MIR"));
         }
+        MirInstr::ComptimeAssert { cond } => {
+            errors.push(format!(
+                "{head} keeps a compile-time assertion of `{cond:?}` in elaborated MIR"
+            ));
+        }
         MirInstr::KeepAlive { .. } | MirInstr::InvalidateInteriors { .. } => {
             errors.push(format!(
                 "{head} keeps the lifetime marker `{}` in elaborated MIR",

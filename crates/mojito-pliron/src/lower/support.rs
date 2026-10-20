@@ -751,6 +751,7 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::Loop { .. } => "Loop",
         MirInstr::ComptimeIf { .. } => "ComptimeIf",
         MirInstr::ComptimeFor { .. } => "ComptimeFor",
+        MirInstr::ComptimeAssert { .. } => "ComptimeAssert",
         MirInstr::Match { .. } => "Match",
         MirInstr::Drop { .. } => "Drop",
         MirInstr::DropVar { .. } => "DropVar",

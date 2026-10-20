@@ -9,7 +9,7 @@
 # closes per instance; a `T` the pack lacks fails the instantiation with
 # upstream's "Type does not exist in Variant.". The
 # `comptime if Self.Ts.contains[T](): pass` lines stand where upstream calls
-# `Self._check[T]()`, whose `comptime assert` Mojito does not parse yet.
+# `Self._check[T]()` (R411).
 from std.reflection.type_info import _unqualified_type_name
 from std.range import range
 

@@ -406,30 +406,19 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             _ => {
                 let name =
                     self.expect_identifier("Expected a name, 'if', or 'for' after 'comptime'")?;
-                // Directive form, e.g. `comptime assert(condition), message`.
+                // `comptime assert cond[, message]`: parentheses around the
+                // condition are an ordinary parenthesized expression, so
+                // `comptime assert(c, "m")` asserts a tuple, as upstream reads it.
                 if name == "assert" {
-                    let mut args = if matches!(self.peek_token()?, Some(Token::LParen)) {
+                    let cond = self.parse_expression(Precedence::Lowest)?;
+                    let message = if matches!(self.peek_token()?, Some(Token::Comma)) {
                         self.next_token()?;
-                        let (args, _) = self.parse_call_args()?;
-                        self.expect(&Token::RParen, "Expected ')' after comptime directive")?;
-                        args
+                        Some(self.parse_expression(Precedence::Lowest)?)
                     } else {
-                        vec![self.parse_expression(Precedence::Lowest)?]
+                        None
                     };
-                    if matches!(self.peek_token()?, Some(Token::Comma)) {
-                        self.next_token()?;
-                        args.push(self.parse_expression(Precedence::Lowest)?);
-                    }
                     self.expect_stmt_end()?;
-                    return Ok(StmtKind::Expr(Expr::new(
-                        ExprKind::Call {
-                            name,
-                            param_args: Vec::new(),
-                            args,
-                            kwargs: Vec::new(),
-                        },
-                        self.last_span,
-                    )));
+                    return Ok(StmtKind::ComptimeAssert { cond, message });
                 }
                 let type_params = if matches!(self.peek_token()?, Some(Token::LBracket)) {
                     self.parse_type_params()?

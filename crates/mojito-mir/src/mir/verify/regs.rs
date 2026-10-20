@@ -69,17 +69,10 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
 /// The registers an instruction reads (operands, arguments, stored values, and
 /// place index registers). Region ops' blocks are walked separately.
 pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
-    let place = |p: &MirPlace, out: &mut Vec<Reg>| {
-        for projection in &p.proj {
-            if let Proj::Index(register) = projection {
-                out.push(*register);
-            }
-        }
-    };
     match instruction {
         MirInstr::EstablishLoans { loans, .. } => {
             for loan in loans {
-                place(&loan.place, out);
+                index_regs(&loan.place, out);
             }
         }
         MirInstr::ConsumePlace { place: p, .. }
@@ -88,7 +81,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::MarkDestroyed { place: p }
         | MirInstr::MakeRef { place: p, .. }
         | MirInstr::MovePlace { place: p, .. }
-        | MirInstr::LoadPlace { place: p, .. } => place(p, out),
+        | MirInstr::LoadPlace { place: p, .. } => index_regs(p, out),
         MirInstr::ReadRef { reference, .. } => out.push(*reference),
         MirInstr::CopyValue { value, .. } | MirInstr::Rebind { value, .. } => out.push(*value),
         MirInstr::WriteRef { reference, value } => out.extend([*reference, *value]),
@@ -98,14 +91,14 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         MirInstr::UnOp { a, .. } => out.push(*a),
         MirInstr::BinOp { a, b, .. } => out.extend([*a, *b]),
         MirInstr::Store { place: p, src } => {
-            place(p, out);
+            index_regs(p, out);
             out.push(*src);
         }
         MirInstr::StoreRef {
             place: p,
             reference,
         } => {
-            place(p, out);
+            index_regs(p, out);
             out.push(*reference);
         }
         MirInstr::MultiSet {
@@ -120,17 +113,17 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         } => {
             out.push(*receiver);
             if let Some(receiver_place) = receiver_place {
-                place(receiver_place, out);
+                index_regs(receiver_place, out);
             }
             for argument in args {
                 subscript_arg_regs(argument, out);
             }
             for argument_place in arg_places.iter().flatten() {
-                place(argument_place, out);
+                index_regs(argument_place, out);
             }
             out.push(*value);
             if let Some(value_place) = value_place {
-                place(value_place, out);
+                index_regs(value_place, out);
             }
             out.extend(
                 call.param_arg_regs
@@ -149,10 +142,10 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
             out.extend(args.iter().copied());
             out.extend(kwargs.iter().map(|(_, register)| *register));
             for p in arg_places.iter().flatten() {
-                place(p, out);
+                index_regs(p, out);
             }
             for p in kwarg_places.iter().flatten() {
-                place(p, out);
+                index_regs(p, out);
             }
             out.extend(param_arg_regs.iter().filter_map(|argument| argument.value));
         }
@@ -176,7 +169,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
                 .chain(arg_places.iter().flatten())
                 .chain(kwarg_places.iter().flatten())
             {
-                place(p, out);
+                index_regs(p, out);
             }
         }
         MirInstr::MethodCall {
@@ -199,7 +192,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
                 .chain(arg_places.iter().flatten())
                 .chain(kwarg_places.iter().flatten())
             {
-                place(p, out);
+                index_regs(p, out);
             }
         }
         MirInstr::PointerStorageTake { pointer, index, .. }
@@ -220,10 +213,10 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         } => {
             out.extend([*base, *index]);
             if let Some(base_place) = base_place {
-                place(base_place, out);
+                index_regs(base_place, out);
             }
             if let Some(index_place) = index_place {
-                place(index_place, out);
+                index_regs(index_place, out);
             }
             if let Some(call) = call {
                 out.extend(
@@ -246,10 +239,10 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
             out.push(*object);
             out.extend([lower, upper, step].into_iter().flatten().copied());
             if let Some(object_place) = object_place {
-                place(object_place, out);
+                index_regs(object_place, out);
             }
             for argument_place in arg_places.iter().flatten() {
-                place(argument_place, out);
+                index_regs(argument_place, out);
             }
             if let Some(call) = call {
                 out.extend(
@@ -276,10 +269,10 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
                 subscript_arg_regs(argument, out);
             }
             if let Some(object_place) = object_place {
-                place(object_place, out);
+                index_regs(object_place, out);
             }
             for argument_place in arg_places.iter().flatten() {
-                place(argument_place, out);
+                index_regs(argument_place, out);
             }
             if let Some(call) = call {
                 out.extend(
@@ -300,7 +293,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         MirInstr::MakeVariant { value, .. } => out.push(*value),
         MirInstr::MakeClosure { captures, .. } => {
             for capture in captures {
-                place(&capture.place, out);
+                index_regs(&capture.place, out);
             }
         }
         MirInstr::VariantIs { variant, .. } | MirInstr::VariantGet { variant, .. } => {
@@ -316,19 +309,19 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         MirInstr::VariantSetInitWith {
             place: p, factory, ..
         } => {
-            place(p, out);
+            index_regs(p, out);
             out.push(*factory);
         }
         MirInstr::VariantSet {
             place: p, value, ..
         } => {
-            place(p, out);
+            index_regs(p, out);
             out.push(*value);
         }
         MirInstr::VariantReplace {
             place: p, value, ..
         } => {
-            place(p, out);
+            index_regs(p, out);
             out.push(*value);
         }
         MirInstr::ConstructTypeParam {
@@ -340,7 +333,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
             out.extend(element.iter().filter_map(|argument| argument.value));
             out.extend(kwargs.iter().map(|(_, register)| *register));
             for p in kwarg_places.iter().flatten() {
-                place(p, out);
+                index_regs(p, out);
             }
         }
         MirInstr::Raise { src } => out.push(*src),
@@ -367,6 +360,16 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::Loop { .. }
         | MirInstr::ComptimeIf { .. }
         | MirInstr::ComptimeFor { .. }
+        | MirInstr::ComptimeAssert { .. }
         | MirInstr::Match { .. } => {}
+    }
+}
+
+/// The registers indexing `p`'s projections.
+fn index_regs(p: &MirPlace, out: &mut Vec<Reg>) {
+    for projection in &p.proj {
+        if let Proj::Index(register) = projection {
+            out.push(*register);
+        }
     }
 }

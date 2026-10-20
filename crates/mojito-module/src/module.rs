@@ -2153,6 +2153,12 @@ fn rewrite_stmt(
             rewrite_condition(cond, names, namespaces);
             rewrite_program(body, names, namespaces);
         }
+        StmtKind::ComptimeAssert { cond, message } => {
+            rewrite_expr(cond, names, namespaces);
+            if let Some(message) = message {
+                rewrite_expr(message, names, namespaces);
+            }
+        }
         StmtKind::Match { subject, cases } | StmtKind::ComptimeMatch { subject, cases } => {
             rewrite_expr(subject, names, namespaces);
             for case in cases {

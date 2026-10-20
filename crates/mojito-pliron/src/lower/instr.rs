@@ -873,6 +873,11 @@ impl FnLowering<'_> {
                 ),
                 None,
             )),
+            // Concrete MIR carries none: the elaborator judges each one.
+            MirInstr::ComptimeAssert { .. } => Err(self.unsupported(
+                "a compile-time assertion reached native lowering".to_string(),
+                None,
+            )),
             MirInstr::Try {
                 body,
                 handler,

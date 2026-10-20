@@ -92,6 +92,7 @@ simple_stmt:
     | destructure_assignment
     | augmented_assignment
     | comptime_stmt
+    | comptime_assert_stmt
     | return_stmt
     | raise_stmt
     | import_stmt
@@ -1183,7 +1184,18 @@ like any list, over closed lists and over packs still open alike.
 ```
 comptime_if_stmt:  'comptime' if_stmt      # 'comptime' 'if' … 'elif' … 'else' …
 comptime_for_stmt: 'comptime' for_stmt     # 'comptime' 'for' NAME 'in' expression ':' block
+comptime_assert_stmt: 'comptime' 'assert' expression [',' expression]
 ```
+
+`comptime assert cond[, message]` is a **compile-time assertion**, allowed only
+in a function body: at module scope and among a struct's or trait's members
+the parser reports upstream's "'comptime assert' must be inside a function;
+move this into a function body". `assert` stays an identifier lexically; the
+parser recognizes it after `comptime`. Parentheses around the condition are an
+ordinary parenthesized expression, so `comptime assert (\n cond\n), "m"` spans
+lines and `comptime assert(c, "m")` asserts a tuple, as upstream reads both.
+The elaborator judges the assertion per reached instance; for the rest of its
+block its condition is known, as a `comptime if` arm's is.
 
 `comptime` also prefixes an `if` or `for` to give a **compile-time conditional**
 (`comptime if cond:` — with `elif`/`else` like a normal `if`) or a **compile-time,

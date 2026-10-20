@@ -412,6 +412,7 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         | MirInstr::Try { .. }
         | MirInstr::Loop { .. }
         | MirInstr::ComptimeFor { .. }
+        | MirInstr::ComptimeAssert { .. }
         | MirInstr::Match { .. } => {}
         MirInstr::If { results, cond, .. } => out.extend(results.iter_mut().chain([cond])),
         MirInstr::ComptimeIf { results, .. } => out.extend(results.iter_mut()),
@@ -2376,6 +2377,14 @@ pub enum MirInstr {
         body: Vec<MirBlock>,
         orelse: Vec<MirBlock>,
     },
+    /// `kgen.param.assert`: a compile-time assertion over parameter
+    /// expressions, its message (if any) riding as
+    /// [`GenericConstraint::WithMessage`]. The elaborator judges it per
+    /// reached instance, failing the instance when it does not hold;
+    /// concrete MIR carries none.
+    ComptimeAssert {
+        cond: Box<GenericConstraint>,
+    },
     /// `hlcf.match`: run `cases` in order until one completes. A case
     /// region tests its pattern, binds, and runs its body: a failed test or
     /// guard ends in [`MirTerm::MatchNext`], which enters the next case
@@ -2562,7 +2571,7 @@ impl MirInstr {
     ///   assertion the elaborator judges per instance;
     /// - every call, store, drop, consume, ownership mark, loan or interior
     ///   marker, keep-alive, scope start, iterator step, `raise`, region op,
-    ///   and unsupported instruction.
+    ///   compile-time assertion, and unsupported instruction.
     pub fn would_be_trivially_dead(&self) -> bool {
         let reads_storage = |place: &MirPlace| {
             place
@@ -2633,6 +2642,7 @@ impl MirInstr {
             | Self::Loop { .. }
             | Self::ComptimeIf { .. }
             | Self::ComptimeFor { .. }
+            | Self::ComptimeAssert { .. }
             | Self::Match { .. }
             | Self::Drop { .. }
             | Self::DropVar { .. }

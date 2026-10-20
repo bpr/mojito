@@ -132,6 +132,12 @@ impl Elab<'_> {
                 }
                 self.cross_opt_block(orelse, env, shadowed)
             }
+            StmtKind::ComptimeAssert { cond, message } => {
+                self.cross_expr(cond, env, shadowed)?;
+                message
+                    .as_mut()
+                    .map_or(Ok(()), |message| self.cross_expr(message, env, shadowed))
+            }
             StmtKind::While { cond, body, orelse } => {
                 self.cross_condition(cond, env, shadowed)?;
                 self.cross_block(body, env, shadowed)?;

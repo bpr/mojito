@@ -1938,6 +1938,13 @@ pub enum CheckedStmtOp {
         iter: CheckedNodeId,
         body: Vec<CheckedStmtId>,
     },
+    /// `comptime assert cond[, message]`: the condition's node carries its
+    /// [`SemanticAdjustment::ComptimeCondition`], judged per instance by the
+    /// elaborator.
+    ComptimeAssert {
+        cond: CheckedNodeId,
+        message: Option<String>,
+    },
     /// `comptime match`: the subject's node, then each case's pattern
     /// nodes, guard, and body.
     ComptimeMatch {
@@ -2068,6 +2075,7 @@ impl CheckedStmtOp {
                 .flat_map(|(condition, _)| condition.expressions())
                 .collect(),
             Self::ComptimeFor { iter, .. } | Self::For { iter, .. } => vec![*iter],
+            Self::ComptimeAssert { cond, .. } => vec![*cond],
             Self::While { cond, .. } => cond.expressions(),
             Self::Return(value) => value.iter().copied().collect(),
             Self::With { items, .. } => items.iter().map(|item| item.context).collect(),
@@ -2148,6 +2156,7 @@ impl CheckedStmtOp {
             | Self::Destructure { .. }
             | Self::SetPlace { .. }
             | Self::Comptime { .. }
+            | Self::ComptimeAssert { .. }
             | Self::Return(_)
             | Self::Raise(_)
             | Self::Import { .. }
@@ -2321,6 +2330,10 @@ impl CheckedStmtOp {
                 iter: map.expression(*iter),
                 body: block(map, body),
             },
+            Self::ComptimeAssert { cond, message } => Self::ComptimeAssert {
+                cond: map.expression(*cond),
+                message: message.clone(),
+            },
             Self::While { cond, body, orelse } => Self::While {
                 cond: cond.map_operands(map),
                 body: block(map, body),
@@ -2403,6 +2416,7 @@ impl CheckedStmtOp {
             Self::Comptime { .. } => "Comptime",
             Self::ComptimeIf { .. } => "ComptimeIf",
             Self::ComptimeFor { .. } => "ComptimeFor",
+            Self::ComptimeAssert { .. } => "ComptimeAssert",
             Self::ComptimeMatch { .. } => "ComptimeMatch",
             Self::If { .. } => "If",
             Self::While { .. } => "While",
@@ -5623,6 +5637,13 @@ impl<'a> ArenaBuilder<'a> {
                 var: var.clone(),
                 iter: self.expr(iter),
                 body: self.block(body),
+            },
+            StmtKind::ComptimeAssert { cond, message } => CheckedStmtOp::ComptimeAssert {
+                cond: self.expr(cond),
+                message: message.as_ref().and_then(|message| match &message.kind {
+                    ExprKind::Str(text) => Some(text.clone()),
+                    _ => None,
+                }),
             },
             StmtKind::Scope(body) => CheckedStmtOp::Scope(self.block(body)),
             StmtKind::While { cond, body, orelse } => CheckedStmtOp::While {

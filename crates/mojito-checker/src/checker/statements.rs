@@ -2,6 +2,7 @@
 //! entry, block scoping, the `check_stmt` statement dispatcher, and parameter
 //! type lowering. Extracted from `checker.rs`; see `docs/symbol-map.md`.
 
+use super::comptime_validation::ComptimeTest;
 use super::decorators::DecoratorSite;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -374,21 +375,34 @@ impl Checker {
     /// Check the statements of a block in the current scope. `ret` is the
     /// enclosing function's declared return type (or `None` at module level);
     /// `in_loop` is true inside a `while`/`for` body (gating `break`/`continue`).
+    /// A `comptime assert` makes its condition known to the statements after
+    /// it, to the end of this block alone.
     pub(super) fn check_block(
         &mut self,
         stmts: &[Stmt],
         ret: Option<&Ty>,
         in_loop: bool,
     ) -> Result<(), TypeError> {
-        for stmt in stmts {
+        let mut asserted = 0;
+        let result = stmts.iter().try_for_each(|stmt| {
+            if let StmtKind::ComptimeAssert { cond, message } = &stmt.kind {
+                let constraint = self.check_comptime_assert(cond, message.as_ref())?;
+                self.assume_condition(cond, constraint.as_ref())?;
+                asserted += 1;
+                return Ok(());
+            }
             self.check_stmt(stmt, ret, in_loop)?;
             if let StmtKind::Comptime { name, .. } = &stmt.kind
                 && let Some(owner) = self.lookup_owner(name)
             {
                 self.comptime_binding_owners.insert(owner);
             }
-        }
-        Ok(())
+            Ok(())
+        });
+        let mut assumed = self.assumed_conformances.borrow_mut();
+        let depth = assumed.len() - asserted;
+        assumed.truncate(depth);
+        result
     }
 
     /// Check a block in a fresh nested scope (the body of an `if`/`elif`/`else`
@@ -438,10 +452,9 @@ impl Checker {
             }
             let cond = Self::boolean_condition(cond, "if")?;
             if comptime {
-                self.check_comptime_condition(cond)?;
-                // A `conforms_to` the condition proves holds in this arm alone.
-                let proved = self.conformance_arm_assumptions(cond)?;
-                self.assumed_conformances.borrow_mut().push(proved);
+                let constraint = self.check_comptime_condition(cond, ComptimeTest::If)?;
+                // What the condition proves holds in this arm alone.
+                self.assume_condition(cond, constraint.as_ref())?;
                 let checked = self.check_scoped_block(body, ret, in_loop);
                 self.assumed_conformances.borrow_mut().pop();
                 checked?;
@@ -1859,6 +1872,9 @@ impl Checker {
             }
             StmtKind::ComptimeFor { var, iter, body } => {
                 self.check_comptime_for(stmt, var, iter, body, ret)
+            }
+            StmtKind::ComptimeAssert { cond, message } => {
+                self.check_comptime_assert(cond, message.as_ref()).map(drop)
             }
             // A kept compile-time block is straight-line code, so what it
             // initializes stays initialized after it.
