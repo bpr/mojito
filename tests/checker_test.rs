@@ -1026,6 +1026,19 @@ fn binds_a_member_application_through_its_parameter_list() {
 }
 
 #[test]
+fn closes_a_parameterized_type_member_over_the_struct_pack() {
+    let member = "struct W[*Ts: AnyType]:\n    comptime E[id: Int]: AnyType = Self.Ts[id]\n\n";
+    ok_std(&format!(
+        "{member}def main():\n    var x: W[Bool, Int].E[1] = 6\n    \
+         var b: W[Bool, Int].E[0] = True\n"
+    ));
+    let e = err_std(&format!(
+        "{member}def main():\n    var x: W[Bool, Int].E[0] = 6\n"
+    ));
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
+}
+
+#[test]
 fn rejects_type_arguments_on_non_generic_struct() {
     let e = err("@fieldwise_init\nstruct Point:\n    var x: Int\n\nvar p: Point[Int] = Point(1)\n");
     assert!(

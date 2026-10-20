@@ -2114,7 +2114,8 @@ impl Checker {
             .into());
         }
         // The struct's own type and value parameters concretize `Self.T` / `Self.n`
-        // references in the template.
+        // references in the template, and its type pack binds by identity to
+        // the element list the instance closed it at (`Self.Ts[id]`).
         let mut types = struct_subst(struct_decls, struct_targs);
         let mut values = HashMap::new();
         for (decl, targ) in struct_decls.iter().zip(struct_targs) {
@@ -2122,13 +2123,22 @@ impl Checker {
                 values.insert(name.clone(), value.clone());
             }
         }
+        let mut ids = mojito_types::param_expr::ParamBindings::new();
+        if let Some((pack, elements)) =
+            super::generics::bound_pack_elements(struct_decls, struct_targs)
+            && let Some(decl) = struct_decls
+                .iter()
+                .find(|decl| decl.name().trim_start_matches('*') == pack)
+            && let Ok(list) = self.param_context.type_list(elements)
+        {
+            ids.bind(decl.id().clone(), list);
+        }
         // The member's own explicit parameters concretize from the application:
         // a value binder by its identity, converted at its declared type as a
         // parameter binding converts (`0` at `idx: Int` is `Int(0)`). Origin
         // parameters are keyed by the id assigned while the template was
         // lowered (their position in `enclosing_type_params`).
         let mut origins = HashMap::new();
-        let mut ids = mojito_types::param_expr::ParamBindings::new();
         let mut supplied = args.iter();
         for (index, param) in member.params.iter().enumerate() {
             if !supplies(param) {

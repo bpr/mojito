@@ -4884,8 +4884,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     1` in `trait HasGet`, read as `T.get[5]` over a conformer that omits
     it, prints `6` at the pin and is rejected the same way.
   - Found while planning R1132 (2026-10-20).
-  - Depends on R505, R1146, R1185 (the default's type expression), and
-    R1202 (the default closing at a conformer).
+  - Depends on R505, R1146, R1185 (the default's type expression), R1202
+    (the default closing at a conformer), and R1196
+    (`Self._enum_case_types` in the default's brackets).
   - Model: Opus, Not Planned.
 
 - [ ] **R1206 The pre-check elaborator does not read a struct member's
@@ -5111,6 +5112,14 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     Self._types].__getitem_param__[id]` or `return TypeList[Trait=AnyType,
     Self._types]().length`, fails with "type mismatch for value parameter
     'values': expected a value, found a type", in a struct or a trait.
+  - Probe: a parameterized member's body over an earlier member,
+    `comptime E[id: Int]: AnyType = TypeList[Trait=AnyType,
+    Self._cases]()[id]` beside `comptime _cases = Self.Ts.values`, read as
+    `var x: O[Bool, String].E[1] = "s"`, fails with "type mismatch for
+    value parameter 'values': expected a value, found a type", where the
+    pin prints `s`; over `comptime _cases = TypeList.of[Trait=AnyType,
+    NoneType, Self.T]().values` it fails with "unsupported associated
+    comptime member access" (found while landing R1202, 2026-10-20).
   - Found while landing R1184 (2026-10-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -5177,22 +5186,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R1185 (2026-10-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R1202 A struct's parameterized type member over its own pack does
-  not close at an instance**
-
-  Problem: `comptime E[id: Int]: AnyType = Self.Ts[id]` in `struct W[*Ts:
-  AnyType]`, read as `var x: W[Bool, Int].E[1] = 6`, fails with "type
-  mismatch for variable 'x': expected Ts[1], found Int", where the pin
-  prints `6`.
-  - `Checker::resolve_parameterized_member` substitutes the member's own
-    `id` but not the struct's `Ts`, so the element stays symbolic.
-  - Probe: the body spelled `TypeList[Trait=AnyType, Self.Ts.values]()[id]`
-    fails the same way.
-  - R1187's `_enum_elt_type_for_case` default is such a member.
-  - Found while landing R1185 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1203 A `comptime` name bound to a `TypeList` value is not
   subscripted in type position**
@@ -10225,6 +10218,11 @@ residue found inside a task moves to the task that owns its fix.
     expects 1 compile-time argument(s), got 2", and `materialize[S[Int,
     Bool].A == Int]()` with "a parameterized type is not a value", where
     the pin runs both (found while landing R805, 2026-10-20).
+  - Probe: a module alias of a variadic struct application, `comptime
+    Alias = W[Bool, Int, String]` over `struct W[*Ts: AnyType]`, stops
+    with "type 'W' expects 1 compile-time argument(s), got 3" at
+    `Alias.n`, where the pin reads the member (found while landing R1202,
+    2026-10-20).
   - Depends on nothing.
   - Model: Fable, Planned.
 

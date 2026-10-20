@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A struct's parameterized type member may read the struct's own type
+  pack (`comptime E[id: Int]: AnyType = Self.Ts[id]` in `struct W[*Ts:
+  AnyType]`, or through `TypeList[Trait=AnyType, Self.Ts.values]()[id]`),
+  as on the pin: `W[Bool, Int].E[1]` closes the pack at the instance's
+  elements and is `Int`, at a concrete instance and inside a generic
+  function (`assets/ok/struct_pack_parameterized_type_member.mojo`). This
+  closes R1202.
 - A trait may require a parameterized `comptime` value (`comptime
   get[idx: Int]: Int`), as on the pin: a conformer's member witnesses it
   when its parameters and result match the requirement's by position,
