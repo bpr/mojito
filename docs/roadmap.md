@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1178**.
+Next free ID: **R1183**.
 
 ## Ordered Work
 
@@ -1744,6 +1744,11 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     holds for every opaque parameter, not only a reflected field type.
   - The abstract destruction walk (`explicit_destroy.rs`) does not ask the
     view's bounds for `Deinitable`.
+  - Probe: `var y = Ts[0]()` then `print(y)` in `def f[*Ts: Movable &
+    Defaultable & Writable]()`, also spelled `var x:
+    TypeList[Ts.values].__getitem_param__[0]`; the pin reports "'y'
+    abandoned without being explicitly destroyed" (found while landing
+    R1168, 2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4496,6 +4501,19 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1180 A type comparison is not a compile-time `Bool` value**
+
+  Problem: `comptime b = T == Int` and `materialize[T == Int]()` in `def
+  g[T: Movable]()` stop with "Undefined variable 'T'", where the pin
+  prints `True` for `g[Int]()`.
+  - `comptime if T == Int:` runs, since `Checker::constraint_operand`
+    reads a type operand. The value evaluators read `T` as a variable.
+  - Probe: a local alias, `comptime F = Ts[0]` then `materialize[F ==
+    Int]()` in `def f[*Ts: Movable]()`.
+  - Found while landing R1168 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R402 A plain `def`'s `comptime for` over struct elements built by a
   call is rejected**
 
@@ -4623,6 +4641,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - A lower-case name (`vals[0] * 2`) is parsed as a subscript and runs.
   - Found while landing a display binding read in a type or a parameter
     argument (2026-10-06).
+  - Probe: `print(materialize[Ts[0] == Int]())` in `def f[*Ts: Movable]()`
+    stops with the same "Expected ']' after a subscript" (found while
+    landing R1168, 2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4798,6 +4819,34 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while planning R493 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R1178 A struct's type-valued parameterized `comptime` member is
+  not read in a compile-time expression**
+
+  Problem: over `struct W[T: AnyType]` with `comptime Get[i: Int] =
+  Self.T`, `comptime E = W[Int].Get[0]`, `comptime if W[U].Get[0] ==
+  Int:`, and a later member `comptime First = Self.Get[0]` are rejected,
+  where the pin runs each.
+  - Only a type annotation reads the member (`var x: W[Int].Get[0]`),
+    through `Checker::resolve_parameterized_member`.
+  - The expression evaluators have no arm for it: `eval_associated_ct`,
+    `compile_dependent_ct_expr`, and `constraint_operand`
+    (`checker/constraints.rs`), and a local `comptime` binding's.
+  - The rejections differ by site: "function types as compile-time
+    values", "Undefined variable 'W'", "unsupported dependent parameter
+    expression", and "'Self' is not a compile-time type".
+  - Probe: a type pack's member spelled out, `comptime E =
+    Ts.__getitem_param__[1]` ("Undefined variable 'Ts'"), and `comptime G
+    = TypeList[Ts.values].__getitem_param__[1]`, `comptime if
+    Ts.__getitem_param__[0] == Int:`, and a struct member `comptime First =
+    Self.Ts.__getitem_param__[0]`.
+  - Probe: a member applying another struct's alias, `comptime _mlir_type
+    = _MLIR.KGENParamListType[Self.type]`, stops packaging with "not an
+    associated comptime expression". It keeps `_mlir_type` off the bundled
+    `ParameterList` and `TypeList`.
+  - Found while landing R1168 (2026-10-20).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1148 A struct parameter read through a value is rejected**
 
@@ -6045,6 +6094,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     bound pack. An `.all` or `.any` through a predicate alias stays
     undecided there, because the alias's body does not reach MIR.
   - Probe: `conformance/probes/typelist_self_pack_member_clause.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1179 A struct header's `where` clause over the struct's own type
+  pack stops the pre-check elaborator**
+
+  Problem: `struct P[*Ts: Movable] where Ts.length == 2` used as
+  `P[Int, Bool].two()` stops with "could not build the specialization
+  conformance oracle: unsupported dependent parameter expression", where
+  the pin prints `2`.
+  - `where Ts.all_conforms_to[Copyable]()` in the same place stops with
+    "unsupported generic where proposition", where the pin prints `2`.
+  - Both stop while `ConformanceOracle::importing`
+    (`checker/conformance.rs`) builds the oracle, before any check runs.
+  - A method's own `where Self.Ts.length == 2` runs.
+  - Found while landing R1168 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -8761,39 +8826,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     the port spells it `Int` and records that in the module header.
   - A runtime subscript already calls `__getitem__`, and the length is
     already `size`.
+  - Probe: over `struct R[t: AnyType, //, values:
+    _MLIR.KGENParamListType[t]]`, `comptime first: Int = Self.values[0]`
+    prints `4` for `R[vs.values]` with `vs = 4, 5`, where the pin rejects
+    it with "'KGENParamList[t]' is not subscriptable". The same arm must
+    take a raw list only under the bundled gate (found while landing
+    R1168, 2026-10-20).
   - Found while landing R494 (2026-10-13).
   - Depends on R801, which gives a `comptime` value member parameters.
-  - Model: Fable, Planned.
-
-- [ ] **R1168 A type pack's `length` and `[i]` are checker rules, not
-  members of a bundled `TypeList`**
-
-  Problem: `Ts.length` and `Ts[i]` over a type pack (and `Self.Ts.length`,
-  `Self.Ts[i]` in a struct's members) are answered by the checker as pack
-  queries, where upstream reads `TypeList.length` and
-  `TypeList.__getitem_param__` on the library struct the pack is.
-  - Bundle `TypeList` in `stdlib/std/builtin/variadics.mojo` with
-    upstream's header (`Trait: type_of(AnyType), //, values:
-    _MLIR.KGENParamListType[Trait]`), `length`, `__getitem_param__`,
-    `__init__`, and `__len__`, and export it from the prelude.
-  - Route the reads through the member, as a value pack's go through
-    `ParameterList` (`Checker::parameter_list_member`): a
-    `type_list_member` beside it in `checker/constraints.rs`.
-  - Then delete the answering arms: `pack_length_binder`'s `length` arm,
-    the `Ts.length` arm of `indexing.rs`, the `Self.Ts.length` and
-    `Self.Ts[i]` arms of `Checker::eval_associated_ct`, and
-    `pack_element_type`'s direct `list_get`.
-  - Explicit `Ts.__getitem_param__[1]` and
-    `TypeList[Ts.values].__getitem_param__[1]` then resolve as member
-    applications (the pin runs both).
-  - The pre-check elaborator matches the bare name `TypeList`
-    (`comptime/rewrite.rs:mark_struct_names`, `comptime/eval.rs`): keep
-    its compiler-known spellings working.
-  - Slices S1 to S3 of `R805-a-compile-time-read-of-a-plan.md`.
-  - Found while landing R494 (2026-10-13); rescoped while landing R805
-    (2026-10-20).
-  - Depends on R1167 (the header's trait parameter and raw list of a
-    trait).
   - Model: Fable, Planned.
 
 - [ ] **R1169 A type pack is not a `TypeList` value**
@@ -8807,13 +8847,29 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `ParameterList[vs.values]()`.
   - `len(Ts)` then dispatches to `__len__` like any `Sized`; delete
     `infer_len`'s pack arm and `pack_length_binder`'s `len` arm.
-  - A `TypeList` instance in MIR needs trait arguments in instance identity
-    (`mojito-symbol` mangling) and on the VM and native.
   - `comptime y: Int = Ts` should then report the pin's "cannot implicitly
     convert 'TypeList[Ts.values]' value to 'Int'", not "Undefined variable
     'y'".
   - Found while planning R805 (2026-10-19).
   - Depends on R1168.
+  - Model: Fable, Planned.
+
+- [ ] **R1182 `TypeList`'s list vocabulary is answered by spelling, not by
+  the bundled struct's members**
+
+  Problem: `of`, `reverse`, `slice`, `map`, `filter_idx`, `reduce`, `any`,
+  `all`, `all_conforms_to`, and `contains` are compiler rules keyed on the
+  name `TypeList`, where upstream declares each on the struct.
+  - The checker answers them in `Checker::typelist_receiver` and
+    `compile_typelist_proposition` (`checker/constraints.rs`).
+  - The pre-check elaborator folds them by spelling in
+    `comptime/rewrite.rs:fold_pack_typelist_use` and `comptime/eval.rs`.
+  - Upstream builds each from `tabulate` or `reduce` with a generator, or
+    as an alias (`of = TypeList[Trait=Trait, Ts.values]`).
+  - Port them to `stdlib/std/builtin/variadics.mojo` and delete the rules.
+  - Found while landing R1168 (2026-10-20).
+  - Depends on R1181 (`tabulate`), R806 (an alias read through the
+    struct), and R1178 (a member applying `__getitem_param__`).
   - Model: Fable, Planned.
 
 - [ ] **R378 A function lifted for a compile-time expression evaluates
@@ -9674,7 +9730,20 @@ residue found inside a task moves to the task that owns its fix.
   - Its body is `TypeList.tabulate[...]`, so it needs a bundled `TypeList`
     with `tabulate`.
   - Found while planning R493 (2026-10-13).
-  - Depends on R811 and R1168 (a bundled `TypeList`).
+  - Depends on R811 and R1181 (`TypeList.tabulate`).
+  - Model: Opus, Not Planned.
+
+- [ ] **R1181 `TypeList.tabulate`, `splat`, and `_concat` are not ported**
+
+  Problem: the bundled `TypeList` has no list builders, where the pin's
+  builds lists with these members.
+  - `TypeList._concat[A.values, B.values]()` is a compiler rule today
+    (`Checker::typelist_receiver`, and `comptime/rewrite.rs` for a bound
+    pack).
+  - Upstream uses `#kgen.param_list.tabulate` and `.concat`. Port them as
+    variadics-private stand-ins, as R811 does for `ParameterList`.
+  - Found while landing R1168 (2026-10-20).
+  - Depends on R808 (generator parameters).
   - Model: Opus, Not Planned.
 
 - [ ] **R813 `FormatStruct` lacks upstream's callback `fields` overload**

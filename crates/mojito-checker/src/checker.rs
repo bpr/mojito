@@ -2578,9 +2578,9 @@ enum AliasBody {
 /// member's own parameters, a type or a typed value.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 enum MemberTemplate {
-    /// A type body over the member's binders (`comptime Buf[n: Int] =
-    /// Fixed[n]`).
-    Type(Ty),
+    /// A type body over the member's classified binders (`comptime
+    /// Buf[n: Int] = Fixed[n]`), which an application binds by identity.
+    Type { decls: Vec<ParamDecl>, template: Ty },
     /// A value body (`comptime get[idx: Int]: Int = Self.values[idx]`) over
     /// the member's classified binders, which an application binds like a
     /// module alias's.
@@ -2627,7 +2627,7 @@ impl ParameterizedMember {
     ) -> Option<mojito_checked::declaration::ParameterizedAssociatedType> {
         use mojito_checked::declaration::AssociatedParameter;
 
-        let MemberTemplate::Type(template) = &self.template else {
+        let MemberTemplate::Type { template, .. } = &self.template else {
             return None;
         };
         let params = self

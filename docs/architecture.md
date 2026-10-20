@@ -1064,7 +1064,10 @@ cloned); the checker
 types it with the collector a `VariadicPack` of the symbolic pack, each
 `args[i]` the dependent `Ts[i]` (`ParamKind::ListGet`), and the pack's
 length — `args.__len__()`, `Ts.length`, `len(Ts)`, as the pin reads them at
-compile time — a `PackQuery::Length` the loop header carries as its bound;
+compile time — a `PackQuery::Length` the loop header carries as its bound.
+A type pack is the bundled `TypeList` the pin's pack is: `Ts.length` and
+`Ts[i]` are its `length` and `__getitem_param__` members applied at the
+pack, which the check folds to that query and element;
 MIR records the elements the checker solved for the call
 (`TyArg::Val(CtValue::Tuple)` among `instantiated_args`); and `native::mono`
 binds the pack whole (`bind_pack`: the `RuntimePack` every spelling of the

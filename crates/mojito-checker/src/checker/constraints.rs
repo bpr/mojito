@@ -182,16 +182,19 @@ impl Checker {
                 let as_type = match requirement {
                     Some(CtMemberReq::Value(_)) => Err(unsupported_assoc_body()),
                     _ => assoc_body_source_type(&member.value).and_then(|source_ty| {
-                        self.lower_parameterized_member(
+                        let decls = self.classify_params(&member_owner, &member.params)?;
+                        let template = self.lower_parameterized_member(
+                            &decls,
                             member_type_scope(&member_owner, &member.params),
                             &member.params,
                             &member.value,
                             &source_ty,
-                        )
+                        )?;
+                        Ok(MemberTemplate::Type { decls, template })
                     }),
                 };
                 let template = match (as_type, &requirement) {
-                    (Ok(template), _) => MemberTemplate::Type(template),
+                    (Ok(template), _) => template,
                     (Err(error), Some(CtMemberReq::Type { .. })) => return Err(error),
                     (Err(type_error), _) => {
                         let declared = match &requirement {
@@ -277,6 +280,7 @@ impl Checker {
     /// concrete resolution substitutes an application's arguments into the result.
     pub(super) fn lower_parameterized_member(
         &mut self,
+        decls: &[ParamDecl],
         scope: HashMap<String, Ty>,
         params: &[mojito_ast::ast::TypeParam],
         body: &Expr,
@@ -285,7 +289,12 @@ impl Checker {
         // Member type parameters resolve as `TyKind::Param` (via the `tparams` scope
         // the caller built, like a generic def's parameters); origin parameters
         // resolve to `Origin::Param` via `enclosing_type_params`; value
-        // parameters resolve to a symbolic `CtValue::Expr`.
+        // parameters resolve to a symbolic `CtValue::Expr` through the value
+        // scope `decls` open.
+        let depth = self.tparams.len();
+        self.vparams.truncate(depth);
+        self.vparams.resize_with(depth, HashMap::new);
+        self.vparams.push(super::annotations::value_scope(decls));
         self.tparams.push(scope);
         let saved = self.enclosing_type_params.len();
         self.enclosing_type_params.extend(params.iter().cloned());
@@ -597,8 +606,8 @@ impl Checker {
                 let ty = self.size_of_operand(param_args, args)?;
                 Ok(CtValue::Expr(self.param_context.size_of(ty)))
             }
-            // `len(Self.values)` over the bundled `ParameterList`'s raw list:
-            // its `#kgen.param_list.size`.
+            // `len(Self.values)` over the bundled `ParameterList`'s or
+            // `TypeList`'s raw list: its `#kgen.param_list.size`.
             ExprKind::Call {
                 name,
                 param_args,
@@ -616,8 +625,8 @@ impl Checker {
                     mojito_types::param_expr::PackQuery::Length,
                 )))
             }
-            // `Self.Ts.length` and `len(Self.Ts)` over the struct's own type
-            // pack, which each application's elements fix.
+            // `len(Self.Ts)` over the struct's own type pack, which each
+            // application's elements fix.
             _ if let Some(length) = self.pack_length_query(expr) => Ok(CtValue::Expr(length)),
             // `Int(3)`: a scalar conversion of a compile-time value, which is
             // the declared type's ordinary literal materialization. It makes
@@ -739,24 +748,14 @@ impl Checker {
                     .ok_or_else(|| TypeError::NotComptime(name.clone()))
             }
             // An element of the struct's own type pack (`Self.Ts[0]`): its
-            // dependent element type, at an index that may read an earlier
-            // member (`Self.Ts[Self.width - 1]`).
+            // `TypeList`'s `__getitem_param__`, at an index that may read an
+            // earlier member (`Self.Ts[Self.width - 1]`).
             ExprKind::Index { object, index } if let Some(pack) = self.type_pack_named(object) => {
-                let index = match self.eval_associated_ct(index, associated)? {
-                    literal @ CtValue::IntLiteral(_) => literal
-                        .clone()
-                        .materialize_as(&Ty::int())
-                        .unwrap_or(literal),
-                    index => index,
-                };
-                let context = &self.param_context;
-                context
-                    .constant(index)
-                    .and_then(|index| context.list_get(&pack, &index))
-                    .map(|element| {
-                        CtValue::Type(mojito_types::types::DependentType::resolve(element))
-                    })
-                    .map_err(param_error)
+                let index = self
+                    .param_context
+                    .constant(self.eval_associated_ct(index, associated)?)
+                    .map_err(param_error)?;
+                self.type_pack_element(&pack, &index).map(CtValue::Type)
             }
             // An element of a member's parameter list (`Self.values[0]`):
             // its `param_list.get`, folded when the list is closed.
@@ -773,14 +772,6 @@ impl Checker {
                     && let Some(dtype) = Dtype::from_name(field) =>
             {
                 Ok(CtValue::Dtype(dtype))
-            }
-            // A type pack's raw list (`Ts.values`, `Self.Ts.values`): the
-            // pack itself, a list of types.
-            ExprKind::Member { object, field }
-                if field == "values"
-                    && let Some(pack) = self.type_pack_named(object) =>
-            {
-                Ok(CtValue::Expr(pack))
             }
             // Upstream's KGEN metatype (`comptime KGENTypeType =
             // __mlir_type.`!kgen.type``).
@@ -1419,13 +1410,6 @@ impl Checker {
             {
                 projection
             }
-            // A type pack's raw list (`Ts.values`): the pack itself.
-            ExprKind::Member { object, field }
-                if field == "values"
-                    && let Some(pack) = self.type_pack_named(object) =>
-            {
-                Ok(pack)
-            }
             // A type's value member (`T.K`, `Self.T.K`): the member read the
             // elaborator answers per instance.
             ExprKind::Member { object, field }
@@ -1562,6 +1546,9 @@ impl Checker {
         if let Some(pack) = self.value_pack_named(object) {
             return self.parameter_list_member(pack, field);
         }
+        if let Some(pack) = self.type_pack_named(object) {
+            return self.type_list_member(&pack, field);
+        }
         let subject = self.member_subject(object)?;
         match subject.kind() {
             TyKind::Param { bounds, .. } => {
@@ -1620,6 +1607,21 @@ impl Checker {
         )
     }
 
+    /// The value member or value parameter `field` of the `TypeList` a type
+    /// pack is (`Ts.length`, `Ts.values`), at the pack. `None` when the
+    /// bundled struct declares no such value.
+    fn type_list_member(
+        &self,
+        pack: &ParamExpr,
+        field: &str,
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        let type_list = self.type_pack_type_list(pack)?;
+        let TyKind::Struct(name, arguments) = type_list.kind() else {
+            return None;
+        };
+        self.struct_value_member(self.structs.get(name)?, arguments, field)
+    }
+
     /// The value `field` names on the struct application `arguments`: a
     /// value member at the arguments, else the argument a value parameter
     /// of that name holds (`S[7].n`). `None` when `field` names neither.
@@ -1666,9 +1668,9 @@ impl Checker {
     }
 
     /// The pack whose length `expr` asks, as the pin reads it at compile
-    /// time: `args.__len__()` of a collector spreading the pack, or
-    /// `Ts.length` and `len(Ts)` of the pack itself. `len(args)` is a runtime
-    /// value, as it is upstream.
+    /// time: `args.__len__()` of a collector spreading the pack, or `len(Ts)`
+    /// of the pack itself. `len(args)` is a runtime value, as it is
+    /// upstream; `Ts.length` is the pack's `TypeList` member.
     pub(super) fn pack_length_binder(&self, expr: &Expr) -> Option<ParamRef> {
         let pack = match &expr.kind {
             ExprKind::Call {
@@ -1690,7 +1692,6 @@ impl Checker {
             } if method == "__len__" && args.is_empty() && kwargs.is_empty() => {
                 self.collector_pack(object)
             }
-            ExprKind::Member { object, field } if field == "length" => self.type_pack_named(object),
             _ => None,
         }?;
         pack.as_decl_ref().cloned()
@@ -2528,6 +2529,14 @@ impl Checker {
                 "compile-time 'TypeList' value has no field '{field}'"
             )));
         }
+        // A type pack's `Ts.length` is its `TypeList`'s member.
+        if let ExprKind::Member { object, field } = &expr.kind
+            && field == "length"
+            && self.type_pack_named(object).is_some()
+            && let Some(member) = self.type_member_value(object, field)
+        {
+            return Ok(ConstraintOperand::Expr(member?));
+        }
         if let Some(object) = length_receiver
             && let Some(receiver) = self.typelist_receiver(object)?
         {
@@ -3301,6 +3310,20 @@ pub(super) fn assoc_body_source_type(value: &Expr) -> Result<SourceType, TypeErr
         ExprKind::Identifier(name) if name == "Self" => Ok(SourceType::SelfType),
         ExprKind::Identifier(name) => Ok(SourceType::Named(name.clone(), Vec::new())),
         ExprKind::TypeApply { name, args } => Ok(SourceType::Named(name.clone(), args.clone())),
+        // A subscript of the struct's own member or parameter
+        // (`Self.values[idx]`, `Self.Get[0]`).
+        ExprKind::Index { object, index }
+            if let ExprKind::Member {
+                object: base,
+                field,
+            } = &object.kind
+                && matches!(&base.kind, ExprKind::Identifier(name) if name == "Self") =>
+        {
+            Ok(SourceType::IndexedProjection {
+                base: Box::new(SourceType::SelfParam(field.clone())),
+                index: index.clone(),
+            })
+        }
         // A type application such as `List[T]` parses as a subscript over the
         // type's name; recover the parameter-argument list from the index.
         ExprKind::Index { object, index } => {

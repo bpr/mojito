@@ -2855,12 +2855,22 @@ impl ParamBindings {
         values: impl IntoIterator<Item = (&'a String, &'a CtValue)>,
     ) -> Self {
         let mut bindings = Self::new();
+        bindings.bind_named_values(context, values);
+        bindings
+    }
+
+    /// Add a declaration's own name → value map beneath the identity
+    /// entries, as [`Self::from_named_values`] builds it.
+    pub fn bind_named_values<'a>(
+        &mut self,
+        context: &ParamContext,
+        values: impl IntoIterator<Item = (&'a String, &'a CtValue)>,
+    ) {
         for (name, value) in values {
             if let Ok(value) = context.constant(value.clone()) {
-                bindings.bind_name(name, value);
+                self.bind_name(name, value);
             }
         }
-        bindings
     }
 
     pub fn bind(&mut self, id: ParamId, value: ParamExpr) {

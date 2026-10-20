@@ -2701,14 +2701,18 @@ impl Checker {
         // in a `Tuple.consume_elements` handler) is opaque inside the user's
         // handler body, as upstream: the pack's `Movable` bound is all the
         // body may use of it. Generated (`$`) clones bind the concrete
-        // element instead.
+        // element instead. An element of a pack in scope (`x: Ts[0]`) keeps
+        // its dependent type, whose capabilities are the pack's bounds.
         let opaque_params: Vec<Option<Ty>> = params
             .iter()
             .zip(&param_tys)
             .map(|(param, ty)| {
                 (!name.contains('$')
                     && param.kind == mojito_ast::ast::ParamKind::Regular
-                    && matches!(ty.kind(), TyKind::Dependent(_)))
+                    && matches!(ty.kind(), TyKind::Dependent(dependent)
+                    if !dependent.pack_element().is_some_and(|(list, _)| {
+                        self.pack_in_scope(list)
+                    })))
                 .then(|| {
                     TyKind::Param {
                         binder: synthetic_binder(&dependent_projection_spelling(&param.ty)),
@@ -3269,6 +3273,7 @@ impl Checker {
             },
             (Ok(source_ty), None) => {
                 match self.lower_parameterized_member(
+                    &decls,
                     type_scope(&decls),
                     type_params,
                     value,

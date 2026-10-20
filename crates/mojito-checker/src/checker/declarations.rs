@@ -2829,6 +2829,7 @@ impl Checker {
                     let bindings = AssocBindings {
                         types: subst.clone(),
                         values: solved_value_bindings(&decls, &tyargs),
+                        ids: mojito_types::param_expr::ParamBindings::new(),
                         origins: HashMap::new(),
                     };
                     let mut score = 0;
@@ -3185,6 +3186,7 @@ impl Checker {
         let bindings = AssocBindings {
             types: subst,
             values: solved_value_bindings(&decls, &tyargs),
+            ids: mojito_types::param_expr::ParamBindings::new(),
             origins: HashMap::new(),
         };
         for (i, (aty, fty)) in arg_tys.iter().zip(&field_tys).enumerate() {
@@ -3936,6 +3938,7 @@ impl Checker {
                 &AssocBindings {
                     types: subst,
                     values: solved_value_bindings(&decls, &tyargs),
+                    ids: mojito_types::param_expr::ParamBindings::new(),
                     origins: HashMap::new(),
                 },
             )

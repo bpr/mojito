@@ -501,9 +501,18 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   member reads its own `Self.Ts.length`, `len(Self.Ts)`, and `Self.Ts[i]`
   in `constraints::eval_associated_ct`, and an application binds the pack's
   element list by binder in `bind_declared` and by name in
-  `generics::solved_value_bindings`), `pack_element_type`
-  builds the dependent element (`ParamContext::list_get`,
-  `DependentType::pack_element` in `mojito-types`), `opaque_element` is its
+  `generics::solved_value_bindings`). A type pack is the bundled `TypeList`
+  (`stdlib/std/builtin/variadics.mojo`): `type_pack_type_list` spells it as
+  `TypeList[type_pack_trait(pack), pack]`, `constraints.rs:type_list_member`
+  reads its `length` and `values` through `struct_value_member` (from
+  `type_member_value`, so `Ts.length` in any position), and
+  `type_pack_element` applies its `__getitem_param__` through
+  `associated_type_from_base`, which `pack_element_type` and
+  `eval_associated_ct`'s `Self.Ts[i]` arm call. The member's template is
+  the dependent element (`ParamContext::list_get`,
+  `DependentType::pack_element` in `mojito-types`), lowered from the
+  bundled `Self.values[idx]` (`ty_from_anno`'s bundled `IndexedProjection`
+  arm), and `opaque_element` is its
   bounded `TyKind::Param` view and `restore_pack_elements` the way back,
   `infer_pack_element_construction` types an element's `Ts[i]()` and, over
   a symbolic pack, records `SemanticAdjustment::ConstructPackElement`, which
@@ -565,7 +574,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `type_resolution.rs:ty_from_anno` to the dependent element (a `ListGet`
   over the `field_types()` node, viewed through `opaque_element`).
   Type-level pack algebra lives beside it: `constraints.rs:typelist_receiver`
-  reads a pack, a `TypeList` construction, a `.reverse()`, and a
+  reads the compiler-known `TypeList` vocabulary (roadmap R1182) over a
+  pack, a `TypeList` construction, a `.reverse()`, and a
   `TypeList._concat[A.values, B.values]()` as a `TypeListReceiver`
   (`Derived` for a list computed from packs still open),
   `type_list_operand` gives the `ParamExpr` a spread's operand denotes, and
@@ -698,7 +708,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `compile_generic_constraint`; declarations compile one constraint per
   trailing `where` clause. `lower_parameterized_member` lowers the symbolic
   type template shared by parameterized associated members and generic
-  comptime aliases; `lower_parametric_value` lowers a value body to its
+  comptime aliases (`MemberTemplate::Type`, keeping the member's classified
+  binders, which `type_resolution.rs:resolve_parameterized_member` binds by
+  identity through `generics::AssocBindings::ids`); `lower_parametric_value` lowers a value body to its
   template (`MemberTemplate::Value`, `AliasBody::Value` in `checker.rs`), and
   `apply_parametric_value` binds an application through `resolve_use_params`.
   `parametric_value_application` recognizes every application shape
@@ -1500,9 +1512,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   concrete MIR carries none) and `native::mono::spread` (`mono/spread.rs`:
   `expand_pack_spreads`, after `substitute_function`; `spread_operands` reads
   either call form) replaces it with the bound pack's element places; `Checker::pack_length_binder`/`pack_length_query`
-  (`checker/constraints.rs`) read `args.__len__()`, `Ts.length`, and
-  `len(Ts)` as `PackQuery::Length` for the loop bound and as a
-  `ConstraintOperand::PackLength` in a `comptime if`; a pack element's
+  (`checker/constraints.rs`) read `args.__len__()` and `len(Ts)` as
+  `PackQuery::Length` for the loop bound and as a
+  `ConstraintOperand::PackLength` in a `comptime if`, while `Ts.length` is
+  the `TypeList` member `type_list_member` folds to the same query; a pack element's
   literal argument converts to the element the call solved
   (`call_inference.rs`); `verify_param_arguments` (`verify/subscripts.rs`)
   and `mir::matched_parameter_arguments` (`mir/ir.rs`) let a pack take every
@@ -1777,8 +1790,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   binder where a trait is a type: a raw list's element
   (`mlir_param_list_type`) and a `!kgen.type` binder's argument
   (`resolve_param_arg`, `lower_assoc_application_arg`).
-- A type pack's `Ts.values` is the pack itself (`eval_associated_ct`,
-  `compile_dependent_ct_expr`), typed by `Checker::type_pack_list_ty`
+- A type pack's `Ts.values` is the pack itself, `TypeList`'s own `values`
+  parameter read through `type_list_member`, typed by `Checker::type_pack_list_ty`
   (`comptime_validation.rs`) as a list of the pack's bound or of `Tr`;
   `CtValue::is_metatype_valued` gives it no run-time form. An infer-only
   trait binder solves from such a list in `solve_trait_binders_from_lists`

@@ -1906,17 +1906,11 @@ impl Checker {
             ));
             return Ok(Ty::dtype());
         }
-        // `Ts.length` of a pack that is still a parameter is an `Int` no
-        // instance has fixed yet.
-        if field == "length"
-            && let Some(pack) = self.type_pack_named(object)
-        {
-            self.record_pack_query_value(span, &pack, mojito_types::param_expr::PackQuery::Length);
-            return Ok(Ty::int());
-        }
         // The length of a `TypeList` value, or of a list computed from
-        // packs, is the `Int` its elements fix.
+        // packs, is the `Int` its elements fix. A type pack's own `length`
+        // is its `TypeList`'s member, read below.
         if field == "length"
+            && self.type_pack_named(object).is_none()
             && let Some(list) = self.type_list_operand(object)?
         {
             let value = self.param_context.list_length(&list).map_err(param_error)?;

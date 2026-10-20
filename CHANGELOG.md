@@ -8,6 +8,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A type pack is upstream's `TypeList`, as on the pin: the prelude exports
+  the bundled `TypeList[Trait: type_of(AnyType), //, values:
+  _MLIR.KGENParamListType[Trait]]` with `length`, `__getitem_param__`, and
+  `__len__`, and a pack's `Ts.length` and `Ts[i]` (`Self.Ts.length`,
+  `Self.Ts[i]` in a struct's members) read those members instead of
+  checker rules. `TypeList[Ts.values].length`, `len(TypeList[Ts.values]())`,
+  and `var x: TypeList[Ts.values].__getitem_param__[0]` run, on the VM and
+  natively (`assets/ok/type_pack_reads_through_typelist.mojo`). A
+  parameterized type member binds its own value parameters by identity, at
+  their declared types, and a parameter typed by a pack element (`x: Ts[0]`)
+  now has the pack's bound in the body rather than `Movable` alone
+  (`assets/type_error/pack_element_parameter_missing_bound.mojo`). The
+  package format is 74. This closes R1168. Spelling the member out in a
+  compile-time expression is R1178, and the rest of `TypeList`'s vocabulary
+  is R1181 and R1182.
+
 - A trait-valued parameter bounds a type binder, as on the pin: `T: Tr`,
   `*Ts: Tr`, and `T: Tr & Hashable` over `Tr: type_of(Copyable)` see `Tr`'s
   declared bound in the body, and each use checks its arguments against the

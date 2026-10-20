@@ -552,8 +552,9 @@ pub(super) fn is_bundled_private_storage_source(source: Option<&str>) -> bool {
         || source == stdlib.join("std/utils/variant.mojo")
 }
 
-/// The bundled `std/builtin/variadics.mojo`, whose `ParameterList` alone
-/// addresses a parameter list's static elements.
+/// The bundled `std/builtin/variadics.mojo`, whose `ParameterList` and
+/// `TypeList` alone read a raw parameter list's size and elements, and whose
+/// `ParameterList` alone addresses its static elements.
 pub(super) fn is_bundled_variadics_source(source: Option<&str>) -> bool {
     let (Some(root), Some(source)) = (mojito_module::module::bundled_root(), source) else {
         return false;

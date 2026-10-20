@@ -173,6 +173,7 @@ pub(super) fn substitute_at(ty: &Ty, info: &StructInfo, targs: &[TyArg]) -> Ty {
         &AssocBindings {
             types: struct_subst(&info.decls, targs),
             values: solved_value_bindings(&info.decls, targs),
+            ids: mojito_types::param_expr::ParamBindings::new(),
             origins: HashMap::new(),
         },
     )
@@ -589,11 +590,12 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
 
 /// The bindings concrete resolution of a parameterized associated type
 /// substitutes into its symbolic template: type parameters by name (the
-/// enclosing struct's and the member's), value parameters by name, and origin
-/// parameters by `OriginParamId`.
+/// enclosing struct's and the member's), value parameters by binder identity
+/// (`ids`) or else by name, and origin parameters by `OriginParamId`.
 pub(super) struct AssocBindings {
     pub types: TySubst,
     pub values: HashMap<String, CtValue>,
+    pub ids: mojito_types::param_expr::ParamBindings,
     pub origins: HashMap<u32, mojito_types::origin::Origin>,
 }
 
@@ -606,19 +608,20 @@ pub(super) struct AssocBindings {
 /// which the type-only pass carries through.
 pub(super) fn substitute_assoc(ty: &Ty, bindings: &AssocBindings) -> Ty {
     let bound = mojito_types::types::substitute_origin_params(ty, &bindings.origins);
-    substitute_values(&substitute(&bound, &bindings.types), &bindings.values)
+    let mut values = bindings.ids.clone();
+    values.bind_named_values(&ParamContext::detached(), &bindings.values);
+    substitute_values(&substitute(&bound, &bindings.types), &values)
 }
 
-fn substitute_values(ty: &Ty, values: &HashMap<String, CtValue>) -> Ty {
-    let recur = |t: &Ty| substitute_values(t, values);
+fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings) -> Ty {
+    let recur = |t: &Ty| substitute_values(t, bindings);
     let context = ParamContext::detached();
-    let bindings = mojito_types::param_expr::ParamBindings::from_named_values(&context, values);
     let map_args = |args: &[TyArg]| -> Vec<TyArg> {
         args.iter()
             .map(|argument| match argument {
                 TyArg::Ty(inner) => TyArg::Ty(recur(inner)),
                 TyArg::Val(value) => TyArg::Val(
-                    mojito_types::types::replace_value_parameters(&context, value, &bindings)
+                    mojito_types::types::replace_value_parameters(&context, value, bindings)
                         .unwrap_or_else(|_| value.clone()),
                 ),
                 TyArg::Origin(origin) => TyArg::Origin(origin.clone()),
@@ -653,18 +656,20 @@ fn substitute_values(ty: &Ty, values: &HashMap<String, CtValue>) -> Ty {
         }
         TyKind::ComptimeList(element) => TyKind::ComptimeList(recur(element)).into(),
         TyKind::ParamList(element) => TyKind::ParamList(recur(element)).into(),
-        TyKind::Dependent(dependent) => {
-            let resolved = mojito_types::types::replace_parameters(&context, ty, &bindings, 0)
+        // A dependent type keeps what its bound references closed (`Ts[idx]`
+        // at `idx = 0` is `Ts[0]` while `Ts` stays open).
+        TyKind::Dependent(_) => {
+            let resolved = mojito_types::types::replace_parameters(&context, ty, bindings, 0)
                 .unwrap_or_else(|_| ty.clone());
             match resolved.kind() {
-                TyKind::Dependent(_) => dependent.map_types(recur),
+                TyKind::Dependent(dependent) => dependent.map_types(recur),
                 _ => recur(&resolved),
             }
         }
         // A symbolic lane dtype or width closes the same way and
         // re-canonicalizes (`Scalar[Self.dt]` at `dt = DType.int` is `Int`).
         TyKind::Simd { .. } if mojito_types::types::is_symbolic(ty) => {
-            mojito_types::types::replace_parameters(&context, ty, &bindings, 0)
+            mojito_types::types::replace_parameters(&context, ty, bindings, 0)
                 .unwrap_or_else(|_| ty.clone())
         }
         _ => ty.clone(),

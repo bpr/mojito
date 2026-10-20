@@ -1,7 +1,21 @@
 # Upstream's `std/builtin/variadics.mojo` surface for the proof subset:
-# `_MLIR`'s raw parameter list type, `ParameterList`, the zero-sized runtime
-# value a homogeneous value pack (`*values: Int`) is when it is read at run
-# time, and its iterator.
+# `_MLIR`'s raw parameter list type, `TypeList`, the compile-time list a
+# variadic type pack (`*Ts: Movable`) is, `ParameterList`, the zero-sized
+# runtime value a homogeneous value pack (`*values: Int`) is when it is read
+# at run time, and its iterator.
+#
+# A pack's `Ts.length` and `Ts[i]` read `TypeList`'s `length` and
+# `__getitem_param__`. Its members stand in for upstream's
+# `#kgen.param_list.size` and `#kgen.param_list.get` attributes: `len` and a
+# subscript of the struct's own raw list, admitted in this module alone.
+# Omitted: `_mlir_type` (a member applying `_MLIR.KGENParamListType` is not
+# yet an associated comptime expression here), `_raw_length` and
+# `_get_type_at_index` (`__mlir_type.index` values are outside the subset),
+# the `@implicit` upcast constructor (`#kgen.upcast`,
+# `#kgen.is_refined_type`), and the list vocabulary (`of`, `tabulate`,
+# `splat`, `_concat`, `reduce`, `any`, `all`, `all_conforms_to`, `contains`,
+# `map`, `filter_idx`, `reverse`, `slice`), which the compiler still answers
+# by spelling.
 #
 # `ParameterList`'s `values` is upstream's one raw `KGENParamListType[type]`
 # parameter, and a pack's `vs.values` is that list. `_MLIR` declares no
@@ -24,6 +38,45 @@ struct _MLIR:
     comptime KGENParamListType[elt_type: Self.KGENTypeType] = __mlir_type[
         `!kgen.param_list<`, elt_type, `>`
     ]
+
+
+struct TypeList[
+    Trait: type_of(AnyType), //, values: _MLIR.KGENParamListType[Trait]
+](Sized, TrivialRegisterPassable):
+    """A compile-time list of types conforming to a common trait.
+
+    `TypeList` provides type-level operations on variadic sequences of types,
+    such as reversing, slicing, mapping, and membership testing.
+
+    Parameters:
+        Trait: The trait that all types in the list must conform to.
+        values: The types in the list.
+    """
+
+    comptime length: Int = len(Self.values)
+    """The number of types in the list."""
+
+    # Upstream's index type is `SIMDLength`, which the subset lacks.
+    comptime __getitem_param__[idx: Int] = Self.values[idx]
+    """Gets a type at the given index.
+
+    Parameters:
+        idx: The index of the type to access.
+    """
+
+    @inline(.always)
+    def __init__(out self):
+        """Constructs a TypeList."""
+        pass
+
+    @inline(.always)
+    def __len__(self) -> Int:
+        """Gets the number of elements in the TypeList.
+
+        Returns:
+            The number of elements on the TypeList.
+        """
+        return Self.length
 
 
 @fieldwise_init

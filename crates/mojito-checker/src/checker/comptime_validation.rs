@@ -14,6 +14,9 @@ use mojito_types::types::{ConstraintOperand, GenericConstraint};
 /// The bundled `ParameterList`'s linked name, its implicit public identity.
 pub(super) const PARAMETER_LIST: &str = "ParameterList";
 
+/// The bundled `TypeList`'s linked name, its implicit public identity.
+pub(super) const TYPE_LIST: &str = "TypeList";
+
 /// A local `comptime` binding of a display the elaborator evaluates per
 /// instance (`comptime L = [n, n + 1]`).
 #[derive(Debug, Clone)]
@@ -1935,16 +1938,40 @@ impl Checker {
         })
     }
 
+    /// Whether `list` is the parameter-list reference of a variadic pack in
+    /// scope ([`Self::pack_reference`] of its spelling).
+    pub(super) fn pack_in_scope(&self, list: &ParamExpr) -> bool {
+        list.as_decl_ref().is_some_and(|reference| {
+            self.pack_reference(&reference.name).is_some_and(|found| {
+                found
+                    .as_decl_ref()
+                    .is_some_and(|found| found.id == reference.id)
+            })
+        })
+    }
+
     /// The raw list type a type pack's `Ts.values` has, as upstream types
     /// it: a list of the pack's bound used as a type
     /// (`KGENParamList[AnyType]`), or of the trait-valued binder bounding it
     /// (`*Ts: Tr` lists `Tr`). `None` when `pack` names no type pack.
     pub(super) fn type_pack_list_ty(&self, pack: &ParamExpr) -> Option<Ty> {
+        let element = match self.type_pack_trait(pack)? {
+            CtValue::Expr(reference) => mojito_types::types::DependentType::resolve(reference),
+            CtValue::Trait(set) => TyKind::Trait(mojito_types::types::trait_set(set)).into(),
+            _ => return None,
+        };
+        Some(TyKind::ParamList(element).into())
+    }
+
+    /// The `Trait` argument of the `TypeList` a type pack is: the
+    /// trait-valued binder bounding it (`*Ts: Tr`), else the trait value its
+    /// declared bound composes. `None` when `pack` names no type pack.
+    pub(super) fn type_pack_trait(&self, pack: &ParamExpr) -> Option<CtValue> {
         let binder = pack.as_decl_ref()?;
         if pack.meta() != &mojito_types::param_expr::MetaTy::type_list() {
             return None;
         }
-        let element = if let Some(trait_binder) = self.trait_bounded_binders.get(&binder.id) {
+        if let Some(trait_binder) = self.trait_bounded_binders.get(&binder.id) {
             let reference = self
                 .value_parameter_in_scope(&trait_binder.name)
                 .filter(|reference| {
@@ -1954,35 +1981,65 @@ impl Checker {
                 })
                 .map(CtValue::Expr)
                 .or_else(|| self.self_param_value(&trait_binder.name))?;
-            let reference = match reference {
-                CtValue::Expr(expr) => expr,
-                value => self.param_context.constant(value).ok()?,
-            };
-            mojito_types::types::DependentType::resolve(reference)
-        } else {
-            let bounds = self
-                .tparams
-                .iter()
-                .flat_map(HashMap::values)
-                .find_map(|ty| match ty.kind() {
-                    TyKind::Param {
-                        binder: declared,
-                        bounds,
-                        ..
-                    } if declared.id == binder.id => Some(bounds.clone()),
+            return Some(match reference {
+                CtValue::Expr(expr) => CtValue::Expr(expr),
+                value => CtValue::Expr(self.param_context.constant(value).ok()?),
+            });
+        }
+        let bounds = self
+            .tparams
+            .iter()
+            .flat_map(HashMap::values)
+            .find_map(|ty| match ty.kind() {
+                TyKind::Param {
+                    binder: declared,
+                    bounds,
+                    ..
+                } if declared.id == binder.id => Some(bounds.clone()),
+                _ => None,
+            })
+            .or_else(|| {
+                self.self_decls.iter().find_map(|decl| match decl {
+                    ParamDecl::Type { id, bounds, .. } if id == &binder.id => Some(bounds.clone()),
                     _ => None,
                 })
-                .or_else(|| {
-                    self.self_decls.iter().find_map(|decl| match decl {
-                        ParamDecl::Type { id, bounds, .. } if id == &binder.id => {
-                            Some(bounds.clone())
-                        }
-                        _ => None,
-                    })
-                })?;
-            TyKind::Trait(mojito_types::types::trait_set(bounds)).into()
-        };
-        Some(TyKind::ParamList(element).into())
+            })?;
+        Some(CtValue::Trait(self.canonical_trait_set(&bounds)))
+    }
+
+    /// The bundled `TypeList` a type pack is, as upstream's variadic type
+    /// parameter is one: `TypeList[Trait, Ts.values]`. `None` when `pack`
+    /// names no type pack.
+    pub(super) fn type_pack_type_list(&self, pack: &ParamExpr) -> Option<Ty> {
+        let trait_value = self.type_pack_trait(pack)?;
+        Some(
+            TyKind::Struct(
+                TYPE_LIST.to_string(),
+                vec![
+                    TyArg::Val(trait_value),
+                    TyArg::Val(CtValue::Expr(pack.clone())),
+                ],
+            )
+            .into(),
+        )
+    }
+
+    /// Element `index` of a type pack that is still a parameter, as upstream
+    /// reads `Ts[index]`: the bundled `TypeList`'s `__getitem_param__`
+    /// applied at the index.
+    pub(super) fn type_pack_element(
+        &self,
+        pack: &ParamExpr,
+        index: &ParamExpr,
+    ) -> Result<Ty, TypeError> {
+        let type_list = self
+            .type_pack_type_list(pack)
+            .ok_or_else(|| TypeError::InvariantViolation(format!("'{pack}' is not a type pack")))?;
+        let index = index
+            .as_constant()
+            .cloned()
+            .unwrap_or_else(|| CtValue::Expr(index.clone()));
+        self.associated_type_from_base(&type_list, "__getitem_param__", &[TyArg::Val(index)])
     }
 
     /// The type pack an expression names by itself while it is still a
@@ -2187,7 +2244,7 @@ impl Checker {
 
     /// The enclosing struct's own value pack or raw parameter list
     /// `Self.<field>`, as the parameter-list reference its binder declares.
-    fn self_raw_list(&self, field: &str) -> Option<ParamExpr> {
+    pub(super) fn self_raw_list(&self, field: &str) -> Option<ParamExpr> {
         self.self_decls.iter().find_map(|decl| match decl {
             ParamDecl::Value { ty, .. }
                 if decl.name().trim_start_matches('*') == field
@@ -2270,8 +2327,9 @@ impl Checker {
     }
 
     /// The type of element `index` of a variadic pack that is still a
-    /// parameter: the dependent `Ts[index]`, whose index is a compile-time
-    /// expression over the parameters and `comptime for` variables in scope.
+    /// parameter: [`Self::type_pack_element`] at an index that is a
+    /// compile-time expression over the parameters and `comptime for`
+    /// variables in scope.
     pub(super) fn pack_element_type(&self, pack: &Ty, index: &Expr) -> Result<Ty, TypeError> {
         let TyKind::Param { binder, .. } = pack.kind() else {
             return Err(TypeError::InvariantViolation(format!(
@@ -2289,10 +2347,7 @@ impl Checker {
                 found: "a runtime value".to_string(),
                 context: "variadic-pack index".to_string(),
             })?;
-        self.param_context
-            .list_get(&list, &index)
-            .map(mojito_types::types::DependentType::resolve)
-            .map_err(param_error)
+        self.type_pack_element(&list, &index)
     }
 
     /// Whether a spread's operand (`*args`, `*args^`) is a binding of a pack

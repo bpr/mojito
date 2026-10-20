@@ -486,6 +486,23 @@ impl Checker {
             {
                 self.pack_element_type(&pack, index)?
             }
+            // `Self.values[idx]` over the struct's own raw type list, in the
+            // bundled `variadics.mojo` alone: the stand-in for upstream's
+            // `#kgen.param_list.get` that `TypeList.__getitem_param__` spells.
+            SourceType::IndexedProjection { base, index }
+                if let SourceType::SelfParam(name) = base.as_ref()
+                    && super::overload_support::is_bundled_variadics_source(
+                        index.source_span().source.as_deref(),
+                    )
+                    && let Some(raw) = self.self_raw_list(name)
+                    && raw.meta() == &mojito_types::param_expr::MetaTy::type_list() =>
+            {
+                let index = self.compile_dependent_ct_expr(index)?;
+                self.param_context
+                    .list_get(&raw, &index)
+                    .map(mojito_types::types::DependentType::resolve)
+                    .map_err(super::param_error)?
+            }
             SourceType::IndexedProjection { base, index } => {
                 // A parameterized associated-type application such as
                 // `Self.IteratorType[origin_of(self)]` is spelled like a dependent
@@ -1890,12 +1907,16 @@ impl Checker {
         } = self.resolve_use_params(name, &alias.decls, args, &[], &[])?;
         let mut types = HashMap::new();
         let mut values = HashMap::new();
+        let mut ids = mojito_types::param_expr::ParamBindings::new();
         for (decl, argument) in alias.decls.iter().zip(&tyargs) {
             match (decl, argument) {
                 (ParamDecl::Type { id, .. }, TyArg::Ty(ty)) => {
                     types.insert(id.clone(), ty.clone());
                 }
-                (ParamDecl::Value { name, .. }, TyArg::Val(value)) => {
+                (ParamDecl::Value { id, name, .. }, TyArg::Val(value)) => {
+                    if let Ok(bound) = self.param_context.constant(value.clone()) {
+                        ids.bind(id.clone(), bound);
+                    }
                     values.insert(name.clone(), value.clone());
                 }
                 _ => {}
@@ -1904,6 +1925,7 @@ impl Checker {
         let bindings = AssocBindings {
             types,
             values,
+            ids,
             // Origin parameters are rejected at alias declaration.
             origins: HashMap::new(),
         };
@@ -1931,7 +1953,7 @@ impl Checker {
         struct_targs: &[TyArg],
         args: &[TyArg],
     ) -> Result<Ty, TypeError> {
-        let MemberTemplate::Type(template) = &member.template else {
+        let MemberTemplate::Type { decls, template } = &member.template else {
             return Err(TypeError::TypeMismatch {
                 expected: "a type".to_string(),
                 found: "a value".to_string(),
@@ -1956,10 +1978,13 @@ impl Checker {
                 values.insert(name.clone(), value.clone());
             }
         }
-        // The member's own explicit parameters concretize from the application.
-        // Origin parameters are keyed by the id assigned while the template was
+        // The member's own explicit parameters concretize from the application:
+        // a value binder by its identity, converted at its declared type as a
+        // parameter binding converts (`0` at `idx: Int` is `Int(0)`). Origin
+        // parameters are keyed by the id assigned while the template was
         // lowered (their position in `enclosing_type_params`).
         let mut origins = HashMap::new();
+        let mut ids = mojito_types::param_expr::ParamBindings::new();
         let mut supplied = args.iter();
         for (index, param) in member.params.iter().enumerate() {
             if param.infer_only {
@@ -1974,7 +1999,22 @@ impl Checker {
                     );
                 }
                 TyArg::Val(value) => {
-                    values.insert(param.name.clone(), value.clone());
+                    // Origin binders classify to no slot: the declaration
+                    // is found by name.
+                    let decl = decls.iter().find(|decl| decl.name() == param.name);
+                    let value = match decl {
+                        Some(ParamDecl::Value { ty, .. }) => value
+                            .clone()
+                            .materialize_as(ty)
+                            .unwrap_or_else(|| value.clone()),
+                        _ => value.clone(),
+                    };
+                    if let Some(decl) = decl
+                        && let Ok(bound) = self.param_context.constant(value.clone())
+                    {
+                        ids.bind(decl.id().clone(), bound);
+                    }
+                    values.insert(param.name.clone(), value);
                 }
                 TyArg::Origin(origin) => {
                     origins.insert((member.param_base + index) as u32, origin.clone());
@@ -1996,6 +2036,7 @@ impl Checker {
         let bindings = AssocBindings {
             types,
             values,
+            ids,
             origins,
         };
         Ok(self.resolve_assoc_ty(&substitute_assoc(template, &bindings)))

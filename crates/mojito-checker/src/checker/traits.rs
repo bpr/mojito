@@ -65,18 +65,25 @@ impl Checker {
             names
                 .iter()
                 .try_for_each(|name| self.check_trait_name(name))
-                .map(|()| {
-                    mojito_types::types::trait_set(
-                        names
-                            .iter()
-                            .filter(|name| {
-                                !names
-                                    .iter()
-                                    .any(|other| other != *name && self.trait_implies(other, name))
-                            })
-                            .map(|name| (*name).to_string()),
-                    )
-                }),
+                .map(|()| self.canonical_trait_set(&names)),
+        )
+    }
+
+    /// The canonical trait set of a composition of `names`: each trait
+    /// another one implies is dropped, the rest in [`trait_set`] order.
+    ///
+    /// [`trait_set`]: mojito_types::types::trait_set
+    pub(super) fn canonical_trait_set<S: AsRef<str>>(&self, names: &[S]) -> Vec<String> {
+        mojito_types::types::trait_set(
+            names
+                .iter()
+                .map(AsRef::as_ref)
+                .filter(|name| {
+                    !names.iter().any(|other| {
+                        other.as_ref() != *name && self.trait_implies(other.as_ref(), name)
+                    })
+                })
+                .map(str::to_string),
         )
     }
 
@@ -1172,7 +1179,7 @@ impl Checker {
             // require the definition's explicit parameter count to match the
             // requirement's, and that the requirement is itself parameterized.
             if let Some(parameterized) = struct_info.parameterized_associated.get(member) {
-                let (CtMemberReq::Type { bounds, params }, MemberTemplate::Type(_)) =
+                let (CtMemberReq::Type { bounds, params }, MemberTemplate::Type { .. }) =
                     (req, &parameterized.template)
                 else {
                     return Err(TypeError::TraitComptimeMemberMismatch {

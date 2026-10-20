@@ -15,7 +15,7 @@ from std.collections.dict import Dict
 from std.collections.optional import Optional, OptionalReg
 from std.builtin.len import Sized, SizedRaising
 from std.builtin.tuple import Tuple
-from std.builtin.variadics import ParameterList
+from std.builtin.variadics import ParameterList, TypeList
 from std.range import range
 from std.iter import Iterable, IterableOwned, Iterator, StopIteration, next
 from std.builtin.reversed import reversed
