@@ -2531,8 +2531,9 @@ origin, appended to the solved place after the interior tags). It
 deliberately forgets which descendant of its base the pointer designates,
 which drives every rule downstream. It is single-element (`multi_element()`
 is false, offsets reject), the deref-place substitution refuses it
-(`pointer_deref_place` — the runtime handle carries the true projection, so
-the checked origin must never re-derive one), and for overlap the terminal
+(`Node::forms_place_address` never records a subtree construction's
+address — the runtime handle carries the true projection, so the checked
+origin must never re-derive one), and for overlap the terminal
 segment is a wildcard over every descendant. Its loan is a lazy interior
 generation whose staleness predicate (`interior_origin_invalidated_by`)
 drops both directional requirements the named-generation rule keeps: a
@@ -4362,11 +4363,17 @@ capability behind an otherwise safe value.
 `PointerOrigin::Place` from the source place — mutability follows the owner
 binding — and the checked pointer type retains that provenance through HIR and
 MIR while the VM value stays an origin-free frame/slot handle. Construction
-lowers to `MakeRef` plus `EstablishLoans` on the pointer binding; a stably bound
-pointer's `p[0]` deref substitutes the frozen owner place (`MirPlace::through`
-names the pointer), so owner liveness, ASAP destruction, and loan conflicts stay
-exact, while reassigned or field-loaded pointers read and write through their
-runtime handles. Aggregates that store place-origin pointers carry the owner
+lowers to `MakeRef` plus `EstablishLoans` on the pointer binding. A pointer's
+loans are its origin, which only keeps owners alive; its address is a separate
+fact (`Flatten::pointer_addresses`), recorded only when the binding's
+initializer is a `Pointer(to=place)` construction (`Node::forms_place_address`)
+or a copy of such a pointer. A stably bound pointer's `p[0]` deref substitutes
+that address (`pointer_deref_place`, `MirPlace::through` names the pointer), so
+owner liveness, ASAP destruction, and loan conflicts stay exact. A pointer whose
+address is not statically known — an `unsafe_origin_cast`, a method's pointer
+under a wider origin than the place it addresses — and reassigned or
+field-loaded pointers read and write through their runtime handles, as
+upstream's `Pointer.__getitem__` dereferences its address, never its origin. Aggregates that store place-origin pointers carry the owner
 loan exactly like reference-valued aggregates. Because an origin-bearing
 pointer designates one checked value rather than an allocation, the checker
 rejects non-zero offsets, pointer arithmetic and comparison, `free()`, writes
@@ -4397,7 +4404,8 @@ place within the call's recorded result origin (`origin_place` reads its
 dereference place through its adjustment's `materialized` slot, which
 `record_pointer_adjustment` keeps across re-inference; an ordinary call's
 pointer result is read through its loan-carrying `$ptr_tmp_r` slot
-(`temporary_pointer_deref`) instead. A read of the bound pointer
+(`temporary_pointer_deref`) instead: only a `Pointer(to=x)` temporary
+substitutes its place, and every other one reads the slot's handle. A read of the bound pointer
 variable itself — a copy into another local, an annotated binding, or a call
 argument — is a plain `UseVar` value read of the stored handle, which both
 backends interpret as the pointee's address.

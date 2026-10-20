@@ -510,9 +510,9 @@ impl<'a> Flatten<'a> {
     }
 
     /// The borrowed read of the pointee pointer subscript node `e` names.
-    /// Dereferencing an origin-bearing pointer reads its source place; the
-    /// checker fixed the offset to 0. A stably bound pointer substitutes
-    /// the owner place directly, keeping the owner touched (and so
+    /// Dereferencing an origin-bearing pointer reads its address; the
+    /// checker fixed the offset to 0. A stably bound pointer with a
+    /// statically known address substitutes that place, keeping it touched (and so
     /// droppable) at each access; a pointer field of a call result the
     /// checker materialized (`make(b).src[]`) dereferences through the
     /// temporary's hidden slot; otherwise the access reads through the

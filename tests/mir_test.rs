@@ -2590,6 +2590,40 @@ fn pointer_construction_lowers_to_a_handle_and_owner_loan() {
 }
 
 #[test]
+fn cast_pointer_deref_reads_through_its_handle() {
+    use mojito::check_program;
+    // The cast changes only the origin, never the address, so the deref
+    // cannot substitute the origin's place `a`: it reads the handle.
+    let src = "def main():\n    var a = 1\n    var b = 2\n    var p = Pointer(to=b).unsafe_origin_cast[origin_of(a)]()\n    print(p[])\n";
+    let program = parse(src).expect("parse");
+    let checked = check_program(&program).expect("check");
+    let mir = mojito::mir::lower_checked_program(&checked);
+    let (_, main) = mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered");
+    let instrs: Vec<&MirInstr> = main
+        .blocks
+        .iter()
+        .flat_map(|block| block.instrs.iter())
+        .collect();
+    assert!(
+        !instrs.iter().any(|instr| matches!(
+            instr,
+            MirInstr::LoadPlace { place, .. } if place.through.is_some()
+        )),
+        "a cast pointer's deref does not substitute its origin's place"
+    );
+    assert!(
+        instrs
+            .iter()
+            .any(|instr| matches!(instr, MirInstr::ReadRef { .. })),
+        "a cast pointer's deref reads through its runtime handle"
+    );
+}
+
+#[test]
 fn list_element_references_lower_with_interior_generation_metadata() {
     use mojito::{OriginSeg, check_program};
 

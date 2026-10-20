@@ -1073,6 +1073,17 @@ fn returned_origin_pointer_deref_reads_and_writes_through_the_pointee() {
 }
 
 #[test]
+fn pointer_origin_cast_dereferences_its_address() {
+    // A pointer whose origin was cast, or a method's pointer under a wider
+    // origin than its address, reads and writes the place it addresses.
+    let source = include_str!("../assets/ok/pointer_origin_cast_reads_pointee.mojo");
+    assert_eq!(
+        run_compiled(source).expect("cast pointers dereference their address"),
+        "2\n8 1 8\n1 1\n6\n9 5 9\n3\nPair(x=1, y=2) Pair(x=3, y=40)\n3\n2 3\n"
+    );
+}
+
+#[test]
 fn reference_list_iteration_writes_through_checked_element_handles() {
     let source = include_str!("../conformance/fixtures/reference_iteration.mojo");
     assert_eq!(

@@ -681,7 +681,7 @@ impl<'a> Flatten<'a> {
         // `pointer.unsafe_write(value)` / `unsafe_write(copy=v)`
         // initializes the pointee at offset 0 — the same store family
         // as `pointer[] = value`. An origin-bearing pointer writes its
-        // source place (owner substitution when stably bound, else
+        // pointee (its address substituted when statically known, else
         // through the runtime handle); a heap pointer stores through a
         // synthetic binding so chained receivers stay expressible.
         let pointer_write = node

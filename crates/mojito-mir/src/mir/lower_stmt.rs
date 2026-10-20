@@ -2499,10 +2499,10 @@ impl<'a> Flatten<'a> {
                 }
                 let (src, _) = self.lower_assignment_value(place, value);
                 self.flush_argument_anchors();
-                // A store through an origin-bearing pointer writes its source
-                // place; the checker fixed the offset to 0 and required
-                // mutable provenance. A stably bound pointer substitutes the
-                // owner place; otherwise the store goes through the handle —
+                // A store through an origin-bearing pointer writes its
+                // address; the checker fixed the offset to 0 and required
+                // mutable provenance. A stably bound pointer substitutes its
+                // statically known address; otherwise the store goes through the handle —
                 // loaded before the invalidation boundary, so a first write
                 // through a subtree pointer uses its still-live generation and
                 // only later uses observe the self-invalidation.
@@ -3492,6 +3492,7 @@ impl<'a> Flatten<'a> {
                     dest_interior: None,
                 });
             }
+            self.record_pointer_address(dest, value, &aggregate_loans);
             if aggregate_loans.is_empty() {
                 self.aggregate_loans.remove(&dest);
             } else {

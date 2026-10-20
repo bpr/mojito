@@ -982,6 +982,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `loop_body`), plus the
   borrowed-iteration source binding and loan re-establishment helpers shared
   with comprehension lowering.
+- Pointer dereference places (`mir.rs`): `Flatten::pointer_deref_place`
+  substitutes a stably bound pointer's statically known address
+  (`Flatten::pointer_addresses`, set by `record_pointer_address` from
+  `lower_bind` for a `Node::forms_place_address` construction or a copy of
+  such a pointer), and `temporary_pointer_deref` does so for a
+  `Pointer(to=x)` temporary; every other pointer, a cast or a call result
+  included, reads through its runtime handle. Its loans
+  (`aggregate_loans`) are its origin and only keep owners alive.
 - `mir/nested.rs` owns capture analysis and nested-function lifting; each
   lifted declaration names the declaration it is nested in
   (`MirFunctionDeclaration::enclosing`, set by `lower_nested_node`), and the

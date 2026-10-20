@@ -335,6 +335,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A pointer dereferences its address, never its origin's place, as on the
+  pin: after `var p = Pointer(to=b).unsafe_origin_cast[origin_of(a)]()`,
+  `p[]` reads and writes `b`, and a method's pointer under a wider origin
+  than the place it addresses (`def ptr(ref self) -> Pointer[Int,
+  origin_of(self)]` over `self.y`) reads `self.y` rather than `self`, where
+  a store through it failed MIR verification. A field read, `+=`, and a
+  method call through such a pointer reach the pointee too
+  (`assets/ok/pointer_origin_cast_reads_pointee.mojo`). This closes R352.
+
 - A field of a reference-returning call's result is a place within the
   call's result origin, as on the pin: `return inner(w).t` over `inner(ref
   w: W) -> ref[w] W` returns under `ref[w.t]` (or `origin_of(w.t)` over read

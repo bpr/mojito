@@ -2687,6 +2687,11 @@ struct Flatten<'a> {
     /// The runtime value contains the handles; this map transfers their static
     /// loans when an aggregate is moved or forwarded into a new binding.
     aggregate_loans: HashMap<VarId, Vec<MirLoan>>,
+    /// The place a pointer variable's value statically addresses, recorded
+    /// only when its initializer formed the pointer from that place (or
+    /// copied such a pointer). Loans say what a pointer keeps alive; this
+    /// says where it points.
+    pointer_addresses: HashMap<VarId, MirPlace>,
     /// The loans a view-constructor conversion's `$conv_view_r` slot holds
     /// on a source that is not a named place (an accessor's reference result,
     /// an intrinsic subscript element), keyed by the converted expression's
@@ -2742,8 +2747,8 @@ struct Flatten<'a> {
     /// loops), read as references to the index binders they denote.
     parameter_reads: HashMap<mojito_types::origin::OwnerId, mojito_types::param_expr::ParamRef>,
     /// Names rebound more than once, or captured by a nested `def`. A pointer
-    /// variable outside this set keeps one statically known loan place for its
-    /// whole live range, so deref sites may substitute the owner place.
+    /// variable outside this set keeps one statically known address for its
+    /// whole live range, so deref sites may substitute that place.
     reassigned_names: std::collections::HashSet<String>,
     returns_reference: bool,
 }
@@ -2957,42 +2962,50 @@ impl<'a> Flatten<'a> {
         )
     }
 
-    /// The statically known storage place behind a stably bound origin-bearing
-    /// pointer variable. Substituting it at deref sites touches the owner at
-    /// each access — the liveness contract `ref` aliases have — so ASAP
-    /// destruction and loan conflicts stay exact. A reassigned or captured
-    /// pointer, or a handle loaded from a field, reads through its runtime
-    /// handle instead.
+    /// The statically known address behind a stably bound origin-bearing
+    /// pointer variable ([`Self::pointer_addresses`]), never its origin's
+    /// place: an origin only keeps owners alive. Substituting the address at
+    /// deref sites touches the owner at each access — the liveness contract
+    /// `ref` aliases have — so ASAP destruction and loan conflicts stay
+    /// exact. A reassigned or captured pointer, one whose address is not
+    /// statically known (a cast, a call result), or a handle loaded from a
+    /// field reads through its runtime handle instead.
     fn pointer_deref_place(&mut self, object: Node<'a>) -> Option<MirPlace> {
         let name = self.name_spelled(object)?;
         if !object.is_origin_bearing_pointer() || self.reassigned_names.contains(&name) {
             return None;
         }
-        // A subtree origin deliberately forgets which exact descendant the
-        // pointer designates, so its loan place cannot substitute for the
-        // deref target; the runtime handle carries the true projection.
-        if matches!(
-            object.ty().as_ref().map(Ty::kind),
-            Some(TyKind::Pointer { origin, .. }) if origin.subtree()
-        ) {
-            return None;
-        }
         let var = self.expression_var(&name, object);
-        let loans = self.aggregate_loans.get(&var)?;
-        let [loan] = loans.as_slice() else {
-            return None;
-        };
-        let mut place = loan.place.clone();
+        let mut place = self.pointer_addresses.get(&var)?.clone();
         place.through = Some(var);
         Some(place)
+    }
+
+    /// Record or clear the address `dest`'s pointer value statically holds
+    /// after binding `value`, whose loans are `loans`: a `Pointer(to=place)`
+    /// construction addresses its single loan's place, and a copy of a named
+    /// pointer inherits that pointer's address.
+    fn record_pointer_address(&mut self, dest: VarId, value: Node<'a>, loans: &[MirLoan]) {
+        let address = match loans {
+            [loan] if value.forms_place_address() => Some(loan.place.clone()),
+            _ => self
+                .name_spelled(value)
+                .and_then(|name| self.existing_expression_var(&name, value))
+                .and_then(|var| self.pointer_addresses.get(&var).cloned()),
+        };
+        match address {
+            Some(address) => self.pointer_addresses.insert(dest, address),
+            None => self.pointer_addresses.remove(&dest),
+        };
     }
 
     /// The read behind a call-produced origin-bearing pointer (`idp(p)[]`):
     /// the temporary is bound to a hidden `$ptr_tmp_r` slot carrying the loans
     /// its checked origin names — exactly as `var q = idp(p)` would — so the
-    /// owner outlives the read. A single-place origin substitutes the owner
-    /// place; a subtree origin, which forgets the exact descendant, reads
-    /// through the slot's runtime handle.
+    /// owner outlives the read. Only a `Pointer(to=place)` temporary, whose
+    /// origin is its address, substitutes that place; every other pointer (a
+    /// cast, a call result, a subtree origin) reads through the slot's
+    /// runtime handle.
     fn temporary_pointer_deref(&mut self, e: Node<'a>, object: Node<'a>) -> Option<Reg> {
         if !matches!(
             object.op(),
@@ -3009,7 +3022,8 @@ impl<'a> Flatten<'a> {
         let loans = self.aggregate_borrows(object);
         let owner = match loans.as_slice() {
             [] => return None,
-            [loan] if !subtree => Some(loan.place.clone()),
+            [loan] if !subtree && object.forms_place_address() => Some(loan.place.clone()),
+            [_] => None,
             _ if subtree => None,
             _ => return None,
         };
@@ -4205,6 +4219,7 @@ fn lower_cfg_body(
                 .collect(),
             environment: HashMap::new(),
             aggregate_loans: HashMap::new(),
+            pointer_addresses: HashMap::new(),
             conversion_view_loans: HashMap::new(),
             pending_argument_anchors: Vec::new(),
             call_setups: Vec::new(),

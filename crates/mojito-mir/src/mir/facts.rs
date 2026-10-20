@@ -515,6 +515,25 @@ impl<'a> Node<'a> {
         origin_bearing_pointer(self.checked.ty.as_ref())
     }
 
+    /// Whether this node is a `Pointer(to=place)` construction whose checked
+    /// origin is that place, the one case where a pointer's origin also
+    /// designates its address. A construction through a `ref` binding
+    /// carries a subtree origin, which forgets the exact descendant the
+    /// runtime handle addresses.
+    pub(super) fn forms_place_address(self) -> bool {
+        matches!(self.op(), CheckedOp::Call { .. })
+            && self.adjustments().iter().any(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::PointerToPlace { .. }
+                )
+            })
+            && !matches!(
+                self.checked.ty.as_ref().map(Ty::kind),
+                Some(TyKind::Pointer { origin, .. }) if origin.subtree()
+            )
+    }
+
     pub(super) fn resolved_callable(self) -> Option<String> {
         callable_target(self.adjustments())
     }

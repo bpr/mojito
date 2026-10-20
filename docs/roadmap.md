@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1216**.
+Next free ID: **R1217**.
 
 ## Ordered Work
 
@@ -1661,19 +1661,25 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R352 A pointer whose origin was cast reads the origin's place, not
-  its pointee**
+- [ ] **R1216 A store through a pointer read by its handle does not
+  destroy the value it replaces**
 
-  Problem: `var p = Pointer(to=b).unsafe_origin_cast[origin_of(a)]()` then
-  `print(p[])` prints `a`'s value in Mojito, where the pin prints `b`'s.
-  - `pointer_deref_place` (`crates/mojito-mir/src/mir.rs`) substitutes the
-    loan's place for the pointer's target.
-  - `temporary_pointer_deref` does the same for a call's pointer result:
-    `print(s.ptr()[])` over `def ptr(ref self) -> Pointer[Int,
-    origin_of(self)]` returning `Pointer(to=self.x).unsafe_origin_cast[
-    origin_of(self)]()` prints `S(x=5)`, where the pin prints `5`.
+  Problem: `var q = Pointer(to=b)`, `q = Pointer(to=b)`, then `q[] =
+  Inner(2)` prints `after 2` / `del 2`, where the pin prints `del 1` /
+  `after 2` / `del 2`.
+  - Cause: `elaborate_store_drops`
+    (`crates/mojito-analysis/src/analysis/store_drops.rs`) recovers a
+    `WriteRef`'s place only from a `MakeRef` handle. A pointer read by
+    `UseVar` names no place, and MIR has no destroy-through-handle
+    instruction for a frame/slot pointer, as upstream's `Pointer.__setitem__`
+    destroys the old pointee before it stores.
+  - Probe: `Pointer(to=h.j).unsafe_origin_cast[origin_of(h)]()` bound to
+    `r`, then `r[] = Inner(31)`, misses the pin's `del 30`.
+  - Probe: a destructured pointer (`var (p, x) = (Pointer(to=a), 1)`) then
+    `p[] = v` over a droppable pointee.
+  - Found while landing R352 (2026-10-20).
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R355 A view element moved by `Tuple.reverse` or `Tuple.concat`
   loses its loan on the storage it views**
