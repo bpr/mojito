@@ -1,7 +1,5 @@
-# Pin gap probe (Mojo 1.6.0.dev2026092105): a struct member's `where` clause
-# over `TypeList[Self.Ts.values]()`. The pin prints `1 True 2`; Mojito
-# rejects the program with "TypeList[...] takes a pack projection
-# ('Ts.values')". Roadmap section 3 carries the entry.
+# A struct member's `where` clause over `TypeList[Self.Ts.values]()` binds
+# the bundled struct, and each call decides it at the receiver's pack.
 from std.traits import IsTriviallyCopyable
 
 

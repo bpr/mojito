@@ -599,13 +599,17 @@ impl ParamContext {
                 self.op(ParamOp::Add, &lengths)
             }
             // A list the elaborator evaluates (a local display binding's
-            // sequence) has the length its value will have.
-            ParamKind::Apply { .. } if matches!(list.meta(), MetaTy::ParamList(_)) => Ok(self
-                .apply(
+            // sequence, a raw-list member read through a bound) has the
+            // length its value will have.
+            ParamKind::Apply { .. } | ParamKind::TypeMember { .. }
+                if matches!(list.meta(), MetaTy::ParamList(_)) =>
+            {
+                Ok(self.apply(
                     LIST_LENGTH_FUNCTION,
                     std::slice::from_ref(list),
                     MetaTy::int(),
-                )),
+                ))
+            }
             _ => Err(ParamError::TypeMismatch {
                 operation: "parameter list length".to_string(),
                 expected: "a parameter list".to_string(),
@@ -1521,9 +1525,10 @@ impl ParamContext {
                     .collect::<Result<_, _>>()?;
                 self.list_concat(&lists)?
             }
-            // A pack bound to its elements, to another pack, or to a list
-            // computed from packs answers its length; the other queries stay
-            // the checker's concrete pack logic.
+            // A pack bound to its elements, to another pack, to a list
+            // computed from packs, or to a raw-list member read through a
+            // bound answers its length; the other queries stay the checker's
+            // concrete pack logic.
             ParamKind::PackQuery {
                 pack,
                 query: PackQuery::Length,
@@ -1533,7 +1538,10 @@ impl ParamContext {
                     ParamKind::Constant(CtValue::Tuple(_))
                         | ParamKind::ListTabulate { .. }
                         | ParamKind::ListConcat { .. }
-                ) || (bound.as_decl_ref().is_some() && matches!(bound.meta(), MetaTy::ParamList(_)))
+                ) || (matches!(
+                    bound.kind(),
+                    ParamKind::DeclRef(_) | ParamKind::TypeMember { .. }
+                ) && matches!(bound.meta(), MetaTy::ParamList(_)))
             }) =>
             {
                 let length = self.list_length(bound)?;

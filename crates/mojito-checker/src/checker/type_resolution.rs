@@ -2363,13 +2363,14 @@ impl Checker {
                              argument yet: '{applied}'"
                         )));
                     }
-                    let actual =
-                        self.ct_value_ty(&value, ty)
-                            .ok_or_else(|| TypeError::TypeMismatch {
-                                expected: ty.to_string(),
-                                found: "a non-materializable compile-time value".to_string(),
-                                context: format!("value parameter '{name}'"),
-                            })?;
+                    let actual = self
+                        .member_value_type(expr)
+                        .or_else(|| self.ct_value_ty(&value, ty))
+                        .ok_or_else(|| TypeError::TypeMismatch {
+                            expected: ty.to_string(),
+                            found: "a non-materializable compile-time value".to_string(),
+                            context: format!("value parameter '{name}'"),
+                        })?;
                     if matches!(actual.kind(), TyKind::ParamList(_))
                         && matches!(ty.kind(), TyKind::ParamList(element)
                             if mojito_types::types::trait_type_bound(element).is_some())

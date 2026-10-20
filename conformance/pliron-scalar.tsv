@@ -1033,7 +1033,9 @@ assets/ok/type_param_copy_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_predicate_comptime_if.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_receiver_instance_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/typelist_comptime_vocabulary.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/typelist_over_member_raw_list.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/typelist_reverse_concat.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/typelist_self_pack_member_clause.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/typelist_where_clauses.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/uint_and_scalar_value_parameters.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/unread_callable_parameter_instances.mojo	-	ineligible	no-scalar-entry-shape

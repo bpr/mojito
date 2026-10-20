@@ -3867,9 +3867,12 @@ impl Checker {
     ) -> Option<Ty> {
         match argument {
             mojito_ast::ast::ParamArg::Value(expr) => self
-                .eval_associated_ct(expr, &HashMap::new())
-                .ok()
-                .and_then(|value| self.ct_value_ty(&value, declared))
+                .member_value_type(expr)
+                .or_else(|| {
+                    self.eval_associated_ct(expr, &HashMap::new())
+                        .ok()
+                        .and_then(|value| self.ct_value_ty(&value, declared))
+                })
                 .or_else(|| self.infer(expr).ok()),
             mojito_ast::ast::ParamArg::Named { value, .. } => {
                 self.param_arg_value_ty(value, declared)

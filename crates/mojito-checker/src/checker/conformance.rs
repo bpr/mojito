@@ -149,6 +149,7 @@ impl ConformanceOracle {
                     declared_field_names: fields.iter().map(|field| field.name.clone()).collect(),
                     field_origin_arguments: HashMap::new(),
                     associated: HashMap::new(),
+                    associated_value_types: HashMap::new(),
                     associated_constraints: HashMap::new(),
                     parameterized_associated: HashMap::new(),
                     methods: method_names,
@@ -287,11 +288,16 @@ impl ConformanceOracle {
             // (`var iter: Self.dict_entry_iter`). A body this signature-only
             // oracle cannot lower is skipped and fails closed at its use
             // site, exactly like the generic-alias registration above.
-            if let Ok((associated_values, associated_constraints, parameterized)) =
-                checker.check_struct_associated(associated, conformance_conditions)
+            if let Ok((
+                associated_values,
+                associated_value_types,
+                associated_constraints,
+                parameterized,
+            )) = checker.check_struct_associated(associated, conformance_conditions)
                 && let Some(info) = checker.structs.get_mut(name)
             {
                 info.associated = associated_values;
+                info.associated_value_types = associated_value_types;
                 info.associated_constraints = associated_constraints;
                 info.parameterized_associated = parameterized;
             }

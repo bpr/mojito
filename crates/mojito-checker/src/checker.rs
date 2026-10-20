@@ -2303,6 +2303,11 @@ struct StructInfo {
     /// struct body. These live on the type, not on runtime instances.
     #[serde(serialize_with = "interface::sorted")]
     associated: HashMap<String, CtValue>,
+    /// The declared type of each `associated` value whose annotation names
+    /// one (`comptime _types: KGENParamListType[AnyType] = ...`), at the
+    /// struct's own binders: a read of the member has this type.
+    #[serde(serialize_with = "interface::sorted")]
+    associated_value_types: HashMap<String, Ty>,
     /// Availability constraints for monomorphic associated members, one entry
     /// per trailing `where` clause. They are evaluated against the enclosing
     /// struct arguments at projection time.
@@ -2656,10 +2661,11 @@ impl ParameterizedMember {
 }
 
 /// A struct's checked associated compile-time members: the eagerly evaluated
-/// monomorphic values, and the parameterized members lowered to their symbolic
-/// templates for later concrete substitution.
+/// monomorphic values with their declared types, and the parameterized members
+/// lowered to their symbolic templates for later concrete substitution.
 type StructAssociatedMembers = (
     HashMap<String, CtValue>,
+    HashMap<String, Ty>,
     HashMap<String, Vec<GenericConstraint>>,
     HashMap<String, ParameterizedMember>,
 );

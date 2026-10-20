@@ -881,6 +881,9 @@ impl CtValue {
             // A trait converts to a metatype over a trait it implies, which
             // the checker proved, and stays the trait it is.
             (value @ Self::Trait(_), TyKind::AnyTrait(_)) => Some(value),
+            // A type is a value of a trait's metatype, the element of a raw
+            // list of that trait whose conversion the checker proved.
+            (value @ Self::Type(_), TyKind::Trait(_)) => Some(value),
             (value @ Self::KgenString(_), TyKind::KgenString) => Some(value),
             (
                 value @ Self::Simd { .. },

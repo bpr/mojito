@@ -245,8 +245,9 @@ base capability with no user lifecycle member and every field trivial. A
 value comparison and a `TypeList` query read the instance's bindings, and a
 `Tuple` or `TString` with no specialization answers by its elements. What
 stays undecided is an `all` or `any` through a predicate alias, whose body
-does not reach MIR. The checker rejects the only member clause that could
-ask one today (roadmap R130), so concrete bindings close every predicate
+does not reach MIR. A member clause over `TypeList[Self.Ts.values]()` asks
+one (`.all[IsSmall]()`), and there the checker's verdict at the call stands
+(roadmap R1197); concrete bindings close every other predicate
 (§Predicates) a member clause reaches.
 
 Removing the trial exposed one defect it had hidden. `Array[c_char, n]()`
@@ -368,5 +369,5 @@ arguments may carry a loan too (§Carried sources), and since 2026-10-08
 | 14 | A call site keeps a source only where a loan can ride it. A symbolic value read out of the frame's own storage lends that storage latently. A store of a symbolic value publishes its stored type as a carried source, and a call through a struct receiver closes it (§Carried sources). An instance over a loan-carrying argument clones no more than a plain-data one. |
 | 15 | The elaborator selects the dunder. A `!=` with no `__ne__` negates `__eq__`, and a sized-scalar comparison the template typed `Bool` converts its mask. |
 | 18 | The template's selected constructor serves the instance, a variadic one keyed by the call's element count. |
-| 7, 16, 18 (availability) | The clause is in MIR and the elaborator decides it (§Availability). A clause in a form it cannot evaluate is undecided, and the checker's verdict at the call stands (roadmap R130). |
+| 7, 16, 18 (availability) | The clause is in MIR and the elaborator decides it (§Availability). A clause in a form it cannot evaluate is undecided, and the checker's verdict at the call stands (roadmap R1197). |
 | 2, 23, 24, 26, 27 | Unchanged: these bodies hold a compile-time construct and keep their clones until P3. |

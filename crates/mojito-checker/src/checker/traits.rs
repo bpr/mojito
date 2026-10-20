@@ -495,6 +495,7 @@ impl Checker {
                     .collect(),
                 field_origin_arguments: HashMap::new(),
                 associated: HashMap::new(),
+                associated_value_types: HashMap::new(),
                 associated_constraints: HashMap::new(),
                 parameterized_associated: HashMap::new(),
                 methods: HashMap::new(),
@@ -642,10 +643,16 @@ impl Checker {
         // own comptime alias (`var iter: Self.dict_entry_iter`). Member bodies
         // reference only `Self` parameters and registered struct shells, never
         // fields, so this ordering is well-founded.
-        let (associated_values, associated_constraints, parameterized_associated) = self
+        let (
+            associated_values,
+            associated_value_types,
+            associated_constraints,
+            parameterized_associated,
+        ) = self
             .check_struct_associated(declaration.associated, declaration.conformance_conditions)?;
         if let Some(info) = self.structs.get_mut(name) {
             info.associated.clone_from(&associated_values);
+            info.associated_value_types = associated_value_types;
             info.associated_constraints
                 .clone_from(&associated_constraints);
             info.parameterized_associated

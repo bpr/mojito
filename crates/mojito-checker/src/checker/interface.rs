@@ -2031,6 +2031,7 @@ mod tests {
             declared_field_names: Vec::new(),
             field_origin_arguments: HashMap::new(),
             associated: HashMap::new(),
+            associated_value_types: HashMap::new(),
             associated_constraints: HashMap::new(),
             parameterized_associated: HashMap::new(),
             methods: rows,

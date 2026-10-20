@@ -575,7 +575,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   over the `field_types()` node, viewed through `opaque_element`).
   Type-level pack algebra lives beside it: `constraints.rs:typelist_receiver`
   reads the compiler-known `TypeList` vocabulary (roadmap R1182) over a
-  pack, a `TypeList` construction, a `.reverse()`, and a
+  pack, a `TypeList` construction (bound through `applied_type` as the
+  bundled struct, read at its `values` slot), a `.reverse()`, and a
   `TypeList._concat[A.values, B.values]()` as a `TypeListReceiver`
   (`Derived` for a list computed from packs still open),
   `type_list_operand` gives the `ParamExpr` a spread's operand denotes, and
@@ -1618,7 +1619,17 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `ConformanceFacts::associated_values` → `MirStructDeclaration::associated_values`
   (`Checker::conformance_facts`, `traits.rs`), and `native::mono` answers
   the node per instance (`type_member_answer`, `mono/symbolic.rs`, over
-  `StructShape::values`).
+  `StructShape::values`). A read's declared type is
+  `Checker::member_value_type`: the bound's requirement, or on a struct
+  the annotation `StructInfo::associated_value_types` keeps, at the
+  application's arguments. Bracket binding (`resolve_param_arg`,
+  `param_arg_value_ty`) types a member argument by it, so a raw-list
+  member solves `TypeList`'s infer-only `Trait`, and
+  `check_struct_associated` rejects a raw-list body its annotation does
+  not convert (`check_raw_list_member`). A raw-list member read through a
+  bound has a length (`ParamContext::list_length`), which
+  `Specializer::resolve_application` answers per instance in a
+  `comptime if`.
 - `Self.e.rows` in a compile-time position is `ParamKind::Field { base, name }`
   (`mojito-types/src/param_expr.rs`, `ParamContext::field`, text
   `param_field`), built by `Checker::struct_value_field`

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1193**.
+Next free ID: **R1198**.
 
 ## Ordered Work
 
@@ -4968,30 +4968,98 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1184 `TypeList[...]` reads only a pack's own `Ts.values`, not a
-  raw list a `comptime` member holds**
+- [ ] **R1193 A member read on a struct applied to a forwarded pack names
+  the struct's own pack**
 
-  Problem: `TypeList[Trait=AnyType, S[Int, Bool]._types]().length` and the
-  same over `T._types` through a bound `T: HasTypes` are rejected, where
-  the pin reads the member's list.
-  - `TypeList[Trait=AnyType, Ts.values]().length` stops with "TypeList[...]
-    takes a pack projection ('Ts.values')". Without `Trait=`, or without
-    `()`, it runs.
-  - `TypeList[T._types].length` stops with "Undefined variable
-    'TypeList'".
-  - `Checker::typelist_receiver` and `pack_values_projection`
-    (`checker/constraints.rs`) accept one positional `Ts.values`.
-  - Lever: accept any raw-list parameter expression, keyword `Trait=`
-    included. A struct's raw-list member reads concretely through
-    `struct_member_at`.
-  - Through a bound it reads as `ParamKind::TypeMember` with a raw-list
-    meta, which the elaborator answers per instance from
-    `ConformanceFacts::associated_values`. R500 is the value-member
-    sibling.
-  - Probe: `conformance/probes/typelist_over_member_raw_list.mojo`.
-  - Found while planning R1132 (2026-10-20).
+  Problem: `S[*Ts].n` and `TypeList[S[*Ts]._types].length` in `def f[*Ts:
+  AnyType]` stop with "parameter constant names parameter `Ts` of `S` that
+  no enclosing declaration binds", where the pin prints `3`.
+  - `struct_member_at`'s `bind_declared` (`checker/constraints.rs`) binds a
+    forwarded pack slot (`TyArg::Ty(pack)`) as a type, never as the
+    `Self.Ts` list the member reads, so the member keeps `S`'s binder.
+  - `S[Int, Bool, Int].n` runs.
+  - Probe: `struct S[*Ts: AnyType]` with `comptime n =
+    TypeList[Self.Ts.values].length`, read as `S[*Ts].n` in `f` and called
+    `f[Int, Bool, Int]()`.
+  - Found while landing R1184 (2026-10-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1194 A member read through a `TypeList` construction in a local
+  `comptime` is lifted as a function**
+
+  Problem: `comptime n = TypeList[Ts.values]().length` in `def h[*Ts:
+  AnyType]` stops with "MIR function '$comptime$h$c0' block 0 parameter
+  constant names parameter `Ts` of `h` that no enclosing declaration
+  binds", where the pin prints `3` for `h[Int, Bool, Int]()`.
+  - `TypeList[Ts.values].length`, without `()`, runs, and so does `return
+    TypeList[Ts.values]().length`.
+  - `compile_dependent_ct_expr` (`checker/constraints.rs`) reads a member
+    through a type (`type_member_value` over `member_subject`), but
+    `member_type_operand` gives up on a construction.
+  - The binding is then lifted to a thunk, which does not bind the `def`'s
+    pack.
+  - Upstream reads a `comptime` member through an instance on the
+    instance's type.
+  - Found while landing R1184 (2026-10-20).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1195 A struct `comptime` member's body is not checked against its
+  annotation**
+
+  Problem: `comptime N: Int = True` in a struct prints `True` for `S.N`,
+  where the pin rejects it with "cannot implicitly convert 'Bool' value to
+  'Int'".
+  - `check_struct_associated` (`checker/constraints.rs`) evaluates the
+    body and keeps the annotation as the member's type
+    (`StructInfo::associated_value_types`).
+  - It checks only a raw-list body against its annotation
+    (`check_raw_list_member`).
+  - R485 is the local `comptime` sibling, in `checker/statements.rs`.
+  - Found while landing R1184 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1196 A struct member cannot pass an earlier member as a bracket
+  value argument**
+
+  Problem: `comptime m = Box[Self.n].w` after `comptime n = 3` stops with
+  "not a compile-time Int constant: unsupported associated comptime member
+  access", where the pin prints `30`.
+  - `Self.n` in brackets parses as the type argument
+    `SourceType::SelfParam`, which `resolve_param_arg`
+    (`checker/type_resolution.rs`) resolves only as one of the struct's own
+    parameters.
+  - The members resolved so far reach the struct's shell only when
+    `check_struct_associated` returns, so a read through the shell misses
+    them too.
+  - `member_type_operand` (`checker/indexing.rs`) drops the error with
+    `.ok()`, so it surfaces as the generic rejection.
+  - Probe: `comptime n = TypeList[Self._types].length` beside `comptime
+    _types: _MLIR.KGENParamListType[AnyType] = Self.Ts.values`, where the
+    pin prints `2` for `S[Int, Bool].n`.
+  - Found while landing R1184 (2026-10-20).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1197 The elaborator cannot decide a pack's `all` or `any` through
+  a predicate alias**
+
+  Problem: `comptime if TypeList[Ts.values]().all[IsSmall]():` over
+  `comptime IsSmall[T: AnyType] = IsTriviallyCopyable[T]` stops with
+  "unsupported comptime if condition `PackPredicate { .. predicate:
+  Alias("IsSmall") .. }` the instance does not decide", where the pin
+  prints `1 0` for `f[Int, Bool](), f[Int, String]()`.
+  - An alias's body does not reach MIR, so `native::mono` has no
+    per-element proposition to evaluate.
+  - A member clause `where TypeList[Self.Ts.values]().all[IsSmall]()`
+    stays undecided the same way, and the checker's verdict at the call
+    stands (`docs/notes/generator-contract.md`).
+  - The builtin `IsTrivially*` predicates are decided.
+  - Found while landing R1184 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1185 A subscript of a `TypeList` value is not a type expression**
 
@@ -5313,7 +5381,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 
 - [ ] **R1175 Compile-time bracket binding is re-implemented outside `call.rs`**
 
-  Problem: five sites bind a bracket list to a declaration's parameters by
+  Problem: six sites bind a bracket list to a declaration's parameters by
   their own rule instead of `mojito_ast::call::match_parameter_slots`, the
   pin's rule the checker's `bracket_bindings` uses.
   - `callable_value_argument` (`checker/origins/subst.rs`) binds positional
@@ -5328,6 +5396,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `T[k=3, Extent.square(2)]` over `struct T[e: Extent, k: Int]`
     prints the pin's `23` only because CTFE later evaluates the unfrozen
     construction.
+  - `Elab::type_from_name` (`comptime/elab.rs`) binds a list positionally
+    without skipping infer-only binders. Probe: `comptime n =
+    TypeList[S[Int, Bool]._types].length` in `main` stops with "type
+    'TypeList' expects 2 compile-time argument(s), got 1", where the pin
+    prints `2`. R207 is the variadic half of the same function.
   - MIR lists carry erased origin arguments with no value, which the MIR
     adapters must keep aligned.
   - Found while landing R449 (2026-10-20).
@@ -6210,27 +6283,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Upstream's `ParamForOp` has an `else` region, reached when
     `paramfor_has_next` is false.
   - Tuple targets (`comptime for a, b in …`) are unverified too.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R130 A struct member's `where` clause over `TypeList[Self.Ts.values]()`
-  is rejected**
-
-  Problem: `def has_int(self) -> Bool where
-  TypeList[Self.Ts.values]().contains[Int]()` on `struct Row[*Ts: AnyType]`
-  runs at the pin and stops in Mojito with "TypeList[...] takes a pack
-  projection ('Ts.values')".
-  - The parser reads the bracket argument in type position, and
-    `typelist_receiver` (`checker/constraints.rs`) accepts only the value
-    spelling `Ts.values`.
-  - Accepting the type spelling there compiles the clause, but the call then
-    judges `.all[IsTriviallyCopyable]()` false on `Row[Int, Bool]`, so the
-    pack's binding at a method call needs a look too.
-  - `conforms_to(Self.Ts.values, Copyable)` in the same position runs.
-  - The elaborator decides `.all`, `.any`, `.contains`, and `.length` over a
-    bound pack. An `.all` or `.any` through a predicate alias stays
-    undecided there, because the alias's body does not reach MIR.
-  - Probe: `conformance/probes/typelist_self_pack_member_clause.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

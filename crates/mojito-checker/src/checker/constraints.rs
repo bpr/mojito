@@ -130,6 +130,7 @@ impl Checker {
         conformance_conditions: &[(String, Expr)],
     ) -> Result<StructAssociatedMembers, TypeError> {
         let mut out = HashMap::new();
+        let mut value_types = HashMap::new();
         let mut constraints = HashMap::new();
         let mut parameterized = HashMap::new();
         let struct_name = match self.self_ty.as_ref().map(Ty::kind) {
@@ -174,6 +175,9 @@ impl Checker {
             let resolved = (|| {
                 if member.params.is_empty() {
                     let value = self.eval_associated_ct(&member.value, &out)?;
+                    if let Some(CtMemberReq::Value(declared)) = &requirement {
+                        self.check_raw_list_member(&member.name, &value, declared)?;
+                    }
                     return Ok::<_, TypeError>((Some(value), None));
                 }
                 // A value annotation declares a value body; without one, a
@@ -234,6 +238,9 @@ impl Checker {
                     if !compiled.is_empty() {
                         constraints.insert(member.name.clone(), compiled);
                     }
+                    if let Some(CtMemberReq::Value(declared)) = &requirement {
+                        value_types.insert(member.name.clone(), declared.clone());
+                    }
                     out.insert(member.name.clone(), value);
                 }
                 (_, Some(template)) => {
@@ -256,7 +263,34 @@ impl Checker {
                 (None, None) => unreachable!("an associated member is a value or a template"),
             }
         }
-        Ok((out, constraints, parameterized))
+        Ok((out, value_types, constraints, parameterized))
+    }
+
+    /// A raw-list member's body converts to its declared list
+    /// (`comptime _types: KGENParamListType[Copyable] = Self.Ts.values`
+    /// over `*Ts: AnyType` does not), as at the pin's declaration.
+    fn check_raw_list_member(
+        &self,
+        member: &str,
+        value: &CtValue,
+        declared: &Ty,
+    ) -> Result<(), TypeError> {
+        let Some(actual) = self
+            .ct_value_ty(value, declared)
+            .filter(|actual| matches!(actual.kind(), TyKind::ParamList(_)))
+        else {
+            return Ok(());
+        };
+        if !matches!(declared.kind(), TyKind::ParamList(_))
+            || self.param_list_converts(&actual, declared)
+        {
+            return Ok(());
+        }
+        Err(TypeError::ParamListConversion {
+            param: member.to_string(),
+            from: actual.to_string(),
+            to: declared.to_string(),
+        })
     }
 
     /// Whether `trait_name` (or a trait it refines) declares the comptime
@@ -1612,6 +1646,29 @@ impl Checker {
         }
     }
 
+    /// The declared type of a type's value member read (`T._types` through
+    /// a bound, `S[Int, Bool]._types`), at the type's arguments. `None`
+    /// when `expr` reads no member whose annotation names a type; a pack's
+    /// `ParameterList` / `TypeList` members type through their values.
+    pub(super) fn member_value_type(&self, expr: &Expr) -> Option<Ty> {
+        let ExprKind::Member { object, field } = &expr.kind else {
+            return None;
+        };
+        if self.value_pack_named(object).is_some() || self.type_pack_named(object).is_some() {
+            return None;
+        }
+        let subject = self.member_subject(object)?;
+        match subject.kind() {
+            TyKind::Param { bounds, .. } => self.lookup_trait_assoc_value_ty(bounds, field),
+            TyKind::Struct(name, arguments) => {
+                let info = self.structs.get(name)?;
+                let declared = info.associated_value_types.get(field)?;
+                Some(super::generics::substitute_at(declared, info, arguments))
+            }
+            _ => None,
+        }
+    }
+
     /// The value member or value parameter `field` of the `ParameterList` a
     /// value pack is (`vs.size`, `vs.values`), at the pack. `None` when the
     /// bundled struct declares no such value.
@@ -2127,8 +2184,9 @@ impl Checker {
 
     /// A `TypeList` receiver in a constraint position: an enclosing pack
     /// parameter itself (upstream's `Ts.all_conforms_to[..]()` / `Self.Ts`),
-    /// the pack adapter (`TypeList[Ts.values]()`) naming a symbolic pack
-    /// parameter, or the concrete constructor
+    /// a construction of the bundled struct (`TypeList[Ts.values]()`,
+    /// `TypeList[Trait=AnyType, T._types]()`) over the raw list its
+    /// `values` binds, or the concrete constructor
     /// (`TypeList.of[Trait=..., T1, ..., Tn]()`) whose element types resolve
     /// immediately.
     pub(super) fn typelist_receiver(
@@ -2201,18 +2259,23 @@ impl Checker {
                 param_args,
                 args,
                 kwargs,
-            } if name == "TypeList" && args.is_empty() && kwargs.is_empty() => {
-                let [mojito_ast::ast::ParamArg::Value(projection)] = param_args.as_slice() else {
-                    return Err(TypeError::Unsupported(
-                        "TypeList[...] takes a pack projection ('Ts.values')".to_string(),
-                    ));
+            } if name == super::comptime_validation::TYPE_LIST
+                && args.is_empty()
+                && kwargs.is_empty() =>
+            {
+                let (ty, _) = self.applied_type(name, param_args)?;
+                let TyKind::Struct(_, arguments) = ty.kind() else {
+                    return Ok(None);
                 };
-                let Some(pack) = pack_values_projection(projection) else {
-                    return Err(TypeError::Unsupported(
-                        "TypeList[...] takes a pack projection ('Ts.values')".to_string(),
-                    ));
+                let Some(TyArg::Val(values)) = self
+                    .structs
+                    .get(name)
+                    .and_then(|info| info.decls.iter().position(|decl| decl.name() == "values"))
+                    .and_then(|slot| arguments.get(slot))
+                else {
+                    return Ok(None);
                 };
-                Ok(Some(TypeListReceiver::Pack(ParamRef::unbound(pack))))
+                derived(self.param_context.constant(values.clone()))
             }
             ExprKind::Invoke {
                 callee,

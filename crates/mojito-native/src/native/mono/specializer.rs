@@ -1293,6 +1293,13 @@ impl<'a> Specializer<'a> {
                 .then(|| eval_ct(&answered, bindings).ok())
                 .flatten());
         };
+        // A raw list's length is an attribute fold (upstream's
+        // `#kgen.param_list.size`), never a function: the list's own
+        // applications are demanded, then the instance answers it.
+        if function == LIST_LENGTH_FUNCTION {
+            let answered = self.applied(template, expr, bindings)?;
+            return eval_ct(&answered, bindings).map(Some);
+        }
         if function == SIZE_OF_FUNCTION {
             let [subject] = args.as_slice() else {
                 return Err(self.error(

@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `TypeList[...]()` construction binds its bracket list as the bundled
+  struct's, as on the pin, so `Trait=` and `values=` apply and a raw list a
+  struct's `comptime` member holds reads concretely
+  (`TypeList[Trait=AnyType, S[Int, Bool]._types]().length`) and through a
+  bound (`TypeList[T._types].length` over `T: HasTypes`), its length
+  answered per instance, in a `comptime if` too
+  (`assets/ok/typelist_over_member_raw_list.mojo`). A member read has its
+  annotated type, a raw-list member whose body does not convert to its
+  annotation is rejected at the declaration
+  (`assets/type_error/raw_list_member_bad_annotation.mojo`), and a member's
+  `where` clause over `TypeList[Self.Ts.values]()` is decided per receiver
+  (`assets/ok/typelist_self_pack_member_clause.mojo`). The package format
+  is 76. This closes R1184 and R130; the gaps left are R1193–R1197.
+
 - A string literal's `.value` is its `!kgen.string` parameter, as on the
   pin: `"None".value`, `("So" + "me").value`, and a module, member, or local
   `comptime` of one fold to a KGEN string, which a parameter typed by
