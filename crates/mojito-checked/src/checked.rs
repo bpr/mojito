@@ -1063,6 +1063,10 @@ pub enum SemanticAdjustment {
     /// handle and erases the origin.
     PointerToPlace {
         mutable: bool,
+        /// The pointer as the holder of a dereference place
+        /// (`Pointer(to=x)[]`): also a materialized borrow source (see
+        /// `MaterializeBorrowSource`), and one span carries one adjustment.
+        materialized: Option<mojito_types::origin::OwnerId>,
     },
     /// Move one initialized element out of compiler-private raw collection
     /// storage, leaving that heap slot uninitialized. Only bundled collection
@@ -1078,13 +1082,18 @@ pub enum SemanticAdjustment {
     },
     /// `pointer.unsafe_offset(i)`: provenance-preserving element arithmetic,
     /// lowered as the ordinary pointer `+` operation.
-    PointerOffset,
+    PointerOffset {
+        /// A materialized dereference holder, as on `PointerToPlace`.
+        materialized: Option<mojito_types::origin::OwnerId>,
+    },
     /// `pointer.unsafe_origin_cast[...]()`: a checked provenance rebind. The runtime
     /// value is unchanged, so lowering forwards the receiver register; the
     /// resolved target origin is retained so aggregate-origin bookkeeping can
     /// carry the rebound loan without re-resolving the parameter argument.
     PointerOriginCast {
         origin: mojito_types::origin::PointerOrigin,
+        /// A materialized dereference holder, as on `PointerToPlace`.
+        materialized: Option<mojito_types::origin::OwnerId>,
     },
     /// Construct compiler-private inline uninit storage (`__UninitStorage[T]()`
     /// or `__UninitStorage[T](value^)`). Only bundled standard-library sources
@@ -6044,6 +6053,17 @@ pub fn materialized_borrow_owner(
             ..
         }
         | SemanticAdjustment::ParamValue {
+            materialized: Some(owner),
+            ..
+        }
+        | SemanticAdjustment::PointerToPlace {
+            materialized: Some(owner),
+            ..
+        }
+        | SemanticAdjustment::PointerOffset {
+            materialized: Some(owner),
+        }
+        | SemanticAdjustment::PointerOriginCast {
             materialized: Some(owner),
             ..
         } => Some(*owner),

@@ -234,8 +234,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `call_result_origins` and an `ImmOrigin` cast's field path too — also the
   source of a dereference place's mutability in `origins/actuals.rs`, where
   `record_call_result_origins` resolves a callee's `ViewReturnOrigin`
-  contract and `materialize_temporary_holder` gives a call-result holder
-  its hidden slot), the positional
+  contract, `materialize_temporary_holder` gives a call-result holder —
+  a struct, or a pointer formed in place — its hidden slot,
+  `record_pointer_adjustment` keeps a pointer adjustment's `materialized`
+  owner, and `returned_pointer_dereference_origin` names a returned
+  pointer dereference's own origin), the positional
   String-slice rejection hint, and member access.
 - `checker/method_calls.rs` (split across `method_calls/`) owns method-call
   inference. `mc_infer.rs` keeps `infer_method_call` as a sequence of stages

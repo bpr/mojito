@@ -4386,7 +4386,18 @@ the returned `ref[o]` stays within that parameter, so the return-boundary
 re-rooter (`canonical_reference_parts`) follows the field handle to the single
 pointee and retains the residual offset-0 index, which the runtime projection
 walkers forward as the identity deref of that pointee — an immutable origin reads,
-a mutable origin writes through the caller's storage. A read of the bound pointer
+a mutable origin writes through the caller's storage. A returned dereference of
+a pointer with a tracked place origin names that origin, as upstream's
+`Pointer.__getitem__(self) -> ref[Self.origin]` does
+(`returned_pointer_dereference_origin`, `origin_of(self)` read at the
+receiver's place), and a field of a reference-returning call's result is a
+place within the call's recorded result origin (`origin_place` reads its
+`ReferenceResult`). A pointer the expression forms in place
+(`PointerToPlace`, `PointerOffset`, `PointerOriginCast`) is the holder of a
+dereference place through its adjustment's `materialized` slot, which
+`record_pointer_adjustment` keeps across re-inference; an ordinary call's
+pointer result is read through its loan-carrying `$ptr_tmp_r` slot
+(`temporary_pointer_deref`) instead. A read of the bound pointer
 variable itself — a copy into another local, an annotated binding, or a call
 argument — is a plain `UseVar` value read of the stored handle, which both
 backends interpret as the pointee's address.

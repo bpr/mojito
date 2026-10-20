@@ -1087,6 +1087,7 @@ impl<'a> Flatten<'a> {
                 // generation domain rooted at the reference's owner.
                 if let Some(mojito_checked::checked::SemanticAdjustment::PointerToPlace {
                     mutable,
+                    ..
                 }) = node.adjustments().iter().find(|adjustment| {
                     matches!(
                         adjustment,
@@ -1217,6 +1218,7 @@ impl<'a> Flatten<'a> {
                     .find_map(|adjustment| match adjustment {
                         mojito_checked::checked::SemanticAdjustment::PointerOriginCast {
                             origin,
+                            ..
                         } => Some(origin),
                         _ => None,
                     });
@@ -1241,7 +1243,7 @@ impl<'a> Flatten<'a> {
                     && node.adjustments().iter().any(|adjustment| {
                         matches!(
                             adjustment,
-                            mojito_checked::checked::SemanticAdjustment::PointerOffset
+                            mojito_checked::checked::SemanticAdjustment::PointerOffset { .. }
                         )
                     })
                 {

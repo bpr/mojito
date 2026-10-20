@@ -2156,9 +2156,12 @@ impl Checker {
                 if let (Some(e), Some(Some((signature, parameter_owners, self_owner)))) =
                     (expr, self.return_ref_contracts.last())
                 {
-                    let actual = match self.returned_reference_parameter_origin(e) {
-                        Some(origin) => origin,
-                        None => self.reference_actual(e)?.origin,
+                    let actual = if let Some(origin) = self.returned_reference_parameter_origin(e) {
+                        origin
+                    } else {
+                        let supplied = self.reference_actual(e)?.origin;
+                        self.returned_pointer_dereference_origin(e, self_owner.as_ref())
+                            .unwrap_or(supplied)
                     };
                     let parameter_origins: Vec<_> = parameter_owners
                         .iter()

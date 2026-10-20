@@ -111,6 +111,20 @@ impl Checker {
                     path: Vec::new(),
                 })
             }
+            // A reference-returning call is a place: the one its result
+            // origin names, so `inner(w).t` projects `w.t`.
+            ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
+                if let Some(mojito_checked::checked::SemanticAdjustment::ReferenceResult {
+                    reference,
+                }) = self
+                    .node_facts
+                    .borrow()
+                    .get(&expr.source_span())
+                    .and_then(|facts| facts.adjustment.as_deref())
+                    && let mojito_types::origin::Origin::Place(place) = &reference.origin =>
+            {
+                Ok(place.clone())
+            }
             // A call result already materialized as the holder of a
             // dereferenced pointer field (`make(xs).src[]`) is its hidden
             // owned slot, exactly like a materialized reference actual.
@@ -454,7 +468,8 @@ impl Checker {
     }
 
     /// Give the holder of a dereferenced pointer a place when it is a call
-    /// result (`make(xs).src[]`, `h.view().src[]`, through any field chain):
+    /// result (`make(xs).src[]`, `h.view().src[]`, `Pointer(to=x)[]`, through
+    /// any field chain):
     /// the view temporary materializes as an anonymous owned binding, so the
     /// dereference projects off real frame storage and the temporary lives as
     /// long as the access. A holder that is already a place, or a call whose
@@ -471,13 +486,29 @@ impl Checker {
                 },
             };
         }
+        // A pointer the expression forms in place (`Pointer(to=x)`, an
+        // origin cast, an offset) loans exactly its checked origin; any other
+        // call's pointer result reads through its own loan-carrying slot.
+        let formed_pointer = || {
+            self.has_fact(&root.source_span(), |facts| {
+                matches!(
+                    facts.adjustment.as_deref(),
+                    Some(
+                        mojito_checked::checked::SemanticAdjustment::PointerToPlace { .. }
+                            | mojito_checked::checked::SemanticAdjustment::PointerOffset { .. }
+                            | mojito_checked::checked::SemanticAdjustment::PointerOriginCast { .. }
+                    )
+                )
+            })
+        };
         if matches!(
             root.kind,
             ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
-        ) && matches!(
-            self.infer(root).as_ref().map(Ty::kind),
-            Ok(TyKind::Struct(..))
-        ) {
+        ) && match self.infer(root).as_ref().map(Ty::kind) {
+            Ok(TyKind::Struct(..)) => true,
+            Ok(TyKind::Pointer { .. }) => formed_pointer(),
+            _ => false,
+        } {
             let _ = self.materialize_borrow_owner(root, mutable);
         }
     }
@@ -527,7 +558,14 @@ impl Checker {
                     materialized,
                     ..
                 }
-                | mojito_checked::checked::SemanticAdjustment::ParamValue { materialized, .. },
+                | mojito_checked::checked::SemanticAdjustment::ParamValue { materialized, .. }
+                | mojito_checked::checked::SemanticAdjustment::PointerToPlace {
+                    materialized, ..
+                }
+                | mojito_checked::checked::SemanticAdjustment::PointerOffset { materialized }
+                | mojito_checked::checked::SemanticAdjustment::PointerOriginCast {
+                    materialized, ..
+                },
             ) => {
                 if let Some(owner) = materialized {
                     Ok(*owner)
@@ -551,6 +589,27 @@ impl Checker {
                 Ok(owner)
             }
         }
+    }
+
+    /// Record a pointer-valued adjustment (`PointerToPlace`, `PointerOffset`,
+    /// `PointerOriginCast`) at `span`, keeping the hidden holder an earlier
+    /// inference of the span materialized for a dereference of it.
+    pub(in crate::checker) fn record_pointer_adjustment(
+        &self,
+        span: SourceSpan,
+        mut adjustment: mojito_checked::checked::SemanticAdjustment,
+    ) {
+        use mojito_checked::checked::SemanticAdjustment;
+        let mut record = self.record_at(span);
+        if let Some(owner) = record.adjustment.as_deref().and_then(|established| {
+            mojito_checked::checked::materialized_borrow_owner(std::slice::from_ref(established))
+        }) && let SemanticAdjustment::PointerToPlace { materialized, .. }
+        | SemanticAdjustment::PointerOffset { materialized }
+        | SemanticAdjustment::PointerOriginCast { materialized, .. } = &mut adjustment
+        {
+            *materialized = Some(owner);
+        }
+        record.adjustment = Some(Box::new(adjustment));
     }
 
     /// The abstract origin a returned reference stays within when it is carried by,
@@ -730,6 +789,43 @@ impl Checker {
                 Some(origin).filter(is_abstract)
             }
             _ => None,
+        }
+    }
+
+    /// The origin a returned pointer dereference (`p[]`, `p[i]`) supplies:
+    /// the pointer's own tracked origin, as upstream's
+    /// `Pointer.__getitem__(self) -> ref[Self.origin] Self.type` returns,
+    /// with `origin_of(self)` read at the enclosing receiver's place. The
+    /// holder's place, which [`Self::reference_actual`] keeps for loans, is
+    /// not the origin a return contract names.
+    pub(in crate::checker) fn returned_pointer_dereference_origin(
+        &self,
+        expr: &Expr,
+        self_place: Option<&mojito_types::origin::OriginPlace>,
+    ) -> Option<mojito_types::origin::Origin> {
+        use mojito_types::origin::{Origin, OriginSeg, PointerOrigin};
+        let pointer = dereferenced_pointer(expr)?;
+        let TyKind::Pointer { origin, .. } = self.infer(pointer).ok()?.into_kind() else {
+            return None;
+        };
+        match origin {
+            PointerOrigin::Place { place, .. } => Some(Origin::Place(place)),
+            PointerOrigin::SelfPlace {
+                interior, subtree, ..
+            } => {
+                let mut place = self_place?.clone();
+                place
+                    .path
+                    .extend(interior.into_iter().map(OriginSeg::Interior));
+                if subtree {
+                    place.path.push(OriginSeg::Subtree);
+                }
+                Some(Origin::Place(place))
+            }
+            PointerOrigin::Param { .. }
+            | PointerOrigin::Static
+            | PointerOrigin::Untracked { .. }
+            | PointerOrigin::UnsafeAny { .. } => None,
         }
     }
 

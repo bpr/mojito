@@ -599,6 +599,7 @@ impl Checker {
                 // origin, recorded by the checker when it typed the cast.
                 if let Some(mojito_checked::checked::SemanticAdjustment::PointerOriginCast {
                     origin,
+                    ..
                 }) = self
                     .node_facts
                     .borrow()
@@ -630,7 +631,7 @@ impl Checker {
                 // `unsafe_offset` preserves provenance: the offset pointer
                 // carries whatever its receiver carried.
                 if let (
-                    Some(mojito_checked::checked::SemanticAdjustment::PointerOffset),
+                    Some(mojito_checked::checked::SemanticAdjustment::PointerOffset { .. }),
                     ExprKind::MethodCall { object, .. },
                 ) = (&adjustment, &expression.kind)
                 {

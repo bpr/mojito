@@ -77,11 +77,7 @@ impl Checker {
                 } else {
                     target
                 };
-                self.record_at(span.clone()).adjustment = Some(Box::new(
-                    mojito_checked::checked::SemanticAdjustment::PointerOriginCast {
-                        origin: target.clone(),
-                    },
-                ));
+                self.record_pointer_origin_cast(span, &target);
                 Ok(TyKind::Pointer {
                     element: elem.clone(),
                     origin: target,
@@ -117,11 +113,7 @@ impl Checker {
                 } else {
                     origin.clone().immutable()
                 };
-                self.record_at(span.clone()).adjustment = Some(Box::new(
-                    mojito_checked::checked::SemanticAdjustment::PointerOriginCast {
-                        origin: target.clone(),
-                    },
-                ));
+                self.record_pointer_origin_cast(span, &target);
                 Ok(TyKind::Pointer {
                     element: elem.clone(),
                     origin: target,
@@ -138,11 +130,7 @@ impl Checker {
                         got: args.len(),
                     });
                 }
-                self.record_at(span.clone()).adjustment = Some(Box::new(
-                    mojito_checked::checked::SemanticAdjustment::PointerOriginCast {
-                        origin: origin.clone(),
-                    },
-                ));
+                self.record_pointer_origin_cast(span, origin);
                 Ok(TyKind::Pointer {
                     element: elem.clone(),
                     origin: origin.clone(),
@@ -172,9 +160,12 @@ impl Checker {
                         context: "argument to 'Pointer.unsafe_offset'".to_string(),
                     });
                 }
-                self.record_at(span.clone()).adjustment = Some(Box::new(
-                    mojito_checked::checked::SemanticAdjustment::PointerOffset,
-                ));
+                self.record_pointer_adjustment(
+                    span.clone(),
+                    mojito_checked::checked::SemanticAdjustment::PointerOffset {
+                        materialized: None,
+                    },
+                );
                 Ok(TyKind::Pointer {
                     element: elem.clone(),
                     origin: origin.clone(),
@@ -650,5 +641,21 @@ impl Checker {
             self.require_error("call through a stored callable field", error)?;
         }
         Ok(ret)
+    }
+
+    /// Record `pointer.unsafe_origin_cast[...]()` (or a cast-shaped rebind)
+    /// at `span`, rebinding to `origin`.
+    fn record_pointer_origin_cast(
+        &self,
+        span: &SourceSpan,
+        origin: &mojito_types::origin::PointerOrigin,
+    ) {
+        self.record_pointer_adjustment(
+            span.clone(),
+            mojito_checked::checked::SemanticAdjustment::PointerOriginCast {
+                origin: origin.clone(),
+                materialized: None,
+            },
+        );
     }
 }

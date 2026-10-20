@@ -335,6 +335,23 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A field of a reference-returning call's result is a place within the
+  call's result origin, as on the pin: `return inner(w).t` over `inner(ref
+  w: W) -> ref[w] W` returns under `ref[w.t]` (or `origin_of(w.t)` over read
+  parameters) and writes through, and `ref[origin_of(w)]` rejects it with
+  "cannot return reference with incompatible origin"
+  (`assets/ok/ref_return_call_result_field.mojo`,
+  `assets/type_error/return_origin_widening_call_result_field.mojo`). A
+  returned pointer dereference names the pointer's own origin, as
+  upstream's `Pointer.__getitem__` returns `ref[Self.origin]`, so `return
+  Pointer(to=self.x).unsafe_origin_cast[origin_of(self)]()[]` (the body of
+  upstream's `Optional._unsafe_get_enum_payload`) returns under `ref[self]`
+  (`assets/ok/ref_return_pointer_dereference.mojo`). The dereference of a
+  pointer formed in place (`Pointer(to=s.x)[]`, an origin cast, an offset)
+  is now a place on both backends: it assigns, passes as a `mut` argument,
+  and binds a `ref` that aliases the pointee, which before silently bound a
+  copy (`assets/ok/pointer_temporary_dereference_place.mojo`). This closes
+  R679 and files R1212–R1215.
 - A struct's `comptime` member reads its own type pack as on the pin:
   `comptime width = Self.Ts.length`, `len(Self.Ts)`, and `comptime First =
   Self.Ts[0]` (an index may read an earlier member, `Self.Ts[Self.width -

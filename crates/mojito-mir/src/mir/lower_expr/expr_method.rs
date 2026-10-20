@@ -658,7 +658,7 @@ impl<'a> Flatten<'a> {
         if node.adjustments.iter().any(|adjustment| {
             matches!(
                 adjustment,
-                mojito_checked::checked::SemanticAdjustment::PointerOffset
+                mojito_checked::checked::SemanticAdjustment::PointerOffset { .. }
             )
         }) {
             let pointer = self.expr(object);

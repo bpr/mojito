@@ -1048,9 +1048,13 @@ impl Checker {
             && let Some(reference) = self.lookup_reference_parameter(name)
         {
             let mutable = origin.statically_mutable() == Some(true);
-            self.record_at(span).adjustment = Some(Box::new(
-                mojito_checked::checked::SemanticAdjustment::PointerToPlace { mutable },
-            ));
+            self.record_pointer_adjustment(
+                span,
+                SemanticAdjustment::PointerToPlace {
+                    mutable,
+                    materialized: None,
+                },
+            );
             return Ok(TyKind::Pointer {
                 element: reference.referent,
                 origin,
@@ -1102,9 +1106,13 @@ impl Checker {
                 }
             };
             let mutable = origin.statically_mutable() == Some(true);
-            self.record_at(span).adjustment = Some(Box::new(
-                mojito_checked::checked::SemanticAdjustment::PointerToPlace { mutable },
-            ));
+            self.record_pointer_adjustment(
+                span,
+                SemanticAdjustment::PointerToPlace {
+                    mutable,
+                    materialized: None,
+                },
+            );
             return Ok(TyKind::Pointer {
                 element: reference.referent,
                 origin,
@@ -1123,9 +1131,13 @@ impl Checker {
                 Some(reference.mutability == mojito_types::origin::Mutability::Mutable);
         }
         let mutable = self.owner_is_mutable(place.root);
-        self.record_at(span).adjustment = Some(Box::new(
-            mojito_checked::checked::SemanticAdjustment::PointerToPlace { mutable },
-        ));
+        self.record_pointer_adjustment(
+            span,
+            SemanticAdjustment::PointerToPlace {
+                mutable,
+                materialized: None,
+            },
+        );
         Ok(TyKind::Pointer {
             element,
             origin: mojito_types::origin::PointerOrigin::Place { place, mutable },

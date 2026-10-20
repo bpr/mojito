@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1212**.
+Next free ID: **R1216**.
 
 ## Ordered Work
 
@@ -1668,9 +1668,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   `print(p[])` prints `a`'s value in Mojito, where the pin prints `b`'s.
   - `pointer_deref_place` (`crates/mojito-mir/src/mir.rs`) substitutes the
     loan's place for the pointer's target.
-  - Probe: `var p = self.data.unsafe_origin_cast[origin_of(self)]()`,
-    then `return rebind[Int](p[0])` under `-> ref[self] Int`, fails with
-    "returned reference escapes storage outside its declared origin".
+  - `temporary_pointer_deref` does the same for a call's pointer result:
+    `print(s.ptr()[])` over `def ptr(ref self) -> Pointer[Int,
+    origin_of(self)]` returning `Pointer(to=self.x).unsafe_origin_cast[
+    origin_of(self)]()` prints `S(x=5)`, where the pin prints `5`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -2488,19 +2489,66 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R679 Returning a field of a call's reference result is rejected**
+- [ ] **R1212 A dereference of a pointer an ordinary call returns is not a
+  place**
 
-  Problem: `def outer(ref w: W) -> ref[w.t] Int: return inner(w).t`, over
-  `def inner(ref w: W) -> ref[w] W`, fails with "reference binding to a
-  non-place expression", where the pin prints the field.
-  - The same holds over read parameters with `origin_of(w.t)`.
-  - Spelled `-> ref[origin_of(w)] Int`, the pin rejects it with "cannot
-    return reference with incompatible origin", and Mojito keeps its own
-    words.
-  - Probe: `return Pointer(to=self.x).unsafe_origin_cast[origin_of(self)]()[]`
-    under `-> ref[self] Int` fails the same way. It is the body of
-    upstream's `Optional._unsafe_get_enum_payload`.
-  - Found while landing R672 (2026-10-13).
+  Problem: `bump(idp(p)[])` over `def idp[o: MutOrigin](v: Pointer[Int, o])
+  -> Pointer[Int, o]` fails with "write-back parameter 0 of 'bump' has no
+  caller place", and `ref r = idp(p)[]` then `r = 11` leaves `x` at `7`,
+  where the pin writes through both.
+  - The `ref` binding copies silently: `origin_place` has no place for the
+    call, so `materialized_reference_actual` materializes the pointee.
+  - A pointer formed in place (`Pointer(to=x)[]`, an origin cast, an
+    offset) takes a hidden holder slot in `materialize_temporary_holder`;
+    an ordinary call's pointer result cannot yet.
+  - Cause: MIR's `$mat_r` slot (`materialize_borrow_slot`) loans what
+    `aggregate_borrows_unmaterialized` finds, which misses the owner loan
+    the read path's `$ptr_tmp_r` slot (`temporary_pointer_deref`)
+    establishes. Materializing the call drops that loan, and
+    `assets/ok/call_result_pointer_deref_keeps_owner.mojo` prints `None`.
+  - Fix: one slot that carries the pointer's loans for reads and places
+    alike.
+  - Probe: `return self.ptr()[]` under `-> ref[self.x] Int` also needs
+    R1213.
+  - Found while landing R679 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1213 A method's pointer result over a field of `self` is rejected
+  at every call**
+
+  Problem: `def ptr(ref self) -> Pointer[Int, origin_of(self.x)]` then
+  `var p = s.ptr()` fails with "Undefined variable 'self'", where the pin
+  prints `p[]`.
+  - `-> Pointer[Int, origin_of(self)]` runs.
+  - Cause: `PointerOrigin::SelfPlace` carries interior tags but no field
+    path, so `pointer_origin_expr`
+    (`crates/mojito-checker/src/checker/type_resolution.rs`) resolves
+    `origin_of(self.x)` as a concrete place, which a call site cannot
+    rebase onto its receiver.
+  - Found while landing R679 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1214 Assigning to a method's reference result over heap storage
+  loses the write**
+
+  Problem: `s.get() = 7` over `def get(mut self) -> ref[self] Int`, whose
+  body returns `p[0]` from `var p =
+  self.data.unsafe_origin_cast[origin_of(self)]()` (a heap pointer field),
+  leaves the heap cell at `42`, where the pin prints `7`.
+  - `ref r = s.get()` then `r = 7` writes through, as does `at(p) = 7` over
+    a free function returning `q[0]` from a local copy of a heap pointer.
+  - The same loss happens under `-> ref[MutUntrackedOrigin] Int` with `var
+    p = self.data`.
+  - Likely cause: the returned handle points into the callee's local
+    pointer slot;
+    `canonical_reference_parts`
+    (`crates/mojito-vm/src/backend/vm/references.rs`) stops at a pointer
+    value rather than re-rooting at its pointee, and the
+    call-as-assignment-target path writes through it after the frame is
+    gone.
+  - Found while landing R679 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -8180,6 +8228,25 @@ retained on purpose and re-probed rather than fixed; they are listed in
     contract, and Pliron rejects a raising destructor at the drop.
   - Reject the declaration at the check, with the pin's message.
   - Found while landing R1043 (2026-10-16).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1215 `unsafe_origin_cast` accepts a target of different
+  mutability**
+
+  Problem: `self.data.unsafe_origin_cast[origin_of(self)]()` under `ref
+  self`, over a `Pointer[Int, MutUntrackedOrigin]` field, is accepted,
+  where the pin rejects it: "value passed to 'target_origin' cannot be
+  converted from 'Origin[mut=self_is_mut]' to 'MutOrigin'".
+  - Upstream declares `unsafe_origin_cast[target_origin: Origin[mut=mut]]`:
+    the target keeps the pointer's own mutability, and `unsafe_mut_cast`
+    is the spelling that changes it.
+  - Mojito's `unsafe_origin_cast` arm
+    (`crates/mojito-checker/src/checker/method_calls/builtin_types.rs`)
+    weakens a mutable target to an immutable pointer's capability instead
+    of matching the two.
+  - The same body under `mut self` is accepted by both.
+  - Found while landing R679 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

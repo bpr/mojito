@@ -670,6 +670,7 @@ assets/ok/pointer_subscript_reads_in_place.mojo	-	ineligible	no-scalar-entry-sha
 assets/ok/pointer_take_pointee_tracked.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_temp_argument_loan.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_temp_argument_loan_return.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_temporary_dereference_place.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_to_owner_twice.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_to_place.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_to_ref_binding.mojo	-	ineligible	no-scalar-entry-shape
@@ -702,6 +703,8 @@ assets/ok/ref_binding_temporary_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_result_field_value_copy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_result_through_read_param.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ref_return_call_result_field.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ref_return_pointer_dereference.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_argument_read_at_call_setup.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_call_assignment_target.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_carrier_collection.mojo	-	ineligible	no-scalar-entry-shape
