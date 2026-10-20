@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1221**.
+Next free ID: **R1223**.
 
 ## Ordered Work
 
@@ -1813,6 +1813,27 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1221 A `ref` binding over an owned subscript result fails MIR
+  verification**
+
+  Problem: `ref r = ns[0]`, over a `__getitem__` that returns an owned
+  `String`, fails with "dynamic element projection requires checked
+  indexed storage, got Names"; the pin binds the materialized result and
+  prints `n0`.
+  - The `RefDecl` arm (`checker/statements.rs`) treats a syntactic index
+    as a place, rather than materializing the call's owned result as
+    `materialized_reference_actual` does for other calls.
+  - Probe: `conformance/probes/ref_binding_owned_subscript_result.mojo`.
+  - Probe: the same over an `Int` result (`ref q = t[1]`) fails the same
+    way, where the pin rejects it with "value of type 'Int' doesn't have a
+    memory origin in 'ref' binding", the rule R1145 brings to the plain
+    `ref` declaration.
+  - A sequence pattern's owned element read avoids it by reading into a
+    hidden `var`.
+  - Found while planning R1135 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1160 An element store while a contiguous `List` slice is live is
   rejected**
 
@@ -1839,6 +1860,14 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     nested `def cap(x) {imm kk}` called by name beside `r`, whose `imm`
     capture is a read parameter of the lifted body; the pin runs all
     three (`conformance/probes/read_beside_live_ref_binding.mojo`).
+  - Probe: a second element reference beside a live one (`ref a = t[0];
+    ref b = t[1]`), a temporary `match` subject's two element bindings
+    (`match (1, 2): case (p, q)` and `case [p, q]`), a reference or write
+    taken through the live binding itself (`ref m = a[1]; m = 20; a[0] =
+    5`, `ref d = c; d.append(4); c.append(5)`), and a `match` case with a
+    `ref` binding reading two elements through the hidden subject (`case
+    (1, ref m, var z)`, `case [1, ref m, var z]`); the pin runs all
+    (`conformance/probes/access_beside_live_ref_binding.mojo`).
   - Found while landing R1037 (2026-10-16).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -2663,27 +2692,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1135 Fixed-length sequence patterns test the length first**
-
-  Problem: `case [a, b]` and `case []` are rejected ("sequence patterns"),
-  where the pin tests `len(subject)` and then subscripts each element over
-  any `Sized` subscriptable subject.
-  - The pattern compiles to one length test (the subject's `__len__`
-    against the pattern's arity) that dominates every element access,
-    then each element pattern over the subject's `__getitem__(i)` result,
-    as a tuple pattern compiles over the tuple accessor.
-  - A wrong length advances to the next case. An error a getter raises
-    propagates.
-  - The subject's bounds decide: a generic subject uses its declared
-    `Sized` and subscript requirements, not duck typing. A subject
-    missing either rejects.
-  - Stop: empty, singleton, and nested patterns run over `List` and a
-    custom `Sized` collection, and a wrong length subscripts nothing.
-  - Probe: `conformance/probes/match_sequence_custom_sized.mojo`;
-    `if_case_and_while_case.mojo` keeps its `[a, b]` part for this entry.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1136 Sequence destructuring assigns after a raising length check**
 
   Problem: `var [a, b] = values` parses but is rejected, where the pin
@@ -2716,7 +2724,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     subject fails the match and raises in assignment, mutating or moving
     the source while a remainder borrows it follows the pin, and a
     remainder cannot escape a dead temporary.
-  - Probe: `conformance/probes/destructure_starred_slice.mojo`.
+  - Probe: `conformance/probes/destructure_starred_slice.mojo`, and the
+    starred `[_, *_, 12]` half of
+    `conformance/probes/match_sequence_custom_sized.mojo`.
   - Depends on R1136.
   - Model: Fable, Not Planned.
 
@@ -2842,6 +2852,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Named analysis tests pin the cap and the overflow check.
   - Depends on R1133.
   - Model: Fable, Not Planned.
+
+- [ ] **R1222 `== literal` in a case pattern does not warn that `==` is
+  redundant**
+
+  Problem: `case == 2:` and `case 1 | == 3:` run without a diagnostic,
+  where the pin warns "'==' is redundant when matching a literal; remove
+  it" at the `==`.
+  - Upstream's `UnaryOpNode::buildCheckList` (`ExprPatterns.cpp`) warns
+    when the operand, parentheses stripped, is a `Bool`, integer, float,
+    or string literal. `== k` does not warn.
+  - The warning applies at any depth: inside a tuple, a sequence element,
+    or a `|` alternative.
+  - The lever is `compile_pattern`'s `Equal` arm (`checker/patterns.rs`),
+    recording a `Warning` as the coverage warnings do.
+  - Add the cases to `assets/ok/match_coverage_warnings.mojo` or a sibling
+    fixture that pins warnings.
+  - Found while planning R1135 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1139 `comptime match` folds in the parameter conditional chain**
 

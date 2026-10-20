@@ -11,11 +11,19 @@
 //! `var name = $match<id>` (the implicit-copy rule), a `ref` or `as` binding
 //! is `ref name = $match<id>` with the subject's own capability, and a guard
 //! is a `Bool` condition checked once the case's bindings exist.
+//!
+//! A sequence pattern `[p0, p1, ...]` over a `Sized` subject first tests the
+//! length through upstream's library function
+//! (`list_length_matches($match<id>, arity, True)`), then compiles each
+//! element's pattern over `$match<id>[i]`. An element is read once per case
+//! (and per `|` alternative), at the first command that needs it, into a
+//! hidden `$elem<id>`: `ref` over a reference result, `var` over an owned
+//! one, which a `var` binding then takes by transfer. `_` reads nothing.
 
 use super::with_stmt::Synth;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_ast::ast::{BindingMode, MatchCase, MatchPattern, MatchPatternKind};
+use mojito_ast::ast::{BindingMode, MatchCase, MatchPattern, MatchPatternKind, SequencePattern};
 use mojito_checked::checked::{MatchPlan, PlannedCommand, Warning};
 use mojito_common::literal::IntLiteral;
 
@@ -39,13 +47,7 @@ impl Checker {
         let checked = self
             .anchor_subject(&synth, &name, subject, read_only, ret, in_loop)
             .and_then(|(anchor, ty, temporary)| {
-                let subject = MatchSubject {
-                    synth: &synth,
-                    name: &name,
-                    ty,
-                    temporary,
-                    path: Vec::new(),
-                };
+                let subject = MatchSubject::root(&synth, &name, ty, temporary);
                 self.check_match_cases(stmt, &subject, anchor, cases, ret, in_loop)
             });
         self.pop_scope();
@@ -72,13 +74,7 @@ impl Checker {
         let checked = self
             .anchor_subject(&synth, &name, value, read_only, ret, in_loop)
             .and_then(|(anchor, ty, temporary)| {
-                let subject = MatchSubject {
-                    synth: &synth,
-                    name: &name,
-                    ty,
-                    temporary,
-                    path: Vec::new(),
-                };
+                let subject = MatchSubject::root(&synth, &name, ty, temporary);
                 let mut commands = Commands::default();
                 self.compile_pattern(pattern, &subject, Join::None, &mut commands)?;
                 self.check_block(body, ret, in_loop)?;
@@ -177,7 +173,12 @@ impl Checker {
                 // fall-through.)
                 let closing = plan.cases.last_mut().expect("the case was pushed");
                 if closing.iter().all(droppable_test) {
-                    closing.retain(|command| matches!(command, PlannedCommand::Bind(_)));
+                    closing.retain(|command| {
+                        matches!(
+                            command,
+                            PlannedCommand::Bind(_) | PlannedCommand::PathValue(_)
+                        )
+                    });
                 } else {
                     plan.concluded = false;
                 }
@@ -247,7 +248,8 @@ impl Checker {
     /// its mode (through `join` inside a `|` alternative), `as` binds it
     /// once its pattern has matched, a tuple or struct pattern compiles
     /// each element's or field's pattern over that projection of the
-    /// subject, in order, and `|` compiles its alternatives.
+    /// subject, in order, a sequence pattern tests the length and then
+    /// compiles each element's pattern, and `|` compiles its alternatives.
     fn compile_pattern(
         &mut self,
         pattern: &MatchPattern,
@@ -280,6 +282,7 @@ impl Checker {
                 )
             }
             MatchPatternKind::Literal(value) | MatchPatternKind::Equal(value) => {
+                let subject = &self.materialize(subject, commands)?;
                 let test = subject.synth.expr(ExprKind::Infix(
                     InfixOp::Eq,
                     Box::new(subject.value()),
@@ -303,8 +306,8 @@ impl Checker {
                 self.compile_or_pattern(alternatives, subject, join, commands)
             }
             MatchPatternKind::Head(_) => Err(TypeError::Unsupported("enum case patterns".into())),
-            MatchPatternKind::Sequence(_) => {
-                Err(TypeError::Unsupported("sequence patterns".into()))
+            MatchPatternKind::Sequence(items) => {
+                self.compile_sequence_pattern(items, subject, join, commands)
             }
         }
     }
@@ -323,7 +326,12 @@ impl Checker {
         let mut first: Option<Vec<String>> = None;
         let mut programs = Vec::new();
         for alternative in alternatives {
-            let mut program = Commands::default();
+            // An alternative re-reads an element the commands before the
+            // `|` did not.
+            let mut program = Commands {
+                reads: commands.reads.clone(),
+                ..Commands::default()
+            };
             let mut bound = Vec::new();
             let inner = if matches!(join, Join::Assign(_)) || first.is_some() {
                 Join::Assign(&mut bound)
@@ -363,6 +371,11 @@ impl Checker {
         mut join: Join<'_>,
         commands: &mut Commands,
     ) -> Result<(), TypeError> {
+        if subject.element.is_some() {
+            return Err(TypeError::MatchPattern(format!(
+                "expected a tuple type to match against, got {UNTYPED_ELEMENT}"
+            )));
+        }
         let Some(elements) = tuple_elements(&subject.ty) else {
             return Err(TypeError::MatchPattern(format!(
                 "expected a tuple type to match against, got '{}'",
@@ -385,6 +398,148 @@ impl Checker {
         Ok(())
     }
 
+    /// `[p0, p1, ...]` over a `Sized` subject: one length test, upstream's
+    /// `list_length_matches` against the pattern's arity, then each
+    /// element's pattern over `subject[i]`, in element order, each element
+    /// read at the first command that needs it. The subject's declared
+    /// conformance decides, not its methods; the getter is the subscript's
+    /// own selection.
+    fn compile_sequence_pattern(
+        &mut self,
+        items: &[SequencePattern],
+        subject: &MatchSubject,
+        mut join: Join<'_>,
+        commands: &mut Commands,
+    ) -> Result<(), TypeError> {
+        let items = items
+            .iter()
+            .map(|item| match item {
+                SequencePattern::Element(pattern) => Ok(pattern),
+                SequencePattern::Star { .. } => {
+                    Err(TypeError::Unsupported("starred sequence patterns".into()))
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if subject.element.is_some() {
+            return Err(TypeError::MatchPattern(format!(
+                "{UNTYPED_ELEMENT} does not conform to 'Sized'"
+            )));
+        }
+        if matches!(
+            subject.ty.kind(),
+            TyKind::Int | TyKind::UInt | TyKind::Float64 | TyKind::Simd { .. }
+        ) {
+            return Err(TypeError::Unsupported(format!(
+                "a sequence pattern over '{}'",
+                subject.ty
+            )));
+        }
+        if !self.conforms_to(&subject.ty, "Sized") {
+            return Err(TypeError::MatchPattern(
+                if matches!(subject.ty.kind(), TyKind::Param { .. }) {
+                    format!(
+                        "cannot prove that value of type '{}' conforms to 'Sized'",
+                        subject.ty
+                    )
+                } else {
+                    format!("value of type '{}' does not conform to 'Sized'", subject.ty)
+                },
+            ));
+        }
+        let length_matches = builtin_stub("list_length_matches");
+        if self.lookup(&length_matches).is_none() {
+            return Err(TypeError::Unsupported(format!(
+                "a sequence pattern needs the bundled '{STUBS_MODULE}' module"
+            )));
+        }
+        let synth = subject.synth;
+        let arity = synth.expr(ExprKind::Int(IntLiteral::from(
+            u64::try_from(items.len()).unwrap_or(u64::MAX),
+        )));
+        let test = synth.expr(ExprKind::Call {
+            name: length_matches,
+            param_args: Vec::new(),
+            args: vec![subject.value(), arity, synth.expr(ExprKind::Bool(true))],
+            kwargs: Vec::new(),
+        });
+        self.expect_bool(&test, "case pattern")?;
+        commands.tests.push(PlannedCommand::ListLength(test));
+        for (index, item) in items.into_iter().enumerate() {
+            let child = subject.sequence_element(
+                index,
+                ElementRead {
+                    by_reference: binds_by_reference(item),
+                    moves: root_bindings(item) <= 1,
+                },
+            );
+            self.compile_pattern(item, &child, join.reborrow(), commands)?;
+        }
+        Ok(())
+    }
+
+    /// The subject a test or binding reads: `subject` itself, or, for a
+    /// sequence element, the hidden `$elem<id>` holding its read — made by
+    /// this case's (or `|` alternative's) first command that needs it, as
+    /// `ref $elem<id> = parent[i]` over a reference result (to read unless
+    /// the element binds by reference) and `var $elem<id> = parent[i]` over
+    /// an owned one, and reused by every later command.
+    fn materialize<'s>(
+        &mut self,
+        subject: &MatchSubject<'s>,
+        commands: &mut Commands,
+    ) -> Result<MatchSubject<'s>, TypeError> {
+        let Some(element) = subject.element else {
+            return Ok(subject.clone());
+        };
+        let read = if let Some(read) = commands.reads.get(&subject.path) {
+            read.clone()
+        } else {
+            let value = subject.value();
+            let value_span = value.source_span();
+            let name = format!("$elem{}", value.syntax_id.0);
+            self.infer(&value)?;
+            let reference = self.infer_reference_value(&value).is_some();
+            let declaration = subject.synth.stmt(if reference {
+                StmtKind::RefDecl {
+                    name: name.clone(),
+                    value,
+                }
+            } else {
+                StmtKind::VarDecl {
+                    name: name.clone(),
+                    ty: None,
+                    value,
+                }
+            });
+            self.check_stmt(&declaration, None, false)?;
+            if reference && !element.by_reference {
+                self.make_reference_immutable(&name, &declaration, value_span);
+            }
+            let ty = self.lookup(&name).cloned().ok_or_else(|| {
+                TypeError::InvariantViolation("a sequence element read was not declared".into())
+            })?;
+            commands
+                .tests
+                .push(PlannedCommand::PathValue(Box::new(declaration)));
+            let read = Read {
+                name,
+                ty: dereferenced(ty),
+                owned: !reference,
+            };
+            commands.reads.insert(subject.path.clone(), read.clone());
+            read
+        };
+        Ok(MatchSubject {
+            synth: subject.synth,
+            name: read.name,
+            ty: read.ty,
+            temporary: false,
+            owned: read.owned.then_some(element.moves),
+            element: None,
+            path: Vec::new(),
+        })
+    }
+
     /// `Name(field=p, ...)` over a subject of the nominal type `Name`: no
     /// positional argument, then the field patterns. The head names the
     /// type; it runs no constructor.
@@ -400,6 +555,11 @@ impl Checker {
         let (ExprKind::Identifier(name) | ExprKind::TypeApply { name, .. }) = &head.kind else {
             return Err(TypeError::Unsupported("enum case patterns".into()));
         };
+        if subject.element.is_some() {
+            return Err(TypeError::MatchPattern(format!(
+                "cannot match {UNTYPED_ELEMENT} against pattern type '{name}'"
+            )));
+        }
         if !args.is_empty() {
             return Err(TypeError::MatchPattern(
                 "struct patterns do not support positional or unpacked arguments".into(),
@@ -430,6 +590,11 @@ impl Checker {
         mut join: Join<'_>,
         commands: &mut Commands,
     ) -> Result<(), TypeError> {
+        if subject.element.is_some() {
+            return Err(TypeError::MatchPattern(format!(
+                "cannot match field patterns against {UNTYPED_ELEMENT}"
+            )));
+        }
         let mut seen = HashSet::new();
         for (field, pattern) in fields {
             if !seen.insert(field.as_str()) {
@@ -452,9 +617,10 @@ impl Checker {
 
     /// Bind `name` to the subject: a bare name is an immutable reference
     /// whatever the subject's capability, `ref` (and `as`) a reference with
-    /// the subject's own, `var` a copy by the implicit-copy rule. Inside a
-    /// `|` alternative only `var` binds: the first alternative declares,
-    /// a later one assigns the same binding a value of the same type.
+    /// the subject's own, `var` a copy by the implicit-copy rule, or the
+    /// transfer of an owned element read only it binds. Inside a `|`
+    /// alternative only `var` binds: the first alternative declares, a
+    /// later one assigns the same binding a value of the same type.
     fn bind_subject(
         &mut self,
         name: &str,
@@ -464,6 +630,7 @@ impl Checker {
         join: Join<'_>,
         commands: &mut Commands,
     ) -> Result<(), TypeError> {
+        let subject = &self.materialize(subject, commands)?;
         match join {
             Join::None => {}
             Join::Declare(_) | Join::Assign(_) if binding != Binding::Var => {
@@ -480,7 +647,7 @@ impl Checker {
                          in one alternative but not the other"
                     )));
                 };
-                let value = subject.value();
+                let value = subject.bound_value();
                 let found = dereferenced(self.infer(&value)?);
                 if found != declared {
                     return Err(TypeError::MatchPattern(format!(
@@ -500,10 +667,15 @@ impl Checker {
                 return Ok(());
             }
         }
-        if binding == Binding::Ref
-            && subject.temporary
-            && self.is_trivial_register_passable(&subject.ty)
-        {
+        // An owned element is an rvalue, which neither `ref` nor `as` may
+        // name when it is register-passable; a root temporary has its
+        // anchor's slot, which `as` may name.
+        let rvalue = match binding {
+            Binding::Ref => subject.temporary || subject.owned.is_some(),
+            Binding::As => subject.owned.is_some(),
+            Binding::Bare | Binding::Var => false,
+        };
+        if rvalue && self.is_trivial_register_passable(&subject.ty) {
             return Err(TypeError::NoMemoryOrigin {
                 ty: subject.ty.to_string(),
                 context: "'ref' binding".into(),
@@ -515,7 +687,7 @@ impl Checker {
             Binding::Var => StmtKind::VarDecl {
                 name: name.to_string(),
                 ty: None,
-                value,
+                value: subject.bound_value(),
             },
             Binding::Bare | Binding::Ref | Binding::As => StmtKind::RefDecl {
                 name: name.to_string(),
@@ -555,27 +727,50 @@ pub fn irrefutable(pattern: &MatchPattern) -> bool {
 }
 
 /// The subject a pattern applies to: the hidden `$match<id>` reference the
-/// anchor declared, projected by `path` to the element or field the
-/// pattern's position names, with the node factory that spells it.
+/// anchor declared (or the hidden `$elem<id>` a sequence element was read
+/// into), projected by `path` to the element or field the pattern's
+/// position names, with the node factory that spells it.
+#[derive(Clone)]
 struct MatchSubject<'a> {
     synth: &'a Synth,
-    name: &'a str,
-    /// The projection's type, any reference stripped.
+    name: String,
+    /// The projection's type, any reference stripped; unknown for an
+    /// unread sequence element, as upstream's list element path is
+    /// untyped.
     ty: Ty,
     /// Whether the whole subject is a temporary the anchor materializes
     /// rather than a place it borrows; a projection never is.
     temporary: bool,
+    /// For an owned sequence element read, an rvalue: whether a `var`
+    /// binding takes it by transfer, being the only binding of it.
+    owned: Option<bool>,
+    /// For an unread sequence element (the path's last step), how its
+    /// read is made.
+    element: Option<ElementRead>,
     path: Vec<Step>,
 }
 
-impl MatchSubject<'_> {
+impl<'a> MatchSubject<'a> {
+    /// The whole subject, the hidden `name` the anchor declared.
+    fn root(synth: &'a Synth, name: &str, ty: Ty, temporary: bool) -> Self {
+        MatchSubject {
+            synth,
+            name: name.to_string(),
+            ty,
+            temporary,
+            owned: None,
+            element: None,
+            path: Vec::new(),
+        }
+    }
+
     /// The expression reading this subject: `$match<id>` under the path's
     /// subscripts and field selections.
     fn value(&self) -> Expr {
-        let mut value = self.synth.identifier(self.name);
+        let mut value = self.synth.identifier(&self.name);
         for step in &self.path {
             value = match step {
-                Step::Element(index) => {
+                Step::Element(index) | Step::SequenceElement(index) => {
                     let index = self.synth.expr(ExprKind::Int(IntLiteral::from(
                         u64::try_from(*index).unwrap_or(u64::MAX),
                     )));
@@ -593,27 +788,52 @@ impl MatchSubject<'_> {
         value
     }
 
+    /// The value a `var` binding or a later `|` alternative's assignment
+    /// takes: the subject read, transferred out of an owned element read
+    /// it alone binds.
+    fn bound_value(&self) -> Expr {
+        let value = self.value();
+        if self.owned == Some(true) {
+            self.synth.expr(ExprKind::Transfer(Box::new(value)))
+        } else {
+            value
+        }
+    }
+
     /// The subject one `step` below this one, of type `ty`.
     fn project(&self, step: Step, ty: Ty) -> Self {
         let mut path = self.path.clone();
         path.push(step);
         MatchSubject {
             synth: self.synth,
-            name: self.name,
+            name: self.name.clone(),
             ty,
             temporary: false,
+            owned: None,
+            element: None,
             path,
+        }
+    }
+
+    /// The unread element `index` of this sequence subject, read as
+    /// `element` says.
+    fn sequence_element(&self, index: usize, element: ElementRead) -> Self {
+        MatchSubject {
+            element: Some(element),
+            ..self.project(Step::SequenceElement(index), Ty::error())
         }
     }
 }
 
-/// A case's commands as they are collected: its tests, then its bindings,
-/// as upstream runs every test of a pattern before any binding
-/// materializes (a failed alternative copies nothing).
+/// A case's commands as they are collected: its tests and element reads,
+/// then its bindings, as upstream runs every test of a pattern before any
+/// binding materializes (a failed alternative copies nothing), with the
+/// element reads made so far, by path, as upstream's per-path values.
 #[derive(Default)]
 struct Commands {
     tests: Vec<PlannedCommand>,
     binds: Vec<PlannedCommand>,
+    reads: HashMap<Vec<Step>, Read>,
 }
 
 impl Commands {
@@ -671,12 +891,35 @@ impl Join<'_> {
     }
 }
 
-/// One projection of a subject: a tuple element or a struct field.
+/// How an unread sequence element is read: by a reference with the
+/// subject's capability when its pattern binds by reference, and, when
+/// owned, moved into a `var` binding when its pattern binds it once.
+#[derive(Clone, Copy)]
+struct ElementRead {
+    by_reference: bool,
+    moves: bool,
+}
+
+/// One element read a case made: the hidden name holding it, its type,
+/// and whether it is an owned value rather than a reference.
 #[derive(Clone)]
+struct Read {
+    name: String,
+    ty: Ty,
+    owned: bool,
+}
+
+/// One projection of a subject: a tuple element, a struct field, or a
+/// sequence element.
+#[derive(Clone, PartialEq, Eq, Hash)]
 enum Step {
     Element(usize),
     Field(String),
+    SequenceElement(usize),
 }
+
+/// What an unread sequence element's type is spelled as in a rejection.
+const UNTYPED_ELEMENT: &str = "an untyped sequence element";
 
 /// `ty` with a reference stripped to its referent.
 fn dereferenced(ty: Ty) -> Ty {
@@ -705,8 +948,8 @@ fn binds_by_reference(pattern: &MatchPattern) -> bool {
             .iter()
             .any(|(_, pattern)| binds_by_reference(pattern)),
         MatchPatternKind::Sequence(items) => items.iter().any(|item| match item {
-            mojito_ast::ast::SequencePattern::Element(pattern) => binds_by_reference(pattern),
-            mojito_ast::ast::SequencePattern::Star { .. } => false,
+            SequencePattern::Element(pattern) => binds_by_reference(pattern),
+            SequencePattern::Star { .. } => false,
         }),
         MatchPatternKind::Wildcard
         | MatchPatternKind::Literal(_)
@@ -715,12 +958,28 @@ fn binds_by_reference(pattern: &MatchPattern) -> bool {
     }
 }
 
+/// How many names `pattern` binds to its subject itself in any one
+/// alternative: a name, an `as` and its pattern's, the most of a `|`'s
+/// alternatives.
+fn root_bindings(pattern: &MatchPattern) -> usize {
+    match &pattern.kind {
+        MatchPatternKind::Bind { .. } => 1,
+        MatchPatternKind::As { pattern, .. } => 1 + root_bindings(pattern),
+        MatchPatternKind::Or(alternatives) => {
+            alternatives.iter().map(root_bindings).max().unwrap_or(0)
+        }
+        _ => 0,
+    }
+}
+
 /// Whether `command` may be dropped from a case whose tests the coverage
 /// proof made redundant: a test, or alternatives that only test.
 fn droppable_test(command: &PlannedCommand) -> bool {
     match command {
-        PlannedCommand::Equal(_) => true,
-        PlannedCommand::Bind(_) => true,
+        PlannedCommand::Equal(_)
+        | PlannedCommand::ListLength(_)
+        | PlannedCommand::Bind(_)
+        | PlannedCommand::PathValue(_) => true,
         PlannedCommand::Alternatives(alternatives) => alternatives
             .iter()
             .flatten()

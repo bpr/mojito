@@ -2611,10 +2611,13 @@ first as upstream's parser does, then one arm region per condition and an
 else region, each arm that completes ended by `Terminator::ComptimeYield`.
 A `match` is an `HirInstr::Match` (`hlcf.match`): one region per case,
 holding its tests as nested `If` ops whose failing arms end in
-`Terminator::MatchNext`, its bindings, its guard, and its body, ended by
-`Terminator::MatchComplete`, then an else region ended by `Yield` for the
-fall-through when no case matched (enum-case and sequence patterns land by
-roadmap entry, R1132–R1140).
+`Terminator::MatchNext` (a sequence pattern's `ListLength` test, the call
+to `std.builtin._stubs.list_length_matches`, among them), the element
+reads (`PathValue`, each a hidden `$elem<id>` declaration placed at the
+first command that needs it), its bindings, its guard, and its body, ended
+by `Terminator::MatchComplete`, then an else region ended by `Yield` for
+the fall-through when no case matched (enum-case and starred sequence
+patterns land by roadmap entry, R1132–R1140).
 No HIR terminator jumps between blocks, so `Cfg::g` holds no edge. HIR
 lowers only a body's live statements (`CheckedTables::live_statements`):
 the statements after a `return`, `break`, `continue`, or `raise` are erased

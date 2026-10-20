@@ -12,7 +12,9 @@
 #   last 12
 #
 # Observed 2026-10-17 against `Mojo 1.2.0.dev2026101705 (46f49943)`.
-# Mojito: rejects sequence patterns until R1135 lands.
+# Mojito: runs the fixed-length first `match` (as
+# `assets/ok/match_sequence_fixed_length.mojo` does); rejects the starred
+# `[_, *_, 12]` until R1137 lands.
 # When Mojito runs it, promote this file to `assets/ok/` with its manifest rows.
 #
 # Run:    mojo run match_sequence_custom_sized.mojo

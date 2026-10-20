@@ -137,7 +137,18 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   each element over `subject[i]`; a struct pattern
   (`compile_struct_pattern`) checks the head's nominal type and, with a
   contextual `{field=p}` (`compile_field_patterns`), compiles each field
-  over `subject.field`; a `|` pattern (`compile_or_pattern`) compiles each
+  over `subject.field`; a sequence pattern (`compile_sequence_pattern`)
+  gates the subject on its declared `Sized` conformance, pushes one
+  `PlannedCommand::ListLength` test (the call to
+  `std.builtin._stubs.list_length_matches`, named by `builtin_stub`), and
+  compiles each element's pattern over an unread element subject, which
+  `materialize` reads at the first command that needs it into a hidden
+  `$elem<id>` (`PlannedCommand::PathValue`: `ref` over a reference
+  result, `var` over an owned one, moved into a lone `var` binding),
+  remembered per path in `Commands::reads` (an alternative starts from a
+  clone, so it re-reads what the commands before the `|` did not); an
+  unread element rejects typed patterns, as upstream's untyped list
+  element path does; a `|` pattern (`compile_or_pattern`) compiles each
   alternative as a program of its own under a `Join` (the first alternative
   declares its `var` bindings, the later ones assign them, names and types
   compared) — orders every test before every binding (`Commands`), checks
@@ -145,7 +156,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   statement, per-case `PlannedCommand`s, `Alternatives` nested) at the
   statement's facts; `MatchSubject` is the projected subject (the hidden
   name, a path of `Step`s, the projection's type, whether the whole
-  subject is a temporary) and `value()` spells it; `Binding` is a name's
+  subject is a temporary, whether it is an owned element read, and how an
+  unread element is read) and `value()` spells it; `Binding` is a name's
   mode, `as` included; `irrefutable` (re-exported as `irrefutable_pattern`)
   decides whether a pattern is irrefutable; `Coverage` over a `Space`
   (`Bool`, a tuple product, or open) accounts for each case, yields the
@@ -154,9 +166,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   and proves a match concluded (`MatchPlan::concluded`, which
   `Checker::match_concluded` answers to the return and field-initialization
   analyses and `explicit_destroy` reads from the fact); the closing case's
-  redundant tests are dropped so no path falls through. HIR's
-  `case_commands` lowers `Alternatives` to an inner `hlcf.match` whose else
-  region advances the enclosing case. `check_case_condition` checks an
+  redundant tests are dropped so no path falls through. The checked
+  program carries the commands as `CheckedCommand`s
+  (`crates/mojito-checked/src/checked.rs`: `Equal`, `ListLength`, `Bind`,
+  `PathValue`, `Alternatives`; `statements()` lists the reads and
+  bindings). HIR's `case_commands` lowers a test (`Equal`, `ListLength`)
+  to a conditional whose else advances, a read or binding to its
+  statement, and `Alternatives` to an inner `hlcf.match` whose else region
+  advances the enclosing case. `check_case_condition` checks an
   `if`/`elif`/`while` `case pattern = value` branch the same way (the
   anchor by `anchor_subject`, the plan recorded at the pattern, the body in
   the bindings' scope); `CheckedCondition::Case` carries the anchor and
@@ -1365,8 +1382,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   types the spelled `iterable.__iter__()` call and the three stub calls
   (`comptime_iterator_protocol`, the stubs in a `Checker::probe` once per
   iterator type, `Checker::comptime_iterator_elements`, named by
-  `paramfor_stub` over `std.builtin._stubs`, the bundled
-  `stdlib/std/builtin/_stubs.mojo` the linker loads ahead of the prelude),
+  `builtin_stub` (`checker.rs`) over `std.builtin._stubs`, the bundled
+  `stdlib/std/builtin/_stubs.mojo` the linker loads ahead of the prelude,
+  which also holds the list-pattern `list_length_matches` and
+  `check_list_length`),
   admits an iterable that reads compile-time bindings alone
   (`reads_compile_time_alone`, where a collector's `args.__len__()` is its
   pack's length, `pack_length_receivers`), records the call as the

@@ -6,13 +6,6 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-/// The linked name of the `std.builtin._stubs` function `name`
-/// (`paramfor_has_next`, `paramfor_next_iter`, `paramfor_next_value`),
-/// which no user spelling reaches.
-pub fn paramfor_stub(name: &str) -> String {
-    mojito_module::module::linked_item_name(STUBS_MODULE, name)
-}
-
 impl Checker {
     /// Check a `comptime for` over `iter` by upstream's iterator protocol:
     /// the loop's binder is the iterator `iter.__iter__()` starts, and the
@@ -40,7 +33,7 @@ impl Checker {
         let iterator_shape = self.param_context.type_shape(iterator_ty.clone());
         let stub = |name: &str, meta| {
             self.param_context.apply(
-                &paramfor_stub(name),
+                &builtin_stub(name),
                 &[iterator_shape.clone(), binder.clone()],
                 meta,
             )
@@ -155,7 +148,7 @@ impl Checker {
         {
             return Ok((call, iterator_ty, element_ty));
         }
-        let entry = paramfor_stub("paramfor_next_value");
+        let entry = builtin_stub("paramfor_next_value");
         if self.lookup(&entry).is_none() {
             return Err(TypeError::Unsupported(format!(
                 "a 'comptime for' over '{ty}' needs the bundled '{STUBS_MODULE}' module"
@@ -175,7 +168,7 @@ impl Checker {
                         source,
                         u32::try_from(ordinal).unwrap_or(u32::MAX).saturating_add(1),
                         ExprKind::Call {
-                            name: paramfor_stub(name),
+                            name: builtin_stub(name),
                             param_args: Vec::new(),
                             args: vec![call.clone()],
                             kwargs: Vec::new(),
@@ -194,9 +187,6 @@ impl Checker {
         Ok((call, iterator_ty, element_ty))
     }
 }
-
-/// The module whose functions step a `comptime for` iterator.
-const STUBS_MODULE: &str = "std.builtin._stubs";
 
 /// The compile-time binder of a `comptime for` iterator of type `iterator`,
 /// upstream's mangled `iter` parameter: the loop's iterable names it, as it

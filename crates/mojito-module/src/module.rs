@@ -874,9 +874,10 @@ impl<'p> Linker<'p> {
             self.prelude_bindings = Some(HashMap::new());
             return Ok(());
         };
-        // The `comptime for` stubs are compiler-known by module path, as
+        // The compiler-called stubs (a sequence pattern's length test, a
+        // `comptime for`'s iterator steps) are known by module path, as
         // upstream's `getBuiltinFunction` finds them: linked first, every
-        // module's loop may step its iterator through them.
+        // module may reach them.
         if let Some(stubs) = self.bundled_module(STUBS_MODULE) {
             self.load_module(&stubs)?;
         }

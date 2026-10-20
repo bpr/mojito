@@ -2137,7 +2137,7 @@ impl CheckedStmtOp {
                 .iter()
                 .map(std::slice::from_ref)
                 .chain(cases.iter().flat_map(|case| {
-                    case.binds()
+                    case.statements()
                         .into_iter()
                         .chain(std::iter::once(case.body.as_slice()))
                 }))
@@ -2687,7 +2687,7 @@ impl CheckedCondition {
     }
 
     /// The statements a pattern condition runs: its anchor and its
-    /// bindings, each a statement of its own.
+    /// commands' element reads and bindings, each a statement of its own.
     pub fn statements(&self) -> Vec<&[CheckedStmtId]> {
         match self {
             Self::Expr(_) => Vec::new(),
@@ -2696,7 +2696,7 @@ impl CheckedCondition {
             } => anchor
                 .iter()
                 .map(std::slice::from_ref)
-                .chain(commands.iter().flat_map(CheckedCommand::binds))
+                .chain(commands.iter().flat_map(CheckedCommand::statements))
                 .collect(),
         }
     }
@@ -2749,11 +2749,12 @@ impl CheckedMatchCase {
             .collect()
     }
 
-    /// The binding statements the case runs, each a statement of its own.
-    pub fn binds(&self) -> Vec<&[CheckedStmtId]> {
+    /// The statements the case's commands run (element reads and
+    /// bindings), in command order, each a statement of its own.
+    pub fn statements(&self) -> Vec<&[CheckedStmtId]> {
         self.commands
             .iter()
-            .flat_map(CheckedCommand::binds)
+            .flat_map(CheckedCommand::statements)
             .collect()
     }
 }
@@ -2765,6 +2766,18 @@ pub enum CheckedCommand {
     /// node of the comparison it synthesized (`$match<id> == value`), whose
     /// `Bool` selects; `False` advances to the next case.
     Equal { test: CheckedNodeId },
+    /// Test a sequence pattern's subject length: the node of the call the
+    /// check synthesized to `std.builtin._stubs.list_length_matches`
+    /// (`list_length_matches($match<id>, arity, True)`), whose `Bool`
+    /// selects; `False` advances to the next case before any element is
+    /// read.
+    ListLength { test: CheckedNodeId },
+    /// Read one element of a sequence pattern's subject, once, at the first
+    /// command that needs it: the declaration the check synthesized
+    /// (`ref $elem<id> = parent[i]` over a reference result, `var $elem<id>
+    /// = parent[i]` over an owned one), which the element's later commands
+    /// name, as upstream's per-path value.
+    PathValue { declaration: CheckedStmtId },
     /// Bind a name to the subject: the declaration the check synthesized
     /// for it (`ref name = $match<id>`, `var name = $match<id>`), or the
     /// assignment a later `|` alternative makes to the first's binding.
@@ -2780,8 +2793,8 @@ impl CheckedCommand {
     /// included.
     pub fn expressions(&self) -> Vec<CheckedNodeId> {
         match self {
-            Self::Equal { test } => vec![*test],
-            Self::Bind { .. } => Vec::new(),
+            Self::Equal { test } | Self::ListLength { test } => vec![*test],
+            Self::Bind { .. } | Self::PathValue { .. } => Vec::new(),
             Self::Alternatives(alternatives) => alternatives
                 .iter()
                 .flatten()
@@ -2790,15 +2803,18 @@ impl CheckedCommand {
         }
     }
 
-    /// The binding statements the command runs, alternatives' included.
-    pub fn binds(&self) -> Vec<&[CheckedStmtId]> {
+    /// The statements the command runs (element reads and bindings),
+    /// alternatives' included.
+    pub fn statements(&self) -> Vec<&[CheckedStmtId]> {
         match self {
-            Self::Bind { declaration } => vec![std::slice::from_ref(declaration)],
-            Self::Equal { .. } => Vec::new(),
+            Self::Bind { declaration } | Self::PathValue { declaration } => {
+                vec![std::slice::from_ref(declaration)]
+            }
+            Self::Equal { .. } | Self::ListLength { .. } => Vec::new(),
             Self::Alternatives(alternatives) => alternatives
                 .iter()
                 .flatten()
-                .flat_map(Self::binds)
+                .flat_map(Self::statements)
                 .collect(),
         }
     }
@@ -2808,7 +2824,13 @@ impl CheckedCommand {
             Self::Equal { test } => Self::Equal {
                 test: map.expression(*test),
             },
+            Self::ListLength { test } => Self::ListLength {
+                test: map.expression(*test),
+            },
             Self::Bind { declaration } => Self::Bind {
+                declaration: map.statement(*declaration),
+            },
+            Self::PathValue { declaration } => Self::PathValue {
                 declaration: map.statement(*declaration),
             },
             Self::Alternatives(alternatives) => Self::Alternatives(
@@ -2853,6 +2875,11 @@ pub struct Warning {
 pub enum PlannedCommand {
     /// The comparison `$match<id> == value`.
     Equal(Expr),
+    /// The length test `list_length_matches($match<id>, arity, True)`.
+    ListLength(Expr),
+    /// The element read `ref $elem<id> = parent[i]` or `var $elem<id> =
+    /// parent[i]`.
+    PathValue(Box<Stmt>),
     /// The declaration `ref name = $match<id>` or `var name = $match<id>`,
     /// or a later `|` alternative's assignment to the first's binding.
     Bind(Box<Stmt>),
@@ -3508,7 +3535,7 @@ impl CheckedTables {
                         for node in command.expressions() {
                             self.walk_expression(node, visit);
                         }
-                        for declaration in command.binds() {
+                        for declaration in command.statements() {
                             walk(declaration, visit);
                         }
                     }
@@ -5337,7 +5364,13 @@ impl<'a> ArenaBuilder<'a> {
             PlannedCommand::Equal(test) => CheckedCommand::Equal {
                 test: self.expr(test),
             },
+            PlannedCommand::ListLength(test) => CheckedCommand::ListLength {
+                test: self.expr(test),
+            },
             PlannedCommand::Bind(declaration) => CheckedCommand::Bind {
+                declaration: self.stmt(declaration),
+            },
+            PlannedCommand::PathValue(declaration) => CheckedCommand::PathValue {
                 declaration: self.stmt(declaration),
             },
             PlannedCommand::Alternatives(alternatives) => CheckedCommand::Alternatives(

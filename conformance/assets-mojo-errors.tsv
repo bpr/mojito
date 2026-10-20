@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	673
+# swept-count	683
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -416,6 +416,16 @@ assets/type_error/match_or_missing_name.mojo	compile-reject	agree	error: or-patt
 assets/type_error/match_or_type_mismatch.mojo	compile-reject	agree	error: or-pattern binding 'n' has incompatible types across alternatives
 assets/type_error/match_ref_binding_register_temporary.mojo	compile-reject	agree	error: value of type 'Int' doesn't have a memory origin in 'ref' binding
 assets/type_error/match_returns_not_concluded.mojo	compile-reject	agree	error: return expected at end of function with results
+assets/type_error/match_sequence_as_register_element.mojo	compile-reject	agree	error: value of type 'Int' doesn't have a memory origin in 'ref' binding
+assets/type_error/match_sequence_element_sequence_pattern.mojo	compile-reject	agree	error: value of type <<NULL TYPE>> does not conform to 'Sized'
+assets/type_error/match_sequence_element_struct_pattern.mojo	compile-reject	agree	error: cannot match value of type <<NULL TYPE>> against pattern type 'P'
+assets/type_error/match_sequence_element_tuple_pattern.mojo	compile-reject	agree	error: expected a tuple type to match against, got <<NULL TYPE>>
+assets/type_error/match_sequence_generic_not_subscriptable.mojo	compile-reject	agree	error: 'T' is not subscriptable, it does not implement the `__getitem__`/`__setitem__` methods
+assets/type_error/match_sequence_generic_unproven_sized.mojo	compile-reject	agree	error: cannot prove that value of type 'T' conforms to 'Sized'
+assets/type_error/match_sequence_not_subscriptable.mojo	compile-reject	agree	error: 'S' is not subscriptable, it does not implement the `__getitem__`/`__setitem__` methods
+assets/type_error/match_sequence_raising_getter.mojo	compile-reject	agree	error: cannot call function that may raise in a context that cannot raise
+assets/type_error/match_sequence_subject_not_sized.mojo	compile-reject	agree	error: value of type 'String' does not conform to 'Sized'
+assets/type_error/match_sequence_undeclared_sized.mojo	compile-reject	agree	error: value of type 'S' does not conform to 'Sized'
 assets/type_error/match_struct_positional_args.mojo	compile-reject	agree	error: struct patterns do not support positional or unpacked arguments
 assets/type_error/match_struct_unknown_field.mojo	compile-reject	agree	error: 'w' is not a field of 'Point'
 assets/type_error/match_struct_wrong_head.mojo	compile-reject	agree	error: cannot match value of type 'Point' against pattern type 'Int'

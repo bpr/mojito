@@ -750,8 +750,8 @@ checker decides whether a call-shaped head is a struct pattern (keyword
 fields, `Point(x=0, y=yv)`) or an enum case with one positional payload
 (`.Some(x)`, `Optional.Some(0)`); a `*`/`**` argument there is a syntax
 error. `comptime match` has the same shape over a parameter subject. Every
-pattern form is parsed; the checker rejects `match` until its checked plan
-lands (`docs/features.md`, Patterns).
+pattern form is parsed; which ones the checker accepts is
+`docs/features.md`'s Control flow row.
 
 ### with_stmt
 

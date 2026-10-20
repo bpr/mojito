@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Fixed-length sequence patterns (`case []`, `case [x]`, `case [a, 11, c]`,
+  and `if case [_, b, _] = xs`) now run over any subject that declares
+  `Sized`, as on the pin: one length test through upstream's
+  `std.builtin._stubs.list_length_matches` gates the case, each element is
+  read through the subject's own `__getitem__` once per case and per `|`
+  alternative, in pattern order, and an owned element moves into a lone
+  `var` binding. A subject that does not declare `Sized`, has no getter, or
+  is matched with a typed pattern inside an element is rejected with the
+  pin's verdict (`assets/ok/match_sequence_fixed_length.mojo`,
+  `assets/ok/if_case_and_while_case.mojo`,
+  `assets/type_error/match_sequence_*`). This closes R1135.
 - A trait requirement whose signature reads an element of the method's own
   pack (`def get[*Us: AnyType](self, ref x: Us[1])`, or
   `TypeList[Us.values]()[1]`) now matches a witness reading the same

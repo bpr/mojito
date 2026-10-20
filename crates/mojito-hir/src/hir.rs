@@ -1174,7 +1174,9 @@ impl Lower {
         });
     }
 
-    /// A case's commands in order. A `|` pattern's alternatives are an
+    /// A case's commands in order: a test (a comparison or a sequence
+    /// length test) is a branch whose failure advances, an element read or
+    /// a binding a statement of the case's scope. A `|` pattern's alternatives are an
     /// inner `hlcf.match` in the case's own scope: each alternative a case
     /// region whose failed test advances to the next alternative and whose
     /// success completes to the commands after the `|`, and whose else
@@ -1183,8 +1185,11 @@ impl Lower {
     fn case_commands(&mut self, commands: &[CheckedCommand]) {
         for command in commands {
             match command {
-                CheckedCommand::Equal { test } => self.case_test(*test),
-                CheckedCommand::Bind { declaration } => self.stmt(*declaration),
+                CheckedCommand::Equal { test } | CheckedCommand::ListLength { test } => {
+                    self.case_test(*test);
+                }
+                CheckedCommand::Bind { declaration }
+                | CheckedCommand::PathValue { declaration } => self.stmt(*declaration),
                 CheckedCommand::Alternatives(alternatives) => {
                     let cases = alternatives
                         .iter()

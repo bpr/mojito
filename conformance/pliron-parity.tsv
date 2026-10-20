@@ -302,6 +302,7 @@ assets/ok/hashlib_keyed_ahasher.mojo	main	exe-differential	sanitized
 assets/ok/hashlib_values.mojo	main	exe-differential	sanitized
 assets/ok/hello_world.mojo	main	exe-differential	sanitized
 assets/ok/homogeneous_variadic_loan_carrying_element.mojo	main	exe-differential	sanitized
+assets/ok/if_case_and_while_case.mojo	main	exe-differential	sanitized
 assets/ok/if_case_elif_chains_and_while_case.mojo	main	exe-differential	sanitized
 assets/ok/if_case_mixed_with_boolean_elif.mojo	main	exe-differential	sanitized
 assets/ok/imm_origin_binders.mojo	main	exe-differential	sanitized
@@ -382,6 +383,7 @@ assets/ok/match_or_alternatives_bind.mojo	main	exe-differential	sanitized
 assets/ok/match_or_failed_alternative_copies.mojo	main	exe-differential	sanitized
 assets/ok/match_raises_and_finally.mojo	main	exe-differential	sanitized
 assets/ok/match_ref_and_as_bindings.mojo	main	exe-differential	sanitized
+assets/ok/match_sequence_fixed_length.mojo	main	exe-differential	sanitized
 assets/ok/match_struct_and_initializer_patterns.mojo	main	exe-differential	sanitized
 assets/ok/match_tuple_patterns.mojo	main	exe-differential	sanitized
 assets/ok/math_module_rounding.mojo	main	exe-differential	sanitized

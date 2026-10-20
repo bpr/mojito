@@ -397,6 +397,17 @@ pub fn resolve_overload_targets(stmts: &[Stmt]) -> Result<HashMap<SourceSpan, St
     Ok(check_program(stmts)?.overload_targets().clone())
 }
 
+/// The linked name of the `std.builtin._stubs` function `name`, which no
+/// user spelling reaches: the compiler calls these by module path, as
+/// upstream's `getBuiltinFunction` names them (`list_length_matches` for a
+/// sequence pattern, `paramfor_*` for a `comptime for`).
+pub(crate) fn builtin_stub(name: &str) -> String {
+    mojito_module::module::linked_item_name(STUBS_MODULE, name)
+}
+
+/// The module holding the functions the compiler calls by module path.
+pub(crate) const STUBS_MODULE: &str = "std.builtin._stubs";
+
 /// A static type checker over the parsed AST.
 ///
 /// Top-level struct and trait declarations register order-independently
@@ -3146,7 +3157,6 @@ mod initializer_list;
 mod template_string;
 
 mod comptime_iteration;
-pub use comptime_iteration::paramfor_stub;
 
 pub use template_string::template_string_entry;
 
