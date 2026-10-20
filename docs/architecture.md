@@ -1194,7 +1194,13 @@ folds to the element once the pack binds to a list
 every trait a conjunctive `conforms_to(Ts.values, Trait)` or
 `Ts.all_conforms_to[Trait]()` of the enclosing declarations guarantees, and
 nothing else — a struct-header conditional conformance, a disjunction, and a
-`comptime if` guard license nothing, as at the pin. Storage over an unbound
+`comptime if` guard license nothing, as at the pin. An element of a bound's
+raw-list member (`TypeList[Trait=AnyType, T._types]()[0]`, a `ListGet` over a
+`ParamKind::TypeMember`) is viewed the same way, its bounds the trait the
+member's declared list holds (`_MLIR.KGENParamListType[Copyable]`); at a call,
+`Checker::resolve_assoc_ty` answers the substituted member read on the
+concrete conformer (`Checker::answer_concrete_members`), so the element
+closes. Storage over an unbound
 pack is a list that spreads it (`TyKind::Tuple`, `TyKind::Variant`, or a `Tuple[...]`
 application whose one argument is the starred `TyKind::Param`,
 `types::pack_spread`); a spread beside other arguments is rejected. A

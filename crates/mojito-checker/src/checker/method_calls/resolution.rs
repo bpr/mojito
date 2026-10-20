@@ -157,16 +157,16 @@ impl Checker {
             let receiver_params: Vec<Ty> = sig
                 .params
                 .iter()
-                .map(|t| substitute_at(t, info, targs))
+                .map(|t| self.resolve_assoc_ty(&substitute_at(t, info, targs)))
                 .collect();
             let receiver_variadic = sig
                 .variadic
                 .as_ref()
-                .map(|ty| substitute_variadic_at(ty, info, targs));
+                .map(|ty| self.resolve_assoc_ty(&substitute_variadic_at(ty, info, targs)));
             let receiver_kw_variadic = sig
                 .kw_variadic
                 .as_ref()
-                .map(|ty| substitute_at(ty, info, targs));
+                .map(|ty| self.resolve_assoc_ty(&substitute_at(ty, info, targs)));
             // A value parameter typed over the struct's pack (a handler
             // `def[index: Int](var element: Self.Ts[index])`) is judged at
             // the receiver's elements.
@@ -256,7 +256,7 @@ impl Checker {
                     // (`result[Self.Ts.length + i]` inside a method of the
                     // struct), which the receiver's must not rewrite.
                     return_type: self.close_method_values(
-                        self.close_pack_elements(
+                        &self.close_pack_elements(
                             substitute(
                                 &super::super::generics::expand_solved_packs(
                                     &substitute_at(&sig.ret, info, targs),
@@ -447,10 +447,14 @@ impl Checker {
             ) else {
                 continue;
             };
-            let return_type = self.resolve_assoc_ty(&substitute(
-                &self.substitute_self_members(&sig.ret, obj_ty),
-                &method_subst,
-            ));
+            let return_type = self.close_method_values(
+                &substitute(
+                    &self.substitute_self_members(&sig.ret, obj_ty),
+                    &method_subst,
+                ),
+                &sig.decls,
+                &method_arguments,
+            );
             matches.push(MethodCallResolution {
                 conversion_score: scored.rank,
                 simd_erasures: scored.simd_erasures,
@@ -474,10 +478,11 @@ impl Checker {
                 ),
                 raises: sig.raises,
                 error: sig.error.as_ref().map(|error| {
-                    self.resolve_assoc_ty(&substitute(
-                        &self.substitute_self_members(error, obj_ty),
-                        &method_subst,
-                    ))
+                    self.close_method_values(
+                        &substitute(&self.substitute_self_members(error, obj_ty), &method_subst),
+                        &sig.decls,
+                        &method_arguments,
+                    )
                 }),
                 mutates_receiver: matches!(
                     sig.self_convention,

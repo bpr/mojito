@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `TypeList` element read through a bound's raw-list member
+  (`TypeList[Trait=AnyType, T._types]()[0]`, or `.__getitem_param__[0]`)
+  keeps its type in the body, with the trait the member's list declares as
+  its capabilities, and closes to the conformer's element at a call, in a
+  function, a method, and a requirement called through the bound
+  (`x.get[0]()`), as on the pin. More generally, a callee signature that
+  reads a bound's value member (`Box[T.K]`, `SIMD[DType.int32, T.K]`) now
+  closes at a call with a concrete conformer
+  (`assets/ok/typelist_element_through_bound.mojo`,
+  `assets/ok/bound_value_member_in_signature.mojo`,
+  `assets/type_error/typelist_element_through_bound_*.mojo`). This closes
+  R1201, and R500, whose probe already matched the pin, is closed with it
+  (`assets/ok/trait_value_member_comptime_position.mojo`).
 - `comptime assert cond[, "message"]` runs, as on the pin: the elaborator
   judges it per reached instance (once per unrolled `comptime for`
   iteration) and fails one where it does not hold with `constraint failed:

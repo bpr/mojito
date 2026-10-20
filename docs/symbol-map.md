@@ -1285,7 +1285,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`checker/declarations.rs`), holds the struct's arguments then the
   constructor's own, and `infer_call` binds a construction's from its
   declaration's first parameter); the checker closes a method's own value
-  binders in its result (`Checker::close_method_values`) and types a spelled
+  binders, and its member reads on concrete subjects, in its result
+  (`Checker::close_method_values`, through the bound-receiver path too) and types a spelled
   `DType` argument (`record_dtype_parameter_arguments`); `split_method_symbol` splits a lowered method
   symbol from its receiver at the last `.` outside brackets (an instance's
   baked `SIMD[DType.float32, 2]` keeps its `.`; the MIR verifier and the
@@ -1712,7 +1713,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   stays a type. A requirement's signature reads its `Self` members at the
   conformer it is matched against (`requirement_at`) and at a bound
   receiver (`method_calls/resolution.rs`) through
-  `Checker::substitute_self_members`. Bracket binding (`resolve_param_arg`,
+  `Checker::substitute_self_members`. After a binder substitution,
+  `Checker::resolve_assoc_ty` (`type_resolution.rs`) closes member reads on
+  a concrete subject — in a call's closed signature, a method's parameters
+  at its receiver (`method_calls/resolution.rs`, `statics.rs`), and
+  `close_method_values` — a type member through `associated_type_from_base`, a
+  value member (`Box[S.K]`, `S[Int, Bool]._types[0]`) through
+  `Checker::answer_concrete_members`, which shares its rewrite with
+  `substitute_self_members` (`constraints.rs:answer_member_reads`);
+  `types::substitute` replaces the binders a struct's value argument names
+  (`Box[T.K]`). Bracket binding (`resolve_param_arg`,
   `param_arg_value_ty`) types a member argument by it, so a raw-list
   member solves `TypeList`'s infer-only `Trait`, and
   `check_struct_associated` rejects a raw-list body its annotation does

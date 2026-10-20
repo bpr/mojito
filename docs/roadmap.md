@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1217**.
+Next free ID: **R1220**.
 
 ## Ordered Work
 
@@ -5165,32 +5165,65 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1201 A `TypeList` element read through a bound keeps neither its
-  type in the body nor closes at the call**
+- [ ] **R1217 A parameterized member read on a concrete struct in a
+  substituted signature does not close in the checker**
 
-  Problem: `def first[T: HasTypes](ref x: TypeList[Trait=AnyType,
-  T._types]()[0]) -> ref[x] TypeList[Trait=AnyType, T._types]()[0]` stops
-  with "type mismatch for return: expected T._types[0], found element[0]",
-  where the pin prints `3` for `first[S[Int, Bool]](n)`.
-  - The explicit spelling `TypeList[Trait=AnyType,
-    T._types].__getitem_param__[0]` fails the same way ("found
-    TypeList.__getitem_param__[0]").
-  - The body half: `opaque_params` (`checker/statements.rs`) makes a
-    parameter of a dependent type opaque unless its list is a pack in
-    scope. A `ParamKind::TypeMember` list (`T._types`) needs the same
-    exception.
-  - The call half: with that exception the call fails with "expected S[(Int,
-    Bool)]._types[0], found Int". The checker never answers a concrete
-    struct's `TypeMember` in a substituted type. Only the elaborator does,
-    through `ParamContext::answer_type_members` (`native/mono/symbolic.rs`).
-  - Probe: the signature above over `trait HasTypes` declaring `comptime
-    _types: _MLIR.KGENParamListType[AnyType]` and `struct S[*Ts: AnyType]`
-    defining it as `Self.Ts.values`.
-  - R1132's payload getter through `T: EnumLike` reads its result type this
-    way.
-  - Found while landing R1185 (2026-10-20).
+  Problem: `def f[T: Tr](x: Box[T.get[0]])` over `comptime get[idx: Int]:
+  Int`, called as `f[S](Box[1]())` where `S` defines `get[idx: Int]: Int =
+  idx + 1`, fails with "type mismatch for argument to 'f': expected
+  Box[S.get[0]], found Box[1]", where the pin prints `1`.
+  - `Checker::answer_concrete_members` (`checker/constraints.rs`) answers
+    only member reads without arguments, so `S.get[0]` stays a read.
+  - The struct side of the answer exists (`struct_member_at`,
+    `ConformanceFacts::parameterized_associated`). It needs the member's
+    parameters bound to the read's arguments, as the elaborator's
+    `type_member_answer` (`native/mono/symbolic.rs`) does.
+  - Found while landing R1201 (2026-10-20).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1218 The pre-check conformance oracle registers traits without
+  their `comptime` requirements**
+
+  Problem: `struct W[T: Tr]` with `var b: Box[Self.T.K]` and an initializer
+  taking one, used as `W[S](Box[3]())`, stops with "could not build the
+  specialization conformance oracle: 'Tr' value has no attribute 'K'",
+  where the pin prints `ok`.
+  - `ConformanceOracle::importing` (`checker/conformance.rs`) registers
+    every trait with empty `comptime_members`, then resolves struct field
+    types, so a field reading a bound's value member finds no requirement.
+  - The same type as an instance method's parameter runs; R1179 stops at
+    the same site for a different cause (a header `where` over a pack).
+  - Once the oracle builds, a field read at `W[S]` types through
+    `substitute_at` alone (`checker/indexing.rs`), which leaves `S.K`
+    unanswered; it needs `resolve_assoc_ty`, as the method parameter paths
+    in `method_calls/` now take.
+  - Probe: `trait Tr` with `comptime K: Int`, `struct S(Tr)` with `comptime
+    K: Int = 3`, and `struct Box[n: Int]`.
+  - Found while landing R1201 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1219 A static method's parameter reading its struct's bound
+  value member stops the elaborator**
+
+  Problem: `struct W[T: Tr]` with `@staticmethod def make(var b:
+  Box[Self.T.K]) -> Int`, called as `W[S].make(Box[3]())`, stops with
+  "unsupported monomorphizing `W.make`: 'T.K' is not a compile-time
+  constant here", where the pin prints `4`.
+  - The check accepts the call (`method_calls/statics.rs` closes `S.K` at
+    the receiver), and the same parameter on an instance method runs.
+  - `infer_call` (`native/mono/infer.rs`) reaches `W.make` with no
+    instantiated arguments and a declaration holding none of the struct's
+    parameters, so nothing binds `T` before the parameter's `T.K` is read;
+    an instance method binds `T` from its receiver.
+  - A static's body reading `Self.T.K` runs, so the gap is the parameter
+    pattern only.
+  - Probe: `trait Tr` with `comptime K: Int`, `struct S(Tr)` with `comptime
+    K: Int = 3`, `struct Box[n: Int]`, and the `make` above returning `4`.
+  - Found while landing R1201 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1203 A `comptime` name bound to a `TypeList` value is not
   subscripted in type position**
@@ -6137,25 +6170,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - `Self.L` over the struct's own list is R279's spelling.
   - Probe: `conformance/probes/comptime_for_other_struct_list.mojo`.
   - Found while landing R8 (2026-10-08).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R500 A trait's compile-time value member read through a type
-  parameter in a compile-time position is rejected**
-
-  Problem: `comptime if T.K > 2:` or `SIMD[DType.int32, T.K - 1]` in `def
-  g[T: HasK]()`, where `HasK` declares `comptime K: Int`, fails with "not a
-  compile-time Int constant: unsupported associated comptime member
-  access", where the pin folds `K` per instance.
-  - `comptime for i in range(T.K)` in a method `m[T: HasK]` fails where a
-    call reaches it ("function instantiation of `S.m` failed"). It ran
-    before R310, on a per-call clone that folded `T`; a generic `def` with
-    the same loop still clones and runs.
-  - No parameter expression names an associated value of a type binder,
-    and `native::mono` has no table of struct associated values to answer
-    one.
-  - Probe: `conformance/probes/trait_value_member_comptime_position.mojo`.
-  - Found while landing R310 (2026-10-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

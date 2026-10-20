@@ -2217,6 +2217,10 @@ impl Checker {
         Ok(self.resolve_assoc_ty(&substitute_assoc(&template, &bindings)))
     }
 
+    /// `ty` with its member reads on concrete subjects closed, as a binder
+    /// substitution leaves them: a type member (`S.Elem`) becomes the type
+    /// the subject binds, and a value member (`S[Int, Bool]._types[0]`,
+    /// `Box[S.K]`) the subject's value.
     pub(super) fn resolve_assoc_ty(&self, ty: &Ty) -> Ty {
         match ty.kind() {
             TyKind::Param {
@@ -2244,10 +2248,21 @@ impl Checker {
                         .into()
                     })
             }
-            TyKind::Struct(name, args) => ty.reusing(TyKind::Struct(
-                name.clone(),
-                map_tyargs(args, |t| self.resolve_assoc_ty(t)),
-            )),
+            TyKind::Struct(name, args) => {
+                let rebuilt = ty.reusing(TyKind::Struct(
+                    name.clone(),
+                    map_tyargs(args, |t| self.resolve_assoc_ty(t)),
+                ));
+                if args
+                    .iter()
+                    .any(|argument| matches!(argument, TyArg::Val(CtValue::Expr(_))))
+                {
+                    self.answer_concrete_members(&rebuilt)
+                } else {
+                    rebuilt
+                }
+            }
+            TyKind::Dependent(_) | TyKind::Simd { .. } => self.answer_concrete_members(ty),
             TyKind::ComptimeList(elem) => TyKind::ComptimeList(self.resolve_assoc_ty(elem)).into(),
             TyKind::ParamList(elem) => TyKind::ParamList(self.resolve_assoc_ty(elem)).into(),
             TyKind::Tuple(elems) => {

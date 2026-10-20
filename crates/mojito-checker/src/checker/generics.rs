@@ -1389,16 +1389,18 @@ impl Checker {
         (rewrite.closed || retyped).then_some(closed)
     }
 
-    /// `ty` with the method's own value binders closed at a call's solved
-    /// arguments (`Scalar[dt]` at `dt = DType.int16` is `Int16`), as a
-    /// generic `def`'s result closes; a binder the call leaves symbolic
-    /// stays as it stands.
+    /// `ty` with its member reads on concrete subjects
+    /// ([`Checker::resolve_assoc_ty`]) and the method's own value binders
+    /// closed at a call's solved arguments (`Scalar[dt]` at `dt =
+    /// DType.int16` is `Int16`), as a generic `def`'s result closes; a binder
+    /// the call leaves symbolic stays as it stands.
     pub(super) fn close_method_values(
         &self,
-        ty: Ty,
+        ty: &Ty,
         decls: &[ParamDecl],
         arguments: &[TyArg],
     ) -> Ty {
+        let ty = self.resolve_assoc_ty(ty);
         let values = Self::value_argument_environment(decls, arguments);
         if values.is_empty() {
             return ty;

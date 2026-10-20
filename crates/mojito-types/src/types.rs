@@ -3475,16 +3475,28 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
             .into()
         }),
         TyKind::Struct(..) if ty.is_closed() => ty.clone(),
-        TyKind::Struct(name, args) => ty.reusing(TyKind::Struct(
-            name.clone(),
-            map_tyargs(args, |t| substitute(t, subst)),
-        )),
-        TyKind::Dependent(_) | TyKind::Simd { .. } if is_symbolic(ty) => {
-            let mut bindings = ParamBindings::new();
-            for (id, ty) in subst {
-                bindings.bind_type(id.clone(), ty.clone());
+        TyKind::Struct(name, args) => {
+            let mut args = map_tyargs(args, |t| substitute(t, subst));
+            // A value argument's expression names type binders too (`Box[T.K]`).
+            if !subst.is_empty()
+                && args
+                    .iter()
+                    .any(|argument| matches!(argument, TyArg::Val(CtValue::Expr(_))))
+            {
+                let bindings = type_bindings(subst);
+                let context = ParamContext::detached();
+                for argument in &mut args {
+                    if let TyArg::Val(value @ CtValue::Expr(_)) = argument
+                        && let Ok(replaced) = replace_value_parameters(&context, value, &bindings)
+                    {
+                        *value = replaced;
+                    }
+                }
             }
-            replace_parameters(&ParamContext::detached(), ty, &bindings, 0)
+            ty.reusing(TyKind::Struct(name.clone(), args))
+        }
+        TyKind::Dependent(_) | TyKind::Simd { .. } if is_symbolic(ty) => {
+            replace_parameters(&ParamContext::detached(), ty, &type_bindings(subst), 0)
                 .unwrap_or_else(|_| ty.clone())
         }
         TyKind::ComptimeList(elem) => TyKind::ComptimeList(substitute(elem, subst)).into(),
@@ -4795,6 +4807,15 @@ fn expand_packs<S: std::hash::BuildHasher>(
     }
 }
 
+/// `subst` as the bindings [`replace_parameters`] takes.
+fn type_bindings(subst: &TySubst) -> ParamBindings {
+    let mut bindings = ParamBindings::new();
+    for (id, ty) in subst {
+        bindings.bind_type(id.clone(), ty.clone());
+    }
+    bindings
+}
+
 /// The bindings [`expand_packs`] replaces a dependent or lane-shaped type
 /// under: the types, each pack as the tuple of its elements, and the values.
 fn pack_bindings<S: std::hash::BuildHasher>(
@@ -4803,10 +4824,7 @@ fn pack_bindings<S: std::hash::BuildHasher>(
     packs: &HashMap<ParamId, Vec<Ty>, S>,
     values: &[(ParamId, CtValue)],
 ) -> ParamBindings {
-    let mut bindings = ParamBindings::new();
-    for (id, ty) in subst {
-        bindings.bind_type(id.clone(), ty.clone());
-    }
+    let mut bindings = type_bindings(subst);
     let lists = packs.iter().map(|(id, elements)| {
         let list = elements
             .iter()

@@ -2769,12 +2769,14 @@ impl Checker {
         self.resolve_dependent_ty(&ty, &values).unwrap_or(ty)
     }
 
-    /// The bounded type parameter an element of an unbound variadic pack, or
-    /// a reflected field type of a symbolic subject, behaves as: the pack's
-    /// declared bounds (a field type has none), plus every trait a `where`
-    /// clause guarantees of the pack's elements or a `comptime if
-    /// conforms_to` arm proves of this element. The dependent type stays the
-    /// element's identity; this is what its capabilities are read from.
+    /// The bounded type parameter an element of an unbound variadic pack, of
+    /// a bound's raw-list member (`TypeList[Trait=AnyType, T._types]()[0]`),
+    /// or a reflected field type of a symbolic subject, behaves as: the
+    /// pack's declared bounds, or the trait the member's declared list holds
+    /// (a field type has none), plus every trait a `where` clause guarantees
+    /// of the pack's elements or a `comptime if conforms_to` arm proves of
+    /// this element. The dependent type stays the element's identity; this
+    /// is what its capabilities are read from.
     pub(super) fn opaque_element(&self, ty: &Ty) -> Option<Ty> {
         let TyKind::Dependent(dependent) = ty.kind() else {
             return None;
@@ -2787,7 +2789,12 @@ impl Checker {
         };
         let list = dependent.pack_element().map(|(list, _)| list);
         let pack = list.and_then(ParamExpr::as_decl_ref);
-        if pack.is_none() && !reflected(dependent.expr()) && !list.is_some_and(reflected) {
+        let member_traits = list.and_then(|list| self.member_list_traits(list));
+        if pack.is_none()
+            && member_traits.is_none()
+            && !reflected(dependent.expr())
+            && !list.is_some_and(reflected)
+        {
             return None;
         }
         let pack_name = pack.map(|reference| reference.name.to_string());
@@ -2804,7 +2811,7 @@ impl Checker {
         });
         let mut bounds = match declared.as_ref().map(Ty::kind) {
             Some(TyKind::Param { bounds, .. }) => bounds.clone(),
-            _ => Vec::new(),
+            _ => member_traits.unwrap_or_default(),
         };
         let spelled = dependent.expr().to_string();
         for (subject, guaranteed) in self.assumed_conformances.borrow().iter().flatten() {
@@ -3051,6 +3058,37 @@ impl Checker {
         }
         let lookup = |name: &str| self.local_comptime_value(name);
         substitute_identifiers(expr, &lookup)
+    }
+
+    /// The element traits of the raw list a bound's value member is declared
+    /// as (`comptime _types: _MLIR.KGENParamListType[Copyable]` read as
+    /// `T._types`); `None` when `list` reads no such member.
+    fn member_list_traits(&self, list: &ParamExpr) -> Option<Vec<String>> {
+        let mojito_types::param_expr::ParamKind::TypeMember {
+            subject,
+            name,
+            args,
+        } = list.kind()
+        else {
+            return None;
+        };
+        let mojito_types::param_expr::ParamKind::TypeShape(subject) = subject.kind() else {
+            return None;
+        };
+        let TyKind::Param { bounds, .. } = subject.kind() else {
+            return None;
+        };
+        let declared = args
+            .is_empty()
+            .then(|| self.lookup_trait_assoc_value_ty(bounds, name))
+            .flatten()?;
+        let TyKind::ParamList(element) = declared.kind() else {
+            return None;
+        };
+        match element.kind() {
+            TyKind::Trait(traits) => Some(traits.clone()),
+            _ => None,
+        }
     }
 }
 

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	670
+# swept-count	672
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -664,6 +664,8 @@ assets/type_error/type_argument_origin_pointer_write_alias.mojo	compile-reject	a
 assets/type_error/type_of_all_types_spelled.mojo	compile-reject	agree	error: use of unknown declaration '__TypeOfAllTypes'
 assets/type_error/type_param_positional_construction.mojo	compile-reject	agree	error: cannot construct 'T' with itself, you can remove the constructor call
 assets/type_error/typelist_bad_predicate.mojo	compile-reject	agree	error: invalid call to 'all': 'all' parameter 'predicate' has '__generator_type[Type: AnyType] Bool' type, but value has type '__generator_type[T: Copyable] AnyType'
+assets/type_error/typelist_element_through_bound_mismatch.mojo	compile-reject	agree	error: invalid call to 'first': value passed to 'x' cannot be converted from 'Bool' to ref 'Int'
+assets/type_error/typelist_element_through_bound_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'T._types[0]' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/typelist_index_out_of_range.mojo	runs	subset	the pin runs it;Mojito rejects: out of range
 assets/type_error/typelist_size_removed_alias.mojo	compile-reject	agree	error: 'TypeList[Int, Bool]' value has no attribute 'size'
 assets/type_error/typelist_value_subscript_symbolic_init.mojo	compile-reject	agree	error: cannot implicitly convert 'IntLiteral[3]' value to 'Ts.values[1]' in 'var' initializer

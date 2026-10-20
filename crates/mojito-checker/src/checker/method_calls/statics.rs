@@ -295,16 +295,16 @@ impl Checker {
             let receiver_params: Vec<Ty> = sig
                 .params
                 .iter()
-                .map(|t| substitute_at(t, info, &tyargs))
+                .map(|t| self.resolve_assoc_ty(&substitute_at(t, info, &tyargs)))
                 .collect();
             let receiver_variadic = sig
                 .variadic
                 .as_ref()
-                .map(|ty| substitute_variadic_at(ty, info, &tyargs));
+                .map(|ty| self.resolve_assoc_ty(&substitute_variadic_at(ty, info, &tyargs)));
             let receiver_kw_variadic = sig
                 .kw_variadic
                 .as_ref()
-                .map(|ty| substitute_at(ty, info, &tyargs));
+                .map(|ty| self.resolve_assoc_ty(&substitute_at(ty, info, &tyargs)));
             let Ok((
                 params,
                 variadic,
@@ -368,7 +368,7 @@ impl Checker {
                     conventions: sig.conventions.clone(),
                     self_convention: sig.self_convention,
                     return_type: self.close_method_values(
-                        substitute(
+                        &substitute(
                             &super::super::generics::expand_solved_packs(
                                 &substitute_at(&sig.ret, info, &tyargs),
                                 &sig.decls,

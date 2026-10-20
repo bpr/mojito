@@ -42,6 +42,7 @@ assets/ok/bool_alias_predicate_where.mojo	main	exe-differential	sanitized
 assets/ok/boolable_and_divmod.mojo	main	exe-differential	sanitized
 assets/ok/borrowed_iteration_temporary_source_drop.mojo	main	exe-differential	sanitized
 assets/ok/bound_generic_write_to.mojo	main	exe-differential	sanitized
+assets/ok/bound_value_member_in_signature.mojo	main	exe-differential	sanitized
 assets/ok/builtins_numeric.mojo	main	exe-differential	sanitized
 assets/ok/bundled_def_loan_carrying_argument.mojo	main	exe-differential	sanitized
 assets/ok/bundled_instance_loan_carrying_argument.mojo	main	exe-differential	sanitized
@@ -1009,6 +1010,7 @@ assets/ok/trait_requirement_constant_default.mojo	main	exe-differential	sanitize
 assets/ok/trait_requirement_default_from_caller_parameter.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_parameter_default.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_variadic_collector.mojo	main	exe-differential	sanitized
+assets/ok/trait_value_member_comptime_position.mojo	main	exe-differential	sanitized
 assets/ok/trait_value_member_through_type_param.mojo	main	exe-differential	sanitized
 assets/ok/trait_valued_parameter.mojo	main	exe-differential	sanitized
 assets/ok/trait_witness_renames_parameter.mojo	main	exe-differential	sanitized
@@ -1051,6 +1053,7 @@ assets/ok/type_param_copy_construction.mojo	main	exe-differential	sanitized
 assets/ok/type_predicate_comptime_if.mojo	main	exe-differential	sanitized
 assets/ok/type_receiver_instance_call.mojo	main	exe-differential	sanitized
 assets/ok/typelist_comptime_vocabulary.mojo	main	exe-differential	sanitized
+assets/ok/typelist_element_through_bound.mojo	main	exe-differential	sanitized
 assets/ok/typelist_of_alias.mojo	main	exe-differential	sanitized
 assets/ok/typelist_over_earlier_member.mojo	main	exe-differential	sanitized
 assets/ok/typelist_over_member_raw_list.mojo	main	exe-differential	sanitized

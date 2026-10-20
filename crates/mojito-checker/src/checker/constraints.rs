@@ -1853,39 +1853,31 @@ impl Checker {
     /// trait's own value requirement (`Box[Self.K]`) becomes the subject's
     /// member: the conformer's value, or `T.K` through the bound.
     pub(super) fn substitute_self_members(&self, ty: &Ty, subject: &Ty) -> Ty {
-        struct Answer<'a> {
-            checker: &'a Checker,
-            subject: &'a Ty,
-        }
-
-        impl mojito_types::types::TyRewrite for Answer<'_> {
-            fn expr(
-                &mut self,
-                expr: &ParamExpr,
-            ) -> Result<ParamExpr, mojito_types::param_expr::ParamError> {
-                self.checker
-                    .param_context
-                    .answer_type_members(expr, &mut |shape, name, args| {
-                        let reads_self = args.is_empty()
-                            && matches!(
-                                shape.kind(),
-                                mojito_types::param_expr::ParamKind::TypeShape(shape)
-                                    if matches!(shape.kind(), TyKind::SelfType)
-                            );
-                        Ok(reads_self
-                            .then(|| self.checker.subject_value_member(self.subject, name))
-                            .flatten()
-                            .map(ParamExpr::into_value))
-                    })
-            }
-        }
-
         let substituted = super::generics::substitute_self(ty, subject);
-        let mut answer = Answer {
-            checker: self,
-            subject,
-        };
-        mojito_types::types::rewrite_ty(&substituted, &mut answer).unwrap_or(substituted)
+        self.answer_member_reads(&substituted, |shape| {
+            matches!(
+                shape.kind(),
+                mojito_types::param_expr::ParamKind::TypeShape(shape)
+                    if matches!(shape.kind(), TyKind::SelfType)
+            )
+            .then(|| subject.clone())
+        })
+    }
+
+    /// `ty` with every value member read on a concrete struct
+    /// (`S[Int, Bool]._types`, `S.K`), as a binder substitution leaves one,
+    /// answered by the struct's member at its arguments.
+    pub(super) fn answer_concrete_members(&self, ty: &Ty) -> Ty {
+        self.answer_member_reads(ty, |shape| {
+            let (mojito_types::param_expr::ParamKind::TypeShape(subject)
+            | mojito_types::param_expr::ParamKind::Constant(CtValue::Type(subject))) = shape.kind()
+            else {
+                return None;
+            };
+            (matches!(subject.kind(), TyKind::Struct(..))
+                && !mojito_types::types::is_symbolic(subject))
+            .then(|| subject.clone())
+        })
     }
 
     /// The declared type of a type's value member or value parameter read
@@ -3548,6 +3540,40 @@ impl Checker {
     /// The value member `field` of `subject`: a struct's at its arguments,
     /// or the member read through a type parameter's bound. `None` when
     /// `subject` declares no such value.
+    /// `ty` with every argument-free member read whose subject `subject_of`
+    /// maps to a type answered by that type's value member; `ty` as it was
+    /// when an answer fails to rebuild.
+    fn answer_member_reads(&self, ty: &Ty, subject_of: impl Fn(&ParamExpr) -> Option<Ty>) -> Ty {
+        struct Answer<'a, F> {
+            checker: &'a Checker,
+            subject_of: F,
+        }
+
+        impl<F: Fn(&ParamExpr) -> Option<Ty>> mojito_types::types::TyRewrite for Answer<'_, F> {
+            fn expr(
+                &mut self,
+                expr: &ParamExpr,
+            ) -> Result<ParamExpr, mojito_types::param_expr::ParamError> {
+                self.checker
+                    .param_context
+                    .answer_type_members(expr, &mut |shape, name, args| {
+                        Ok(args
+                            .is_empty()
+                            .then(|| (self.subject_of)(shape))
+                            .flatten()
+                            .and_then(|subject| self.checker.subject_value_member(&subject, name))
+                            .map(ParamExpr::into_value))
+                    })
+            }
+        }
+
+        let mut answer = Answer {
+            checker: self,
+            subject_of,
+        };
+        mojito_types::types::rewrite_ty(ty, &mut answer).unwrap_or_else(|_| ty.clone())
+    }
+
     fn subject_value_member(&self, subject: &Ty, field: &str) -> Option<ParamExpr> {
         match subject.kind() {
             TyKind::Struct(name, arguments) => self
