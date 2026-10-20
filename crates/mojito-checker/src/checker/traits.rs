@@ -664,9 +664,10 @@ impl Checker {
         declaration: &StructDeclaration<'_>,
     ) -> Result<StructMemberTypes, TypeError> {
         let name = declaration.name;
-        // Associated members resolve BEFORE fields and are installed into the
-        // registered shell right away: a field's type may apply the struct's
-        // own comptime alias (`var iter: Self.dict_entry_iter`). Member bodies
+        // Associated members resolve BEFORE fields, each installed into the
+        // registered shell as it resolves: a later member reads an earlier
+        // one through `Self`, and a field's type may apply the struct's own
+        // comptime alias (`var iter: Self.dict_entry_iter`). Member bodies
         // reference only `Self` parameters and registered struct shells, never
         // fields, so this ordering is well-founded.
         let (
@@ -1374,7 +1375,7 @@ impl Checker {
             params: req_sig
                 .params
                 .iter()
-                .map(|t| self.resolve_assoc_ty(&substitute_self(t, self_ty)))
+                .map(|t| self.requirement_ty_at(t, self_ty))
                 .collect(),
             names: req_sig.names.clone(),
             required: req_sig.required.clone(),
@@ -1382,25 +1383,25 @@ impl Checker {
             variadic: req_sig
                 .variadic
                 .as_ref()
-                .map(|ty| self.resolve_assoc_ty(&substitute_self(ty, self_ty))),
+                .map(|ty| self.requirement_ty_at(ty, self_ty)),
             variadic_index: req_sig.variadic_index,
             variadic_convention: req_sig.variadic_convention,
             variadic_name: req_sig.variadic_name.clone(),
             kw_variadic: req_sig
                 .kw_variadic
                 .as_ref()
-                .map(|ty| self.resolve_assoc_ty(&substitute_self(ty, self_ty))),
+                .map(|ty| self.requirement_ty_at(ty, self_ty)),
             kw_variadic_index: req_sig.kw_variadic_index,
             positional_only: req_sig.positional_only,
             keyword_only: req_sig.keyword_only,
             conventions: req_sig.conventions.clone(),
-            ret: self.resolve_assoc_ty(&substitute_self(&req_sig.ret, self_ty)),
+            ret: self.requirement_ty_at(&req_sig.ret, self_ty),
             ret_mlir_index: req_sig.ret_mlir_index,
             raises: req_sig.raises,
             error: req_sig
                 .error
                 .as_ref()
-                .map(|error| self.resolve_assoc_ty(&substitute_self(error, self_ty))),
+                .map(|error| self.requirement_ty_at(error, self_ty)),
             self_convention: req_sig.self_convention,
             ref_params: req_sig.ref_params.clone(),
             ref_return: req_sig.ref_return.clone(),
@@ -1413,6 +1414,12 @@ impl Checker {
             nested_origins: req_sig.nested_origins,
             overload: None,
         }
+    }
+
+    /// One type of a requirement's signature at the conformer `self_ty`:
+    /// `Self` and its value members replaced, associated types resolved.
+    fn requirement_ty_at(&self, ty: &Ty, self_ty: &Ty) -> Ty {
+        self.resolve_assoc_ty(&self.substitute_self_members(ty, self_ty))
     }
 
     /// Prove Copyable without treating a conditional marker declaration as

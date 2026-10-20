@@ -3951,9 +3951,16 @@ impl Checker {
             mojito_ast::ast::ParamArg::Named { value, .. } => {
                 self.param_arg_value_ty(value, declared)
             }
-            mojito_ast::ast::ParamArg::Type(SourceType::SelfParam(param)) => self
-                .self_param_value(param)
-                .and_then(|value| self.ct_value_ty(&value, declared)),
+            mojito_ast::ast::ParamArg::Type(SourceType::SelfParam(param))
+                if let Some(value) = self.self_param_value(param) =>
+            {
+                self.ct_value_ty(&value, declared)
+            }
+            mojito_ast::ast::ParamArg::Type(source)
+                if let Some(read) = self.type_spelled_member_read(source) =>
+            {
+                self.param_arg_value_ty(&mojito_ast::ast::ParamArg::Value(read), declared)
+            }
             mojito_ast::ast::ParamArg::Type(_) => None,
         }
     }

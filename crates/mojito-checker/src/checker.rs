@@ -2304,8 +2304,10 @@ struct StructInfo {
     #[serde(serialize_with = "interface::sorted")]
     associated: HashMap<String, CtValue>,
     /// The declared type of each `associated` value whose annotation names
-    /// one (`comptime _types: KGENParamListType[AnyType] = ...`), at the
-    /// struct's own binders: a read of the member has this type.
+    /// one (`comptime _types: KGENParamListType[AnyType] = ...`), or the
+    /// raw-list type of an unannotated list body (`comptime _cases =
+    /// Self.Ts.values`), at the struct's own binders: a read of the member
+    /// has this type.
     #[serde(serialize_with = "interface::sorted")]
     associated_value_types: HashMap<String, Ty>,
     /// Availability constraints for monomorphic associated members, one entry

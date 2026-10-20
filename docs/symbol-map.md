@@ -727,7 +727,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `type_resolution.rs:member_application` binds through
   `resolve_use_params`, and a subscript of the member in an expression
   (`parser/suffix.rs:parameter_application`, whose base
-  `ast::Expr::type_spelling` reads as a type); `constraints.rs:
+  `ast::Expr::type_spelling` reads as a type, and whose inverse
+  `ast::Type::expression_spelling` respells a type-shaped receiver or
+  bracket argument as the expression it denotes); `constraints.rs:
   member_source_type` reads that subscript as the type it spells, and
   `subscript_param_args` reads a type-valued index as a type argument. A
   bare parameterized struct as a member's base (`S.n`, `S.Of[Bool]`) is
@@ -1669,8 +1671,20 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `type_member_answer` binds the arguments to its parameters by position
   (`StructShape::parameterized_values`). A read's declared type is
   `Checker::member_value_type`: the bound's requirement, or on a struct
-  the annotation `StructInfo::associated_value_types` keeps, at the
-  application's arguments. Bracket binding (`resolve_param_arg`,
+  the annotation `StructInfo::associated_value_types` keeps (or an
+  unannotated raw-list body's own type), at the application's arguments.
+  `check_struct_associated` installs each member into the struct's shell
+  as it resolves, so a later member reads it through `Self`, and
+  `type_member_value`'s `TyKind::SelfType` arm reads a trait's own value
+  requirement in its scope. A member spelled as a type in a value slot
+  (`Box[Self.n]`, `Self.T.K`) is the read
+  `type_resolution.rs:type_spelled_member_read` respells, the value-slot
+  entry of `resolve_param_arg`, `param_arg_value_ty`, `simd_width`, and
+  `lower_assoc_application_arg`; a type member or type parameter there
+  stays a type. A requirement's signature reads its `Self` members at the
+  conformer it is matched against (`requirement_at`) and at a bound
+  receiver (`method_calls/resolution.rs`) through
+  `Checker::substitute_self_members`. Bracket binding (`resolve_param_arg`,
   `param_arg_value_ty`) types a member argument by it, so a raw-list
   member solves `TypeList`'s infer-only `Trait`, and
   `check_struct_associated` rejects a raw-list body its annotation does

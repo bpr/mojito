@@ -159,7 +159,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             if let Type::Assoc { base, name, args } = &ty
                 && !args.is_empty()
                 && matches!(self.peek_token()?, Some(Token::LParen))
-                && let Some(receiver) = type_spelling_expression(base, (start, self.last_span.1))
+                && let Some(receiver) = base.expression_spelling((start, self.last_span.1))
             {
                 let callee = Expr::new(
                     ExprKind::Member {

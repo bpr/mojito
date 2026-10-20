@@ -811,6 +811,7 @@ assets/ok/struct_generator_lane_symbolic_width.mojo	main	exe-differential	saniti
 assets/ok/struct_generator_struct_value.mojo	main	exe-differential	sanitized
 assets/ok/struct_generator_vector_value.mojo	main	exe-differential	sanitized
 assets/ok/struct_layout_unread_parameter_instances.mojo	main	exe-differential	sanitized
+assets/ok/struct_member_bracket_value_argument.mojo	main	exe-differential	sanitized
 assets/ok/struct_member_reads_type_pack.mojo	main	exe-differential	sanitized
 assets/ok/struct_member_unread_struct_parameter_instances.mojo	main	exe-differential	sanitized
 assets/ok/struct_method_comptime_template_served.mojo	main	exe-differential	sanitized
@@ -1039,6 +1040,7 @@ assets/ok/type_predicate_comptime_if.mojo	main	exe-differential	sanitized
 assets/ok/type_receiver_instance_call.mojo	main	exe-differential	sanitized
 assets/ok/typelist_comptime_vocabulary.mojo	main	exe-differential	sanitized
 assets/ok/typelist_of_alias.mojo	main	exe-differential	sanitized
+assets/ok/typelist_over_earlier_member.mojo	main	exe-differential	sanitized
 assets/ok/typelist_over_member_raw_list.mojo	main	exe-differential	sanitized
 assets/ok/typelist_reverse_concat.mojo	main	exe-differential	sanitized
 assets/ok/typelist_self_pack_member_clause.mojo	main	exe-differential	sanitized

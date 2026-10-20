@@ -247,8 +247,29 @@ impl Checker {
                     if !compiled.is_empty() {
                         constraints.insert(member.name.clone(), compiled);
                     }
+                    // A closed raw list is a plain tuple, so an unannotated
+                    // one keeps the list type its body had.
                     if let Some(CtMemberReq::Value(declared)) = &requirement {
                         value_types.insert(member.name.clone(), declared.clone());
+                    } else if let Some(inferred) = self
+                        .member_value_type(&member.value)
+                        .or_else(|| self.ct_value_ty(&value, &Ty::infer()))
+                        .filter(|ty| matches!(ty.kind(), TyKind::ParamList(_)))
+                    {
+                        value_types.insert(member.name.clone(), inferred);
+                    }
+                    // A later member reads an earlier one through `Self`
+                    // (`comptime m = Box[Self.n].w`).
+                    if let Some(info) = self.structs.get_mut(&struct_name) {
+                        info.associated.insert(member.name.clone(), value.clone());
+                        if let Some(ty) = value_types.get(&member.name) {
+                            info.associated_value_types
+                                .insert(member.name.clone(), ty.clone());
+                        }
+                        if let Some(compiled) = constraints.get(&member.name) {
+                            info.associated_constraints
+                                .insert(member.name.clone(), compiled.clone());
+                        }
                     }
                     out.insert(member.name.clone(), value);
                 }
@@ -932,6 +953,13 @@ impl Checker {
                     if let Some(value) = associated.get(field) {
                         return Ok(value.clone());
                     }
+                    // A member of the struct's shell, or a trait's requirement
+                    // read through its own `Self`.
+                    if let Some(member) = self.type_member_value(object, field) {
+                        let member = member?;
+                        self.record_member_value(expr.source_span(), member.clone());
+                        return Ok(member.into_value());
+                    }
                     if let Some(error) = self.instance_field_without_instance(field) {
                         return Err(error);
                     }
@@ -947,6 +975,13 @@ impl Checker {
                     let member = member?;
                     self.record_member_value(expr.source_span(), member.clone());
                     return Ok(member.into_value());
+                }
+                // A type application whose own resolution fails reports why
+                // (`Box[Self.B].w` over a type member `B`).
+                if !matches!(&object.kind, ExprKind::Identifier(_))
+                    && let Some(Err(error)) = self.member_type_operand_resolution(object)
+                {
+                    return Err(error);
                 }
                 Err(TypeError::NotComptime(
                     "unsupported associated comptime member access".to_string(),
@@ -1773,6 +1808,17 @@ impl Checker {
                     })
                 })
             }
+            // A trait's own `comptime` requirement, read in its scope.
+            TyKind::SelfType => {
+                let ty = self.trait_self_value_ty(field)?;
+                let subject = self.param_context.type_shape(subject.clone());
+                Some(Ok(self.param_context.type_member(
+                    &subject,
+                    field,
+                    &[],
+                    mojito_types::param_expr::MetaTy::value(ty),
+                )))
+            }
             TyKind::Struct(name, arguments) => {
                 let info = self.structs.get(name)?;
                 // A type member is no value, but read through a generator it
@@ -1794,6 +1840,47 @@ impl Checker {
         }
     }
 
+    /// `ty`, a trait requirement's type, with its abstract `Self` replaced
+    /// by `subject`: the conformer whose witness it is matched against, or
+    /// the bound type parameter a call reaches it through. A read of the
+    /// trait's own value requirement (`Box[Self.K]`) becomes the subject's
+    /// member: the conformer's value, or `T.K` through the bound.
+    pub(super) fn substitute_self_members(&self, ty: &Ty, subject: &Ty) -> Ty {
+        struct Answer<'a> {
+            checker: &'a Checker,
+            subject: &'a Ty,
+        }
+
+        impl mojito_types::types::TyRewrite for Answer<'_> {
+            fn expr(
+                &mut self,
+                expr: &ParamExpr,
+            ) -> Result<ParamExpr, mojito_types::param_expr::ParamError> {
+                self.checker
+                    .param_context
+                    .answer_type_members(expr, &mut |shape, name, args| {
+                        let reads_self = args.is_empty()
+                            && matches!(
+                                shape.kind(),
+                                mojito_types::param_expr::ParamKind::TypeShape(shape)
+                                    if matches!(shape.kind(), TyKind::SelfType)
+                            );
+                        Ok(reads_self
+                            .then(|| self.checker.subject_value_member(self.subject, name))
+                            .flatten()
+                            .map(ParamExpr::into_value))
+                    })
+            }
+        }
+
+        let substituted = super::generics::substitute_self(ty, subject);
+        let mut answer = Answer {
+            checker: self,
+            subject,
+        };
+        mojito_types::types::rewrite_ty(&substituted, &mut answer).unwrap_or(substituted)
+    }
+
     /// The declared type of a type's value member or value parameter read
     /// (`T._types` through a bound, `S[Int, Bool]._types`,
     /// `TypeList.of[Trait=AnyType, Int].values`), at the type's arguments.
@@ -1810,6 +1897,7 @@ impl Checker {
         let subject = self.member_subject(object)?;
         match subject.kind() {
             TyKind::Param { bounds, .. } => self.lookup_trait_assoc_value_ty(bounds, field),
+            TyKind::SelfType => self.trait_self_value_ty(field),
             TyKind::Struct(name, arguments) => {
                 let info = self.structs.get(name)?;
                 let declared = info.associated_value_types.get(field).or_else(|| {
@@ -3361,6 +3449,36 @@ impl Checker {
                 self.reject_unbound_dependence(name, field, &CtValue::Expr(value.clone()))
             }
             _ => Ok(()),
+        }
+    }
+
+    /// The value member `field` of `subject`: a struct's at its arguments,
+    /// or the member read through a type parameter's bound. `None` when
+    /// `subject` declares no such value.
+    fn subject_value_member(&self, subject: &Ty, field: &str) -> Option<ParamExpr> {
+        match subject.kind() {
+            TyKind::Struct(name, arguments) => self
+                .struct_value_member(self.structs.get(name)?, arguments, field)?
+                .ok(),
+            TyKind::Param { bounds, .. } => {
+                let ty = self.lookup_trait_assoc_value_ty(bounds, field)?;
+                Some(self.param_context.type_member(
+                    &self.param_context.type_shape(subject.clone()),
+                    field,
+                    &[],
+                    mojito_types::param_expr::MetaTy::value(ty),
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    /// The declared type of the value requirement `field` of the trait
+    /// whose scope is being checked, which its own `Self` reads.
+    fn trait_self_value_ty(&self, field: &str) -> Option<Ty> {
+        match self.trait_self_comptime.last()?.get(field)? {
+            CtMemberReq::Value(ty) => Some(ty.clone()),
+            CtMemberReq::Type { .. } | CtMemberReq::Generator { .. } => None,
         }
     }
 

@@ -2151,6 +2151,16 @@ impl Checker {
     /// `TypeList.of[Trait=AnyType, Int]`) rather than a value. `None` when
     /// its root names a binding or it names no type.
     pub(super) fn member_type_operand(&self, object: &Expr) -> Option<Ty> {
+        self.member_type_operand_resolution(object)?.ok()
+    }
+
+    /// The resolution of a member's object spelled as a type operand, its
+    /// error included (`Box[Self.B]` over a type member `B`); `None` when
+    /// its root names a binding or `Self`, or it is not spelled as a type.
+    pub(super) fn member_type_operand_resolution(
+        &self,
+        object: &Expr,
+    ) -> Option<Result<Ty, TypeError>> {
         fn applied_member_root(object: &Expr) -> Option<&String> {
             match &object.kind {
                 ExprKind::Member { object, .. } => match &object.kind {
@@ -2174,7 +2184,7 @@ impl Checker {
             return None;
         }
         let source = super::constraints::assoc_body_source_type(object).ok()?;
-        self.ty_from_anno(&source).ok()
+        Some(self.ty_from_anno(&source))
     }
 
     /// The `DType.<method>[dtype]()` floating-point format query `callee`

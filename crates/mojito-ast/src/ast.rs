@@ -196,6 +196,39 @@ pub enum Type {
     Value(Box<Expr>),
 }
 
+impl Type {
+    /// The expression this type spelling denotes, the inverse of
+    /// [`Expr::type_spelling`]: `TypeList.of` as the receiver of the
+    /// qualified construction `TypeList.of[...]()`, or `Self.n` as the read
+    /// of a member a bracket value slot spells as a type. `None` for a
+    /// spelling no expression denotes.
+    pub fn expression_spelling(&self, span: Span) -> Option<Expr> {
+        let kind = match self {
+            Self::Int => ExprKind::Identifier("Int".to_string()),
+            Self::UInt => ExprKind::Identifier("UInt".to_string()),
+            Self::Bool => ExprKind::Identifier("Bool".to_string()),
+            Self::StringLiteral => ExprKind::Identifier("StringLiteral".to_string()),
+            Self::Float64 => ExprKind::Identifier("Float64".to_string()),
+            Self::SelfType => ExprKind::Identifier("Self".to_string()),
+            Self::Named(name, args) if args.is_empty() => ExprKind::Identifier(name.clone()),
+            Self::Named(name, args) => ExprKind::TypeApply {
+                name: name.clone(),
+                args: args.clone(),
+            },
+            Self::SelfParam(name) if !name.starts_with('*') => ExprKind::Member {
+                object: Box::new(Expr::new(ExprKind::Identifier("Self".to_string()), span)),
+                field: name.clone(),
+            },
+            Self::Assoc { base, name, args } if args.is_empty() => ExprKind::Member {
+                object: Box::new(base.expression_spelling(span)?),
+                field: name.clone(),
+            },
+            _ => return None,
+        };
+        Some(Expr::new(kind, span))
+    }
+}
+
 /// One parameter in a source-level function/closure type.
 ///
 /// Unlike [`FnParam`], it has no default; its regular or keyword-variadic role

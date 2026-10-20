@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1209**.
+Next free ID: **R1210**.
 
 ## Ordered Work
 
@@ -3449,6 +3449,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `var f = S.st` over `@staticmethod def st(x: Int) -> Int` fails
     with "Undefined variable 'S'", where the pin prints `f(3)` (found
     while landing R1032, 2026-10-17).
+  - Probe: a value member read through a type member alias at run time,
+    `print(S.B.w)` over `comptime B = Box[3]`, fails with "Undefined
+    variable 'S'", where the pin prints `30`; the local `comptime W =
+    S.B.w` works.
   - The explicit spelling parses as `Invoke` over `Member(P, plain)`. The
     error is raised before the non-parametric static path in
     `checker/method_calls/type_receivers.rs` sees the call.
@@ -3481,6 +3485,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: a run-time construction through a struct's member alias, `var t
     = TypeList.of[Trait=AnyType, Int, Bool]()` then `print(len(t))`, fails
     with "Undefined variable 'TypeList'", where the pin prints `2`.
+  - Probe: a construction through a non-generic struct's member alias,
+    `S.V(1)` over `comptime V = SIMD[DType.int64, Self.w]`, fails with
+    "Undefined variable 'S'", where the pin prints `[1, 1, 1, 1]`.
   - Depends on R59, which finds the pass that reads a bare type name as a
     value; the alias call needs the same answer.
   - Model: Opus, Planned.
@@ -3990,7 +3997,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     the same way.
   - Probe: R1132's payload getter, `-> ref[self] TypeList[Trait=AnyType,
     Self._enum_case_types]()[id]`, as a requirement and a conformer's
-    witness. It also needs R1196 for `Self._enum_case_types` in brackets.
+    witness.
   - Found while landing R1185 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -4907,7 +4914,31 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     S.b` fail the same way, where the pin reports "cannot access comptime
     member 'b' with unbound parameter 'S.T'". `Elab::generator_member`
     tests only the body's own spelling for the parameters.
+  - Probe: a member passing a sibling as a bracket value, `comptime m =
+    Box[Self.n].w` beside `comptime n = 3`, read as `comptime x = S.m`,
+    fails with "value parameter 'n' expects a compile-time Int, got
+    Self.n", where the pin prints `30`; `print(S.m)` prints `30`.
   - Found while landing R1204 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1209 The pre-check elaborator does not read a struct parameter
+  through a type**
+
+  Problem: `comptime c = S[7].n` over `struct S[n: Int]` stops with "type
+  'S[7]' has no compile-time member 'n'", where the pin prints `7`.
+  - The elaborator's member read through a struct type
+    (`Elab::associated_value_at`, `comptime/elab.rs`) looks only at the
+    struct's `comptime` members, never its parameters.
+  - The check reads the same parameter: `print(S[7].n)` prints `7`, through
+    `Checker::struct_parameter_at`.
+  - Probe: a `TypeList.of` alias's `values` in a module or local
+    `comptime`, `comptime c = TypeList.of[Trait=AnyType, NoneType,
+    Int].values` read as `TypeList[c].length`, fails with "type
+    'TypeList[AnyType, (None, Int)]' has no associated type 'values'",
+    where the pin prints `2`: a package struct's read
+    (`Elab::generator_type_member`) asks only for a type member.
+  - Found while landing R1196 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4943,6 +4974,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: the subscript spelling in a local `comptime`, `comptime T =
     TypeList[Trait=AnyType, Ts.values]()[1]`, fails with "type
     'TypeList[AnyType, Ts]' cannot be indexed here", where the pin runs it.
+  - Probe: a later member applying a sibling's parameterized type member,
+    `comptime F = Self.E[Self.n]` (or `Self.E[2]`) beside `comptime E[k:
+    Int] = Box[k]`, read as `var b: S.F`, fails with "not an associated
+    comptime expression", where the pin runs it; `var b: Self.E[Self.n]`
+    in a method runs.
   - Found while landing R1168 (2026-10-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -4961,6 +4997,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `_ParameterListIter[*pl](0)` over that `comptime pl` (the pin
     runs it), since `Checker::parameter_list_spread` takes only a literal
     `ParameterList[...]()` construction, not a value whose type is one.
+  - Probe: a construction's `values` in a `comptime` body, `comptime
+    _cases = TypeList.of[Trait=AnyType, NoneType, Int]().values` in a
+    struct (also over `Self.T`), read as `TypeList[O._cases].length`, fails
+    with "unsupported associated comptime member access", and at module
+    scope with "Undefined variable 'TypeList'", where the pin prints `2`
+    for each.
   - Found while landing R807 (2026-10-19).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5064,6 +5106,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     alias parameter", where the pin prints `3` for `Count[Int, Bool,
     Float64]`: `Checker::lower_parametric_value` reads the body through
     `compile_dependent_ct_expr`, which gives up on the construction.
+  - Probe: a struct member's body over a construction, `comptime n =
+    TypeList[Trait=AnyType, Self._types]().length`, fails with
+    "unsupported associated comptime member access", where the pin prints
+    `2` for `S[Int, Bool].n`; `eval_associated_ct` reaches the same
+    `member_type_operand`.
   - Found while landing R1184 (2026-10-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -5088,41 +5135,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R1184 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R1196 A struct member cannot pass an earlier member as a bracket
-  value argument**
-
-  Problem: `comptime m = Box[Self.n].w` after `comptime n = 3` stops with
-  "not a compile-time Int constant: unsupported associated comptime member
-  access", where the pin prints `30`.
-  - `Self.n` in brackets parses as the type argument
-    `SourceType::SelfParam`, which `resolve_param_arg`
-    (`checker/type_resolution.rs`) resolves only as one of the struct's own
-    parameters.
-  - The members resolved so far reach the struct's shell only when
-    `check_struct_associated` returns, so a read through the shell misses
-    them too.
-  - `member_type_operand` (`checker/indexing.rs`) drops the error with
-    `.ok()`, so it surfaces as the generic rejection.
-  - Probe: `comptime n = TypeList[Self._types].length` beside `comptime
-    _types: _MLIR.KGENParamListType[AnyType] = Self.Ts.values`, where the
-    pin prints `2` for `S[Int, Bool].n`.
-  - Probe: a method signature or body passing a member as the bracket
-    value, `-> ref[self] TypeList[Trait=AnyType,
-    Self._types].__getitem_param__[id]` or `return TypeList[Trait=AnyType,
-    Self._types]().length`, fails with "type mismatch for value parameter
-    'values': expected a value, found a type", in a struct or a trait.
-  - Probe: a parameterized member's body over an earlier member,
-    `comptime E[id: Int]: AnyType = TypeList[Trait=AnyType,
-    Self._cases]()[id]` beside `comptime _cases = Self.Ts.values`, read as
-    `var x: O[Bool, String].E[1] = "s"`, fails with "type mismatch for
-    value parameter 'values': expected a value, found a type", where the
-    pin prints `s`; over `comptime _cases = TypeList.of[Trait=AnyType,
-    NoneType, Self.T]().values` it fails with "unsupported associated
-    comptime member access" (found while landing R1202, 2026-10-20).
-  - Found while landing R1184 (2026-10-20).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R1207 A struct's `comptime` member cannot read a member declared
   after it**

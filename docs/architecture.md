@@ -991,8 +991,8 @@ partition that keeps origins back scatters the binder's answer into source
 positions (`ForwardedBrackets::scatter`, for the struct origin partition and
 an explicit specialization's), and the route holding the occurrence records
 it (`Checker::record_bracket_attributes`). A type-shaped argument's
-attribute is what it bound to — a type, a value it names (`Self.n`, a pack
-spread `*vs`), or an origin — and a value-shaped one's is the type or origin
+attribute is what it bound to — a type, a value it names (`Self.n`, a
+struct parameter or `comptime` member; a pack spread `*vs`), or an origin — and a value-shaped one's is the type or origin
 it bound to (`List[String]`, `Pointer[Int, origin_of(x)]`, `size_of[T]`),
 which `resolve_param_arg` and origin binding also record at the argument
 (`NodeFacts::argument_attribute`); a type in value position records its

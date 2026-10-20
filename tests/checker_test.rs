@@ -1039,6 +1039,20 @@ fn closes_a_parameterized_type_member_over_the_struct_pack() {
 }
 
 #[test]
+fn closes_an_earlier_member_as_a_bracket_value() {
+    let boxed = "struct Box[n: Int]:\n    def __init__(out self):\n        pass\n\n\
+                 struct S:\n    comptime n = 3\n    comptime B = Box[Self.n]\n\n";
+    ok(&format!("{boxed}def main():\n    var b: S.B = Box[3]()\n"));
+    let e = err(&format!("{boxed}def main():\n    var b: S.B = Box[4]()\n"));
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
+    // A trait's requirement over its own value member matches the witness.
+    ok(&format!(
+        "{boxed}trait HasK:\n    comptime K: Int\n\n    def get(self) -> Box[Self.K]:\n        ...\n\n\
+         struct A(HasK):\n    comptime K = 3\n\n    def get(self) -> Box[Self.K]:\n        return Box[3]()\n"
+    ));
+}
+
+#[test]
 fn rejects_type_arguments_on_non_generic_struct() {
     let e = err("@fieldwise_init\nstruct Point:\n    var x: Int\n\nvar p: Point[Int] = Point(1)\n");
     assert!(

@@ -778,6 +778,12 @@ impl Checker {
         }
         let arg = match argument {
             ParamArg::Value(arg) => arg,
+            ParamArg::Type(source)
+                if is_value_parameter(param)
+                    && let Some(read) = self.type_spelled_member_read(source) =>
+            {
+                return Ok(TyArg::Val(self.eval_associated_ct(&read, &HashMap::new())?));
+            }
             ParamArg::Type(_) if is_value_parameter(param) => {
                 return Err(TypeError::TypeMismatch {
                     expected: "a value".to_string(),
@@ -2596,6 +2602,11 @@ impl Checker {
                         .map(TyArg::Val)
                         .ok_or_else(|| TypeError::UnknownSelfParam(param.clone()))
                 }
+                ParamArg::Type(source)
+                    if let Some(read) = self.type_spelled_member_read(source) =>
+                {
+                    self.resolve_param_arg(decl, &ParamArg::Value(read))
+                }
                 // A nested application of a value alias (`Twice[Twice[5]]`)
                 // parses as a type argument.
                 ParamArg::Type(SourceType::Named(alias, alias_args))
@@ -3833,30 +3844,19 @@ impl Checker {
             {
                 value
             }
+            mojito_ast::ast::ParamArg::Type(source)
+                if let Some(read) = self.type_spelled_member_read(source) =>
+            {
+                self.eval_associated_ct(&read, &HashMap::new())?
+            }
             // `Self.e.rows`, a field of a struct-typed value parameter,
             // parses as an associated member of the parameter.
-            mojito_ast::ast::ParamArg::Type(SourceType::Assoc { base, name, args })
-                if args.is_empty()
-                    && let SourceType::SelfParam(param) = &**base =>
+            mojito_ast::ast::ParamArg::Type(source @ SourceType::Assoc { base, .. })
+                if matches!(&**base, SourceType::SelfParam(_))
+                    && let Some(read) =
+                        source.expression_spelling(mojito_common::token::DUMMY_SPAN) =>
             {
-                let span = mojito_common::token::Span::default();
-                let expr = |kind| Expr {
-                    kind,
-                    span,
-                    source: None,
-                    syntax_id: mojito_common::token::SyntaxId::fresh(),
-                };
-                let parameter = expr(ExprKind::Member {
-                    object: Box::new(expr(ExprKind::Identifier("Self".to_string()))),
-                    field: param.clone(),
-                });
-                self.eval_associated_ct(
-                    &expr(ExprKind::Member {
-                        object: Box::new(parameter),
-                        field: name.clone(),
-                    }),
-                    &HashMap::new(),
-                )?
+                self.eval_associated_ct(&read, &HashMap::new())?
             }
             mojito_ast::ast::ParamArg::Type(ty)
                 if let Some(element) = self.display_element_argument(ty) =>
@@ -3890,6 +3890,24 @@ impl Checker {
         } else {
             Err(TypeError::BadSimdWidth(w.to_string()))
         }
+    }
+
+    /// The read a type-spelled bracket argument denotes in a value slot,
+    /// where upstream's argument is an expression: `Self.n` or `Self.T.K`
+    /// naming a compile-time value member (a struct's, or a trait's through
+    /// its own `Self` or a bound). `None` for any other spelling, a type
+    /// parameter or type member among them, which stays a type.
+    pub(super) fn type_spelled_member_read(&self, source: &SourceType) -> Option<Expr> {
+        if !matches!(source, SourceType::SelfParam(_) | SourceType::Assoc { .. }) {
+            return None;
+        }
+        let read = source.expression_spelling(mojito_common::token::DUMMY_SPAN)?;
+        let ExprKind::Member { object, field } = &read.kind else {
+            return None;
+        };
+        self.type_member_value(object, field)
+            .is_some()
+            .then_some(read)
     }
 
     /// Upstream's rejections of two type-shaped spellings in a value slot: the

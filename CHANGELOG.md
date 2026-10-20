@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A struct's `comptime` value member passes as a bracket value argument,
+  as on the pin: `Box[Self.n]` reads the member `n` in a later member's
+  body, a parameterized member's body, a method, a field's `SIMD` width,
+  and a member application (`Self.E[Self.n]`), and a trait reads its own
+  requirement the same way, so `def get(self) -> Box[Self.K]` matches its
+  witness and reads at `T.K` through a bound. An earlier raw-list member
+  feeds a `TypeList` (`TypeList[Self._types].length`), keeping its list
+  type when unannotated
+  (`assets/ok/struct_member_bracket_value_argument.mojo`,
+  `assets/ok/typelist_over_earlier_member.mojo`). This closes R1196.
 - A struct's parameterized type member may read the struct's own type
   pack (`comptime E[id: Int]: AnyType = Self.Ts[id]` in `struct W[*Ts:
   AnyType]`, or through `TypeList[Trait=AnyType, Self.Ts.values]()[id]`),

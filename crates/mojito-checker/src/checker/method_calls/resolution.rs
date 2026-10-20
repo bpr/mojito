@@ -388,13 +388,16 @@ impl Checker {
             let receiver_params: Vec<_> = sig
                 .params
                 .iter()
-                .map(|ty| substitute_self(ty, obj_ty))
+                .map(|ty| self.substitute_self_members(ty, obj_ty))
                 .collect();
-            let receiver_variadic = sig.variadic.as_ref().map(|ty| substitute_self(ty, obj_ty));
+            let receiver_variadic = sig
+                .variadic
+                .as_ref()
+                .map(|ty| self.substitute_self_members(ty, obj_ty));
             let receiver_kw_variadic = sig
                 .kw_variadic
                 .as_ref()
-                .map(|ty| substitute_self(ty, obj_ty));
+                .map(|ty| self.substitute_self_members(ty, obj_ty));
             let (params, variadic, kw_variadic, method_subst, method_arguments, bracket_attributes) =
                 match self.instantiate_method_generics(
                     &format!("{obj_ty}.{method}"),
@@ -445,7 +448,7 @@ impl Checker {
                 continue;
             };
             let return_type = self.resolve_assoc_ty(&substitute(
-                &substitute_self(&sig.ret, obj_ty),
+                &self.substitute_self_members(&sig.ret, obj_ty),
                 &method_subst,
             ));
             matches.push(MethodCallResolution {
@@ -472,7 +475,7 @@ impl Checker {
                 raises: sig.raises,
                 error: sig.error.as_ref().map(|error| {
                     self.resolve_assoc_ty(&substitute(
-                        &substitute_self(error, obj_ty),
+                        &self.substitute_self_members(error, obj_ty),
                         &method_subst,
                     ))
                 }),
