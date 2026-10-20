@@ -46,6 +46,50 @@ impl Checker {
         }
     }
 
+    /// The canonical trait set `expr` denotes when it is a trait, or a `&`
+    /// composition of traits, used as a value (`Copyable & Hashable`): each
+    /// trait another one implies is dropped, as upstream folds a redundant
+    /// composition. `None` when it names no trait.
+    pub(super) fn trait_value(&self, expr: &Expr) -> Option<Result<Vec<String>, TypeError>> {
+        let names = mojito_ast::ast::trait_conjunction_names(expr)?;
+        let names_trait = |name: &str| {
+            self.check_trait_name(name).is_ok()
+                && self.lookup(name).is_none()
+                && self.value_parameter_in_scope(name).is_none()
+        };
+        if !names.iter().any(|name| names_trait(name)) {
+            return None;
+        }
+        Some(
+            names
+                .iter()
+                .try_for_each(|name| self.check_trait_name(name))
+                .map(|()| {
+                    mojito_types::types::trait_set(
+                        names
+                            .iter()
+                            .filter(|name| {
+                                !names
+                                    .iter()
+                                    .any(|other| other != *name && self.trait_implies(other, name))
+                            })
+                            .map(|name| (*name).to_string()),
+                    )
+                }),
+        )
+    }
+
+    /// Whether the trait set `traits` converts to a trait metatype over
+    /// `bound`: every trait of `bound` is implied by one of `traits`, as
+    /// upstream upcasts `AnyTrait[Derived]` to `AnyTrait[Base]`.
+    pub(super) fn traits_satisfy(&self, traits: &[String], bound: &[String]) -> bool {
+        bound.iter().all(|required| {
+            traits
+                .iter()
+                .any(|available| self.trait_implies(available, required))
+        })
+    }
+
     /// Upstream names a trait's members only through a conforming type or a
     /// bound, so `Trait.method(x)` is rejected rather than read as a value.
     pub(super) fn reject_direct_trait_member(&self, object: &Expr) -> Result<(), TypeError> {
@@ -1668,6 +1712,7 @@ impl Checker {
             CtValue::Bool(_) => Some(Ty::bool()),
             CtValue::Str(_) => Some(Ty::string_literal()),
             CtValue::Dtype(_) => Some(Ty::dtype()),
+            CtValue::Trait(traits) => Some(TyKind::AnyTrait(traits.clone()).into()),
             CtValue::Simd { dtype, lanes } => Some(mojito_types::types::canonical_simd_ty(
                 *dtype,
                 lanes.len() as i64,
@@ -2233,6 +2278,15 @@ impl Checker {
 
     pub(super) fn trait_refines(&self, candidate: &str, required: &str) -> bool {
         refines_trait(&self.traits, candidate, required)
+    }
+
+    /// Whether the trait `available` is `required` or implies it: every trait
+    /// refines `AnyType`, beside its declared and built-in refinements.
+    pub(super) fn trait_implies(&self, available: &str, required: &str) -> bool {
+        available == required
+            || required == "AnyType"
+            || self.trait_refines(available, required)
+            || builtin_trait_implies(available, required)
     }
 
     /// Explain the first actionable reason a built-in bound failed. This is

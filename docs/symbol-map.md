@@ -1733,6 +1733,31 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   a type. The checker's producer is
   `record_reflection_value` (`checker/reflection.rs`).
 
+## Trait-valued parameters (2026-10-20)
+
+- A trait used as a value is `CtValue::Trait` (`mojito-types`, `ct.rs`), its
+  type the trait metatype `TyKind::AnyTrait` (`types.rs`, upstream's
+  `AnyTraitType`, displayed `AnyTrait[...]`), each over the canonical trait
+  set `types::trait_set` builds. `CtValue::is_trait_valued` answers a trait
+  or a parameter expression over a trait-valued binder, which
+  `is_parameter_attribute` counts as having no run-time form.
+- The parser reads `type_of(...)` as `Type::TypeOf` (`parse_type`, and
+  `parse_type_params` for a parameter's value type). The checker's
+  `resolve_ty_from_anno_at_depth` (`type_resolution.rs`) maps a trait
+  operand to the metatype through `Checker::trait_value` (`traits.rs`),
+  which drops a trait another one implies (`trait_implies`), so the binder
+  classifies as an ordinary `ParamDecl::Value`; its default goes through
+  `trait_param_default` (`declarations.rs`).
+- `Checker::resolve_trait_param_arg` (`type_resolution.rs`) binds a trait, a
+  composition, or a trait-valued binder in scope, accepts it when
+  `traits_satisfy` its bound, records it as the argument's attribute, and
+  otherwise reports `TypeError::ParamValueType`. MIR passes no register for
+  it (`attribute_has_no_runtime_form`, `mir.rs`), mangling spells it `T`
+  (`encode_specialization_value`), and concrete MIR rejects a register of
+  the metatype (`verify/concrete.rs`).
+- The elaborator classifies the binder by `any_trait_source_type`
+  (`mojito-comptime`, `comptime.rs`).
+
 ## The compile-time branch and the request path (2026-10-03)
 
 - `MirTerm::ComptimeBranch { cond: GenericConstraint, .. }` (`mir/ir.rs`) is

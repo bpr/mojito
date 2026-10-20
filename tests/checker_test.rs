@@ -8367,3 +8367,37 @@ fn scalar_construction_from_a_literal_is_its_materialization() {
             .contains(&SemanticAdjustment::MaterializeLiteral(Ty::uint()))
     }));
 }
+
+#[test]
+fn trait_valued_parameters_bind_traits_their_bound_accepts() {
+    ok_std(
+        "def g[Tr: type_of(Movable) = Copyable]() -> Int:\n    return 1\n\
+         def f[Tr: type_of(Copyable)]() -> Int:\n    return g[Tr]()\n\
+         def main():\n    print(g(), g[ImplicitlyCopyable](), g[Tr=Copyable & Hashable]())\n\
+         \x20   print(f[Copyable]())\n",
+    );
+}
+
+#[test]
+fn trait_valued_parameters_reject_what_their_bound_does_not_accept() {
+    let rejects = |argument: &str, found: &str| {
+        let error = err_std(&format!(
+            "def g[Tr: type_of(Copyable)]():\n    pass\ndef main():\n    g[{argument}]()\n"
+        ));
+        assert!(
+            matches!(&error, TypeError::ParamValueType { found: f, .. } if f == found),
+            "{error:?}"
+        );
+    };
+    rejects("Movable", "AnyTrait[Movable]");
+    rejects("Int", "AnyStruct[Int]");
+    rejects("3", "IntLiteral[3]");
+    assert!(matches!(
+        err_std("def g[Tr: type_of(AnyType)]():\n    var x = Tr\ndef main():\n    g[Copyable]()\n"),
+        TypeError::DynamicTypeValue(_)
+    ));
+    assert!(matches!(
+        err_std("def main():\n    var x = 3\n    var y: type_of(x) = 4\n"),
+        TypeError::Unsupported(_)
+    ));
+}

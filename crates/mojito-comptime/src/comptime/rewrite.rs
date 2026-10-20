@@ -773,6 +773,7 @@ pub(super) fn rewrite_type(ty: &mut Type, subs: Subs) {
                 rewrite_expr(origin, subs);
             }
         }
+        Type::TypeOf(operand) => rewrite_expr(operand, subs),
         Type::Int
         | Type::UInt
         | Type::Bool

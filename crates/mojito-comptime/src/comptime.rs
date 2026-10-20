@@ -511,6 +511,18 @@ pub(super) fn def_pack_names(type_params: &[TypeParam], params: &[FnParam]) -> H
         .collect()
 }
 
+/// The trait metatype `type_of(operand)` denotes when the operand is a
+/// trait or a `&` composition of traits. Which spelled traits a sibling
+/// implies is the checker's to drop.
+pub(super) fn any_trait_source_type(operand: &Expr) -> Option<Ty> {
+    mojito_ast::ast::trait_conjunction_names(operand).map(|names| {
+        TyKind::AnyTrait(mojito_types::types::trait_set(
+            names.into_iter().map(str::to_string),
+        ))
+        .into()
+    })
+}
+
 /// Substitute every now-concrete type binder `subs` answers in a source
 /// annotation, wherever it appears unshadowed.
 fn substitute_source_type_bindings(ty: &mut Type, subs: rewrite::TypeSubs) {
@@ -586,6 +598,9 @@ fn substitute_source_type_bindings(ty: &mut Type, subs: rewrite::TypeSubs) {
         Type::Ref { referent, .. } => {
             substitute_source_type_bindings(referent, subs);
         }
+        // The operand of `type_of` is an expression, which names no type
+        // binder.
+        Type::TypeOf(_) => {}
         Type::Int
         | Type::UInt
         | Type::Bool
@@ -669,6 +684,8 @@ fn ct_param_source_type(source: &Type) -> Option<Ty> {
         Type::StringLiteral | Type::ClosedStringLiteral => Some(Ty::string_literal()),
         Type::Float64 => Some(Ty::float64()),
         Type::None => Some(Ty::none()),
+        // A trait-valued parameter (`Tr: type_of(AnyType)`).
+        Type::TypeOf(operand) => any_trait_source_type(operand),
         Type::Named(name, args) if name == "List" && args.len() == 1 => {
             let ParamArg::Type(element) = &args[0] else {
                 return None;

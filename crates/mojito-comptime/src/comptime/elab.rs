@@ -651,6 +651,11 @@ impl Elab<'_> {
             Type::Float64 => Ok(Ty::float64()),
             Type::None => Ok(Ty::none()),
             Type::Named(name, args) => self.type_from_name(name, args, scope),
+            Type::TypeOf(operand) => any_trait_source_type(operand).ok_or_else(|| {
+                ComptimeError::NotComptime(
+                    "'type_of' of a value or a struct type is not supported yet".to_string(),
+                )
+            }),
             Type::SelfParam(name) => match scope.get(name) {
                 Some(CtValue::Type(ty)) => Ok(ty.clone()),
                 Some(_) => Err(ComptimeError::NotComptime(format!(

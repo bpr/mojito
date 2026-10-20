@@ -493,6 +493,7 @@ fn rewrite_type(
             rewrite_type(base, names, namespaces);
             rewrite_expr(index, names, namespaces);
         }
+        Type::TypeOf(operand) => rewrite_expr(operand, names, namespaces),
         _ => {}
     }
 }

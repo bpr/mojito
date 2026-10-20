@@ -89,6 +89,7 @@ pub fn ct_to_vm(value: &CtValue) -> Result<Value, RuntimeError> {
         CtValue::Dtype(dtype) => Ok(Value::Dtype(*dtype)),
         CtValue::Type(_)
         | CtValue::Reflected(_)
+        | CtValue::Trait(_)
         | CtValue::Expr(_)
         | CtValue::Deferred(_)
         | CtValue::Marker(_)

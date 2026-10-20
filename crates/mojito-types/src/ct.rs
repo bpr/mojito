@@ -10,8 +10,8 @@
 //! type-valued compile-time members.
 //!
 //! Scalar values and recursively materializable tuples/lists/dicts/sets have a
-//! runtime literal form; `Type`, `Reflected`, `Expr`, `Deferred`, `Marker`,
-//! and `RemovedArg` are compile-time-only.
+//! runtime literal form; `Type`, `Reflected`, `Trait`, `Expr`, `Deferred`,
+//! `Marker`, and `RemovedArg` are compile-time-only.
 
 use crate::origin::{Mutability, OriginParamId};
 use crate::param_expr::{ParamExpr, ParamRef};
@@ -403,6 +403,11 @@ pub enum CtValue {
     /// `reflect[T]` API. Field selection returns another handle, allowing
     /// `.field[name]` / `.field_at[index]` chains to terminate in `.T`.
     Reflected(Ty),
+    /// A trait, or a `&` composition of traits, used as a value — upstream's
+    /// `!lit.trait<…>`, whose type is the trait metatype
+    /// ([`TyKind::AnyTrait`]). The list is the canonical trait set
+    /// ([`crate::types::trait_set`]); it displays as `A & B`.
+    Trait(Vec<String>),
     /// A residual parameter expression: a declared parameter, or an operator
     /// over one, while a generic declaration is checked. Never a constant — a
     /// folded expression is its ordinary concrete variant
@@ -651,10 +656,25 @@ impl CtValue {
 
     /// Whether a bracket argument solved to this value has no run-time form
     /// at its call, which carries it as a parameter attribute alone, as
-    /// Mojo's call does: a string, or any value
-    /// [`Self::is_folded_parameter_argument`] accepts.
+    /// Mojo's call does: a string, a [trait](Self::is_trait_valued), or
+    /// any value [`Self::is_folded_parameter_argument`] accepts.
     pub fn is_parameter_attribute(&self) -> bool {
-        matches!(self, Self::Str(_)) || self.is_folded_parameter_argument()
+        matches!(self, Self::Str(_))
+            || self.is_trait_valued()
+            || self.is_folded_parameter_argument()
+    }
+
+    /// Whether this value is a trait, or a parameter expression over a
+    /// trait-valued binder: compile-time data with no run-time form.
+    pub fn is_trait_valued(&self) -> bool {
+        match self {
+            Self::Trait(_) => true,
+            Self::Expr(expr) => expr
+                .meta()
+                .as_value()
+                .is_some_and(|ty| matches!(ty.kind(), TyKind::AnyTrait(_))),
+            _ => false,
+        }
     }
 
     /// Whether this value is closed data a constant holds whole: a closed
@@ -742,6 +762,7 @@ impl CtValue {
             | Self::StoreToMem(_)
             | Self::Type(_)
             | Self::Reflected(_)
+            | Self::Trait(_)
             | Self::Expr(_)
             | Self::Deferred(_)
             | Self::Marker(_)
@@ -810,6 +831,9 @@ impl CtValue {
                 Some(value)
             }
             (value @ Self::Dtype(_), TyKind::Dtype) => Some(value),
+            // A trait converts to a metatype over a trait it implies, which
+            // the checker proved, and stays the trait it is.
+            (value @ Self::Trait(_), TyKind::AnyTrait(_)) => Some(value),
             (
                 value @ Self::Simd { .. },
                 TyKind::Simd {
@@ -1072,6 +1096,7 @@ impl CtValue {
             | Self::StoreToMem(_)
             | Self::Type(_)
             | Self::Reflected(_)
+            | Self::Trait(_)
             | Self::Expr(_)
             | Self::Deferred(_)
             | Self::Marker(_)
@@ -1290,6 +1315,7 @@ impl fmt::Display for CtValue {
             Self::StoreToMem(value) => write!(f, "store_to_mem({value})"),
             Self::Type(ty) => write!(f, "{ty}"),
             Self::Reflected(ty) => write!(f, "reflect[{ty}]"),
+            Self::Trait(traits) => f.write_str(&traits.join(" & ")),
             Self::Expr(expr) => write!(f, "{expr}"),
             Self::Deferred(binder) => write!(f, "{binder}"),
             Self::Marker(marker) => write!(f, "{marker}"),

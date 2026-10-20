@@ -3628,10 +3628,14 @@ impl<'a> Flatten<'a> {
         match argument {
             CheckedParamArg::Value(_) => folded,
             CheckedParamArg::Named { value, .. } => match &**value {
-                CheckedParamArg::Attribute { value, .. } => resolved_origin(value.as_ref()),
+                CheckedParamArg::Attribute { value, .. } => {
+                    attribute_has_no_runtime_form(value.as_ref())
+                }
                 CheckedParamArg::Value(_) | CheckedParamArg::Named { .. } => folded,
             },
-            CheckedParamArg::Attribute { value, .. } => resolved_origin(value.as_ref()),
+            CheckedParamArg::Attribute { value, .. } => {
+                attribute_has_no_runtime_form(value.as_ref())
+            }
         }
     }
 
@@ -5138,8 +5142,14 @@ use nested::*;
 use node::Node;
 
 /// Whether a bracket argument's attribute is an origin.
-const fn resolved_origin(value: Option<&TyArg>) -> bool {
-    matches!(value, Some(TyArg::Origin(_)))
+/// Whether a bracket attribute has no slot value at run time: an origin,
+/// or a trait (`g[Copyable]()`), which the instantiated arguments carry.
+fn attribute_has_no_runtime_form(value: Option<&TyArg>) -> bool {
+    match value {
+        Some(TyArg::Origin(_)) => true,
+        Some(TyArg::Val(value)) => value.is_trait_valued(),
+        _ => false,
+    }
 }
 
 fn sorted_map<K: Ord + serde::Serialize, V: serde::Serialize, S: serde::Serializer>(

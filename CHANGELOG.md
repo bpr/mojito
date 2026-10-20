@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A trait is a compile-time value, as on the pin: `def g[Tr:
+  type_of(AnyType)]()` and `struct W[Tr: type_of(Copyable) = Copyable, //,
+  n: Int]` declare a value parameter of the trait metatype
+  (`AnyTrait[...]`), bound positionally or by keyword to a trait or a `&`
+  composition that refines its bound, forwarded (`f[Tr]()`, `W[Self.Tr]`),
+  inferred from an argument's type, and part of the instance's identity, on
+  the VM and natively. A trait its bound does not accept, a type, or a value
+  is rejected with the pin's "parameter 'Tr' has 'AnyTrait[Copyable]' type,
+  but value has type ..." text, and `var x = Tr` with its "dynamic type
+  values" one (`assets/ok/trait_valued_parameter.mojo`). `type_of(...)`
+  parses as a type, though only a trait operand is accepted (R134). MIR text
+  schema 1.76 spells `any_trait([...])` and `ct_trait([...])`, and the
+  package format is 71. This closes R1166.
+
 - The pin's pattern-matching syntax parses: `match subject:` with `case`
   arms in either layout, every case-pattern form (literals, `== expr`, `_`,
   bare/`var`/`ref` bindings, tuples, sequences with one star, struct and

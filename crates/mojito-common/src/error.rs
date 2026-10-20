@@ -393,6 +393,15 @@ pub enum TypeError {
         trait_name: String,
         member: String,
     },
+    /// A compile-time argument whose type is not its parameter's: a trait
+    /// that does not refine a trait-valued parameter's bound (`g[Movable]()`
+    /// for `Tr: type_of(Copyable)`), or a type or value given for one.
+    ParamValueType {
+        callee: String,
+        param: String,
+        expected: String,
+        found: String,
+    },
     /// A value parameter was declared with a type other than `Int` (the only
     /// value-parameter type supported).
     BadValueParamType {
@@ -918,6 +927,16 @@ impl fmt::Display for TypeError {
             } => write!(
                 f,
                 "struct '{struct_name}' comptime member '{member}' does not match the requirement from trait '{trait_name}'"
+            ),
+            Self::ParamValueType {
+                callee,
+                param,
+                expected,
+                found,
+            } => write!(
+                f,
+                "invalid call to '{callee}': '{callee}' parameter '{param}' has '{expected}' \
+                 type, but value has type '{found}'"
             ),
             Self::BadValueParamType { name, ty } => {
                 write!(f, "value parameter '{name}' must have type Int, not '{ty}'")

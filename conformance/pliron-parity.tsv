@@ -988,6 +988,7 @@ assets/ok/trait_requirement_default_from_caller_parameter.mojo	main	exe-differen
 assets/ok/trait_requirement_parameter_default.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_variadic_collector.mojo	main	exe-differential	sanitized
 assets/ok/trait_value_member_through_type_param.mojo	main	exe-differential	sanitized
+assets/ok/trait_valued_parameter.mojo	main	exe-differential	sanitized
 assets/ok/trait_witness_renames_parameter.mojo	main	exe-differential	sanitized
 assets/ok/traits.mojo	main	exe-differential	sanitized
 assets/ok/transfer_into_owned_argument.mojo	main	exe-differential	sanitized

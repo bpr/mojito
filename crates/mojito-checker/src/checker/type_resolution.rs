@@ -69,9 +69,14 @@ pub(super) fn bracket_attribute(
     match argument {
         ParamArg::Named { value, .. } => bracket_attribute(value, bound),
         ParamArg::Type(_) => Some(bound.clone()),
-        ParamArg::Value(_) => {
-            matches!(bound, TyArg::Ty(_) | TyArg::Origin(_)).then(|| bound.clone())
-        }
+        // A trait has no run-time form, so a trait argument is an attribute
+        // like a type.
+        ParamArg::Value(_) => matches!(bound, TyArg::Ty(_) | TyArg::Origin(_))
+            .then(|| bound.clone())
+            .or_else(|| match bound {
+                TyArg::Val(value) if value.is_trait_valued() => Some(bound.clone()),
+                _ => None,
+            }),
     }
 }
 
@@ -245,6 +250,15 @@ impl Checker {
             SourceType::Bool => Ty::bool(),
             SourceType::StringLiteral => self.bare_string_literal()?,
             SourceType::ClosedStringLiteral => Ty::string_literal(),
+            // The trait metatype; `type_of` of anything else waits on R134.
+            SourceType::TypeOf(operand) => match self.trait_value(operand) {
+                Some(traits) => TyKind::AnyTrait(traits?).into(),
+                None => {
+                    return Err(TypeError::Unsupported(
+                        "'type_of' of a value or a struct type is not supported yet".to_string(),
+                    ));
+                }
+            },
             SourceType::Float64 => Ty::float64(),
             SourceType::None => Ty::none(),
             SourceType::Func {
@@ -2142,6 +2156,9 @@ impl Checker {
                 }
                 Ok(TyArg::Ty(ty))
             }
+            ParamDecl::Value { ty, .. } if let TyKind::AnyTrait(bound) = ty.kind() => {
+                self.resolve_trait_param_arg(decl, bound, arg)
+            }
             ParamDecl::Value { name, ty, .. } => match arg {
                 ParamArg::Value(expr) => {
                     // Function values are compile-time parameters in source, but
@@ -2924,6 +2941,75 @@ impl Checker {
                 .is_ok_and(|converted| coerces(&converted, ty))
     }
 
+    /// Resolve the argument of a trait-valued parameter whose type is
+    /// `AnyTrait[bound]`: a trait or a composition refining every trait of
+    /// `bound`, or a trait-valued binder in scope (`f[Tr]()`, `W[Self.Tr]`)
+    /// whose own bound does. A type or another value is a type mismatch, as
+    /// upstream's metatype conversion reports it.
+    fn resolve_trait_param_arg(
+        &self,
+        decl: &ParamDecl,
+        bound: &[String],
+        arg: &mojito_ast::ast::ParamArg,
+    ) -> Result<TyArg, TypeError> {
+        use mojito_ast::ast::ParamArg;
+        let mismatch = |found: String| TypeError::ParamValueType {
+            callee: decl.id().owner.to_string(),
+            param: decl.name().to_string(),
+            expected: TyKind::AnyTrait(bound.to_vec()).to_string(),
+            found,
+        };
+        let type_argument = |source: &SourceType| {
+            self.ty_from_anno(source)
+                .map(|ty| mismatch(format!("AnyStruct[{ty}]")))
+        };
+        let value = match arg {
+            ParamArg::Named { value, .. } => {
+                return self.resolve_trait_param_arg(decl, bound, value);
+            }
+            ParamArg::Value(expr) => match self.trait_value(expr) {
+                Some(traits) => CtValue::Trait(traits?),
+                None => match self.compile_dependent_ct_expr(expr) {
+                    Ok(value) => value.into_value(),
+                    Err(error) => {
+                        let source = match &expr.kind {
+                            ExprKind::Identifier(name) => SourceType::Named(name.clone(), vec![]),
+                            ExprKind::TypeApply { name, args } => {
+                                SourceType::Named(name.clone(), args.clone())
+                            }
+                            _ => return Err(error),
+                        };
+                        return Err(type_argument(&source).unwrap_or(error));
+                    }
+                },
+            },
+            ParamArg::Type(SourceType::SelfParam(param))
+                if let Some(value) = self.self_param_value(param) =>
+            {
+                value
+            }
+            ParamArg::Type(source) => return Err(type_argument(source)?),
+        };
+        match self.ct_value_ty(&value, &Ty::error()) {
+            Some(ref ty) if let TyKind::AnyTrait(traits) = ty.kind() => {
+                if self.traits_satisfy(traits, bound) {
+                    if let ParamArg::Value(expr) = arg {
+                        self.record_at(expr.source_span()).argument_attribute =
+                            Some(TyArg::Val(value.clone()));
+                    }
+                    Ok(TyArg::Val(value))
+                } else {
+                    Err(mismatch(ty.to_string()))
+                }
+            }
+            found => Err(mismatch(match (&value, found) {
+                (CtValue::IntLiteral(literal), _) => format!("IntLiteral[{literal}]"),
+                (_, Some(ty)) => ty.to_string(),
+                (value, None) => value.to_string(),
+            })),
+        }
+    }
+
     fn pack_is_shadowed(&self, starred: &str) -> bool {
         // `local_type_aliases` is searched ahead of `tparams`, so a binding in
         // any alias scope is nearer than one in any parameter scope.
@@ -3393,6 +3479,7 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         | TyKind::IntLiteral
         | TyKind::FloatLiteral
         | TyKind::Dtype
+        | TyKind::AnyTrait(_)
         | TyKind::Error => false,
         TyKind::Func(_) | TyKind::GenericFunc(_) => ty
             .callable()

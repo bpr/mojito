@@ -2141,6 +2141,9 @@ fn ty_value(ty: &Ty) -> String {
         ),
         TyKind::ComptimeList(value) => positional("comptime_list", &ty_value(value)),
         TyKind::ParamList(value) => positional("param_list", &ty_value(value)),
+        TyKind::AnyTrait(traits) => {
+            positional("any_trait", &list(traits.iter().map(|v| symbol(v))))
+        }
         TyKind::Tuple(values) => positional("tuple", &list(values.iter().map(ty_value))),
         TyKind::RuntimePack(values) => {
             positional("runtime_pack", &list(values.iter().map(ty_value)))
@@ -2743,6 +2746,7 @@ fn ct_value(value: &CtValue) -> String {
         }
         CtValue::Type(v) => positional("ct_type", &ty_value(v)),
         CtValue::Reflected(v) => positional("ct_reflected", &ty_value(v)),
+        CtValue::Trait(traits) => positional("ct_trait", &list(traits.iter().map(|v| symbol(v)))),
         CtValue::Expr(v) => positional("ct_expr", &param_expr(v)),
         CtValue::Deferred(v) => positional("ct_deferred", &binder_ref(v)),
         CtValue::Marker(v) => positional("ct_marker", &ct_marker(v)),

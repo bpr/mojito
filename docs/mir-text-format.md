@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.75
+mojito-mir 1.76
 ```
 
-The writer emits 1.75. The reader accepts 1.0 through 1.75; *Schema 1.0*
+The writer emits 1.76. The reader accepts 1.0 through 1.76; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -667,7 +667,9 @@ only the positional form.
 `CtValue` uses `ct_int`, `ct_uint`, `ct_float_bits`, `ct_int_literal`,
 `ct_float_literal`, `ct_bool`, `ct_string`, `ct_tuple`, `ct_list`, `ct_dict`,
 `ct_set`, `ct_dtype`, `ct_simd`, `ct_struct { name, fields }`, `ct_type`,
-`ct_reflected`, `ct_expr(param-expr)` for a residual parameter expression,
+`ct_reflected`, `ct_trait([trait, ...])` for a trait or a `&` composition of
+traits used as a value (schema 1.76), `ct_expr(param-expr)` for a residual
+parameter expression,
 `ct_deferred(binder)` for a slot whose value arrives later (a callable-value
 parameter the VM reifies) and which is no part of generic identity, or
 `ct_marker(marker)` for an elaborator classification of a name that is no
@@ -802,6 +804,11 @@ the canonical concrete type on read.
 `!kgen.param_list<type>`, the type of `ParameterList`'s `values` parameter. It
 types compile-time parameter declarations only: elaborated MIR rejects a
 register, slot, or signature that holds one.
+
+`any_trait([trait, ...])` (schema 1.76) is upstream's trait metatype
+`AnyTraitType`, spelled `type_of(Trait)` in source: the type of a trait used
+as a value, over its canonical trait set. Like `param_list`, it types
+compile-time parameter declarations only.
 
 `ParamDecl` is
 `type_param { owner, slot, name, bounds, callable_bound, default, infer_only, variadic, constraints }`
@@ -1064,10 +1071,10 @@ lowering unit, one record per library declaration, and one module table
 holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 70`.
+MLIR bytecode throughout. The format line is `mojito-package 71`.
 
 ```text
-mojito-package 70
+mojito-package 71
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode, then the type section>

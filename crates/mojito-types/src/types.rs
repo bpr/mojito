@@ -594,6 +594,11 @@ pub enum TyKind {
     /// of `ParameterList`'s `values` parameter and of a value pack's
     /// `vs.values`. It is compile-time only; no runtime register holds one.
     ParamList(Ty),
+    /// Upstream's trait metatype `AnyTraitType`, spelled `type_of(Trait)`:
+    /// the type of a trait used as a value, displayed `AnyTrait[A & B]`. The
+    /// list is the bound's canonical trait set ([`trait_set`]). It is
+    /// compile-time only; no runtime register holds one.
+    AnyTrait(Vec<String>),
     /// Compiler-private `__RuntimeTuple[T1, ..., Tn]` storage. Public
     /// `Tuple[T1, ..., Tn]` values are nominal standard-library structs.
     Tuple(Vec<Ty>),
@@ -2186,6 +2191,7 @@ impl fmt::Display for TyKind {
             Self::Ref(reference) => write!(f, "ref {}", reference.referent),
             Self::ComptimeList(elem) => write!(f, "<comptime-list[{elem}]>"),
             Self::ParamList(elem) => write!(f, "KGENParamList[{elem}]"),
+            Self::AnyTrait(traits) => write!(f, "AnyTrait[{}]", traits.join(" & ")),
             Self::Tuple(elems) => {
                 write!(f, "Tuple[")?;
                 for (i, t) in elems.iter().enumerate() {
@@ -2610,6 +2616,7 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         }
         (TyKind::ComptimeList(a), TyKind::ComptimeList(b)) => coerces(a, b),
         (TyKind::ParamList(a), TyKind::ParamList(b)) => a == b,
+        (TyKind::AnyTrait(a), TyKind::AnyTrait(b)) => a == b,
         (
             TyKind::Pointer {
                 element: a,
@@ -3669,6 +3676,7 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
         | TyKind::FloatLiteral
         | TyKind::Infer
         | TyKind::Dtype
+        | TyKind::AnyTrait(_)
         | TyKind::SelfType
         | TyKind::Error => ty.clone(),
     })
@@ -3755,6 +3763,7 @@ pub fn rewrite_value(value: &CtValue, rewrite: &mut dyn TyRewrite) -> Result<CtV
         | CtValue::Bool(_)
         | CtValue::Str(_)
         | CtValue::Dtype(_)
+        | CtValue::Trait(_)
         | CtValue::Simd { .. }
         | CtValue::Deferred(_)
         | CtValue::Marker(_)
@@ -4097,6 +4106,19 @@ pub fn is_stdlib_file_descriptor_struct(name: &str) -> bool {
 )]
 pub struct CheckedDeclId(pub u32);
 
+/// The canonical spelling of a trait composition.
+///
+/// Each trait appears once, ordered by name descending, as the pin displays
+/// a composition (`Copyable & Hashable` prints `Hashable & Copyable`).
+/// Dropping a trait another one implies needs the trait table, so the
+/// checker does that first.
+pub fn trait_set<I: IntoIterator<Item = String>>(names: I) -> Vec<String> {
+    let mut traits: Vec<String> = names.into_iter().collect();
+    traits.sort_unstable_by(|a, b| b.cmp(a));
+    traits.dedup();
+    traits
+}
+
 /// Whether `ty` still mentions something only an instantiation can resolve.
 ///
 /// A type parameter, an associated or dependent projection, `Self`, or an
@@ -4130,6 +4152,7 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         TyKind::Ref(reference) => is_symbolic(&reference.referent),
         TyKind::Simd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
         TyKind::Dtype
+        | TyKind::AnyTrait(_)
         | TyKind::Int
         | TyKind::UInt
         | TyKind::Bool
@@ -4230,6 +4253,7 @@ pub fn ct_value_is_symbolic(value: &CtValue) -> bool {
         | CtValue::Dtype(_)
         | CtValue::Simd { .. }
         | CtValue::Str(_)
+        | CtValue::Trait(_)
         | CtValue::RemovedArg => false,
     }
 }

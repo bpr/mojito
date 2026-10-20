@@ -870,6 +870,53 @@ fn parses_value_parameters_typed_by_qualified_types() {
 }
 
 #[test]
+fn parses_trait_valued_parameters_spelled_type_of() {
+    let statements = parse(
+        "struct Box[Tr: type_of(Copyable & Hashable), //, n: Int]:\n    pass\n\
+         def g[Tr: type_of(AnyType) = Copyable]():\n    var y: type_of(x) = 3\n",
+    );
+    let StmtKind::Struct { type_params, .. } = &statements[0].kind else {
+        panic!("expected struct");
+    };
+    assert_eq!(type_params[0].bounds, ["type_of"]);
+    assert!(type_params[0].infer_only);
+    assert_eq!(
+        type_params[0].value_type,
+        Some(Type::TypeOf(bx(ExprKind::Infix(
+            InfixOp::BitAnd,
+            ident("Copyable"),
+            ident("Hashable"),
+        ))))
+    );
+    assert_eq!(type_params[1].bounds, ["Int"]);
+    let StmtKind::Def {
+        type_params, body, ..
+    } = &statements[1].kind
+    else {
+        panic!("expected def");
+    };
+    assert_eq!(
+        type_params[0].value_type,
+        Some(Type::TypeOf(ident("AnyType")))
+    );
+    assert!(type_params[0].default.is_some());
+    let StmtKind::VarDecl { ty, .. } = &body[0].kind else {
+        panic!("expected a var declaration");
+    };
+    assert_eq!(ty.as_ref(), Some(&Type::TypeOf(ident("x"))));
+}
+
+#[test]
+fn parses_a_bare_type_of_bound_as_a_bound_name() {
+    let statements = parse("def g[T: type_of]():\n    pass\n");
+    let StmtKind::Def { type_params, .. } = &statements[0].kind else {
+        panic!("expected def");
+    };
+    assert_eq!(type_params[0].bounds, ["type_of"]);
+    assert_eq!(type_params[0].value_type, None);
+}
+
+#[test]
 fn retains_conditional_struct_conformance_predicates() {
     let statements =
         parse("struct Wrapper[T: AnyType](Writable where conforms_to(T, Writable)):\n    pass\n");

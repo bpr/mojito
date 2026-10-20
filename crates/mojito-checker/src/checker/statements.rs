@@ -897,6 +897,14 @@ impl Checker {
                 {
                     return Err(TypeError::DynamicTypeValue(name.clone()));
                 }
+                // Nor has a trait (`var x = Tr` over `Tr: type_of(AnyType)`).
+                if let ExprKind::Identifier(source) = &value.kind
+                    && self
+                        .lookup(source)
+                        .is_some_and(|ty| matches!(ty.kind(), TyKind::AnyTrait(_)))
+                {
+                    return Err(TypeError::DynamicTypeValue(name.clone()));
+                }
                 self.register_named_bindings(value)?;
                 let (contextual, origin_demands) = match ty.as_ref() {
                     Some(annotation) => {

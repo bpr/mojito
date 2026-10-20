@@ -2151,6 +2151,31 @@ fn raw_param_list_types_round_trip() {
     assert!(text.contains("param_list(Int)"), "{text}");
 }
 
+/// Schema 1.76 spells the trait metatype `any_trait([...])` and a trait value
+/// `ct_trait([...])`.
+#[test]
+fn trait_metatypes_and_values_round_trip() {
+    let traits = vec!["Hashable".to_string(), "Copyable".to_string()];
+    let ty = Ty::new(TyKind::AnyTrait(traits.clone()));
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            vec![ty.clone(), Ty::none()],
+            vec![
+                MirInstr::ConstructType { dest: Reg(0), ty },
+                MirInstr::Const {
+                    dest: Reg(1),
+                    k: Const::Value(mojito_types::ct::CtValue::Trait(traits)),
+                },
+            ],
+        ),
+    )]);
+    assert_reprints(&program);
+    let text = write::program(&program);
+    assert!(text.contains("any_trait([Hashable, Copyable])"), "{text}");
+    assert!(text.contains("ct_trait([Hashable, Copyable])"), "{text}");
+}
+
 /// Schema 1.34 carries the static address of a parameter list's elements,
 /// the list a template's parameter or an instance's closed tuple.
 #[test]

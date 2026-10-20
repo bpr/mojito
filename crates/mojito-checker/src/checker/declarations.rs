@@ -927,15 +927,20 @@ impl Checker {
         id: ParamId,
         ty: Ty,
     ) -> Result<ParamDecl, TypeError> {
+        let default = match (&tp.default, ty.kind()) {
+            (Some(expr), TyKind::AnyTrait(bound)) => {
+                Some(self.trait_param_default(tp, &id, bound, expr)?)
+            }
+            (default, _) => default
+                .as_ref()
+                .map(|expr| self.compile_dependent_ct_expr(expr))
+                .transpose()?,
+        };
         Ok(ParamDecl::Value {
             id,
             name: tp.name.clone(),
             ty,
-            default: tp
-                .default
-                .as_ref()
-                .map(|expr| self.compile_dependent_ct_expr(expr))
-                .transpose()?,
+            default,
             callable_default: None,
             infer_only: tp.infer_only,
             variadic: tp.name.starts_with('*'),
@@ -945,6 +950,35 @@ impl Checker {
                 .map(|condition| self.compile_where_clause(condition))
                 .collect::<Result<_, _>>()?,
         })
+    }
+
+    /// The default of a trait-valued parameter (`Tr: type_of(AnyType) =
+    /// Copyable`): a trait or a composition its bound accepts.
+    fn trait_param_default(
+        &self,
+        tp: &mojito_ast::ast::TypeParam,
+        id: &ParamId,
+        bound: &[String],
+        expr: &Expr,
+    ) -> Result<ParamExpr, TypeError> {
+        let expected = TyKind::AnyTrait(bound.to_vec());
+        let mismatch = |found: String| TypeError::ParamValueType {
+            callee: id.owner.to_string(),
+            param: tp.name.clone(),
+            expected: expected.to_string(),
+            found,
+        };
+        let Some(traits) = self.trait_value(expr) else {
+            let value = self.compile_dependent_ct_expr(expr)?;
+            return Err(mismatch(value.meta().to_string()));
+        };
+        let traits = traits?;
+        if !self.traits_satisfy(&traits, bound) {
+            return Err(mismatch(TyKind::AnyTrait(traits).to_string()));
+        }
+        self.param_context
+            .constant_as(CtValue::Trait(traits), &expected.into())
+            .map_err(param_error)
     }
 
     /// Lower a callable contract with its own `def[...]` binders. The

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	628
+# swept-count	632
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -600,6 +600,10 @@ assets/type_error/trait_default_conflicting_implementations.mojo	compile-reject	
 assets/type_error/trait_default_parameter_conflicts_struct_parameter.mojo	compile-reject	agree	error: name conflict between parameter 'x' in the default trait method and a parameter in the struct
 assets/type_error/trait_default_uses_conformer_method.mojo	compile-reject	agree	error: '_Self' value has no attribute 'extra'
 assets/type_error/trait_member_direct_access.mojo	compile-reject	agree	error: Direct access of trait members is not supported.
+assets/type_error/trait_parameter_not_inferred.mojo	compile-reject	agree	error: invalid call to 'g': failed to infer parameter 'Tr'
+assets/type_error/trait_parameter_runtime_read.mojo	compile-reject	agree	error: dynamic type values not permitted yet; try creating a 'comptime' instead of a 'var'
+assets/type_error/trait_parameter_type_argument.mojo	compile-reject	agree	error: invalid call to 'g': 'g' parameter 'Tr' has 'AnyTrait[AnyType]' type, but value has type 'AnyStruct[Int]'
+assets/type_error/trait_parameter_unrefined_trait.mojo	compile-reject	agree	error: invalid call to 'g': 'g' parameter 'Tr' has 'AnyTrait[Copyable]' type, but value has type 'AnyTrait[Movable]'
 assets/type_error/trait_requirement_collector_convention.mojo	compile-reject	agree	error: 'C' does not implement all requirements for 'Eater'
 assets/type_error/trait_requirement_collector_missing.mojo	compile-reject	agree	error: 'Bad' does not implement all requirements for 'Taker'
 assets/type_error/trait_result_origin_read_self.mojo	compile-reject	agree	error: cannot return 'self's origin, because it might expand to a RegisterPassable type

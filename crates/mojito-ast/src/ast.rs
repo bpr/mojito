@@ -184,6 +184,11 @@ pub enum Type {
         referent: Box<Self>,
         origin: Option<OriginSpec>,
     },
+    /// Upstream's `type_of(x)`: the type of a compile-time expression. The
+    /// parser accepts any operand; the checker accepts a trait or a `&`
+    /// composition of traits, whose type is the trait metatype
+    /// (`type_of(AnyType)` types a trait-valued parameter).
+    TypeOf(Box<Expr>),
 }
 
 /// One parameter in a source-level function/closure type.
@@ -2720,6 +2725,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                         }
                     }
                 }
+                Type::TypeOf(operand) => self.expr(operand),
                 Type::Func {
                     type_params,
                     params,

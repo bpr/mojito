@@ -1435,6 +1435,7 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         TyKind::None => "None".to_string(),
         TyKind::ComptimeList(elem) => format!("__ComptimeList${}", ty_raw_in(elem, self_ty, mode)),
         TyKind::ParamList(elem) => format!("__ParamList${}", ty_raw_in(elem, self_ty, mode)),
+        TyKind::AnyTrait(traits) => format!("__AnyTrait${}", traits.join("$")),
         TyKind::Tuple(elems) => format!(
             "Tuple${}",
             elems
@@ -2814,6 +2815,7 @@ pub fn specialization_value_is_closed(value: &CtValue) -> bool {
         | CtValue::Str(_)
         | CtValue::Dtype(_)
         | CtValue::Simd { .. }
+        | CtValue::Trait(_)
         | CtValue::RemovedArg => true,
     }
 }
@@ -2915,6 +2917,10 @@ fn encode_specialization_value(value: &CtValue, out: &mut String) {
         CtValue::Reflected(ty) => {
             let rendered = ty.to_string();
             out.push_str(&format!("r{}:{rendered}", rendered.len()));
+        }
+        CtValue::Trait(traits) => {
+            let rendered = traits.join("&");
+            out.push_str(&format!("T{}:{rendered}", rendered.len()));
         }
         CtValue::RemovedArg => out.push('R'),
         // `mangle_parts` validated the whole key before encoding began.

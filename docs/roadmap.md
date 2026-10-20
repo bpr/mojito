@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1171**.
+Next free ID: **R1174**.
 
 ## Ordered Work
 
@@ -2561,6 +2561,23 @@ Track: `calls`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
+- [ ] **R1172 Overloads that differ only in compile-time parameter types
+  collapse to the last one**
+
+  Problem: `g[DType.int8]()` over `def g[d: DType]() -> Int: return 1`
+  beside `def g[n: Int]() -> Int: return 2` prints `2`, where the pin
+  prints `1`.
+  - A free function's lowered name spells its run-time signature only
+    (`lowered_def_name` in `crates/mojito-symbol/src/symbol.rs`), so the two
+    declarations share one symbol and the later replaces the earlier.
+  - A trait-valued overload (`g[Tr: type_of(AnyType)]` beside
+    `g[n: Int]`) shares it: `g[Copyable]()` prints `2`, the pin `1`.
+  - Upstream selects among such overloads by the bracket arguments'
+    types, as it selects among run-time signatures.
+  - Found while planning R1166 (2026-10-20).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 - [ ] **R1114 `not <Trait>` opts a struct out of a trait in its conformance
   list**
 
@@ -4830,24 +4847,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1166 A trait is not a compile-time value**
-
-  Problem: `def g[Tr: type_of(AnyType)]()` and `struct Box[Tr:
-  type_of(AnyType), //, ...]` run at the pin, while Mojito stops at the
-  `(` with "Expected ']' after type parameters".
-  - `type_of(...)` is parsed nowhere in `crates/`: add it to
-    `docs/grammar.md` first; R134's `type_of(x)` of a value shares the
-    spelling.
-  - The checker has no trait-valued binder: `ParamDecl` is a type or a
-    value of a `Ty`, and `CtValue` has no trait.
-  - It needs the binder's classification, positional and keyword arguments
-    (`g[Copyable]()`, `g[Tr=Movable]()`), and the trait in instance
-    identity (mangling).
-  - Upstream's `TypeList` header needs it (R1168).
-  - Found while planning R805 (2026-10-19).
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R1167 A type binder or raw list bounded by a trait parameter is
   rejected**
 
@@ -4862,8 +4861,47 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - An infer-only trait binder must solve from a raw list's type, as
     `TypeList[Ts.values]` solves `Trait` from `Ts`'s bound.
   - Found while planning R805 (2026-10-19).
-  - Depends on R1166 and R1150 (the raw list's `!kgen.type` element).
+  - Depends on R1166, R1150 (the raw list's `!kgen.type` element), and R449
+    (`g[Tr=Copyable, Int]()` supplies an infer-only binder by keyword before
+    a positional argument).
   - Model: Fable, Planned.
+
+- [ ] **R1171 A trait is not a `comptime` binding**
+
+  Problem: `comptime T = Copyable`, `comptime MyTr = Copyable & Movable`,
+  and `comptime U: type_of(AnyType) = Movable` stop with "'Copyable' is not
+  a compile-time type", where the pin binds each and passes it to a
+  trait-valued parameter (`g[MyTr]()` over `g[Tr: type_of(Movable)]`).
+  - The elaborator's alias table (`TypeAliases` in `comptime/elab.rs`)
+    holds only types, and `Elab::eval` reads a trait name as an unknown
+    type.
+  - The checker's side needs a module or local constant whose value is
+    `CtValue::Trait`, read by `Checker::trait_value` wherever a trait is
+    spelled.
+  - Using such an alias as a bound (`T: MyTr`) is R1167's bound form, not
+    this entry's.
+  - Probe: `comptime MyTr = Copyable & Movable`, then `print(g[MyTr]())`,
+    prints `1` at the pin.
+  - Found while landing R1166 (2026-10-20).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1173 A type or trait read as a run-time expression is rejected**
+
+  Problem: `_ = Tr` over `Tr: type_of(AnyType)`, and `_ = T` over a type
+  parameter, run at the pin, while Mojito stops with "unsupported runtime
+  value parameter `Copyable`" and "Undefined variable 'T'".
+  - A type value (upstream's `!kgen.type`) has no run-time form in Mojito:
+    identifier inference (`Checker::infer_impl`) resolves a trait-valued
+    binder to its metatype but lowers the read as a value-parameter
+    register, and resolves a type name to nothing.
+  - `Tr == Copyable` is rejected with "Undefined variable 'Copyable'"
+    where the pin reports "'AnyTrait[AnyType]' does not implement the
+    '__eq__' method": a trait name in expression position has no value
+    either.
+  - Found while landing R1166 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R808 A `__generator_type[...] T` parameter and an unbound
   application `Alias[a, _]` are not supported**
@@ -5066,6 +5104,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The pin rejects only a positional argument for an infer-only binder.
   - The check is made twice: in `Checker::resolve_use_params` and in
     `split_callable_specialization` (`checker/generics.rs`).
+  - A keyword for the infer-only binder followed by a positional argument
+    (`B[d=DType.int8, 4]()` over `struct B[d: DType, //, n: Int]`, and
+    `Box[Tr=Copyable, 3]()` over `struct Box[Tr: type_of(AnyType), //, n:
+    Int]`) stops in `bracket_bindings` with "positional compile-time
+    argument follows a keyword argument", where the pin prints `4`.
   - Found while landing R446 (2026-10-07).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -6017,11 +6060,17 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R134 `type_of(x)` is not accepted as a type**
+- [ ] **R134 `type_of(x)` of a value is not accepted as a type**
 
-  Problem: `var y: type_of(x) = 3` stops with a parse error at the `(`, and
-  `unsafe_alloc[type_of(px)](1)` with "expected a type, found a value"; the
-  pin runs both.
+  Problem: `var y: type_of(x) = 3` stops with "'type_of' of a value or a
+  struct type is not supported yet", and `unsafe_alloc[type_of(px)](1)` with
+  "expected a type, found a value", where the pin runs both.
+  - The parser reads `type_of(...)` as `Type::TypeOf`, and the checker
+    (`ty_from_anno`) accepts only a trait operand, whose type is the trait
+    metatype.
+  - `type_of(Int)`, the metatype of a struct type, is the same gap.
+  - A bracket argument spelled `type_of(px)` parses as a call expression,
+    not a type.
   - Spelling the type out (`unsafe_alloc[Pointer[Int, origin_of(x)]]`)
     runs.
   - Found while fixing a pointer dereference through a generic struct's

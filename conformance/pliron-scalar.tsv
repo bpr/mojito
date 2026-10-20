@@ -988,6 +988,7 @@ assets/ok/trait_requirement_default_from_caller_parameter.mojo	-	ineligible	no-s
 assets/ok/trait_requirement_parameter_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_variadic_collector.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_value_member_through_type_param.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/trait_valued_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_witness_renames_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/traits.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/transfer_into_owned_argument.mojo	-	ineligible	no-scalar-entry-shape

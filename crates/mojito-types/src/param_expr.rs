@@ -124,8 +124,10 @@ impl ParamContext {
         // A tuple at the nominal `Tuple` is a value of that type, not a
         // compile-time tuple of its elements, and a frozen struct instance
         // (named by its monomorphized instance) is a value of the declared
-        // closed struct type it materialized at.
-        if (crate::types::tuple_elements(ty).is_some() || matches!(value, CtValue::Struct { .. }))
+        // closed struct type it materialized at. A trait bound to a
+        // trait-valued parameter is a value of the metatype it upcast to.
+        if (crate::types::tuple_elements(ty).is_some()
+            || matches!(value, CtValue::Struct { .. } | CtValue::Trait(_)))
             && !crate::types::ct_value_is_symbolic(&value)
         {
             return Ok(self.make(MetaTy::value(ty.clone()), ParamKind::Constant(value)));
@@ -2495,6 +2497,7 @@ impl MetaTy {
             CtValue::Pointer { .. } | CtValue::StoreToMem(_) => Self::value(Ty::infer()),
             CtValue::Type(_) => Self::Type,
             CtValue::Reflected(_) => Self::ReflectedType,
+            CtValue::Trait(traits) => Self::value(TyKind::AnyTrait(traits.clone()).into()),
             CtValue::Expr(expr) => expr.meta().clone(),
             // A deferred slot has no value yet, so no domain either.
             CtValue::Deferred(_) | CtValue::Marker(_) | CtValue::RemovedArg => {

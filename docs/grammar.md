@@ -396,6 +396,14 @@ parameter's type too (`[x: M.A]`, `[t: AnyType, //, raw:
 _MLIR.KGENParamListType[t]]`); the parser records it as the same associated
 lookup or dependent projection a type annotation produces.
 
+A **trait-valued parameter** is a value parameter typed by the trait
+metatype, spelled `type_of(Trait)` (`[Tr: type_of(AnyType)]`, `[Tr:
+type_of(Copyable & Hashable) = Copyable, //, n: Int]`). Its argument is a
+trait or a `&` composition of traits (`g[Copyable]()`, `g[Tr=Movable]()`).
+The parser records `type_of` as the bound and the `type_of(...)` type as the
+value type, as for a qualified type; `type_of` without parentheses stays an
+ordinary bound name.
+
 A `params_decl` list may follow the name in a `struct` or `def` header, declaring
 compile-time **parameters**. Each `NAME: X` is either a **type parameter** — when `X`
 is one or more trait names joined by `&` (`T: Copyable & Movable`) — or a **value
@@ -1033,6 +1041,7 @@ type:
     | 'ref' [origin_spec] type    # an origin-checked reference type `ref[origin] T` (a direct field, a result; never a type argument)
     | NAME [param_args]            # struct type, optionally with type/value arguments
     | '__mlir_type' '.' 'index'    # the Indexer requirement's return spelling (the only `__mlir_type` form accepted)
+    | 'type_of' '(' expression ')' # the type of a compile-time expression (`type_of(AnyType)`, the trait metatype)
 function_type: 'def' [params_decl] '(' [','.function_type_param+] ')' fn_effect* '->' type
 function_type_param:
     | 'var' '**' NAME ':' type
@@ -1066,6 +1075,12 @@ indirect-call checking, and are preserved in checked HIR and the MIR call ABI.
 Own `def[...]` binders form a nested generic scope for a callable constraint or
 compile-time callable value; a parametric function type is not an ordinary
 runtime-parameter annotation.
+`type_of(expression)` is upstream's type of a compile-time expression and
+parses into `Type::TypeOf` with its operand retained, whatever the operand.
+The checker accepts a trait or a `&` composition of traits, whose type is
+the trait metatype (displayed `AnyTrait[Copyable]`, which has no source
+spelling). `type_of` of a value or of a struct type (`var y: type_of(x) =
+3`) is a checker error.
 A **reference type** `ref[origin] T` parses into `Type::Ref` with its origin
 retained. Signature checking substitutes parameter/receiver origins at calls and
 rejects invalid escapes. `ref` is contextual here — it is the reference form only

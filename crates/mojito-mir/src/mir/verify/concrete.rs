@@ -154,6 +154,12 @@ fn require_concrete(head: &str, role: &str, ty: &Ty, errors: &mut Vec<String>) {
             "{head} {role} holds the compile-time-only raw parameter list type `{ty}`"
         ));
     }
+    // A trait is a compile-time value: no run-time value holds one.
+    if mojito_types::types::mentions(ty, &|ty| matches!(ty.kind(), TyKind::AnyTrait(_))) {
+        errors.push(format!(
+            "{head} {role} holds the compile-time-only trait metatype `{ty}`"
+        ));
+    }
 }
 
 fn require_no_parameters(head: &str, parameters: &[ParamDecl], errors: &mut Vec<String>) {

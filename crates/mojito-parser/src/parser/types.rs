@@ -41,6 +41,11 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     Ok(Type::SelfParam(param))
                 }
                 "Self" => Ok(Type::SelfType),
+                // Upstream's `type_of(x)`: the type of a compile-time
+                // expression, retained as its operand.
+                "type_of" if matches!(self.peek_token()?, Some(Token::LParen)) => {
+                    self.parse_type_of_operand()
+                }
                 // `ref [origin] T` — a reference type (parametric mutability). The
                 // origin specifier is parsed and discarded; the referent follows.
                 // (`ref` is contextual — a following `[` or type token, not `.`/end.)
@@ -652,9 +657,18 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             // `Origin[mut=True]`, so they record as the `Origin` bound with a
             // fixed mutability.
             let mut value_type = None;
+            // `Tr: type_of(AnyType)` is a value parameter typed by the trait
+            // metatype; the spelled head stays the bound, as for a qualified
+            // value type.
+            let first_bound = if first_bound == "type_of"
+                && callable_bound.is_none()
+                && matches!(self.peek_token()?, Some(Token::LParen))
+            {
+                value_type = Some(self.parse_type_of_operand()?);
+                first_bound
             // `v: Self.T` is a value parameter typed by the enclosing
             // struct's type parameter.
-            let first_bound = if first_bound == "Self"
+            } else if first_bound == "Self"
                 && callable_bound.is_none()
                 && matches!(self.peek_token()?, Some(Token::Dot))
             {
@@ -736,6 +750,14 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         }
         self.expect(&Token::RBracket, "Expected ']' after type parameters")?;
         Ok(params)
+    }
+
+    /// The parenthesized operand of `type_of`, whose name was just read.
+    fn parse_type_of_operand(&mut self) -> Result<Type, ParseError> {
+        self.expect(&Token::LParen, "Expected '(' after 'type_of'")?;
+        let operand = self.parse_expression(Precedence::Lowest)?;
+        self.expect(&Token::RParen, "Expected ')' after the 'type_of' operand")?;
+        Ok(Type::TypeOf(Box::new(operand)))
     }
 
     // --- Expressions (Pratt parser) ---
