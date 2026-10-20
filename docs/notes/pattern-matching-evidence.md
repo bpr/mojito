@@ -93,7 +93,7 @@ has today:
   (`comptime _enum_case_names: _MLIR.KGENParamListType[KGENString]`), the
   spelling R807 ports.
 - `TypeList[Trait=AnyType, Self._enum_case_types]()[id]` as a dependent
-  result type, which needs R805's library `TypeList` and its
+  result type, which needs R1168's library `TypeList` and its
   `__getitem_param__` read of a type pack.
 - `ParameterList.of[...]` / `TypeList.of[...]` `.values` projections, also
   R807.

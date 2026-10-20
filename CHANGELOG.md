@@ -116,6 +116,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A struct's `comptime` member reads its own type pack as on the pin:
+  `comptime width = Self.Ts.length`, `len(Self.Ts)`, and `comptime First =
+  Self.Ts[0]` (an index may read an earlier member, `Self.Ts[Self.width -
+  1]`) are fixed by each application, so `Row[Int, Bool].width` prints `2`
+  and `var x: Row[Int, Bool].First = 7` types as `Int`
+  (`assets/ok/struct_member_reads_type_pack.mojo`). These reads are still
+  checker rules, not members of a bundled `TypeList`, which waits for
+  trait-valued parameters (roadmap R1166 to R1169).
+
 - A trait body may hold `pass`, as on the pin (`trait Measured(Sized):
   pass`), where it was a parse error.
 

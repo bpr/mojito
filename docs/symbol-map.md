@@ -496,8 +496,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `SimdDtype::licenses` and record each lane fact as its slots, known or
   symbolic (a shuffle, slice, or join only at a known width). The same page
   owns a pack that is still a parameter:
-  `pack_reference`/`unbound_pack_named` resolve it (scopes in
-  `Checker::pack_params`, `annotations::pack_scope`), `pack_element_type`
+  `pack_reference`/`type_pack_named` resolve it (scopes in
+  `Checker::pack_params`, `annotations::pack_scope`; a struct's `comptime`
+  member reads its own `Self.Ts.length`, `len(Self.Ts)`, and `Self.Ts[i]`
+  in `constraints::eval_associated_ct`, and an application binds the pack's
+  element list by binder in `bind_declared` and by name in
+  `generics::solved_value_bindings`), `pack_element_type`
   builds the dependent element (`ParamContext::list_get`,
   `DependentType::pack_element` in `mojito-types`), `opaque_element` is its
   bounded `TyKind::Param` view and `restore_pack_elements` the way back,

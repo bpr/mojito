@@ -1722,7 +1722,7 @@ impl Checker {
             // `Ts[i]` over a `def`'s or method's own pack.
             ExprKind::Index { object, index }
                 if matches!(&object.kind, ExprKind::Identifier(_))
-                    && self.unbound_pack_named(object).is_some() =>
+                    && self.type_pack_named(object).is_some() =>
             {
                 let ExprKind::Identifier(name) = &object.kind else {
                     unreachable!("guarded above");
@@ -1935,9 +1935,11 @@ impl Checker {
         })
     }
 
-    /// The pack an expression names by itself: a bare `Ts` of an enclosing
-    /// `def` or method, or the enclosing struct's `Self.Ts`.
-    pub(super) fn unbound_pack_named(&self, expr: &Expr) -> Option<ParamExpr> {
+    /// The type pack an expression names by itself while it is still a
+    /// parameter: a bare `Ts` of an enclosing `def` or method, or the
+    /// enclosing struct's `Self.Ts`. The counterpart of
+    /// [`Self::value_pack_named`].
+    pub(super) fn type_pack_named(&self, expr: &Expr) -> Option<ParamExpr> {
         match &expr.kind {
             ExprKind::Identifier(name) if self.lookup(name).is_none() => {
                 self.pack_parameter_in_scope(name)

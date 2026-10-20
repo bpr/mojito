@@ -616,6 +616,9 @@ impl Checker {
                     mojito_types::param_expr::PackQuery::Length,
                 )))
             }
+            // `Self.Ts.length` and `len(Self.Ts)` over the struct's own type
+            // pack, which each application's elements fix.
+            _ if let Some(length) = self.pack_length_query(expr) => Ok(CtValue::Expr(length)),
             // `Int(3)`: a scalar conversion of a compile-time value, which is
             // the declared type's ordinary literal materialization. It makes
             // `Array[Int, Int(3)]` and `Array[Int, 3]` one type.
@@ -734,6 +737,26 @@ impl Checker {
                 };
                 self.ty_value_from_name(name, &subscript_param_args(index))?
                     .ok_or_else(|| TypeError::NotComptime(name.clone()))
+            }
+            // An element of the struct's own type pack (`Self.Ts[0]`): its
+            // dependent element type, at an index that may read an earlier
+            // member (`Self.Ts[Self.width - 1]`).
+            ExprKind::Index { object, index } if let Some(pack) = self.type_pack_named(object) => {
+                let index = match self.eval_associated_ct(index, associated)? {
+                    literal @ CtValue::IntLiteral(_) => literal
+                        .clone()
+                        .materialize_as(&Ty::int())
+                        .unwrap_or(literal),
+                    index => index,
+                };
+                let context = &self.param_context;
+                context
+                    .constant(index)
+                    .and_then(|index| context.list_get(&pack, &index))
+                    .map(|element| {
+                        CtValue::Type(mojito_types::types::DependentType::resolve(element))
+                    })
+                    .map_err(param_error)
             }
             // An element of a member's parameter list (`Self.values[0]`):
             // its `param_list.get`, folded when the list is closed.
@@ -1632,7 +1655,7 @@ impl Checker {
                 kwargs,
             } if name == "len" && param_args.is_empty() && kwargs.is_empty() => {
                 match args.as_slice() {
-                    [pack] => self.unbound_pack_named(pack),
+                    [pack] => self.type_pack_named(pack),
                     _ => None,
                 }
             }
@@ -1644,9 +1667,7 @@ impl Checker {
             } if method == "__len__" && args.is_empty() && kwargs.is_empty() => {
                 self.collector_pack(object)
             }
-            ExprKind::Member { object, field } if field == "length" => {
-                self.unbound_pack_named(object)
-            }
+            ExprKind::Member { object, field } if field == "length" => self.type_pack_named(object),
             _ => None,
         }?;
         pack.as_decl_ref().cloned()
@@ -3119,7 +3140,7 @@ impl Checker {
     }
 
     /// Bind each of `decls` to its argument in `arguments` by binder id: a
-    /// type binder to its type, a value binder to its value.
+    /// type binder to its type, a value binder or a type pack to its value.
     fn bind_declared(
         &self,
         bindings: &mut mojito_types::param_expr::ParamBindings,
@@ -3131,7 +3152,7 @@ impl Checker {
                 (ParamDecl::Type { id, .. }, TyArg::Ty(ty)) => {
                     bindings.bind_type(id.clone(), ty.clone());
                 }
-                (ParamDecl::Value { id, .. }, TyArg::Val(value)) => {
+                (ParamDecl::Value { id, .. } | ParamDecl::Type { id, .. }, TyArg::Val(value)) => {
                     bindings.bind(
                         id.clone(),
                         self.param_context

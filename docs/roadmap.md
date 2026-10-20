@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1166**.
+Next free ID: **R1171**.
 
 ## Ordered Work
 
@@ -2593,9 +2593,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     duplicate or unknown names, payload arity), and give `Optional` and
     `Bool` the members over their existing storage.
   - The protocol's spellings need the raw parameter-list type and the
-    `TypeList` dependent read; refine R807/R805 into session-sized work if
+    `TypeList` dependent read; refine R807/R1168 into session-sized work if
     the port exposes more.
-  - Depends on R807 and R805 (the raw-list and dependent-member spellings).
+  - Depends on R807 and R1168 (the raw-list and dependent-member spellings).
   - Model: Fable, Planned.
 
 - [ ] **R1133 Enum case patterns select by discriminant and payload**
@@ -4411,6 +4411,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1170 A struct's `comptime` type member read through `Self` in a
+  method's compile-time position is rejected**
+
+  Problem: over `struct Row[T: Movable]` with `comptime First = Self.T`, a
+  static method's `comptime if Self.First == Int:` stops with "Undefined
+  variable 'First'", and `comptime F = Self.First` with "'Self' is not a
+  compile-time type", where the pin prints `10` for both at `Row[Int]`.
+  - `Checker::constraint_operand`'s `Self.` arm takes every `Self.<name>`
+    for one of the struct's own binders, never a member.
+  - The pre-check elaborator's type resolution (`comptime/elab.rs`) has no
+    type for `Self` in a method instance.
+  - `var x: Self.First` in a method resolves.
+  - Found while landing R805 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R402 A plain `def`'s `comptime for` over struct elements built by a
   call is rejected**
 
@@ -4756,10 +4772,46 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `checker/type_resolution.rs`), and a parameter bounded by an alias of
     it would classify as a value parameter, not a type parameter.
   - Upstream's `_MLIR.POPArrayType` is not ported either.
-  - Related to R805, whose `TypeList` is a `KGENParamListType` of a trait.
+  - Related to R1167: upstream's `TypeList` is a `KGENParamListType` of a
+    trait.
   - Found while landing R807 (2026-10-19).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R1166 A trait is not a compile-time value**
+
+  Problem: `def g[Tr: type_of(AnyType)]()` and `struct Box[Tr:
+  type_of(AnyType), //, ...]` run at the pin, while Mojito stops at the
+  `(` with "Expected ']' after type parameters".
+  - `type_of(...)` is parsed nowhere in `crates/`: add it to
+    `docs/grammar.md` first; R134's `type_of(x)` of a value shares the
+    spelling.
+  - The checker has no trait-valued binder: `ParamDecl` is a type or a
+    value of a `Ty`, and `CtValue` has no trait.
+  - It needs the binder's classification, positional and keyword arguments
+    (`g[Copyable]()`, `g[Tr=Movable]()`), and the trait in instance
+    identity (mangling).
+  - Upstream's `TypeList` header needs it (R1168).
+  - Found while planning R805 (2026-10-19).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R1167 A type binder or raw list bounded by a trait parameter is
+  rejected**
+
+  Problem: `def g[Tr: type_of(AnyType), //, *Ts: Tr]() -> Int: return
+  Ts.length` prints `3` for `g[Int, Bool, String]()` and `1` for
+  `g[Tr=Copyable, Int]()` at the pin, and a struct parameter ``values:
+  __mlir_type[`!kgen.param_list<`, Tr, `>`]`` fed `Ts.values` runs there.
+  - A type binder's bounds are trait names (`ParamDecl::Type::bounds` is a
+    `Vec<String>`), so a bound that is a trait parameter has no form.
+  - A raw list's element must be a type: a trait there stops with "unknown
+    type 'AnyType'".
+  - An infer-only trait binder must solve from a raw list's type, as
+    `TypeList[Ts.values]` solves `Trait` from `Ts`'s bound.
+  - Found while planning R805 (2026-10-19).
+  - Depends on R1166 and R1150 (the raw list's `!kgen.type` element).
+  - Model: Fable, Planned.
 
 - [ ] **R808 A `__generator_type[...] T` parameter and an unbound
   application `Alias[a, _]` are not supported**
@@ -5002,6 +5054,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   'TypeList[vs.values]().length > 1'", where the pin runs it.
   - `Checker::typelist_receiver` (`checker/constraints.rs`) takes every
     enclosing variadic parameter for a type pack, a value pack included.
+  - The same cause stops `comptime if len(vs) == 2:` over `*vs: Int` in
+    the elaborator with "unsupported comptime if condition
+    `Eq(PackLength(...))` the instance does not decide", where the pin
+    prints `202` for `f[1, 2]()` (found while landing R805, 2026-10-20).
   - Found while landing R494 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -8568,19 +8624,55 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R801, which gives a `comptime` value member parameters.
   - Model: Fable, Planned.
 
-- [ ] **R805 A compile-time read of a type pack is a checker rule, not a
-  `TypeList` member**
+- [ ] **R1168 A type pack's `length` and `[i]` are checker rules, not
+  members of a bundled `TypeList`**
 
-  Problem: `len(Ts)`, `Ts.length`, and `Ts[i]` over a type pack are
-  recorded by the checker as pack queries, where upstream answers them
-  through `TypeList.size` and `__getitem_param__` on a library struct.
-  - Mojito has no bundled `TypeList`: the checker builds it
-    (`Checker::typelist_receiver`, `unbound_pack_named`, the type-pack arms
-    of `pack_length_binder`).
-  - A value pack's reads already go through the bundled `ParameterList`
-    (R494), which is the model to follow.
-  - Found while landing R494 (2026-10-13).
-  - Depends on R801, which gives a `comptime` value member parameters.
+  Problem: `Ts.length` and `Ts[i]` over a type pack (and `Self.Ts.length`,
+  `Self.Ts[i]` in a struct's members) are answered by the checker as pack
+  queries, where upstream reads `TypeList.length` and
+  `TypeList.__getitem_param__` on the library struct the pack is.
+  - Bundle `TypeList` in `stdlib/std/builtin/variadics.mojo` with
+    upstream's header (`Trait: type_of(AnyType), //, values:
+    _MLIR.KGENParamListType[Trait]`), `length`, `__getitem_param__`,
+    `__init__`, and `__len__`, and export it from the prelude.
+  - Route the reads through the member, as a value pack's go through
+    `ParameterList` (`Checker::parameter_list_member`): a
+    `type_list_member` beside it in `checker/constraints.rs`.
+  - Then delete the answering arms: `pack_length_binder`'s `length` arm,
+    the `Ts.length` arm of `indexing.rs`, the `Self.Ts.length` and
+    `Self.Ts[i]` arms of `Checker::eval_associated_ct`, and
+    `pack_element_type`'s direct `list_get`.
+  - Explicit `Ts.__getitem_param__[1]` and
+    `TypeList[Ts.values].__getitem_param__[1]` then resolve as member
+    applications (the pin runs both).
+  - The pre-check elaborator matches the bare name `TypeList`
+    (`comptime/rewrite.rs:mark_struct_names`, `comptime/eval.rs`): keep
+    its compiler-known spellings working.
+  - Slices S1 to S3 of `R805-a-compile-time-read-of-a-plan.md`.
+  - Found while landing R494 (2026-10-13); rescoped while landing R805
+    (2026-10-20).
+  - Depends on R1167 (the header's trait parameter and raw list of a
+    trait).
+  - Model: Fable, Planned.
+
+- [ ] **R1169 A type pack is not a `TypeList` value**
+
+  Problem: `var x = Ts`, `comptime raw = Ts.values`, and `comptime tl:
+  TypeList[Trait=Movable, Ts.values] = Ts` stop with "Undefined variable
+  'Ts'", where the pin runs them, and `len(Ts)` is a checker rule rather
+  than `TypeList.__len__`.
+  - Read the pack in a runtime position as `TypeList[Ts.values]()`, as
+    `infer_value_pack_read` reads a value pack as
+    `ParameterList[vs.values]()`.
+  - `len(Ts)` then dispatches to `__len__` like any `Sized`; delete
+    `infer_len`'s pack arm and `pack_length_binder`'s `len` arm.
+  - A `TypeList` instance in MIR needs trait arguments in instance identity
+    (`mojito-symbol` mangling) and on the VM and native.
+  - `comptime y: Int = Ts` should then report the pin's "cannot implicitly
+    convert 'TypeList[Ts.values]' value to 'Int'", not "Undefined variable
+    'y'".
+  - Found while planning R805 (2026-10-19).
+  - Depends on R1168.
   - Model: Fable, Planned.
 
 - [ ] **R378 A function lifted for a compile-time expression evaluates
@@ -9441,7 +9533,7 @@ residue found inside a task moves to the task that owns its fix.
   - Its body is `TypeList.tabulate[...]`, so it needs a bundled `TypeList`
     with `tabulate`.
   - Found while planning R493 (2026-10-13).
-  - Depends on R811 and R805 (a bundled `TypeList`).
+  - Depends on R811 and R1168 (a bundled `TypeList`).
   - Model: Opus, Not Planned.
 
 - [ ] **R813 `FormatStruct` lacks upstream's callback `fields` overload**
@@ -9505,6 +9597,12 @@ residue found inside a task moves to the task that owns its fix.
   - Its erased shell has no sound nominal form.
   - The public `Tuple` is the one compiler-known template whose `*Ts`
     absorbs every argument.
+  - The pre-check elaborator's `Elab::type_from_name` (`comptime/elab.rs`)
+    applies any other variadic struct at fixed arity, so over `struct
+    S[*Ts: Movable]` a `comptime F = S[Int, Bool].n` stops with "type 'S'
+    expects 1 compile-time argument(s), got 2", and `materialize[S[Int,
+    Bool].A == Int]()` with "a parameterized type is not a value", where
+    the pin runs both (found while landing R805, 2026-10-20).
   - Depends on nothing.
   - Model: Fable, Planned.
 

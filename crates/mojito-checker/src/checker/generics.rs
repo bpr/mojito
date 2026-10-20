@@ -316,7 +316,8 @@ pub(super) fn bound_pack_elements(
 }
 
 /// The value-parameter bindings a resolved application implies: each
-/// `ParamDecl::Value` paired with its solved `TyArg::Val` argument.
+/// `ParamDecl::Value` paired with its solved `TyArg::Val` argument, and each
+/// type pack with its element list, which a dependent `Ts[i]` reads.
 pub(super) fn solved_value_bindings(
     decls: &[ParamDecl],
     tyargs: &[TyArg],
@@ -325,9 +326,15 @@ pub(super) fn solved_value_bindings(
         .iter()
         .zip(tyargs)
         .filter_map(|(decl, argument)| match (decl, argument) {
-            (ParamDecl::Value { name, .. }, TyArg::Val(value)) => {
-                Some((name.clone(), value.clone()))
-            }
+            (
+                ParamDecl::Value { name, .. }
+                | ParamDecl::Type {
+                    name,
+                    variadic: true,
+                    ..
+                },
+                TyArg::Val(value),
+            ) => Some((name.clone(), value.clone())),
             _ => None,
         })
         .collect()

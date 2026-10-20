@@ -794,7 +794,7 @@ impl Checker {
     pub(super) fn infer_len(&self, span: SourceSpan, args: &[Expr]) -> Result<Ty, TypeError> {
         // `len(Ts)` of a pack that is still a parameter.
         if let [pack] = args
-            && let Some(pack) = self.unbound_pack_named(pack)
+            && let Some(pack) = self.type_pack_named(pack)
         {
             self.record_pack_query_value(span, &pack, mojito_types::param_expr::PackQuery::Length);
             return Ok(Ty::int());
