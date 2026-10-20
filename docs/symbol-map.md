@@ -1694,7 +1694,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `comptime if`. A requirement's default (`comptime K: Int = 3`,
   `TraitComptime::default`) is kept in its `TraitInfo` as the member an
   omitting conformer declares (`traits::comptime_defaults`, a package
-  exports it); `Checker::collect_comptime_defaults` gathers a conformer's
+  exports it), a parameterized one keeping the requirement's parameters
+  and `where` clauses; `Checker::collect_comptime_defaults` gathers a conformer's
   through its traits' refinements, `check_struct_associated` reads them
   after the struct's own members with `Self` the conformer, and the
   elaborator's `CtStruct::associated` appends them through

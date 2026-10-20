@@ -4869,33 +4869,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1187 A trait's parameterized `comptime` requirement cannot
-  declare a default**
-
-  Problem: upstream's `EnumLike` declares `comptime
-  _enum_elt_type_for_case[id: Int]: AnyType = TypeList[Trait=AnyType,
-  Self._enum_case_types]()[id]`, which Mojito rejects, and at the pin
-  `Optional[String]._enum_elt_type_for_case[1]` is `String` for a
-  conformer that omits the member.
-  - A monomorphic requirement's default is synthesized as the omitting
-    conformer's member (`Checker::collect_comptime_defaults`), but a
-    parameterized one, type- or value-valued, is rejected in
-    `Checker::check_trait` before anything synthesizes it.
-  - A generic read through `T._enum_elt_type_for_case[i]` also needs
-    R666.
-  - Probe: `comptime E[id: Int]: AnyType = Int` in `trait HasE` is
-    rejected ("a default for a trait's parameterized compile-time
-    requirement"), and the pin runs `var x: Q.E[0] = 3` over `struct
-    Q(HasE)`, which omits `E`.
-  - Probe: the value-valued sibling `comptime get[idx: Int]: Int = idx +
-    1` in `trait HasGet`, read as `T.get[5]` over a conformer that omits
-    it, prints `6` at the pin and is rejected the same way.
-  - Found while planning R1132 (2026-10-20).
-  - Depends on R505, R1146, R1185 (the default's type expression), R1202
-    (the default closing at a conformer), and R1196
-    (`Self._enum_case_types` in the default's brackets).
-  - Model: Opus, Not Planned.
-
 - [ ] **R1206 The pre-check elaborator does not read a struct member's
   sibling members**
 
@@ -4918,6 +4891,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     Box[Self.n].w` beside `comptime n = 3`, read as `comptime x = S.m`,
     fails with "value parameter 'n' expects a compile-time Int, got
     Self.n", where the pin prints `30`; `print(S.m)` prints `30`.
+  - Probe: a parameterized value member reading a sibling, `comptime get[i:
+    Int]: Int = i + Self.K` beside `comptime K = 100` (or taken from a
+    trait's default), read as `comptime k = A.get[2] + 1`, fails the same
+    way, where the pin prints `103`; `print(A.get[2])` prints `102`.
   - Found while landing R1204 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5229,6 +5206,14 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - R1184 found that `MetaTy::value` erases a raw list's trait element,
     which is the likely cause: the binder's list and the `values` slot's
     `KGENParamList[Trait]` do not meet.
+  - Probe: a struct member's list of types over its own parameter,
+    `comptime _cases = TypeList.of[Trait=Copyable, Int, Self.T].values`,
+    fails conformance to `comptime _cases:
+    _MLIR.KGENParamListType[Copyable]` ("does not match the requirement"),
+    where the pin prints `2` for `TypeList[O[Int]._cases].length`. Its
+    meta-type is `MetaTy::type_list()`, which keeps no trait, so
+    `Checker::open_type_list_satisfies` (`checker/traits.rs`) accepts only
+    an element every type conforms to (`AnyType`).
   - Found while landing R1185 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.

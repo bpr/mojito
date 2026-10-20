@@ -35,17 +35,17 @@ pub(super) enum RegisterPassability {
 /// A trait's own defaulted `comptime` requirements, each as the member a
 /// conformer that omits it declares: the requirement's annotation over the
 /// default, as upstream synthesizes the conformer's witness. A parameterized
-/// requirement's default is not one (`check_trait` rejects it).
+/// requirement's default keeps the requirement's parameters and `where`
+/// clauses, so the synthesized member is applied as the conformer's own.
 pub(super) fn comptime_defaults(members: &[TraitComptime]) -> Vec<StructComptime> {
     members
         .iter()
-        .filter(|member| member.params.is_empty())
         .filter_map(|member| {
             Some(StructComptime {
                 name: member.name.clone(),
-                params: Vec::new(),
+                params: member.params.clone(),
                 ty: Some(member.ty.clone()),
-                where_clauses: Vec::new(),
+                where_clauses: member.where_clauses.clone(),
                 value: member.default.clone()?,
             })
         })
@@ -192,11 +192,6 @@ impl Checker {
                 }
                 requirement => requirement,
             };
-            if member.default.is_some() && !member.params.is_empty() {
-                return Err(TypeError::Unsupported(
-                    "a default for a trait's parameterized compile-time requirement".to_string(),
-                ));
-            }
             if !member.where_clauses.is_empty() {
                 let constraints = member
                     .where_clauses
@@ -1625,6 +1620,7 @@ impl Checker {
                 self.ct_value_ty(value, self_ty)
                     .is_some_and(|actual| coerces(&actual, expected))
                     || value.clone().materialize_as(expected).is_some()
+                    || self.open_type_list_satisfies(value, expected)
             }
             CtMemberReq::Type { bounds, .. } => {
                 let CtValue::Type(ty) = value else {
@@ -1637,6 +1633,23 @@ impl Checker {
             // An unparameterized member is no generator.
             CtMemberReq::Generator { .. } => false,
         }
+    }
+
+    /// Whether `value`, a raw list of types over open parameters
+    /// (`TypeList.of[Trait=AnyType, NoneType, Self.T].values`), witnesses
+    /// the raw list `expected`: its element meta-type keeps no trait, so it
+    /// does when every type conforms to the element's
+    /// (`KGENParamList[AnyType]`).
+    fn open_type_list_satisfies(&self, value: &CtValue, expected: &Ty) -> bool {
+        let CtValue::Expr(list) = value else {
+            return false;
+        };
+        let TyKind::ParamList(element) = expected.kind() else {
+            return false;
+        };
+        list.meta() == &mojito_types::param_expr::MetaTy::type_list()
+            && mojito_types::types::trait_type_bound(element)
+                .is_some_and(|required| self.traits_satisfy(&["AnyType".to_string()], required))
     }
 
     pub(super) fn conforms_to_under_assumption(

@@ -1552,11 +1552,16 @@ impl Checker {
                     None => Err(TypeError::NotComptime(name.clone())),
                 },
             },
-            ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
+            ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") =>
+            {
                 match self.self_param_ct_value(field) {
                     Some(CtValue::Expr(expr)) => Ok(context.intern(&expr)),
                     Some(value) => constant(value),
-                    None => Err(TypeError::UnknownSelfParam(field.clone())),
+                    // A sibling value member (`comptime get[i: Int]: Int = i
+                    // + Self.K`).
+                    None => self
+                        .type_member_value(object, field)
+                        .unwrap_or_else(|| Err(TypeError::UnknownSelfParam(field.clone()))),
                 }
             }
             // A closed `StringLiteral`'s `value` parameter (`s: KGENString =

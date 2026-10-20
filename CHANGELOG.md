@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A trait's parameterized `comptime` requirement may declare a default,
+  value- or type-valued, as on the pin: a conformer that omits the member
+  takes it with the requirement's parameters and `where` clauses, read
+  with `Self` as that conformer (`comptime get[idx: Int]: Int = idx +
+  Self.K`, upstream's `EnumLike._enum_elt_type_for_case`). A parameterized
+  value member's body now reads a sibling value member, and a raw list of
+  types over the struct's own parameters witnesses a
+  `KGENParamListType[AnyType]` requirement
+  (`assets/ok/trait_parameterized_comptime_default.mojo`). This closes
+  R1187.
 - A struct's `comptime` value member passes as a bracket value argument,
   as on the pin: `Box[Self.n]` reads the member `n` in a later member's
   body, a parameterized member's body, a method, a field's `SIMD` width,

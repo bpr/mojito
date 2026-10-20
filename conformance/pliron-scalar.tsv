@@ -992,6 +992,7 @@ assets/ok/trait_default_refinement.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_default_wrapper_conventions.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_inheritance.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_method_binder_spelling.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/trait_parameterized_comptime_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_parameterized_value_requirement.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_constant_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_default_from_caller_parameter.mojo	-	ineligible	no-scalar-entry-shape
