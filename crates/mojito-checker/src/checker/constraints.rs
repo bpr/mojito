@@ -495,6 +495,7 @@ impl Checker {
                 arguments,
                 decls.iter().map(ParamDecl::name).zip(&bound),
             )?;
+            self.reject_generator_dependence(object, field, &value)?;
             Ok(value)
         })())
     }
@@ -1640,7 +1641,21 @@ impl Checker {
                 })
             }
             TyKind::Struct(name, arguments) => {
-                self.struct_value_member(self.structs.get(name)?, arguments, field)
+                let info = self.structs.get(name)?;
+                // A type member is no value, but read through a generator it
+                // is first rejected for depending on the unbound parameters.
+                if let ExprKind::Identifier(base) = &object.kind
+                    && let Some(member @ CtValue::Type(_)) = info.associated.get(field)
+                    && self.unbound_generator(base).is_some()
+                    && let Err(error) = self.reject_unbound_dependence(base, field, member)
+                {
+                    return Some(Err(error));
+                }
+                let value = self.struct_value_member(info, arguments, field)?;
+                Some(value.and_then(|value| {
+                    self.reject_generator_dependence(object, field, &value)
+                        .map(|()| value)
+                }))
             }
             _ => None,
         }
@@ -3217,15 +3232,35 @@ impl Checker {
         })
     }
 
+    /// [`Self::reject_unbound_dependence`] of a member read whose base
+    /// `object` is a bare parameterized struct, read as its generator.
+    fn reject_generator_dependence(
+        &self,
+        object: &Expr,
+        field: &str,
+        value: &ParamExpr,
+    ) -> Result<(), TypeError> {
+        match &object.kind {
+            ExprKind::Identifier(name) if self.unbound_generator(name).is_some() => {
+                self.reject_unbound_dependence(name, field, &CtValue::Expr(value.clone()))
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// The type `object` names as the subject of a member read: `Self`, a
-    /// type parameter (`T`, `Self.T`), or a struct application (`A`,
-    /// `B[4]`); `None` for an expression that names a value.
+    /// type parameter (`T`, `Self.T`), a struct application (`A`, `B[4]`),
+    /// or a bare parameterized struct's generator (`S`); `None` for an
+    /// expression that names a value.
     fn member_subject(&self, object: &Expr) -> Option<Ty> {
         match &object.kind {
             ExprKind::Identifier(name) if name == "Self" => self.self_ty.clone(),
             ExprKind::Identifier(name) if self.lookup(name).is_some() => None,
             ExprKind::Identifier(name) if let Some(parameter) = self.lookup_tparam(name) => {
                 Some(parameter)
+            }
+            ExprKind::Identifier(name) if let Some(generator) = self.unbound_generator(name) => {
+                Some(generator)
             }
             ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
                 match self.self_param_ct_value(field)? {

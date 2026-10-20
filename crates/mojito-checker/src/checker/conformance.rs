@@ -400,6 +400,35 @@ impl ConformanceOracle {
             .map(|applied| applied.map(ParamExpr::into_value))
     }
 
+    /// The compile-time member `member` of the generator of package struct
+    /// `name`, applied to the closed `arguments` (none for an
+    /// unparameterized member): a bare parameterized struct read as a
+    /// member's base (`S.n`), which the pin answers unless the member
+    /// depends on the unbound parameters. `None` when `name` names no
+    /// parameterized package struct.
+    pub fn package_generator_member(
+        &self,
+        name: &str,
+        member: &str,
+        arguments: &[CtValue],
+    ) -> Option<Result<CtValue, TypeError>> {
+        let info = self.package_struct(name)?.0;
+        if info.decls.is_empty() {
+            return None;
+        }
+        let generator: Ty = TyKind::Struct(name.to_string(), info.self_arguments()).into();
+        let value = if arguments.is_empty() {
+            self.package_associated_value(&generator, member)
+        } else {
+            self.package_member_application(&generator, member, arguments)?
+        };
+        Some(value.and_then(|value| {
+            self.checker
+                .reject_unbound_dependence(name, member, &value)
+                .map(|()| value)
+        }))
+    }
+
     /// The compile-time member `member` of `base`, an instance of a
     /// package struct: a type member as the check projects it, a value
     /// member at the instance's arguments.

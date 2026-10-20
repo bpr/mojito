@@ -727,7 +727,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`parser/suffix.rs:parameter_application`, whose base
   `ast::Expr::type_spelling` reads as a type); `constraints.rs:
   member_source_type` reads that subscript as the type it spells, and
-  `subscript_param_args` reads a type-valued index as a type argument.
+  `subscript_param_args` reads a type-valued index as a type argument. A
+  bare parameterized struct as a member's base (`S.n`, `S.Of[Bool]`) is
+  its generator, `type_resolution.rs:unbound_generator` (the struct at its
+  own binders, no default filled), read by `member_base` and
+  `constraints.rs:member_subject`; `reject_unbound_dependence` rejects a
+  read naming one of those binders with the pin's "cannot access comptime
+  member ... with unbound parameter" (`TypeError::UnboundParameterMember`).
+  The pre-check elaborator answers the same read through
+  `comptime/elab.rs:generator_member`, and a package struct's through
+  `ConformanceOracle::package_generator_member`.
   `lower_parametric_value` lowers a value body to its
   template (`MemberTemplate::Value`, `AliasBody::Value` in `checker.rs`), and
   `apply_parametric_value` binds an application through `resolve_use_params`.

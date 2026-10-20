@@ -1040,6 +1040,7 @@ assets/ok/typelist_self_pack_member_clause.mojo	-	ineligible	no-scalar-entry-sha
 assets/ok/typelist_value_subscript_type.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/typelist_where_clauses.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/uint_and_scalar_value_parameters.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/unbound_struct_member_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/unread_callable_parameter_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/unsafe_pointer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/unspelled_loan_carrying_type_argument.mojo	-	ineligible	no-scalar-entry-shape

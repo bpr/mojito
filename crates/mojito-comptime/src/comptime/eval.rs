@@ -106,6 +106,9 @@ impl Elab<'_> {
                 {
                     return Ok(CtValue::Type(ty));
                 }
+                if let Some(name) = self.generator_base(object, scope) {
+                    return self.generator_member(name, field, &[]);
+                }
                 match self.eval(object, scope)? {
                     CtValue::Type(ty) => self.associated_value(&ty, field),
                     CtValue::Reflected(ty) if field == "T" => Ok(CtValue::Type(ty)),
@@ -193,6 +196,21 @@ impl Elab<'_> {
                         )));
                     };
                     return self.eval_reflected_field_handle(&ty, field, index, scope);
+                }
+                // A parameterized member of a bare struct's generator
+                // (`S.Of[Bool]`).
+                if let ExprKind::Member {
+                    object: base,
+                    field,
+                } = &object.kind
+                    && let Some(name) = self.generator_base(base, scope)
+                    && self.declares_parameterized_member(&Self::generator(name), field)
+                {
+                    let args = match &index.kind {
+                        ExprKind::TupleLit(elements) => self.eval_all(elements, scope)?,
+                        _ => vec![self.eval(index, scope)?],
+                    };
+                    return self.generator_member(name, field, &args);
                 }
                 // A struct's parameterized value member applied
                 // (`S[10].plus[2]`), its arguments bound by position.
@@ -667,6 +685,9 @@ impl Elab<'_> {
                     field,
                 } = &object.kind
                 {
+                    if let Some(name) = self.generator_base(base, scope) {
+                        return self.generator_member(name, field, &values);
+                    }
                     let CtValue::Type(ty) = self.eval(base, scope)? else {
                         return Err(unapplied());
                     };
@@ -781,8 +802,12 @@ impl Elab<'_> {
                 object: base,
                 field,
             } => {
-                let CtValue::Type(ty) = self.eval(base, scope).ok()? else {
-                    return None;
+                let ty = match self.generator_base(base, scope) {
+                    Some(name) => Self::generator(name),
+                    None => match self.eval(base, scope).ok()? {
+                        CtValue::Type(ty) => ty,
+                        _ => return None,
+                    },
                 };
                 let TyKind::Struct(name, _) = ty.kind() else {
                     return None;

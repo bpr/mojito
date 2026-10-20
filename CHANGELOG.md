@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `comptime` member is read through a parameterized struct left unbound,
+  as on the pin: `S.n`, `S.plus[4]`, `var d: S.Of[Bool]`, and `comptime B
+  = S.Of[Int]` read a member that does not depend on the struct's
+  parameters, no default filling one
+  (`assets/ok/unbound_struct_member_read.mojo`), and a member that does is
+  rejected with upstream's "cannot access comptime member 'Y' with unbound
+  parameter 'D.T'" (`assets/type_error/unbound_struct_member_dependent.mojo`).
+  This closes R1204; a local binding of a member reading a sibling member
+  is filed as R1206.
 - A struct's parameterized `comptime` member is read through the struct,
   as on the pin: `S[Int].Of[Bool]`, `P.Pair[A, B]`, and
   `_MLIR.KGENParamListType[Int]` are types whose bracket list binds as an

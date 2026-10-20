@@ -4,6 +4,7 @@
 use super::*;
 use mojito_ast::ast::Method;
 use mojito_ast::visit::{MutVisitor, walk_block_mut};
+use mojito_common::error::TypeError;
 use mojito_types::types::TyKind;
 
 /// The type handles a block's `comptime T = ...` statements bound so far:
@@ -676,7 +677,18 @@ impl Elab<'_> {
                 {
                     return Ok(ty.clone());
                 }
-                let base = self.type_from_anno(base, scope)?;
+                let generator = match &**base {
+                    Type::Named(base, base_args)
+                        if base_args.is_empty() && self.unbound_generator(base, scope) =>
+                    {
+                        Some(base.as_str())
+                    }
+                    _ => None,
+                };
+                let base = match generator {
+                    Some(generator) => Self::generator(generator),
+                    None => self.type_from_anno(base, scope)?,
+                };
                 let member_args = args
                     .iter()
                     .map(|arg| match arg {
@@ -687,7 +699,11 @@ impl Elab<'_> {
                         )),
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                match self.associated_value_at(&base, name, &member_args)? {
+                let value = match generator {
+                    Some(generator) => self.generator_member(generator, name, &member_args)?,
+                    None => self.associated_value_at(&base, name, &member_args)?,
+                };
+                match value {
                     CtValue::Type(ty) => Ok(ty),
                     _ => Err(ComptimeError::NotComptime(format!(
                         "{base}.{name} is not type-valued"
@@ -900,6 +916,87 @@ impl Elab<'_> {
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(TyKind::Struct(name.to_string(), tyargs).into())
+    }
+
+    /// The struct name a member read's base `object` spells when it is a
+    /// bare parameterized struct, read as its generator (`S` in `S.n`), as
+    /// the pin reads it, no default filling a parameter. `None` when the
+    /// name is bound in `scope` or names no parameterized struct.
+    pub(super) fn generator_base<'x>(
+        &self,
+        object: &'x Expr,
+        scope: &ConstEnv<'_>,
+    ) -> Option<&'x str> {
+        let ExprKind::Identifier(name) = &object.kind else {
+            return None;
+        };
+        self.unbound_generator(name, scope).then_some(name.as_str())
+    }
+
+    /// Whether `name` is a bare parameterized struct read as its generator
+    /// ([`Self::generator_base`]).
+    pub(super) fn unbound_generator(&self, name: &str, scope: &ConstEnv<'_>) -> bool {
+        matches!(
+            scope.get(name),
+            None | Some(CtValue::Marker(CtMarker::TypeName))
+        ) && self
+            .ct_struct(name)
+            .is_some_and(|info| !info.decls().is_empty())
+    }
+
+    /// The compile-time member `member` of struct `name`'s generator,
+    /// applied to the closed `member_args` (none for an unparameterized
+    /// member). As at the pin, a member that does not depend on the unbound
+    /// parameters reads, and one that does is rejected.
+    pub(super) fn generator_member(
+        &self,
+        name: &str,
+        member: &str,
+        member_args: &[CtValue],
+    ) -> Result<CtValue, ComptimeError> {
+        match self.ct_struct(name) {
+            Some(StructView::Own(info)) => {
+                if let Some(parameter) = info
+                    .associated
+                    .iter()
+                    .find(|associated| associated.name == member)
+                    .and_then(|associated| {
+                        info.decls.iter().find(|decl| {
+                            let qualified = self_qualified(decl.name());
+                            expression_names_any(&associated.value, &|name| name == qualified)
+                        })
+                    })
+                {
+                    return Err(ComptimeError::Type(TypeError::UnboundParameterMember {
+                        member: member.to_string(),
+                        parameter: format!("{name}.{}", parameter.name().trim_start_matches('*')),
+                    }));
+                }
+                self.associated_value_at(&Self::generator(name), member, member_args)
+            }
+            Some(StructView::Package(_)) => self
+                .conformance
+                .package_generator_member(name, member, member_args)
+                .unwrap_or_else(|| {
+                    Err(TypeError::NoSuchAssociatedType {
+                        object_type: name.to_string(),
+                        member: member.to_string(),
+                    })
+                })
+                .map_err(|error| match error {
+                    TypeError::UnboundParameterMember { .. } => ComptimeError::Type(error),
+                    error => ComptimeError::NotComptime(error.to_string()),
+                }),
+            None => Err(ComptimeError::NotComptime(format!(
+                "unknown compile-time struct '{name}'"
+            ))),
+        }
+    }
+
+    /// The generator of struct `name`, no argument bound, as the base the
+    /// member reads of [`Self::generator_member`] take.
+    pub(super) fn generator(name: &str) -> Ty {
+        TyKind::Struct(name.to_string(), Vec::new()).into()
     }
 
     pub(super) fn associated_value(

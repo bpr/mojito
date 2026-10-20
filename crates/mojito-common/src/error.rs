@@ -344,6 +344,12 @@ pub enum TypeError {
         field: String,
         ty: String,
     },
+    /// A `comptime` member read through a struct left unbound (`S.Y`) whose
+    /// value depends on the unbound `parameter` (`S.T`).
+    UnboundParameterMember {
+        member: String,
+        parameter: String,
+    },
     /// A field typed by a bare struct type parameter whose bounds do not
     /// prove `Deinitable`, in a struct that declares no `Deinitable`
     /// conformance to discharge it.
@@ -877,6 +883,10 @@ impl fmt::Display for TypeError {
             Self::UnqualifiedStructParam(name) => write!(
                 f,
                 "unqualified access to struct parameter '{name}'; use 'Self.{name}' instead"
+            ),
+            Self::UnboundParameterMember { member, parameter } => write!(
+                f,
+                "cannot access comptime member '{member}' with unbound parameter '{parameter}'"
             ),
             Self::InstanceFieldWithoutInstance { field, ty } => write!(
                 f,

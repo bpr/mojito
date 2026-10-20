@@ -476,14 +476,7 @@ impl Checker {
                     _ => return Err(unsupported_mlir_type()),
                 }
             }
-            SourceType::Assoc { base, name, args } => {
-                let base_ty = self.ty_from_anno(base)?;
-                if args.is_empty() {
-                    self.associated_type_from_base(&base_ty, name, &[])?
-                } else {
-                    self.member_application(&base_ty, name, args)?
-                }
-            }
+            SourceType::Assoc { base, name, args } => self.member_type(base, name, args)?,
             // A compile-time value is a type only through a subscript, as at
             // the pin ("expected a type, not a value").
             SourceType::Value(_) => {
@@ -559,12 +552,15 @@ impl Checker {
                     // sequence indexing instead of surfacing a "not a type" error.
                     SourceType::Assoc {
                         base: inner, name, ..
-                    } => match self.ty_from_anno(inner) {
-                        Ok(base_ty) => self.parameterized_assoc_application(
-                            &base_ty,
-                            name,
-                            &[mojito_ast::ast::ParamArg::Value(index.as_ref().clone())],
-                        )?,
+                    } => match self.member_base(inner) {
+                        Ok((base_ty, generator)) => self
+                            .parameterized_assoc_application(
+                                &base_ty,
+                                name,
+                                &[mojito_ast::ast::ParamArg::Value(index.as_ref().clone())],
+                            )?
+                            .map(|applied| self.generator_member_type(generator, name, applied))
+                            .transpose()?,
                         Err(_) => None,
                     },
                     _ => None,
@@ -666,6 +662,51 @@ impl Checker {
             }
             .into(),
         ))
+    }
+
+    /// The type member `name` of `base`, applied to `args` (none for an
+    /// unparameterized member): `T.Element`, `S[Int].Of[Bool]`, `S.Of[Bool]`.
+    fn member_type(
+        &self,
+        base: &SourceType,
+        name: &str,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<Ty, TypeError> {
+        let (base_ty, generator) = self.member_base(base)?;
+        let member = if args.is_empty() {
+            self.associated_type_from_base(&base_ty, name, &[])?
+        } else {
+            self.member_application(&base_ty, name, args)?
+        };
+        self.generator_member_type(generator, name, member)
+    }
+
+    /// `member`, the type member `name` read through a base
+    /// [`Self::member_base`] resolved, once a generator base's read is
+    /// cleared of its unbound parameters.
+    fn generator_member_type(
+        &self,
+        generator: Option<&str>,
+        name: &str,
+        member: Ty,
+    ) -> Result<Ty, TypeError> {
+        if let Some(base) = generator {
+            self.reject_unbound_dependence(base, name, &CtValue::Type(member.clone()))?;
+        }
+        Ok(member)
+    }
+
+    /// The type a member read's base names, beside the struct's name when
+    /// the base is a bare parameterized struct, read as its unbound
+    /// generator ([`Self::unbound_generator`]).
+    fn member_base<'a>(&self, base: &'a SourceType) -> Result<(Ty, Option<&'a str>), TypeError> {
+        if let SourceType::Named(name, args) = base
+            && args.is_empty()
+            && let Some(generator) = self.unbound_generator(name)
+        {
+            return Ok((generator, Some(name)));
+        }
+        self.ty_from_anno(base).map(|ty| (ty, None))
     }
 
     /// `base.name[args]` over a whole bracket list (`S[Int].Of[Bool]`,
@@ -3559,6 +3600,51 @@ impl Checker {
         Some(TyKind::Struct(name.to_string(), info.self_arguments()).into())
     }
 
+    /// The generator a bare parameterized struct name denotes as the base
+    /// of a member read (`S.n`, `S.Of[Bool]`): the struct at its own
+    /// binders, its defaults unfilled, as the pin reads it. `None` when
+    /// `name` is a binding, a parameter, or an alias, or names no
+    /// parameterized struct.
+    pub(super) fn unbound_generator(&self, name: &str) -> Option<Ty> {
+        if self.lookup(name).is_some()
+            || self.lookup_tparam(name).is_some()
+            || self.value_parameter_in_scope(name).is_some()
+            || self.comptime_aliases.contains_key(name)
+        {
+            return None;
+        }
+        let info = self.structs.get(name)?;
+        (!info.decls.is_empty())
+            .then(|| TyKind::Struct(name.to_string(), info.self_arguments()).into())
+    }
+
+    /// Reject `value`, the member `member` read through the generator of
+    /// struct `name`, when it depends on one of the generator's unbound
+    /// parameters, as the pin does.
+    pub(super) fn reject_unbound_dependence(
+        &self,
+        name: &str,
+        member: &str,
+        value: &CtValue,
+    ) -> Result<(), TypeError> {
+        let Some(info) = self.structs.get(name) else {
+            return Ok(());
+        };
+        let mut search = BinderSearch {
+            decls: &info.decls,
+            found: None,
+        };
+        // The search never fails; the rebuilt value is discarded.
+        let _ = mojito_types::types::rewrite_value(value, &mut search);
+        match search.found {
+            Some(parameter) => Err(TypeError::UnboundParameterMember {
+                member: member.to_string(),
+                parameter: format!("{name}.{}", parameter.trim_start_matches('*')),
+            }),
+            None => Ok(()),
+        }
+    }
+
     /// Resolve the alternatives of `Variant[T1, ..., Tn]`.  Alternative order
     /// is significant because it becomes the runtime tag; duplicate types would
     /// make `isa[T]` and `value[T]` ambiguous and are rejected here.
@@ -4014,4 +4100,43 @@ pub(super) fn spells_mlir_index(annotation: Option<&SourceType>) -> bool {
                 && matches!(base.as_ref(), SourceType::Named(base, base_args)
                     if base == "__mlir_type" && base_args.is_empty())
     )
+}
+
+/// The first of a generator's own binders a read value names
+/// ([`Checker::reject_unbound_dependence`]), by its declared name.
+struct BinderSearch<'a> {
+    decls: &'a [ParamDecl],
+    found: Option<String>,
+}
+
+impl BinderSearch<'_> {
+    fn note(&mut self, id: &mojito_types::param_expr::ParamId) {
+        if self.found.is_none()
+            && let Some(decl) = self.decls.iter().find(|decl| decl.id() == id)
+        {
+            self.found = Some(decl.name().to_string());
+        }
+    }
+}
+
+impl mojito_types::types::TyRewrite for BinderSearch<'_> {
+    fn param(&mut self, binder: &mojito_types::param_expr::ParamRef) -> Option<Ty> {
+        self.note(&binder.id);
+        None
+    }
+
+    fn expr(
+        &mut self,
+        expr: &ParamExpr,
+    ) -> Result<ParamExpr, mojito_types::param_expr::ParamError> {
+        for reference in expr.free_parameters() {
+            self.note(&reference.id);
+        }
+        let mut nested = Vec::new();
+        expr.visit(&mut |node| nested.extend(node.embedded_types().into_iter().cloned()));
+        for ty in &nested {
+            mojito_types::types::rewrite_ty(ty, self)?;
+        }
+        Ok(expr.clone())
+    }
 }

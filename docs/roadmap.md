@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1206**.
+Next free ID: **R1207**.
 
 ## Ordered Work
 
@@ -4868,25 +4868,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     R1202 (the default closing at a conformer).
   - Model: Opus, Not Planned.
 
-- [ ] **R1204 A `comptime` member cannot be read through a parameterized
-  struct left unbound**
+- [ ] **R1206 The pre-check elaborator does not read a struct member's
+  sibling members**
 
-  Problem: over `struct S[T: AnyType]` with `comptime n = 3`, `comptime m =
-  S.n` stops with "type 'S' expects 1 compile-time argument(s), got 0",
-  where the pin reads a member that does not depend on the unbound
-  parameters and prints `3`.
-  - The pin rejects only a member that does: `S.Y` for `comptime Y =
-    Self.T` is "cannot access comptime member 'Y' with unbound parameter
-    'S.T'".
-  - The pre-check elaborator applies the bare name at fixed arity
-    (`Elab::type_from_name`, `comptime/elab.rs`), and the checker's
-    `ty_from_anno` of the base cannot infer the parameters.
-  - Probe: `print(S.n)` fails with "Undefined variable 'S'".
-  - Probe: `var d: S.Of[Bool] = (5, 6)` over `comptime Of[U: AnyType] =
-    Tuple[Int, Int]`, and `comptime B = S.Of[Bool]`, fail the same way.
-  - Upstream's `TypeList.of` and `ParameterList.of` are read through the
-    unbound struct, so R1186 and R809 need it.
-  - Found while landing R806 (2026-10-20).
+  Problem: over `struct S[T: AnyType]` with `comptime a = 2` and `comptime
+  b = Self.a + 1`, `comptime m = S[Int].b` stops with "'Self' is not a
+  compile-time type", where the pin prints `3`.
+  - `Elab::associated_value_at` (`comptime/elab.rs`) evaluates a member's
+    body over the struct's parameters and the member's own, but not the
+    struct's other members, so `Self.a` falls to an unknown `Self`.
+  - The check reads the same member at run time: `print(S[Int].b)` prints
+    `3`.
+  - Probe: through the unbound struct, `comptime m = S.b` fails the same
+    way, where the pin prints `3`.
+  - Probe: a member depending on the parameters through a sibling,
+    `comptime a = Self.T` and `comptime b = Self.a`, makes `comptime m =
+    S.b` fail the same way, where the pin reports "cannot access comptime
+    member 'b' with unbound parameter 'S.T'". `Elab::generator_member`
+    tests only the body's own spelling for the parameters.
+  - Found while landing R1204 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
