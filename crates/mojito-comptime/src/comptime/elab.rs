@@ -160,9 +160,14 @@ impl Elab<'_> {
                     // later `comptime if` condition can evaluate before the
                     // branches are pruned.
                     if !in_fn {
-                        self.generic_aliases
-                            .borrow_mut()
-                            .insert(name.clone(), (type_params.clone(), (*value).clone()));
+                        self.generic_aliases.borrow_mut().insert(
+                            name.clone(),
+                            super::GenericAlias {
+                                params: type_params.clone(),
+                                where_clauses: where_clauses.clone(),
+                                body: (*value).clone(),
+                            },
+                        );
                     }
                     out.push(stmt.clone());
                     return Ok(());
@@ -884,6 +889,36 @@ impl Elab<'_> {
         base: &Ty,
         member: &str,
     ) -> Result<CtValue, ComptimeError> {
+        self.associated_value_at(base, member, &[])
+    }
+
+    /// Whether the struct `base` names declares a parameterized `comptime`
+    /// value member `member`, the program's own or the imported package's.
+    pub(super) fn declares_parameterized_member(&self, base: &Ty, member: &str) -> bool {
+        let TyKind::Struct(name, _) = base.kind() else {
+            return false;
+        };
+        match self.ct_struct(name) {
+            Some(StructView::Own(info)) => info
+                .associated
+                .iter()
+                .any(|associated| associated.name == member && !associated.params.is_empty()),
+            Some(StructView::Package(_)) => self
+                .conformance
+                .package_member_application(base, member, &[])
+                .is_some(),
+            None => false,
+        }
+    }
+
+    /// The compile-time member `member` of `base` applied to the closed
+    /// `member_args` (none for an unparameterized member).
+    pub(super) fn associated_value_at(
+        &self,
+        base: &Ty,
+        member: &str,
+        member_args: &[CtValue],
+    ) -> Result<CtValue, ComptimeError> {
         // A `SIMD` type's `dtype` parameter; `Int` and `Float64` are width-1
         // vectors.
         if member == "dtype" {
@@ -912,6 +947,17 @@ impl Elab<'_> {
         };
         let info = match self.ct_struct(name) {
             Some(StructView::Own(info)) => info,
+            Some(StructView::Package(_)) if !member_args.is_empty() => {
+                return self
+                    .conformance
+                    .package_member_application(base, member, member_args)
+                    .unwrap_or_else(|| {
+                        Err(mojito_common::error::TypeError::NotComptime(format!(
+                            "type '{base}' has no parameterized compile-time member '{member}'"
+                        )))
+                    })
+                    .map_err(|error| ComptimeError::NotComptime(error.to_string()));
+            }
             Some(StructView::Package(_)) => {
                 return self
                     .conformance
@@ -933,6 +979,12 @@ impl Elab<'_> {
                     "type '{base}' has no compile-time member '{member}'"
                 ))
             })?;
+        if member_args.len() != assoc.params.len() {
+            return Err(ComptimeError::Arity(format!(
+                "'{base}.{member}' takes exactly {} compile-time argument(s)",
+                assoc.params.len()
+            )));
+        }
         let mut env = ConstEnv::default();
         for (decl, arg) in info.decls.iter().zip(args) {
             match (decl, arg) {
@@ -940,10 +992,16 @@ impl Elab<'_> {
                     env.insert(name.clone(), CtValue::Type(ty.clone()));
                 }
                 (ParamDecl::Value { name, .. }, TyArg::Val(value)) => {
-                    env.insert(name.clone(), value.clone());
+                    env.insert(name.trim_start_matches('*').to_string(), value.clone());
                 }
                 _ => {}
             }
+        }
+        for (param, value) in assoc.params.iter().zip(member_args) {
+            env.insert(param.name.clone(), value.clone());
+        }
+        if !assoc.params.is_empty() {
+            self.check_where_clauses(&format!("{base}.{member}"), &assoc.where_clauses, &env)?;
         }
         self.eval(&assoc.value, &env)
     }

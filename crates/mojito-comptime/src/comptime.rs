@@ -325,9 +325,11 @@ pub fn elaborate_exporting(
         };
         let constant = match (values.get(name), aliases.get(name)) {
             (Some(value), _) => ElaboratedConstant::Value(value.clone()),
-            (None, Some((parameters, body))) => {
-                ElaboratedConstant::Alias(parameters.clone(), body.clone())
-            }
+            (None, Some(alias)) => ElaboratedConstant::Alias(
+                alias.params.clone(),
+                alias.where_clauses.clone(),
+                alias.body.clone(),
+            ),
             (None, None) => continue,
         };
         constants.push((module.clone(), name.clone(), constant));
@@ -875,16 +877,25 @@ struct Elab<'a> {
     /// `installed`'s ([`Self::module_constant`]).
     top_consts: RefCell<HashMap<String, CtValue>>,
     /// The program's own module-scope generic `comptime` aliases in
-    /// declaration order, name → (parameters, body); an imported package's
-    /// are `installed`'s ([`Self::generic_alias`]). The declarations pass
+    /// declaration order; an imported package's are `installed`'s
+    /// ([`Self::generic_alias`]). The declarations pass
     /// through elaboration for the checker's alias registry, but an
     /// application inside a `comptime if` condition must already evaluate
     /// here — the branches are pruned before checking.
-    generic_aliases: RefCell<HashMap<String, (Vec<TypeParam>, Expr)>>,
+    generic_aliases: RefCell<HashMap<String, GenericAlias>>,
     /// The declaration interfaces of the package the program imports, whose
     /// module constants a lookup the program's own miss reads, each decoded
     /// on first lookup.
     installed: Option<&'a InstalledInterfaces>,
+}
+
+/// A module-scope generic `comptime` alias as a compile-time application
+/// evaluates it: its parameters, its `where` clauses, and its body.
+#[derive(Clone)]
+struct GenericAlias {
+    params: Vec<TypeParam>,
+    where_clauses: Vec<Expr>,
+    body: Expr,
 }
 
 /// The compile-time values an elaboration reads by name: its own frame,
@@ -955,16 +966,18 @@ impl Elab<'_> {
             )
     }
 
-    /// The parameters and body of the module-scope generic alias `name`.
-    fn generic_alias(&self, name: &str) -> Option<(Vec<TypeParam>, Expr)> {
+    /// The module-scope generic alias `name`.
+    fn generic_alias(&self, name: &str) -> Option<GenericAlias> {
         self.generic_aliases
             .borrow()
             .get(name)
             .cloned()
             .or_else(|| match self.installed?.elaborated(name)? {
-                ElaboratedConstant::Alias(parameters, body) => {
-                    Some((parameters.clone(), body.clone()))
-                }
+                ElaboratedConstant::Alias(params, where_clauses, body) => Some(GenericAlias {
+                    params: params.clone(),
+                    where_clauses: where_clauses.clone(),
+                    body: body.clone(),
+                }),
                 ElaboratedConstant::Value(_) => None,
             })
     }

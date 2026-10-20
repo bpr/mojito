@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1146**.
+Next free ID: **R1148**.
 
 ## Ordered Work
 
@@ -4125,17 +4125,20 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 - [ ] **R518 A generic `comptime` alias whose body applies a callable is
   refused**
 
-  Problem: `comptime Twice[n: Int] = f(n)` applied as `Twice[3]` reports
-  "a compile-time call of 'f' is not evaluated above the check", where the
-  pin evaluates the alias body in its elaborator and prints `6`.
-  - The AST route that evaluated the body is gone (R9); the alias body is
-    folded by `Elab::apply_generic_alias` above the check, which folds no
-    call.
-  - The lever is the one the module constants took: the check binds the
-    application as a parameter expression and `native::mono` evaluates it.
+  Problem: `comptime Twice[n: Int] = f(n)` bound by a compile-time constant
+  (`comptime z = Twice[6]`, local or module) reports "a compile-time call
+  of 'f' is not evaluated above the check", where the pin prints `12`.
+  - A runtime read (`Twice[3]`, `Twice[k]`) and a parameter argument
+    (`Arr[Twice[k]]()`) already run: the check binds the alias's template,
+    which applies `f`, and `native::mono` evaluates it.
+  - A compile-time constant is still folded above the check by
+    `Elab::apply_generic_alias`, which folds no call. The lever is the one
+    the module constants took: `Elab::applied_initializer` leaves an
+    initializer applying such an alias to the check.
   - A struct's associated `comptime` member that applies a callable
-    (`comptime k = f(1)` inside a struct) was already refused before R9
-    ("not an associated comptime expression") and takes the same lever.
+    (`comptime k = f(1)` inside a struct) is refused with "not an associated
+    comptime expression" and takes the same lever through
+    `eval_associated_ct`.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -4590,22 +4593,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R801 A `comptime` value member or alias cannot take parameters**
+- [ ] **R1146 A trait cannot require a parameterized `comptime` value**
 
-  Problem: `comptime get[idx: Int]: Int = Self.values[idx]` on a struct,
-  and `comptime plus_one[n: Int]: Int = n + 1` at module scope, fail with
-  "a compile-time value member cannot take parameters", where the pin
-  declares upstream's `ParameterList.__getitem_param__` this way.
-  - Only types are templated today (`ParameterizedMember.template: Ty`,
-    `lower_parameterized_member` in `checker/constraints.rs`,
-    `StructDeclaration::parameterized_associated_types`).
-  - An unannotated member fails with "a parameterized associated type must
-    be defined by a type".
-  - A module alias read with a symbolic argument (`plus_one[k]` in a
-    generic `def`) fails with "Undefined variable".
-  - The member's template must cross the package boundary in the struct
-    record, so the change bumps the package format and the MIR schema.
-  - Found while planning R494 (2026-10-13).
+  Problem: a trait requirement `comptime get[idx: Int]: Int`, read through
+  a bound type parameter as `T.get[0]` in `def use[T: HasGet]()`, prints
+  the element at the pin, while Mojito rejects the requirement with "a
+  trait's parameterized compile-time value requirement".
+  - A struct's parameterized value member is a checker template
+    (`MemberTemplate::Value`), answered at every read, so the checked
+    `StructDeclaration` carries none and the elaborator cannot answer a
+    read through `T`.
+  - The work: a parameterized `CtMemberReq::Value` and its conformance
+    check (`checker/traits.rs`), arguments on `ParamKind::TypeMember` in
+    `mojito-types/src/param_expr.rs`, a parameterized value fact on
+    `StructDeclaration` with its MIR text writer and parser (a schema bump),
+    and the answer in `native/mono/symbolic.rs`'s `type_member_answer`.
+  - Probe: `trait HasGet` above, conformed to by `struct S[*values: Int]`
+    defining `comptime get[idx: Int]: Int = Self.values[idx]`;
+    `use[S[4, 5]]()` prints `4` at the pin.
+  - Found while landing R801 (2026-10-19).
   - Depends on nothing.
   - Model: Fable, Planned.
 
@@ -5415,6 +5421,27 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     operands.
   - The same condition over `Self.T` in a struct method runs.
   - Probe: `conformance/probes/conforms_to_condition_generic_def.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R1147 A type proposition over a type parameter is not a runtime
+  value**
+
+  Problem: `return conforms_to(T, Copyable)` in `def f[T: AnyType]() ->
+  Bool` reports "Undefined variable 'conforms_to'", and `return
+  IsSmallCopy[T]` over a predicate alias reports "the Bool-valued comptime
+  alias 'IsSmallCopy' read as a value over a type parameter", where the pin
+  prints each instance's answer.
+  - A closed application (`IsSmallCopy[Int]`) and one over value
+    parameters (`positive[k]`) already read as values.
+  - `Checker::constraint_proposition` decides a `Conforms` or `Trivial` leaf
+    over an unbound type parameter as an unknown hole instead of building
+    `ParamContext::conforms` over the parameter's type shape, which the
+    elaborator answers per instance.
+  - A bare `conforms_to(...)` call has no value inference arm at all, so
+    even a closed `print(conforms_to(Int, Copyable))` reports "Undefined
+    variable 'conforms_to'" where the pin prints `True`.
+  - Found while landing R801 (2026-10-19).
   - Depends on nothing.
   - Model: Opus, Planned.
 

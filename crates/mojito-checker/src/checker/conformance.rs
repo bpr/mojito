@@ -359,6 +359,38 @@ impl ConformanceOracle {
         }
     }
 
+    /// The parameterized value member `member` of `base`, an instance of a
+    /// package struct, applied to the closed `arguments`, a type argument
+    /// as its type value. `None` when `base` declares no such member.
+    pub fn package_member_application(
+        &self,
+        base: &Ty,
+        member: &str,
+        arguments: &[CtValue],
+    ) -> Option<Result<CtValue, TypeError>> {
+        let TyKind::Struct(name, struct_arguments) = base.kind() else {
+            return None;
+        };
+        let info = self.package_struct(name)?.0;
+        let definition = info.parameterized_associated.get(member)?;
+        let arguments = arguments
+            .iter()
+            .map(|argument| match argument {
+                CtValue::Type(ty) => TyArg::Ty(ty.clone()),
+                value => TyArg::Val(value.clone()),
+            })
+            .collect::<Vec<_>>();
+        self.checker
+            .member_template_at(
+                &format!("{base}.{member}"),
+                info,
+                struct_arguments,
+                definition,
+                &arguments,
+            )
+            .map(|applied| applied.map(ParamExpr::into_value))
+    }
+
     /// The compile-time member `member` of `base`, an instance of a
     /// package struct: a type member as the check projects it, a value
     /// member at the instance's arguments.

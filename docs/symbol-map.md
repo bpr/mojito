@@ -686,13 +686,26 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   diagnostic around the semantic constraint compiled by
   `compile_generic_constraint`; declarations compile one constraint per
   trailing `where` clause. `lower_parameterized_member` lowers the symbolic
-  template shared by parameterized associated members and generic comptime
-  aliases. Predicate aliases live here too: `compile_predicate_alias_body`
+  type template shared by parameterized associated members and generic
+  comptime aliases; `lower_parametric_value` lowers a value body to its
+  template (`MemberTemplate::Value`, `AliasBody::Value` in `checker.rs`), and
+  `apply_parametric_value` binds an application through `resolve_use_params`.
+  `parametric_value_application` recognizes every application shape
+  (`subscript_param_args` reads the brackets) and dispatches to
+  `value_alias_application` or `parameterized_member_value`, whose `where`
+  clauses `validate_member_availability` checks; `compile_dependent_ct_expr`,
+  `eval_associated_ct`, and `indexing.rs`'s `read_parametric_value` (a runtime
+  read, recorded as `SemanticAdjustment::ParamValue`) all consult it, and
+  `member_template_at` answers a package struct's member for the elaborator. Predicate aliases live here too: `compile_predicate_alias_body`
   lowers a Bool body, and `predicate_alias_application`/`apply_predicate_alias`
   recognize and inline an application (shared by constraint compilation and
   `traits.rs`'s raw conformance-condition evaluator); the elaborator's
-  `comptime if` path applies module-scope aliases via `Elab::apply_generic_alias`
-  (`comptime/eval.rs`). The `TypeList` vocabulary shares both homes:
+  compile-time positions (`comptime if`, module and local constants) apply
+  module-scope aliases via `Elab::apply_generic_alias` and structs'
+  parameterized value members via `Elab::associated_value_at`, checking
+  `where` clauses with `Elab::check_where_clauses` (`comptime/eval.rs`,
+  `comptime/elab.rs`), while a runtime position is the checker's
+  `read_parametric_value`. The `TypeList` vocabulary shares both homes:
   `compile_typelist_proposition`/`typelist_receiver` lower the constraint
   forms (`PackPredicate`/`PackContains`/`PackLength` in `types.rs`), and the
   elaborator evaluates compile-time TypeList values (`eval_typelist_of`,

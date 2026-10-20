@@ -2036,6 +2036,29 @@ impl Checker {
         Some(Ok(ty))
     }
 
+    /// A generic alias or a struct's parameterized `comptime` member
+    /// applied as a runtime value (`plus_one[k]`, `S[10].plus[2]`,
+    /// `IsSmall[Int]`): the parameter value its application binds, recorded
+    /// at `expr` for MIR to carry, typed by its value type.
+    pub(super) fn read_parametric_value(&self, expr: &Expr) -> Option<Result<Ty, TypeError>> {
+        let value = match self
+            .parametric_value_application(expr)
+            .or_else(|| self.predicate_alias_value(expr))?
+        {
+            Ok(value) => value,
+            Err(error) => return Some(Err(error)),
+        };
+        let Some(ty) = value.meta().as_value().cloned() else {
+            return Some(Err(TypeError::TypeMismatch {
+                expected: "a value".to_string(),
+                found: value.meta().to_string(),
+                context: "a compile-time application read as a runtime value".to_string(),
+            }));
+        };
+        self.record_member_value(expr.source_span(), value);
+        Some(Ok(ty))
+    }
+
     /// Record `value` as the type member value read at `span`.
     pub(super) fn record_member_value(&self, span: SourceSpan, value: ParamExpr) {
         self.record_at(span).adjustment = Some(Box::new(

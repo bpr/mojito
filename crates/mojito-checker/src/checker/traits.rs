@@ -102,6 +102,11 @@ impl Checker {
         }
         for member in comptime_members {
             let requirement = self.ct_member_req_from_anno(&member.params, &member.ty)?;
+            if matches!(requirement, CtMemberReq::Value(_)) && !member.params.is_empty() {
+                return Err(TypeError::Unsupported(
+                    "a trait's parameterized compile-time value requirement".to_string(),
+                ));
+            }
             if !member.where_clauses.is_empty() {
                 let constraints = member
                     .where_clauses
@@ -1118,7 +1123,9 @@ impl Checker {
             // require the definition's explicit parameter count to match the
             // requirement's, and that the requirement is itself parameterized.
             if let Some(parameterized) = struct_info.parameterized_associated.get(member) {
-                let CtMemberReq::Type { bounds, params } = req else {
+                let (CtMemberReq::Type { bounds, params }, MemberTemplate::Type(_)) =
+                    (req, &parameterized.template)
+                else {
                     return Err(TypeError::TraitComptimeMemberMismatch {
                         struct_name: name.to_string(),
                         trait_name: tr.to_string(),
@@ -1984,7 +1991,7 @@ impl Checker {
                 let mut members = info
                     .parameterized_associated
                     .iter()
-                    .map(|(member, declared)| declared.checked_fact(member))
+                    .filter_map(|(member, declared)| declared.checked_fact(member))
                     .collect::<Vec<_>>();
                 members.sort_by(|left, right| left.name.cmp(&right.name));
                 (name.clone(), members)

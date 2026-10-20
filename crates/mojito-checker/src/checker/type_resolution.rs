@@ -37,6 +37,26 @@ pub(super) struct BoundParameters {
     pub(super) attributes: BracketAttributes,
 }
 
+/// Whether a bound argument is still symbolic: an expression over open
+/// parameters, or an aggregate holding one.
+pub(super) fn tyarg_is_symbolic(argument: &TyArg) -> bool {
+    match argument {
+        TyArg::Val(CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)) => true,
+        TyArg::Val(CtValue::Tuple(values) | CtValue::List(values)) => values.iter().any(|value| {
+            matches!(
+                value,
+                CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)
+            )
+        }),
+        TyArg::Val(_) => false,
+        TyArg::Origin(
+            mojito_types::origin::Origin::Param(_) | mojito_types::origin::Origin::SelfParam,
+        ) => true,
+        TyArg::Origin(_) => false,
+        TyArg::Ty(ty) => type_is_symbolic(ty),
+    }
+}
+
 /// The attribute bracket argument `argument` carries once binding resolved
 /// it to `bound`: a type-shaped argument always has one, and a
 /// value-shaped one only when it bound to a type or an origin, a run-time
@@ -1749,7 +1769,7 @@ impl Checker {
                     "'{name}' is a Bool-valued comptime alias, not a type"
                 )));
             }
-            AliasBody::Value => {
+            AliasBody::Value(_) => {
                 return Err(TypeError::Unsupported(format!(
                     "'{name}' is a value comptime alias, not a type"
                 )));
@@ -1803,6 +1823,13 @@ impl Checker {
         struct_targs: &[TyArg],
         args: &[TyArg],
     ) -> Result<Ty, TypeError> {
+        let MemberTemplate::Type(template) = &member.template else {
+            return Err(TypeError::TypeMismatch {
+                expected: "a type".to_string(),
+                found: "a value".to_string(),
+                context: format!("'{base}.{name}' is a compile-time value member"),
+            });
+        };
         let explicit = member.params.iter().filter(|p| !p.infer_only).count();
         if args.len() != explicit {
             return Ok(TyKind::Assoc {
@@ -1846,34 +1873,24 @@ impl Checker {
                 }
             }
         }
-        if !member.availability.is_empty() {
-            let mut environment = ConstraintEnvironment::declared(struct_decls, struct_targs);
-            // A member's own parameters are not classified declarations, so
-            // its clause names them by spelling.
-            for (parameter, argument) in member
+        self.validate_member_availability(
+            &format!("{base}.{name}"),
+            &member.availability,
+            struct_decls,
+            struct_targs,
+            member
                 .params
                 .iter()
                 .filter(|parameter| !parameter.infer_only)
-                .zip(args)
-            {
-                environment.bind_named(&[], &parameter.name, argument);
-            }
-            if !environment.arguments().any(tyarg_is_symbolic) {
-                for constraint in &member.availability {
-                    self.validate_constraint_in_environment(
-                        &format!("{base}.{name}"),
-                        constraint,
-                        &environment,
-                    )?;
-                }
-            }
-        }
+                .map(|parameter| parameter.name.as_str())
+                .zip(args),
+        )?;
         let bindings = AssocBindings {
             types,
             values,
             origins,
         };
-        Ok(self.resolve_assoc_ty(&substitute_assoc(&member.template, &bindings)))
+        Ok(self.resolve_assoc_ty(&substitute_assoc(template, &bindings)))
     }
 
     pub(super) fn resolve_assoc_ty(&self, ty: &Ty) -> Ty {
@@ -2203,6 +2220,31 @@ impl Checker {
                     self.self_param_value(param)
                         .map(TyArg::Val)
                         .ok_or_else(|| TypeError::UnknownSelfParam(param.clone()))
+                }
+                // A nested application of a value alias (`Twice[Twice[5]]`)
+                // parses as a type argument.
+                ParamArg::Type(SourceType::Named(alias, alias_args))
+                    if let Some(value) = self.value_alias_application(alias, alias_args) =>
+                {
+                    let value = value?;
+                    let actual = value.meta().as_value().cloned().unwrap_or_else(Ty::error);
+                    if !coerces(&actual, ty) {
+                        return Err(TypeError::TypeMismatch {
+                            expected: ty.to_string(),
+                            found: actual.to_string(),
+                            context: format!("value parameter '{name}'"),
+                        });
+                    }
+                    Ok(TyArg::Val(match value.as_constant() {
+                        Some(closed) => closed.clone().materialize_as(ty).ok_or_else(|| {
+                            TypeError::TypeMismatch {
+                                expected: ty.to_string(),
+                                found: closed.to_string(),
+                                context: format!("value parameter '{name}'"),
+                            }
+                        })?,
+                        None => CtValue::Expr(value),
+                    }))
                 }
                 ParamArg::Type(source)
                     if let Some(element) = self.display_element_argument(source) =>
@@ -3297,24 +3339,6 @@ impl Checker {
             .or_else(|| self.installed_type_alias(name))
             .or_else(|| self.tparams.iter().rev().find_map(|scope| scope.get(name)))
             .cloned()
-    }
-}
-
-fn tyarg_is_symbolic(argument: &TyArg) -> bool {
-    match argument {
-        TyArg::Val(CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)) => true,
-        TyArg::Val(CtValue::Tuple(values) | CtValue::List(values)) => values.iter().any(|value| {
-            matches!(
-                value,
-                CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)
-            )
-        }),
-        TyArg::Val(_) => false,
-        TyArg::Origin(
-            mojito_types::origin::Origin::Param(_) | mojito_types::origin::Origin::SelfParam,
-        ) => true,
-        TyArg::Origin(_) => false,
-        TyArg::Ty(ty) => type_is_symbolic(ty),
     }
 }
 

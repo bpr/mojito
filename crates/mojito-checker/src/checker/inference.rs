@@ -1145,6 +1145,11 @@ impl Checker {
                     MethodCallArguments::ordinary(args, kwargs),
                 )
             }),
+            ExprKind::Index { .. } | ExprKind::MultiIndex { .. } | ExprKind::TypeApply { .. }
+                if let Some(read) = self.read_parametric_value(expr) =>
+            {
+                read
+            }
             ExprKind::Index { object, index }
                 if let Some(element) = self.comptime_display_subscript(expr, object, index) =>
             {

@@ -2499,20 +2499,37 @@ struct SelectedConversion {
 /// The lowered body of a [`ComptimeAlias`]: a symbolic type template, a
 /// symbolic Bool proposition (a predicate alias, usable exactly where
 /// `conforms_to`/`IsTrivially*` propositions are — never in type positions),
-/// or a compile-time value expression, which elaboration folds at each runtime
-/// use.
+/// or a compile-time value over the alias's binders, which every application
+/// binds by substitution and the elaborator folds per instance.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 enum AliasBody {
     Type(Ty),
     Predicate(Box<GenericConstraint>),
-    Value,
+    Value(ParamExpr),
 }
 
-/// A parameterized associated type a conforming struct defines
-/// (`comptime Buf[n: Int] = Fixed[n]`). The body is lowered once with the
-/// member's own parameters in scope, so the resulting `template` carries them
-/// symbolically (`TyKind::Param`, `CtValue::Expr`, `Origin::Param`); concrete
-/// resolution substitutes an application's arguments into it. The raw
+/// The body of a [`ParameterizedMember`]: upstream's generator over the
+/// member's own parameters, a type or a typed value.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+enum MemberTemplate {
+    /// A type body over the member's binders (`comptime Buf[n: Int] =
+    /// Fixed[n]`).
+    Type(Ty),
+    /// A value body (`comptime get[idx: Int]: Int = Self.values[idx]`) over
+    /// the member's classified binders, which an application binds like a
+    /// module alias's.
+    Value {
+        decls: Vec<ParamDecl>,
+        body: ParamExpr,
+    },
+}
+
+/// A parameterized `comptime` member a struct defines: a type
+/// (`comptime Buf[n: Int] = Fixed[n]`) or a value (`comptime plus[k: Int] =
+/// Self.n + k`). The body is lowered once with the member's own parameters
+/// in scope, so the resulting `template` carries them symbolically
+/// (`TyKind::Param`, `CtValue::Expr`, `Origin::Param`); concrete resolution
+/// substitutes an application's arguments into it. The raw
 /// `TypeParam`s are retained (rather than classified `ParamDecl`s) so the
 /// argument-to-parameter binding can distinguish type, value, and origin kinds.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -2521,7 +2538,7 @@ struct ParameterizedMember {
     /// (`annotations::member_binder`): `Struct.member`.
     binder_owner: String,
     params: Vec<mojito_ast::ast::TypeParam>,
-    template: Ty,
+    template: MemberTemplate,
     /// Constraints (one per trailing `where` clause) evaluated against both
     /// enclosing struct arguments and the member application's explicit
     /// arguments.
@@ -2536,10 +2553,17 @@ struct ParameterizedMember {
 impl ParameterizedMember {
     /// The member as the checked declaration fact names it: its explicit
     /// parameters keyed exactly as `resolve_parameterized_member` binds an
-    /// application's arguments.
-    fn checked_fact(&self, name: &str) -> mojito_checked::declaration::ParameterizedAssociatedType {
+    /// application's arguments. `None` for a value member, which the check
+    /// answers at every read.
+    fn checked_fact(
+        &self,
+        name: &str,
+    ) -> Option<mojito_checked::declaration::ParameterizedAssociatedType> {
         use mojito_checked::declaration::AssociatedParameter;
 
+        let MemberTemplate::Type(template) = &self.template else {
+            return None;
+        };
         let params = self
             .params
             .iter()
@@ -2557,11 +2581,11 @@ impl ParameterizedMember {
                 }
             })
             .collect();
-        mojito_checked::declaration::ParameterizedAssociatedType {
+        Some(mojito_checked::declaration::ParameterizedAssociatedType {
             name: name.to_string(),
             params,
-            template: self.template.clone(),
-        }
+            template: template.clone(),
+        })
     }
 }
 
@@ -2993,7 +3017,7 @@ mod iteration;
 mod type_resolution;
 use type_resolution::{
     BoundParameters, BracketAttributes, ForwardedBrackets, bracket_attribute, dtype_attribute,
-    types_attributes,
+    tyarg_is_symbolic, types_attributes,
 };
 
 mod constraints;

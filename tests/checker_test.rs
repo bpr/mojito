@@ -6872,6 +6872,47 @@ fn generic_comptime_aliases_reject_unsupported_shapes() {
 }
 
 #[test]
+fn parameterized_comptime_values_bind_at_each_application() {
+    // A struct's value member over its pack and its value parameter, read
+    // through a symbolic struct argument and by a later member.
+    ok(
+        "struct S[*values: Int]:\n    comptime get[idx: Int]: Int = Self.values[idx]\n\nstruct P[n: Int]:\n    comptime plus[k: Int] = Self.n + k\n    comptime both = Self.plus[1] * 10\n\ndef shifted[m: Int]() -> Int:\n    return P[m].plus[1]\n\ndef main():\n    print(S[1, 2, 3].get[1])\n    print(P[2].both)\n    print(shifted[5]())\n",
+    );
+    // An annotated alias over a parameter still open, and an alias over
+    // an alias as a struct's parameter argument.
+    ok(
+        "comptime plus_one[n: Int]: Int = n + 1\ncomptime twice[n: Int] = n * 2\n\n@fieldwise_init\nstruct Arr[n: Int]:\n    pass\n\ndef bumped[k: Int]() -> Int:\n    return plus_one[k]\n\ndef main():\n    var a = Arr[twice[plus_one[1]]]()\n    print(bumped[4]())\n",
+    );
+
+    // The annotation converts the body as an alias initializer does.
+    assert!(matches!(
+        err("comptime bad[n: Int]: Bool = n + 1\n"),
+        TypeError::TypeMismatch { expected, found, .. } if expected == "Bool" && found == "Int"
+    ));
+    // A value member names no type.
+    assert!(matches!(
+        err(
+            "struct S[n: Int]:\n    comptime plus[k: Int]: Int = Self.n + k\n\ndef main():\n    var x: S[1].plus[2] = 3\n",
+        ),
+        TypeError::TypeMismatch { expected, found, .. } if expected == "a type" && found == "a value"
+    ));
+    // A value alias's `where` clause holds at every application.
+    assert!(matches!(
+        err("comptime twice[n: Int] where n > 0 = n * 2\n\ndef main():\n    print(twice[0])\n"),
+        TypeError::BadCall { .. }
+    ));
+    // A trait's parameterized value requirement is rejected explicitly.
+    let TypeError::Unsupported(message) = err("trait HasGet:\n    comptime get[idx: Int]: Int\n")
+    else {
+        panic!("expected a parameterized value requirement rejection");
+    };
+    assert_eq!(
+        message,
+        "a trait's parameterized compile-time value requirement"
+    );
+}
+
+#[test]
 fn bool_bodied_comptime_aliases_are_predicates() {
     // A predicate alias applies in a def where clause, regardless of the
     // declaration order between the alias and its consumer (aliases

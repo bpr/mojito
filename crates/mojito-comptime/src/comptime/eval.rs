@@ -179,6 +179,21 @@ impl Elab<'_> {
                     };
                     return self.eval_reflected_field_handle(&ty, field, index, scope);
                 }
+                // A struct's parameterized value member applied
+                // (`S[10].plus[2]`), its arguments bound by position.
+                if let ExprKind::Member {
+                    object: base,
+                    field,
+                } = &object.kind
+                    && let Ok(CtValue::Type(ty)) = self.eval(base, scope)
+                    && self.declares_parameterized_member(&ty, field)
+                {
+                    let args = match &index.kind {
+                        ExprKind::TupleLit(elements) => self.eval_all(elements, scope)?,
+                        _ => vec![self.eval(index, scope)?],
+                    };
+                    return self.associated_value_at(&ty, field, &args);
+                }
                 let container = self.eval(object, scope)?;
                 // A dictionary subscript is the raising `__getitem__`, which
                 // only the check binds and the elaborator below MIR runs.
@@ -624,6 +639,32 @@ impl Elab<'_> {
                 let receiver = self.eval(object, scope)?;
                 self.comptime_value_method(&receiver, method, args, scope)
             }
+            // A parameterized declaration applied with keyword arguments
+            // (`twice[n=4]`, `S[2].plus[k=5]`).
+            ExprKind::MultiIndex { object, args }
+                if let Some(params) = self.keyword_application_params(object, scope) =>
+            {
+                let values = self.bind_subscript_arguments(&params, args, scope)?;
+                let unapplied = || {
+                    ComptimeError::NotComptime(
+                        "a keyword application of no parameterized declaration".to_string(),
+                    )
+                };
+                if let ExprKind::Member {
+                    object: base,
+                    field,
+                } = &object.kind
+                {
+                    let CtValue::Type(ty) = self.eval(base, scope)? else {
+                        return Err(unapplied());
+                    };
+                    return self.associated_value_at(&ty, field, &values);
+                }
+                let ExprKind::Identifier(name) = &object.kind else {
+                    return Err(unapplied());
+                };
+                self.apply_generic_alias_values(name, values)
+            }
             _ => Err(ComptimeError::NotComptime(
                 "unsupported compile-time expression".to_string(),
             )),
@@ -712,6 +753,91 @@ impl Elab<'_> {
         self.apply_generic_alias_values(name, values)
     }
 
+    /// The parameters of the declaration a multi-argument subscript
+    /// applies: a generic alias, or one of the program's own structs'
+    /// parameterized value members. `None` for any other subscript.
+    fn keyword_application_params(
+        &self,
+        object: &Expr,
+        scope: &ConstEnv<'_>,
+    ) -> Option<Vec<TypeParam>> {
+        match &object.kind {
+            ExprKind::Identifier(name) if self.is_generic_alias(name) => {
+                self.generic_alias(name).map(|alias| alias.params)
+            }
+            ExprKind::Member {
+                object: base,
+                field,
+            } => {
+                let CtValue::Type(ty) = self.eval(base, scope).ok()? else {
+                    return None;
+                };
+                let TyKind::Struct(name, _) = ty.kind() else {
+                    return None;
+                };
+                let Some(StructView::Own(info)) = self.ct_struct(name) else {
+                    return None;
+                };
+                info.associated
+                    .iter()
+                    .find(|member| member.name == *field && !member.params.is_empty())
+                    .map(|member| member.params.clone())
+            }
+            _ => None,
+        }
+    }
+
+    /// The values `args` bind to `params`, positional arguments in order
+    /// and a keyword argument to the parameter it names.
+    fn bind_subscript_arguments(
+        &self,
+        params: &[TypeParam],
+        args: &[mojito_ast::ast::SubscriptArg],
+        scope: &ConstEnv<'_>,
+    ) -> Result<Vec<CtValue>, ComptimeError> {
+        use mojito_ast::ast::SubscriptArg;
+        let mut values = vec![None; params.len()];
+        let mut next = 0;
+        for argument in args {
+            let (slot, value) = match argument {
+                SubscriptArg::Index(value) => {
+                    next += 1;
+                    (next - 1, value)
+                }
+                SubscriptArg::Keyword { name, value } => (
+                    params
+                        .iter()
+                        .position(|param| param.name == *name)
+                        .ok_or_else(|| {
+                            ComptimeError::Arity(format!(
+                                "no compile-time parameter named '{name}'"
+                            ))
+                        })?,
+                    value,
+                ),
+                SubscriptArg::Slice { .. } | SubscriptArg::KeywordSlice { .. } => {
+                    return Err(ComptimeError::NotComptime(
+                        "a slice as a compile-time argument".to_string(),
+                    ));
+                }
+            };
+            match values.get_mut(slot) {
+                Some(bound @ None) => *bound = Some(self.eval(value, scope)?),
+                _ => {
+                    return Err(ComptimeError::Arity(
+                        "a compile-time parameter bound twice or past the last".to_string(),
+                    ));
+                }
+            }
+        }
+        values
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| {
+                ComptimeError::Arity("a compile-time parameter left unbound".to_string())
+            })
+    }
+
     /// The value-level core of [`Self::apply_generic_alias`], shared with the
     /// `TypeList` `any`/`all` per-element predicate evaluation.
     fn apply_generic_alias_values(
@@ -719,20 +845,56 @@ impl Elab<'_> {
         name: &str,
         values: Vec<CtValue>,
     ) -> Result<CtValue, ComptimeError> {
-        let (params, body) = self.generic_alias(name).ok_or_else(|| {
+        let alias = self.generic_alias(name).ok_or_else(|| {
             ComptimeError::NotComptime(format!("`{name}` is not a generic comptime alias"))
         })?;
-        if values.len() != params.len() {
+        if values.len() != alias.params.len() {
             return Err(ComptimeError::Arity(format!(
                 "{name}[...] takes exactly {} argument(s)",
-                params.len()
+                alias.params.len()
             )));
         }
         let mut env = ConstEnv::over(self.top_consts.borrow().clone(), self.installed);
-        for (param, value) in params.iter().zip(values) {
+        for (param, value) in alias.params.iter().zip(values) {
             env.insert(param.name.clone(), value);
         }
-        self.eval(&body, &env)
+        self.check_where_clauses(name, &alias.where_clauses, &env)?;
+        self.eval(&alias.body, &env)
+    }
+
+    /// Require each `where` clause of the parameterized declaration `name`
+    /// to hold under its application's bindings `env`, as the check
+    /// requires of a runtime application: `cond` or `(cond, "message")`.
+    pub(super) fn check_where_clauses(
+        &self,
+        name: &str,
+        clauses: &[Expr],
+        env: &ConstEnv<'_>,
+    ) -> Result<(), ComptimeError> {
+        for clause in clauses {
+            let (holds, message) = match self.eval(clause, env)? {
+                CtValue::Tuple(parts) => match parts.as_slice() {
+                    [CtValue::Bool(holds), CtValue::Str(message)] => {
+                        (*holds, Some(message.clone()))
+                    }
+                    _ => {
+                        return Err(ComptimeError::NotBool(format!(
+                            "a where clause of '{name}'"
+                        )));
+                    }
+                },
+                value => (value.as_bool("a where clause")?, None),
+            };
+            if !holds {
+                return Err(ComptimeError::Constraint(match message {
+                    Some(message) => {
+                        format!("invalid use of '{name}': violated constraint: {message}")
+                    }
+                    None => format!("invalid use of '{name}': violated constraint"),
+                }));
+            }
+        }
+        Ok(())
     }
 
     /// Evaluate `TypeList.of[Trait=..., T1, ..., Tn]()` to a compile-time

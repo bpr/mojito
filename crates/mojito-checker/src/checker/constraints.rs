@@ -70,10 +70,11 @@ impl Checker {
         }
     }
 
-    /// Classify a trait comptime-member annotation. In Mojo terms,
-    /// `comptime count: Int` requires an integer compile-time value, while
-    /// `comptime Element: AnyType` requires a type-valued member whose type
-    /// conforms to `AnyType`.
+    /// Classify a comptime-member annotation. In Mojo terms, `comptime
+    /// count: Int` requires an integer compile-time value, while `comptime
+    /// Element: AnyType` requires a type-valued member whose type conforms
+    /// to `AnyType`. Either may take parameters (`comptime get[idx: Int]:
+    /// Int`), as upstream's alias declaration does.
     pub(super) fn ct_member_req_from_anno(
         &self,
         params: &[mojito_ast::ast::TypeParam],
@@ -119,13 +120,6 @@ impl Checker {
                 });
             }
         }
-        if !params.is_empty() {
-            return Err(TypeError::Unsupported(
-                "a compile-time value member cannot take parameters; only an \
-                 associated type may be parameterized"
-                    .to_string(),
-            ));
-        }
         Ok(CtMemberReq::Value(self.ty_from_anno(ty)?))
     }
 
@@ -150,13 +144,15 @@ impl Checker {
                 return Err(TypeError::Redeclaration(member.name.clone()));
             }
             let member_owner = format!("{struct_name}.{}", member.name);
-            if let Some(annotation) = &member.ty {
-                // Resolve and classify the annotation now even when the member's
-                // symbolic body cannot be checked until application. This keeps
-                // associated `comptime NAME: Type where ... = ...` declarations
-                // from silently discarding an invalid declared type.
-                self.ct_member_req_from_anno(&member.params, annotation)?;
-            }
+            // Resolve and classify the annotation now even when the member's
+            // symbolic body cannot be checked until application. This keeps
+            // associated `comptime NAME: Type where ... = ...` declarations
+            // from silently discarding an invalid declared type.
+            let requirement = member
+                .ty
+                .as_ref()
+                .map(|annotation| self.ct_member_req_from_anno(&member.params, annotation))
+                .transpose()?;
             // The member's own clause and the conditions of the conditional
             // traits requiring it are assumed while its body resolves; every
             // application re-checks the clause (`availability`), and a
@@ -181,17 +177,56 @@ impl Checker {
             let resolved = (|| {
                 if member.params.is_empty() {
                     let value = self.eval_associated_ct(&member.value, &out)?;
-                    Ok::<_, TypeError>((Some(value), None))
-                } else {
-                    let source_ty = assoc_body_source_type(&member.value)?;
-                    let template = self.lower_parameterized_member(
-                        member_type_scope(&member_owner, &member.params),
-                        &member.params,
-                        &member.value,
-                        &source_ty,
-                    )?;
-                    Ok((None, Some(template)))
+                    return Ok::<_, TypeError>((Some(value), None));
                 }
+                // A value annotation declares a value body; without one, a
+                // body that does not lower as a type is a value, as an
+                // unannotated generic alias's is.
+                let as_type = match requirement {
+                    Some(CtMemberReq::Value(_)) => Err(unsupported_assoc_body()),
+                    _ => assoc_body_source_type(&member.value).and_then(|source_ty| {
+                        self.lower_parameterized_member(
+                            member_type_scope(&member_owner, &member.params),
+                            &member.params,
+                            &member.value,
+                            &source_ty,
+                        )
+                    }),
+                };
+                let template = match (as_type, &requirement) {
+                    (Ok(template), _) => MemberTemplate::Type(template),
+                    (Err(error), Some(CtMemberReq::Type { .. })) => return Err(error),
+                    (Err(type_error), _) => {
+                        let declared = match &requirement {
+                            Some(CtMemberReq::Value(ty)) => Some(ty),
+                            _ => None,
+                        };
+                        // A body spelled as a type reports why it is not
+                        // one, unless its annotation declares a value.
+                        let spelled_as_type =
+                            declared.is_none() && assoc_body_source_type(&member.value).is_ok();
+                        if member.params.iter().any(|parameter| {
+                            parameter.is_origin_mutability_binder(&member.params)
+                                || matches!(assoc_param_kind(parameter), AssocParamKind::Origin)
+                        }) {
+                            return Err(if declared.is_some() {
+                                TypeError::Unsupported(
+                                    "origin parameters on a parameterized comptime value"
+                                        .to_string(),
+                                )
+                            } else {
+                                type_error
+                            });
+                        }
+                        let decls = self.classify_params(&member_owner, &member.params)?;
+                        match self.lower_parametric_value(&decls, &member.value, declared) {
+                            Ok(body) => MemberTemplate::Value { decls, body },
+                            Err(_) if spelled_as_type => return Err(type_error),
+                            Err(error) => return Err(error),
+                        }
+                    }
+                };
+                Ok((None, Some(template)))
             })();
             self.assumed_conformances.borrow_mut().pop();
             match resolved? {
@@ -203,16 +238,20 @@ impl Checker {
                 }
                 (_, Some(template)) => {
                     let param_base = self.enclosing_type_params.len();
-                    parameterized.insert(
-                        member.name.clone(),
-                        ParameterizedMember {
-                            binder_owner: member_owner.clone(),
-                            params: member.params.clone(),
-                            template,
-                            availability: compiled,
-                            param_base,
-                        },
-                    );
+                    let definition = ParameterizedMember {
+                        binder_owner: member_owner.clone(),
+                        params: member.params.clone(),
+                        template,
+                        availability: compiled,
+                        param_base,
+                    };
+                    // A later member reads an earlier one through `Self`
+                    // (`comptime both = Self.plus[1] * 10`).
+                    if let Some(info) = self.structs.get_mut(&struct_name) {
+                        info.parameterized_associated
+                            .insert(member.name.clone(), definition.clone());
+                    }
+                    parameterized.insert(member.name.clone(), definition);
                 }
                 (None, None) => unreachable!("an associated member is a value or a template"),
             }
@@ -272,6 +311,221 @@ impl Checker {
         template
     }
 
+    /// Lower the value body of a parameterized `comptime` member or generic
+    /// alias to its symbolic template: upstream's generator over the
+    /// declaration's own binders, which every application binds by
+    /// substitution. A declared type converts the body as an alias
+    /// initializer is converted.
+    pub(super) fn lower_parametric_value(
+        &mut self,
+        decls: &[ParamDecl],
+        body: &Expr,
+        declared: Option<&Ty>,
+    ) -> Result<ParamExpr, TypeError> {
+        self.push_param_scope(decls);
+        let compiled = {
+            let _lifting = self.lifting_position();
+            self.compile_dependent_ct_expr(body)
+        };
+        self.tparams.pop();
+        let compiled = compiled?;
+        let Some(ty) = declared else {
+            return Ok(compiled);
+        };
+        let mismatch = |found: String| TypeError::TypeMismatch {
+            expected: ty.to_string(),
+            found,
+            context: "a compile-time value declared with a type".to_string(),
+        };
+        if let Some(value) = compiled.as_constant() {
+            return self
+                .param_context
+                .constant_as(value.clone(), ty)
+                .map_err(|_| mismatch(value.to_string()));
+        }
+        match compiled.meta().as_value() {
+            Some(actual) if coerces(actual, ty) => Ok(compiled),
+            Some(actual) => Err(mismatch(actual.to_string())),
+            None => Err(mismatch(compiled.meta().to_string())),
+        }
+    }
+
+    /// Apply a parametric value template: `args` bound to `decls` through
+    /// the contract a struct application uses (arity, bounds, defaults,
+    /// `where` clauses), substituted into `body` beside the `outer`
+    /// bindings, and folded. Returns the bound arguments beside the value.
+    pub(super) fn apply_parametric_value(
+        &self,
+        label: &str,
+        decls: &[ParamDecl],
+        body: &ParamExpr,
+        args: &[mojito_ast::ast::ParamArg],
+        mut bindings: mojito_types::param_expr::ParamBindings,
+    ) -> Result<(ParamExpr, Vec<TyArg>), TypeError> {
+        let arguments = self
+            .resolve_use_params(label, decls, args, &[], &[])?
+            .arguments;
+        self.bind_declared(&mut bindings, decls, &arguments)?;
+        let context = &self.param_context;
+        let value = context
+            .replace(body, &bindings)
+            .and_then(|replaced| context.fold(&replaced))
+            .map_err(param_error)?;
+        Ok((value, arguments))
+    }
+
+    /// The parametric value `expr` applies, when it is one: a value-bodied
+    /// generic alias (`twice[k]`, `Twice[3]`, `plus_one[n=3]`) or a
+    /// struct's parameterized value member (`S[10].plus[2]`,
+    /// `Self.get[1]`), bound at the application. `None` for any other
+    /// expression.
+    pub(super) fn parametric_value_application(
+        &self,
+        expr: &Expr,
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        let (object, args) = match &expr.kind {
+            ExprKind::TypeApply { name, args } => return self.value_alias_application(name, args),
+            ExprKind::Index { object, index } => (object, subscript_param_args(index)),
+            ExprKind::MultiIndex { object, args } => (object, multi_subscript_param_args(args)?),
+            _ => return None,
+        };
+        match &object.kind {
+            ExprKind::Identifier(name) => self.value_alias_application(name, &args),
+            ExprKind::Member { object, field } => {
+                self.parameterized_member_value(object, field, &args)
+            }
+            _ => None,
+        }
+    }
+
+    /// The application of the value-bodied generic alias `name` to `args`.
+    /// `None` when `name` names a binding, a value binder, or no such alias.
+    pub(super) fn value_alias_application(
+        &self,
+        name: &str,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        if self.lookup(name).is_some() || self.value_parameter_in_scope(name).is_some() {
+            return None;
+        }
+        let alias = self.comptime_aliases.get(name)?;
+        let AliasBody::Value(body) = &alias.body else {
+            return None;
+        };
+        Some(
+            self.apply_parametric_value(
+                name,
+                &alias.decls,
+                body,
+                args,
+                mojito_types::param_expr::ParamBindings::new(),
+            )
+            .map(|(value, _)| value),
+        )
+    }
+
+    /// The parameterized value member `field` of the struct `object` names,
+    /// applied to `args` at the struct's arguments; the member's own
+    /// `where` clauses are checked against both. `None` when `object` names
+    /// no struct or `field` is no parameterized value member of it.
+    pub(super) fn parameterized_member_value(
+        &self,
+        object: &Expr,
+        field: &str,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        let subject = self.member_subject(object)?;
+        let TyKind::Struct(name, arguments) = subject.kind() else {
+            return None;
+        };
+        let info = self.structs.get(name)?;
+        let member = info.parameterized_associated.get(field)?;
+        let MemberTemplate::Value { decls, body } = &member.template else {
+            return None;
+        };
+        let label = format!("{subject}.{field}");
+        Some((|| {
+            let mut outer = mojito_types::param_expr::ParamBindings::new();
+            self.bind_declared(&mut outer, &info.decls, arguments)?;
+            let (value, bound) = self.apply_parametric_value(&label, decls, body, args, outer)?;
+            self.validate_member_availability(
+                &label,
+                &member.availability,
+                &info.decls,
+                arguments,
+                decls.iter().map(ParamDecl::name).zip(&bound),
+            )?;
+            Ok(value)
+        })())
+    }
+
+    /// A struct's parameterized value member at the struct's `arguments`
+    /// and the member's own bound `member_arguments`, folded; its `where`
+    /// clauses are checked against both. `None` for a type member.
+    pub(super) fn member_template_at(
+        &self,
+        label: &str,
+        info: &StructInfo,
+        arguments: &[TyArg],
+        member: &ParameterizedMember,
+        member_arguments: &[TyArg],
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        let MemberTemplate::Value { decls, body } = &member.template else {
+            return None;
+        };
+        Some((|| {
+            if member_arguments.len() != decls.len() {
+                return Err(TypeError::WrongTypeArgCount {
+                    name: label.to_string(),
+                    expected: decls.len(),
+                    got: member_arguments.len(),
+                });
+            }
+            let mut bindings = mojito_types::param_expr::ParamBindings::new();
+            self.bind_declared(&mut bindings, &info.decls, arguments)?;
+            self.bind_declared(&mut bindings, decls, member_arguments)?;
+            self.validate_member_availability(
+                label,
+                &member.availability,
+                &info.decls,
+                arguments,
+                decls.iter().map(ParamDecl::name).zip(member_arguments),
+            )?;
+            let context = &self.param_context;
+            context
+                .replace(body, &bindings)
+                .and_then(|replaced| context.fold(&replaced))
+                .map_err(param_error)
+        })())
+    }
+
+    /// Check a parameterized member's own `where` clauses at an
+    /// application: the struct's arguments bound to its declarations, and
+    /// the member's, which are not classified in the clause, by spelling.
+    /// A clause over arguments still symbolic is checked per instance.
+    pub(super) fn validate_member_availability<'a>(
+        &self,
+        label: &str,
+        availability: &[GenericConstraint],
+        struct_decls: &[ParamDecl],
+        struct_arguments: &'a [TyArg],
+        member_arguments: impl IntoIterator<Item = (&'a str, &'a TyArg)>,
+    ) -> Result<(), TypeError> {
+        if availability.is_empty() {
+            return Ok(());
+        }
+        let mut environment = ConstraintEnvironment::declared(struct_decls, struct_arguments);
+        for (name, argument) in member_arguments {
+            environment.bind_named(&[], name, argument);
+        }
+        if environment.arguments().any(tyarg_is_symbolic) {
+            return Ok(());
+        }
+        availability.iter().try_for_each(|constraint| {
+            self.validate_constraint_in_environment(label, constraint, &environment)
+        })
+    }
+
     /// Evaluate a struct-level associated comptime value. This intentionally
     /// accepts type-valued expressions in addition to runtime-materializable
     /// constants because associated facts are type metadata, not executable code.
@@ -282,6 +536,13 @@ impl Checker {
     ) -> Result<CtValue, TypeError> {
         match &expr.kind {
             _ if let Some(read) = self.display_read(expr) => read.map(CtValue::Expr),
+            // A parametric value's application, recorded for a bracket
+            // argument MIR reads as a value.
+            _ if let Some(value) = self.parametric_value_application(expr) => {
+                let value = value?;
+                self.record_member_value(expr.source_span(), value.clone());
+                Ok(value.into_value())
+            }
             ExprKind::Int(n) => Ok(CtValue::IntLiteral(n.clone())),
             ExprKind::Float(value) => Ok(CtValue::FloatLiteral(value.clone())),
             ExprKind::Bool(b) => Ok(CtValue::Bool(*b)),
@@ -474,16 +735,16 @@ impl Checker {
                 let ExprKind::Identifier(name) = &object.kind else {
                     unreachable!("guarded above");
                 };
-                let args: Vec<mojito_ast::ast::ParamArg> = match &index.kind {
-                    ExprKind::TupleLit(elements) => elements
-                        .iter()
-                        .cloned()
-                        .map(mojito_ast::ast::ParamArg::Value)
-                        .collect(),
-                    _ => vec![mojito_ast::ast::ParamArg::Value((**index).clone())],
-                };
-                self.ty_value_from_name(name, &args)?
+                self.ty_value_from_name(name, &subscript_param_args(index))?
                     .ok_or_else(|| TypeError::NotComptime(name.clone()))
+            }
+            // An element of a member's parameter list (`Self.values[0]`):
+            // its `param_list.get`, folded when the list is closed.
+            ExprKind::Index { object, .. }
+                if matches!(object.kind, ExprKind::Member { .. })
+                    && let Ok(element) = self.compile_dependent_ct_expr(expr) =>
+            {
+                Ok(element.into_value())
             }
             // `DType.int`: a compile-time element-type value, as it appears
             // in a `dtype: DType` argument (`_StridedRange[DType.int]`).
@@ -1017,6 +1278,7 @@ impl Checker {
             ExprKind::Float(value) => constant(CtValue::FloatLiteral(value.clone())),
             ExprKind::Bool(value) => constant(CtValue::Bool(*value)),
             ExprKind::Str(value) => constant(CtValue::Str(value.clone())),
+            _ if let Some(value) = self.parametric_value_application(expr) => value,
             // A value binder in scope (a `comptime for` index, a callable
             // contract's own binder) shadows a same-named module constant.
             ExprKind::Identifier(name) => match self.value_parameter_in_scope(name) {
@@ -1985,18 +2247,60 @@ impl Checker {
                     return None;
                 };
                 self.predicate_alias(name)?;
-                let args = match &index.kind {
-                    ExprKind::TupleLit(elements) => elements
-                        .iter()
-                        .cloned()
-                        .map(mojito_ast::ast::ParamArg::Value)
-                        .collect(),
-                    _ => vec![mojito_ast::ast::ParamArg::Value((**index).clone())],
-                };
-                Some((name, args))
+                Some((name, subscript_param_args(index)))
             }
             _ => None,
         }
+    }
+
+    /// The Bool a predicate-alias application read as a value denotes
+    /// (`IsSmall[Int]`, `positive[k]`): its proposition at the arguments,
+    /// a constant when they decide it. `None` when `expr` applies no
+    /// predicate alias.
+    pub(super) fn predicate_alias_value(
+        &self,
+        expr: &Expr,
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        let (name, args) = self.predicate_alias_application(expr)?;
+        // A value binder an argument spells stays its symbolic reference.
+        let symbolic: Vec<(String, TyArg)> = self
+            .vparams
+            .iter()
+            .take(self.tparams.len())
+            .flat_map(HashMap::keys)
+            .filter_map(|binder| {
+                self.value_parameter_in_scope(binder)
+                    .map(|reference| (binder.clone(), TyArg::Val(CtValue::Expr(reference))))
+            })
+            .collect();
+        let environment = ConstraintEnvironment::named(
+            &[],
+            symbolic
+                .iter()
+                .map(|(binder, argument)| (binder.as_str(), argument)),
+        );
+        Some(
+            self.apply_predicate_alias(name, &args)
+                .and_then(|constraint| {
+                    let proposition = self
+                        .constraint_proposition(&constraint, &environment)
+                        .map_err(param_error)?;
+                    let mut undecided = false;
+                    proposition.visit(&mut |node| {
+                        undecided |= matches!(
+                            node.kind(),
+                            mojito_types::param_expr::ParamKind::Hole { .. }
+                        );
+                    });
+                    if undecided {
+                        return Err(TypeError::Unsupported(format!(
+                            "the Bool-valued comptime alias '{name}' read as a value over a type \
+                     parameter"
+                        )));
+                    }
+                    Ok(proposition)
+                }),
+        )
     }
 
     /// The compiled Bool body of a registered predicate alias, or `None` when
@@ -2005,7 +2309,7 @@ impl Checker {
         let alias = self.comptime_aliases.get(name)?;
         match &alias.body {
             AliasBody::Predicate(constraint) => Some((&alias.decls, constraint)),
-            AliasBody::Type(_) | AliasBody::Value => None,
+            AliasBody::Type(_) | AliasBody::Value(_) => None,
         }
     }
 
@@ -2758,7 +3062,23 @@ impl Checker {
     ) -> Result<ParamExpr, TypeError> {
         let context = &self.param_context;
         let mut bindings = mojito_types::param_expr::ParamBindings::new();
-        for (decl, argument) in info.decls.iter().zip(arguments) {
+        self.bind_declared(&mut bindings, &info.decls, arguments)?;
+        let value = context.constant(value.clone()).map_err(param_error)?;
+        context
+            .replace(&value, &bindings)
+            .and_then(|replaced| context.fold(&replaced))
+            .map_err(param_error)
+    }
+
+    /// Bind each of `decls` to its argument in `arguments` by binder id: a
+    /// type binder to its type, a value binder to its value.
+    fn bind_declared(
+        &self,
+        bindings: &mut mojito_types::param_expr::ParamBindings,
+        decls: &[ParamDecl],
+        arguments: &[TyArg],
+    ) -> Result<(), TypeError> {
+        for (decl, argument) in decls.iter().zip(arguments) {
             match (decl, argument) {
                 (ParamDecl::Type { id, .. }, TyArg::Ty(ty)) => {
                     bindings.bind_type(id.clone(), ty.clone());
@@ -2766,17 +3086,15 @@ impl Checker {
                 (ParamDecl::Value { id, .. }, TyArg::Val(value)) => {
                     bindings.bind(
                         id.clone(),
-                        context.constant(value.clone()).map_err(param_error)?,
+                        self.param_context
+                            .constant(value.clone())
+                            .map_err(param_error)?,
                     );
                 }
                 _ => {}
             }
         }
-        let value = context.constant(value.clone()).map_err(param_error)?;
-        context
-            .replace(&value, &bindings)
-            .and_then(|replaced| context.fold(&replaced))
-            .map_err(param_error)
+        Ok(())
     }
 }
 
@@ -2897,21 +3215,41 @@ pub(super) fn assoc_body_source_type(value: &Expr) -> Result<SourceType, TypeErr
             let ExprKind::Identifier(name) = &object.kind else {
                 return Err(unsupported_assoc_body());
             };
-            let args = match &index.kind {
-                ExprKind::TupleLit(elements) => elements
-                    .iter()
-                    .cloned()
-                    .map(mojito_ast::ast::ParamArg::Value)
-                    .collect(),
-                _ => vec![mojito_ast::ast::ParamArg::Value((**index).clone())],
-            };
-            Ok(SourceType::Named(name.clone(), args))
+            Ok(SourceType::Named(name.clone(), subscript_param_args(index)))
         }
         ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(s) if s == "Self") => {
             Ok(SourceType::SelfParam(field.clone()))
         }
         _ => Err(unsupported_assoc_body()),
     }
+}
+
+/// The compile-time arguments a subscript's index spells: one per element
+/// of a tuple index, else the index itself.
+pub(super) fn subscript_param_args(index: &Expr) -> Vec<mojito_ast::ast::ParamArg> {
+    match &index.kind {
+        ExprKind::TupleLit(elements) => elements
+            .iter()
+            .cloned()
+            .map(mojito_ast::ast::ParamArg::Value)
+            .collect(),
+        _ => vec![mojito_ast::ast::ParamArg::Value(index.clone())],
+    }
+}
+
+/// The compile-time arguments a multi-argument subscript spells, a keyword
+/// argument (`plus_one[n=3]`) as a named one. `None` when one is a slice.
+fn multi_subscript_param_args(args: &[SubscriptArg]) -> Option<Vec<mojito_ast::ast::ParamArg>> {
+    args.iter()
+        .map(|argument| match argument {
+            SubscriptArg::Index(value) => Some(mojito_ast::ast::ParamArg::Value(value.clone())),
+            SubscriptArg::Keyword { name, value } => Some(mojito_ast::ast::ParamArg::Named {
+                name: name.clone(),
+                value: Box::new(mojito_ast::ast::ParamArg::Value(value.clone())),
+            }),
+            SubscriptArg::Slice { .. } | SubscriptArg::KeywordSlice { .. } => None,
+        })
+        .collect()
 }
 
 /// The pack a `.values` projection names: `Ts.values` (a `def`'s own pack)

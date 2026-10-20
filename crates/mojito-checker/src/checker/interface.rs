@@ -475,8 +475,8 @@ pub enum ElaboratedConstant {
     /// A closed constant's folded value, or the marker of one the check
     /// binds.
     Value(CtValue),
-    /// A generic alias: its parameters and body.
-    Alias(Vec<TypeParam>, Expr),
+    /// A generic alias: its parameters, its `where` clauses, and its body.
+    Alias(Vec<TypeParam>, Vec<Expr>, Expr),
 }
 
 /// The elaborated module constants of a package's program, each beside its

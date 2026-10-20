@@ -549,7 +549,11 @@ built-in traits (`Copyable`, …) impose no checked requirements. Conformance is
 declares that trait here.
 
 Struct declarations, methods, and associated `comptime` members accept the same
-trailing `where` clauses as free functions. A parameterized associated
+trailing `where` clauses as free functions. An associated `comptime` member
+may take parameters whether its body is a type (`comptime Buf[n: Int] =
+Fixed[n]`) or a value (`comptime get[idx: Int]: Int = Self.values[idx]`,
+applied as `S[1, 2].get[0]`); a trait requirement may be parameterized only
+when it is a type. A parameterized associated
 member is checked when projected with concrete arguments; its availability may
 depend on either the enclosing struct parameters or its own parameters. The
 diagnostic tuple form retains its message through those checks.
@@ -1072,9 +1076,11 @@ argument (`FixedBuffer[N]`) and as an ordinary `Int` at runtime. (Mojo removed
 `alias`; `comptime` replaces it.)
 
 A module-scope **generic alias** `comptime Alias[params]: Type where ... = ...`
-declares a parametric abbreviation: the body is either a type expression or a
+declares a parametric abbreviation: the body is a type expression, a
 **Bool proposition** (a predicate alias such as `comptime IsSmallCopy[T] =
-conforms_to(T, Copyable) and IsTriviallyCopyable[T]`). A type-bodied alias
+conforms_to(T, Copyable) and IsTriviallyCopyable[T]`), or a compile-time
+**value** (`comptime twice[n: Int] = n * 2`, or with a value annotation
+`comptime plus_one[n: Int]: Int = n + 1`, which the body converts to). A type-bodied alias
 application (`Alias[Int]`, in any type position) validates arity, bounds,
 defaults, and the declared `where` clauses before expanding to the aliased
 type. A predicate-alias application (`IsSmallCopy[T]`) is a compile-time Bool
@@ -1084,10 +1090,11 @@ predicates are: `where` clauses, conditional-conformance conditions, and
 bounds beyond `AnyType` (spell requirements in the body) and no defaults.
 Aliases lower sequentially, so a body may reference only already-declared
 names (self-reference is an unknown type; an alias may expand an earlier
-alias, including a predicate alias expanding an earlier one). Non-Bool
-value-bodied generic aliases (`comptime Twice[n: Int] = 2 * n`), origin
-parameters, aliases in function bodies, and using an alias as a constructor
-callee or bare value are rejected. Repeated trailing `where` clauses are
+alias, including a predicate alias expanding an earlier one). A
+value-bodied alias application (`twice[k]`, `Twice[3]`, `plus_one[n=3]`)
+validates like a type-bodied one and is a compile-time value wherever one
+is accepted. Origin parameters, aliases in function bodies, and using an
+alias as a constructor callee or bare value are rejected. Repeated trailing `where` clauses are
 retained independently on every declaration that accepts a clause (see
 **function_def**).
 

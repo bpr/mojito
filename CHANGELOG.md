@@ -88,6 +88,18 @@ to evolve under the `0.x` compatibility rules.
   lowers a case's two exits to the next case's entry and to the join
   through a frame like a loop's.
 
+- A `comptime` value member and a value-bodied generic alias take
+  parameters, annotated or not, as on the pin: `comptime get[idx: Int]: Int
+  = Self.values[idx]` reads as `S[1, 2, 3].get[1]` or `Self.get[1]`, and
+  `comptime plus_one[n: Int]: Int = n + 1` as `plus_one[k]` over a
+  parameter still open, by keyword, inside another alias, or as a struct's
+  parameter argument. The check lowers each body once to a template over
+  its own parameters and binds every application through the struct
+  application contract, so an alias's `where` clause now rejects a
+  violating application, and a runtime read no longer folds above the
+  check. A struct member over its own pack's element (`comptime first =
+  Self.values[0]`) also resolves. The package format is 69.
+
 ### Fixed
 
 - `ref y = x` over a loop's element reference (`for x in xs`) forwards the

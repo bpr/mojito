@@ -513,8 +513,9 @@ impl<'a> Flatten<'a> {
     /// op, which another family lowers.
     fn call_family(&mut self, node: Node<'a>) -> Option<Reg> {
         let checked = node.checked;
-        // A pack or reflection query read as a runtime value is a
-        // parameter constant; its operand is a type, never lowered.
+        // A pack or reflection query, or a parametric value's application,
+        // read as a runtime value is a parameter constant; its operands
+        // are compile-time, never lowered.
         if matches!(
             checked.op,
             CheckedOp::Call { .. }
@@ -522,6 +523,8 @@ impl<'a> Flatten<'a> {
                 | CheckedOp::Member { .. }
                 | CheckedOp::MethodCall { .. }
                 | CheckedOp::Index { .. }
+                | CheckedOp::MultiIndex { .. }
+                | CheckedOp::TypeApply { .. }
         ) && let Some(value) = recorded_param_value(&checked.adjustments)
         {
             return Some(self.param_value_register(node, value));

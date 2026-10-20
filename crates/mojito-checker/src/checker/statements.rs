@@ -3179,12 +3179,16 @@ impl Checker {
         if mojito_types::types::trivial_predicate_name(name).is_some() {
             return Err(TypeError::Redeclaration(name.to_string()));
         }
-        if let Some(annotation) = ty {
-            // Resolve and classify the annotation even though the symbolic
-            // body is checked only at application, so a declared type is not
-            // silently discarded (mirrors associated-member declarations).
-            self.ct_member_req_from_anno(type_params, annotation)?;
-        }
+        // Resolve and classify the annotation, so a declared type is not
+        // silently discarded (mirrors associated-member declarations): a
+        // value type declares a value body, converted to it.
+        let declared = match ty
+            .map(|annotation| self.ct_member_req_from_anno(type_params, annotation))
+            .transpose()?
+        {
+            Some(CtMemberReq::Value(declared)) => Some(declared),
+            _ => None,
+        };
         let mut decls = self.classify_params(name, type_params)?;
         for condition in where_clauses {
             let constraint = self.compile_where_clause(condition)?.bind(&[&decls]);
@@ -3204,10 +3208,22 @@ impl Checker {
         // as type applications (`IsTriviallyCopyable[T]` is an `Index` shape),
         // so a body that parses as a type but fails to lower falls back to the
         // predicate path; a genuine type error is reported when neither path
-        // accepts. A body that is not a proposition is a value, which
-        // elaboration evaluates and folds at each runtime use.
-        let body = match super::constraints::assoc_body_source_type(value) {
-            Ok(source_ty) => {
+        // accepts. A body that is not a proposition is a value, lowered to
+        // its template over the alias's binders, as is any body a value
+        // annotation declares.
+        let body = match (super::constraints::assoc_body_source_type(value), &declared) {
+            // A `Bool` annotation admits a proposition as well as a value.
+            (_, Some(declared)) => match self.lower_parametric_value(&decls, value, Some(declared))
+            {
+                Ok(body) => AliasBody::Value(body),
+                Err(error) => match self.compile_predicate_alias_body(&decls, value) {
+                    Ok(constraint) if *declared.kind() == TyKind::Bool => {
+                        AliasBody::Predicate(Box::new(constraint))
+                    }
+                    _ => return Err(error),
+                },
+            },
+            (Ok(source_ty), None) => {
                 match self.lower_parameterized_member(
                     type_scope(&decls),
                     type_params,
@@ -3221,14 +3237,18 @@ impl Checker {
                     )),
                 }
             }
-            Err(_) => match self.compile_predicate_alias_body(&decls, value) {
+            (Err(_), None) => match self.compile_predicate_alias_body(&decls, value) {
                 Ok(constraint) => AliasBody::Predicate(Box::new(constraint)),
-                Err(TypeError::Unsupported(message))
-                    if message.starts_with("a generic comptime alias must be defined by") =>
-                {
-                    AliasBody::Value
-                }
-                Err(error) => return Err(error),
+                Err(predicate_error) => match self.lower_parametric_value(&decls, value, None) {
+                    Ok(body) => AliasBody::Value(body),
+                    Err(error)
+                        if matches!(&predicate_error, TypeError::Unsupported(message)
+                            if message.starts_with("a generic comptime alias must be defined by")) =>
+                    {
+                        return Err(error);
+                    }
+                    Err(_) => return Err(predicate_error),
+                },
             },
         };
         self.comptime_aliases
