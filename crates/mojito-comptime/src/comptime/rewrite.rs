@@ -1378,6 +1378,9 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
                     for condition in &mut member.where_clauses {
                         rewrite_expr(condition, inner);
                     }
+                    if let Some(default) = &mut member.default {
+                        rewrite_expr(default, inner);
+                    }
                 }
             }
         }
@@ -1641,6 +1644,9 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
                 substitute_type_bindings_in_type(&mut member.ty, &inner);
                 for condition in &mut member.where_clauses {
                     retype_expr(condition, &inner);
+                }
+                if let Some(default) = &mut member.default {
+                    retype_expr(default, &inner);
                 }
             }
         }

@@ -1664,7 +1664,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   not convert (`check_raw_list_member`). A raw-list member read through a
   bound has a length (`ParamContext::list_length`), which
   `Specializer::resolve_application` answers per instance in a
-  `comptime if`.
+  `comptime if`. A requirement's default (`comptime K: Int = 3`,
+  `TraitComptime::default`) is kept in its `TraitInfo` as the member an
+  omitting conformer declares (`traits::comptime_defaults`, a package
+  exports it); `Checker::collect_comptime_defaults` gathers a conformer's
+  through its traits' refinements, `check_struct_associated` reads them
+  after the struct's own members with `Self` the conformer, and the
+  elaborator's `CtStruct::associated` appends them through
+  `ConformanceOracle::comptime_defaults`.
 - `Self.e.rows` in a compile-time position is `ParamKind::Field { base, name }`
   (`mojito-types/src/param_expr.rs`, `ParamContext::field`, text
   `param_field`), built by `Checker::struct_value_field`

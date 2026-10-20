@@ -936,9 +936,11 @@ pub struct TraitMethod {
     pub default_body: Option<Vec<Stmt>>,
 }
 
-/// A `comptime NAME: Type` **member requirement** inside a `trait` body — a
-/// compile-time constant / associated alias a conforming struct must define
-/// (`comptime count: Int`, `comptime EltType: Copyable`).
+/// A `comptime NAME: Type` **member requirement** inside a `trait` body.
+///
+/// It is a compile-time constant / associated alias a conforming struct
+/// must define (`comptime count: Int`, `comptime EltType: Copyable`),
+/// unless it declares a default (`comptime K: Int = 3`).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TraitComptime {
     pub name: String,
@@ -949,6 +951,9 @@ pub struct TraitComptime {
     pub ty: Type,
     /// Optional availability constraint, including the diagnostic tuple form.
     pub where_clauses: Vec<Expr>,
+    /// The member a conformer that omits it takes, read with `Self` as
+    /// the conformer.
+    pub default: Option<Expr>,
 }
 
 /// A `comptime NAME = expr` associated compile-time fact inside a `struct` body.

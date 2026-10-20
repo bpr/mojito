@@ -580,9 +580,13 @@ trait_block: NEWLINE INDENT trait_member+ DEDENT
 trait_member: trait_method | trait_comptime | 'pass' NEWLINE  # `pass` declares nothing (`trait Named(Sized): pass`)
 trait_method: decorators 'def' NAME [params_decl] '(' 'self' [',' params] ')' ['raises' [type]] ['->' type] where_clause* ':' NEWLINE INDENT (trait_req | block) DEDENT
 trait_req: '...' NEWLINE                                       # a pure requirement
-trait_comptime: 'comptime' NAME [params_decl] ':' type where_clause* NEWLINE
-                                                              # a compile-time member requirement
+trait_comptime: 'comptime' NAME [params_decl] ':' type where_clause* ['=' expr] NEWLINE
+                                                              # a compile-time member requirement, optionally defaulted
 ```
+
+A `comptime` requirement may declare a default (`comptime K: Int = 3`), the
+member a conformer that omits it takes, read with `Self` as that conformer
+(`comptime K2: Int = Self.K * 2`).
 
 A `trait` declares **method requirements**: each is a `def` header (with the implicit
 `self` first parameter, like a struct method) whose body is exactly `...` (the ellipsis

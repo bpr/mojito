@@ -406,8 +406,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// `trait Name[(Super, …)]: <members>` — a trait, optionally **refining**
     /// super-traits (`trait Bird(Animal):`, reusing the conformance-list parser).
     /// The body holds `def` method requirements (`...`) or default methods (a real
-    /// body), and `comptime NAME: Type` member requirements. (Generic traits
-    /// `trait T[U]:` are not valid current Mojo, so no `[type_params]` is parsed.)
+    /// body), and `comptime NAME: Type [= default]` member requirements. (Generic
+    /// traits `trait T[U]:` are not valid current Mojo, so no `[type_params]` is
+    /// parsed.)
     pub(super) fn parse_trait(&mut self) -> Result<StmtKind, ParseError> {
         self.expect(&Token::Trait, "Expected 'trait'")?;
         let name = self.expect_identifier("Expected a trait name after 'trait'")?;
@@ -460,7 +461,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         })
     }
 
-    /// `comptime NAME: Type` — a compile-time member requirement inside a trait.
+    /// `comptime NAME: Type [= default]` — a compile-time member requirement
+    /// inside a trait.
     pub(super) fn parse_trait_comptime(
         &mut self,
     ) -> Result<mojito_ast::ast::TraitComptime, ParseError> {
@@ -493,12 +495,19 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             )
         };
         let where_clauses = self.parse_where_clauses()?;
+        let default = if matches!(self.peek_token()?, Some(Token::Assign)) {
+            self.next_token()?;
+            Some(self.parse_expression(Precedence::Lowest)?)
+        } else {
+            None
+        };
         self.expect_stmt_end()?;
         Ok(mojito_ast::ast::TraitComptime {
             name,
             params,
             ty,
             where_clauses,
+            default,
         })
     }
 

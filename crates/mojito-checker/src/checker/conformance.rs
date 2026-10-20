@@ -73,7 +73,13 @@ impl ConformanceOracle {
         // can answer nominal queries while specialization is still rewriting
         // the program.
         for statement in stmts {
-            let StmtKind::Trait { name, refines, .. } = &statement.kind else {
+            let StmtKind::Trait {
+                name,
+                refines,
+                comptime_members,
+                ..
+            } = &statement.kind
+            else {
                 continue;
             };
             checker.traits.insert(
@@ -83,6 +89,7 @@ impl ConformanceOracle {
                     methods: HashMap::new(),
                     comptime_members: HashMap::new(),
                     comptime_constraints: HashMap::new(),
+                    comptime_defaults: super::traits::comptime_defaults(comptime_members),
                     defaults: Vec::new(),
                     requirements: Vec::new(),
                 },
@@ -242,6 +249,7 @@ impl ConformanceOracle {
             let StmtKind::Struct {
                 name,
                 type_params,
+                conforms,
                 fields,
                 associated,
                 conformance_conditions,
@@ -293,7 +301,7 @@ impl ConformanceOracle {
                 associated_value_types,
                 associated_constraints,
                 parameterized,
-            )) = checker.check_struct_associated(associated, conformance_conditions)
+            )) = checker.check_struct_associated(associated, conforms, conformance_conditions)
                 && let Some(info) = checker.structs.get_mut(name)
             {
                 info.associated = associated_values;
@@ -522,6 +530,18 @@ impl ConformanceOracle {
         self.checker
             .struct_member_at(info, arguments, value)
             .map(ParamExpr::into_value)
+    }
+
+    /// The defaulted `comptime` requirements of the traits `conforms`
+    /// names and of their parents, each as the member a conformer that
+    /// omits it declares.
+    pub fn comptime_defaults(&self, conforms: &[String]) -> Vec<mojito_ast::ast::StructComptime> {
+        let mut defaults = Vec::new();
+        for trait_name in conforms {
+            self.checker
+                .collect_comptime_defaults(trait_name, &mut defaults);
+        }
+        defaults
     }
 
     /// The field types of `base`, an instance of a package struct, in

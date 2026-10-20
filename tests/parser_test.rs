@@ -1147,8 +1147,29 @@ fn parses_trait_comptime_member() {
                     params: vec![],
                     ty: Type::Int,
                     where_clauses: Vec::new(),
+                    default: None,
                 }]
             );
+        }
+        other => panic!("expected a trait, got {other:?}"),
+    }
+}
+
+#[test]
+fn parses_trait_comptime_member_default() {
+    // `comptime count: Int = 3` — a requirement a conformer may omit.
+    match &parse("trait Repeater:\n    comptime count: Int = 3\n")[0].kind {
+        StmtKind::Trait {
+            comptime_members, ..
+        } => {
+            assert_eq!(comptime_members.len(), 1);
+            assert!(matches!(
+                comptime_members[0]
+                    .default
+                    .as_ref()
+                    .map(|value| &value.kind),
+                Some(ExprKind::Int(_))
+            ));
         }
         other => panic!("expected a trait, got {other:?}"),
     }

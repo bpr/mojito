@@ -32,6 +32,26 @@ pub(super) enum RegisterPassability {
     Excluded,
 }
 
+/// A trait's own defaulted `comptime` requirements, each as the member a
+/// conformer that omits it declares: the requirement's annotation over the
+/// default, as upstream synthesizes the conformer's witness. A parameterized
+/// requirement's default is not one (`check_trait` rejects it).
+pub(super) fn comptime_defaults(members: &[TraitComptime]) -> Vec<StructComptime> {
+    members
+        .iter()
+        .filter(|member| member.params.is_empty())
+        .filter_map(|member| {
+            Some(StructComptime {
+                name: member.name.clone(),
+                params: Vec::new(),
+                ty: Some(member.ty.clone()),
+                where_clauses: Vec::new(),
+                value: member.default.clone()?,
+            })
+        })
+        .collect()
+}
+
 impl Checker {
     /// A trait name is valid if it is a built-in, a user trait defined so
     /// far, or a same-module trait predeclared ahead of the struct shells.
@@ -170,6 +190,11 @@ impl Checker {
             if matches!(requirement, CtMemberReq::Value(_)) && !member.params.is_empty() {
                 return Err(TypeError::Unsupported(
                     "a trait's parameterized compile-time value requirement".to_string(),
+                ));
+            }
+            if member.default.is_some() && !member.params.is_empty() {
+                return Err(TypeError::Unsupported(
+                    "a default for a trait's parameterized compile-time requirement".to_string(),
                 ));
             }
             if !member.where_clauses.is_empty() {
@@ -404,6 +429,7 @@ impl Checker {
                 methods,
                 comptime_members: ct_members,
                 comptime_constraints: ct_constraints,
+                comptime_defaults: comptime_defaults(comptime_members),
                 defaults,
                 requirements,
             },
@@ -648,8 +674,11 @@ impl Checker {
             associated_value_types,
             associated_constraints,
             parameterized_associated,
-        ) = self
-            .check_struct_associated(declaration.associated, declaration.conformance_conditions)?;
+        ) = self.check_struct_associated(
+            declaration.associated,
+            declaration.conforms,
+            declaration.conformance_conditions,
+        )?;
         if let Some(info) = self.structs.get_mut(name) {
             info.associated.clone_from(&associated_values);
             info.associated_value_types = associated_value_types;

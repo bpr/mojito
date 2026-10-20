@@ -2684,6 +2684,9 @@ struct TraitInfo {
     /// clause on the requirement.
     #[serde(serialize_with = "interface::sorted")]
     comptime_constraints: HashMap<String, Vec<GenericConstraint>>,
+    /// The trait's own defaulted `comptime` requirements, in declaration
+    /// order, each as the member a conformer that omits it declares.
+    comptime_defaults: Vec<StructComptime>,
     /// The trait's own defaults, in declaration order; a refinement's are
     /// its parent's. Each names its requirement row in [`Self::methods`].
     defaults: Vec<trait_defaults::DefaultShape>,

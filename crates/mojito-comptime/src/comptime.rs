@@ -367,7 +367,7 @@ fn elaborate_in<'a>(
     let elab = Elab {
         program,
         fns: collect_fns(program),
-        structs: collect_structs(program),
+        structs: collect_structs(program, &conformance),
         conformance,
         template_binders: RefCell::new(Vec::new()),
         crossing_templates: Cell::new(0),
@@ -851,7 +851,9 @@ struct CtStruct<'a> {
     /// declared defaults classification cannot resolve without evaluation
     /// (`H: Hasher = default_hasher` names a module alias).
     source_params: &'a [TypeParam],
-    associated: &'a [StructComptime],
+    /// Its own `comptime` members, then the defaults of the conformed
+    /// traits' requirements it omits.
+    associated: std::borrow::Cow<'a, [StructComptime]>,
     fields: &'a [mojito_ast::ast::Param],
 }
 
@@ -1107,17 +1109,28 @@ fn collect_fns(program: &[Stmt]) -> HashSet<String> {
         .collect()
 }
 
-fn collect_structs(program: &[Stmt]) -> HashMap<String, CtStruct<'_>> {
+fn collect_structs<'a>(
+    program: &'a [Stmt],
+    conformance: &mojito_checker::checker::ConformanceOracle,
+) -> HashMap<String, CtStruct<'a>> {
     let mut structs = HashMap::new();
     for s in program {
         if let StmtKind::Struct {
             name,
             type_params,
+            conforms,
             associated,
             fields,
             ..
         } = &s.kind
         {
+            let mut defaults = conformance.comptime_defaults(conforms);
+            defaults.retain(|default| associated.iter().all(|member| member.name != default.name));
+            let associated = if defaults.is_empty() {
+                std::borrow::Cow::Borrowed(associated.as_slice())
+            } else {
+                std::borrow::Cow::Owned([associated.as_slice(), &defaults].concat())
+            };
             structs.insert(
                 name.clone(),
                 CtStruct {

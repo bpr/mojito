@@ -127,8 +127,17 @@ impl Checker {
     pub(super) fn check_struct_associated(
         &mut self,
         associated: &[StructComptime],
+        conforms: &[String],
         conformance_conditions: &[(String, Expr)],
     ) -> Result<StructAssociatedMembers, TypeError> {
+        // A member the struct omits is the default a conformed trait
+        // declares for it, read after the struct's own, with `Self` as
+        // the struct.
+        let mut defaults = Vec::new();
+        for trait_name in conforms {
+            self.collect_comptime_defaults(trait_name, &mut defaults);
+        }
+        defaults.retain(|default| associated.iter().all(|member| member.name != default.name));
         let mut out = HashMap::new();
         let mut value_types = HashMap::new();
         let mut constraints = HashMap::new();
@@ -137,7 +146,7 @@ impl Checker {
             Some(TyKind::Struct(name, _)) => name.clone(),
             _ => "Self".to_string(),
         };
-        for member in associated {
+        for member in associated.iter().chain(&defaults) {
             if out.contains_key(&member.name) || parameterized.contains_key(&member.name) {
                 return Err(TypeError::Redeclaration(member.name.clone()));
             }
@@ -291,6 +300,28 @@ impl Checker {
             from: actual.to_string(),
             to: declared.to_string(),
         })
+    }
+
+    /// The defaulted `comptime` requirements `trait_name` and its parents
+    /// declare, parents first, a refinement's default replacing its
+    /// parent's.
+    pub(super) fn collect_comptime_defaults(
+        &self,
+        trait_name: &str,
+        out: &mut Vec<StructComptime>,
+    ) {
+        let Some(info) = self.traits.get(trait_name) else {
+            return;
+        };
+        for parent in &info.refines {
+            self.collect_comptime_defaults(parent, out);
+        }
+        for default in &info.comptime_defaults {
+            match out.iter_mut().find(|member| member.name == default.name) {
+                Some(slot) => slot.clone_from(default),
+                None => out.push(default.clone()),
+            }
+        }
     }
 
     /// Whether `trait_name` (or a trait it refines) declares the comptime

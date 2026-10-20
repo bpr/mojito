@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A trait's `comptime` requirement may declare a default (`comptime K: Int
+  = 3`, `comptime E: AnyType = Int`), as on the pin: a conformer that
+  omits the member takes the default, read with `Self` as that conformer
+  (`comptime K2: Int = Self.K * 2`), through a bound (`T.K`), by name
+  (`A.K`), in a compile-time expression, and in a trait default method; a
+  refining trait's conformer takes its parent's default
+  (`assets/ok/trait_comptime_requirement_default.mojo`). A parameterized
+  requirement's default is still rejected (R1187). This closes R505.
 - `TypeList.of` is the bundled `TypeList`'s upstream alias, `comptime
   of[Trait: type_of(AnyType), //, *Ts: Trait] = TypeList[Trait=Trait,
   Ts.values]`, in place of a compiler rule keyed on the spelling: its

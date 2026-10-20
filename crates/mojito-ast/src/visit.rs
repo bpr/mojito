@@ -671,6 +671,9 @@ pub fn walk_trait_comptime<V: Visitor>(visitor: &mut V, member: &TraitComptime) 
     walk_type_params(visitor, &member.params);
     walk_type(visitor, &member.ty);
     walk_exprs(visitor, &member.where_clauses);
+    if let Some(default) = &member.default {
+        walk_expr(visitor, default);
+    }
 }
 
 /// The local `comptime` display bindings of `statements`, each with its
@@ -1055,6 +1058,9 @@ pub fn walk_stmt_mut<V: MutVisitor>(visitor: &mut V, statement: &mut Stmt) {
                 walk_type_mut(visitor, &mut member.ty);
                 for condition in &mut member.where_clauses {
                     walk_expr_mut(visitor, condition);
+                }
+                if let Some(default) = &mut member.default {
+                    walk_expr_mut(visitor, default);
                 }
             }
         }

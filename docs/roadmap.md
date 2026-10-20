@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1207**.
+Next free ID: **R1208**.
 
 ## Ordered Work
 
@@ -4867,17 +4867,19 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 
   Problem: upstream's `EnumLike` declares `comptime
   _enum_elt_type_for_case[id: Int]: AnyType = TypeList[Trait=AnyType,
-  Self._enum_case_types]()[id]`, which Mojito cannot parse, and at the pin
+  Self._enum_case_types]()[id]`, which Mojito rejects, and at the pin
   `Optional[String]._enum_elt_type_for_case[1]` is `String` for a
   conformer that omits the member.
-  - R505 is the value-member default and R1146 the parameterized value
-    requirement. This one is type-valued, parameterized, and defaulted,
-    instantiated at the conformer.
+  - A monomorphic requirement's default is synthesized as the omitting
+    conformer's member (`Checker::collect_comptime_defaults`), and R1146 is
+    the parameterized value requirement. This one is type-valued,
+    parameterized, and defaulted, instantiated at the conformer.
   - A generic read through `T._enum_elt_type_for_case[i]` also needs
     R666.
-  - Probe: `comptime E[id: Int]: AnyType = Int` in `trait HasE` fails to
-    parse ("Expected newline, ';', or EOF"), and the pin runs `var x:
-    Q.E[0] = 3` over `struct Q(HasE)`, which omits `E`.
+  - Probe: `comptime E[id: Int]: AnyType = Int` in `trait HasE` is
+    rejected ("a default for a trait's parameterized compile-time
+    requirement"), and the pin runs `var x: Q.E[0] = 3` over `struct
+    Q(HasE)`, which omits `E`.
   - Found while planning R1132 (2026-10-20).
   - Depends on R505, R1146, R1185 (the default's type expression), and
     R1202 (the default closing at a conformer).
@@ -5074,6 +5076,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - It checks only a raw-list body against its annotation
     (`check_raw_list_member`).
   - R485 is the local `comptime` sibling, in `checker/statements.rs`.
+  - Probe: a trait requirement's default, `comptime K: Int = "x"`, is
+    accepted at the trait, where the pin rejects it there with "cannot
+    implicitly convert 'StringLiteral["x"]' value to 'Int'"; a conformer
+    taking it fails later with "comptime member 'K' does not match the
+    requirement".
   - Found while landing R1184 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5104,6 +5111,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R1184 (2026-10-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1207 A struct's `comptime` member cannot read a member declared
+  after it**
+
+  Problem: `comptime X = Self.K + 1` above `comptime K = 3` stops with
+  "'Self.K' is not a type parameter of the enclosing struct", where the
+  pin prints `4` for `D.X`, as it reads a struct's members in any order.
+  - `check_struct_associated` (`checker/constraints.rs`) evaluates the
+    members eagerly in declaration order, each against the map of those
+    before it.
+  - A trait requirement's default is read after the conformer's own
+    members, so an own member reading a defaulted one fails the same way.
+  - Probe: `struct D(HasK)` declaring `comptime X = Self.K + 1` beside
+    `trait HasK` with `comptime K: Int = 3`, where the pin prints `4` for
+    `D.X`.
+  - Found while landing R505 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1197 The elaborator cannot decide a pack's `all` or `any` through
   a predicate alias**
@@ -6082,21 +6107,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     one.
   - Probe: `conformance/probes/trait_value_member_comptime_position.mojo`.
   - Found while landing R310 (2026-10-08).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R505 A trait's compile-time value requirement cannot declare a
-  default**
-
-  Problem: `comptime K: Int = 3` in a trait body fails to parse ("Expected
-  newline, ';', or EOF at the end of statement"), where the pin accepts it
-  and a conformer that omits `K` reads `3` through a bound (`T.K`).
-  - The parser's trait `comptime` member takes no initializer; a struct's
-    annotated member (`comptime N: Int = 3`) parses.
-  - Conformance would then take the default for a witness that omits the
-    member, and `ConformanceFacts::associated_values` would carry it so the
-    elaborator answers `T.K` from it.
-  - Found while landing R484 (2026-10-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -2095,6 +2095,9 @@ fn rewrite_stmt(
                 for condition in &mut c.where_clauses {
                     rewrite_expr(condition, names, namespaces);
                 }
+                if let Some(default) = &mut c.default {
+                    rewrite_expr(default, names, namespaces);
+                }
             }
         }
         StmtKind::VarDecl { ty, value, .. } => {
