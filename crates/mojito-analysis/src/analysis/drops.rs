@@ -914,6 +914,8 @@ pub(super) fn region_block_live_out(
         | MirTerm::ComptimeYield(_)
         | MirTerm::ComptimeBreak
         | MirTerm::ComptimeContinue
+        | MirTerm::MatchNext
+        | MirTerm::MatchComplete
         | MirTerm::Unreachable => HashSet::new(),
         MirTerm::EscapeJump { target, cleanup } => {
             let mut out = seeds.finally_live.clone();
@@ -1348,6 +1350,8 @@ pub(super) const fn rewire_target(term: &mut MirTerm, old: usize, new: usize) {
         | MirTerm::ComptimeYield(_)
         | MirTerm::ComptimeBreak
         | MirTerm::ComptimeContinue
+        | MirTerm::MatchNext
+        | MirTerm::MatchComplete
         | MirTerm::Unreachable => {}
     }
 }

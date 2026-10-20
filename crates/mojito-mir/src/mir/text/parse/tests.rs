@@ -2765,6 +2765,13 @@ fn structured_region_ops_and_terminators_reprint() {
             arms: vec![one(Vec::new(), MirTerm::ComptimeYield(Vec::new()))],
             orelse: one(Vec::new(), MirTerm::ComptimeYield(Vec::new())),
         },
+        MirInstr::Match {
+            cases: vec![
+                one(Vec::new(), MirTerm::MatchNext),
+                one(Vec::new(), MirTerm::MatchComplete),
+            ],
+            orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+        },
     ];
     instrs.push(MirInstr::ComptimeFor {
         binder,
@@ -2809,6 +2816,9 @@ fn structured_region_ops_and_terminators_reprint() {
         "comptime.for {",
         "comptime.for.break {}",
         "comptime.for.continue {}",
+        "match {",
+        "match.next {}",
+        "match.complete {}",
         "unreachable {}",
     ] {
         assert!(text.contains(mnemonic), "missing `{mnemonic}` in {text}");

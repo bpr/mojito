@@ -8,9 +8,10 @@
 use std::iter::Peekable;
 
 use mojito_ast::ast::{
-    ArgConvention, Capture, CaptureKind, CaptureList, Decorator, Expr, ExprKind, FnParam,
-    FunctionTypeParam, InfixOp, KwArg, LoopBindingMode, Method, Param, ParamKind, PrefixOp, Stmt,
-    StmtKind, SubscriptArg, TStringPart, Type, WithItem,
+    ArgConvention, BindingMode, Capture, CaptureKind, CaptureList, Condition, Decorator,
+    DestructureTarget, DestructureTargetKind, Expr, ExprKind, FnParam, FunctionTypeParam, InfixOp,
+    KwArg, Method, Param, ParamKind, PrefixOp, Stmt, StmtKind, SubscriptArg, TStringPart, Type,
+    WithItem,
 };
 use mojito_common::error::{LexError, ParseError};
 use mojito_common::token::{Span, TStringChunk, Token};
@@ -28,9 +29,12 @@ pub struct ParseReport {
 mod driver;
 mod exprs;
 mod items;
+mod patterns;
 mod stmts;
 mod suffix;
 mod types;
+
+use patterns::{TargetItem, expr_to_target, item_to_target};
 
 /// Binding-power levels, lowest to highest. Mirrors Python/Mojo expression
 /// precedence for the implemented operator set.
@@ -141,7 +145,7 @@ fn is_explicit_origin_argument(expression: &Expr) -> bool {
 
 /// The parsed body of an `if`/`elif`/`else` chain: the `(condition, body)`
 /// branches plus the optional `else` body. Shared by `if` and `comptime if`.
-type IfChain = (Vec<(Expr, Vec<Stmt>)>, Option<Vec<Stmt>>);
+type IfChain = (Vec<(Condition, Vec<Stmt>)>, Option<Vec<Stmt>>);
 
 type StructConformanceList = (Vec<String>, Vec<(String, Expr)>, Option<Type>);
 

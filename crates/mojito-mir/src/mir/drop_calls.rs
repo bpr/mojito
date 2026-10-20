@@ -424,7 +424,11 @@ fn flow(list: &[MirBlock], entry: State, var: VarId) -> Flow {
         raised = join(raised, raising);
         if matches!(
             block.term,
-            MirTerm::TryYield | MirTerm::Yield(_) | MirTerm::ComptimeYield(_)
+            MirTerm::TryYield
+                | MirTerm::Yield(_)
+                | MirTerm::ComptimeYield(_)
+                | MirTerm::MatchNext
+                | MirTerm::MatchComplete
         ) {
             yielded = join(yielded, states.last().cloned().flatten());
         }

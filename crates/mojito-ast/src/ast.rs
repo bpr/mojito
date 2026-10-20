@@ -1049,20 +1049,468 @@ impl From<StmtKind> for Stmt {
     }
 }
 
-/// The source-level binding convention on an iteration target.
+/// The source-level binding convention on a name a construct introduces: an
+/// iteration target, a `case` pattern binding, or a destructuring leaf.
 ///
-/// Ordinary `for` statements and comprehension clauses share these spellings.
-/// The convention is independent of whether the iterable expression is
-/// transferred with `^`: an unadorned target is immutable, while `var` and
-/// contextual `ref` are explicit target conventions.
+/// `for` statements, comprehension clauses, match patterns, and
+/// destructuring targets share these spellings. The convention is
+/// independent of whether the bound value is transferred with `^`: an
+/// unadorned name is immutable, while `var` and contextual `ref` are explicit
+/// conventions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum LoopBindingMode {
-    /// `for item in iterable`.
+pub enum BindingMode {
+    /// `for item in iterable`, `case item:`.
     Immutable,
-    /// `for var item in iterable`.
+    /// `for var item in iterable`, `case var item:`, `var item` in a target.
     Var,
-    /// `for ref item in iterable`.
+    /// `for ref item in iterable`, `case ref item:`, `ref item` in a target.
     Ref,
+}
+
+/// A `case` pattern: the recursive match grammar of `match`, `if case`, and
+/// `while case`. Equality ignores the span and occurrence identity, as
+/// [`Expr`]'s does.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MatchPattern {
+    pub kind: MatchPatternKind,
+    pub span: Span,
+    /// Stamped as [`Stmt::module`] is.
+    #[serde(with = "expression_source")]
+    pub source: Option<String>,
+    /// Concrete occurrence identity; ignored by structural equality.
+    #[serde(with = "mojito_common::token::node_syntax")]
+    pub syntax_id: mojito_common::token::SyntaxId,
+}
+
+impl MatchPattern {
+    pub fn new(kind: MatchPatternKind, span: Span) -> Self {
+        Self {
+            kind,
+            span,
+            source: None,
+            syntax_id: mojito_common::token::SyntaxId::fresh(),
+        }
+    }
+
+    pub fn source_span(&self) -> mojito_common::token::SourceSpan {
+        mojito_common::token::SourceSpan::syntax(self.source.clone(), self.span, self.syntax_id)
+    }
+
+    /// The names the pattern binds, in source order, with their conventions.
+    /// Every alternative of an OR pattern is visited, so a name an OR binds
+    /// appears once per alternative.
+    pub fn bindings(&self) -> Vec<(&str, BindingMode)> {
+        let mut out = Vec::new();
+        self.collect_bindings(&mut out);
+        out
+    }
+
+    /// The expressions the pattern embeds, in source order: literals, `==`
+    /// operands, and call-shaped heads. They are the pattern's reads; its
+    /// names are definitions, not expressions.
+    pub fn expressions(&self) -> Vec<&Expr> {
+        let mut out = Vec::new();
+        self.collect_expressions(&mut out);
+        out
+    }
+
+    pub fn expressions_mut(&mut self) -> Vec<&mut Expr> {
+        let mut out = Vec::new();
+        self.collect_expressions_mut(&mut out);
+        out
+    }
+
+    fn collect_expressions<'a>(&'a self, out: &mut Vec<&'a Expr>) {
+        match &self.kind {
+            MatchPatternKind::Literal(value)
+            | MatchPatternKind::Equal(value)
+            | MatchPatternKind::Head(value) => out.push(value),
+            MatchPatternKind::As { pattern, .. } => pattern.collect_expressions(out),
+            MatchPatternKind::Tuple(items) | MatchPatternKind::Or(items) => {
+                for item in items {
+                    item.collect_expressions(out);
+                }
+            }
+            MatchPatternKind::Sequence(items) => {
+                for item in items {
+                    if let SequencePattern::Element(pattern) = item {
+                        pattern.collect_expressions(out);
+                    }
+                }
+            }
+            MatchPatternKind::Call { head, args, kwargs } => {
+                out.push(head);
+                for pattern in args {
+                    pattern.collect_expressions(out);
+                }
+                for (_, pattern) in kwargs {
+                    pattern.collect_expressions(out);
+                }
+            }
+            MatchPatternKind::Fields(fields) => {
+                for (_, pattern) in fields {
+                    pattern.collect_expressions(out);
+                }
+            }
+            MatchPatternKind::Wildcard | MatchPatternKind::Bind { .. } => {}
+        }
+    }
+
+    fn collect_expressions_mut<'a>(&'a mut self, out: &mut Vec<&'a mut Expr>) {
+        match &mut self.kind {
+            MatchPatternKind::Literal(value)
+            | MatchPatternKind::Equal(value)
+            | MatchPatternKind::Head(value) => out.push(value),
+            MatchPatternKind::As { pattern, .. } => pattern.collect_expressions_mut(out),
+            MatchPatternKind::Tuple(items) | MatchPatternKind::Or(items) => {
+                for item in items {
+                    item.collect_expressions_mut(out);
+                }
+            }
+            MatchPatternKind::Sequence(items) => {
+                for item in items {
+                    if let SequencePattern::Element(pattern) = item {
+                        pattern.collect_expressions_mut(out);
+                    }
+                }
+            }
+            MatchPatternKind::Call { head, args, kwargs } => {
+                out.push(head);
+                for pattern in args {
+                    pattern.collect_expressions_mut(out);
+                }
+                for (_, pattern) in kwargs {
+                    pattern.collect_expressions_mut(out);
+                }
+            }
+            MatchPatternKind::Fields(fields) => {
+                for (_, pattern) in fields {
+                    pattern.collect_expressions_mut(out);
+                }
+            }
+            MatchPatternKind::Wildcard | MatchPatternKind::Bind { .. } => {}
+        }
+    }
+
+    fn collect_bindings<'a>(&'a self, out: &mut Vec<(&'a str, BindingMode)>) {
+        match &self.kind {
+            MatchPatternKind::Bind { name, mode } => out.push((name, *mode)),
+            MatchPatternKind::As { pattern, name } => {
+                pattern.collect_bindings(out);
+                out.push((name, BindingMode::Immutable));
+            }
+            MatchPatternKind::Tuple(items) | MatchPatternKind::Or(items) => {
+                for item in items {
+                    item.collect_bindings(out);
+                }
+            }
+            MatchPatternKind::Sequence(items) => {
+                for item in items {
+                    match item {
+                        SequencePattern::Element(pattern) => pattern.collect_bindings(out),
+                        SequencePattern::Star {
+                            name: Some(name), ..
+                        } => {
+                            out.push((name, BindingMode::Immutable));
+                        }
+                        SequencePattern::Star { name: None, .. } => {}
+                    }
+                }
+            }
+            MatchPatternKind::Call { args, kwargs, .. } => {
+                for pattern in args {
+                    pattern.collect_bindings(out);
+                }
+                for (_, pattern) in kwargs {
+                    pattern.collect_bindings(out);
+                }
+            }
+            MatchPatternKind::Fields(fields) => {
+                for (_, pattern) in fields {
+                    pattern.collect_bindings(out);
+                }
+            }
+            MatchPatternKind::Wildcard
+            | MatchPatternKind::Literal(_)
+            | MatchPatternKind::Equal(_)
+            | MatchPatternKind::Head(_) => {}
+        }
+    }
+}
+
+impl From<MatchPatternKind> for MatchPattern {
+    fn from(kind: MatchPatternKind) -> Self {
+        Self::new(kind, mojito_common::token::DUMMY_SPAN)
+    }
+}
+
+impl PartialEq for MatchPattern {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+    }
+}
+
+/// The forms of a [`MatchPattern`].
+///
+/// Call-shaped heads keep their syntax: the checker decides whether
+/// `Head(...)` names a struct (keyword fields) or an enum case (one
+/// positional payload), as upstream's `CallNode` does.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum MatchPatternKind {
+    /// `_` — matches anything, binds nothing.
+    Wildcard,
+    /// `name`, `var name`, or `ref name` — matches anything and binds it.
+    Bind { name: String, mode: BindingMode },
+    /// A literal (`0`, `2.5`, `"s"`, `True`, `None`), compared through
+    /// `__eq__`. The expression keeps the literal's spelling and span.
+    Literal(Expr),
+    /// `== expr` — an explicit equality test against any expression.
+    Equal(Expr),
+    /// `(p, q)`, `p, q`, `()`, `(p,)` — a tuple of subpatterns.
+    Tuple(Vec<MatchPattern>),
+    /// `[p, *rest, q]` — a sequence of subpatterns with at most one star.
+    Sequence(Vec<SequencePattern>),
+    /// `Head(p, name=q)` — a call-shaped pattern: a struct pattern over
+    /// keyword fields (`Point(x=0, y=yv)`) or an enum payload case
+    /// (`Optional.Some(x)`, `.Some(x)`, whose head is a member chain, the
+    /// leading-dot form rooted at the contextual sentinel).
+    Call {
+        head: Expr,
+        args: Vec<MatchPattern>,
+        kwargs: Vec<(String, MatchPattern)>,
+    },
+    /// `.name` or `Owner.name` — a member chain without arguments: an enum
+    /// case without a payload.
+    Head(Expr),
+    /// `{name=p, ...}` — a contextual struct pattern over the subject's
+    /// nominal type.
+    Fields(Vec<(String, MatchPattern)>),
+    /// `p | q` — alternatives tried in order.
+    Or(Vec<MatchPattern>),
+    /// `p as name` — `p` must match; `name` binds the whole value.
+    As {
+        pattern: Box<MatchPattern>,
+        name: String,
+    },
+}
+
+/// One element of a sequence pattern.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum SequencePattern {
+    Element(Box<MatchPattern>),
+    /// `*name` or `*_`: the elements between the fixed prefix and suffix.
+    Star {
+        name: Option<String>,
+        span: Span,
+    },
+}
+
+/// One `case pattern [if guard]: body` arm of a `match`.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MatchCase {
+    pub pattern: MatchPattern,
+    pub guard: Option<Expr>,
+    pub body: Vec<Stmt>,
+    pub span: Span,
+}
+
+/// An `if`/`elif`/`while` condition: a boolean expression, or a `case`
+/// pattern test of a value.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum Condition {
+    /// `if expr:`
+    Expr(Expr),
+    /// `if case pattern = value:`
+    Case {
+        pattern: Box<MatchPattern>,
+        value: Expr,
+    },
+}
+
+impl Condition {
+    /// The expression the condition evaluates: the boolean, or the matched
+    /// value.
+    pub const fn value(&self) -> &Expr {
+        match self {
+            Self::Expr(value) | Self::Case { value, .. } => value,
+        }
+    }
+
+    pub const fn value_mut(&mut self) -> &mut Expr {
+        match self {
+            Self::Expr(value) | Self::Case { value, .. } => value,
+        }
+    }
+
+    /// The pattern of a `case` condition.
+    pub fn pattern(&self) -> Option<&MatchPattern> {
+        match self {
+            Self::Expr(_) => None,
+            Self::Case { pattern, .. } => Some(pattern),
+        }
+    }
+
+    pub fn pattern_mut(&mut self) -> Option<&mut MatchPattern> {
+        match self {
+            Self::Expr(_) => None,
+            Self::Case { pattern, .. } => Some(pattern),
+        }
+    }
+}
+
+/// A destructuring target: where the pieces of an assigned value go.
+///
+/// Unlike a [`MatchPattern`], a leaf is a place to write or a name to
+/// declare, never a test. Equality ignores the span and occurrence identity.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DestructureTarget {
+    pub kind: DestructureTargetKind,
+    pub span: Span,
+    /// Stamped as [`Stmt::module`] is.
+    #[serde(with = "expression_source")]
+    pub source: Option<String>,
+    /// Concrete occurrence identity; ignored by structural equality.
+    #[serde(with = "mojito_common::token::node_syntax")]
+    pub syntax_id: mojito_common::token::SyntaxId,
+}
+
+impl DestructureTarget {
+    pub fn new(kind: DestructureTargetKind, span: Span) -> Self {
+        Self {
+            kind,
+            span,
+            source: None,
+            syntax_id: mojito_common::token::SyntaxId::fresh(),
+        }
+    }
+
+    pub fn source_span(&self) -> mojito_common::token::SourceSpan {
+        mojito_common::token::SourceSpan::syntax(self.source.clone(), self.span, self.syntax_id)
+    }
+
+    /// The names the target declares (`var`/`ref` leaves), in source order.
+    pub fn declared_names(&self) -> Vec<&str> {
+        let mut out = Vec::new();
+        self.collect_declared(&mut out);
+        out
+    }
+
+    fn collect_declared<'a>(&'a self, out: &mut Vec<&'a str>) {
+        match &self.kind {
+            DestructureTargetKind::Declare { name, .. } => out.push(name),
+            DestructureTargetKind::Tuple(items) => {
+                for item in items {
+                    item.collect_declared(out);
+                }
+            }
+            DestructureTargetKind::Sequence(items) => {
+                for item in items {
+                    match item {
+                        SequenceTarget::Element(target) | SequenceTarget::Star(target) => {
+                            target.collect_declared(out);
+                        }
+                    }
+                }
+            }
+            DestructureTargetKind::Discard | DestructureTargetKind::Place(_) => {}
+        }
+    }
+
+    /// Whether any leaf is a `var`/`ref` declaration.
+    pub fn declares(&self) -> bool {
+        !self.declared_names().is_empty()
+    }
+
+    /// The place expressions the target writes, in source order.
+    pub fn places(&self) -> Vec<&Expr> {
+        let mut out = Vec::new();
+        self.collect_places(&mut out);
+        out
+    }
+
+    pub fn places_mut(&mut self) -> Vec<&mut Expr> {
+        let mut out = Vec::new();
+        self.collect_places_mut(&mut out);
+        out
+    }
+
+    fn collect_places<'a>(&'a self, out: &mut Vec<&'a Expr>) {
+        match &self.kind {
+            DestructureTargetKind::Place(place) => out.push(place),
+            DestructureTargetKind::Tuple(items) => {
+                for item in items {
+                    item.collect_places(out);
+                }
+            }
+            DestructureTargetKind::Sequence(items) => {
+                for item in items {
+                    match item {
+                        SequenceTarget::Element(target) | SequenceTarget::Star(target) => {
+                            target.collect_places(out);
+                        }
+                    }
+                }
+            }
+            DestructureTargetKind::Discard | DestructureTargetKind::Declare { .. } => {}
+        }
+    }
+
+    fn collect_places_mut<'a>(&'a mut self, out: &mut Vec<&'a mut Expr>) {
+        match &mut self.kind {
+            DestructureTargetKind::Place(place) => out.push(place),
+            DestructureTargetKind::Tuple(items) => {
+                for item in items {
+                    item.collect_places_mut(out);
+                }
+            }
+            DestructureTargetKind::Sequence(items) => {
+                for item in items {
+                    match item {
+                        SequenceTarget::Element(target) | SequenceTarget::Star(target) => {
+                            target.collect_places_mut(out);
+                        }
+                    }
+                }
+            }
+            DestructureTargetKind::Discard | DestructureTargetKind::Declare { .. } => {}
+        }
+    }
+}
+
+impl From<DestructureTargetKind> for DestructureTarget {
+    fn from(kind: DestructureTargetKind) -> Self {
+        Self::new(kind, mojito_common::token::DUMMY_SPAN)
+    }
+}
+
+impl PartialEq for DestructureTarget {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+    }
+}
+
+/// The forms of a [`DestructureTarget`].
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum DestructureTargetKind {
+    /// `_` — the piece is discarded (not read).
+    Discard,
+    /// `var name` or `ref name` — a new binding; a `var`/`ref` before a
+    /// tuple or sequence target distributes to every leaf name in it.
+    Declare { name: String, mode: BindingMode },
+    /// An existing name or a place expression (`a`, `p.x`, `xs[i]`), written.
+    Place(Expr),
+    /// `(t, u)`, `t, u`, `()` — the value's tuple elements, in order.
+    Tuple(Vec<DestructureTarget>),
+    /// `[t, *rest, u]` — the value's sequence elements, with at most one star.
+    Sequence(Vec<SequenceTarget>),
+}
+
+/// One element of a sequence target.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum SequenceTarget {
+    Element(DestructureTarget),
+    /// `*target`: the slice between the fixed prefix and suffix.
+    Star(DestructureTarget),
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -1091,16 +1539,14 @@ pub enum StmtKind {
         op: InfixOp,
         value: Expr,
     },
-    /// `a, b, … = value` — **tuple unpacking**. `declares` is true for the
-    /// declaration form `var a, b = value` (each target is a fresh `var`) and
-    /// false for the bare assignment form `a, b = value` (each target must
-    /// already be in scope — a `NAME` or place). `targets` is the comma-separated
-    /// target list; the value evaluates to a tuple of matching arity and lowers
-    /// to independent place writes.
-    Unpack {
-        targets: Vec<Expr>,
+    /// `target = value` — **destructuring assignment** through a recursive
+    /// [`DestructureTarget`]: `a, b = t`, `var a, b = t`,
+    /// `(var a, (ref b, _)) = pair`, `var (x, y) = e`, `[first, *rest] =
+    /// values`, nested places. The value is evaluated once and its pieces
+    /// distributed to the target's leaves.
+    Destructure {
+        target: DestructureTarget,
         value: Expr,
-        declares: bool,
     },
     /// `place = value` — assign through a **place expression** rooted at a
     /// mutable variable (or `mut self`): a field write `p.x = e`, a list-element
@@ -1192,8 +1638,15 @@ pub enum StmtKind {
     /// conditional**. Compile-time elaboration selects one branch before semantic
     /// checking, so discarded branches do not need to type-check.
     ComptimeIf {
-        branches: Vec<(Expr, Vec<Stmt>)>,
+        branches: Vec<(Condition, Vec<Stmt>)>,
         orelse: Option<Vec<Stmt>>,
+    },
+    /// `comptime match subject: case ...` — a **compile-time match** over a
+    /// parameter value or type. Same shape as `Match`; elaboration selects
+    /// one case per instance after every case is checked.
+    ComptimeMatch {
+        subject: Expr,
+        cases: Vec<MatchCase>,
     },
     /// `comptime for var in iter: <body>` — a **compile-time (unrolled) loop**
     /// (Mojo's modern spelling; the older `@parameter for` is deprecated). Same
@@ -1206,21 +1659,31 @@ pub enum StmtKind {
     /// `if cond: ... (elif cond: ...)* (else: ...)?`
     ///
     /// `branches` holds the `if` plus each `elif` as a `(condition, body)` pair,
-    /// tried in order; `orelse` is the optional `else` body.
+    /// tried in order; `orelse` is the optional `else` body. A condition is a
+    /// boolean expression or a `case pattern = value` test whose bindings
+    /// the branch body sees.
     If {
-        branches: Vec<(Expr, Vec<Stmt>)>,
+        branches: Vec<(Condition, Vec<Stmt>)>,
         orelse: Option<Vec<Stmt>>,
     },
     /// `while cond: <body>`
     While {
-        cond: Expr,
+        cond: Condition,
         body: Vec<Stmt>,
         orelse: Option<Vec<Stmt>>,
+    },
+    /// `match subject: case pattern [if guard]: <body> ...` — the subject is
+    /// evaluated once and the cases tried in order; the first whose pattern
+    /// matches and whose guard holds runs. A comma-separated subject forms a
+    /// tuple. Cases may share the `match` indent or sit one level in.
+    Match {
+        subject: Expr,
+        cases: Vec<MatchCase>,
     },
     /// `for [ref | var] name in iter: <body>`.
     For {
         var: String,
-        binding: LoopBindingMode,
+        binding: BindingMode,
         iter: Expr,
         body: Vec<Stmt>,
         orelse: Option<Vec<Stmt>>,
@@ -1524,7 +1987,7 @@ pub enum CollectionKind {
 pub enum ComprehensionClause {
     For {
         var: String,
-        binding: LoopBindingMode,
+        binding: BindingMode,
         iter: Box<Expr>,
     },
     If(Box<Expr>),
@@ -1864,20 +2327,31 @@ pub fn lambdas_in_stmt<'a>(stmt: &'a Stmt, out: &mut Vec<&'a Expr>) {
             lambdas_in_expr(place, out);
             lambdas_in_expr(value, out);
         }
-        StmtKind::Unpack { targets, value, .. } => {
-            for target in targets {
-                lambdas_in_expr(target, out);
+        StmtKind::Destructure { target, value } => {
+            for place in target.places() {
+                lambdas_in_expr(place, out);
             }
             lambdas_in_expr(value, out);
         }
         StmtKind::If { branches, .. } | StmtKind::ComptimeIf { branches, .. } => {
             for (cond, _) in branches {
-                lambdas_in_expr(cond, out);
+                lambdas_in_condition(cond, out);
             }
         }
-        StmtKind::While { cond, .. } => lambdas_in_expr(cond, out),
+        StmtKind::While { cond, .. } => lambdas_in_condition(cond, out),
         StmtKind::For { iter, .. } | StmtKind::ComptimeFor { iter, .. } => {
             lambdas_in_expr(iter, out);
+        }
+        StmtKind::Match { subject, cases } | StmtKind::ComptimeMatch { subject, cases } => {
+            lambdas_in_expr(subject, out);
+            for case in cases {
+                for value in case.pattern.expressions() {
+                    lambdas_in_expr(value, out);
+                }
+                if let Some(guard) = &case.guard {
+                    lambdas_in_expr(guard, out);
+                }
+            }
         }
         StmtKind::With { items, .. } => {
             for item in items {
@@ -1896,6 +2370,15 @@ pub fn lambdas_in_stmt<'a>(stmt: &'a Stmt, out: &mut Vec<&'a Expr>) {
         | StmtKind::Break
         | StmtKind::Continue => {}
     }
+}
+
+fn lambdas_in_condition<'a>(condition: &'a Condition, out: &mut Vec<&'a Expr>) {
+    if let Some(pattern) = condition.pattern() {
+        for value in pattern.expressions() {
+            lambdas_in_expr(value, out);
+        }
+    }
+    lambdas_in_expr(condition.value(), out);
 }
 
 fn lambdas_in_param_args<'a>(args: &'a [ParamArg], out: &mut Vec<&'a Expr>) {
@@ -1953,6 +2436,72 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
             for statement in statements {
                 statement.syntax_id = self.id(statement.syntax_id);
                 self.statement(&mut statement.kind);
+            }
+        }
+
+        fn condition(&mut self, condition: &mut Condition) {
+            if let Some(pattern) = condition.pattern_mut() {
+                self.pattern(pattern);
+            }
+            self.expr(condition.value_mut());
+        }
+
+        fn pattern(&mut self, pattern: &mut MatchPattern) {
+            pattern.syntax_id = self.id(pattern.syntax_id);
+            match &mut pattern.kind {
+                MatchPatternKind::Literal(value)
+                | MatchPatternKind::Equal(value)
+                | MatchPatternKind::Head(value) => self.expr(value),
+                MatchPatternKind::As { pattern, .. } => self.pattern(pattern),
+                MatchPatternKind::Tuple(items) | MatchPatternKind::Or(items) => {
+                    for item in items {
+                        self.pattern(item);
+                    }
+                }
+                MatchPatternKind::Sequence(items) => {
+                    for item in items {
+                        if let SequencePattern::Element(pattern) = item {
+                            self.pattern(pattern);
+                        }
+                    }
+                }
+                MatchPatternKind::Call { head, args, kwargs } => {
+                    self.expr(head);
+                    for pattern in args {
+                        self.pattern(pattern);
+                    }
+                    for (_, pattern) in kwargs {
+                        self.pattern(pattern);
+                    }
+                }
+                MatchPatternKind::Fields(fields) => {
+                    for (_, pattern) in fields {
+                        self.pattern(pattern);
+                    }
+                }
+                MatchPatternKind::Wildcard | MatchPatternKind::Bind { .. } => {}
+            }
+        }
+
+        fn target(&mut self, target: &mut DestructureTarget) {
+            target.syntax_id = self.id(target.syntax_id);
+            match &mut target.kind {
+                DestructureTargetKind::Place(place) => self.expr(place),
+                DestructureTargetKind::Tuple(items) => {
+                    for item in items {
+                        self.target(item);
+                    }
+                }
+                DestructureTargetKind::Sequence(items) => {
+                    for item in items {
+                        match item {
+                            SequenceTarget::Element(target) | SequenceTarget::Star(target) => {
+                                self.target(target);
+                            }
+                        }
+                    }
+                }
+                DestructureTargetKind::Discard | DestructureTargetKind::Declare { .. } => {}
             }
         }
 
@@ -2277,15 +2826,13 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                     }
                     self.expr(value);
                 }
-                StmtKind::Unpack { targets, value, .. } => {
-                    for target in targets {
-                        self.expr(target);
-                    }
+                StmtKind::Destructure { target, value } => {
+                    self.target(target);
                     self.expr(value);
                 }
                 StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
                     for (condition, block) in branches {
-                        self.expr(condition);
+                        self.condition(condition);
                         self.block(block);
                     }
                     if let Some(block) = orelse {
@@ -2293,10 +2840,20 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                     }
                 }
                 StmtKind::While { cond, body, orelse } => {
-                    self.expr(cond);
+                    self.condition(cond);
                     self.block(body);
                     if let Some(body) = orelse {
                         self.block(body);
+                    }
+                }
+                StmtKind::Match { subject, cases } | StmtKind::ComptimeMatch { subject, cases } => {
+                    self.expr(subject);
+                    for case in cases {
+                        self.pattern(&mut case.pattern);
+                        if let Some(guard) = &mut case.guard {
+                            self.expr(guard);
+                        }
+                        self.block(&mut case.body);
                     }
                 }
                 StmtKind::For {
@@ -2522,6 +3079,14 @@ pub fn stamp_source(statements: &mut [Stmt], source: &str) {
 
         fn visit_expr_mut(&mut self, expr: &mut Expr) {
             expr.source = Some(self.0.to_string());
+        }
+
+        fn visit_pattern_mut(&mut self, pattern: &mut MatchPattern) {
+            pattern.source = Some(self.0.to_string());
+        }
+
+        fn visit_target_mut(&mut self, target: &mut DestructureTarget) {
+            target.source = Some(self.0.to_string());
         }
     }
 

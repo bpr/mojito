@@ -1,5 +1,5 @@
 //! Structured control flow: the regions of `if`, `loop`, `comptime if`,
-//! `comptime for`, and `try`, and the terminators that end them.
+//! `comptime for`, `match`, and `try`, and the terminators that end them.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -122,6 +122,15 @@ pub(super) fn verify_regions(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
             verify_region(cx, RegionKind::ComptimeForBody, protected, body, errors);
             verify_region(cx, RegionKind::ComptimeForElse, protected, orelse, errors);
         }
+        MirInstr::Match { cases, orelse } => {
+            if cases.is_empty() {
+                errors.push(format!("{}: match holds no case", cx.prefix));
+            }
+            for case in cases {
+                verify_region(cx, RegionKind::MatchCase, protected, case, errors);
+            }
+            verify_region(cx, RegionKind::IfArm(Vec::new()), protected, orelse, errors);
+        }
         _ => {}
     }
 }
@@ -131,7 +140,8 @@ pub(super) fn verify_regions(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
 /// `if.elifcond.yield` in an elif condition, with a `Bool`; `break` and
 /// `continue` inside the loop they name (the nearest, or the nearest
 /// carrying the label); `comptime.for.break`/`continue` where the nearest
-/// enclosing loop is a `comptime for`. `unreachable` ends any region.
+/// enclosing loop is a `comptime for`; `match.next`/`match.complete` inside
+/// a `match` case. `unreachable` ends any region.
 pub(super) fn verify_region_terminator(
     prefix: &str,
     function: &MirFunction,
@@ -170,6 +180,14 @@ pub(super) fn verify_region_terminator(
                     "{prefix}: `{mnemonic}` is not inside a comptime for body"
                 ));
             }
+        }
+        (MirTerm::MatchNext | MirTerm::MatchComplete, _)
+            if !context
+                .regions
+                .iter()
+                .any(|kind| matches!(kind, RegionKind::MatchCase)) =>
+        {
+            errors.push(format!("{prefix}: `{mnemonic}` is not inside a match case"));
         }
         _ => {}
     }
@@ -402,6 +420,82 @@ mod tests {
         let found = findings(&arity);
         assert_finding(&found, "`yield` yields 0 values for 1 results");
         assert_finding(&found, "`yield` yields Bool for a result of type Int");
+    }
+
+    /// A `match` of two cases over a `Bool` subject: the first tests `r0`
+    /// and advances on failure, the second always completes; a nested
+    /// `if` in a case may leave it through either terminator.
+    fn two_case_match() -> MirInstr {
+        let test = MirInstr::If {
+            results: Vec::new(),
+            cond: Reg(0),
+            then: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            elifs: Vec::new(),
+            orelse: one(Vec::new(), MirTerm::MatchNext),
+        };
+        MirInstr::Match {
+            cases: vec![
+                one(vec![test], MirTerm::MatchComplete),
+                one(Vec::new(), MirTerm::MatchComplete),
+            ],
+            orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+        }
+    }
+
+    #[test]
+    fn a_well_formed_match_verifies() {
+        let function = function_with(vec![two_case_match()]);
+        assert_eq!(findings(&function), Vec::<String>::new());
+        // A case may be left from a loop nested in it, and a loop in a case
+        // keeps its own `break`.
+        let nested = function_with(vec![MirInstr::Match {
+            cases: vec![one(
+                vec![MirInstr::Loop {
+                    label: None,
+                    body: one(
+                        vec![MirInstr::If {
+                            results: Vec::new(),
+                            cond: Reg(0),
+                            then: one(Vec::new(), MirTerm::MatchComplete),
+                            elifs: Vec::new(),
+                            orelse: one(Vec::new(), MirTerm::Break { label: None }),
+                        }],
+                        MirTerm::Continue { label: None },
+                    ),
+                }],
+                MirTerm::MatchNext,
+            )],
+            orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+        }]);
+        assert_eq!(findings(&nested), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_match_terminator_outside_a_case_is_a_finding() {
+        let next = function_with(vec![MirInstr::If {
+            results: Vec::new(),
+            cond: Reg(0),
+            then: one(Vec::new(), MirTerm::MatchNext),
+            elifs: Vec::new(),
+            orelse: one(Vec::new(), MirTerm::MatchComplete),
+        }]);
+        let found = findings(&next);
+        assert_finding(&found, "`match.next` is not inside a match case");
+        assert_finding(&found, "`match.complete` is not inside a match case");
+        // The else region is an arm, not a case.
+        let orelse = function_with(vec![MirInstr::Match {
+            cases: vec![one(Vec::new(), MirTerm::MatchComplete)],
+            orelse: one(Vec::new(), MirTerm::MatchNext),
+        }]);
+        assert_finding(
+            &findings(&orelse),
+            "`match.next` is not inside a match case",
+        );
+        let empty = function_with(vec![MirInstr::Match {
+            cases: Vec::new(),
+            orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+        }]);
+        assert_finding(&findings(&empty), "match holds no case");
     }
 
     #[test]

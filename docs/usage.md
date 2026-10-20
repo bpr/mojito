@@ -280,3 +280,13 @@ let artifact = program.emit_mir()?;
 let execution = compiler.execute(&program)?;
 println!("{}", execution.output);
 ```
+
+## Warnings
+
+A check may record nonfatal diagnostics — today, `match` coverage: a
+non-exhaustive `Bool` match, an unreachable case. The program still
+compiles and runs. Every command that compiles the input prints each one
+to stderr as `warning: FILE:LINE: message` (`warning: MODULE: message`
+for a linked module) after a successful compile, in source order; library
+users read the same list from `CompiledProgram::warnings()` with no
+stderr effect.

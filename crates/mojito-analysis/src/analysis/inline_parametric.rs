@@ -2184,6 +2184,7 @@ fn is_closed(callee: &MirFunction, declaration: &MirFunctionDeclaration) -> bool
                         | MirInstr::Loop { .. }
                         | MirInstr::ComptimeIf { .. }
                         | MirInstr::ComptimeFor { .. }
+                        | MirInstr::Match { .. }
                         | MirInstr::MakeClosure { .. }
                 )
             }) && matches!(

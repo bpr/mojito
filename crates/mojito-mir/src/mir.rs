@@ -2863,8 +2863,11 @@ fn reassigned_names(
                     bump(counts, name);
                 }
             }
-            CheckedStmtOp::Unpack { targets, .. } => {
-                for name in targets.iter().filter_map(|target| identifier(*target)) {
+            CheckedStmtOp::Destructure { target, .. } => {
+                for name in target.declared_names() {
+                    bump(counts, name);
+                }
+                for name in target.expressions().into_iter().filter_map(identifier) {
                     bump(counts, name);
                 }
             }
@@ -2877,6 +2880,16 @@ fn reassigned_names(
             CheckedStmtOp::While { body, orelse, .. } => {
                 scan_all(body, counts);
                 scan_all(orelse.as_deref().unwrap_or_default(), counts);
+            }
+            CheckedStmtOp::Match { .. } => {
+                for body in node.op.bodies() {
+                    scan_all(body, counts);
+                }
+            }
+            CheckedStmtOp::ComptimeMatch { cases, .. } => {
+                for case in cases {
+                    scan_all(&case.body, counts);
+                }
             }
             CheckedStmtOp::Scope(body) => scan_all(body, counts),
             CheckedStmtOp::For {
@@ -3144,6 +3157,14 @@ impl<'a> Flatten<'a> {
                     .get(&value.0)
                     .cloned()
                     .or_else(|| expression.ty());
+                // A construction's call leaves its result register for its
+                // binding to type; the hidden slot is that binding.
+                if let Some(ty) = &ty {
+                    self.f
+                        .reg_types
+                        .entry(value.0)
+                        .or_insert_with(|| ty.clone());
+                }
                 let variable = self.var(&format!("$mat_r{}", value.0));
                 match ty {
                     Some(ty) if self.enclosing_binders.lifted => {

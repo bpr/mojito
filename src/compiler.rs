@@ -57,6 +57,13 @@ impl CompiledProgram {
         &self.checked
     }
 
+    /// The nonfatal diagnostics the check recorded, in source order; the
+    /// program compiles and runs with them. An imported package's bodies
+    /// were checked when the package was built, so theirs are not here.
+    pub fn warnings(&self) -> &[mojito_checked::checked::Warning] {
+        self.checked.warnings()
+    }
+
     /// Parametric MIR: the ownership-verified, pre-drop MIR produced by the
     /// authoritative compiler pipeline, whose generic bodies still name their
     /// parameters. The later phases derive from it. With an imported
@@ -324,10 +331,11 @@ pub fn validate_module_scope(stmts: &[Stmt]) -> Result<(), TypeError> {
             StmtKind::RefDecl { .. } => "reference declaration",
             StmtKind::Assign { .. } | StmtKind::SetPlace { .. } => "assignment",
             StmtKind::AugAssign { .. } => "augmented assignment",
-            StmtKind::Unpack { .. } => "unpacking assignment",
-            StmtKind::ComptimeIf { .. } | StmtKind::ComptimeFor { .. } => {
-                "unelaborated compile-time statement"
-            }
+            StmtKind::Destructure { .. } => "unpacking assignment",
+            StmtKind::Match { .. } => "match statement",
+            StmtKind::ComptimeIf { .. }
+            | StmtKind::ComptimeFor { .. }
+            | StmtKind::ComptimeMatch { .. } => "unelaborated compile-time statement",
             StmtKind::If { .. } => "if statement",
             StmtKind::While { .. } => "while statement",
             StmtKind::For { .. } => "for statement",

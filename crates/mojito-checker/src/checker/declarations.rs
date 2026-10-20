@@ -44,8 +44,8 @@ impl BodyParam<'_> {
     }
 }
 
-pub(super) fn definitely_returns(body: &[Stmt]) -> bool {
-    body.iter().any(stmt_returns)
+pub(super) fn definitely_returns(body: &[Stmt], concluded: &dyn Fn(&Stmt) -> bool) -> bool {
+    body.iter().any(|stmt| stmt_returns(stmt, concluded))
 }
 
 /// How many compile-time parameters a per-call clone of a declaration bakes,
@@ -123,7 +123,10 @@ pub(super) fn unify_through_callable_bounds(
     Ok(())
 }
 
-pub(super) fn stmt_returns(stmt: &Stmt) -> bool {
+/// Whether `stmt` never completes normally. `concluded` says whether a
+/// `match` statement's cases cover every value of its subject (the check's
+/// coverage fact); a case the subject cannot miss concludes it regardless.
+pub(super) fn stmt_returns(stmt: &Stmt, concluded: &dyn Fn(&Stmt) -> bool) -> bool {
     match &stmt.kind {
         StmtKind::Return(_) => true,
         // A `raise` diverges (it never falls through to the end), so for
@@ -139,8 +142,21 @@ pub(super) fn stmt_returns(stmt: &Stmt) -> bool {
         // A `comptime if` reaches here only under source validation, where
         // no arm is assumed selected: every arm must return.
         StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
-            orelse.as_ref().is_some_and(|e| definitely_returns(e))
-                && branches.iter().all(|(_, b)| definitely_returns(b))
+            orelse
+                .as_ref()
+                .is_some_and(|e| definitely_returns(e, concluded))
+                && branches
+                    .iter()
+                    .all(|(_, b)| definitely_returns(b, concluded))
+        }
+        // A `match` falls through unless its cases cover the subject or a
+        // case the subject cannot miss concludes it; then every case must
+        // return.
+        StmtKind::Match { cases, .. } => {
+            match_concluded(stmt, cases, concluded)
+                && cases
+                    .iter()
+                    .all(|case| definitely_returns(&case.body, concluded))
         }
         // A `comptime for` reaches here only under source validation. How
         // often it unrolls, and which of its `comptime if` arms survive, is
@@ -149,7 +165,7 @@ pub(super) fn stmt_returns(stmt: &Stmt) -> bool {
         StmtKind::ComptimeFor { body, .. } => block_holds_return(body),
         // A `with` body runs exactly once (its desugar is a `try`/`finally`
         // whose cleanup cannot divert control), so it diverges iff the body does.
-        StmtKind::With { body, .. } | StmtKind::Scope(body) => definitely_returns(body),
+        StmtKind::With { body, .. } | StmtKind::Scope(body) => definitely_returns(body, concluded),
         // A `try` definitely diverges when: a `finally` does (it overrides every
         // path); or the **normal-completion** path diverges (the body — or, if the
         // body may complete, the `else`) *and* the **exceptional** path does (every
@@ -161,15 +177,20 @@ pub(super) fn stmt_returns(stmt: &Stmt) -> bool {
             orelse,
             finalbody,
         } => {
-            if finalbody.as_ref().is_some_and(|fb| definitely_returns(fb)) {
+            if finalbody
+                .as_ref()
+                .is_some_and(|fb| definitely_returns(fb, concluded))
+            {
                 return true;
             }
             let normal = match orelse {
-                Some(else_) => definitely_returns(body) || definitely_returns(else_),
-                None => definitely_returns(body),
+                Some(else_) => {
+                    definitely_returns(body, concluded) || definitely_returns(else_, concluded)
+                }
+                None => definitely_returns(body, concluded),
             };
             let exceptional = match except {
-                Some((_, handler)) => definitely_returns(handler),
+                Some((_, handler)) => definitely_returns(handler, concluded),
                 None => true,
             };
             normal && exceptional
@@ -178,10 +199,28 @@ pub(super) fn stmt_returns(stmt: &Stmt) -> bool {
     }
 }
 
+/// Whether the `match` statement `stmt` with `cases` never falls through:
+/// the check proved its cases cover the subject, or an unguarded case the
+/// subject cannot miss concludes it.
+pub(super) fn match_concluded(
+    stmt: &Stmt,
+    cases: &[mojito_ast::ast::MatchCase],
+    concluded: &dyn Fn(&Stmt) -> bool,
+) -> bool {
+    concluded(stmt)
+        || cases
+            .iter()
+            .any(|case| case.guard.is_none() && super::patterns::irrefutable(&case.pattern))
+}
+
 /// Conservative definite-initialization check for a named `out` result. A
 /// value-returning path supplies the result directly; a fallthrough or bare
 /// return path must assign the named result first.
-pub(super) fn definitely_initializes_named_result(body: &[Stmt], name: &str) -> bool {
+pub(super) fn definitely_initializes_named_result(
+    body: &[Stmt],
+    name: &str,
+    concluded: &dyn Fn(&Stmt) -> bool,
+) -> bool {
     let mut initialized = false;
     for stmt in body {
         match &stmt.kind {
@@ -207,17 +246,25 @@ pub(super) fn definitely_initializes_named_result(body: &[Stmt], name: &str) -> 
             }) if is_diverging_intrinsic(name) => return true,
             StmtKind::Return(None) => return initialized,
             StmtKind::Scope(body) => {
-                initialized |= definitely_initializes_named_result(body, name);
+                initialized |= definitely_initializes_named_result(body, name, concluded);
             }
             StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
                 let Some(orelse) = orelse else { continue };
                 if branches
                     .iter()
-                    .all(|(_, branch)| definitely_initializes_named_result(branch, name))
-                    && definitely_initializes_named_result(orelse, name)
+                    .all(|(_, branch)| definitely_initializes_named_result(branch, name, concluded))
+                    && definitely_initializes_named_result(orelse, name, concluded)
                 {
                     return true;
                 }
+            }
+            StmtKind::Match { cases, .. }
+                if match_concluded(stmt, cases, concluded)
+                    && cases.iter().all(|case| {
+                        definitely_initializes_named_result(&case.body, name, concluded)
+                    }) =>
+            {
+                return true;
             }
             _ => {}
         }
@@ -229,8 +276,12 @@ pub(super) fn definitely_initializes_named_result(body: &[Stmt], name: &str) -> 
 /// path does not produce a value and therefore need not initialize the field;
 /// every explicit return and every fallthrough path does. Loops are treated as
 /// possibly executing zero times.
-pub(super) fn definitely_initializes_self_field(body: &[Stmt], field: &str) -> bool {
-    let flow = init_field_flow(body, field, false);
+pub(super) fn definitely_initializes_self_field(
+    body: &[Stmt],
+    field: &str,
+    concluded: &dyn Fn(&Stmt) -> bool,
+) -> bool {
+    let flow = init_field_flow(body, field, false, concluded);
     flow.valid && flow.normal.is_none_or(|initialized| initialized)
 }
 
@@ -366,7 +417,12 @@ struct InitFieldFlow {
     valid: bool,
 }
 
-fn init_field_flow(body: &[Stmt], field: &str, mut initialized: bool) -> InitFieldFlow {
+fn init_field_flow(
+    body: &[Stmt],
+    field: &str,
+    mut initialized: bool,
+    concluded: &dyn Fn(&Stmt) -> bool,
+) -> InitFieldFlow {
     let mut valid = true;
     for stmt in body {
         match &stmt.kind {
@@ -402,10 +458,10 @@ fn init_field_flow(body: &[Stmt], field: &str, mut initialized: bool) -> InitFie
             StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
                 let mut flows: Vec<_> = branches
                     .iter()
-                    .map(|(_, branch)| init_field_flow(branch, field, initialized))
+                    .map(|(_, branch)| init_field_flow(branch, field, initialized, concluded))
                     .collect();
                 flows.push(match orelse {
-                    Some(orelse) => init_field_flow(orelse, field, initialized),
+                    Some(orelse) => init_field_flow(orelse, field, initialized, concluded),
                     None => InitFieldFlow {
                         normal: Some(initialized),
                         valid: true,
@@ -423,16 +479,41 @@ fn init_field_flow(body: &[Stmt], field: &str, mut initialized: bool) -> InitFie
                     }
                 };
             }
+            // A `match` is a branch per case, plus the fall-through when no
+            // case concludes it.
+            StmtKind::Match { cases, .. } => {
+                let mut flows: Vec<_> = cases
+                    .iter()
+                    .map(|case| init_field_flow(&case.body, field, initialized, concluded))
+                    .collect();
+                if !match_concluded(stmt, cases, concluded) {
+                    flows.push(InitFieldFlow {
+                        normal: Some(initialized),
+                        valid: true,
+                    });
+                }
+                valid &= flows.iter().all(|flow| flow.valid);
+                let mut normal_paths = flows.iter().filter_map(|flow| flow.normal);
+                initialized = match normal_paths.next() {
+                    Some(first) => normal_paths.fold(first, |all, state| all && state),
+                    None => {
+                        return InitFieldFlow {
+                            normal: None,
+                            valid,
+                        };
+                    }
+                };
+            }
             // A loop may execute zero times, so assignments in its body cannot
             // establish initialization after the loop. Returns inside it still
             // have to be safe.
             StmtKind::While { body, .. } | StmtKind::For { body, .. } => {
-                valid &= init_field_flow(body, field, initialized).valid;
+                valid &= init_field_flow(body, field, initialized, concluded).valid;
             }
             // A `with` body, like a kept compile-time block, runs exactly
             // once, straight through.
             StmtKind::With { body, .. } | StmtKind::Scope(body) => {
-                let flow = init_field_flow(body, field, initialized);
+                let flow = init_field_flow(body, field, initialized, concluded);
                 valid &= flow.valid;
                 match flow.normal {
                     Some(state) => initialized = state,
@@ -450,10 +531,10 @@ fn init_field_flow(body: &[Stmt], field: &str, mut initialized: bool) -> InitFie
                 orelse,
                 finalbody,
             } => {
-                let body_flow = init_field_flow(body, field, initialized);
+                let body_flow = init_field_flow(body, field, initialized, concluded);
                 valid &= body_flow.valid;
                 let normal_flow = body_flow.normal.map(|state| match orelse {
-                    Some(orelse) => init_field_flow(orelse, field, state),
+                    Some(orelse) => init_field_flow(orelse, field, state, concluded),
                     None => InitFieldFlow {
                         normal: Some(state),
                         valid: true,
@@ -461,7 +542,7 @@ fn init_field_flow(body: &[Stmt], field: &str, mut initialized: bool) -> InitFie
                 });
                 let exceptional_flow = except
                     .as_ref()
-                    .map(|(_, handler)| init_field_flow(handler, field, initialized));
+                    .map(|(_, handler)| init_field_flow(handler, field, initialized, concluded));
                 valid &= normal_flow.is_none_or(|flow| flow.valid)
                     && exceptional_flow.is_none_or(|flow| flow.valid);
 
@@ -481,7 +562,7 @@ fn init_field_flow(body: &[Stmt], field: &str, mut initialized: bool) -> InitFie
                     };
                     let final_flows: Vec<_> = starts
                         .into_iter()
-                        .map(|state| init_field_flow(finalbody, field, state))
+                        .map(|state| init_field_flow(finalbody, field, state, concluded))
                         .collect();
                     valid &= final_flows.iter().all(|flow| flow.valid);
                     exits = final_flows.iter().filter_map(|flow| flow.normal).collect();
@@ -1421,7 +1502,7 @@ impl Checker {
             return Ok(());
         }
         for (field, _) in &info.fields {
-            if !definitely_initializes_self_field(body, field) {
+            if !definitely_initializes_self_field(body, field, &|stmt| self.match_concluded(stmt)) {
                 return Err(TypeError::UninitializedField {
                     struct_name: sname.to_string(),
                     method: method.to_string(),
@@ -1728,9 +1809,10 @@ impl Checker {
         self.self_mutable = saved;
         self.self_initializing = saved_initializing;
         result?;
+        let concluded = |stmt: &Stmt| self.match_concluded(stmt);
         let completes = match named_result {
-            Some(result) => definitely_initializes_named_result(body, result.name),
-            None => *ret_ty == TyKind::None || definitely_returns(body),
+            Some(result) => definitely_initializes_named_result(body, result.name, &concluded),
+            None => *ret_ty == TyKind::None || definitely_returns(body, &concluded),
         };
         if !completes {
             return Err(TypeError::MissingReturn(name.to_string()));

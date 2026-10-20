@@ -126,7 +126,8 @@ impl VmBackend {
             MirInstr::If { .. }
             | MirInstr::Loop { .. }
             | MirInstr::ComptimeIf { .. }
-            | MirInstr::ComptimeFor { .. } => {
+            | MirInstr::ComptimeFor { .. }
+            | MirInstr::Match { .. } => {
                 return Err(parametric_instruction(&format!(
                     "structured control flow `{}`",
                     mojito_mir::mir::text::instruction_mnemonic(i)
@@ -2267,6 +2268,8 @@ impl VmBackend {
                 | MirTerm::ComptimeYield(_)
                 | MirTerm::ComptimeBreak
                 | MirTerm::ComptimeContinue
+                | MirTerm::MatchNext
+                | MirTerm::MatchComplete
                 | MirTerm::Unreachable => {
                     return Err(parametric_instruction(&format!(
                         "the region terminator `{}`",

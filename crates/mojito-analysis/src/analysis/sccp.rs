@@ -136,6 +136,8 @@ impl Solver<'_> {
             | MirTerm::ComptimeYield(_)
             | MirTerm::ComptimeBreak
             | MirTerm::ComptimeContinue
+            | MirTerm::MatchNext
+            | MirTerm::MatchComplete
             | MirTerm::Unreachable => Vec::new(),
         }
     }

@@ -1,7 +1,9 @@
 //! Checked explicit-destruction obligations over structured source CFGs.
 
 use crate::checker::DeclarationTable;
-use mojito_ast::ast::{ArgConvention, Expr, ExprKind, SourceType, Stmt, StmtKind, TStringPart};
+use mojito_ast::ast::{
+    ArgConvention, Condition, Expr, ExprKind, SourceType, Stmt, StmtKind, TStringPart,
+};
 use mojito_checked::checked::{AnnotationSite, ExplicitDestroyInfo, NodeFacts};
 use mojito_checked::fact_store::FactSet;
 use mojito_common::error::TypeError;
@@ -661,7 +663,7 @@ fn join(mut exits: Vec<Env>) -> Result<Env, TypeError> {
 /// contributes the entry environment itself — so a value consumed on one
 /// branch only is conditionally destroyed.
 fn branch_exits(
-    branches: &[(Expr, Vec<Stmt>)],
+    branches: &[(Condition, Vec<Stmt>)],
     orelse: Option<&[Stmt]>,
     env: Env,
     node_facts: &HashMap<SourceSpan, NodeFacts>,
@@ -671,7 +673,7 @@ fn branch_exits(
     let mut exits = Vec::new();
     for (condition, body) in branches {
         let mut branch = env.clone();
-        check_expr(condition, &mut branch, node_facts, types)?;
+        check_expr(condition.value(), &mut branch, node_facts, types)?;
         finish_statement(&mut branch, types)?;
         if let Some(exit) = check_block(body, branch, true, node_facts, deletability, types)? {
             exits.push(exit);
@@ -693,7 +695,7 @@ fn branch_exits(
 ///
 /// `None` means every branch is terminal, so nothing follows the statement.
 fn check_if(
-    branches: &[(Expr, Vec<Stmt>)],
+    branches: &[(Condition, Vec<Stmt>)],
     orelse: Option<&[Stmt]>,
     env: Env,
     node_facts: &HashMap<SourceSpan, NodeFacts>,
@@ -716,7 +718,7 @@ fn check_if(
 ///
 /// `None` means every arm is terminal, so nothing follows the statement.
 fn check_comptime_if(
-    branches: &[(Expr, Vec<Stmt>)],
+    branches: &[(Condition, Vec<Stmt>)],
     orelse: Option<&[Stmt]>,
     env: Env,
     node_facts: &HashMap<SourceSpan, NodeFacts>,
@@ -725,7 +727,7 @@ fn check_comptime_if(
 ) -> Result<Option<Env>, TypeError> {
     let parametric = branches
         .iter()
-        .any(|(condition, _)| env.is_parametric(condition));
+        .any(|(condition, _)| env.is_parametric(condition.value()));
     let mut exits = branch_exits(
         branches,
         orelse,
@@ -1198,8 +1200,41 @@ fn check_stmt(
                 ensure_same(&env, &after)?;
             }
         }
+        // Each case runs from the state after the subject; their exits and
+        // the fall-through (unless a case concludes the match) must agree.
+        StmtKind::Match { subject, cases } => {
+            check_expr(subject, &mut env, node_facts, types)?;
+            finish_statement(&mut env, types)?;
+            let mut exits = Vec::new();
+            for case in cases {
+                let mut branch = env.clone();
+                if let Some(guard) = &case.guard {
+                    check_expr(guard, &mut branch, node_facts, types)?;
+                    finish_statement(&mut branch, types)?;
+                }
+                if let Some(exit) =
+                    check_block(&case.body, branch, true, node_facts, deletability, types)?
+                {
+                    exits.push(exit);
+                }
+            }
+            let concluded = node_facts
+                .get(&stmt.source_span())
+                .and_then(|facts| facts.match_plan.as_ref())
+                .is_some_and(|plan| plan.concluded)
+                || cases.iter().any(|case| {
+                    case.guard.is_none() && crate::checker::irrefutable_pattern(&case.pattern)
+                });
+            if !concluded {
+                exits.push(env);
+            }
+            if exits.is_empty() {
+                return Ok(None);
+            }
+            env = join(exits)?;
+        }
         StmtKind::While { cond, body, orelse } => {
-            check_expr(cond, &mut env, node_facts, types)?;
+            check_expr(cond.value(), &mut env, node_facts, types)?;
             finish_statement(&mut env, types)?;
             if let Some(after) =
                 check_block(body, env.clone(), true, node_facts, deletability, types)?
@@ -1284,10 +1319,10 @@ fn check_stmt(
             check_expr(value, &mut env, node_facts, types)?;
             finish_statement(&mut env, types)?;
         }
-        StmtKind::Unpack { targets, value, .. } => {
+        StmtKind::Destructure { target, value } => {
             check_expr(value, &mut env, node_facts, types)?;
-            for target in targets {
-                check_expr(target, &mut env, node_facts, types)?;
+            for place in target.places() {
+                check_expr(place, &mut env, node_facts, types)?;
             }
             finish_statement(&mut env, types)?;
         }

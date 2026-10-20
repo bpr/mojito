@@ -1,0 +1,959 @@
+//! `match` statements: the subject is anchored once, each case's pattern
+//! compiles to the commands upstream's `PatternMatchBuilder` builds (tests
+//! and bindings), and the plan is recorded for the checked program.
+//!
+//! The check synthesizes the syntax its commands run on (`with_stmt.rs`'s
+//! `Synth`): `ref $match<id> = subject` anchors the subject with the
+//! ordinary reference-binding rules (a place keeps its storage, a temporary
+//! gets a hidden slot for the statement), a test is the comparison
+//! `$match<id> == value` through the selected `__eq__`, a bare binding is
+//! `ref name = $match<id>` made immutable, a `var` binding is
+//! `var name = $match<id>` (the implicit-copy rule), a `ref` or `as` binding
+//! is `ref name = $match<id>` with the subject's own capability, and a guard
+//! is a `Bool` condition checked once the case's bindings exist.
+
+use super::with_stmt::Synth;
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
+use super::*;
+use mojito_ast::ast::{BindingMode, MatchCase, MatchPattern, MatchPatternKind};
+use mojito_checked::checked::{MatchPlan, PlannedCommand, Warning};
+use mojito_common::literal::IntLiteral;
+
+impl Checker {
+    /// Check `match subject:` with its `cases`: anchor the subject, compile
+    /// each case's pattern to commands in a scope of its own, check its
+    /// body there, and record the plan at the statement.
+    pub(super) fn check_match(
+        &mut self,
+        stmt: &Stmt,
+        subject: &Expr,
+        cases: &[MatchCase],
+        ret: Option<&Ty>,
+        in_loop: bool,
+    ) -> Result<(), TypeError> {
+        let synth = Synth::for_statement(stmt, subject.source.clone());
+        let name = format!("$match{}", synth.parent().0);
+        let read_only = !cases.iter().any(|case| binds_by_reference(&case.pattern));
+        // The hidden subject lives in a scope of its own around the cases.
+        self.push_scope();
+        let checked = self
+            .anchor_subject(&synth, &name, subject, read_only, ret, in_loop)
+            .and_then(|(anchor, ty, temporary)| {
+                let subject = MatchSubject {
+                    synth: &synth,
+                    name: &name,
+                    ty,
+                    temporary,
+                    path: Vec::new(),
+                };
+                self.check_match_cases(stmt, &subject, anchor, cases, ret, in_loop)
+            });
+        self.pop_scope();
+        checked
+    }
+
+    /// Check the `case pattern = value` condition of an `if`, `elif`, or
+    /// `while` branch whose body is `body`: anchor the value, compile the
+    /// pattern's commands, and check the body in the scope that holds the
+    /// bindings — a sibling branch or the statement after sees none of
+    /// them. The plan is recorded at the pattern.
+    pub(super) fn check_case_condition(
+        &mut self,
+        pattern: &MatchPattern,
+        value: &Expr,
+        body: &[Stmt],
+        ret: Option<&Ty>,
+        in_loop: bool,
+    ) -> Result<(), TypeError> {
+        let synth = Synth::for_pattern(pattern, value.source.clone());
+        let name = format!("$case{}", synth.parent().0);
+        let read_only = !binds_by_reference(pattern);
+        self.push_scope();
+        let checked = self
+            .anchor_subject(&synth, &name, value, read_only, ret, in_loop)
+            .and_then(|(anchor, ty, temporary)| {
+                let subject = MatchSubject {
+                    synth: &synth,
+                    name: &name,
+                    ty,
+                    temporary,
+                    path: Vec::new(),
+                };
+                let mut commands = Commands::default();
+                self.compile_pattern(pattern, &subject, Join::None, &mut commands)?;
+                self.check_block(body, ret, in_loop)?;
+                self.record_at(pattern.source_span()).match_plan = Some(MatchPlan {
+                    anchor,
+                    cases: vec![commands.into_program()],
+                    concluded: false,
+                });
+                Ok(())
+            });
+        self.pop_scope();
+        checked
+    }
+
+    /// Declare the hidden `name` over `subject` in the current scope: a
+    /// place subject is borrowed where it lies (`ref name = place`), to
+    /// read when `read_only` — then the guards and bodies may read the
+    /// place themselves — and with the place's capability otherwise; any
+    /// other subject is a temporary materialized into one owner that lasts
+    /// through the statement (`var name = value`), which no `ref` binding of
+    /// a register-passable value may name. The anchor statement, the
+    /// subject's type (a reference stripped), and whether it is a temporary.
+    fn anchor_subject(
+        &mut self,
+        synth: &Synth,
+        name: &str,
+        subject: &Expr,
+        read_only: bool,
+        ret: Option<&Ty>,
+        in_loop: bool,
+    ) -> Result<(Stmt, Ty, bool), TypeError> {
+        let temporary = !(super::places::is_place_expr(subject)
+            || matches!(self.infer(subject)?.kind(), TyKind::Ref(_)));
+        let anchor = synth.stmt(if temporary {
+            StmtKind::VarDecl {
+                name: name.to_string(),
+                ty: None,
+                value: subject.clone(),
+            }
+        } else {
+            StmtKind::RefDecl {
+                name: name.to_string(),
+                value: subject.clone(),
+            }
+        });
+        self.check_stmt(&anchor, ret, in_loop)?;
+        if !temporary && read_only {
+            self.make_reference_immutable(name, &anchor, subject.source_span());
+        }
+        let ty = self.lookup(name).cloned().ok_or_else(|| {
+            TypeError::InvariantViolation("the match subject's anchor was not declared".into())
+        })?;
+        Ok((anchor, dereferenced(ty), temporary))
+    }
+
+    fn check_match_cases(
+        &mut self,
+        stmt: &Stmt,
+        subject: &MatchSubject,
+        anchor: Stmt,
+        cases: &[MatchCase],
+        ret: Option<&Ty>,
+        in_loop: bool,
+    ) -> Result<(), TypeError> {
+        let before = self.uninitialized.borrow().clone();
+        let mut exits = Vec::new();
+        let mut plan = MatchPlan {
+            anchor,
+            cases: Vec::new(),
+            concluded: false,
+        };
+        let mut coverage = Coverage::new(&subject.ty);
+        let mut warnings = Vec::new();
+        for case in cases {
+            (*self.uninitialized.borrow_mut()).clone_from(&before);
+            self.push_scope();
+            let commands = self.check_case(case, subject, ret, in_loop);
+            self.pop_scope();
+            plan.cases.push(commands?);
+            // Once the cases cover every value, nothing falls through past
+            // them (later cases are unreachable).
+            if !plan.concluded {
+                exits.push(self.uninitialized.borrow().clone());
+            }
+            if let Some(message) = coverage.add(case) {
+                warnings.push(Warning {
+                    message,
+                    span: case.pattern.source_span(),
+                });
+            }
+            if !plan.concluded && coverage.complete() {
+                plan.concluded = true;
+                // The proof made the closing case's tests pass whenever it
+                // is reached: it runs without them, so no path falls
+                // through. (A `|` that binds keeps its tests, and the
+                // fall-through.)
+                let closing = plan.cases.last_mut().expect("the case was pushed");
+                if closing.iter().all(droppable_test) {
+                    closing.retain(|command| matches!(command, PlannedCommand::Bind(_)));
+                } else {
+                    plan.concluded = false;
+                }
+            }
+        }
+        if !plan.concluded {
+            exits.push(before);
+            if let Some(message) = coverage.missing() {
+                warnings.push(Warning {
+                    message,
+                    span: stmt.source_span(),
+                });
+            }
+        }
+        *self.uninitialized.borrow_mut() = exits.into_iter().flatten().collect::<HashSet<_>>();
+        let mut facts = self.record_at(stmt.source_span());
+        facts.match_plan = Some(plan);
+        facts.match_warnings = (!warnings.is_empty()).then_some(warnings);
+        Ok(())
+    }
+
+    /// Make the reference binding `name`, declared by `declaration` over
+    /// the value at `value_span`, read its referent whatever the place's
+    /// capability: the binding, its type, and its borrow are immutable.
+    fn make_reference_immutable(&mut self, name: &str, declaration: &Stmt, value_span: SourceSpan) {
+        self.set_binding_mutable(name, false);
+        self.record_at(value_span).reference_value_use = Some(false);
+        if let Some(ty) = self.lookup(name).cloned()
+            && let TyKind::Ref(reference) = ty.kind()
+        {
+            let mut reference = reference.clone();
+            reference.mutability = mojito_types::origin::Mutability::Immutable;
+            let ty = Ty::new(TyKind::Ref(reference));
+            self.set_binding_type(name, ty.clone());
+            self.record_at(declaration.source_span()).binding_ty = Some(ty);
+        }
+    }
+
+    /// Whether the check proved the `match` statement `stmt` covers every
+    /// value of its subject, so that nothing falls through it.
+    pub(super) fn match_concluded(&self, stmt: &Stmt) -> bool {
+        self.has_fact(&stmt.source_span(), |facts| {
+            facts.match_plan.as_ref().is_some_and(|plan| plan.concluded)
+        })
+    }
+
+    /// One case in its own scope: its pattern's commands, then its body.
+    fn check_case(
+        &mut self,
+        case: &MatchCase,
+        subject: &MatchSubject,
+        ret: Option<&Ty>,
+        in_loop: bool,
+    ) -> Result<Vec<PlannedCommand>, TypeError> {
+        let mut commands = Commands::default();
+        self.compile_pattern(&case.pattern, subject, Join::None, &mut commands)?;
+        if let Some(guard) = &case.guard {
+            self.register_named_bindings(guard)?;
+            self.expect_bool(guard, "case guard")?;
+        }
+        self.check_block(&case.body, ret, in_loop)?;
+        Ok(commands.into_program())
+    }
+
+    /// The commands `pattern` compiles to over `subject`: a literal or
+    /// `== value` compares, `_` tests nothing, a name binds the subject by
+    /// its mode (through `join` inside a `|` alternative), `as` binds it
+    /// once its pattern has matched, a tuple or struct pattern compiles
+    /// each element's or field's pattern over that projection of the
+    /// subject, in order, and `|` compiles its alternatives.
+    fn compile_pattern(
+        &mut self,
+        pattern: &MatchPattern,
+        subject: &MatchSubject,
+        mut join: Join<'_>,
+        commands: &mut Commands,
+    ) -> Result<(), TypeError> {
+        match &pattern.kind {
+            MatchPatternKind::Wildcard => Ok(()),
+            MatchPatternKind::Bind { name, mode } => self.bind_subject(
+                name,
+                Binding::from(*mode),
+                pattern.source_span(),
+                subject,
+                join,
+                commands,
+            ),
+            MatchPatternKind::As {
+                pattern: inner,
+                name,
+            } => {
+                self.compile_pattern(inner, subject, join.reborrow(), commands)?;
+                self.bind_subject(
+                    name,
+                    Binding::As,
+                    pattern.source_span(),
+                    subject,
+                    join,
+                    commands,
+                )
+            }
+            MatchPatternKind::Literal(value) | MatchPatternKind::Equal(value) => {
+                let test = subject.synth.expr(ExprKind::Infix(
+                    InfixOp::Eq,
+                    Box::new(subject.value()),
+                    Box::new(value.clone()),
+                ));
+                self.register_named_bindings(&test)?;
+                self.expect_bool(&test, "case pattern")?;
+                commands.tests.push(PlannedCommand::Equal(test));
+                Ok(())
+            }
+            MatchPatternKind::Tuple(items) => {
+                self.compile_tuple_pattern(items, subject, join, commands)
+            }
+            MatchPatternKind::Call { head, args, kwargs } => {
+                self.compile_struct_pattern(head, args, kwargs, subject, join, commands)
+            }
+            MatchPatternKind::Fields(fields) => {
+                self.compile_field_patterns(fields, subject, join, commands)
+            }
+            MatchPatternKind::Or(alternatives) => {
+                self.compile_or_pattern(alternatives, subject, join, commands)
+            }
+            MatchPatternKind::Head(_) => Err(TypeError::Unsupported("enum case patterns".into())),
+            MatchPatternKind::Sequence(_) => {
+                Err(TypeError::Unsupported("sequence patterns".into()))
+            }
+        }
+    }
+
+    /// `p0 | p1 | ...`: each alternative's commands as a program of its
+    /// own, the first that matches selecting. Every alternative binds the
+    /// same names, the first's declarations being the bindings the later
+    /// ones assign, each with the first's type.
+    fn compile_or_pattern(
+        &mut self,
+        alternatives: &[MatchPattern],
+        subject: &MatchSubject,
+        mut join: Join<'_>,
+        commands: &mut Commands,
+    ) -> Result<(), TypeError> {
+        let mut first: Option<Vec<String>> = None;
+        let mut programs = Vec::new();
+        for alternative in alternatives {
+            let mut program = Commands::default();
+            let mut bound = Vec::new();
+            let inner = if matches!(join, Join::Assign(_)) || first.is_some() {
+                Join::Assign(&mut bound)
+            } else {
+                Join::Declare(&mut bound)
+            };
+            self.compile_pattern(alternative, subject, inner, &mut program)?;
+            if let Some(first) = &first {
+                if let Some(missing) = first
+                    .iter()
+                    .find(|name| !bound.contains(name))
+                    .or_else(|| bound.iter().find(|name| !first.contains(name)))
+                {
+                    return Err(TypeError::MatchPattern(format!(
+                        "or-pattern alternatives must bind the same names; '{missing}' is \
+                         bound in one alternative but not the other"
+                    )));
+                }
+            } else {
+                first = Some(bound);
+            }
+            programs.push(program.into_program());
+        }
+        if let Some(names) = first {
+            join.record(names);
+        }
+        commands.tests.push(PlannedCommand::Alternatives(programs));
+        Ok(())
+    }
+
+    /// `(p0, p1, ...)` over a tuple subject of the same arity: each
+    /// element's pattern over `subject[i]`, in element order.
+    fn compile_tuple_pattern(
+        &mut self,
+        items: &[MatchPattern],
+        subject: &MatchSubject,
+        mut join: Join<'_>,
+        commands: &mut Commands,
+    ) -> Result<(), TypeError> {
+        let Some(elements) = tuple_elements(&subject.ty) else {
+            return Err(TypeError::MatchPattern(format!(
+                "expected a tuple type to match against, got '{}'",
+                subject.ty
+            )));
+        };
+        if elements.len() != items.len() {
+            return Err(TypeError::MatchPattern(format!(
+                "cannot match value of '{}' of {} elements against a pattern with {} elements",
+                subject.ty,
+                elements.len(),
+                items.len()
+            )));
+        }
+        let elements: Vec<Ty> = elements.into_iter().cloned().collect();
+        for (index, (item, element)) in items.iter().zip(elements).enumerate() {
+            let child = subject.project(Step::Element(index), element);
+            self.compile_pattern(item, &child, join.reborrow(), commands)?;
+        }
+        Ok(())
+    }
+
+    /// `Name(field=p, ...)` over a subject of the nominal type `Name`: no
+    /// positional argument, then the field patterns. The head names the
+    /// type; it runs no constructor.
+    fn compile_struct_pattern(
+        &mut self,
+        head: &Expr,
+        args: &[MatchPattern],
+        kwargs: &[(String, MatchPattern)],
+        subject: &MatchSubject,
+        join: Join<'_>,
+        commands: &mut Commands,
+    ) -> Result<(), TypeError> {
+        let (ExprKind::Identifier(name) | ExprKind::TypeApply { name, .. }) = &head.kind else {
+            return Err(TypeError::Unsupported("enum case patterns".into()));
+        };
+        if !args.is_empty() {
+            return Err(TypeError::MatchPattern(
+                "struct patterns do not support positional or unpacked arguments".into(),
+            ));
+        }
+        let matches_head = match subject.ty.kind() {
+            TyKind::Struct(subject_name, _) => {
+                subject_name == name || subject_name.rsplit('$').next() == Some(name)
+            }
+            _ => false,
+        };
+        if !matches_head {
+            return Err(TypeError::MatchPattern(format!(
+                "cannot match value of type '{}' against pattern type '{name}'",
+                subject.ty
+            )));
+        }
+        self.compile_field_patterns(kwargs, subject, join, commands)
+    }
+
+    /// `{field=p, ...}` over a struct subject: each named field's pattern
+    /// over `subject.field`, a field named once; a field the pattern omits
+    /// matches anything.
+    fn compile_field_patterns(
+        &mut self,
+        fields: &[(String, MatchPattern)],
+        subject: &MatchSubject,
+        mut join: Join<'_>,
+        commands: &mut Commands,
+    ) -> Result<(), TypeError> {
+        let mut seen = HashSet::new();
+        for (field, pattern) in fields {
+            if !seen.insert(field.as_str()) {
+                return Err(TypeError::MatchPattern(format!(
+                    "keyword argument '{field}' was already used; remove the duplicate"
+                )));
+            }
+            let child = subject.project(Step::Field(field.clone()), Ty::error());
+            // The field's checked type; an unknown field is the selection's
+            // own rejection.
+            let ty = self.infer(&child.value())?;
+            let child = MatchSubject {
+                ty: dereferenced(ty),
+                ..child
+            };
+            self.compile_pattern(pattern, &child, join.reborrow(), commands)?;
+        }
+        Ok(())
+    }
+
+    /// Bind `name` to the subject: a bare name is an immutable reference
+    /// whatever the subject's capability, `ref` (and `as`) a reference with
+    /// the subject's own, `var` a copy by the implicit-copy rule. Inside a
+    /// `|` alternative only `var` binds: the first alternative declares,
+    /// a later one assigns the same binding a value of the same type.
+    fn bind_subject(
+        &mut self,
+        name: &str,
+        binding: Binding,
+        pattern_span: SourceSpan,
+        subject: &MatchSubject,
+        join: Join<'_>,
+        commands: &mut Commands,
+    ) -> Result<(), TypeError> {
+        match join {
+            Join::None => {}
+            Join::Declare(_) | Join::Assign(_) if binding != Binding::Var => {
+                return Err(TypeError::Unsupported(format!(
+                    "a bare or 'ref' binding in a '|' alternative ('{name}')"
+                )));
+            }
+            Join::Declare(bound) => bound.push(name.to_string()),
+            Join::Assign(bound) => {
+                bound.push(name.to_string());
+                let Some(declared) = self.lookup(name).cloned() else {
+                    return Err(TypeError::MatchPattern(format!(
+                        "or-pattern alternatives must bind the same names; '{name}' is bound \
+                         in one alternative but not the other"
+                    )));
+                };
+                let value = subject.value();
+                let found = dereferenced(self.infer(&value)?);
+                if found != declared {
+                    return Err(TypeError::MatchPattern(format!(
+                        "or-pattern binding '{name}' has incompatible types across \
+                         alternatives: first alternative has type '{declared}', this \
+                         alternative has type '{found}'"
+                    )));
+                }
+                let assignment = subject.synth.stmt(StmtKind::Assign {
+                    name: name.to_string(),
+                    value,
+                });
+                self.check_stmt(&assignment, None, false)?;
+                commands
+                    .binds
+                    .push(PlannedCommand::Bind(Box::new(assignment)));
+                return Ok(());
+            }
+        }
+        if binding == Binding::Ref
+            && subject.temporary
+            && self.is_trivial_register_passable(&subject.ty)
+        {
+            return Err(TypeError::NoMemoryOrigin {
+                ty: subject.ty.to_string(),
+                context: "'ref' binding".into(),
+            });
+        }
+        let value = subject.value();
+        let value_span = value.source_span();
+        let declaration = subject.synth.stmt(match binding {
+            Binding::Var => StmtKind::VarDecl {
+                name: name.to_string(),
+                ty: None,
+                value,
+            },
+            Binding::Bare | Binding::Ref | Binding::As => StmtKind::RefDecl {
+                name: name.to_string(),
+                value,
+            },
+        });
+        self.check_stmt(&declaration, None, false)?;
+        if binding == Binding::Bare {
+            self.make_reference_immutable(name, &declaration, value_span);
+        }
+        self.record_at(pattern_span).binding = self.lookup_owner(name);
+        commands
+            .binds
+            .push(PlannedCommand::Bind(Box::new(declaration)));
+        Ok(())
+    }
+}
+
+/// Whether `pattern` matches every value of its subject's type: a wildcard
+/// or a binding, at every position of a tuple or `as`, in some `|`
+/// alternative, or at every named field of a struct pattern.
+pub fn irrefutable(pattern: &MatchPattern) -> bool {
+    match &pattern.kind {
+        MatchPatternKind::Wildcard | MatchPatternKind::Bind { .. } => true,
+        MatchPatternKind::Tuple(items) => items.iter().all(irrefutable),
+        MatchPatternKind::As { pattern, .. } => irrefutable(pattern),
+        MatchPatternKind::Or(items) => items.iter().any(irrefutable),
+        MatchPatternKind::Call { args, kwargs, .. } => {
+            args.iter().all(irrefutable) && kwargs.iter().all(|(_, pattern)| irrefutable(pattern))
+        }
+        MatchPatternKind::Fields(fields) => fields.iter().all(|(_, pattern)| irrefutable(pattern)),
+        MatchPatternKind::Literal(_)
+        | MatchPatternKind::Equal(_)
+        | MatchPatternKind::Sequence(_)
+        | MatchPatternKind::Head(_) => false,
+    }
+}
+
+/// The subject a pattern applies to: the hidden `$match<id>` reference the
+/// anchor declared, projected by `path` to the element or field the
+/// pattern's position names, with the node factory that spells it.
+struct MatchSubject<'a> {
+    synth: &'a Synth,
+    name: &'a str,
+    /// The projection's type, any reference stripped.
+    ty: Ty,
+    /// Whether the whole subject is a temporary the anchor materializes
+    /// rather than a place it borrows; a projection never is.
+    temporary: bool,
+    path: Vec<Step>,
+}
+
+impl MatchSubject<'_> {
+    /// The expression reading this subject: `$match<id>` under the path's
+    /// subscripts and field selections.
+    fn value(&self) -> Expr {
+        let mut value = self.synth.identifier(self.name);
+        for step in &self.path {
+            value = match step {
+                Step::Element(index) => {
+                    let index = self.synth.expr(ExprKind::Int(IntLiteral::from(
+                        u64::try_from(*index).unwrap_or(u64::MAX),
+                    )));
+                    self.synth.expr(ExprKind::Index {
+                        object: Box::new(value),
+                        index: Box::new(index),
+                    })
+                }
+                Step::Field(field) => self.synth.expr(ExprKind::Member {
+                    object: Box::new(value),
+                    field: field.clone(),
+                }),
+            };
+        }
+        value
+    }
+
+    /// The subject one `step` below this one, of type `ty`.
+    fn project(&self, step: Step, ty: Ty) -> Self {
+        let mut path = self.path.clone();
+        path.push(step);
+        MatchSubject {
+            synth: self.synth,
+            name: self.name,
+            ty,
+            temporary: false,
+            path,
+        }
+    }
+}
+
+/// A case's commands as they are collected: its tests, then its bindings,
+/// as upstream runs every test of a pattern before any binding
+/// materializes (a failed alternative copies nothing).
+#[derive(Default)]
+struct Commands {
+    tests: Vec<PlannedCommand>,
+    binds: Vec<PlannedCommand>,
+}
+
+impl Commands {
+    fn into_program(self) -> Vec<PlannedCommand> {
+        self.tests.into_iter().chain(self.binds).collect()
+    }
+}
+
+/// How a pattern binds a name: the source modes, and `as`, which keeps the
+/// subject's capability as `ref` does but may name a temporary of any type.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Binding {
+    Bare,
+    Var,
+    Ref,
+    As,
+}
+
+impl From<BindingMode> for Binding {
+    fn from(mode: BindingMode) -> Self {
+        match mode {
+            BindingMode::Immutable => Self::Bare,
+            BindingMode::Var => Self::Var,
+            BindingMode::Ref => Self::Ref,
+        }
+    }
+}
+
+/// How a binding joins a `|` pattern's alternatives: outside one it
+/// declares; in the first alternative it declares and is noted; in a later
+/// alternative it assigns the first's binding and is noted, so the
+/// alternatives' names can be compared.
+enum Join<'a> {
+    None,
+    Declare(&'a mut Vec<String>),
+    Assign(&'a mut Vec<String>),
+}
+
+impl Join<'_> {
+    /// The same join for a nested pattern's bindings.
+    const fn reborrow(&mut self) -> Join<'_> {
+        match self {
+            Join::None => Join::None,
+            Join::Declare(bound) => Join::Declare(bound),
+            Join::Assign(bound) => Join::Assign(bound),
+        }
+    }
+
+    /// Note `names`, a nested `|`'s joined bindings, as this join's.
+    fn record(&mut self, names: Vec<String>) {
+        match self {
+            Join::None => {}
+            Join::Declare(bound) | Join::Assign(bound) => bound.extend(names),
+        }
+    }
+}
+
+/// One projection of a subject: a tuple element or a struct field.
+#[derive(Clone)]
+enum Step {
+    Element(usize),
+    Field(String),
+}
+
+/// `ty` with a reference stripped to its referent.
+fn dereferenced(ty: Ty) -> Ty {
+    match ty.kind() {
+        TyKind::Ref(reference) => reference.referent.clone(),
+        _ => ty,
+    }
+}
+
+/// Whether `pattern` binds a name by `ref` or `as`, which keep the subject's
+/// own capability and so need the subject borrowed as the place allows.
+fn binds_by_reference(pattern: &MatchPattern) -> bool {
+    match &pattern.kind {
+        MatchPatternKind::Bind { mode, .. } => *mode == BindingMode::Ref,
+        MatchPatternKind::As { .. } => true,
+        MatchPatternKind::Tuple(items) | MatchPatternKind::Or(items) => {
+            items.iter().any(binds_by_reference)
+        }
+        MatchPatternKind::Call { args, kwargs, .. } => {
+            args.iter().any(binds_by_reference)
+                || kwargs
+                    .iter()
+                    .any(|(_, pattern)| binds_by_reference(pattern))
+        }
+        MatchPatternKind::Fields(fields) => fields
+            .iter()
+            .any(|(_, pattern)| binds_by_reference(pattern)),
+        MatchPatternKind::Sequence(items) => items.iter().any(|item| match item {
+            mojito_ast::ast::SequencePattern::Element(pattern) => binds_by_reference(pattern),
+            mojito_ast::ast::SequencePattern::Star { .. } => false,
+        }),
+        MatchPatternKind::Wildcard
+        | MatchPatternKind::Literal(_)
+        | MatchPatternKind::Equal(_)
+        | MatchPatternKind::Head(_) => false,
+    }
+}
+
+/// Whether `command` may be dropped from a case whose tests the coverage
+/// proof made redundant: a test, or alternatives that only test.
+fn droppable_test(command: &PlannedCommand) -> bool {
+    match command {
+        PlannedCommand::Equal(_) => true,
+        PlannedCommand::Bind(_) => true,
+        PlannedCommand::Alternatives(alternatives) => alternatives
+            .iter()
+            .flatten()
+            .all(|command| !matches!(command, PlannedCommand::Bind(_)) && droppable_test(command)),
+    }
+}
+
+/// The cases' coverage of a subject's value space: the cells of a finite
+/// space (`Bool`, a tuple of finite spaces up to 1024 cells) the unguarded
+/// cases so far cover, and, over an open space, the root literal spellings
+/// they already compared, which a later case repeats unreachably.
+struct Coverage {
+    space: Space,
+    /// Per cell of a finite space, whether a case covers it; empty over an
+    /// open space.
+    covered: Vec<bool>,
+    /// Whether an unguarded case the subject cannot miss has closed the
+    /// space, finite or open.
+    closed: bool,
+    spellings: HashSet<String>,
+}
+
+impl Coverage {
+    fn new(ty: &Ty) -> Self {
+        let space = Space::of(ty);
+        let covered = vec![false; space.cells().unwrap_or(0)];
+        Self {
+            space,
+            covered,
+            closed: false,
+            spellings: HashSet::new(),
+        }
+    }
+
+    /// Account for `case`, in order: the warning it earns when earlier cases
+    /// already cover everything it can match. A guarded case adds nothing.
+    fn add(&mut self, case: &MatchCase) -> Option<String> {
+        let spelling = root_literal_spelling(&case.pattern);
+        let cells = self.space.cover(&case.pattern);
+        let warning = if self.complete() {
+            Some(
+                "case is unreachable; previous cases cover every value of the match subject"
+                    .to_string(),
+            )
+        } else if let Some(spelling) = &spelling
+            && self.spellings.contains(spelling)
+        {
+            Some(format!(
+                "case is unreachable; '{spelling}' is already covered by a previous case"
+            ))
+        } else if !cells.is_empty()
+            && cells.iter().any(|cell| *cell)
+            && cells
+                .iter()
+                .zip(&self.covered)
+                .all(|(cell, covered)| !cell || *covered)
+        {
+            Some(match &spelling {
+                Some(spelling) => format!(
+                    "case is unreachable; '{spelling}' is already covered by a previous case"
+                ),
+                None => {
+                    "case is unreachable; previous cases cover every value of the match subject"
+                        .to_string()
+                }
+            })
+        } else {
+            None
+        };
+        if case.guard.is_none() {
+            for (covered, cell) in self.covered.iter_mut().zip(&cells) {
+                *covered |= *cell;
+            }
+            self.closed |= irrefutable(&case.pattern);
+            if let Some(spelling) = spelling {
+                self.spellings.insert(spelling);
+            }
+        }
+        warning
+    }
+
+    /// Whether the unguarded cases so far cover every value.
+    fn complete(&self) -> bool {
+        self.closed || (!self.covered.is_empty() && self.covered.iter().all(|covered| *covered))
+    }
+
+    /// The warning for a finite space the cases leave values of: each
+    /// uncovered cell, spelled.
+    fn missing(&self) -> Option<String> {
+        if self.covered.is_empty() {
+            return None;
+        }
+        let missing: Vec<String> = self
+            .covered
+            .iter()
+            .enumerate()
+            .filter(|(_, covered)| !**covered)
+            .map(|(cell, _)| format!("'{}'", self.space.spell(cell)))
+            .collect();
+        match missing.as_slice() {
+            [] => None,
+            [one] => Some(format!("'match' is not exhaustive; missing case for {one}")),
+            [init @ .., last] => Some(format!(
+                "'match' is not exhaustive; missing cases for {} and {last}",
+                init.join(", ")
+            )),
+        }
+    }
+}
+
+/// A subject's value space as the coverage analysis sees it: `Bool`'s two
+/// values, a tuple's product of its elements' spaces, or open (no finite
+/// set of literals covers it).
+enum Space {
+    Bool,
+    Product(Vec<Self>),
+    Open,
+}
+
+impl Space {
+    /// The largest finite product the analysis enumerates.
+    const MAX_CELLS: usize = 1024;
+
+    fn of(ty: &Ty) -> Self {
+        if matches!(ty.kind(), TyKind::Bool) {
+            return Self::Bool;
+        }
+        tuple_elements(ty).map_or(Self::Open, |items| {
+            Self::Product(items.into_iter().map(Self::of).collect())
+        })
+    }
+
+    /// How many cells the space has, when it is finite and enumerable.
+    fn cells(&self) -> Option<usize> {
+        match self {
+            Self::Bool => Some(2),
+            Self::Open => None,
+            Self::Product(items) => items.iter().try_fold(1usize, |cells, item| {
+                cells
+                    .checked_mul(item.cells()?)
+                    .filter(|cells| *cells <= Self::MAX_CELLS)
+            }),
+        }
+    }
+
+    /// The cells `pattern` covers: a wildcard or binding every one, a `Bool`
+    /// literal its value, a tuple the product of its elements' cells, `|`
+    /// the union, anything else none. Empty over an open space.
+    fn cover(&self, pattern: &MatchPattern) -> Vec<bool> {
+        let Some(cells) = self.cells() else {
+            return Vec::new();
+        };
+        match &pattern.kind {
+            MatchPatternKind::Wildcard | MatchPatternKind::Bind { .. } => vec![true; cells],
+            MatchPatternKind::As { pattern, .. } => self.cover(pattern),
+            MatchPatternKind::Or(alternatives) => {
+                let mut union = vec![false; cells];
+                for alternative in alternatives {
+                    for (cell, covered) in union.iter_mut().zip(self.cover(alternative)) {
+                        *cell |= covered;
+                    }
+                }
+                union
+            }
+            MatchPatternKind::Literal(Expr {
+                kind: ExprKind::Bool(value),
+                ..
+            }) if matches!(self, Self::Bool) => vec![!*value, *value],
+            MatchPatternKind::Tuple(items) => match self {
+                Self::Product(spaces) if spaces.len() == items.len() => {
+                    let elements: Vec<Vec<bool>> = spaces
+                        .iter()
+                        .zip(items)
+                        .map(|(space, item)| space.cover(item))
+                        .collect();
+                    (0..cells)
+                        .map(|cell| {
+                            self.decompose(cell)
+                                .iter()
+                                .zip(&elements)
+                                .all(|(index, element)| element[*index])
+                        })
+                        .collect()
+                }
+                _ => vec![false; cells],
+            },
+            _ => vec![false; cells],
+        }
+    }
+
+    /// A product cell as its elements' cells, first element first.
+    fn decompose(&self, mut cell: usize) -> Vec<usize> {
+        let Self::Product(spaces) = self else {
+            return vec![cell];
+        };
+        let mut indexes = vec![0; spaces.len()];
+        for (index, space) in spaces.iter().enumerate().rev() {
+            let radix = space.cells().unwrap_or(1);
+            indexes[index] = cell % radix;
+            cell /= radix;
+        }
+        indexes
+    }
+
+    /// The value a cell stands for, as the pin spells it (`False`, `True`,
+    /// a product as `False, True`).
+    fn spell(&self, cell: usize) -> String {
+        match self {
+            Self::Bool => if cell == 0 { "False" } else { "True" }.to_string(),
+            Self::Product(spaces) => self
+                .decompose(cell)
+                .iter()
+                .zip(spaces)
+                .map(|(index, space)| space.spell(*index))
+                .collect::<Vec<_>>()
+                .join(", "),
+            Self::Open => String::new(),
+        }
+    }
+}
+
+/// The spelling of a root literal pattern, as a duplicate of an earlier
+/// case's is reported.
+fn root_literal_spelling(pattern: &MatchPattern) -> Option<String> {
+    let MatchPatternKind::Literal(value) = &pattern.kind else {
+        return None;
+    };
+    Some(match &value.kind {
+        ExprKind::Int(value) => value.to_string(),
+        ExprKind::Float(value) => value.to_string(),
+        ExprKind::Str(value) => format!("\"{value}\""),
+        ExprKind::Bool(value) => if *value { "True" } else { "False" }.to_string(),
+        ExprKind::None => "None".to_string(),
+        _ => return None,
+    })
+}

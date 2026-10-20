@@ -2,9 +2,9 @@
 
 use mojito_ast::ast::Stmt;
 use mojito_ast::ast::{
-    ArgConvention, CollectionKind, ComprehensionClause, Expr, ExprKind, ImportNames, InfixOp,
-    KwArg, LoopBindingMode, MethodProvenance, ParamArg, ParamKind, PrefixOp, SubscriptArg,
-    TStringPart, TypeParam,
+    ArgConvention, BindingMode, CollectionKind, ComprehensionClause, Expr, ExprKind, ImportNames,
+    InfixOp, KwArg, MethodProvenance, ParamArg, ParamKind, PrefixOp, SubscriptArg, TStringPart,
+    TypeParam,
 };
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_common::token::{SourceSpan, Span, SyntaxId};
@@ -264,7 +264,7 @@ pub enum IterationBindingAction {
 /// mutability.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedIterationBinding {
-    pub mode: mojito_ast::ast::LoopBindingMode,
+    pub mode: mojito_ast::ast::BindingMode,
     pub action: IterationBindingAction,
     pub yielded_ty: Ty,
     pub binding_ty: Ty,
@@ -1174,6 +1174,9 @@ pub struct SpelledConstruction(pub Box<Expr>);
 
 impl Eq for SpelledConstruction {}
 
+/// One element of a tuple being destructured: how it is read from the
+/// tuple, and, when the target nests a tuple at that position, the plan
+/// for its own elements.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedTupleUnpackElement {
     pub ty: Ty,
@@ -1189,6 +1192,10 @@ pub struct CheckedTupleUnpackElement {
     /// origin-bearing value), so its binding inherits the unpacked value's
     /// loans the way an ordinary binding of the whole value does.
     pub carries_loans: bool,
+    /// The plan for the element's own elements when the target nests a
+    /// tuple there; empty for a leaf target.
+    #[serde(default)]
+    pub elements: Vec<Self>,
 }
 
 /// One expression in the typed semantic arena.
@@ -1821,7 +1828,7 @@ pub enum CheckedSubscriptArg {
 pub enum CheckedComprehensionClause {
     For {
         var: String,
-        binding: LoopBindingMode,
+        binding: BindingMode,
         iter: CheckedNodeId,
     },
     If(CheckedNodeId),
@@ -1910,10 +1917,12 @@ pub enum CheckedStmtOp {
         op: InfixOp,
         value: CheckedNodeId,
     },
-    Unpack {
-        targets: Vec<CheckedNodeId>,
+    /// A destructuring assignment: the value's pieces go to the target's
+    /// leaves. The value node carries the extraction plan
+    /// ([`SemanticAdjustment::TupleUnpack`]).
+    Destructure {
+        target: CheckedTarget,
         value: CheckedNodeId,
-        declares: bool,
     },
     SetPlace {
         place: CheckedNodeId,
@@ -1932,7 +1941,7 @@ pub enum CheckedStmtOp {
         denotes: Option<mojito_types::param_expr::ParamExpr>,
     },
     ComptimeIf {
-        branches: Vec<(CheckedNodeId, Vec<CheckedStmtId>)>,
+        branches: Vec<(CheckedCondition, Vec<CheckedStmtId>)>,
         orelse: Option<Vec<CheckedStmtId>>,
     },
     ComptimeFor {
@@ -1940,18 +1949,32 @@ pub enum CheckedStmtOp {
         iter: CheckedNodeId,
         body: Vec<CheckedStmtId>,
     },
+    /// `comptime match`: the subject's node, then each case's pattern
+    /// nodes, guard, and body.
+    ComptimeMatch {
+        subject: CheckedNodeId,
+        cases: Vec<CheckedMatchCase>,
+    },
     If {
-        branches: Vec<(CheckedNodeId, Vec<CheckedStmtId>)>,
+        branches: Vec<(CheckedCondition, Vec<CheckedStmtId>)>,
         orelse: Option<Vec<CheckedStmtId>>,
     },
     While {
-        cond: CheckedNodeId,
+        cond: CheckedCondition,
         body: Vec<CheckedStmtId>,
         orelse: Option<Vec<CheckedStmtId>>,
     },
+    /// `match`: the statement anchoring the subject (`ref $match<id> =
+    /// subject`, the check's own declaration, evaluated once), then each
+    /// case's pattern nodes, commands, guard, and body. `None` when the
+    /// check recorded no plan.
+    Match {
+        anchor: Option<CheckedStmtId>,
+        cases: Vec<CheckedMatchCase>,
+    },
     For {
         var: String,
-        binding: LoopBindingMode,
+        binding: BindingMode,
         iter: CheckedNodeId,
         body: Vec<CheckedStmtId>,
         orelse: Option<Vec<CheckedStmtId>>,
@@ -2003,9 +2026,16 @@ impl CheckedStmtOp {
             Self::AugAssign { place, value, .. } | Self::SetPlace { place, value } => {
                 vec![*place, *value]
             }
-            Self::Unpack { targets, value, .. } => {
-                targets.iter().copied().chain([*value]).collect()
+            Self::Destructure { target, value } => {
+                target.expressions().into_iter().chain([*value]).collect()
             }
+            Self::Match { cases, .. } => cases
+                .iter()
+                .flat_map(CheckedMatchCase::expressions)
+                .collect(),
+            Self::ComptimeMatch { subject, cases } => std::iter::once(*subject)
+                .chain(cases.iter().flat_map(CheckedMatchCase::expressions))
+                .collect(),
             Self::Comptime {
                 where_clauses,
                 value,
@@ -2044,11 +2074,12 @@ impl CheckedStmtOp {
                 }
                 operands
             }
-            Self::ComptimeIf { branches, .. } | Self::If { branches, .. } => {
-                branches.iter().map(|(condition, _)| *condition).collect()
-            }
+            Self::ComptimeIf { branches, .. } | Self::If { branches, .. } => branches
+                .iter()
+                .flat_map(|(condition, _)| condition.expressions())
+                .collect(),
             Self::ComptimeFor { iter, .. } | Self::For { iter, .. } => vec![*iter],
-            Self::While { cond, .. } => vec![*cond],
+            Self::While { cond, .. } => cond.expressions(),
             Self::Return(value) => value.iter().copied().collect(),
             Self::With { items, .. } => items.iter().map(|item| item.context).collect(),
             Self::Import { .. }
@@ -2079,13 +2110,34 @@ impl CheckedStmtOp {
                 .collect(),
             Self::ComptimeIf { branches, orelse } | Self::If { branches, orelse } => branches
                 .iter()
-                .map(|(_, body)| body.as_slice())
+                .flat_map(|(condition, body)| {
+                    condition
+                        .statements()
+                        .into_iter()
+                        .chain(std::iter::once(body.as_slice()))
+                })
                 .chain(orelse.as_deref())
                 .collect(),
-            Self::While { body, orelse, .. } | Self::For { body, orelse, .. } => {
-                std::iter::once(body.as_slice())
-                    .chain(orelse.as_deref())
-                    .collect()
+            Self::While { cond, body, orelse } => cond
+                .statements()
+                .into_iter()
+                .chain(std::iter::once(body.as_slice()))
+                .chain(orelse.as_deref())
+                .collect(),
+            Self::For { body, orelse, .. } => std::iter::once(body.as_slice())
+                .chain(orelse.as_deref())
+                .collect(),
+            Self::Match { anchor, cases } => anchor
+                .iter()
+                .map(std::slice::from_ref)
+                .chain(cases.iter().flat_map(|case| {
+                    case.binds()
+                        .into_iter()
+                        .chain(std::iter::once(case.body.as_slice()))
+                }))
+                .collect(),
+            Self::ComptimeMatch { cases, .. } => {
+                cases.iter().map(|case| case.body.as_slice()).collect()
             }
             Self::Try {
                 body,
@@ -2104,7 +2156,7 @@ impl CheckedStmtOp {
             | Self::RefDecl { .. }
             | Self::Assign { .. }
             | Self::AugAssign { .. }
-            | Self::Unpack { .. }
+            | Self::Destructure { .. }
             | Self::SetPlace { .. }
             | Self::Comptime { .. }
             | Self::Return(_)
@@ -2133,10 +2185,26 @@ impl CheckedStmtOp {
         let optional_block = |map: &mut dyn NodeMap, body: &Option<Vec<CheckedStmtId>>| {
             body.as_ref().map(|body| block(map, body))
         };
-        let branches = |map: &mut dyn NodeMap, branches: &[(CheckedNodeId, Vec<CheckedStmtId>)]| {
-            branches
+        let branches =
+            |map: &mut dyn NodeMap, branches: &[(CheckedCondition, Vec<CheckedStmtId>)]| {
+                branches
+                    .iter()
+                    .map(|(condition, body)| (condition.map_operands(map), block(map, body)))
+                    .collect::<Vec<_>>()
+            };
+        let cases = |map: &mut dyn NodeMap, cases: &[CheckedMatchCase]| {
+            cases
                 .iter()
-                .map(|(condition, body)| (map.expression(*condition), block(map, body)))
+                .map(|case| CheckedMatchCase {
+                    pattern: case.pattern.map_operands(map),
+                    commands: case
+                        .commands
+                        .iter()
+                        .map(|command| command.map_operands(map))
+                        .collect(),
+                    guard: case.guard.map(|guard| map.expression(guard)),
+                    body: block(map, &case.body),
+                })
                 .collect::<Vec<_>>()
         };
         match self {
@@ -2162,14 +2230,9 @@ impl CheckedStmtOp {
                 op: *op,
                 value: map.expression(*value),
             },
-            Self::Unpack {
-                targets,
-                value,
-                declares,
-            } => Self::Unpack {
-                targets: values(map, targets),
+            Self::Destructure { target, value } => Self::Destructure {
+                target: target.map_operands(map),
                 value: map.expression(*value),
-                declares: *declares,
             },
             Self::SetPlace { place, value } => Self::SetPlace {
                 place: map.expression(*place),
@@ -2270,9 +2333,23 @@ impl CheckedStmtOp {
                 body: block(map, body),
             },
             Self::While { cond, body, orelse } => Self::While {
-                cond: map.expression(*cond),
+                cond: cond.map_operands(map),
                 body: block(map, body),
                 orelse: optional_block(map, orelse),
+            },
+            Self::Match {
+                anchor,
+                cases: arms,
+            } => Self::Match {
+                anchor: anchor.map(|anchor| map.statement(anchor)),
+                cases: cases(map, arms),
+            },
+            Self::ComptimeMatch {
+                subject,
+                cases: arms,
+            } => Self::ComptimeMatch {
+                subject: map.expression(*subject),
+                cases: cases(map, arms),
             },
             Self::For {
                 var,
@@ -2329,7 +2406,7 @@ impl CheckedStmtOp {
             Self::RefDecl { .. } => "RefDecl",
             Self::Assign { .. } => "Assign",
             Self::AugAssign { .. } => "AugAssign",
-            Self::Unpack { .. } => "Unpack",
+            Self::Destructure { .. } => "Destructure",
             Self::SetPlace { .. } => "SetPlace",
             Self::Def(_) => "Def",
             Self::Struct(_) => "Struct",
@@ -2337,8 +2414,10 @@ impl CheckedStmtOp {
             Self::Comptime { .. } => "Comptime",
             Self::ComptimeIf { .. } => "ComptimeIf",
             Self::ComptimeFor { .. } => "ComptimeFor",
+            Self::ComptimeMatch { .. } => "ComptimeMatch",
             Self::If { .. } => "If",
             Self::While { .. } => "While",
+            Self::Match { .. } => "Match",
             Self::For { .. } => "For",
             Self::Return(_) => "Return",
             Self::Raise(_) => "Raise",
@@ -2550,6 +2629,504 @@ pub struct CheckedTraitComptime {
 pub struct CheckedWithItem {
     pub context: CheckedNodeId,
     pub var: Option<String>,
+}
+
+/// An `if`/`elif`/`while` condition: a boolean node, or a `case` test of a
+/// value's node by a pattern.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum CheckedCondition {
+    Expr(CheckedNodeId),
+    /// `case pattern = value`: the value's node, the anchor declaring the
+    /// hidden subject the check synthesized over it, and the pattern's
+    /// commands, as a `match` case's; a failed test takes the branch's
+    /// else path.
+    Case {
+        pattern: CheckedPattern,
+        value: CheckedNodeId,
+        anchor: Option<CheckedStmtId>,
+        commands: Vec<CheckedCommand>,
+    },
+}
+
+impl CheckedCondition {
+    /// The boolean node of an expression condition.
+    pub const fn boolean(&self) -> Option<CheckedNodeId> {
+        match self {
+            Self::Expr(value) => Some(*value),
+            Self::Case { .. } => None,
+        }
+    }
+
+    /// The condition's nodes in checked order: the value, then a
+    /// pattern's embedded expressions, then its commands'.
+    pub fn expressions(&self) -> Vec<CheckedNodeId> {
+        match self {
+            Self::Expr(value) => vec![*value],
+            Self::Case {
+                pattern,
+                value,
+                commands,
+                ..
+            } => std::iter::once(*value)
+                .chain(pattern.expressions())
+                .chain(commands.iter().flat_map(CheckedCommand::expressions))
+                .collect(),
+        }
+    }
+
+    /// The statements a pattern condition runs: its anchor and its
+    /// bindings, each a statement of its own.
+    pub fn statements(&self) -> Vec<&[CheckedStmtId]> {
+        match self {
+            Self::Expr(_) => Vec::new(),
+            Self::Case {
+                anchor, commands, ..
+            } => anchor
+                .iter()
+                .map(std::slice::from_ref)
+                .chain(commands.iter().flat_map(CheckedCommand::binds))
+                .collect(),
+        }
+    }
+
+    pub(crate) fn map_operands(&self, map: &mut dyn NodeMap) -> Self {
+        match self {
+            Self::Expr(value) => Self::Expr(map.expression(*value)),
+            Self::Case {
+                pattern,
+                value,
+                anchor,
+                commands,
+            } => {
+                let value = map.expression(*value);
+                Self::Case {
+                    pattern: pattern.map_operands(map),
+                    value,
+                    anchor: anchor.map(|anchor| map.statement(anchor)),
+                    commands: commands
+                        .iter()
+                        .map(|command| command.map_operands(map))
+                        .collect(),
+                }
+            }
+        }
+    }
+}
+
+/// One `case` arm of a `match`: its pattern, the commands the check
+/// compiled it to, its guard, and its body.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CheckedMatchCase {
+    pub pattern: CheckedPattern,
+    /// The case's program, in order: each test, which advances to the next
+    /// case when it fails, and each binding, as upstream's command list.
+    pub commands: Vec<CheckedCommand>,
+    pub guard: Option<CheckedNodeId>,
+    pub body: Vec<CheckedStmtId>,
+}
+
+impl CheckedMatchCase {
+    /// The arm's nodes in checked order: the pattern's, the tests', then
+    /// the guard.
+    pub fn expressions(&self) -> Vec<CheckedNodeId> {
+        self.pattern
+            .expressions()
+            .into_iter()
+            .chain(self.commands.iter().flat_map(CheckedCommand::expressions))
+            .chain(self.guard)
+            .collect()
+    }
+
+    /// The binding statements the case runs, each a statement of its own.
+    pub fn binds(&self) -> Vec<&[CheckedStmtId]> {
+        self.commands
+            .iter()
+            .flat_map(CheckedCommand::binds)
+            .collect()
+    }
+}
+
+/// One step of a case's program, as upstream's `PatternCommand`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum CheckedCommand {
+    /// Compare the subject through the `__eq__` the check selected: the
+    /// node of the comparison it synthesized (`$match<id> == value`), whose
+    /// `Bool` selects; `False` advances to the next case.
+    Equal { test: CheckedNodeId },
+    /// Bind a name to the subject: the declaration the check synthesized
+    /// for it (`ref name = $match<id>`, `var name = $match<id>`), or the
+    /// assignment a later `|` alternative makes to the first's binding.
+    Bind { declaration: CheckedStmtId },
+    /// The alternatives of a `|` pattern, each a program of its own: the
+    /// first whose tests all pass selects, and the case advances when none
+    /// does.
+    Alternatives(Vec<Vec<Self>>),
+}
+
+impl CheckedCommand {
+    /// The command's expression nodes in checked order, alternatives'
+    /// included.
+    pub fn expressions(&self) -> Vec<CheckedNodeId> {
+        match self {
+            Self::Equal { test } => vec![*test],
+            Self::Bind { .. } => Vec::new(),
+            Self::Alternatives(alternatives) => alternatives
+                .iter()
+                .flatten()
+                .flat_map(Self::expressions)
+                .collect(),
+        }
+    }
+
+    /// The binding statements the command runs, alternatives' included.
+    pub fn binds(&self) -> Vec<&[CheckedStmtId]> {
+        match self {
+            Self::Bind { declaration } => vec![std::slice::from_ref(declaration)],
+            Self::Equal { .. } => Vec::new(),
+            Self::Alternatives(alternatives) => alternatives
+                .iter()
+                .flatten()
+                .flat_map(Self::binds)
+                .collect(),
+        }
+    }
+
+    fn map_operands(&self, map: &mut dyn NodeMap) -> Self {
+        match self {
+            Self::Equal { test } => Self::Equal {
+                test: map.expression(*test),
+            },
+            Self::Bind { declaration } => Self::Bind {
+                declaration: map.statement(*declaration),
+            },
+            Self::Alternatives(alternatives) => Self::Alternatives(
+                alternatives
+                    .iter()
+                    .map(|commands| {
+                        commands
+                            .iter()
+                            .map(|command| command.map_operands(map))
+                            .collect()
+                    })
+                    .collect(),
+            ),
+        }
+    }
+}
+
+/// The check's plan for one `match`, recorded at the statement.
+///
+/// It holds the declaration anchoring the subject, each case's commands,
+/// which the checked program's nodes are built from, and whether the
+/// cases cover every value of the subject, so that nothing falls through.
+#[derive(Debug, Clone)]
+pub struct MatchPlan {
+    /// `ref $match<id> = subject` or `var $match<id> = subject`.
+    pub anchor: Stmt,
+    pub cases: Vec<Vec<PlannedCommand>>,
+    pub concluded: bool,
+}
+
+/// A nonfatal diagnostic the check recorded at a source location: the
+/// program still compiles and runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Warning {
+    pub message: String,
+    pub span: SourceSpan,
+}
+
+/// One step of a planned case: the synthesized syntax the check recorded
+/// facts for.
+#[derive(Debug, Clone)]
+pub enum PlannedCommand {
+    /// The comparison `$match<id> == value`.
+    Equal(Expr),
+    /// The declaration `ref name = $match<id>` or `var name = $match<id>`,
+    /// or a later `|` alternative's assignment to the first's binding.
+    Bind(Box<Stmt>),
+    /// The alternatives of a `|` pattern, each a program of its own.
+    Alternatives(Vec<Vec<Self>>),
+}
+
+/// A checked `case` pattern: the source pattern
+/// ([`MatchPattern`](mojito_ast::ast::MatchPattern)) with each embedded
+/// expression replaced by its node.
+///
+/// The names it binds are definitions the pattern facts of the statement
+/// describe, not nodes.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CheckedPattern {
+    pub kind: CheckedPatternKind,
+    pub span: Span,
+    #[serde(with = "mojito_common::token::node_syntax")]
+    pub syntax_id: SyntaxId,
+}
+
+impl CheckedPattern {
+    /// The pattern's nodes in checked order.
+    pub fn expressions(&self) -> Vec<CheckedNodeId> {
+        let mut out = Vec::new();
+        self.collect_expressions(&mut out);
+        out
+    }
+
+    fn collect_expressions(&self, out: &mut Vec<CheckedNodeId>) {
+        match &self.kind {
+            CheckedPatternKind::Literal(value)
+            | CheckedPatternKind::Equal(value)
+            | CheckedPatternKind::Head(value) => out.push(*value),
+            CheckedPatternKind::As { pattern, .. } => pattern.collect_expressions(out),
+            CheckedPatternKind::Tuple(items) | CheckedPatternKind::Or(items) => {
+                for item in items {
+                    item.collect_expressions(out);
+                }
+            }
+            CheckedPatternKind::Sequence(items) => {
+                for item in items {
+                    if let CheckedSequencePattern::Element(pattern) = item {
+                        pattern.collect_expressions(out);
+                    }
+                }
+            }
+            CheckedPatternKind::Call { head, args, kwargs } => {
+                out.push(*head);
+                for pattern in args {
+                    pattern.collect_expressions(out);
+                }
+                for (_, pattern) in kwargs {
+                    pattern.collect_expressions(out);
+                }
+            }
+            CheckedPatternKind::Fields(fields) => {
+                for (_, pattern) in fields {
+                    pattern.collect_expressions(out);
+                }
+            }
+            CheckedPatternKind::Wildcard | CheckedPatternKind::Bind { .. } => {}
+        }
+    }
+
+    pub(crate) fn map_operands(&self, map: &mut dyn NodeMap) -> Self {
+        let kind = match &self.kind {
+            CheckedPatternKind::Wildcard => CheckedPatternKind::Wildcard,
+            CheckedPatternKind::Bind { name, mode } => CheckedPatternKind::Bind {
+                name: name.clone(),
+                mode: *mode,
+            },
+            CheckedPatternKind::Literal(value) => {
+                CheckedPatternKind::Literal(map.expression(*value))
+            }
+            CheckedPatternKind::Equal(value) => CheckedPatternKind::Equal(map.expression(*value)),
+            CheckedPatternKind::Head(value) => CheckedPatternKind::Head(map.expression(*value)),
+            CheckedPatternKind::Tuple(items) => {
+                CheckedPatternKind::Tuple(items.iter().map(|item| item.map_operands(map)).collect())
+            }
+            CheckedPatternKind::Or(items) => {
+                CheckedPatternKind::Or(items.iter().map(|item| item.map_operands(map)).collect())
+            }
+            CheckedPatternKind::Sequence(items) => CheckedPatternKind::Sequence(
+                items
+                    .iter()
+                    .map(|item| match item {
+                        CheckedSequencePattern::Element(pattern) => {
+                            CheckedSequencePattern::Element(pattern.map_operands(map))
+                        }
+                        CheckedSequencePattern::Star { name } => {
+                            CheckedSequencePattern::Star { name: name.clone() }
+                        }
+                    })
+                    .collect(),
+            ),
+            CheckedPatternKind::Call { head, args, kwargs } => CheckedPatternKind::Call {
+                head: map.expression(*head),
+                args: args.iter().map(|item| item.map_operands(map)).collect(),
+                kwargs: kwargs
+                    .iter()
+                    .map(|(name, pattern)| (name.clone(), pattern.map_operands(map)))
+                    .collect(),
+            },
+            CheckedPatternKind::Fields(fields) => CheckedPatternKind::Fields(
+                fields
+                    .iter()
+                    .map(|(name, pattern)| (name.clone(), pattern.map_operands(map)))
+                    .collect(),
+            ),
+            CheckedPatternKind::As { pattern, name } => CheckedPatternKind::As {
+                pattern: Box::new(pattern.map_operands(map)),
+                name: name.clone(),
+            },
+        };
+        Self {
+            kind,
+            span: self.span,
+            syntax_id: self.syntax_id,
+        }
+    }
+}
+
+/// The forms of a [`CheckedPattern`], one per
+/// [`MatchPatternKind`](mojito_ast::ast::MatchPatternKind).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum CheckedPatternKind {
+    Wildcard,
+    Bind {
+        name: String,
+        mode: BindingMode,
+    },
+    Literal(CheckedNodeId),
+    Equal(CheckedNodeId),
+    Tuple(Vec<CheckedPattern>),
+    Sequence(Vec<CheckedSequencePattern>),
+    Call {
+        head: CheckedNodeId,
+        args: Vec<CheckedPattern>,
+        kwargs: Vec<(String, CheckedPattern)>,
+    },
+    Head(CheckedNodeId),
+    Fields(Vec<(String, CheckedPattern)>),
+    Or(Vec<CheckedPattern>),
+    As {
+        pattern: Box<CheckedPattern>,
+        name: String,
+    },
+}
+
+/// One element of a checked sequence pattern.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum CheckedSequencePattern {
+    Element(CheckedPattern),
+    Star { name: Option<String> },
+}
+
+/// A checked destructuring target: the source target
+/// ([`DestructureTarget`](mojito_ast::ast::DestructureTarget)) with each
+/// place replaced by its node.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CheckedTarget {
+    pub kind: CheckedTargetKind,
+    pub span: Span,
+    #[serde(with = "mojito_common::token::node_syntax")]
+    pub syntax_id: SyntaxId,
+}
+
+impl CheckedTarget {
+    /// The target's place nodes in checked order.
+    pub fn expressions(&self) -> Vec<CheckedNodeId> {
+        let mut out = Vec::new();
+        self.collect_expressions(&mut out);
+        out
+    }
+
+    fn collect_expressions(&self, out: &mut Vec<CheckedNodeId>) {
+        match &self.kind {
+            CheckedTargetKind::Place(place) => out.push(*place),
+            CheckedTargetKind::Tuple(items) => {
+                for item in items {
+                    item.collect_expressions(out);
+                }
+            }
+            CheckedTargetKind::Sequence(items) => {
+                for item in items {
+                    match item {
+                        CheckedSequenceTarget::Element(target)
+                        | CheckedSequenceTarget::Star(target) => target.collect_expressions(out),
+                    }
+                }
+            }
+            CheckedTargetKind::Discard | CheckedTargetKind::Declare { .. } => {}
+        }
+    }
+
+    /// The names the target declares, in source order.
+    pub fn declared_names(&self) -> Vec<&str> {
+        let mut out = Vec::new();
+        self.collect_declared(&mut out);
+        out
+    }
+
+    fn collect_declared<'a>(&'a self, out: &mut Vec<&'a str>) {
+        match &self.kind {
+            CheckedTargetKind::Declare { name, .. } => out.push(name),
+            CheckedTargetKind::Tuple(items) => {
+                for item in items {
+                    item.collect_declared(out);
+                }
+            }
+            CheckedTargetKind::Sequence(items) => {
+                for item in items {
+                    match item {
+                        CheckedSequenceTarget::Element(target)
+                        | CheckedSequenceTarget::Star(target) => target.collect_declared(out),
+                    }
+                }
+            }
+            CheckedTargetKind::Discard | CheckedTargetKind::Place(_) => {}
+        }
+    }
+
+    pub(crate) fn map_operands(&self, map: &mut dyn NodeMap) -> Self {
+        let kind = match &self.kind {
+            CheckedTargetKind::Discard => CheckedTargetKind::Discard,
+            CheckedTargetKind::Declare {
+                name,
+                mode,
+                binding,
+                binding_ty,
+            } => CheckedTargetKind::Declare {
+                name: name.clone(),
+                mode: *mode,
+                binding: *binding,
+                binding_ty: binding_ty.clone(),
+            },
+            CheckedTargetKind::Place(place) => CheckedTargetKind::Place(map.expression(*place)),
+            CheckedTargetKind::Tuple(items) => {
+                CheckedTargetKind::Tuple(items.iter().map(|item| item.map_operands(map)).collect())
+            }
+            CheckedTargetKind::Sequence(items) => CheckedTargetKind::Sequence(
+                items
+                    .iter()
+                    .map(|item| match item {
+                        CheckedSequenceTarget::Element(target) => {
+                            CheckedSequenceTarget::Element(target.map_operands(map))
+                        }
+                        CheckedSequenceTarget::Star(target) => {
+                            CheckedSequenceTarget::Star(target.map_operands(map))
+                        }
+                    })
+                    .collect(),
+            ),
+        };
+        Self {
+            kind,
+            span: self.span,
+            syntax_id: self.syntax_id,
+        }
+    }
+}
+
+/// The forms of a [`CheckedTarget`], one per
+/// [`DestructureTargetKind`](mojito_ast::ast::DestructureTargetKind).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum CheckedTargetKind {
+    Discard,
+    /// A declared leaf: the binding the check introduced for it and that
+    /// binding's storage type (a `ref` leaf's is a reference type).
+    Declare {
+        name: String,
+        mode: BindingMode,
+        binding: Option<mojito_types::origin::OwnerId>,
+        binding_ty: Option<Ty>,
+    },
+    Place(CheckedNodeId),
+    Tuple(Vec<CheckedTarget>),
+    Sequence(Vec<CheckedSequenceTarget>),
+}
+
+/// One element of a checked sequence target.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum CheckedSequenceTarget {
+    Element(CheckedTarget),
+    Star(CheckedTarget),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -2897,10 +3474,46 @@ impl CheckedTables {
             CheckedStmtOp::If { branches, orelse }
             | CheckedStmtOp::ComptimeIf { branches, orelse } => {
                 for (condition, body) in branches {
-                    self.walk_expression(*condition, visit);
+                    for node in condition.expressions() {
+                        self.walk_expression(node, visit);
+                    }
+                    for statements in condition.statements() {
+                        walk(statements, visit);
+                    }
                     walk(body, visit);
                 }
                 walk(orelse.as_deref().unwrap_or_default(), visit);
+            }
+            CheckedStmtOp::Match { anchor, cases } => {
+                if let Some(anchor) = anchor {
+                    walk(std::slice::from_ref(anchor), visit);
+                }
+                for case in cases {
+                    for node in case.pattern.expressions() {
+                        self.walk_expression(node, visit);
+                    }
+                    for command in &case.commands {
+                        for node in command.expressions() {
+                            self.walk_expression(node, visit);
+                        }
+                        for declaration in command.binds() {
+                            walk(declaration, visit);
+                        }
+                    }
+                    if let Some(guard) = case.guard {
+                        self.walk_expression(guard, visit);
+                    }
+                    walk(&case.body, visit);
+                }
+            }
+            CheckedStmtOp::ComptimeMatch { subject, cases } => {
+                self.walk_expression(*subject, visit);
+                for case in cases {
+                    for node in case.expressions() {
+                        self.walk_expression(node, visit);
+                    }
+                    walk(&case.body, visit);
+                }
             }
             op => {
                 for node in op.expressions() {
@@ -3229,6 +3842,8 @@ impl DiscoveryResult {
 /// previously recomputed from AST syntax or checker-private side tables.
 #[derive(Debug, Clone)]
 pub struct CheckedProgram {
+    /// Every warning the check recorded, in source order.
+    warnings: Vec<Warning>,
     compatibility_overload_targets: HashMap<SourceSpan, String>,
     generic_instantiations: HashMap<SourceSpan, GenericInstantiation>,
     method_instantiations: HashMap<SourceSpan, MethodInstantiation>,
@@ -3595,6 +4210,12 @@ impl CheckedConst {
 }
 
 impl CheckedProgram {
+    /// Every warning the check recorded, in source order: nonfatal
+    /// diagnostics a program compiles and runs with.
+    pub fn warnings(&self) -> &[Warning] {
+        &self.warnings
+    }
+
     /// The single checker-to-checked-boundary assembly point: the arena
     /// and the program's indexes, built from what `discovery` recorded.
     pub fn new(discovery: DiscoveryResult) -> Self {
@@ -3613,6 +4234,15 @@ impl CheckedProgram {
             mut default_wrappers,
             trait_members,
         } = discovery;
+        let mut warnings: Vec<Warning> = node_facts
+            .values()
+            .flat_map(|facts| facts.match_warnings.iter().flatten().cloned())
+            .collect();
+        warnings.sort_by(|left, right| {
+            (&left.span.source, left.span.span)
+                .cmp(&(&right.span.source, right.span.span))
+                .then_with(|| left.message.cmp(&right.message))
+        });
         let expressions_span = mojito_common::timing::span("expressions");
         let signatures = Signatures {
             checked_types: &checked_types,
@@ -3654,6 +4284,7 @@ impl CheckedProgram {
         });
         drop(declarations_span);
         Self {
+            warnings,
             compatibility_overload_targets: fact_index(&node_facts, |facts| {
                 facts.overload_target.as_ref()
             }),
@@ -3737,6 +4368,7 @@ impl CheckedProgram {
             declaration_effects,
         } = sites;
         Self {
+            warnings: Vec::new(),
             compatibility_overload_targets: overload_targets,
             generic_instantiations: HashMap::new(),
             method_instantiations: HashMap::new(),
@@ -4173,6 +4805,128 @@ impl<'a> ArenaBuilder<'a> {
             .map(|member| &member.declaration)
     }
 
+    /// A condition's nodes: the value, then a pattern's expressions.
+    fn condition(&mut self, condition: &mojito_ast::ast::Condition) -> CheckedCondition {
+        match condition {
+            mojito_ast::ast::Condition::Expr(value) => CheckedCondition::Expr(self.expr(value)),
+            mojito_ast::ast::Condition::Case { pattern, value } => {
+                let value = self.expr(value);
+                let plan = self.facts(&pattern.source_span()).match_plan.clone();
+                CheckedCondition::Case {
+                    pattern: self.pattern(pattern),
+                    value,
+                    anchor: plan.as_ref().map(|plan| self.stmt(&plan.anchor)),
+                    commands: plan
+                        .as_ref()
+                        .and_then(|plan| plan.cases.first())
+                        .map(|commands| {
+                            commands
+                                .iter()
+                                .map(|command| self.command(command))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                }
+            }
+        }
+    }
+
+    /// A pattern's node, its embedded expressions built in source order.
+    fn pattern(&mut self, pattern: &mojito_ast::ast::MatchPattern) -> CheckedPattern {
+        use mojito_ast::ast::{MatchPatternKind, SequencePattern};
+        let kind = match &pattern.kind {
+            MatchPatternKind::Wildcard => CheckedPatternKind::Wildcard,
+            MatchPatternKind::Bind { name, mode } => CheckedPatternKind::Bind {
+                name: name.clone(),
+                mode: *mode,
+            },
+            MatchPatternKind::Literal(value) => CheckedPatternKind::Literal(self.expr(value)),
+            MatchPatternKind::Equal(value) => CheckedPatternKind::Equal(self.expr(value)),
+            MatchPatternKind::Head(value) => CheckedPatternKind::Head(self.expr(value)),
+            MatchPatternKind::Tuple(items) => {
+                CheckedPatternKind::Tuple(items.iter().map(|item| self.pattern(item)).collect())
+            }
+            MatchPatternKind::Or(items) => {
+                CheckedPatternKind::Or(items.iter().map(|item| self.pattern(item)).collect())
+            }
+            MatchPatternKind::Sequence(items) => CheckedPatternKind::Sequence(
+                items
+                    .iter()
+                    .map(|item| match item {
+                        SequencePattern::Element(pattern) => {
+                            CheckedSequencePattern::Element(self.pattern(pattern))
+                        }
+                        SequencePattern::Star { name, .. } => {
+                            CheckedSequencePattern::Star { name: name.clone() }
+                        }
+                    })
+                    .collect(),
+            ),
+            MatchPatternKind::Call { head, args, kwargs } => CheckedPatternKind::Call {
+                head: self.expr(head),
+                args: args.iter().map(|item| self.pattern(item)).collect(),
+                kwargs: kwargs
+                    .iter()
+                    .map(|(name, pattern)| (name.clone(), self.pattern(pattern)))
+                    .collect(),
+            },
+            MatchPatternKind::Fields(fields) => CheckedPatternKind::Fields(
+                fields
+                    .iter()
+                    .map(|(name, pattern)| (name.clone(), self.pattern(pattern)))
+                    .collect(),
+            ),
+            MatchPatternKind::As { pattern, name } => CheckedPatternKind::As {
+                pattern: Box::new(self.pattern(pattern)),
+                name: name.clone(),
+            },
+        };
+        CheckedPattern {
+            kind,
+            span: pattern.span,
+            syntax_id: pattern.syntax_id,
+        }
+    }
+
+    /// A target's node, its places built in source order.
+    fn target(&mut self, target: &mojito_ast::ast::DestructureTarget) -> CheckedTarget {
+        use mojito_ast::ast::{DestructureTargetKind, SequenceTarget};
+        let kind = match &target.kind {
+            DestructureTargetKind::Discard => CheckedTargetKind::Discard,
+            DestructureTargetKind::Declare { name, mode } => {
+                let facts = self.facts(&target.source_span());
+                CheckedTargetKind::Declare {
+                    name: name.clone(),
+                    mode: *mode,
+                    binding: facts.binding,
+                    binding_ty: facts.binding_ty.clone(),
+                }
+            }
+            DestructureTargetKind::Place(place) => CheckedTargetKind::Place(self.expr(place)),
+            DestructureTargetKind::Tuple(items) => {
+                CheckedTargetKind::Tuple(items.iter().map(|item| self.target(item)).collect())
+            }
+            DestructureTargetKind::Sequence(items) => CheckedTargetKind::Sequence(
+                items
+                    .iter()
+                    .map(|item| match item {
+                        SequenceTarget::Element(target) => {
+                            CheckedSequenceTarget::Element(self.target(target))
+                        }
+                        SequenceTarget::Star(target) => {
+                            CheckedSequenceTarget::Star(self.target(target))
+                        }
+                    })
+                    .collect(),
+            ),
+        };
+        CheckedTarget {
+            kind,
+            span: target.span,
+            syntax_id: target.syntax_id,
+        }
+    }
+
     fn expr(&mut self, expression: &Expr) -> CheckedNodeId {
         use ExprKind::{Identifier, Index, Member, TypeApply, TypeValue};
         if let Some(node) = self.spelled_construction(expression) {
@@ -4569,6 +5323,30 @@ impl<'a> ArenaBuilder<'a> {
     }
 
     /// `statement`'s node, built after its operands' and bodies' nodes.
+    /// One planned command as the checked program's: its synthesized node
+    /// or statement converted, alternatives recursively.
+    fn command(&mut self, planned: &PlannedCommand) -> CheckedCommand {
+        match planned {
+            PlannedCommand::Equal(test) => CheckedCommand::Equal {
+                test: self.expr(test),
+            },
+            PlannedCommand::Bind(declaration) => CheckedCommand::Bind {
+                declaration: self.stmt(declaration),
+            },
+            PlannedCommand::Alternatives(alternatives) => CheckedCommand::Alternatives(
+                alternatives
+                    .iter()
+                    .map(|commands| {
+                        commands
+                            .iter()
+                            .map(|command| self.command(command))
+                            .collect()
+                    })
+                    .collect(),
+            ),
+        }
+    }
+
     fn stmt(&mut self, statement: &Stmt) -> CheckedStmtId {
         let op = self.stmt_op(statement);
         let facts = self.facts(&statement.source_span());
@@ -4588,7 +5366,9 @@ impl<'a> ArenaBuilder<'a> {
 
     /// `statement`'s own operation, its expressions' and bodies' nodes built
     /// in their structural order.
-    fn stmt_op(&mut self, statement: &Stmt) -> CheckedStmtOp {
+    /// A declaration's op (`def`, `struct`, `trait`): its symbol, signature,
+    /// and members. `None` for any other statement.
+    fn declaration_op(&mut self, statement: &Stmt) -> Option<CheckedStmtOp> {
         use mojito_ast::ast::StmtKind;
         let values = |this: &mut Self, values: &[Expr]| {
             values
@@ -4596,66 +5376,7 @@ impl<'a> ArenaBuilder<'a> {
                 .map(|value| this.expr(value))
                 .collect::<Vec<_>>()
         };
-        let optional_block =
-            |this: &mut Self, body: &Option<Vec<Stmt>>| body.as_ref().map(|body| this.block(body));
-        let branches = |this: &mut Self, branches: &[(Expr, Vec<Stmt>)]| {
-            branches
-                .iter()
-                .map(|(condition, body)| (this.expr(condition), this.block(body)))
-                .collect::<Vec<_>>()
-        };
-        match &statement.kind {
-            StmtKind::VarDecl { name, ty, value } => CheckedStmtOp::VarDecl {
-                name: name.clone(),
-                applications: ty
-                    .as_ref()
-                    .map(|ty| self.type_applications(ty))
-                    .unwrap_or_default(),
-                value: self.expr(value),
-            },
-            StmtKind::RefDecl { name, value } => CheckedStmtOp::RefDecl {
-                name: name.clone(),
-                value: self.expr(value),
-            },
-            StmtKind::Assign { name, value } => CheckedStmtOp::Assign {
-                name: name.clone(),
-                value: self.expr(value),
-            },
-            StmtKind::Raise(value) => CheckedStmtOp::Raise(self.expr(value)),
-            StmtKind::Expr(value) => CheckedStmtOp::Expr(self.expr(value)),
-            StmtKind::Comptime {
-                name,
-                where_clauses,
-                value,
-                ..
-            } => CheckedStmtOp::Comptime {
-                name: name.clone(),
-                where_clauses: values(self, where_clauses),
-                value: self.expr(value),
-                denotes: self
-                    .facts(&statement.source_span())
-                    .comptime_value
-                    .as_deref()
-                    .cloned(),
-            },
-            StmtKind::AugAssign { place, op, value } => CheckedStmtOp::AugAssign {
-                place: self.expr(place),
-                op: *op,
-                value: self.expr(value),
-            },
-            StmtKind::SetPlace { place, value } => CheckedStmtOp::SetPlace {
-                place: self.expr(place),
-                value: self.expr(value),
-            },
-            StmtKind::Unpack {
-                targets,
-                value,
-                declares,
-            } => CheckedStmtOp::Unpack {
-                targets: values(self, targets),
-                value: self.expr(value),
-                declares: *declares,
-            },
+        Some(match &statement.kind {
             StmtKind::Def {
                 name,
                 type_params,
@@ -4805,6 +5526,101 @@ impl<'a> ArenaBuilder<'a> {
                     comptime_members,
                 }))
             }
+            _ => return None,
+        })
+    }
+
+    fn stmt_op(&mut self, statement: &Stmt) -> CheckedStmtOp {
+        use mojito_ast::ast::StmtKind;
+        if let Some(op) = self.declaration_op(statement) {
+            return op;
+        }
+        let values = |this: &mut Self, values: &[Expr]| {
+            values
+                .iter()
+                .map(|value| this.expr(value))
+                .collect::<Vec<_>>()
+        };
+        let optional_block =
+            |this: &mut Self, body: &Option<Vec<Stmt>>| body.as_ref().map(|body| this.block(body));
+        let branches = |this: &mut Self, branches: &[(mojito_ast::ast::Condition, Vec<Stmt>)]| {
+            branches
+                .iter()
+                .map(|(condition, body)| (this.condition(condition), this.block(body)))
+                .collect::<Vec<_>>()
+        };
+        let cases =
+            |this: &mut Self, cases: &[mojito_ast::ast::MatchCase], plan: Option<&MatchPlan>| {
+                cases
+                    .iter()
+                    .enumerate()
+                    .map(|(index, case)| CheckedMatchCase {
+                        pattern: this.pattern(&case.pattern),
+                        commands: plan
+                            .and_then(|plan| plan.cases.get(index))
+                            .map(|commands| {
+                                commands
+                                    .iter()
+                                    .map(|command| this.command(command))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                        guard: case.guard.as_ref().map(|guard| this.expr(guard)),
+                        body: this.block(&case.body),
+                    })
+                    .collect::<Vec<_>>()
+            };
+        match &statement.kind {
+            StmtKind::VarDecl { name, ty, value } => CheckedStmtOp::VarDecl {
+                name: name.clone(),
+                applications: ty
+                    .as_ref()
+                    .map(|ty| self.type_applications(ty))
+                    .unwrap_or_default(),
+                value: self.expr(value),
+            },
+            StmtKind::RefDecl { name, value } => CheckedStmtOp::RefDecl {
+                name: name.clone(),
+                value: self.expr(value),
+            },
+            StmtKind::Assign { name, value } => CheckedStmtOp::Assign {
+                name: name.clone(),
+                value: self.expr(value),
+            },
+            StmtKind::Raise(value) => CheckedStmtOp::Raise(self.expr(value)),
+            StmtKind::Expr(value) => CheckedStmtOp::Expr(self.expr(value)),
+            StmtKind::Comptime {
+                name,
+                where_clauses,
+                value,
+                ..
+            } => CheckedStmtOp::Comptime {
+                name: name.clone(),
+                where_clauses: values(self, where_clauses),
+                value: self.expr(value),
+                denotes: self
+                    .facts(&statement.source_span())
+                    .comptime_value
+                    .as_deref()
+                    .cloned(),
+            },
+            StmtKind::AugAssign { place, op, value } => CheckedStmtOp::AugAssign {
+                place: self.expr(place),
+                op: *op,
+                value: self.expr(value),
+            },
+            StmtKind::SetPlace { place, value } => CheckedStmtOp::SetPlace {
+                place: self.expr(place),
+                value: self.expr(value),
+            },
+            StmtKind::Destructure { target, value } => CheckedStmtOp::Destructure {
+                target: self.target(target),
+                value: self.expr(value),
+            },
+            // Declarations were taken above.
+            StmtKind::Def { .. } | StmtKind::Struct { .. } | StmtKind::Trait { .. } => {
+                CheckedStmtOp::Pass
+            }
             StmtKind::ComptimeIf {
                 branches: arms,
                 orelse,
@@ -4826,9 +5642,24 @@ impl<'a> ArenaBuilder<'a> {
             },
             StmtKind::Scope(body) => CheckedStmtOp::Scope(self.block(body)),
             StmtKind::While { cond, body, orelse } => CheckedStmtOp::While {
-                cond: self.expr(cond),
+                cond: self.condition(cond),
                 body: self.block(body),
                 orelse: optional_block(self, orelse),
+            },
+            StmtKind::Match { cases: arms, .. } => {
+                let plan = self.facts(&statement.source_span()).match_plan.clone();
+                let anchor = plan.as_ref().map(|plan| self.stmt(&plan.anchor));
+                CheckedStmtOp::Match {
+                    anchor,
+                    cases: cases(self, arms, plan.as_ref()),
+                }
+            }
+            StmtKind::ComptimeMatch {
+                subject,
+                cases: arms,
+            } => CheckedStmtOp::ComptimeMatch {
+                subject: self.expr(subject),
+                cases: cases(self, arms, None),
             },
             StmtKind::For {
                 var,
@@ -5317,6 +6148,10 @@ node_facts! {
         adjustment: Box<SemanticAdjustment>,
         parameterized_method_call: Vec<mojito_types::types::ParamDecl>,
         tuple_unpack_plan: Vec<CheckedTupleUnpackElement>,
+        /// A `match` statement's anchor and commands.
+        match_plan: MatchPlan,
+        /// A `match` statement's coverage warnings, in case order.
+        match_warnings: Vec<Warning>,
         interior_reference: mojito_types::origin::OriginPlace,
         interior_invalidations: Vec<InteriorInvalidation>,
         /// A reference read as a value: whether it is writable.

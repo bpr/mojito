@@ -88,11 +88,24 @@ impl Elab<'_> {
                 self.cross_expr(place, env, shadowed)?;
                 self.cross_expr(value, env, shadowed)
             }
-            StmtKind::Unpack { targets, value, .. } => {
-                for target in targets {
-                    self.cross_expr(target, env, shadowed)?;
+            StmtKind::Destructure { target, value } => {
+                for place in target.places_mut() {
+                    self.cross_expr(place, env, shadowed)?;
                 }
                 self.cross_expr(value, env, shadowed)
+            }
+            StmtKind::Match { subject, cases } | StmtKind::ComptimeMatch { subject, cases } => {
+                self.cross_expr(subject, env, shadowed)?;
+                for case in cases {
+                    for value in case.pattern.expressions_mut() {
+                        self.cross_expr(value, env, shadowed)?;
+                    }
+                    if let Some(guard) = &mut case.guard {
+                        self.cross_expr(guard, env, shadowed)?;
+                    }
+                    self.cross_block(&mut case.body, env, shadowed)?;
+                }
+                Ok(())
             }
             // A compile-time binding's initializer was consumed by
             // elaboration, or is the check's to bind.
@@ -105,20 +118,20 @@ impl Elab<'_> {
             | StmtKind::FromImport { .. } => Ok(()),
             StmtKind::If { branches, orelse } => {
                 for (cond, body) in branches {
-                    self.cross_expr(cond, env, shadowed)?;
+                    self.cross_condition(cond, env, shadowed)?;
                     self.cross_block(body, env, shadowed)?;
                 }
                 self.cross_opt_block(orelse, env, shadowed)
             }
             StmtKind::ComptimeIf { branches, orelse } => {
                 for (cond, body) in branches {
-                    self.cross_expr(cond, env, shadowed)?;
+                    self.cross_condition(cond, env, shadowed)?;
                     self.cross_block(body, env, shadowed)?;
                 }
                 self.cross_opt_block(orelse, env, shadowed)
             }
             StmtKind::While { cond, body, orelse } => {
-                self.cross_expr(cond, env, shadowed)?;
+                self.cross_condition(cond, env, shadowed)?;
                 self.cross_block(body, env, shadowed)?;
                 self.cross_opt_block(orelse, env, shadowed)
             }
@@ -171,6 +184,22 @@ impl Elab<'_> {
                 Ok(())
             }
         }
+    }
+
+    /// A condition's reads: a pattern's embedded expressions, then the
+    /// matched value.
+    fn cross_condition(
+        &self,
+        condition: &mut mojito_ast::ast::Condition,
+        env: &ConstEnv<'_>,
+        shadowed: &HashSet<String>,
+    ) -> Result<(), ComptimeError> {
+        if let Some(pattern) = condition.pattern_mut() {
+            for value in pattern.expressions_mut() {
+                self.cross_expr(value, env, shadowed)?;
+            }
+        }
+        self.cross_expr(condition.value_mut(), env, shadowed)
     }
 
     fn cross_opt_block(
@@ -582,11 +611,18 @@ fn collect_runtime_locals(stmts: &[Stmt], out: &mut HashSet<String>) {
             | StmtKind::Assign { name, .. } => {
                 out.insert(name.clone());
             }
-            StmtKind::Unpack { targets, .. } => {
-                for target in targets {
-                    if let ExprKind::Identifier(name) = &target.kind {
-                        out.insert(name.clone());
-                    }
+            StmtKind::Destructure { target, .. } => {
+                out.extend(target.declared_names().into_iter().map(str::to_string));
+            }
+            StmtKind::Match { cases, .. } | StmtKind::ComptimeMatch { cases, .. } => {
+                for case in cases {
+                    out.extend(
+                        case.pattern
+                            .bindings()
+                            .into_iter()
+                            .map(|(name, _)| name.to_string()),
+                    );
+                    collect_runtime_locals(&case.body, out);
                 }
             }
             StmtKind::For {
@@ -599,14 +635,30 @@ fn collect_runtime_locals(stmts: &[Stmt], out: &mut HashSet<String>) {
                 }
             }
             StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
-                for (_, body) in branches {
+                for (condition, body) in branches {
+                    if let Some(pattern) = condition.pattern() {
+                        out.extend(
+                            pattern
+                                .bindings()
+                                .into_iter()
+                                .map(|(name, _)| name.to_string()),
+                        );
+                    }
                     collect_runtime_locals(body, out);
                 }
                 if let Some(orelse) = orelse {
                     collect_runtime_locals(orelse, out);
                 }
             }
-            StmtKind::While { body, orelse, .. } => {
+            StmtKind::While { cond, body, orelse } => {
+                if let Some(pattern) = cond.pattern() {
+                    out.extend(
+                        pattern
+                            .bindings()
+                            .into_iter()
+                            .map(|(name, _)| name.to_string()),
+                    );
+                }
                 collect_runtime_locals(body, out);
                 if let Some(orelse) = orelse {
                     collect_runtime_locals(orelse, out);

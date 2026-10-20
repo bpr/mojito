@@ -86,6 +86,7 @@ pub fn instruction_regions(instruction: &MirInstr) -> Vec<&Vec<MirBlock>> {
             arms.iter().chain(std::iter::once(orelse)).collect()
         }
         MirInstr::ComptimeFor { body, orelse, .. } => vec![body, orelse],
+        MirInstr::Match { cases, orelse } => cases.iter().chain(std::iter::once(orelse)).collect(),
         MirInstr::Try {
             body,
             handler,
@@ -122,6 +123,9 @@ pub fn instruction_regions_mut(instruction: &mut MirInstr) -> Vec<&mut Vec<MirBl
             arms.iter_mut().chain(std::iter::once(orelse)).collect()
         }
         MirInstr::ComptimeFor { body, orelse, .. } => vec![body, orelse],
+        MirInstr::Match { cases, orelse } => {
+            cases.iter_mut().chain(std::iter::once(orelse)).collect()
+        }
         MirInstr::Try {
             body,
             handler,
@@ -157,6 +161,8 @@ pub fn terminator_regs_mut(term: &mut MirTerm) -> Vec<&mut Reg> {
         | MirTerm::Continue { .. }
         | MirTerm::ComptimeBreak
         | MirTerm::ComptimeContinue
+        | MirTerm::MatchNext
+        | MirTerm::MatchComplete
         | MirTerm::Unreachable => Vec::new(),
     }
 }
@@ -184,6 +190,8 @@ pub fn terminator_targets(term: &MirTerm) -> Vec<MirBlockId> {
         | MirTerm::ComptimeYield(_)
         | MirTerm::ComptimeBreak
         | MirTerm::ComptimeContinue
+        | MirTerm::MatchNext
+        | MirTerm::MatchComplete
         | MirTerm::Unreachable => Vec::new(),
     }
 }
@@ -210,6 +218,8 @@ pub fn terminator_targets_mut(term: &mut MirTerm) -> Vec<&mut MirBlockId> {
         | MirTerm::ComptimeYield(_)
         | MirTerm::ComptimeBreak
         | MirTerm::ComptimeContinue
+        | MirTerm::MatchNext
+        | MirTerm::MatchComplete
         | MirTerm::Unreachable => Vec::new(),
     }
 }
@@ -401,7 +411,8 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         | MirInstr::Unsupported(_)
         | MirInstr::Try { .. }
         | MirInstr::Loop { .. }
-        | MirInstr::ComptimeFor { .. } => {}
+        | MirInstr::ComptimeFor { .. }
+        | MirInstr::Match { .. } => {}
         MirInstr::If { results, cond, .. } => out.extend(results.iter_mut().chain([cond])),
         MirInstr::ComptimeIf { results, .. } => out.extend(results.iter_mut()),
         MirInstr::ConstructTypeParam {
@@ -797,6 +808,8 @@ pub fn renumber_block_slots(blocks: &mut [MirBlock], renumber: &dyn Fn(VarId) ->
             | MirTerm::ComptimeYield(_)
             | MirTerm::ComptimeBreak
             | MirTerm::ComptimeContinue
+            | MirTerm::MatchNext
+            | MirTerm::MatchComplete
             | MirTerm::Unreachable => {}
         }
     }
@@ -999,6 +1012,8 @@ fn collect_block_slots(block: &MirBlock, addressed: &mut BTreeSet<VarId>) {
         | MirTerm::ComptimeYield(_)
         | MirTerm::ComptimeBreak
         | MirTerm::ComptimeContinue
+        | MirTerm::MatchNext
+        | MirTerm::MatchComplete
         | MirTerm::Unreachable => {}
     }
 }
@@ -2361,6 +2376,19 @@ pub enum MirInstr {
         body: Vec<MirBlock>,
         orelse: Vec<MirBlock>,
     },
+    /// `hlcf.match`: run `cases` in order until one completes. A case
+    /// region tests its pattern, binds, and runs its body: a failed test or
+    /// guard ends in [`MirTerm::MatchNext`], which enters the next case
+    /// region, or `orelse` after the last; a body that runs to its end ends
+    /// in [`MirTerm::MatchComplete`], which leaves the op. `orelse` runs
+    /// when no case completed and ends in [`MirTerm::Yield`] with no
+    /// values. A `break`/`continue` in a case names the enclosing loop, as
+    /// in any region. Concrete MIR carries none: [`super::lower_control_flow`]
+    /// lowers it first.
+    Match {
+        cases: Vec<Vec<MirBlock>>,
+        orelse: Vec<MirBlock>,
+    },
     /// An ASAP destructor on a register (reserved for the future Op/assembler VM).
     Drop {
         reg: Reg,
@@ -2605,6 +2633,7 @@ impl MirInstr {
             | Self::Loop { .. }
             | Self::ComptimeIf { .. }
             | Self::ComptimeFor { .. }
+            | Self::Match { .. }
             | Self::Drop { .. }
             | Self::DropVar { .. }
             | Self::ConsumeVar { .. }
@@ -2965,6 +2994,13 @@ pub enum MirTerm {
     /// `hlcf.comptime.for.continue`: end this iteration of the nearest
     /// enclosing [`MirInstr::ComptimeFor`].
     ComptimeContinue,
+    /// `hlcf.match.next`: the nearest enclosing [`MirInstr::Match`] case
+    /// did not match; try the next case, or the op's `orelse` after the
+    /// last.
+    MatchNext,
+    /// `hlcf.match.complete`: the nearest enclosing [`MirInstr::Match`]
+    /// case ran; leave the op.
+    MatchComplete,
     /// `hlcf.unreachable`: control never reaches here.
     Unreachable,
 }

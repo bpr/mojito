@@ -33,7 +33,7 @@ impl Checker {
         &self,
         iter_ty: &Ty,
         mode: mojito_checked::checked::IterationMode,
-        binding: mojito_ast::ast::LoopBindingMode,
+        binding: mojito_ast::ast::BindingMode,
         source: Option<&mojito_types::origin::OriginPlace>,
         source_mutable: bool,
     ) -> Result<(mojito_checked::checked::IterationProtocol, IteratorRaises), TypeError> {
@@ -51,7 +51,7 @@ impl Checker {
         {
             yielded_ty = resolved;
         }
-        if binding == mojito_ast::ast::LoopBindingMode::Ref
+        if binding == mojito_ast::ast::BindingMode::Ref
             && Self::is_abstract_iteration_dispatch(&protocol)
         {
             return Err(TypeError::Unsupported(
@@ -81,16 +81,16 @@ impl Checker {
     /// This is the single matrix shared by statements and comprehensions.
     pub(super) fn iteration_binding_plan(
         &self,
-        mode: mojito_ast::ast::LoopBindingMode,
+        mode: mojito_ast::ast::BindingMode,
         yielded_ty: &Ty,
     ) -> Result<mojito_checked::checked::CheckedIterationBinding, TypeError> {
-        use mojito_ast::ast::LoopBindingMode;
+        use mojito_ast::ast::BindingMode;
         use mojito_checked::checked::{CheckedIterationBinding, IterationBindingAction};
         use mojito_types::origin::Mutability;
 
         if let TyKind::Ref(reference) = yielded_ty.kind() {
             return match mode {
-                LoopBindingMode::Immutable => {
+                BindingMode::Immutable => {
                     let mut binding = reference.clone();
                     binding.mutability = Mutability::Immutable;
                     Ok(CheckedIterationBinding {
@@ -101,7 +101,7 @@ impl Checker {
                         mutable: false,
                     })
                 }
-                LoopBindingMode::Var => {
+                BindingMode::Var => {
                     if !self.is_implicitly_copyable(&reference.referent) {
                         return Err(TypeError::TraitNotSatisfied {
                             param: "loop item".to_string(),
@@ -119,7 +119,7 @@ impl Checker {
                         mutable: true,
                     })
                 }
-                LoopBindingMode::Ref => Ok(CheckedIterationBinding {
+                BindingMode::Ref => Ok(CheckedIterationBinding {
                     mode,
                     action: IterationBindingAction::BorrowReference,
                     yielded_ty: yielded_ty.clone(),
@@ -137,7 +137,7 @@ impl Checker {
                 reason: self.trait_failure_reason(yielded_ty, "Movable"),
             });
         }
-        if mode == LoopBindingMode::Var {
+        if mode == BindingMode::Var {
             return Ok(CheckedIterationBinding {
                 mode,
                 action: IterationBindingAction::MoveValue,
@@ -172,7 +172,7 @@ impl Checker {
             action: IterationBindingAction::BorrowValue,
             yielded_ty: yielded_ty.clone(),
             binding_ty: yielded_ty.clone(),
-            mutable: mode == LoopBindingMode::Ref,
+            mutable: mode == BindingMode::Ref,
         })
     }
 

@@ -4685,3 +4685,27 @@ fn static_self_forwarded_struct_parameters_leave_the_instance_key() {
         assert_eq!(instances(template), count, "instances of `{template}`");
     }
 }
+
+#[test]
+fn compiler_reports_match_coverage_warnings_without_stderr() {
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_unlinked(
+            "def main():\n    var b = True\n    match b:\n        case True:\n            print(\"t\")\n    match 5:\n        case 0:\n            print(\"zero\")\n        case 0:\n            print(\"again\")\n        case _:\n            print(\"other\")\n",
+        )
+        .expect("a non-exhaustive match compiles");
+    let messages: Vec<&str> = program
+        .warnings()
+        .iter()
+        .map(|warning| warning.message.as_str())
+        .collect();
+    assert_eq!(
+        messages,
+        [
+            "'match' is not exhaustive; missing case for 'False'",
+            "case is unreachable; '0' is already covered by a previous case",
+        ]
+    );
+    let execution = compiler.execute(&program).expect("execute");
+    assert_eq!(execution.output, "t\nother\n");
+}

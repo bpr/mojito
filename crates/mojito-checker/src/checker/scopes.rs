@@ -172,6 +172,31 @@ impl Checker {
         Ok(())
     }
 
+    /// Set whether the binding `name` in the innermost scope that holds it
+    /// may be written: a `case` binding is immutable whatever its subject.
+    pub(super) fn set_binding_mutable(&mut self, name: &str, mutable: bool) {
+        if let Some(scope) = self
+            .mutable_scopes
+            .iter_mut()
+            .rev()
+            .find(|scope| scope.contains_key(name))
+        {
+            scope.insert(name.to_string(), mutable);
+        }
+    }
+
+    /// Retype the innermost binding of `name` as `ty`.
+    pub(super) fn set_binding_type(&mut self, name: &str, ty: Ty) {
+        if let Some(scope) = self
+            .scopes
+            .iter_mut()
+            .rev()
+            .find(|scope| scope.contains_key(name))
+        {
+            scope.insert(name.to_string(), ty);
+        }
+    }
+
     pub(super) fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
         self.mutable_scopes.push(HashMap::new());

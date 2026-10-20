@@ -6,6 +6,97 @@ to evolve under the `0.x` compatibility rules.
 
 ## [Unreleased]
 
+### Added
+
+- The pin's pattern-matching syntax parses: `match subject:` with `case`
+  arms in either layout, every case-pattern form (literals, `== expr`, `_`,
+  bare/`var`/`ref` bindings, tuples, sequences with one star, struct and
+  contextual `{field=p}` patterns, enum cases `.Some(x)`/`Optional.None`,
+  `|`, `as`, guards), `case pattern = value` conditions of `if`/`elif`/
+  `while`, `comptime match`, and recursive destructuring targets
+  (`(var a, (ref b, _)) = pair`, `var [first, *rest] = values`). The AST
+  carries them as `MatchPattern`, `DestructureTarget`, and `Condition`,
+  every walker and the checked mirror (`CheckedPattern`, `CheckedTarget`,
+  `CheckedCondition`) see them, and the checker rejects each form with a
+  contextual "unsupported feature" until its slice lands
+  (`match-case-plan.md`). `docs/notes/pattern-matching-evidence.md` and
+  twenty `conformance/probes/match_*`/`destructure_*`/`if_case_*` probes
+  record the pin's behavior for the slices that follow.
+
+- Recursive destructuring targets run: `(var a, (ref b, _)) = pair`,
+  `var (x, (y, z)) = e`, `var (p, q), r = (7, 8), 9`, nested assignment
+  into names, and struct-field places, through one extraction plan the
+  flat `a, b = t` forms now share (the separate `Unpack` statement is
+  gone). The destinations' subexpressions are evaluated before the
+  right-hand side, as the pin does; a `ref` leaf binds the element's
+  reference and writes through. A nominal subscript leaf (`xs[i]`) and
+  sequence targets are rejected until their slices land.
+
+- `match` statements run with literal, `== expr`, `_`, and bare-binding
+  patterns: the subject is evaluated once, cases are tried in order and the
+  first match's body runs, a statement no case matches falls through, each
+  test is the subject's `__eq__` evaluated when its case is reached, and a
+  bare `case name` binds an immutable reference to the subject scoped to
+  its case. The checker synthesizes the test and binding statements and
+  records a `MatchPlan` the HIR lowers to the `match` region op; the
+  remaining pattern forms, `if case`, and `comptime match` stay rejected
+  until their slices.
+
+- `case var x`, `case ref x`, `pattern as x`, and `case pattern if guard`
+  run: a `var` binding copies the subject by the implicit-copy rule before
+  the guard and dies at its last use, `ref` and `as` keep the subject's
+  own capability, a `ref` binding of a register-passable temporary is
+  rejected as having no memory origin, a false guard advances to the next
+  case, and `continue`/`break`/`return` and raised errors leave the match
+  through the enclosing loop, function, or `try`.
+
+- Tuple patterns `(1, (2, y))`, struct patterns `Point(x=0, y=yv)`, and
+  contextual field patterns `{x=1}` run: each element or field's pattern
+  applies to that projection of the subject (`$match[i]`, `$match.field`),
+  a temporary subject is materialized once into a hidden owner, and the
+  wrong arity, a non-tuple subject, a positional struct argument, a
+  repeated or unknown field, and a head naming another type are rejected
+  with the pin's texts.
+
+- `|` patterns run: the alternatives are tried in order as an inner match
+  region, every test of a pattern runs before any of its bindings
+  materializes (a failed alternative copies nothing, as at the pin), the
+  alternatives' `var` bindings join into one binding of one type, `as`
+  after a `|` binds the whole, and alternatives binding different names or
+  types are rejected with the pin's texts. A bare or `ref` binding inside
+  an alternative stays rejected until reference joins land.
+
+- The check records nonfatal warnings: `CheckedProgram::warnings()` and
+  `CompiledProgram::warnings()` list them in source order, and the CLI
+  prints each as `warning: FILE:LINE: message` on stderr after a
+  successful compile. `match` coverage produces them with the pin's texts:
+  a non-exhaustive `Bool` or `(Bool, …)` match names its missing cells, a
+  case after a catch-all or repeating a root literal is unreachable, and
+  guards add no coverage; a match whose cases cover the subject concludes
+  it, so returns in every case satisfy return analysis. A place subject is
+  borrowed to read unless a case binds it by `ref` or `as`.
+
+- `if case pattern = value:`, `elif case …`, and `while case …` run: the
+  right-hand side is evaluated only when its branch is reached, the
+  pattern's bindings exist in that branch's body alone, a failed match
+  takes the next branch or the `else`, and `while case` re-anchors its
+  subject at every header visit, a failed match running the loop's `else`.
+
+- MIR gains the `match` region op (`hlcf.match`) and its `match.next`/
+  `match.complete` terminators, with HIR's `HirInstr::Match`, textual MIR
+  (schema 1.74), the structural verifier, and `lower-control-flow`, which
+  lowers a case's two exits to the next case's entry and to the join
+  through a frame like a loop's.
+
+### Fixed
+
+- `ref y = x` over a loop's element reference (`for x in xs`) forwards the
+  element handle instead of failing MIR verification, `ref r = Box(2)`
+  over a constructor call types the temporary's hidden slot, and a value
+  copied through a reference binding (`var w = r`) no longer inherits the
+  binding's loans unless its type can hold a reference, so a later use of
+  the referent is not a conflict.
+
 ### Changed
 
 - The differential pin is now Mojo `1.2.0.dev2026101705` (upstream

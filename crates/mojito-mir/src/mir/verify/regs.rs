@@ -366,6 +366,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::Try { .. }
         | MirInstr::Loop { .. }
         | MirInstr::ComptimeIf { .. }
-        | MirInstr::ComptimeFor { .. } => {}
+        | MirInstr::ComptimeFor { .. }
+        | MirInstr::Match { .. } => {}
     }
 }

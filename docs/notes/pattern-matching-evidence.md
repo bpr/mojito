@@ -1,0 +1,120 @@
+# Pattern matching: pinned evidence
+
+Evidence for `match-case-plan.md` slice M0, gathered 2026-10-17 against
+`Mojo 1.2.0.dev2026101705 (46f49943)` (upstream checkout `cfd79ca736`).
+Every row names the probe that pins it; runnable probes live under
+`conformance/probes/match_*.mojo`, `destructure_*.mojo`, `if_case_*.mojo`,
+and `comptime_match_forms.mojo`, each with the pin's output in its header.
+Rows marked *diagnostic only* were run once and are recorded here rather
+than kept as files, with the pin's exact text. A probe Mojito runs with the
+pin's output moves to `assets/ok/` (or `assets/type_error/`) under the same
+name; the probes still under `conformance/probes/` say which roadmap entry
+they wait for.
+
+## Evaluation and effects
+
+| Question | Pin behavior | Probe |
+|---|---|---|
+| Subject evaluation | Once per `match`; a failed arm leaves it for the next arm. | `match_guard_copy_drop`, `match_temporary_subject_survives_failed_var_case` |
+| `== expr` ordering | The expression is evaluated and `__eq__` called once per test, in case order; a failed tuple element short-circuits the rest of that case. | `match_equality_effects` |
+| Raising `__eq__` | An ordinary call: `cannot call function that may raise in a context that cannot raise`; inside `try` the error is caught, it is not a mismatch. | diagnostic only (`raising_eq`) |
+| Sequence accessors | One `__len__` call per case gates every element read; `_` reads nothing; a from-end element calls `__len__` again. | `match_sequence_custom_sized` |
+| Starred remainder | Requires `__getitem__` over a slice: `invalid call to '__getitem__': value passed to 'i' cannot be converted from slice literal to 'Int'` on a type with only the `Int` overload. | diagnostic only (`seq_custom2`) |
+| Guard | Runs after the case's bindings exist; `False` advances to the next case, not another OR alternative. | `match_guard_copy_drop`, `match_or_alternatives_bind` |
+| Exits | `continue`/`break` in a case target the enclosing loop; `return` leaves the function. | `match_exits_and_return_analysis` |
+
+## Bindings
+
+| Question | Pin behavior | Probe |
+|---|---|---|
+| Bare binding | Immutable; over a memory value it is an immutable reference (no copy, even for a non-copyable subject). Writing it: `expression must be mutable in assignment`. | `match_noncopyable_subject`, `match_binding_kinds_on_temporary`, diagnostic only (`bindings_scope2`) |
+| `var` binding | Copies with the implicit-copy rule (`value of type 'Tracked' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'`); the copy is destroyed after its last use, which may be before the guard call. A last-use copy of a dead subject is elided to a move. | `match_guard_copy_drop`, `match_temporary_subject_survives_failed_var_case` |
+| `ref` binding | Writes through to a mutable place; over a temporary it is immutable (`invalid use of mutating method on rvalue`). `match Int(): case ref z` rejects: `value of type 'Int' doesn't have a memory origin in 'ref' binding`. | `match_binding_kinds_on_temporary`, `match_optional_enum_cases`, upstream `match_diags.mojo` |
+| `as` binding | Keeps the subject's category: writes through to a mutable place (plan probe `bindings.mojo`), immutable over a temporary. | diagnostic only (`as_temporary`: `expression must be mutable in assignment`) |
+| Scope | A case's names exist in its body only and may shadow outer names; `if case` names are absent from `else`. | `match_binding_scope`, diagnostic only (`if_case_scope`: `use of unknown declaration 'k'`) |
+| Duplicate name | `invalid redefinition of 'a'` with a `previous definition here` note. | diagnostic only (`bind_dup`) |
+| OR joins | Alternatives must bind the same names (`or-pattern alternatives must bind the same names; 'a' is bound in one alternative but not the other`), with one kind (`or-pattern binding 'x' must use the same 'var'/'ref' kind in each alternative`) and one type (`or-pattern binding 'n' has incompatible types across alternatives`, note `first alternative has type 'Tracked', this alternative has type 'Int'`). | diagnostic only (`temp_consumed` first draft) |
+| Nested `var ref x` | A warning upstream (`nested 'var' or 'ref' patterns are redundant, remove the outer pattern`); Mojito may reject it. | upstream `match_diags.mojo` |
+
+## Patterns and shapes
+
+| Question | Pin behavior | Probe |
+|---|---|---|
+| Literal forms | Int, float, string, `True`/`False`, `None` compare through `__eq__`; a signed literal is not a pattern (`expression is not a valid match pattern; use '==' to compare against its value`, fix-it `==`). A type-mismatched literal is the `__eq__` call's error. | `match_literal_forms`, diagnostic only (`coverage_texts`) |
+| `case Int:` | Binds a name `Int`. | `match_literal_forms` |
+| `==` operand | Parsed at unary (factor) precedence: `== a \| b` is `(== a) \| b`; `== compute()` and `== {1, offset=2}` are fine. | upstream `ParserExprs.cpp`, `match.mojo` |
+| `as` precedence | Looser than `\|`: `3 \| 4 as n` is `(3 \| 4) as n`; it binds per comma element. | `match_or_alternatives_bind` |
+| Comma subjects/patterns | `match a, b:` and `case True, _:` form tuples without parentheses; `()` and `(n,)` work. | `match_literal_forms` |
+| Tuple arity | Static: `cannot match value of 'Tuple[Int, Int]' of 2 elements against a pattern with 3 elements`; non-tuple subject: `expected a tuple type to match against, got 'Int'`. | diagnostic only (`tuple_shape_errors`) |
+| Struct patterns | `Point(x=0, y=yv)`, contextual `{x=1}`, nested, omitted fields are wildcards, `ref` field bindings. Positional arguments reject (`struct patterns do not support positional or unpacked arguments`); unknown field `'w' is not a field of 'Vec3'`; wrong head `cannot match value of type 'Vec3' against pattern type 'Int'`; duplicate field `keyword argument 'x' was already used; remove the duplicate`; empty `String()` warns. | `match_struct_and_initializer_patterns`, upstream `match_diags.mojo` |
+| Enum cases | `.Some(x)`, `.None`, `Optional.Some(0)`, `.Some(ref s)`; one payload subpattern (`enum case patterns currently support at most one payload subpattern`); `.None()` and `.None(x)`: `enum case 'None' has no associated value`; `.Some()`: `enum case 'Some' requires a payload pattern inside the parentheses`; unknown `'Nope' is not a case of 'Optional[Int]'`; a non-enum subject: `cannot resolve inferred member without a contextual type`; a parametric enum: `cannot match on a parametric enum type`. | `match_optional_enum_cases`, diagnostic only (`optional_errors`), upstream `match_diags.mojo` |
+| Sequence patterns | `[]`, `[x]`, `[1, *mid, 5]`, `[*_, 5]`, `[*all]` over `List` and over a user `Sized` + `__getitem__(Int)` type; a wrong length advances to the next case. | `destructure_starred_slice`, `match_sequence_custom_sized` |
+| Remainder type | `Span[Int, origin_of(values["element"])]` for a `List[Int]` (`cannot implicitly convert 'Span[...]' value to 'List[Int]'`). | diagnostic only (`star_type2`) |
+| Case layouts | Same-indent and indented `case` blocks, same-line bodies, nested `match`. No case: `'match' statement must have at least one 'case' block`. | `match_case_layouts`, upstream `match_diags.mojo` |
+
+## Coverage and diagnostics
+
+| Question | Pin behavior | Probe |
+|---|---|---|
+| Non-exhaustive `Bool` | Warning `'match' is not exhaustive; missing case for 'False'`; a product lists cells: `missing cases for 'False, True' and 'True, False'`. The program still runs. | diagnostic only (`coverage_texts`) |
+| Duplicate literal | Warning `case is unreachable; '0' is already covered by a previous case`. | diagnostic only (`coverage_texts`) |
+| After a catch-all | Warning `case is unreachable; previous cases cover every value of the match subject`. | diagnostic only (`coverage_texts`, `optional_errors`) |
+| `Optional` without `.None` | Warning `'match' is not exhaustive; missing case for 'None'`. | diagnostic only (`optional_errors`) |
+| Return analysis | An exhaustive `Bool` match or a `_` case whose arms all return satisfies it; a guarded last case does not (`return expected at end of function with results`). | `match_exits_and_return_analysis`, diagnostic only (`exits`) |
+| Irrefutable `if case` | Accepted silently; the `else` of an irrefutable tuple condition warns `unreachable code after match that always completes`. | `if_case_and_while_case` |
+| Constant subjects | A literal subject folds the match; the pin then warns about unreachable code after it. Not a semantic requirement. | `match_literal_forms` |
+
+## Destructuring assignment
+
+| Question | Pin behavior | Probe |
+|---|---|---|
+| Order | Destination subexpressions (indices) evaluate left to right *before* the right-hand side; the RHS evaluates once; stores follow. `(i, xs[i]) = (2, 7)` writes `xs[0]`. | `destructure_evaluation_order` |
+| Temporaries | Elements copy out of a temporary tuple (implicit-copy rule applies; `_` copies nothing); the temporary is then destroyed. `tpair()^` changes nothing (`transfer from an owned value has no effect`). | `destructure_evaluation_order` |
+| Nested targets | Places, `var`, `ref`, `_`, and tuples nest freely: `(a, (b, c))`, `var (x, (y, z))`, `var (p, q), r = (7, 8), 9`, `(xs[0], (xs[1], a))`, `(var m, ref n)`, `_, (b, _)`. | `destructure_nested_targets` |
+| Invalid targets | `(var a, 0) = p`: `expression must be mutable in assignment`; `var (x, y, z) = p` on a pair: `cannot declare 'x' without a contextual type from its initializer`; `w, = p`: `cannot implicitly convert 'Tuple[Int, Int]' value to 'Tuple[Int]'`. | diagnostic only (`tuple_shape_errors`) |
+| Lists | `var [a, b] = values` requires a raising context; a wrong length raises `list pattern does not match value length` before any store; `[x, y] = values` leaves `x`, `y` unchanged. | `destructure_list_wrong_length_raises` |
+| Iteration targets | `for a, b in pairs`, `for (a, b)`, `for (var a, _)`, `for x, (y, z)`, and `[a * b for a, b in pairs]` work; `for ref (a, b)` leaves `a` immutable (`expression must be mutable for in-place operator destination`). | diagnostic only (`for_targets`) |
+
+## Conditional and compile-time forms
+
+| Question | Pin behavior | Probe |
+|---|---|---|
+| `if case` / `elif case` | Each RHS is evaluated only when its branch is reached; mixes with boolean branches. A trailing `if` guard is not accepted (parsed as a ternary: `expected 'else' clause in ternary`). | `if_case_and_while_case`, `if_case_mixed_with_boolean_elif` |
+| `while case` | Re-evaluates the subject each iteration; `else` runs on failure, `break` skips it. | `if_case_and_while_case` |
+| `comptime match` | `== Int` over a type parameter, literals and tuples over values, bare bindings, OR, `as`, guards. `var` bindings reject (`'var' bindings are not supported in 'comptime match'`); a dynamic subject: `cannot use a dynamic value in 'match' subject`; a dynamic guard: `cannot use a dynamic value in 'comptime if' condition`. | `comptime_match_forms`, diagnostic only |
+| Untaken arm bodies | Still checked: `var bad: Int = "str"` in an untaken arm is `cannot implicitly convert 'StringLiteral["str"]' value to 'Int'`. | diagnostic only (`comptime_match` first draft) |
+
+## EnumLike prerequisites
+
+`EnumLike` (`stdlib/std/builtin/enum_like.mojo`) needs, beyond what Mojito
+has today:
+
+- `_MLIR.KGENParamListType[T]` as the type of a raw parameter list
+  (`comptime _enum_case_names: _MLIR.KGENParamListType[KGENString]`), the
+  spelling R807 ports.
+- `TypeList[Trait=AnyType, Self._enum_case_types]()[id]` as a dependent
+  result type, which needs R805's library `TypeList` and its
+  `__getitem_param__` read of a type pack.
+- `ParameterList.of[...]` / `TypeList.of[...]` `.values` projections, also
+  R807.
+
+`Optional` and `Bool` conform upstream through those spellings; Mojito's
+`Optional` keeps its payload storage and gains the three members once the
+spellings exist (slice M9).
+
+## Settled uncertainties from the plan
+
+- *Copy/destructor ordering on failed guards and OR joins*: copies precede
+  the guard and die at last use; a failed OR alternative's bindings do not
+  outlive the alternative (tests precede binds; `match_or_alternatives_bind`).
+- *Assignment ordering*: destinations before RHS, stores after; see above.
+- *Wrong-length assignment*: raises `list pattern does not match value
+  length` with nothing stored; a `raises` context is mandatory.
+- *Star-discard accessor behavior*: `*_` performs no slice; a named star
+  slices through `__getitem__(Slice)` and keeps the result's origin.
+- *Generic EnumLike*: rejected by the pin (`cannot match on a parametric
+  enum type`), so Mojito's subset boundary matches.
+- *Compile-time conditional-pattern statements*: `comptime if case` exists
+  upstream (`ParserStmts.cpp` diagnoses `variable binding ... in 'comptime
+  if case' must be a compile-time value`); it is not scheduled here and is
+  filed separately when M18 lands.

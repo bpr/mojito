@@ -1,5 +1,6 @@
-//! The transitional `lower-control-flow` pass: structured region ops to
-//! MIR's CFG, as upstream's `LowerControlFlow` lowers `hlcf` to LLVM blocks.
+//! The transitional `lower-control-flow` pass: structured region ops
+//! (`if`, `loop`, `comptime if`, `comptime for`, `match`) to MIR's CFG, as
+//! upstream's `LowerControlFlow` lowers `hlcf` to LLVM blocks.
 //!
 //! Each block list is rebuilt: the function's, and each `try` part's as its
 //! own list. A list's own blocks keep their indices, so an escape target
@@ -11,8 +12,9 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-/// Lower every `if`, `loop`, `comptime if`, and `comptime for` of `function`
-/// to blocks and CFG terminators. A body without them is unchanged.
+/// Lower every `if`, `loop`, `comptime if`, `comptime for`, and `match` of
+/// `function` to blocks and CFG terminators. A body without them is
+/// unchanged.
 pub fn lower_control_flow(function: &mut MirFunction) {
     if !has_structured_control_flow(function) {
         return;
@@ -47,8 +49,9 @@ struct Lowering<'f> {
     frames: Vec<Frame>,
 }
 
-/// A loop a `break`/`continue` may name: where it continues, where it
-/// exits, and the list its blocks are in.
+/// A loop a `break`/`continue` may name, or a `match` case a `match.next`/
+/// `match.complete` leaves: where it continues (a loop's header, the next
+/// case's entry), where it exits, and the list its blocks are in.
 struct Frame {
     kind: FrameKind,
     header: MirBlockId,
@@ -59,6 +62,7 @@ struct Frame {
 enum FrameKind {
     Loop(Option<LoopLabel>),
     ComptimeFor,
+    MatchCase,
 }
 
 /// How a region's own terminators end it.
@@ -115,7 +119,8 @@ impl Lowering<'_> {
                 MirInstr::If { .. }
                 | MirInstr::Loop { .. }
                 | MirInstr::ComptimeIf { .. }
-                | MirInstr::ComptimeFor { .. } => {
+                | MirInstr::ComptimeFor { .. }
+                | MirInstr::Match { .. } => {
                     let join = self.reserve(1);
                     let (entry, prefix) = self.op(instruction, join);
                     self.out[current] = MirBlock {
@@ -171,8 +176,43 @@ impl Lowering<'_> {
                 };
                 (MirTerm::Jump(header), Vec::new())
             }
+            MirInstr::Match { cases, orelse } => {
+                let entry = self.lower_match(cases, orelse, join);
+                (MirTerm::Jump(entry), Vec::new())
+            }
             other => (MirTerm::Jump(join), vec![other]),
         }
+    }
+
+    /// Lower a `match`: each case region under a frame whose `header` is
+    /// the next case's entry (the else region's after the last) and whose
+    /// `exit` is the join, so `match.next` and `match.complete` resolve to
+    /// jumps; the else region yields to the join. Returns the first case's
+    /// entry.
+    fn lower_match(
+        &mut self,
+        cases: Vec<Vec<MirBlock>>,
+        orelse: Vec<MirBlock>,
+        join: MirBlockId,
+    ) -> MirBlockId {
+        let arm = RegionEnd::Arm {
+            join,
+            slots: Vec::new(),
+        };
+        let mut next = self.region(orelse, &arm);
+        for blocks in cases.into_iter().rev() {
+            let entry = self.reserve(blocks.len());
+            self.frames.push(Frame {
+                kind: FrameKind::MatchCase,
+                header: next,
+                exit: join,
+                depth: self.depth,
+            });
+            self.fill(blocks, entry, &RegionEnd::Body);
+            self.frames.pop();
+            next = entry;
+        }
+        next
     }
 
     fn lower_if(
@@ -340,6 +380,12 @@ impl Lowering<'_> {
             (MirTerm::ComptimeContinue, _) => self
                 .leave(instrs, |frame| frame.header, is_comptime_for)
                 .unwrap_or(MirTerm::ComptimeContinue),
+            (MirTerm::MatchNext, _) => self
+                .leave(instrs, |frame| frame.header, is_match_case)
+                .unwrap_or(MirTerm::MatchNext),
+            (MirTerm::MatchComplete, _) => self
+                .leave(instrs, |frame| frame.exit, is_match_case)
+                .unwrap_or(MirTerm::MatchComplete),
             (MirTerm::Unreachable, _) => MirTerm::Return(None),
             (term, _) => term,
         }
@@ -391,10 +437,14 @@ const fn is_comptime_for(kind: &FrameKind) -> bool {
     matches!(kind, FrameKind::ComptimeFor)
 }
 
+const fn is_match_case(kind: &FrameKind) -> bool {
+    matches!(kind, FrameKind::MatchCase)
+}
+
 fn names_loop(kind: &FrameKind, label: Option<LoopLabel>) -> bool {
     match kind {
         FrameKind::Loop(found) => label.is_none() || *found == label,
-        FrameKind::ComptimeFor => false,
+        FrameKind::ComptimeFor | FrameKind::MatchCase => false,
     }
 }
 
@@ -409,6 +459,7 @@ fn blocks_hold_structure(blocks: &[MirBlock]) -> bool {
                     | MirInstr::Loop { .. }
                     | MirInstr::ComptimeIf { .. }
                     | MirInstr::ComptimeFor { .. }
+                    | MirInstr::Match { .. }
             ) || instruction_regions(instruction)
                 .into_iter()
                 .any(|region| blocks_hold_structure(region))
@@ -508,6 +559,119 @@ mod tests {
             body[0].term,
             MirTerm::EscapeJump { target: 1, .. }
         ));
+    }
+
+    /// A `match` of two cases: the first tests `r0` in a nested `if` and
+    /// advances on failure, the second always completes.
+    fn two_case_match() -> MirInstr {
+        let test = MirInstr::If {
+            results: Vec::new(),
+            cond: Reg(0),
+            then: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            elifs: Vec::new(),
+            orelse: one(Vec::new(), MirTerm::MatchNext),
+        };
+        MirInstr::Match {
+            cases: vec![
+                one(vec![test], MirTerm::MatchComplete),
+                one(Vec::new(), MirTerm::MatchComplete),
+            ],
+            orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+        }
+    }
+
+    /// The blocks a chain of bare jumps from `from` passes through, the
+    /// last being the first that is not a bare jump.
+    fn chain(function: &MirFunction, mut from: MirBlockId) -> Vec<MirBlockId> {
+        let mut visited = vec![from];
+        while let MirTerm::Jump(to) = function.blocks[from].term
+            && function.blocks[from].instrs.is_empty()
+        {
+            from = to;
+            visited.push(from);
+        }
+        visited
+    }
+
+    #[test]
+    fn match_next_and_complete_go_to_distinct_targets() {
+        let function = lowered(function_with(one(
+            vec![two_case_match()],
+            MirTerm::Return(None),
+        )));
+        // bb0 enters the first case; bb1 is the join after the match.
+        let MirTerm::Jump(first) = function.blocks[0].term else {
+            panic!("the match is entered by a jump");
+        };
+        assert!(matches!(function.blocks[1].term, MirTerm::Return(None)));
+        // The first case's test branches: its then arm yields back into the
+        // case, which completes to the join; its else arm advances to the
+        // second case, which completes to the join as well.
+        let MirTerm::Branch {
+            cond: Reg(0),
+            then_b,
+            else_b,
+        } = function.blocks[first].term
+        else {
+            panic!("the first case tests r0");
+        };
+        let completed = chain(&function, then_b);
+        let advanced = chain(&function, else_b);
+        assert_eq!(completed.last(), Some(&1), "the completed first case joins");
+        assert_eq!(
+            advanced.last(),
+            Some(&1),
+            "the second case completes to the join"
+        );
+        // The failure path passes through the second case's own entry, which
+        // the completion path never visits.
+        assert!(
+            advanced[..advanced.len() - 1]
+                .iter()
+                .any(|block| !completed.contains(block)),
+            "next-case and completion take distinct paths: {completed:?} {advanced:?}"
+        );
+        assert!(!has_structured_control_flow(&function));
+    }
+
+    #[test]
+    fn a_break_in_a_case_leaves_the_enclosing_loop() {
+        let case = one(
+            vec![MirInstr::If {
+                results: Vec::new(),
+                cond: Reg(0),
+                then: one(Vec::new(), MirTerm::Break { label: None }),
+                elifs: Vec::new(),
+                orelse: one(Vec::new(), MirTerm::MatchNext),
+            }],
+            MirTerm::MatchComplete,
+        );
+        let body = one(
+            vec![MirInstr::Match {
+                cases: vec![case],
+                orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            }],
+            MirTerm::Continue { label: None },
+        );
+        let function = lowered(function_with(one(
+            vec![MirInstr::Loop { label: None, body }],
+            MirTerm::Return(None),
+        )));
+        // bb0 enters the loop body; bb1 is the join after the loop.
+        let MirTerm::Jump(loop_entry) = function.blocks[0].term else {
+            panic!("the loop is entered by a jump");
+        };
+        assert!(matches!(function.blocks[1].term, MirTerm::Return(None)));
+        let MirTerm::Jump(case_entry) = function.blocks[loop_entry].term else {
+            panic!("the match is entered by a jump");
+        };
+        let MirTerm::Branch { then_b, else_b, .. } = function.blocks[case_entry].term else {
+            panic!("the case tests r0");
+        };
+        // `break` leaves the loop, not the match; `match.next` reaches the
+        // match's else region, which continues the loop.
+        assert_eq!(chain(&function, then_b).last(), Some(&1));
+        assert_eq!(chain(&function, else_b).last(), Some(&loop_entry));
     }
 
     #[test]

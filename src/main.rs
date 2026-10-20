@@ -691,14 +691,32 @@ fn compile_input_describing(
         let _read = mojito::timing::span("input.read");
         read_source(file).map_err(|e| format!("cannot read input: {e}"))?
     };
-    match file {
+    let program = match file {
         Some(path) if path != "-" => compiler.compile_source(&source, Path::new(path)),
         _ => compiler.compile_unlinked(&source),
     }
     .map_err(|error| match &error {
         CompilerError::Module(module) => format_module_error(module, file.unwrap_or("-"), &source),
         _ => describe(&error),
-    })
+    })?;
+    for warning in program.warnings() {
+        eprintln!("{}", format_warning(warning, file.unwrap_or("-"), &source));
+    }
+    Ok(program)
+}
+
+/// A warning on one line: `warning: FILE:LINE: message` for the input
+/// (whose text gives the line), `warning: SOURCE: message` for a linked
+/// module.
+fn format_warning(warning: &mojito::checked::Warning, file: &str, source: &str) -> String {
+    match &warning.span.source {
+        Some(module) if module != file => format!("warning: {module}: {}", warning.message),
+        _ => {
+            let start = warning.span.span.0.min(source.len());
+            let line = source[..start].matches('\n').count() + 1;
+            format!("warning: {file}:{line}: {}", warning.message)
+        }
+    }
 }
 
 /// `exec`: load a verified textual MIR artifact and execute it on the selected

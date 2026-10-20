@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1132**.
+Next free ID: **R1146**.
 
 ## Ordered Work
 
@@ -2583,47 +2583,166 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1116 `match`/`case` pattern matching needs a plan**
+- [ ] **R1132 `EnumLike` is a library protocol the checker reads, not a
+  spelling**
 
-  Problem: the pin's `match subject:` statement with `case pattern:` arms —
-  literals, `|` alternatives, `if` guards, name and `as` bindings, `var`/
-  `ref` bindings, tuple, struct, and list patterns, `.Some(x)` cases of
-  `EnumLike` types, explicit `== value` patterns, `comptime match`, and
-  exhaustiveness warnings — has no Mojito surface. `match` and `case` lex
-  as keywords since the 2026-10-17 re-pin, so a `match` statement is a
-  parse error.
-  - The feature is released (`Mojo/docs/site/releases/v1.2.0.md`,
-    `Mojo/docs/site/manual/control-flow.mdx`); it is the window's one
-    large language addition.
-  - Write `docs/pattern-matching-plan.md`: the grammar, the AST and
-    parser slice, how the checker decides each pattern kind (comparison
-    through `__eq__`, `EnumLike` case metadata, destructuring), the HIR
-    lowering to a CFG of tests and bindings, and `comptime match` as a
-    folded chain, each stage one session.
-  - This entry lands when the plan is written and its slices are filed as
-    chained entries.
-  - Depends on nothing.
+  Problem: `match` has no enum-case patterns because Mojito has no
+  `EnumLike` trait, where the pin's `Optional` and `Bool` conform through
+  `_enum_case_names`, `_enum_case_types`, `_get_enum_discriminant`, and
+  `_unsafe_get_enum_payload[id]`.
+  - Slice M9 of `match-case-plan.md` (D5): port the trait under
+    `stdlib/std/builtin/`, validate a conformer's metadata (lengths,
+    duplicate or unknown names, payload arity), and give `Optional` and
+    `Bool` the members over their existing storage.
+  - The protocol's spellings need the raw parameter-list type and the
+    `TypeList` dependent read; refine R807/R805 into session-sized work if
+    the port exposes more.
+  - Depends on R807 and R805 (the raw-list and dependent-member spellings).
   - Model: Fable, Planned.
 
-- [ ] **R1117 `if case` and `while case` test one pattern without a `match`**
+- [ ] **R1133 Enum case patterns select by discriminant and payload**
 
-  Problem: `if case .Some(item) = value:` and
-  `while case .Some(item) = get_next():` are parse errors, where the pin
-  evaluates the value once, binds the pattern's names in the body, and
-  runs `elif`/`else` or the loop's `else` on a failed match.
-  - The pattern machinery is R1116's; this is the statement-form slice.
-  - Depends on R1116.
+  Problem: `case .Some(x)`, `case Optional.None`, and `case .Some(ref s)`
+  are rejected ("enum case patterns"), where the pin tests the
+  discriminant and binds the payload through the selected getter.
+  - Slice M10 of `match-case-plan.md`: `MatchPatternKind::Call` with a
+    leading-dot or qualified head and `Head` compile to a discriminant test
+    and a payload sub-subject (`checker/patterns.rs`); a nullary case never
+    touches a payload.
+  - Rejections with the pin's texts: an unknown case, `.None(x)`,
+    `.Some()`, a qualified head of another family, a parametric enum
+    subject.
+  - Probe: `conformance/probes/match_optional_enum_cases.mojo`.
+  - Depends on R1132.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1134 Coverage spans enums, products, and payload refinement**
+
+  Problem: the coverage model (`Coverage`/`Space` in
+  `checker/patterns.rs`) knows `Bool` and tuples of `Bool`, so an
+  `Optional` without a `.None` case and a `(Bool, Int)` product with a
+  correlated wildcard warn nothing, where the pin reports the missing
+  cells.
+  - Slice M11 of `match-case-plan.md` (D6): closed and open `EnumLike`
+    alternatives, payload refinement (`Some(0)` covers no whole `Some`,
+    `Some(_)` makes later refinements unreachable), finite struct products,
+    the 1024-cell cap with its "add a catch-all" warning.
+  - Named analysis tests for the cap and checked multiplication.
+  - Depends on R1133.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1135 Fixed-length sequence patterns test the length first**
+
+  Problem: `case [a, b]` and `case []` are rejected ("sequence patterns"),
+  where the pin tests `len(subject)` and then subscripts each element over
+  any `Sized` subscriptable subject.
+  - Slice M12 of `match-case-plan.md`: a length test dominating the element
+    accesses, a wrong length advancing to the next case, getter errors
+    propagating.
+  - Probe: `conformance/probes/match_sequence_custom_sized.mojo`;
+    `if_case_and_while_case.mojo` keeps its `[a, b]` part for this slice.
+  - Depends on R1051 (a real `Sized` requirement).
+  - Model: Fable, Not Planned.
+
+- [ ] **R1136 Sequence destructuring assigns after a raising length check**
+
+  Problem: `var [a, b] = values` parses but is rejected, where the pin
+  stores nothing and raises `list pattern does not match value length` on
+  a wrong length, inside a raising context.
+  - Slice M13 of `match-case-plan.md`: `DestructureTargetKind::Sequence`
+    through `check_destructure`, with assignment's raise instead of a
+    next-case failure.
+  - Probe: `conformance/probes/destructure_list_wrong_length_raises.mojo`.
+  - Depends on R1135.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1137 Starred sequence patterns and targets slice the remainder**
+
+  Problem: `case [first, *rest]` and `var [a, *middle, b] = values` are
+  rejected, where the pin tests a minimum length, binds the prefix and
+  suffix elements, and gives `*name` the checked slice of the rest (a
+  borrowing `Span` where the slice is one).
+  - Slice M14 of `match-case-plan.md`. `*_` performs no slice.
+  - Probe: `conformance/probes/destructure_starred_slice.mojo`.
+  - Depends on R1136, R190 (a borrowing slice result), and R192 (the slice
+    descriptor correction).
+  - Model: Fable, Not Planned.
+
+- [ ] **R1138 `for` and comprehension targets destructure each element**
+
+  Problem: `for a, b in pairs`, `for (var a, _) in pairs`, and
+  `[a * b for a, b in pairs]` are parse errors, where the pin binds each
+  element through a recursive target with immutable default bindings.
+  - Slice M17 of `match-case-plan.md`: `StmtKind::For` and
+    `ComprehensionClause` take a `DestructureTarget`; the checker binds the
+    yielded value to a hidden per-iteration name and destructures it with
+    `check_destructure`; a yielded reference is not copied to unpack it.
+  - `for ref (a, b)` leaves `a` immutable, as at the pin.
+  - Sequence targets wait for R1136/R1137.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1139 `comptime match` folds in the parameter conditional chain**
+
+  Problem: `comptime match` statements are rejected ("'comptime match'
+  statements"), where the pin matches a parameter subject by type equality
+  (`case == Int`), literals, tuples, bindings, `|`, `as`, and guards.
+  - Slice M18 of `match-case-plan.md` (D7): the checked lowering joins the
+    existing `comptime if` chain (`check_comptime_condition`, `ParamExpr`,
+    `native::mono`), a CTFE subject demanded once; dynamic subjects and
+    guards and `var` bindings reject with the pin's texts.
+  - Probe: `conformance/probes/comptime_match_forms.mojo`.
+  - Depends on R1134.
+  - Model: Fable, Planned.
+
+- [ ] **R1140 Repeated leading tests of neighbouring cases are shared**
+
+  Problem: every `match` case re-runs its own tests (`checker/patterns.rs`
+  emits one program per case), where upstream's `findClusterSize` /
+  `emitClusteredCases` share a safe leading literal or tag test across
+  neighbouring cases.
+  - Slice M19 of `match-case-plan.md`: share only dominance-safe tests,
+    keep order within residual cases, never share an effectful equality or
+    getter call; audit textual MIR round-trips, source locations, and dead
+    arms, and retire the transitional diagnostics the slices left.
+  - Depends on R1139, R1137, and R1138.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1141 Bare and `ref` bindings in `|` alternatives join their
+  references**
+
+  Problem: `case (x, 2) | (1, x)` is rejected ("a bare or 'ref' binding in
+  a '|' alternative"), where the pin binds `x` as one immutable reference
+  to whichever element matched.
+  - Only `var` bindings join today (`Join` in `checker/patterns.rs`: the
+    first alternative declares, the later ones assign one slot).
+  - A reference join needs the runtime-handle representation in both
+    alternatives (`runtime_aliases` in `mir/lower_stmt.rs`) with the union
+    of their loans, since a static alias names one place.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1142 A nominal subscript is a destructuring target**
+
+  Problem: `(xs[0], xs[1]) = pair` is rejected ("a nominal subscript
+  (`xs[i]`) as a destructuring target"), where the pin stores each element
+  through `__setitem__`.
+  - `checker/destructure.rs` rejects the leaf because the extraction plan's
+    element store has no `__setitem__` path; the plain `xs[i] = v` store
+    has one (`lower_subscript_set`).
+  - Fixture to add beside `assets/ok/destructure_swap_and_places.mojo`.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1118 List destructuring and list patterns**
+- [ ] **R1143 `comptime if case` tests a pattern at compile time**
 
-  Problem: `var [first, *middle, last] = values` is a parse error, where
-  the pin destructures any `Sized` subscriptable collection, a single
-  `*name` taking the elements between the leading and trailing ones, and
-  raises on a wrong length. `case []`, `case [1, *middle, last]` are the
-  pattern form, which does not match on a wrong length.
-  - A `*` pattern needs `ContiguousSlice` subscripting on the subject.
-  - Depends on R1116.
+  Problem: `comptime if case pattern = value:` is a parse error, where the
+  pin accepts it and requires the binding to be a compile-time value
+  (`variable binding ... in 'comptime if case' must be a compile-time
+  value`).
+  - The parser rejects it in `parser/stmts.rs` beside `comptime match`;
+    the checked lowering is R1139's chain with a one-case condition.
+  - Depends on R1139.
   - Model: Opus, Not Planned.
 
 - [ ] **R1119 `Defaultable` supplies a default `__init__()`**
@@ -6049,6 +6168,35 @@ retained on purpose and re-probed rather than fixed; they are listed in
     named as the missing shape.
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1144 A copy that is its source's last use stays a copy**
+
+  Problem: `var u = t` with no later use of `t`, and `match make(): case
+  var x:` over a temporary, print `copy` and two `del`s in Mojito, where
+  the pin moves the dying source into the binding and prints one `del`.
+  - `analysis/copy_elision.rs` keys on a `DropVar` directly after the copy
+    construction; the binding's `var.store` comes first here, and a match
+    binding reads through the hidden `$match` slot.
+  - Probes: `conformance/probes/match_binding_kinds_on_temporary.mojo`,
+    `match_guard_copy_drop.mojo`, and
+    `match_temporary_subject_survives_failed_var_case.mojo` keep the traces;
+    `assets/ok/match_guards_and_var_bindings.mojo` reads the subject after
+    every match to stay clear of it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1145 `ref z = Int()` binds a register-passable temporary**
+
+  Problem: `ref z = Int()` runs in Mojito, where the pin rejects it: `value
+  of type 'Int' doesn't have a memory origin in 'ref' binding`.
+  - A `match` applies the rule to `case ref z` over a temporary subject
+    (`bind_subject` in `checker/patterns.rs`, `TypeError::NoMemoryOrigin`);
+    the plain `ref` declaration (`statements.rs`, the `RefDecl` arm) still
+    materializes the temporary into a hidden slot.
+  - Fixture: `assets/type_error/match_ref_binding_register_temporary.mojo`
+    is the match form; add the plain form beside it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1131 A temporary handed to an owning collector runs its move
   initializer**

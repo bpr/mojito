@@ -3038,6 +3038,9 @@ mod call_inference;
 mod ffi_calls;
 
 mod bound_defaults;
+mod destructure;
+mod patterns;
+pub use patterns::irrefutable as irrefutable_pattern;
 mod statements;
 mod with_stmt;
 

@@ -4,8 +4,22 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_checked::checked::CheckedOp;
+use mojito_checked::checked::{
+    CheckedOp, CheckedTarget, CheckedTargetKind, CheckedTupleUnpackElement,
+};
 use mojito_types::types::TyKind;
+
+/// The state one destructuring assignment's leaves share: its place leaves
+/// in order (and the places lowered for the non-name ones), the value's
+/// loans, and the source place a `ref` leaf borrows.
+struct DestructureFrame<'a, 'p> {
+    places: &'p [Node<'a>],
+    lowered: Vec<Option<MirPlace>>,
+    next: usize,
+    loans: Vec<MirLoan>,
+    root_place: Option<MirPlace>,
+    value: Node<'a>,
+}
 
 impl<'a> Flatten<'a> {
     /// Lower one HIR instruction into `self.cur`.
@@ -139,6 +153,11 @@ impl<'a> Flatten<'a> {
                     label: Some(LoopLabel(*label)),
                     body,
                 });
+            }
+            HirInstr::Match { cases, orelse } => {
+                let cases = cases.iter().map(|case| self.hir_region(case)).collect();
+                let orelse = self.hir_region(orelse);
+                self.emit(MirInstr::Match { cases, orelse });
             }
             HirInstr::ComptimeFor {
                 iter,
@@ -2227,6 +2246,53 @@ impl<'a> Flatten<'a> {
                         self.owner_vars.insert(owner, hidden);
                     }
                 }
+                // `ref y = x` over a binding that itself stores a runtime
+                // handle (a borrowed loop element, a `mut` parameter)
+                // forwards the handle: the new binding aliases the same
+                // storage and carries the same loans.
+                if materialized.is_none()
+                    && let Some(name) = self.name_spelled(value)
+                    && let var = self.expression_var(&name, value)
+                    && (var as usize) >= self.f.n_params
+                    && self.runtime_aliases.contains(&var)
+                    && let Some(slot_ty) = self.var_types.get(&var).cloned()
+                    && matches!(slot_ty.kind(), TyKind::Ref(_))
+                {
+                    let slot_ty = Some(slot_ty);
+                    let mut place = MirPlace::root(var, slot_ty.clone());
+                    place.through = Some(var);
+                    let handle_ty = mir_place_handle_ty(&place, None).unwrap_or_else(Ty::error);
+                    let handle = self.fresh_typed(node.location(), Some(var), handle_ty);
+                    self.emit(MirInstr::MakeRef {
+                        dest: handle,
+                        place,
+                    });
+                    if let Some(ty) = slot_ty.clone() {
+                        self.var_types.insert(reference, ty);
+                    }
+                    self.runtime_aliases.insert(reference);
+                    self.emit(MirInstr::DefVar {
+                        var: reference,
+                        src: handle,
+                        binding_ty: slot_ty,
+                        in_place: false,
+                    });
+                    if let Some(loans) = self.aggregate_loans.get(&var).cloned() {
+                        let marker = self.fresh_typed(
+                            node.location(),
+                            Some(loans[0].place.root),
+                            Ty::none(),
+                        );
+                        self.aggregate_loans.insert(reference, loans.clone());
+                        self.emit(MirInstr::EstablishLoans {
+                            reference,
+                            loans,
+                            marker,
+                            dest_interior: None,
+                        });
+                    }
+                    return;
+                }
                 if materialized.is_none()
                     && (value.reference_result().is_some()
                         || !(matches!(
@@ -2704,163 +2770,11 @@ impl<'a> Flatten<'a> {
                 MirInstr::Unsupported("nested def/struct/trait declaration".into()),
             ),
 
-            // Tuple unpacking `a, b = t`: evaluate the tuple once, then bind each
-            // target from its element (a NAME → `DefVar`; a place → `Store`).
-            (CheckedStmtOp::Unpack { .. }, &[ref targets @ .., value]) => {
-                let plan = value
-                    .tuple_unpack_plan()
-                    .expect("checked tuple unpack carries an extraction plan");
-                assert_eq!(
-                    plan.len(),
-                    targets.len(),
-                    "checked tuple unpack arity matches its targets"
-                );
-                let mut base_place = self.simple_place(value);
-                let tuple = self.expr(value);
-                // A temporary read through element references lives in a
-                // hidden slot under the owner the checker minted for it,
-                // the root those references name.
-                if base_place.is_none()
-                    && let Some(owner) = plan.first().and_then(|element| element.temporary)
-                    && !self.owner_vars.contains_key(&owner)
-                {
-                    let ty = self
-                        .f
-                        .reg_types
-                        .get(&tuple.0)
-                        .cloned()
-                        .or_else(|| value.ty());
-                    let hidden = self.var(&format!("$mat_r{}", tuple.0));
-                    if let Some(ty) = ty.clone() {
-                        self.var_types.insert(hidden, ty);
-                    }
-                    self.emit(MirInstr::DefVar {
-                        var: hidden,
-                        src: tuple,
-                        binding_ty: ty.clone(),
-                        in_place: false,
-                    });
-                    self.owner_vars.insert(owner, hidden);
-                    base_place = Some(MirPlace::root(hidden, ty));
-                }
-                // A loan-carrying element (a view into the unpacked value's
-                // source) inherits the value's loans, exactly as binding the
-                // whole value would: otherwise the source dies at the call
-                // that produced the tuple.
-                let loans = self.aggregate_borrows(value);
-                for (i, (&target, extraction)) in targets.iter().zip(plan).enumerate() {
-                    // `_` discards its element of a place without reading it.
-                    if extraction.reference.is_some()
-                        && self.name_spelled(target).is_some_and(|name| name == "_")
-                    {
-                        continue;
-                    }
-                    let carries_loans = extraction.carries_loans;
-                    let idx = self.fresh_typed(target.location(), None, Ty::int());
-                    self.emit(MirInstr::Const {
-                        dest: idx,
-                        k: Const::Int(i as i64),
-                    });
-                    let raw_ty = extraction.reference.clone().map_or_else(
-                        || extraction.ty.clone(),
-                        |reference| Ty::new(TyKind::Ref(reference)),
-                    );
-                    let raw = self.fresh_typed(target.location(), None, raw_ty.clone());
-                    let call = extraction.accessor.clone().map(|target| MirSubscriptCall {
-                        target,
-                        raises: None,
-                        result_ty: raw_ty.clone(),
-                        receiver_requires_place: extraction.reference.is_some(),
-                        receiver_convention: extraction
-                            .reference
-                            .as_ref()
-                            .map(|_| mojito_ast::ast::ArgConvention::Ref),
-                        arguments: Vec::new(),
-                        capture_accesses: Vec::new(),
-                        reference_result: extraction.reference.clone(),
-                        param_arg_regs: extraction
-                            .param_decls
-                            .iter()
-                            .map(|_| MirParamArg {
-                                name: None,
-                                value: Some(idx),
-                                expr: None,
-                            })
-                            .collect(),
-                        param_decls: extraction.param_decls.clone(),
-                    });
-                    let intrinsic = call
-                        .is_none()
-                        .then(|| value.intrinsic_index_dispatch())
-                        .flatten();
-                    self.emit(MirInstr::Index {
-                        dest: raw,
-                        base: tuple,
-                        index: idx,
-                        base_place: base_place.clone().map(Box::new),
-                        index_place: None,
-                        call: call.map(Box::new),
-                        intrinsic,
-                    });
-                    let elem = if extraction.reference.is_some() {
-                        let element_ty = extraction.ty;
-                        let value = self.fresh_typed(
-                            target.location(),
-                            base_place.as_ref().map(|place| place.root),
-                            element_ty.clone(),
-                        );
-                        self.emit(MirInstr::ReadRef {
-                            dest: value,
-                            reference: raw,
-                        });
-                        // The target owns its element independently of the
-                        // unpacked place, so a lifecycle type runs its copy
-                        // initializer rather than aliasing the place's storage.
-                        let copied = self.fresh_typed(target.location(), None, element_ty);
-                        self.emit(MirInstr::CopyValue {
-                            dest: copied,
-                            value,
-                            constructor: None,
-                        });
-                        copied
-                    } else {
-                        raw
-                    };
-                    if let Some(name) = self.name_spelled(target) {
-                        let var = self.expression_var(&name, target);
-                        self.emit_interior_invalidations(target, Some(var));
-                        let binding_ty = target.place_ty().or_else(|| target.ty());
-                        if let Some(ty) = binding_ty.clone() {
-                            self.var_types.insert(var, ty);
-                        }
-                        self.emit(MirInstr::DefVar {
-                            var,
-                            src: elem,
-                            binding_ty,
-                            in_place: false,
-                        });
-                        if carries_loans && let Some(first) = loans.first() {
-                            let marker = self.fresh_typed(
-                                value.location(),
-                                Some(first.place.root),
-                                Ty::none(),
-                            );
-                            self.aggregate_loans.insert(var, loans.clone());
-                            self.emit(MirInstr::EstablishLoans {
-                                reference: var,
-                                loans: loans.clone(),
-                                marker,
-                                dest_interior: None,
-                            });
-                        }
-                    } else {
-                        let place = self
-                            .lower_projected_reference_place(target)
-                            .unwrap_or_else(|| self.place(target));
-                        self.emit_interior_invalidations(target, Some(place.root));
-                        self.emit(MirInstr::Store { place, src: elem });
-                    }
-                }
+            // Destructuring `(var a, (ref b, _)) = t`: the destinations'
+            // places first, then the value once, then each leaf from its
+            // element (`lower_destructure`).
+            (CheckedStmtOp::Destructure { target, .. }, &[ref places @ .., value]) => {
+                self.lower_destructure(target, places, value);
             }
 
             // --- Unreachable after the checker ---------------------------------
@@ -2898,18 +2812,424 @@ impl<'a> Flatten<'a> {
                     node.op.kind_name()
                 )));
             }
+            // A `match` without its plan, or a `comptime match`, is a form
+            // the checker admits before its lowering lands: a later-phase
+            // boundary here.
+            (CheckedStmtOp::Match { .. }, _) => {
+                self.emit(MirInstr::Unsupported("'match' statement lowering".into()));
+            }
+            (CheckedStmtOp::ComptimeMatch { .. }, _) => {
+                self.emit(MirInstr::Unsupported(
+                    "'comptime match' statement lowering".into(),
+                ));
+            }
             (
                 CheckedStmtOp::RefDecl { .. }
                 | CheckedStmtOp::SetPlace { .. }
                 | CheckedStmtOp::AugAssign { .. }
                 | CheckedStmtOp::Raise(_)
                 | CheckedStmtOp::Comptime { .. }
-                | CheckedStmtOp::Unpack { .. },
+                | CheckedStmtOp::Destructure { .. },
                 _,
             ) => self.emit(MirInstr::Unsupported(
                 "a HIR statement's expressions do not match its checked node".into(),
             )),
         }
+    }
+
+    /// Lower a destructuring assignment: the places among `places` (the
+    /// target's place leaves, in order) are evaluated first, as the pin
+    /// evaluates destinations before the right-hand side, then `value` once,
+    /// then each leaf is bound, written, or discarded from its element.
+    fn lower_destructure(&mut self, target: &CheckedTarget, places: &[Node<'a>], value: Node<'a>) {
+        let plan = value
+            .tuple_unpack_plan()
+            .expect("a checked destructuring value carries an extraction plan");
+        // A name re-assigns its slot; any other place is evaluated now and
+        // written after the value.
+        let lowered = places
+            .iter()
+            .map(|place| {
+                if self.name_spelled(*place).is_some() {
+                    None
+                } else {
+                    Some(
+                        self.lower_projected_reference_place(*place)
+                            .unwrap_or_else(|| self.place(*place)),
+                    )
+                }
+            })
+            .collect();
+        let mut base_place = self.simple_place(value);
+        let tuple = self.expr(value);
+        // A temporary read through element references lives in a hidden
+        // slot under the owner the checker minted for it, the root those
+        // references name.
+        if base_place.is_none()
+            && let Some(owner) = plan.first().and_then(|element| element.temporary)
+            && !self.owner_vars.contains_key(&owner)
+        {
+            let ty = self
+                .f
+                .reg_types
+                .get(&tuple.0)
+                .cloned()
+                .or_else(|| value.ty());
+            let hidden = self.var(&format!("$mat_r{}", tuple.0));
+            if let Some(ty) = ty.clone() {
+                self.var_types.insert(hidden, ty);
+            }
+            self.emit(MirInstr::DefVar {
+                var: hidden,
+                src: tuple,
+                binding_ty: ty.clone(),
+                in_place: false,
+            });
+            self.owner_vars.insert(owner, hidden);
+            base_place = Some(MirPlace::root(hidden, ty));
+        }
+        // A loan-carrying element (a view into the unpacked value's source)
+        // inherits the value's loans, exactly as binding the whole value
+        // would: otherwise the source dies at the call that produced the
+        // tuple.
+        let loans = self.aggregate_borrows(value);
+        let CheckedTargetKind::Tuple(items) = &target.kind else {
+            self.emit(MirInstr::Unsupported(
+                "a destructuring target that is not a tuple".into(),
+            ));
+            return;
+        };
+        let mut frame = DestructureFrame {
+            places,
+            lowered,
+            next: 0,
+            loans,
+            root_place: base_place.clone(),
+            value,
+        };
+        self.lower_destructure_elements(items, &plan, tuple, base_place.as_ref(), &mut frame);
+    }
+
+    /// Bind each of `items` from its element of the tuple in `base`
+    /// (`base_place` when it is a place), per `plan`.
+    fn lower_destructure_elements(
+        &mut self,
+        items: &[CheckedTarget],
+        plan: &[CheckedTupleUnpackElement],
+        base: Reg,
+        base_place: Option<&MirPlace>,
+        frame: &mut DestructureFrame<'a, '_>,
+    ) {
+        assert_eq!(
+            plan.len(),
+            items.len(),
+            "checked tuple destructuring arity matches its targets"
+        );
+        let location = frame.value.location();
+        for (i, (item, extraction)) in items.iter().zip(plan).enumerate() {
+            // `_` discards its element without reading it.
+            if matches!(item.kind, CheckedTargetKind::Discard) {
+                continue;
+            }
+            let idx = self.fresh_typed(location.clone(), None, Ty::int());
+            self.emit(MirInstr::Const {
+                dest: idx,
+                k: Const::Int(i as i64),
+            });
+            let raw_ty = extraction.reference.clone().map_or_else(
+                || extraction.ty.clone(),
+                |reference| Ty::new(TyKind::Ref(reference)),
+            );
+            let raw = self.fresh_typed(location.clone(), None, raw_ty.clone());
+            let call = extraction.accessor.clone().map(|target| MirSubscriptCall {
+                target,
+                raises: None,
+                result_ty: raw_ty.clone(),
+                receiver_requires_place: extraction.reference.is_some(),
+                // A `ref self` accessor reads its receiver unless the
+                // reference it returns is mutable, the checker's effective
+                // convention for a reference-returning receiver.
+                receiver_convention: extraction.reference.as_ref().map(|reference| {
+                    if reference.mutability == mojito_types::origin::Mutability::Mutable {
+                        mojito_ast::ast::ArgConvention::Ref
+                    } else {
+                        mojito_ast::ast::ArgConvention::Imm
+                    }
+                }),
+                arguments: Vec::new(),
+                capture_accesses: Vec::new(),
+                reference_result: extraction.reference.clone(),
+                param_arg_regs: extraction
+                    .param_decls
+                    .iter()
+                    .map(|_| MirParamArg {
+                        name: None,
+                        value: Some(idx),
+                        expr: None,
+                    })
+                    .collect(),
+                param_decls: extraction.param_decls.clone(),
+            });
+            let intrinsic = call
+                .is_none()
+                .then(|| frame.value.intrinsic_index_dispatch())
+                .flatten();
+            self.emit(MirInstr::Index {
+                dest: raw,
+                base,
+                index: idx,
+                base_place: base_place.cloned().map(Box::new),
+                index_place: None,
+                call: call.map(Box::new),
+                intrinsic,
+            });
+            // A nested tuple's elements are read through this element's
+            // reference; a `ref` leaf keeps the reference itself.
+            match &item.kind {
+                CheckedTargetKind::Tuple(inner) => {
+                    let (inner_base, inner_place) = match &extraction.reference {
+                        Some(reference) => {
+                            let place = self.destructured_reference_place(raw, reference, frame);
+                            let loaded = self.fresh_typed(
+                                location.clone(),
+                                Some(place.root),
+                                reference.referent.clone(),
+                            );
+                            self.emit(MirInstr::LoadPlace {
+                                dest: loaded,
+                                place: place.clone(),
+                            });
+                            (loaded, Some(place))
+                        }
+                        None => (raw, None),
+                    };
+                    self.lower_destructure_elements(
+                        inner,
+                        &extraction.elements,
+                        inner_base,
+                        inner_place.as_ref(),
+                        frame,
+                    );
+                    continue;
+                }
+                CheckedTargetKind::Declare {
+                    name,
+                    mode: mojito_ast::ast::BindingMode::Ref,
+                    binding,
+                    binding_ty,
+                } => {
+                    self.bind_destructured_reference(
+                        name,
+                        *binding,
+                        binding_ty.clone(),
+                        raw,
+                        frame,
+                    );
+                    continue;
+                }
+                _ => {}
+            }
+            let elem = if extraction.reference.is_some() {
+                let element_ty = extraction.ty.clone();
+                let value = self.fresh_typed(
+                    location.clone(),
+                    base_place.map(|place| place.root),
+                    element_ty.clone(),
+                );
+                self.emit(MirInstr::ReadRef {
+                    dest: value,
+                    reference: raw,
+                });
+                // The target owns its element independently of the unpacked
+                // place, so a lifecycle type runs its copy initializer rather
+                // than aliasing the place's storage.
+                let copied = self.fresh_typed(location.clone(), None, element_ty);
+                self.emit(MirInstr::CopyValue {
+                    dest: copied,
+                    value,
+                    constructor: None,
+                });
+                copied
+            } else {
+                raw
+            };
+            match &item.kind {
+                CheckedTargetKind::Declare {
+                    name,
+                    binding,
+                    binding_ty,
+                    ..
+                } => {
+                    let var = match binding {
+                        Some(owner) => self.binding_var(*owner, name),
+                        None => self.var(name),
+                    };
+                    if let Some(ty) = binding_ty.clone() {
+                        self.var_types.insert(var, ty);
+                    }
+                    self.emit(MirInstr::DefVar {
+                        var,
+                        src: elem,
+                        binding_ty: binding_ty.clone(),
+                        in_place: false,
+                    });
+                    self.establish_destructured_loans(var, extraction.carries_loans, frame);
+                }
+                CheckedTargetKind::Place(_) => {
+                    let place_node = frame.places[frame.next];
+                    let lowered = frame.lowered[frame.next].clone();
+                    frame.next += 1;
+                    match (self.name_spelled(place_node), lowered) {
+                        (Some(name), _) => {
+                            let var = self.expression_var(&name, place_node);
+                            self.emit_interior_invalidations(place_node, Some(var));
+                            let binding_ty = place_node.place_ty().or_else(|| place_node.ty());
+                            if let Some(ty) = binding_ty.clone() {
+                                self.var_types.insert(var, ty);
+                            }
+                            self.emit(MirInstr::DefVar {
+                                var,
+                                src: elem,
+                                binding_ty,
+                                in_place: false,
+                            });
+                            self.establish_destructured_loans(var, extraction.carries_loans, frame);
+                        }
+                        (None, Some(place)) => {
+                            self.emit_interior_invalidations(place_node, Some(place.root));
+                            self.emit(MirInstr::Store { place, src: elem });
+                        }
+                        (None, None) => self.emit(MirInstr::Unsupported(
+                            "a destructuring place leaf without its lowered place".into(),
+                        )),
+                    }
+                }
+                CheckedTargetKind::Sequence(_) => self.emit(MirInstr::Unsupported(
+                    "sequence destructuring target lowering".into(),
+                )),
+                CheckedTargetKind::Discard | CheckedTargetKind::Tuple(_) => {}
+            }
+        }
+    }
+
+    /// The place a nested tuple element's reference `handle` designates: a
+    /// hidden reference slot, as a reference-returning call's receiver
+    /// place is materialized. The slot lives within the statement, whose
+    /// reads it serves and whose `ref` leaves borrow the source themselves,
+    /// so it holds no loan of its own.
+    fn destructured_reference_place(
+        &mut self,
+        handle: Reg,
+        reference: &mojito_types::origin::RefTy,
+        frame: &DestructureFrame<'a, '_>,
+    ) -> MirPlace {
+        let variable = self.var(&format!("$destr_ref_r{}", handle.0));
+        let storage_ty = Ty::new(TyKind::Ref(reference.clone()));
+        self.var_types.insert(variable, storage_ty.clone());
+        self.runtime_aliases.insert(variable);
+        self.emit(MirInstr::DefVar {
+            var: variable,
+            src: handle,
+            binding_ty: Some(storage_ty.clone()),
+            in_place: false,
+        });
+        if let Some(root) = frame.root_place.clone() {
+            let loans = vec![MirLoan {
+                place: root,
+                mutable: reference.mutability == mojito_types::origin::Mutability::Mutable,
+                interior: None,
+                shared: false,
+                setup: false,
+            }];
+            let marker = self.fresh_typed(
+                frame.value.location(),
+                Some(loans[0].place.root),
+                Ty::none(),
+            );
+            self.emit(MirInstr::EstablishLoans {
+                reference: variable,
+                loans: loans.clone(),
+                marker,
+                dest_interior: None,
+            });
+            self.aggregate_loans.insert(variable, loans);
+        }
+        let mut place = MirPlace::root(variable, Some(storage_ty));
+        place.ty = Some(reference.referent.clone());
+        place.through = Some(variable);
+        place
+    }
+
+    /// A `ref` leaf: the element's reference handle becomes the binding's
+    /// slot, which borrows the destructured source for as long as it lives.
+    fn bind_destructured_reference(
+        &mut self,
+        name: &str,
+        binding: Option<mojito_types::origin::OwnerId>,
+        binding_ty: Option<Ty>,
+        raw: Reg,
+        frame: &DestructureFrame<'a, '_>,
+    ) {
+        let var = match binding {
+            Some(owner) => self.binding_var(owner, name),
+            None => self.var(name),
+        };
+        let mutable = binding_ty.as_ref().is_some_and(|ty| {
+            matches!(
+                ty.kind(),
+                TyKind::Ref(reference)
+                    if reference.mutability == mojito_types::origin::Mutability::Mutable
+            )
+        });
+        if let Some(ty) = binding_ty.clone() {
+            self.var_types.insert(var, ty);
+        }
+        self.runtime_aliases.insert(var);
+        self.emit(MirInstr::DefVar {
+            var,
+            src: raw,
+            binding_ty,
+            in_place: false,
+        });
+        if let Some(place) = frame.root_place.clone() {
+            let marker = self.fresh_typed(frame.value.location(), Some(place.root), Ty::none());
+            self.emit(MirInstr::EstablishLoans {
+                reference: var,
+                loans: vec![MirLoan {
+                    place,
+                    mutable,
+                    interior: None,
+                    shared: false,
+                    setup: false,
+                }],
+                marker,
+                dest_interior: None,
+            });
+        }
+    }
+
+    /// A loan-carrying element's binding inherits the destructured value's
+    /// loans.
+    fn establish_destructured_loans(
+        &mut self,
+        var: VarId,
+        carries_loans: bool,
+        frame: &DestructureFrame<'a, '_>,
+    ) {
+        if !carries_loans {
+            return;
+        }
+        let Some(first) = frame.loans.first() else {
+            return;
+        };
+        let marker = self.fresh_typed(frame.value.location(), Some(first.place.root), Ty::none());
+        self.aggregate_loans.insert(var, frame.loans.clone());
+        self.emit(MirInstr::EstablishLoans {
+            reference: var,
+            loans: frame.loans.clone(),
+            marker,
+            dest_interior: None,
+        });
     }
 
     /// `comptime N = e` is an ordinary binding at runtime, unless the check
@@ -3408,6 +3728,8 @@ impl<'a> Flatten<'a> {
             },
             Terminator::ComptimeBreak => MirTerm::ComptimeBreak,
             Terminator::ComptimeContinue => MirTerm::ComptimeContinue,
+            Terminator::MatchNext => MirTerm::MatchNext,
+            Terminator::MatchComplete => MirTerm::MatchComplete,
         }
     }
 }

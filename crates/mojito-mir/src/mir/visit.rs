@@ -373,6 +373,7 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
             visitor.visit_param_ref(binder)?;
             visitor.visit_sequence(source)
         }
+        I::Match { .. } => Ok(()),
         I::DefVar {
             binding_ty: None, ..
         }
@@ -430,6 +431,8 @@ pub fn walk_terminator_mut<V: MutTypeVisitor + ?Sized>(
         | MirTerm::ComptimeYield(_)
         | MirTerm::ComptimeBreak
         | MirTerm::ComptimeContinue
+        | MirTerm::MatchNext
+        | MirTerm::MatchComplete
         | MirTerm::Unreachable => Ok(()),
     }
 }

@@ -538,6 +538,8 @@ fn block_field_live_out(
         | MirTerm::ComptimeYield(_)
         | MirTerm::ComptimeBreak
         | MirTerm::ComptimeContinue
+        | MirTerm::MatchNext
+        | MirTerm::MatchComplete
         | MirTerm::Unreachable => FieldSet::new(),
         MirTerm::ReturnWithCleanup { cleanup, .. } => {
             let mut out = seeds.finally_live.clone();

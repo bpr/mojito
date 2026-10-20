@@ -334,15 +334,19 @@ It skips top-level blank lines and repeatedly calls:
 parse_statement()
 ```
 
-`parse_statement()` peeks at the first token and dispatches:
+`parse_statement()` peeks at the first token and dispatches (a leading `(`
+or `[` goes through `parse_target_display` in `parser/patterns.rs`, which
+yields a destructuring target when a `var`/`ref` leaf or a following `=`
+makes it one, and otherwise hands the display back to expression parsing):
 
 - `var` -> variable declaration
 - `def` -> function declaration
 - `struct` -> struct declaration
 - decorators -> decorated `def` or `struct`
 - `trait` -> trait declaration
-- `comptime` -> comptime declaration/if/for
+- `comptime` -> comptime declaration/if/for/match
 - `if`, `while`, `for`, `with`, `try`
+- `match` -> match statement (`parser/patterns.rs`); a stray `case` is an error
 - `return`, `raise`, `import`, `from`
 - `pass`, `break`, `continue`
 - otherwise, expression-or-assignment

@@ -226,6 +226,8 @@ enum RegionKind {
     ComptimeIfArm(Vec<Reg>),
     ComptimeForBody,
     ComptimeForElse,
+    /// A `match` case, left by `MatchNext` or `MatchComplete`.
+    MatchCase,
 }
 
 /// One instruction's verification scope: the function it sits in, the

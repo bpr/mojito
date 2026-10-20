@@ -73,7 +73,10 @@ let program = compiler.compile_path(path)?;
 let execution = compiler.execute(&program)?;
 ```
 
-`CompiledProgram` privately retains the `CheckedProgram` and three MIR phases,
+`CompiledProgram` exposes the check's nonfatal diagnostics (`warnings()`,
+the `Warning` list `CheckedProgram` gathers from its facts in source order;
+the CLI prints them after a successful compile) and privately retains the
+`CheckedProgram` and three MIR phases,
 each named by its accessor and each computed once:
 
 | Phase | Accessor | What it is | Who consumes it |
@@ -2568,6 +2571,12 @@ N+1 times, the exhausted iterator's copy keeping only the stop arm. A `comptime 
 an `HirInstr::ComptimeIf` (`hlcf.comptime.if`): its conditions, computed
 first as upstream's parser does, then one arm region per condition and an
 else region, each arm that completes ended by `Terminator::ComptimeYield`.
+A `match` is an `HirInstr::Match` (`hlcf.match`): one region per case,
+holding its tests as nested `If` ops whose failing arms end in
+`Terminator::MatchNext`, its bindings, its guard, and its body, ended by
+`Terminator::MatchComplete`, then an else region ended by `Yield` for the
+fall-through when no case matched (the statement form lands by slice,
+`match-case-plan.md`).
 No HIR terminator jumps between blocks, so `Cfg::g` holds no edge. HIR
 lowers only a body's live statements (`CheckedTables::live_statements`):
 the statements after a `return`, `break`, `continue`, or `raise` are erased
@@ -3888,16 +3897,21 @@ The structure mirrors source-level exception semantics:
 
 ### Structured Region Ops
 
-`Try` is one of five region ops. The other four are upstream's `hlcf` ops
+`Try` is one of six region ops. The other five are upstream's `hlcf` ops
 (`docs/structured-control-flow-plan.md`): `If { results, cond, then, elifs,
 orelse }` (`hlcf.if`, each `MirElif` a condition region and an arm), `Loop {
 label, body }` (`hlcf.loop`), `ComptimeIf { results, conds, arms, orelse }`
-(`hlcf.comptime.if`), and `ComptimeFor { binder, source, body, orelse }`
-(`hlcf.comptime.for`, its `orelse` one `Unreachable` block). Their regions
-are block lists like a `try` part's, and end in the region terminators
-`Yield`, `ElifCond`, `Break`/`Continue` (an optional `LoopLabel` naming the
-nearest enclosing loop carrying it), `ComptimeYield`, `ComptimeBreak`/
-`ComptimeContinue`, and `Unreachable`; `Return` may end any region.
+(`hlcf.comptime.if`), `ComptimeFor { binder, source, body, orelse }`
+(`hlcf.comptime.for`, its `orelse` one `Unreachable` block), and `Match {
+cases, orelse }` (`hlcf.match`: each case a region that tests its pattern
+and runs its body, left by `MatchNext` for the next case — the `orelse`
+after the last — or by `MatchComplete` for the op's end; `orelse` ends in
+`Yield` with no values). Their regions are block lists like a `try` part's,
+and end in the region terminators `Yield`, `ElifCond`, `Break`/`Continue`
+(an optional `LoopLabel` naming the nearest enclosing loop carrying it, a
+`match` case between them being no loop), `ComptimeYield`, `ComptimeBreak`/
+`ComptimeContinue`, `MatchNext`/`MatchComplete`, and `Unreachable`;
+`Return` may end any region.
 `instruction_regions`/`instruction_regions_mut` walk every op's regions in
 a fixed order, and `prune_unreachable_blocks`, `block_successors`, the
 analyses, and the elaborator's slot renumbering walk through them.
@@ -3915,7 +3929,10 @@ as upstream's `IfElseOpNode` emits `hlcf.comptime.if`), and
 region's blocks are appended to its list, the rest of the block moves to a
 join, an op's results go through one slot each, stored at a `yield` and
 forwarded at the join, a `break`/`continue` leaving a `try` part to a
-function-level loop is an `EscapeJump`, and `Unreachable` is `Return(None)`.
+function-level loop is an `EscapeJump`, a `match` case's `match.next` and
+`match.complete` jump to the next case's entry and to the join through a
+frame like a loop's (`tests/mir_passes/lower-control-flow/match_cases.mir`),
+and `Unreachable` is `Return(None)`.
 Every analysis below lowering, the elaborator, the VM, and the Pliron
 backend sees only lowered MIR.
 

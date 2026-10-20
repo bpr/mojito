@@ -1037,6 +1037,11 @@ impl<'a> Flatten<'a> {
         if let Some(name) = self.name_spelled(node)
             && let Some(var) = self.existing_expression_var(&name, node)
             && let Some(loans) = self.aggregate_loans.get(&var)
+            // A value read through a reference binding is the referent's
+            // copy: it carries the binding's loans only when its type can
+            // hold a reference of its own.
+            && !((self.aliases.contains_key(&var) || self.runtime_aliases.contains(&var))
+                && !node.ty().is_some_and(|ty| carries_references(&ty)))
         {
             return loans.clone();
         }
@@ -1410,4 +1415,33 @@ fn field_interior(place: &MirPlace, named: &[String]) -> Option<MirInteriorOrigi
             )
             .collect(),
     })
+}
+
+/// Whether a value of `ty` can hold a reference to storage outside itself,
+/// so that its copy carries its source's loans: a reference, a pointer, a
+/// callable (its captures), a type not yet bound, or an aggregate one of
+/// whose arguments names an origin or such a type.
+fn carries_references(ty: &Ty) -> bool {
+    match ty.kind() {
+        TyKind::Ref(reference) => carries_references(&reference.referent),
+        TyKind::Pointer { .. }
+        | TyKind::Func(_)
+        | TyKind::GenericFunc(_)
+        | TyKind::Overload(_)
+        | TyKind::Param { .. }
+        | TyKind::Assoc { .. }
+        | TyKind::Dependent(_)
+        | TyKind::SelfType
+        | TyKind::Infer => true,
+        TyKind::Struct(_, args) => args.iter().any(|arg| match arg {
+            mojito_types::types::TyArg::Ty(ty) => carries_references(ty),
+            mojito_types::types::TyArg::Origin(_) => true,
+            mojito_types::types::TyArg::Val(_) => false,
+        }),
+        TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {
+            items.iter().any(carries_references)
+        }
+        TyKind::VariadicPack(item) | TyKind::ComptimeList(item) => carries_references(item),
+        _ => false,
+    }
 }

@@ -69,6 +69,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 Some(Token::Trait) => self.parse_trait()?,
                 Some(Token::Comptime) => self.parse_comptime()?,
                 Some(Token::If) => self.parse_if()?,
+                Some(Token::Match) => self.parse_match(false)?,
+                Some(Token::Case) => {
+                    return Err(ParseError::UnexpectedToken(
+                        Token::Case,
+                        "'case' outside of a 'match' statement".into(),
+                    ));
+                }
                 Some(Token::While) => self.parse_while()?,
                 Some(Token::For) => self.parse_for()?,
                 Some(Token::With) => self.parse_with()?,
@@ -121,13 +128,23 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// top-level comma after the first target starts a **tuple unpacking**
     /// (`a, b = t`).
     pub(super) fn parse_expr_or_assign(&mut self) -> Result<StmtKind, ParseError> {
-        let expr = self.parse_expression(Precedence::Lowest)?;
+        // A leading `(` or `[` may open a destructuring target
+        // (`(var a, (ref b, _)) = pair`, `[x, y] = values`), which is not an
+        // expression; a display without binding leaves continues as one.
+        let expr = if matches!(self.peek_token()?, Some(Token::LParen | Token::LBracket)) {
+            match self.parse_target_display(None)? {
+                TargetItem::Target(target) => return self.parse_destructure_tail(target, None),
+                TargetItem::Expr(expr) => self.parse_expression_from(expr, Precedence::Lowest)?,
+            }
+        } else {
+            self.parse_expression(Precedence::Lowest)?
+        };
 
         // Tuple-unpacking target list: `a, b, … = value`. A top-level comma
         // (the Pratt parser never consumes one) after the first target starts an
         // unpack; collect the remaining comma-separated targets, then require `=`.
         if matches!(self.peek_token()?, Some(Token::Comma)) {
-            let mut targets = vec![expr];
+            let mut items = vec![TargetItem::Expr(expr)];
             while matches!(self.peek_token()?, Some(Token::Comma)) {
                 // A trailing comma before `=` is allowed (`a, = t`, `a, b, = t`).
                 // Without a following `=`, the same comma syntax is a bare tuple
@@ -139,39 +156,44 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 ) {
                     break;
                 }
-                targets.push(self.parse_expression(Precedence::Lowest)?);
+                items.push(self.parse_target_item(None)?);
             }
             if !matches!(self.peek_token()?, Some(Token::Assign)) {
-                let start = targets[0].span.0;
-                let display = self.node(ExprKind::TupleLit(targets), start);
+                let elements = items
+                    .into_iter()
+                    .map(|item| match item {
+                        TargetItem::Expr(value) => Ok(value),
+                        TargetItem::Target(_) => Err(ParseError::UnexpectedToken(
+                            Token::Comma,
+                            "expected '=' after a destructuring target".to_string(),
+                        )),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let start = elements[0].span.0;
+                let display = self.node(ExprKind::TupleLit(elements), start);
                 self.expect_stmt_end()?;
                 return Ok(StmtKind::Expr(display));
             }
-            for target in &targets {
-                if !matches!(
-                    target.kind,
-                    ExprKind::Identifier(_) | ExprKind::Member { .. } | ExprKind::Index { .. }
-                ) {
-                    return Err(ParseError::UnexpectedToken(
-                        Token::Comma,
-                        format!("invalid unpacking target: {:?}", target.kind),
-                    ));
-                }
-            }
-            self.expect(
-                &Token::Assign,
-                "Expected '=' after the unpacking target list",
-            )?;
-            let value = self.parse_tuple_display()?;
-            self.expect_stmt_end()?;
-            return Ok(StmtKind::Unpack {
-                targets,
-                value,
-                declares: false,
-            });
+            // The comma list is a tuple target; each element is a name or
+            // place to write, a declaring leaf, or a nested display.
+            let start = self.peek_start();
+            let targets = items
+                .into_iter()
+                .map(item_to_target)
+                .collect::<Result<Vec<_>, _>>()?;
+            let start = targets.first().map_or(start, |target| target.span.0);
+            let target = DestructureTarget::new(
+                DestructureTargetKind::Tuple(targets),
+                (start, self.last_significant_end),
+            );
+            return self.finish_destructure(target);
         }
 
         if matches!(self.peek_token()?, Some(Token::Assign)) {
+            // A tuple or list display is a destructuring target.
+            if matches!(expr.kind, ExprKind::TupleLit(_) | ExprKind::ListLit(_)) {
+                return self.finish_destructure(expr_to_target(expr)?);
+            }
             self.next_token()?; // consume '='
             let value = self.parse_tuple_display()?;
             let stmt = if let ExprKind::Identifier(name) = expr.kind {
@@ -237,26 +259,30 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
     /// `var name[: Type] = value` — the annotation is optional (inferred `var`).
     pub(super) fn parse_var_decl(&mut self) -> Result<StmtKind, ParseError> {
+        let start = self.peek_start();
         self.expect(&Token::Var, "Statements must begin with a keyword")?;
+        // `var (a, (b, _)) = e` / `var [x, *rest] = e`: every leaf declares.
+        if matches!(self.peek_token()?, Some(Token::LParen | Token::LBracket)) {
+            let TargetItem::Target(target) = self.parse_declared_target(BindingMode::Var, start)?
+            else {
+                return Err(ParseError::UnexpectedToken(
+                    Token::Var,
+                    "expected a destructuring target after 'var'".into(),
+                ));
+            };
+            return self.parse_destructure_tail(target, Some(BindingMode::Var));
+        }
         let name = self.expect_identifier("Expected identifier after 'var'")?;
+        // `var a, b = e`: a tuple target whose every leaf declares.
         if matches!(self.peek_token()?, Some(Token::Comma)) {
-            let mut targets = vec![Expr::new(ExprKind::Identifier(name), self.last_span)];
-            while matches!(self.peek_token()?, Some(Token::Comma)) {
-                self.next_token()?;
-                let target = self.expect_identifier("Expected another variable name")?;
-                targets.push(Expr::new(ExprKind::Identifier(target), self.last_span));
-            }
-            self.expect(
-                &Token::Assign,
-                "Expected '=' after variable unpacking targets",
-            )?;
-            let value = self.parse_tuple_display()?;
-            self.expect_stmt_end()?;
-            return Ok(StmtKind::Unpack {
-                targets,
-                value,
-                declares: true,
-            });
+            let first = DestructureTarget::new(
+                DestructureTargetKind::Declare {
+                    name,
+                    mode: BindingMode::Var,
+                },
+                self.last_span,
+            );
+            return self.parse_destructure_tail(first, Some(BindingMode::Var));
         }
         // An optional `: Type`; omitting it infers the type from `value`.
         let ty = if matches!(self.peek_token()?, Some(Token::Colon)) {
@@ -303,8 +329,20 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// preserves the distinction from an owned `var` so later phases cannot
     /// accidentally give it copy semantics.
     pub(super) fn parse_ref_decl(&mut self) -> Result<StmtKind, ParseError> {
+        let start = self.peek_start();
         let keyword = self.expect_identifier("Expected 'ref'")?;
         debug_assert_eq!(keyword, "ref");
+        // `ref (a, b) = e`: every leaf is a reference binding.
+        if matches!(self.peek_token()?, Some(Token::LParen | Token::LBracket)) {
+            let TargetItem::Target(target) = self.parse_declared_target(BindingMode::Ref, start)?
+            else {
+                return Err(ParseError::UnexpectedToken(
+                    Token::Identifier("ref".into()),
+                    "expected a destructuring target after 'ref'".into(),
+                ));
+            };
+            return self.parse_destructure_tail(target, Some(BindingMode::Ref));
+        }
         let name = self.expect_identifier("Expected a name after 'ref'")?;
         self.expect(&Token::Assign, "Expected '=' after the reference name")?;
         let value = self.parse_expression(Precedence::Lowest)?;
@@ -322,8 +360,21 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         match self.peek_token()? {
             Some(Token::If) => {
                 let (branches, orelse) = self.parse_if_rest()?;
+                // The pin's `comptime if case` is not supported: a
+                // compile-time condition folds as an expression, which a
+                // pattern test is not.
+                if branches
+                    .iter()
+                    .any(|(condition, _)| condition.pattern().is_some())
+                {
+                    return Err(ParseError::UnexpectedToken(
+                        Token::Case,
+                        "'comptime if case' is not supported; use 'comptime match'".into(),
+                    ));
+                }
                 Ok(StmtKind::ComptimeIf { branches, orelse })
             }
+            Some(Token::Match) => self.parse_match(true),
             // The expression form `comptime(expr)` in statement position.
             Some(Token::LParen) => {
                 let start = self.last_span.0;
@@ -344,7 +395,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             }
             Some(Token::For) => {
                 let (var, binding, iter, body) = self.parse_for_rest()?;
-                if binding != LoopBindingMode::Immutable {
+                if binding != BindingMode::Immutable {
                     return Err(ParseError::UnexpectedToken(
                         Token::For,
                         "comptime for cannot use an explicit ref/var binding".to_string(),
@@ -845,8 +896,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     pub(super) fn parse_condition_block(
         &mut self,
         ctx: &str,
-    ) -> Result<(Expr, Vec<Stmt>), ParseError> {
-        let cond = self.parse_expression(Precedence::Lowest)?;
+    ) -> Result<(Condition, Vec<Stmt>), ParseError> {
+        let cond = self.parse_condition()?;
         self.expect(&Token::Colon, ctx)?;
         let body = self.parse_suite()?;
         Ok((cond, body))
@@ -911,17 +962,17 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         Ok(Some(self.parse_suite()?))
     }
 
-    pub(super) fn parse_loop_binding_mode(&mut self) -> Result<LoopBindingMode, ParseError> {
+    pub(super) fn parse_loop_binding_mode(&mut self) -> Result<BindingMode, ParseError> {
         match self.peek_token()? {
             Some(Token::Identifier(word)) if word == "ref" => {
                 self.next_token()?;
-                Ok(LoopBindingMode::Ref)
+                Ok(BindingMode::Ref)
             }
             Some(Token::Var) => {
                 self.next_token()?;
-                Ok(LoopBindingMode::Var)
+                Ok(BindingMode::Var)
             }
-            _ => Ok(LoopBindingMode::Immutable),
+            _ => Ok(BindingMode::Immutable),
         }
     }
 
@@ -929,7 +980,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// must be `for`. Shared by runtime and compile-time loops.
     pub(super) fn parse_for_rest(
         &mut self,
-    ) -> Result<(String, LoopBindingMode, Expr, Vec<Stmt>), ParseError> {
+    ) -> Result<(String, BindingMode, Expr, Vec<Stmt>), ParseError> {
         self.expect(&Token::For, "Expected 'for'")?;
         let binding = self.parse_loop_binding_mode()?;
         let var = self.expect_identifier("Expected a loop variable name after 'for'")?;

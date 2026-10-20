@@ -220,6 +220,8 @@ impl VmBackend {
                 | MirTerm::ComptimeYield(_)
                 | MirTerm::ComptimeBreak
                 | MirTerm::ComptimeContinue
+                | MirTerm::MatchNext
+                | MirTerm::MatchComplete
                 | MirTerm::Unreachable => {
                     return Err(parametric_instruction(&format!(
                         "the region terminator `{}`",

@@ -110,6 +110,8 @@ pub(super) fn verify_terminator(
         | MirTerm::ComptimeYield(_)
         | MirTerm::ComptimeBreak
         | MirTerm::ComptimeContinue
+        | MirTerm::MatchNext
+        | MirTerm::MatchComplete
         | MirTerm::Unreachable => {
             verify_region_terminator(&prefix, function, terminator, context, errors);
         }

@@ -225,6 +225,8 @@ fn find_nested_defs(
             | CheckedStmtOp::While { .. }
             | CheckedStmtOp::For { .. }
             | CheckedStmtOp::ComptimeFor { .. }
+            | CheckedStmtOp::Match { .. }
+            | CheckedStmtOp::ComptimeMatch { .. }
             | CheckedStmtOp::Scope(_)
             | CheckedStmtOp::Try { .. } => node.op.bodies(),
             _ => continue,

@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.73
+# Mojito Textual MIR Format, Version 1.74
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.73 is implemented end to end for inspection and loading: canonical
+Version 1.74 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.73
+mojito-mir 1.74
 ```
 
-The writer emits 1.73. The reader accepts 1.0 through 1.73; *Schema 1.0*
+The writer emits 1.74. The reader accepts 1.0 through 1.74; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -962,6 +962,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `Unsupported` | `unsupported { message: string }` |
 | `If` | `if { results: [reg...], condition: %rN, then: [block...], elifs: [elif { condition: [block...], then: [block...] }...], else: [block...] }` — `hlcf.if` (schema 1.54) |
 | `Loop` | `loop { label: option<loopN>, body: [block...] }` — `hlcf.loop` (schema 1.54) |
+| `Match` | `match { cases: [[block...]...], else: [block...] }` — `hlcf.match`: the cases in order, each a region that tests its pattern and runs its body, leaving by `match.next` (the next case, or `else` after the last) or `match.complete` (the op's end); `else` runs when no case completed and ends in `yield` with no values (schema 1.74) |
 | `ComptimeIf` | `comptime.if { results: [reg...], conditions: [<constraint>...], arms: [[block...]...], else: [block...] }` — `hlcf.comptime.if`, one arm per condition (schema 1.54) |
 | `ComptimeFor` | `comptime.for { binder: <binder>, initial: <param_expr>, has_next: <param_expr>, next_iter: <param_expr>, next_value: <param_expr>, body: [block...], else: [block...] }` — `hlcf.comptime.for`; the four sequence fields are the `ComptimeFor` terminator's; `else` is one block ending in `unreachable {}`; `body` is one block ending in `unreachable {}` that holds a `comptime.if` on `eq { left: operand_expr(<has_next>), right: operand_value(ct_bool(true)) }`, whose arm is the suite and whose else arm is the stop arm, ending in `comptime.for.break {}`, as `LowerSemanticCF` leaves upstream's body (schema 1.54; the `slot` field and the `elements` source withdrawn, schema 1.57; the body's `has_next` test, schema 1.58) |
 | `GetIter` / `HasNext` / `Next` / `TryNext` | `iter.init` / `iter.has_next` / `iter.next` / `iter.try_next` (schema 1.71: an `iter.try_next` whose `call` has a `result_adapter` carries `adapter_constructor: "<symbol>"` after its operands, as `call.method` does) |
@@ -1006,6 +1007,7 @@ as explicit options/lists. Backends must not reconstruct omitted selections.
 | `Break` / `Continue` | `break { label: option<loopN> }` / `continue { label: option<loopN> }` — `hlcf.break`/`hlcf.continue`: the nearest enclosing `loop`, or the nearest carrying the label (schema 1.54) |
 | `ComptimeYield` | `comptime.yield { values: [reg...] }` — ends a `comptime.if` arm (schema 1.54) |
 | `ComptimeBreak` / `ComptimeContinue` | `comptime.for.break {}` / `comptime.for.continue {}` — the nearest enclosing `comptime.for` (schema 1.54) |
+| `MatchNext` / `MatchComplete` | `match.next {}` / `match.complete {}` — `hlcf.match.next`/`hlcf.match.complete`: leave the nearest enclosing `match` case for the next case or for the op's end (schema 1.74) |
 | `Unreachable` | `unreachable {}` — `hlcf.unreachable` (schema 1.54) |
 
 The structured terminators end only the region of their op; the verifier

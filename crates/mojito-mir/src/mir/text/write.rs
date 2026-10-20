@@ -1554,6 +1554,13 @@ fn instruction_value(instruction: &MirInstr) -> String {
             fields.extend([("body", blocks_value(body)), ("else", blocks_value(orelse))]);
             record(tag, &fields)
         }
+        MirInstr::Match { cases, orelse } => record(
+            tag,
+            &[
+                ("cases", list(cases.iter().map(|case| blocks_value(case)))),
+                ("else", blocks_value(orelse)),
+            ],
+        ),
         MirInstr::Drop { reg } => record(tag, &[("reg", reg_value(*reg))]),
         MirInstr::DeclareVar { var } | MirInstr::ConsumeVar { var } => {
             record(tag, &[("var", var_value(*var))])
@@ -1684,6 +1691,8 @@ fn term_value(term: &MirTerm) -> String {
         MirTerm::TryYield
         | MirTerm::ComptimeBreak
         | MirTerm::ComptimeContinue
+        | MirTerm::MatchNext
+        | MirTerm::MatchComplete
         | MirTerm::Unreachable => record(tag, &[]),
         MirTerm::Yield(values) | MirTerm::ComptimeYield(values) => record(
             tag,

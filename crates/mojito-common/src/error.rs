@@ -217,9 +217,16 @@ pub enum TypeError {
         place: String,
         ty: Option<String>,
     },
-    /// An origin specifier names a read value of a register-passable type.
+    /// A `case` pattern that cannot apply to its subject: the wrong tuple
+    /// arity or a non-tuple subject under a tuple pattern, a struct
+    /// pattern over another type, with a positional argument, or naming a
+    /// field twice. The message is the pin's.
+    MatchPattern(String),
+    /// An origin specifier or a `ref` binding (`context`) names a read
+    /// value of a register-passable type.
     NoMemoryOrigin {
         ty: String,
+        context: String,
     },
     /// A store into storage that outlives the frame carries a loan rooted in
     /// frame-local storage — the store-outward twin of the return escape.
@@ -727,10 +734,11 @@ impl fmt::Display for TypeError {
                     "cannot return '{place}'s origin, because it might expand to a RegisterPassable type"
                 )
             }
-            Self::NoMemoryOrigin { ty } => {
+            Self::MatchPattern(message) => write!(f, "{message}"),
+            Self::NoMemoryOrigin { ty, context } => {
                 write!(
                     f,
-                    "value of type '{ty}' doesn't have a memory origin in origin specifier"
+                    "value of type '{ty}' doesn't have a memory origin in {context}"
                 )
             }
             Self::TransferEffectDivergence { rounds, callable } => {

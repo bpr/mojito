@@ -89,6 +89,7 @@ simple_stmt:
     | var_decl
     | assignment
     | unpack_assignment
+    | destructure_assignment
     | augmented_assignment
     | comptime_stmt
     | return_stmt
@@ -112,10 +113,12 @@ compound_stmt:
     | if_stmt
     | while_stmt
     | for_stmt
+    | match_stmt
     | with_stmt
     | try_stmt
     | comptime_if_stmt
     | comptime_for_stmt
+    | comptime_match_stmt
 ```
 
 A simple statement is one logical line terminated by `NEWLINE` (no `;`, hence no
@@ -130,6 +133,16 @@ not `NEWLINE`-terminated at this level.
 var_decl: 'var' NAME [':' type] '=' expression   # annotation optional (inferred var)
 assignment: assign_target '=' expression
 unpack_assignment: target (',' target)* ','? '=' expression   # a top-level comma ⇒ tuple unpacking
+destructure_assignment:
+    | 'var' declared_display (',' declared_item)* ','? '=' expression   # every leaf declares
+    | 'ref' declared_display (',' declared_item)* ','? '=' expression
+    | display_target (',' target_item)* ','? '=' expression
+    | target_item (',' target_item)+ ','? '=' expression   # a nested or declaring element
+display_target: '(' [target_item (',' target_item)* ','?] ')' | '[' [seq_target (',' seq_target)* ','?] ']'
+target_item: 'var' (NAME | display_target) | 'ref' (NAME | display_target) | display_target | target | '_'
+seq_target: target_item | '*' (NAME | '_' | place)        # at most one star
+declared_display: display_target                           # leaves are NAME | '_' | nested displays
+declared_item: NAME | '_' | declared_display
 augmented_assignment: assign_target aug_op expression
 aug_op: '+=' | '-=' | '*=' | '/=' | '//=' | '%=' | '**=' | '&=' | '|=' | '^='
 assign_target: target | call | 'rebind' '[' type ']' '(' target ')'   # checker erases rebind to its operand
@@ -166,13 +179,31 @@ in scope immediately, but reads still require every reachable path to have
 initialized it first.
 
 **Tuple unpacking** binds each target to the corresponding element of the tuple
-`e` (a top-level comma in the target list is what marks the statement as an
-unpack). The **declaration** form `var a, b = e` introduces each target as a fresh
-`var`; the **bare** form `a, b, … = e` requires every target already in scope — a
-`NAME` re-assigns it (keeping its type) or a place (`p.x`, `xs[i]`) is written, and
-an undeclared target is the same `AssignToUndeclared` error. A trailing comma is
-allowed (`a, = t`). The value tuple is evaluated **once**, then each element is
-bound to its target.
+`e` (a top-level comma in the target list is what marks the statement as a
+destructuring). The **declaration** form `var a, b = e` introduces each target as
+a fresh `var`; the **bare** form `a, b, … = e` requires every target already in
+scope — a `NAME` re-assigns it (keeping its type) or a place (`p.x`) is written,
+and an undeclared target is the same `AssignToUndeclared` error. A trailing
+comma is allowed (`a, = t`). The destinations' subexpressions are evaluated
+first, then the value tuple **once**, then each element is bound to its target.
+
+**Destructuring assignment** generalizes unpacking to a recursive target
+(`docs/notes/pattern-matching-evidence.md` records the pin's behavior). A
+target leaf is an existing name or place (written), `var NAME` / `ref NAME`
+(declared), or `_` (discarded, not read); tuple displays nest freely and a
+bracketed display destructures a sequence, with one optional `*` element
+taking the slice between the fixed prefix and suffix:
+`(var a, (ref b, _)) = pair`, `(xs[0], (xs[1], a)) = v`, `var (x, (y, z)) =
+e`, `var (p, q), r = (7, 8), 9`, `var [first, *middle, last] = values`,
+`[x, y] = values`. A `var`/`ref` before a display distributes to every leaf
+name in it. A flat comma list of names and places (`a, b = t`, `var a, b =
+t`, the `unpack_assignment` spelling) is the same statement with a flat
+tuple target. A statement-initial `(` or `[` opens a target only when `=`
+follows and no leaf declares: `(a + 1).foo()`, `(a, b)`, and
+`[1, 2].append(3)` remain expressions, while `(var a, b)` without `=` is an
+error. Tuple targets run (`docs/features.md`, Bindings): a nominal subscript
+leaf (`xs[i]`) and sequence targets are parsed and rejected by the checker
+until their slices land.
 
 **Augmented assignment** `target OP= e` means `target = target OP e` for the seven
 arithmetic and integer bitwise/shift operators. The target obeys the same place
@@ -597,22 +628,36 @@ least one member; fields and methods may interleave.
 
 ```
 if_stmt:
-    | 'if' expression ':' block elif_stmt
-    | 'if' expression ':' block [else_block]
+    | 'if' condition ':' block elif_stmt
+    | 'if' condition ':' block [else_block]
 elif_stmt:
-    | 'elif' expression ':' block elif_stmt
-    | 'elif' expression ':' block [else_block]
+    | 'elif' condition ':' block elif_stmt
+    | 'elif' condition ':' block [else_block]
 else_block: 'else' ':' block
+condition: expression | 'case' case_patterns '=' expression_list
 
-while_stmt: 'while' expression ':' block
+while_stmt: 'while' condition ':' block ['else' ':' block]
 
 for_stmt: 'for' [('ref' | 'var')] NAME 'in' expression ':' block ['else' ':' block]
+
+match_stmt: 'match' expression_list ':' NEWLINE case_block+
+    | 'match' expression_list ':' NEWLINE INDENT case_block+ DEDENT
+case_block: 'case' case_patterns ['if' expression] ':' suite
+expression_list: expression (',' expression)* ','?        # a comma forms a tuple
 
 with_stmt: 'with' ','.with_item+ ':' block
 with_item: expression ['as' NAME]
 ```
 
-Conditions are any `expression` (the checker requires `Bool`). `while` / `for`
+A boolean condition is any `expression` (the checker requires `Bool`). A
+**`case` condition** (`if case (var x, 0) = get():`, `elif case [a] = xs:`,
+`while case .Some(item) = next():`) evaluates its right-hand side when the
+branch is reached and succeeds when the pattern matches, binding the
+pattern's names in that body only; a `while case` re-evaluates per
+iteration and runs its `else` on the first failure. The pin accepts
+`comptime if case`; Mojito parses it as an error (write `comptime match`).
+`case` conditions are parsed and rejected by the checker until the pattern
+plan lands. `while` / `for`
 support loop `else`; `break` bypasses it. A `for` target is a single `NAME`, optionally
 introduced with `ref` for mutable list-element iteration; its
 iterable is any `expression` whose nominal type supplies the checked iteration
@@ -630,6 +675,49 @@ explicit destruction. The bundled List owned iterator still requires
 `Deinitable` elements even for guaranteed full exhaustion; lifting that
 restriction is tracked with the associated-iterator/origin work. `break` /
 `continue` outside a loop are checker errors.
+
+### match_stmt and patterns
+
+```
+match_stmt: 'match' expression_list ':' NEWLINE case_block+
+    | 'match' expression_list ':' NEWLINE INDENT case_block+ DEDENT
+comptime_match_stmt: 'comptime' match_stmt
+case_block: 'case' case_patterns ['if' expression] ':' suite
+
+case_patterns: pattern (',' pattern)* ','?               # a comma forms a tuple pattern
+pattern: or_pattern ('as' NAME)*                        # `as` binds looser than `|`
+or_pattern: closed_pattern ('|' closed_pattern)*
+closed_pattern:
+    | '_'                                               # wildcard
+    | NAME                                              # binds the value (`case Int:` binds `Int`)
+    | 'var' NAME | 'ref' NAME                           # binds a mutable copy / a reference
+    | literal                                           # INT | FLOAT | STRING | 'True' | 'False' | 'None'
+    | '==' unary_expression                             # explicit equality (`== -3`, `== f(x)`)
+    | '(' ')' | '(' pattern ')' | '(' pattern (',' pattern)* ','? ')'   # grouping or tuple
+    | '[' [seq_pattern (',' seq_pattern)* ','?] ']'     # sequence, at most one star
+    | '{' [NAME '=' pattern (',' NAME '=' pattern)* ','?] '}'          # contextual struct fields
+    | head                                              # `.None`, `Optional.None`
+    | head '(' [pattern_arg (',' pattern_arg)* ','?] ')'               # `Point(x=0)`, `.Some(x)`
+seq_pattern: pattern | '*' (NAME | '_')
+head: '.' NAME | NAME ('.' NAME)* | NAME '[' param_args ']' ('.' NAME)*
+pattern_arg: pattern | NAME '=' pattern                 # keyword fields (struct) or one payload (enum)
+```
+
+`match` evaluates its subject once (a comma list forms a tuple) and tries
+the cases in order; the first whose pattern matches and whose guard is true
+runs. Cases either share the `match` indent (Mojo style) or sit one level
+in (Python style); a case body may follow the `case` line. A `match` needs
+at least one case, and `case` outside a `match` is an error. A bare name
+binds (immutably) rather than naming a value; a signed number, an
+arithmetic expression, or a subscript is not a pattern — write `== expr`,
+whose operand is parsed at unary precedence (`== a | b` is `(== a) | b`).
+`var`/`ref` take one name (`var ref x` is rejected as redundant). The
+checker decides whether a call-shaped head is a struct pattern (keyword
+fields, `Point(x=0, y=yv)`) or an enum case with one positional payload
+(`.Some(x)`, `Optional.Some(0)`); a `*`/`**` argument there is a syntax
+error. `comptime match` has the same shape over a parameter subject. Every
+pattern form is parsed; the checker rejects `match` until its checked plan
+lands (`docs/features.md`, Patterns).
 
 ### with_stmt
 

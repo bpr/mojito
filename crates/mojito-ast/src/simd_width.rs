@@ -2,7 +2,7 @@
 //! types, statements, and expressions. The elaborator specializes such a
 //! declaration per call, and source validation checks its template.
 
-use crate::ast::{Expr, ExprKind, Method, ParamArg, Stmt, StmtKind, Type, TypeParam};
+use crate::ast::{Condition, Expr, ExprKind, Method, ParamArg, Stmt, StmtKind, Type, TypeParam};
 
 /// Whether a generic `def` uses one of its parameters as a lane width.
 ///
@@ -138,6 +138,11 @@ fn param_arg_uses_simd_width(width_position: bool, argument: &ParamArg, names: &
 fn stmt_uses_param_simd_width(statement: &Stmt, names: &[&str]) -> bool {
     let block = |stmts: &[Stmt]| stmts.iter().any(|s| stmt_uses_param_simd_width(s, names));
     let expr = |e: &Expr| expr_uses_param_simd_width(e, names);
+    let condition = |c: &Condition| {
+        c.pattern()
+            .is_some_and(|pattern| pattern.expressions().into_iter().any(expr))
+            || expr(c.value())
+    };
     match &statement.kind {
         StmtKind::VarDecl { ty, value, .. } => {
             ty.as_ref()
@@ -150,18 +155,28 @@ fn stmt_uses_param_simd_width(statement: &Stmt, names: &[&str]) -> bool {
         StmtKind::AugAssign { place, value, .. } | StmtKind::SetPlace { place, value } => {
             expr(place) || expr(value)
         }
-        StmtKind::Unpack { targets, value, .. } => targets.iter().any(expr) || expr(value),
+        StmtKind::Destructure { target, value } => {
+            target.places().into_iter().any(expr) || expr(value)
+        }
         StmtKind::Expr(e) => expr(e),
         StmtKind::Return(value) => value.as_ref().is_some_and(expr),
         StmtKind::Raise(value) => expr(value),
         StmtKind::If { branches, orelse } => {
             branches
                 .iter()
-                .any(|(cond, body)| expr(cond) || block(body))
+                .any(|(cond, body)| condition(cond) || block(body))
                 || orelse.as_ref().is_some_and(|body| block(body))
         }
         StmtKind::While { cond, body, orelse } => {
-            expr(cond) || block(body) || orelse.as_ref().is_some_and(|body| block(body))
+            condition(cond) || block(body) || orelse.as_ref().is_some_and(|body| block(body))
+        }
+        StmtKind::Match { subject, cases } | StmtKind::ComptimeMatch { subject, cases } => {
+            expr(subject)
+                || cases.iter().any(|case| {
+                    case.pattern.expressions().into_iter().any(expr)
+                        || case.guard.as_ref().is_some_and(expr)
+                        || block(&case.body)
+                })
         }
         StmtKind::For { iter, body, .. } => expr(iter) || block(body),
         StmtKind::With { items, body } => {

@@ -524,15 +524,33 @@ fn collect_bound_names<'a>(body: &'a [Stmt], names: &mut HashSet<&'a str>) {
                 names.insert(var);
                 collect_bound_names(body, names);
             }
+            StmtKind::Destructure { target, .. } => {
+                names.extend(target.declared_names());
+            }
+            StmtKind::Match { cases, .. } | StmtKind::ComptimeMatch { cases, .. } => {
+                for case in cases {
+                    names.extend(case.pattern.bindings().into_iter().map(|(name, _)| name));
+                    collect_bound_names(&case.body, names);
+                }
+            }
             StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
-                for (_, block) in branches {
+                for (condition, block) in branches {
+                    if let Some(pattern) = condition.pattern() {
+                        names.extend(pattern.bindings().into_iter().map(|(name, _)| name));
+                    }
                     collect_bound_names(block, names);
                 }
                 if let Some(block) = orelse {
                     collect_bound_names(block, names);
                 }
             }
-            StmtKind::While { body, .. } | StmtKind::With { body, .. } => {
+            StmtKind::While { cond, body, .. } => {
+                if let Some(pattern) = cond.pattern() {
+                    names.extend(pattern.bindings().into_iter().map(|(name, _)| name));
+                }
+                collect_bound_names(body, names);
+            }
+            StmtKind::With { body, .. } => {
                 collect_bound_names(body, names);
             }
             StmtKind::Try {
@@ -574,15 +592,41 @@ fn remove_bound_names(body: &[Stmt], names: &mut HashMap<String, String>) {
                 names.remove(var);
                 remove_bound_names(body, names);
             }
+            StmtKind::Destructure { target, .. } => {
+                for name in target.declared_names() {
+                    names.remove(name);
+                }
+            }
+            StmtKind::Match { cases, .. } | StmtKind::ComptimeMatch { cases, .. } => {
+                for case in cases {
+                    for (name, _) in case.pattern.bindings() {
+                        names.remove(name);
+                    }
+                    remove_bound_names(&case.body, names);
+                }
+            }
             StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
-                for (_, block) in branches {
+                for (condition, block) in branches {
+                    for (name, _) in condition
+                        .pattern()
+                        .map(|p| p.bindings())
+                        .unwrap_or_default()
+                    {
+                        names.remove(name);
+                    }
                     remove_bound_names(block, names);
                 }
                 if let Some(block) = orelse {
                     remove_bound_names(block, names);
                 }
             }
-            StmtKind::While { body, .. } | StmtKind::With { body, .. } => {
+            StmtKind::While { cond, body, .. } => {
+                for (name, _) in cond.pattern().map(|p| p.bindings()).unwrap_or_default() {
+                    names.remove(name);
+                }
+                remove_bound_names(body, names);
+            }
+            StmtKind::With { body, .. } => {
                 remove_bound_names(body, names);
             }
             StmtKind::Try {
@@ -673,6 +717,9 @@ fn program_uses_kwargs(program: &[Stmt]) -> bool {
                 || orelse
                     .as_ref()
                     .is_some_and(|body| program_uses_kwargs(body))
+        }
+        StmtKind::Match { cases, .. } | StmtKind::ComptimeMatch { cases, .. } => {
+            cases.iter().any(|case| program_uses_kwargs(&case.body))
         }
         StmtKind::While { body, .. }
         | StmtKind::For { body, .. }
@@ -1380,6 +1427,17 @@ impl<'p> Linker<'p> {
                     self.resolve_scoped_imports(block, dir, importer, bindings, namespaces)?;
                 }
             }
+            StmtKind::Match { cases, .. } | StmtKind::ComptimeMatch { cases, .. } => {
+                for case in cases {
+                    self.resolve_scoped_imports(
+                        &mut case.body,
+                        dir,
+                        importer,
+                        bindings,
+                        namespaces,
+                    )?;
+                }
+            }
             StmtKind::While { body, .. }
             | StmtKind::For { body, .. }
             | StmtKind::ComptimeFor { body, .. }
@@ -2035,15 +2093,15 @@ fn rewrite_stmt(
             rewrite_expr(place, names, namespaces);
             rewrite_expr(value, names, namespaces);
         }
-        StmtKind::Unpack { targets, value, .. } => {
-            for t in targets {
-                rewrite_expr(t, names, namespaces);
+        StmtKind::Destructure { target, value } => {
+            for place in target.places_mut() {
+                rewrite_expr(place, names, namespaces);
             }
             rewrite_expr(value, names, namespaces);
         }
         StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
             for (c, b) in branches {
-                rewrite_expr(c, names, namespaces);
+                rewrite_condition(c, names, namespaces);
                 rewrite_program(b, names, namespaces);
             }
             if let Some(b) = orelse {
@@ -2051,8 +2109,20 @@ fn rewrite_stmt(
             }
         }
         StmtKind::While { cond, body, .. } => {
-            rewrite_expr(cond, names, namespaces);
+            rewrite_condition(cond, names, namespaces);
             rewrite_program(body, names, namespaces);
+        }
+        StmtKind::Match { subject, cases } | StmtKind::ComptimeMatch { subject, cases } => {
+            rewrite_expr(subject, names, namespaces);
+            for case in cases {
+                for value in case.pattern.expressions_mut() {
+                    rewrite_expr(value, names, namespaces);
+                }
+                if let Some(guard) = &mut case.guard {
+                    rewrite_expr(guard, names, namespaces);
+                }
+                rewrite_program(&mut case.body, names, namespaces);
+            }
         }
         StmtKind::For { iter, body, .. } | StmtKind::ComptimeFor { iter, body, .. } => {
             rewrite_expr(iter, names, namespaces);
@@ -2083,6 +2153,21 @@ fn rewrite_stmt(
         }
         _ => {}
     }
+}
+
+/// A condition's reads: the matched value and a pattern's embedded
+/// expressions. The pattern's names are definitions, not reads.
+fn rewrite_condition(
+    condition: &mut mojito_ast::ast::Condition,
+    names: &HashMap<String, String>,
+    namespaces: &HashMap<String, HashMap<String, String>>,
+) {
+    if let Some(pattern) = condition.pattern_mut() {
+        for value in pattern.expressions_mut() {
+            rewrite_expr(value, names, namespaces);
+        }
+    }
+    rewrite_expr(condition.value_mut(), names, namespaces);
 }
 
 fn read_and_parse_named(path: &Path, module_name: &str) -> Result<Vec<Stmt>, ModuleError> {

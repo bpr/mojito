@@ -19,8 +19,8 @@
 //! [`Cfg::slots`].
 
 use mojito_checked::checked::{
-    CheckedExpr, CheckedNodeId, CheckedOp, CheckedProgram, CheckedStmt, CheckedStmtId,
-    CheckedStmtOp, CheckedTables, SemanticAdjustment,
+    CheckedCommand, CheckedCondition, CheckedExpr, CheckedMatchCase, CheckedNodeId, CheckedOp,
+    CheckedProgram, CheckedStmt, CheckedStmtId, CheckedStmtOp, CheckedTables, SemanticAdjustment,
 };
 use mojito_types::origin::OwnerId;
 use mojito_types::types::Ty;
@@ -229,6 +229,16 @@ pub enum HirInstr {
         body: HirRegion,
         orelse: HirRegion,
     },
+    /// `hlcf.match`: `cases` tried in order, each a region that tests its
+    /// pattern and runs its body — a failed test or guard ends in
+    /// [`Terminator::MatchNext`], a body that completes in
+    /// [`Terminator::MatchComplete`] — then `orelse` when none matched,
+    /// ended by [`Terminator::Yield`]. A `break`/`continue` in a case names
+    /// the enclosing loop.
+    Match {
+        cases: Vec<HirRegion>,
+        orelse: HirRegion,
+    },
 }
 
 /// A region of a region op: its one block, a node of its [`Cfg::g`].
@@ -313,6 +323,12 @@ pub enum Terminator {
     /// `hlcf.comptime.for.continue`: end this iteration of the innermost
     /// [`HirInstr::ComptimeFor`].
     ComptimeContinue,
+    /// `hlcf.match.next`: the innermost [`HirInstr::Match`] case did not
+    /// match; try the next.
+    MatchNext,
+    /// `hlcf.match.complete`: the innermost [`HirInstr::Match`] case ran;
+    /// leave the op.
+    MatchComplete,
 }
 
 #[derive(Debug, Default)]
@@ -517,6 +533,7 @@ fn collect_function_implicit_names(
             CheckedStmtOp::ComptimeFor { body, .. }
             | CheckedStmtOp::With { body, .. }
             | CheckedStmtOp::Scope(body) => vec![body.as_slice()],
+            CheckedStmtOp::Match { .. } => statement.op.bodies(),
             _ => Vec::new(),
         };
         for body in bodies {
@@ -875,18 +892,22 @@ impl Lower {
             .expect("a checked body names a statement node of its tables");
         match &s.op {
             CheckedStmtOp::If { branches, orelse } => {
-                self.if_statement(branches, orelse.as_deref());
+                self.if_statement(id, branches, orelse.as_deref());
             }
             CheckedStmtOp::ComptimeIf { branches, orelse } => {
-                self.comptime_if(branches, orelse.as_deref());
+                self.comptime_if(id, branches, orelse.as_deref());
             }
             CheckedStmtOp::Scope(body) => self.scoped_block(body),
             CheckedStmtOp::ComptimeFor { var, iter, body } => {
                 self.comptime_for(var, *iter, s.binding, body);
             }
             CheckedStmtOp::While { cond, body, orelse } => {
-                self.while_loop(*cond, body, orelse.as_deref());
+                self.while_loop(cond, body, orelse.as_deref());
             }
+            CheckedStmtOp::Match {
+                anchor: Some(anchor),
+                cases,
+            } => self.match_statement(*anchor, cases),
             CheckedStmtOp::For { .. } => self.for_loop(s),
             CheckedStmtOp::Break => self.leave(id, true),
             CheckedStmtOp::Continue => self.leave(id, false),
@@ -1010,17 +1031,32 @@ impl Lower {
     /// operand, evaluated here; each later one is an elif condition region.
     fn if_statement(
         &mut self,
-        branches: &[(CheckedNodeId, Vec<CheckedStmtId>)],
+        id: CheckedStmtId,
+        branches: &[(CheckedCondition, Vec<CheckedStmtId>)],
         orelse: Option<&[CheckedStmtId]>,
     ) {
         let Some(((first, then), rest)) = branches.split_first() else {
             return;
         };
-        let cond = HirCond::Expr(self.expr(*first));
+        // A chain holding a `case` condition is a chain of one-armed
+        // conditionals, each branch's test in the previous one's else.
+        if branches.iter().any(|(cond, _)| cond.boolean().is_none()) {
+            self.conditional_chain(branches, orelse);
+            return;
+        }
+        let Some(first) = first.boolean() else {
+            self.push(HirInstr::Stmt(self.statement(id)));
+            return;
+        };
+        let cond = HirCond::Expr(self.expr(first));
         let then = self.arm(Some(then));
         let mut elifs = Vec::new();
         for (cond, body) in rest {
-            let cond = self.region(|this| Terminator::ElifCond(this.expr(*cond)));
+            let Some(cond) = cond.boolean() else {
+                self.push(HirInstr::Stmt(self.statement(id)));
+                return;
+            };
+            let cond = self.region(|this| Terminator::ElifCond(this.expr(cond)));
             elifs.push(HirElif {
                 cond,
                 then: self.arm(Some(body)),
@@ -1031,6 +1067,137 @@ impl Lower {
             cond,
             then,
             elifs,
+            orelse,
+        });
+    }
+
+    /// An `if`/`elif`/`else` chain with a `case` condition, one branch at
+    /// a time: a boolean branch is an `hlcf.if` whose else region holds
+    /// the rest of the chain; a `case pattern = value` branch anchors the
+    /// value — evaluated only when the branch is reached — and matches it
+    /// as a one-case `hlcf.match` whose body is the branch's and whose else
+    /// region holds the rest of the chain, so the bindings exist in the
+    /// body alone.
+    fn conditional_chain(
+        &mut self,
+        branches: &[(CheckedCondition, Vec<CheckedStmtId>)],
+        orelse: Option<&[CheckedStmtId]>,
+    ) {
+        let Some(((cond, body), rest)) = branches.split_first() else {
+            if let Some(orelse) = orelse {
+                self.scoped_block(orelse);
+            }
+            return;
+        };
+        match cond {
+            CheckedCondition::Expr(node) => {
+                let cond = HirCond::Expr(self.expr(*node));
+                let then = self.arm(Some(body));
+                let orelse = self.region(|this| {
+                    this.conditional_chain(rest, orelse);
+                    Terminator::Yield
+                });
+                self.push(HirInstr::If {
+                    cond,
+                    then,
+                    elifs: Vec::new(),
+                    orelse,
+                });
+            }
+            CheckedCondition::Case {
+                anchor, commands, ..
+            } => {
+                self.scopes.push(HashMap::new());
+                if let Some(anchor) = anchor {
+                    self.stmt(*anchor);
+                }
+                let case = self.region(|this| {
+                    this.scopes.push(HashMap::new());
+                    this.case_commands(commands);
+                    this.block(body);
+                    this.scopes.pop();
+                    Terminator::MatchComplete
+                });
+                let orelse = self.region(|this| {
+                    this.conditional_chain(rest, orelse);
+                    Terminator::Yield
+                });
+                self.push(HirInstr::Match {
+                    cases: vec![case],
+                    orelse,
+                });
+                self.scopes.pop();
+            }
+        }
+    }
+
+    /// `match` as `hlcf.match`: the anchor declares the subject's slot in the
+    /// enclosing scope, then each case is a region of its own scope — every
+    /// test and the guard an `hlcf.if` whose else arm is `match.next`, every
+    /// binding its declaration, then the body, ended by `match.complete` —
+    /// and the else region yields the fall-through when no case matched.
+    fn match_statement(&mut self, anchor: CheckedStmtId, cases: &[CheckedMatchCase]) {
+        self.stmt(anchor);
+        let regions = cases
+            .iter()
+            .map(|case| {
+                self.region(|this| {
+                    this.scopes.push(HashMap::new());
+                    this.case_commands(&case.commands);
+                    if let Some(guard) = case.guard {
+                        this.case_test(guard);
+                    }
+                    this.block(&case.body);
+                    this.scopes.pop();
+                    Terminator::MatchComplete
+                })
+            })
+            .collect();
+        let orelse = self.region(|_| Terminator::Yield);
+        self.push(HirInstr::Match {
+            cases: regions,
+            orelse,
+        });
+    }
+
+    /// A case's commands in order. A `|` pattern's alternatives are an
+    /// inner `hlcf.match` in the case's own scope: each alternative a case
+    /// region whose failed test advances to the next alternative and whose
+    /// success completes to the commands after the `|`, and whose else
+    /// region advances the enclosing case; a binding the first alternative
+    /// declares is the slot the later ones assign.
+    fn case_commands(&mut self, commands: &[CheckedCommand]) {
+        for command in commands {
+            match command {
+                CheckedCommand::Equal { test } => self.case_test(*test),
+                CheckedCommand::Bind { declaration } => self.stmt(*declaration),
+                CheckedCommand::Alternatives(alternatives) => {
+                    let cases = alternatives
+                        .iter()
+                        .map(|commands| {
+                            self.region(|this| {
+                                this.case_commands(commands);
+                                Terminator::MatchComplete
+                            })
+                        })
+                        .collect();
+                    let orelse = self.region(|_| Terminator::MatchNext);
+                    self.push(HirInstr::Match { cases, orelse });
+                }
+            }
+        }
+    }
+
+    /// One test of a case: `hlcf.if` over `test`, whose else arm advances to
+    /// the next case.
+    fn case_test(&mut self, test: CheckedNodeId) {
+        let cond = HirCond::Expr(self.expr(test));
+        let then = self.region(|_| Terminator::Yield);
+        let orelse = self.region(|_| Terminator::MatchNext);
+        self.push(HirInstr::If {
+            cond,
+            then,
+            elifs: Vec::new(),
             orelse,
         });
     }
@@ -1094,10 +1261,19 @@ impl Lower {
     /// first, as the op's attributes, then one region per arm.
     fn comptime_if(
         &mut self,
-        branches: &[(CheckedNodeId, Vec<CheckedStmtId>)],
+        id: CheckedStmtId,
+        branches: &[(CheckedCondition, Vec<CheckedStmtId>)],
         orelse: Option<&[CheckedStmtId]>,
     ) {
-        let conds = branches.iter().map(|(cond, _)| self.expr(*cond)).collect();
+        let Some(conds) = branches
+            .iter()
+            .map(|(cond, _)| cond.boolean())
+            .collect::<Option<Vec<_>>>()
+        else {
+            self.push(HirInstr::Stmt(self.statement(id)));
+            return;
+        };
+        let conds = conds.into_iter().map(|cond| self.expr(cond)).collect();
         let arms = branches
             .iter()
             .map(|(_, body)| self.comptime_arm(Some(body)))
@@ -1156,22 +1332,60 @@ impl Lower {
     /// tests `cond` first (`lowerLITLoop`).
     fn while_loop(
         &mut self,
-        cond: CheckedNodeId,
+        cond: &CheckedCondition,
         body: &[CheckedStmtId],
         orelse: Option<&[CheckedStmtId]>,
     ) {
         let label = self.label();
-        let body = self.region(|this| {
-            let cond = HirCond::Expr(this.expr(cond));
-            this.loop_test(cond, label, orelse);
-            this.loops.push(EnclosingLoop {
-                target: LoopTarget::Loop(label),
-                cleanup: Vec::new(),
-            });
-            this.scoped_block(body);
-            this.loops.pop();
-            Terminator::Continue(label)
-        });
+        let body = match cond {
+            CheckedCondition::Expr(cond) => self.region(|this| {
+                let cond = HirCond::Expr(this.expr(*cond));
+                this.loop_test(cond, label, orelse);
+                this.loops.push(EnclosingLoop {
+                    target: LoopTarget::Loop(label),
+                    cleanup: Vec::new(),
+                });
+                this.scoped_block(body);
+                this.loops.pop();
+                Terminator::Continue(label)
+            }),
+            // `while case`: each visit of the header anchors the value
+            // again and matches it; a failed match runs the loop's `else`
+            // and leaves, as a false condition does, and the bindings exist
+            // in the body alone.
+            CheckedCondition::Case {
+                anchor, commands, ..
+            } => self.region(|this| {
+                this.scopes.push(HashMap::new());
+                if let Some(anchor) = anchor {
+                    this.stmt(*anchor);
+                }
+                let orelse = this.region(|this| {
+                    if let Some(body) = orelse {
+                        this.scoped_block(body);
+                    }
+                    Terminator::Break(label)
+                });
+                let case = this.region(|this| {
+                    this.scopes.push(HashMap::new());
+                    this.case_commands(commands);
+                    this.loops.push(EnclosingLoop {
+                        target: LoopTarget::Loop(label),
+                        cleanup: Vec::new(),
+                    });
+                    this.block(body);
+                    this.loops.pop();
+                    this.scopes.pop();
+                    Terminator::MatchComplete
+                });
+                this.push(HirInstr::Match {
+                    cases: vec![case],
+                    orelse,
+                });
+                this.scopes.pop();
+                Terminator::Continue(label)
+            }),
+        };
         self.push(HirInstr::Loop { label, body });
     }
 
@@ -1404,6 +1618,11 @@ fn explicit_local_names(checked: &CheckedTables, body: &[CheckedStmtId]) -> Hash
                 | CheckedStmtOp::ComptimeFor { body, .. }
                 | CheckedStmtOp::With { body, .. }
                 | CheckedStmtOp::Scope(body) => walk(checked, body, names),
+                CheckedStmtOp::Match { .. } => {
+                    for body in statement.op.bodies() {
+                        walk(checked, body, names);
+                    }
+                }
                 CheckedStmtOp::Try {
                     body,
                     except,
@@ -1445,8 +1664,8 @@ fn checked_statement_roots(statement: &CheckedStmtOp) -> Vec<CheckedNodeId> {
         | CheckedStmtOp::AugAssign { place, value, .. } => {
             vec![*place, *value]
         }
-        CheckedStmtOp::Unpack { targets, value, .. } => {
-            targets.iter().copied().chain([*value]).collect()
+        CheckedStmtOp::Destructure { target, value } => {
+            target.expressions().into_iter().chain([*value]).collect()
         }
         CheckedStmtOp::Return(Some(value)) => vec![*value],
         CheckedStmtOp::With { items, .. } => items.iter().map(|item| item.context).collect(),

@@ -429,6 +429,8 @@ pub(super) fn summarize_interior_region(
             | MirTerm::ComptimeYield(_)
             | MirTerm::ComptimeBreak
             | MirTerm::ComptimeContinue
+            | MirTerm::MatchNext
+            | MirTerm::MatchComplete
             | MirTerm::Unreachable => {}
         }
     }
@@ -856,6 +858,7 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         | MirInstr::Loop { .. }
         | MirInstr::ComptimeIf { .. }
         | MirInstr::ComptimeFor { .. }
+        | MirInstr::Match { .. }
         | MirInstr::Const { .. }
         | MirInstr::SizeOf { .. }
         | MirInstr::ParamListAddress { .. }

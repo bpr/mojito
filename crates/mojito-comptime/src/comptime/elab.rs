@@ -297,6 +297,19 @@ impl Elab<'_> {
                     },
                 ));
             }
+            // A `match` is checked whole; its case bodies elaborate as a
+            // branch's do. A `comptime match` stays in its template like a
+            // `comptime if`: the elaborator below MIR selects its case.
+            StmtKind::Match { subject, cases } => {
+                let cases = self.match_cases(cases, env, in_fn)?;
+                out.push(rebuilt(
+                    stmt,
+                    StmtKind::Match {
+                        subject: subject.clone(),
+                        cases,
+                    },
+                ));
+            }
             StmtKind::For {
                 var,
                 binding,
@@ -317,29 +330,7 @@ impl Elab<'_> {
                     },
                 ));
             }
-            StmtKind::Try {
-                body,
-                except,
-                orelse,
-                finalbody,
-            } => {
-                let body = self.block(body, env, in_fn)?;
-                let except = match except {
-                    Some((n, b)) => Some((n.clone(), self.block(b, env, in_fn)?)),
-                    None => None,
-                };
-                let orelse = self.opt_block(orelse, env, in_fn)?;
-                let finalbody = self.opt_block(finalbody, env, in_fn)?;
-                out.push(rebuilt(
-                    stmt,
-                    StmtKind::Try {
-                        body,
-                        except,
-                        orelse,
-                        finalbody,
-                    },
-                ));
-            }
+            StmtKind::Try { .. } => out.push(self.try_stmt(stmt, env, in_fn)?),
             // The context-manager protocol is a checker desugar (the manager
             // type selects the `__enter__`/`__exit__` shape); elaborate the
             // body and keep the statement, like `While`.
@@ -486,6 +477,60 @@ impl Elab<'_> {
             _ => out.push(stmt.clone()),
         }
         Ok(())
+    }
+
+    /// A `try` statement with each of its parts elaborated.
+    fn try_stmt(
+        &self,
+        stmt: &Stmt,
+        env: &mut ConstEnv<'_>,
+        in_fn: bool,
+    ) -> Result<Stmt, ComptimeError> {
+        let StmtKind::Try {
+            body,
+            except,
+            orelse,
+            finalbody,
+        } = &stmt.kind
+        else {
+            return Ok(stmt.clone());
+        };
+        let body = self.block(body, env, in_fn)?;
+        let except = match except {
+            Some((n, b)) => Some((n.clone(), self.block(b, env, in_fn)?)),
+            None => None,
+        };
+        let orelse = self.opt_block(orelse, env, in_fn)?;
+        let finalbody = self.opt_block(finalbody, env, in_fn)?;
+        Ok(rebuilt(
+            stmt,
+            StmtKind::Try {
+                body,
+                except,
+                orelse,
+                finalbody,
+            },
+        ))
+    }
+
+    /// The cases of a runtime `match`, their bodies elaborated.
+    fn match_cases(
+        &self,
+        cases: &[mojito_ast::ast::MatchCase],
+        env: &mut ConstEnv<'_>,
+        in_fn: bool,
+    ) -> Result<Vec<mojito_ast::ast::MatchCase>, ComptimeError> {
+        cases
+            .iter()
+            .map(|case| {
+                Ok(mojito_ast::ast::MatchCase {
+                    pattern: case.pattern.clone(),
+                    guard: case.guard.clone(),
+                    body: self.block(&case.body, env, in_fn)?,
+                    span: case.span,
+                })
+            })
+            .collect()
     }
 
     #[allow(clippy::ref_option, reason = "TODO: take Option<&T>")]
@@ -1303,7 +1348,7 @@ fn spell_aliases_in_conditions(statements: &mut [Stmt], aliases: &HashMap<String
         fn visit_stmt_mut(&mut self, statement: &mut Stmt) {
             if let StmtKind::ComptimeIf { branches, .. } = &mut statement.kind {
                 for (condition, _) in branches {
-                    mojito_ast::visit::walk_expr_mut(&mut Spell(self.0), condition);
+                    mojito_ast::visit::walk_condition_mut(&mut Spell(self.0), condition);
                 }
             }
         }

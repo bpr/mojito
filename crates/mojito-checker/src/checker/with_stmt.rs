@@ -186,7 +186,10 @@ impl Checker {
 /// derived from the statement's own ([`SyntaxId::derived`]), so building the
 /// desugar again yields the same occurrences. Hidden names are unique per
 /// statement.
-struct Synth {
+/// A node factory for syntax the check synthesizes on behalf of statement
+/// `parent`: every node carries the statement's span and module and an
+/// identity derived from the statement's, so its facts are its own.
+pub(super) struct Synth {
     span: mojito_common::token::Span,
     module: Option<String>,
     source: Option<String>,
@@ -195,21 +198,54 @@ struct Synth {
 }
 
 impl Synth {
-    fn stmt(&self, kind: StmtKind) -> Stmt {
+    /// The factory for the nodes the check synthesizes for `stmt`, their
+    /// expressions sourced as `source`.
+    pub(super) fn for_statement(stmt: &Stmt, source: Option<String>) -> Self {
+        Self {
+            span: stmt.span,
+            module: stmt.module.clone(),
+            source,
+            parent: stmt.syntax_id,
+            next: std::cell::Cell::new(0),
+        }
+    }
+
+    /// The factory for the nodes the check synthesizes for the `case`
+    /// condition whose pattern is `pattern`, their expressions sourced as
+    /// `source`.
+    pub(super) fn for_pattern(
+        pattern: &mojito_ast::ast::MatchPattern,
+        source: Option<String>,
+    ) -> Self {
+        Self {
+            span: pattern.span,
+            module: pattern.source.clone(),
+            source,
+            parent: pattern.syntax_id,
+            next: std::cell::Cell::new(0),
+        }
+    }
+
+    /// The statement's own identity, which hidden names derive from.
+    pub(super) const fn parent(&self) -> SyntaxId {
+        self.parent
+    }
+
+    pub(super) fn stmt(&self, kind: StmtKind) -> Stmt {
         let mut statement = Stmt::new(kind, self.span);
         statement.module.clone_from(&self.module);
         statement.syntax_id = self.identity();
         statement
     }
 
-    fn expr(&self, kind: ExprKind) -> Expr {
+    pub(super) fn expr(&self, kind: ExprKind) -> Expr {
         let mut expression = Expr::new(kind, self.span);
         expression.source.clone_from(&self.source);
         expression.syntax_id = self.identity();
         expression
     }
 
-    fn identifier(&self, name: &str) -> Expr {
+    pub(super) fn identifier(&self, name: &str) -> Expr {
         self.expr(ExprKind::Identifier(name.to_string()))
     }
 
@@ -235,13 +271,7 @@ fn first_item<'a>(
     let [item, rest @ ..] = items else {
         return None;
     };
-    let synth = Synth {
-        span: stmt.span,
-        module: stmt.module.clone(),
-        source: item.context.source.clone(),
-        parent: stmt.syntax_id,
-        next: std::cell::Cell::new(0),
-    };
+    let synth = Synth::for_statement(stmt, item.context.source.clone());
     let body = if rest.is_empty() {
         body.to_vec()
     } else {
@@ -363,7 +393,9 @@ fn desugar_tail(
                 }),
                 synth.stmt(StmtKind::If {
                     branches: vec![(
-                        synth.expr(ExprKind::Prefix(PrefixOp::Not, Box::new(error_exit))),
+                        mojito_ast::ast::Condition::Expr(
+                            synth.expr(ExprKind::Prefix(PrefixOp::Not, Box::new(error_exit))),
+                        ),
                         vec![synth.stmt(StmtKind::Raise(synth.identifier(&error)))],
                     )],
                     orelse: None,
@@ -371,10 +403,10 @@ fn desugar_tail(
             ];
             let cleanup = vec![synth.stmt(StmtKind::If {
                 branches: vec![(
-                    synth.expr(ExprKind::Prefix(
+                    mojito_ast::ast::Condition::Expr(synth.expr(ExprKind::Prefix(
                         PrefixOp::Not,
                         Box::new(synth.identifier(&handled)),
-                    )),
+                    ))),
                     vec![plain_exit()],
                 )],
                 orelse: None,

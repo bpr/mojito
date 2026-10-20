@@ -657,12 +657,8 @@ fn declared_local_names(s: &Stmt, names: &mut HashSet<String>) {
         | StmtKind::Assign { name, .. } => {
             names.insert(name.clone());
         }
-        StmtKind::Unpack { targets, .. } => {
-            for target in targets {
-                if let ExprKind::Identifier(name) = &target.kind {
-                    names.insert(name.clone());
-                }
-            }
+        StmtKind::Destructure { target, .. } => {
+            names.extend(target.declared_names().into_iter().map(str::to_string));
         }
         _ => {}
     }
@@ -930,6 +926,77 @@ fn rewrite_decorators(decorators: &mut [mojito_ast::ast::Decorator], subs: Subs)
     }
 }
 
+/// A condition's reads: a pattern's embedded expressions and the matched
+/// value. The pattern's names are definitions.
+fn rewrite_condition(condition: &mut mojito_ast::ast::Condition, subs: Subs) {
+    if let Some(pattern) = condition.pattern_mut() {
+        for value in pattern.expressions_mut() {
+            rewrite_expr(value, subs);
+        }
+    }
+    rewrite_expr(condition.value_mut(), subs);
+}
+
+fn retype_condition(condition: &mut mojito_ast::ast::Condition, subs: TypeSubs) {
+    if let Some(pattern) = condition.pattern_mut() {
+        for value in pattern.expressions_mut() {
+            retype_expr(value, subs);
+        }
+    }
+    retype_expr(condition.value_mut(), subs);
+}
+
+/// A case's bindings shadow a constant of their name in the guard and body;
+/// its pattern's expressions read the enclosing names.
+fn rewrite_cases(cases: &mut [mojito_ast::ast::MatchCase], subs: Subs, into_defs: bool) {
+    for case in cases {
+        for value in case.pattern.expressions_mut() {
+            rewrite_expr(value, subs);
+        }
+        let bound = case
+            .pattern
+            .bindings()
+            .into_iter()
+            .map(|(name, _)| name.to_string())
+            .collect::<HashSet<String>>();
+        let inner: Subs = &|name| {
+            if into_defs && bound.contains(name) {
+                None
+            } else {
+                subs(name)
+            }
+        };
+        if let Some(guard) = &mut case.guard {
+            rewrite_expr(guard, inner);
+        }
+        rewrite_block(&mut case.body, inner, into_defs);
+    }
+}
+
+/// A `with` statement's managers read the enclosing names; an `as NAME`
+/// binding rebinds its name in the body.
+fn rewrite_with(items: &mut [WithItem], body: &mut [Stmt], subs: Subs, into_defs: bool) {
+    let mut bound_names: HashSet<String> = HashSet::new();
+    for WithItem { context, var } in items {
+        rewrite_expr(context, subs);
+        if into_defs && let Some(name) = var {
+            bound_names.insert(name.clone());
+        }
+    }
+    if bound_names.is_empty() {
+        rewrite_block(body, subs, into_defs);
+    } else {
+        let inner: Subs = &|name| {
+            if bound_names.contains(name) {
+                None
+            } else {
+                subs(name)
+            }
+        };
+        rewrite_block(body, inner, into_defs);
+    }
+}
+
 #[allow(
     clippy::cognitive_complexity,
     clippy::too_many_lines,
@@ -984,24 +1051,21 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
             rewrite_expr(place, subs);
             rewrite_expr(value, subs);
         }
-        // A declaring unpack's bare name binds a new local, so it is never a
-        // use of a same-named constant.
-        StmtKind::Unpack {
-            targets,
-            value,
-            declares,
-        } => {
-            for target in targets {
-                if !(*declares && matches!(target.kind, ExprKind::Identifier(_))) {
-                    rewrite_expr(target, subs);
-                }
+        // A target's declared leaves are new locals; only its places read.
+        StmtKind::Destructure { target, value } => {
+            for place in target.places_mut() {
+                rewrite_expr(place, subs);
             }
             rewrite_expr(value, subs);
+        }
+        StmtKind::Match { subject, cases } | StmtKind::ComptimeMatch { subject, cases } => {
+            rewrite_expr(subject, subs);
+            rewrite_cases(cases, subs, into_defs);
         }
         StmtKind::Expr(e) => rewrite_expr(e, subs),
         StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
             for (c, b) in branches {
-                rewrite_expr(c, subs);
+                rewrite_condition(c, subs);
                 rewrite_block(b, subs, into_defs);
             }
             if let Some(b) = orelse {
@@ -1009,7 +1073,7 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
             }
         }
         StmtKind::While { cond, body, orelse } => {
-            rewrite_expr(cond, subs);
+            rewrite_condition(cond, subs);
             rewrite_block(body, subs, into_defs);
             if let Some(body) = orelse {
                 rewrite_block(body, subs, into_defs);
@@ -1082,28 +1146,7 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
         StmtKind::Scope(body) => {
             rewrite_block(body, subs, into_defs);
         }
-        StmtKind::With { items, body } => {
-            let mut bound_names: HashSet<String> = HashSet::new();
-            for WithItem { context, var } in items {
-                rewrite_expr(context, subs);
-                if into_defs && let Some(name) = var {
-                    bound_names.insert(name.clone());
-                }
-            }
-            if bound_names.is_empty() {
-                rewrite_block(body, subs, into_defs);
-            } else {
-                // An `as NAME` binding rebinds its name in the with-body.
-                let inner: Subs = &|name| {
-                    if bound_names.contains(name) {
-                        None
-                    } else {
-                        subs(name)
-                    }
-                };
-                rewrite_block(body, inner, into_defs);
-            }
-        }
+        StmtKind::With { items, body } => rewrite_with(items, body, subs, into_defs),
         // A nested `def`/`struct` is a separate scope. For materialization
         // (`into_defs`), descend but shadow the function's parameters (a parameter
         // named like a module constant is *not* that constant). For loop-variable
@@ -1408,14 +1451,28 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
             retype_expr(place, subs);
             retype_expr(value, subs);
         }
-        StmtKind::Unpack { targets, value, .. } => {
-            retype_exprs(targets, subs);
+        StmtKind::Destructure { target, value } => {
+            for place in target.places_mut() {
+                retype_expr(place, subs);
+            }
             retype_expr(value, subs);
+        }
+        StmtKind::Match { subject, cases } | StmtKind::ComptimeMatch { subject, cases } => {
+            retype_expr(subject, subs);
+            for case in cases {
+                for value in case.pattern.expressions_mut() {
+                    retype_expr(value, subs);
+                }
+                if let Some(guard) = &mut case.guard {
+                    retype_expr(guard, subs);
+                }
+                substitute_type_bindings_in_block(&mut case.body, subs);
+            }
         }
         StmtKind::Expr(e) => retype_expr(e, subs),
         StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
             for (condition, body) in branches {
-                retype_expr(condition, subs);
+                retype_condition(condition, subs);
                 substitute_type_bindings_in_block(body, subs);
             }
             if let Some(body) = orelse {
@@ -1423,7 +1480,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
             }
         }
         StmtKind::While { cond, body, orelse } => {
-            retype_expr(cond, subs);
+            retype_condition(cond, subs);
             substitute_type_bindings_in_block(body, subs);
             if let Some(body) = orelse {
                 substitute_type_bindings_in_block(body, subs);

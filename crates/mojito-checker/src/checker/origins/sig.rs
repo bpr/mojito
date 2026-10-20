@@ -407,7 +407,10 @@ impl Checker {
                     return Err(TypeError::ReturnedOriginRegisterPassable { place, ty: None });
                 }
                 RegisterPassability::Proven if read && self.is_trivial_register_passable(ty) => {
-                    return Err(TypeError::NoMemoryOrigin { ty: ty.to_string() });
+                    return Err(TypeError::NoMemoryOrigin {
+                        ty: ty.to_string(),
+                        context: "origin specifier".into(),
+                    });
                 }
                 RegisterPassability::Proven => {
                     return Err(TypeError::ReturnedOriginRegisterPassable {

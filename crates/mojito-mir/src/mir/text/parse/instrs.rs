@@ -851,6 +851,13 @@ impl Decoder {
                 body: self.req(value, fields, "body", |d, v| Some(d.region_blocks(v)))?,
                 orelse: self.req(value, fields, "else", |d, v| Some(d.region_blocks(v)))?,
             }),
+            "match" => Some(MirInstr::Match {
+                cases: self.req(value, fields, "cases", |d, v| {
+                    let cases = d.list(v).ok()?;
+                    Some(cases.iter().map(|case| d.region_blocks(case)).collect())
+                })?,
+                orelse: self.req(value, fields, "else", |d, v| Some(d.region_blocks(v)))?,
+            }),
             "drop.reg" => Some(MirInstr::Drop {
                 reg: self.req(value, fields, "reg", Self::reg)?,
             }),
@@ -979,6 +986,8 @@ impl Decoder {
             )?)),
             "comptime.for.break" => Some(MirTerm::ComptimeBreak),
             "comptime.for.continue" => Some(MirTerm::ComptimeContinue),
+            "match.next" => Some(MirTerm::MatchNext),
+            "match.complete" => Some(MirTerm::MatchComplete),
             "unreachable" => Some(MirTerm::Unreachable),
             other => {
                 self.error(value.span, format!("unknown terminator `{other}`"));

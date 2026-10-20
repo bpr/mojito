@@ -92,8 +92,9 @@ conflicting signature"), so the fixture spells `c_int(1)` and
 name/`as`/`var`/`ref` bindings, tuple, struct, and list patterns,
 `.Some(x)` cases of `EnumLike` types, explicit `== value` patterns, and
 `comptime match`; `if case`/`while case`; `var [first, *middle, last] =
-values`. The window's one large feature wants its own plan: R1116 writes it
-and files the slices, R1117 and R1118 are the statement forms that follow.
+values`. The window's one large feature has its plan, `match-case-plan.md`:
+its landed slices run `match`, `if case`, and `while case`, and R1132–R1143
+are the slices and residues that remain.
 
 ### 4. `where <cond> else "<message>"` and `not <Trait>`
 
@@ -535,7 +536,7 @@ and wants its own plan.
   `'TString[StringSpan("a")]'`), and an origin in a conversion diagnostic now
   prints as `origin_of(rhs.origin)` rather than `rhs.origin.mut`.
 
-Sections 1 and 3 were filed at the next re-pin as R1115/R1114 and R1116–R1118; section 4's surfaces that still have no Mojito spelling are listed under the `cfd79ca736` changeset.
+Sections 1 and 3 were filed at the next re-pin as R1115/R1114 and the pattern-matching plan (now R1132–R1143); section 4's surfaces that still have no Mojito spelling are listed under the `cfd79ca736` changeset.
 
 ## Historical Audit — `a79fbdf59f2` (2026-08-26)
 

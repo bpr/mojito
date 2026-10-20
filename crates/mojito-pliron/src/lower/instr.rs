@@ -865,7 +865,8 @@ impl FnLowering<'_> {
             MirInstr::If { .. }
             | MirInstr::Loop { .. }
             | MirInstr::ComptimeIf { .. }
-            | MirInstr::ComptimeFor { .. } => Err(self.unsupported(
+            | MirInstr::ComptimeFor { .. }
+            | MirInstr::Match { .. } => Err(self.unsupported(
                 format!(
                     "structured control flow `{}` reached native lowering",
                     mojito_mir::mir::text::instruction_mnemonic(instr)

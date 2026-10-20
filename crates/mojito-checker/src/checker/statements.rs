@@ -373,7 +373,7 @@ impl Checker {
     /// selection is the elaborator's, so no arm is assumed here.
     pub(super) fn check_conditional(
         &mut self,
-        branches: &[(Expr, Vec<Stmt>)],
+        branches: &[(mojito_ast::ast::Condition, Vec<Stmt>)],
         orelse: Option<&[Stmt]>,
         ret: Option<&Ty>,
         in_loop: bool,
@@ -384,6 +384,16 @@ impl Checker {
         let mut fallthrough_reachable = true;
         for (cond, body) in branches {
             (*self.uninitialized.borrow_mut()).clone_from(&before);
+            if let mojito_ast::ast::Condition::Case { pattern, value } = cond
+                && !comptime
+            {
+                self.check_case_condition(pattern, value, body, ret, in_loop)?;
+                if fallthrough_reachable {
+                    exits.push(self.uninitialized.borrow().clone());
+                }
+                continue;
+            }
+            let cond = Self::boolean_condition(cond, "if")?;
             if comptime {
                 self.check_comptime_condition(cond)?;
                 // A `conforms_to` the condition proves holds in this arm alone.
@@ -419,6 +429,20 @@ impl Checker {
         }
         *self.uninitialized.borrow_mut() = exits.into_iter().flatten().collect::<HashSet<_>>();
         Ok(())
+    }
+
+    /// The boolean expression of a condition. A `case` condition's test is
+    /// slice M15's; until it lands the statement is rejected here.
+    pub(super) fn boolean_condition<'c>(
+        condition: &'c mojito_ast::ast::Condition,
+        statement: &str,
+    ) -> Result<&'c Expr, TypeError> {
+        match condition {
+            mojito_ast::ast::Condition::Expr(value) => Ok(value),
+            mojito_ast::ast::Condition::Case { .. } => Err(TypeError::Unsupported(format!(
+                "'{statement} case' pattern conditions"
+            ))),
+        }
     }
 
     /// Whether `ty` is a type parameter one of whose bounds requires the
@@ -686,6 +710,7 @@ impl Checker {
                 temporary: None,
                 reference: None,
                 carries_loans: false,
+                elements: Vec::new(),
             })
             .collect::<Vec<_>>();
         // The nominal `Tuple` reads each element through its
@@ -1446,189 +1471,9 @@ impl Checker {
                 Ok(())
             }
 
-            // Tuple unpacking `a, b = t`: `t` must be a tuple of matching arity; each
-            // target (a NAME or a place) receives the corresponding element type. A
-            // NAME follows the assignment rules (re-assign if in scope, else a
-            // var-less introduction).
-            StmtKind::Unpack {
-                targets,
-                value,
-                declares,
-            } => {
-                let vt = self.infer(value)?;
-                let Some(elems) = tuple_elements(&vt) else {
-                    return Err(TypeError::TypeMismatch {
-                        expected: "a tuple".to_string(),
-                        found: vt.to_string(),
-                        context: "tuple unpacking".to_string(),
-                    });
-                };
-                if elems.len() != targets.len() {
-                    return Err(TypeError::TypeMismatch {
-                        expected: format!("a {}-element tuple", targets.len()),
-                        found: vt.to_string(),
-                        context: "tuple unpacking".to_string(),
-                    });
-                }
-                let elems = elems.into_iter().cloned().collect::<Vec<_>>();
-                // A place is read element by element through the reference it
-                // yields; the Tuple's index accessor demands it.
-                let place = is_place_expr(value);
-                let served = self.tuple_index_accessor(&vt).is_some();
-                let source = match place.then(|| self.reference_actual(value)).transpose() {
-                    Ok(source) => source,
-                    Err(error) if served => {
-                        return Err(error);
-                    }
-                    Err(_) => None,
-                };
-                // A temporary `Tuple` lives in a hidden slot for the
-                // statement, and its elements are read through references
-                // into it, as a place's are. The slot's owner is the root of
-                // each element reference the plan records.
-                let source = match source {
-                    None if served && !place => {
-                        let owner = self.fresh_owner()?;
-                        Some(mojito_types::origin::RefTy {
-                            referent: vt.clone(),
-                            origin: mojito_types::origin::Origin::Place(
-                                mojito_types::origin::OriginPlace {
-                                    root: owner,
-                                    path: Vec::new(),
-                                },
-                            ),
-                            mutability: mojito_types::origin::Mutability::Immutable,
-                        })
-                    }
-                    source => source,
-                };
-                let mut unpack_plan = self.tuple_unpack_plan(&vt, source.as_ref())?;
-                if let (false, true, Some(mojito_types::origin::Origin::Place(temporary))) =
-                    (place, served, source.as_ref().map(|source| &source.origin))
-                {
-                    for element in &mut unpack_plan {
-                        element.temporary = Some(temporary.root);
-                    }
-                }
-                // A named target owns a copy of the element a place keeps, so
-                // the element must copy implicitly; `_` reads nothing.
-                for (target, element) in targets.iter().zip(&unpack_plan) {
-                    if element.reference.is_none()
-                        || matches!(&target.kind, ExprKind::Identifier(name) if name == "_")
-                    {
-                        continue;
-                    }
-                    let context = "unpacking a Tuple place copies each element".to_string();
-                    if !self.is_copyable(&element.ty) {
-                        return Err(TypeError::NonCopyable {
-                            ty: element.ty.to_string(),
-                            context,
-                        });
-                    }
-                    if !self.is_implicitly_copyable(&element.ty) {
-                        return Err(TypeError::ImplicitCopy {
-                            ty: element.ty.to_string(),
-                            context,
-                            transferable: false,
-                            copyable: true,
-                        });
-                    }
-                }
-                self.record_at(value.source_span()).tuple_unpack_plan = Some(unpack_plan);
-                for (index, (target, elem)) in targets.iter().zip(&elems).enumerate() {
-                    match &target.kind {
-                        // `_` discards its element (no binding, no declaration).
-                        ExprKind::Identifier(name) if name == "_" => {}
-                        // `var a, b = e` declares each target; a bare `a, b = e`
-                        // requires every target already in scope.
-                        ExprKind::Identifier(name) if *declares => {
-                            let declared = self.inferred_binding_ty(elem, name)?;
-                            self.declare(name, declared)?;
-                        }
-                        ExprKind::Identifier(name) => match self.lookup(name).cloned() {
-                            Some(existing) => {
-                                self.check_capture_access(name, true)?;
-                                if !self.is_binding_mutable(name) {
-                                    return Err(TypeError::ImmutableBinding(name.clone()));
-                                }
-                                if !coerces(elem, &existing) {
-                                    return Err(TypeError::TypeMismatch {
-                                        expected: existing.to_string(),
-                                        found: elem.to_string(),
-                                        context: format!("unpacking into '{name}'"),
-                                    });
-                                }
-                                if matches!(existing.kind(), TyKind::Ref(_)) {
-                                    self.record_place_write_invalidation(
-                                        target.source_span(),
-                                        target,
-                                    );
-                                } else if let Some(owner) = self.lookup_owner(name) {
-                                    self.record_owner_invalidation(
-                                        target.source_span(),
-                                        owner,
-                                        Vec::new(),
-                                    );
-                                }
-                            }
-                            None => return Err(TypeError::AssignToUndeclared(name.clone())),
-                        },
-                        _ => {
-                            if let Some(root) = place_root_name(target) {
-                                self.check_capture_access(root, true)?;
-                            }
-                            let target_ty = self.check_place(target)?;
-                            self.record_place_write_invalidation(target.source_span(), target);
-                            if !coerces(elem, &target_ty) {
-                                if let Some(mismatch) =
-                                    self.struct_origin_mismatch(elem, &target_ty)
-                                {
-                                    return Err(mismatch);
-                                }
-                                return Err(TypeError::TypeMismatch {
-                                    expected: target_ty.to_string(),
-                                    found: elem.to_string(),
-                                    context: "unpacking into a place".to_string(),
-                                });
-                            }
-                            // Store-outward twin for unpack-into-place. A
-                            // loan-carrying element cannot currently reach
-                            // here (rvalue unpack demands implicitly copyable
-                            // elements and place targets type-match exactly),
-                            // so this is defensive coverage that keeps the
-                            // boundary closed if those restrictions loosen.
-                            let element_value = match &value.kind {
-                                ExprKind::TupleLit(items) if items.len() == targets.len() => {
-                                    &items[index]
-                                }
-                                _ => value,
-                            };
-                            let storage = Some(target_ty.clone());
-                            self.check_outward_store(target, element_value, elem, &storage)?;
-                        }
-                    }
-                    if let ExprKind::Identifier(name) = &target.kind
-                        && let Some(owner) = self.lookup_owner(name)
-                    {
-                        self.record_at(target.source_span()).binding = Some(owner);
-                        // Unpack targets are binder/place syntax, not ordinary
-                        // inferred expressions, so retain their complete slot
-                        // metadata explicitly for checked MIR verification and
-                        // for a nested closure that captures the introduction.
-                        if let Some(storage_ty) = self.lookup(name).cloned() {
-                            let value_ty = match storage_ty.kind() {
-                                TyKind::Ref(reference) => reference.referent.clone(),
-                                _ => storage_ty.clone(),
-                            };
-                            self.record_at(target.source_span()).ty = Some(value_ty);
-                            self.record_at(target.source_span()).place_ty =
-                                Some(storage_ty.clone());
-                            self.record_at(target.source_span()).binding_ty = Some(storage_ty);
-                        }
-                    }
-                }
-                Ok(())
-            }
+            // Destructuring `a, b = t`, `(var a, (ref b, _)) = pair`: the
+            // value's pieces go to the target's leaves (`destructure.rs`).
+            StmtKind::Destructure { target, value } => self.check_destructure(target, value),
 
             // The context-manager protocol is a checked desugar (`with_stmt.rs`).
             StmtKind::With { items, body } => self.check_with(stmt, items, body, ret, in_loop),
@@ -1968,11 +1813,25 @@ impl Checker {
                 self.check_conditional(branches, orelse.as_deref(), ret, in_loop, false)
             }
 
+            StmtKind::Match { subject, cases } => {
+                self.check_match(stmt, subject, cases, ret, in_loop)
+            }
+            // Pattern matching lands by slice: the parsed forms are rejected
+            // here until their checked plans exist.
+            StmtKind::ComptimeMatch { .. } => {
+                Err(TypeError::Unsupported("'comptime match' statements".into()))
+            }
+
             StmtKind::While { cond, body, orelse } => {
                 let before = self.uninitialized.borrow().clone();
-                self.register_named_bindings(cond)?;
-                self.expect_bool(cond, "while condition")?;
-                self.check_scoped_block(body, ret, true)?;
+                if let mojito_ast::ast::Condition::Case { pattern, value } = cond {
+                    self.check_case_condition(pattern, value, body, ret, true)?;
+                } else {
+                    let cond = Self::boolean_condition(cond, "while")?;
+                    self.register_named_bindings(cond)?;
+                    self.expect_bool(cond, "while condition")?;
+                    self.check_scoped_block(body, ret, true)?;
+                }
                 *self.uninitialized.borrow_mut() = before;
                 if let Some(body) = orelse {
                     self.check_scoped_block(body, ret, in_loop)?;
@@ -3069,16 +2928,17 @@ impl Checker {
         }
         // A function with a non-`None` return type must return on every
         // path (falling off the end would yield `None`).
+        let concluded = |stmt: &Stmt| self.match_concluded(stmt);
         if result.is_ok()
             && named_result.is_none()
             && ret_ty != TyKind::None
-            && !definitely_returns(body)
+            && !definitely_returns(body, &concluded)
         {
             result = Err(TypeError::MissingReturn(name.clone()));
         }
         if result.is_ok()
             && let Some(named_result) = named_result
-            && !definitely_initializes_named_result(body, &named_result.name)
+            && !definitely_initializes_named_result(body, &named_result.name, &concluded)
         {
             result = Err(TypeError::MissingReturn(name.clone()));
         }

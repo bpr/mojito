@@ -11,9 +11,10 @@
 use std::collections::HashMap;
 
 use crate::ast::{
-    ComprehensionClause, Decorator, Expr, ExprKind, FnParam, FunctionTypeParam, Method, Param,
-    ParamArg, Stmt, StmtKind, StructComptime, SubscriptArg, TStringPart, TraitComptime,
-    TraitMethod, Type, TypeParam,
+    ComprehensionClause, Condition, Decorator, DestructureTarget, DestructureTargetKind, Expr,
+    ExprKind, FnParam, FunctionTypeParam, MatchCase, MatchPattern, MatchPatternKind, Method, Param,
+    ParamArg, SequencePattern, SequenceTarget, Stmt, StmtKind, StructComptime, SubscriptArg,
+    TStringPart, TraitComptime, TraitMethod, Type, TypeParam,
 };
 
 /// Callbacks for a read-only walk. Every method has a no-op default.
@@ -26,6 +27,12 @@ pub trait Visitor {
 
     /// A type annotation, reported before its children.
     fn visit_type(&mut self, _ty: &Type) {}
+
+    /// A `case` pattern, reported before its children.
+    fn visit_pattern(&mut self, _pattern: &MatchPattern) {}
+
+    /// A destructuring target, reported before its children.
+    fn visit_target(&mut self, _target: &DestructureTarget) {}
 
     /// A scope that binds `names` is about to be walked (parameter names keep
     /// a pack's leading `*`). Returning `false` skips everything the scope
@@ -59,9 +66,15 @@ pub fn walk_stmt<V: Visitor>(visitor: &mut V, statement: &Stmt) {
             walk_expr(visitor, place);
             walk_expr(visitor, value);
         }
-        StmtKind::Unpack { targets, value, .. } => {
-            walk_exprs(visitor, targets);
+        StmtKind::Destructure { target, value } => {
+            walk_target(visitor, target);
             walk_expr(visitor, value);
+        }
+        StmtKind::Match { subject, cases } | StmtKind::ComptimeMatch { subject, cases } => {
+            walk_expr(visitor, subject);
+            for case in cases {
+                walk_case(visitor, case);
+            }
         }
         StmtKind::Def {
             decorators,
@@ -157,14 +170,12 @@ pub fn walk_stmt<V: Visitor>(visitor: &mut V, statement: &Stmt) {
         }
         StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
             for (condition, body) in branches {
-                walk_expr(visitor, condition);
-                walk_block(visitor, body);
+                walk_condition(visitor, condition, body);
             }
             walk_optional_block(visitor, orelse.as_deref());
         }
         StmtKind::While { cond, body, orelse } => {
-            walk_expr(visitor, cond);
-            walk_block(visitor, body);
+            walk_condition(visitor, cond, body);
             walk_optional_block(visitor, orelse.as_deref());
         }
         StmtKind::Scope(body) => walk_block(visitor, body),
@@ -221,6 +232,107 @@ pub fn walk_stmt<V: Visitor>(visitor: &mut V, statement: &Stmt) {
         | StmtKind::Pass
         | StmtKind::Break
         | StmtKind::Continue => {}
+    }
+}
+
+/// A condition and the body it guards: a `case` condition's bindings scope
+/// over the body, as a loop target's do.
+pub fn walk_condition<V: Visitor>(visitor: &mut V, condition: &Condition, body: &[Stmt]) {
+    match condition {
+        Condition::Expr(value) => {
+            walk_expr(visitor, value);
+            walk_block(visitor, body);
+        }
+        Condition::Case { pattern, value } => {
+            walk_expr(visitor, value);
+            walk_pattern(visitor, pattern);
+            let names = pattern
+                .bindings()
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect::<Vec<_>>();
+            if visitor.enter_scope(&names) {
+                walk_block(visitor, body);
+            }
+        }
+    }
+}
+
+/// One `case` arm: its pattern, then its guard and body in the scope of
+/// the pattern's bindings.
+pub fn walk_case<V: Visitor>(visitor: &mut V, case: &MatchCase) {
+    walk_pattern(visitor, &case.pattern);
+    let names = case
+        .pattern
+        .bindings()
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect::<Vec<_>>();
+    if !visitor.enter_scope(&names) {
+        return;
+    }
+    if let Some(guard) = &case.guard {
+        walk_expr(visitor, guard);
+    }
+    walk_block(visitor, &case.body);
+}
+
+pub fn walk_pattern<V: Visitor>(visitor: &mut V, pattern: &MatchPattern) {
+    visitor.visit_pattern(pattern);
+    match &pattern.kind {
+        MatchPatternKind::Literal(value)
+        | MatchPatternKind::Equal(value)
+        | MatchPatternKind::Head(value) => walk_expr(visitor, value),
+        MatchPatternKind::As { pattern, .. } => walk_pattern(visitor, pattern),
+        MatchPatternKind::Tuple(items) | MatchPatternKind::Or(items) => {
+            for item in items {
+                walk_pattern(visitor, item);
+            }
+        }
+        MatchPatternKind::Sequence(items) => {
+            for item in items {
+                if let SequencePattern::Element(pattern) = item {
+                    walk_pattern(visitor, pattern);
+                }
+            }
+        }
+        MatchPatternKind::Call { head, args, kwargs } => {
+            walk_expr(visitor, head);
+            for pattern in args {
+                walk_pattern(visitor, pattern);
+            }
+            for (_, pattern) in kwargs {
+                walk_pattern(visitor, pattern);
+            }
+        }
+        MatchPatternKind::Fields(fields) => {
+            for (_, pattern) in fields {
+                walk_pattern(visitor, pattern);
+            }
+        }
+        MatchPatternKind::Wildcard | MatchPatternKind::Bind { .. } => {}
+    }
+}
+
+pub fn walk_target<V: Visitor>(visitor: &mut V, target: &DestructureTarget) {
+    visitor.visit_target(target);
+    match &target.kind {
+        DestructureTargetKind::Place(place) => walk_expr(visitor, place),
+        DestructureTargetKind::Tuple(items) => {
+            for item in items {
+                walk_target(visitor, item);
+            }
+        }
+        DestructureTargetKind::Sequence(items) => {
+            for item in items {
+                match item {
+                    SequenceTarget::Element(target) | SequenceTarget::Star(target) => {
+                        walk_target(visitor, target);
+                    }
+                }
+            }
+        }
+        DestructureTargetKind::Discard | DestructureTargetKind::Declare { .. } => {}
     }
 }
 
@@ -712,6 +824,12 @@ pub trait MutVisitor {
 
     /// A type annotation, reported after its children.
     fn visit_type_mut(&mut self, _ty: &mut Type) {}
+
+    /// A `case` pattern, reported after its children.
+    fn visit_pattern_mut(&mut self, _pattern: &mut MatchPattern) {}
+
+    /// A destructuring target, reported after its children.
+    fn visit_target_mut(&mut self, _target: &mut DestructureTarget) {}
 }
 
 /// Walk every statement, expression, and annotation of a block in place.
@@ -757,15 +875,23 @@ pub fn walk_stmt_mut<V: MutVisitor>(visitor: &mut V, statement: &mut Stmt) {
             }
             walk_expr_mut(visitor, value);
         }
-        StmtKind::Unpack { targets, value, .. } => {
-            for target in targets {
-                walk_expr_mut(visitor, target);
-            }
+        StmtKind::Destructure { target, value } => {
+            walk_target_mut(visitor, target);
             walk_expr_mut(visitor, value);
+        }
+        StmtKind::Match { subject, cases } | StmtKind::ComptimeMatch { subject, cases } => {
+            walk_expr_mut(visitor, subject);
+            for case in cases {
+                walk_pattern_mut(visitor, &mut case.pattern);
+                if let Some(guard) = &mut case.guard {
+                    walk_expr_mut(visitor, guard);
+                }
+                walk_block_mut(visitor, &mut case.body);
+            }
         }
         StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
             for (condition, block) in branches {
-                walk_expr_mut(visitor, condition);
+                walk_condition_mut(visitor, condition);
                 walk_block_mut(visitor, block);
             }
             if let Some(block) = orelse {
@@ -773,7 +899,7 @@ pub fn walk_stmt_mut<V: MutVisitor>(visitor: &mut V, statement: &mut Stmt) {
             }
         }
         StmtKind::While { cond, body, orelse } => {
-            walk_expr_mut(visitor, cond);
+            walk_condition_mut(visitor, cond);
             walk_block_mut(visitor, body);
             if let Some(body) = orelse {
                 walk_block_mut(visitor, body);
@@ -935,6 +1061,74 @@ pub fn walk_stmt_mut<V: MutVisitor>(visitor: &mut V, statement: &mut Stmt) {
         | StmtKind::Break
         | StmtKind::Continue => {}
     }
+}
+
+pub fn walk_condition_mut<V: MutVisitor>(visitor: &mut V, condition: &mut Condition) {
+    if let Some(pattern) = condition.pattern_mut() {
+        walk_pattern_mut(visitor, pattern);
+    }
+    walk_expr_mut(visitor, condition.value_mut());
+}
+
+/// Walk one pattern in place, children first.
+pub fn walk_pattern_mut<V: MutVisitor>(visitor: &mut V, pattern: &mut MatchPattern) {
+    match &mut pattern.kind {
+        MatchPatternKind::Literal(value)
+        | MatchPatternKind::Equal(value)
+        | MatchPatternKind::Head(value) => walk_expr_mut(visitor, value),
+        MatchPatternKind::As { pattern, .. } => walk_pattern_mut(visitor, pattern),
+        MatchPatternKind::Tuple(items) | MatchPatternKind::Or(items) => {
+            for item in items {
+                walk_pattern_mut(visitor, item);
+            }
+        }
+        MatchPatternKind::Sequence(items) => {
+            for item in items {
+                if let SequencePattern::Element(pattern) = item {
+                    walk_pattern_mut(visitor, pattern);
+                }
+            }
+        }
+        MatchPatternKind::Call { head, args, kwargs } => {
+            walk_expr_mut(visitor, head);
+            for pattern in args {
+                walk_pattern_mut(visitor, pattern);
+            }
+            for (_, pattern) in kwargs {
+                walk_pattern_mut(visitor, pattern);
+            }
+        }
+        MatchPatternKind::Fields(fields) => {
+            for (_, pattern) in fields {
+                walk_pattern_mut(visitor, pattern);
+            }
+        }
+        MatchPatternKind::Wildcard | MatchPatternKind::Bind { .. } => {}
+    }
+    visitor.visit_pattern_mut(pattern);
+}
+
+/// Walk one destructuring target in place, children first.
+pub fn walk_target_mut<V: MutVisitor>(visitor: &mut V, target: &mut DestructureTarget) {
+    match &mut target.kind {
+        DestructureTargetKind::Place(place) => walk_expr_mut(visitor, place),
+        DestructureTargetKind::Tuple(items) => {
+            for item in items {
+                walk_target_mut(visitor, item);
+            }
+        }
+        DestructureTargetKind::Sequence(items) => {
+            for item in items {
+                match item {
+                    SequenceTarget::Element(target) | SequenceTarget::Star(target) => {
+                        walk_target_mut(visitor, target);
+                    }
+                }
+            }
+        }
+        DestructureTargetKind::Discard | DestructureTargetKind::Declare { .. } => {}
+    }
+    visitor.visit_target_mut(target);
 }
 
 /// Walk one expression in place, children first.

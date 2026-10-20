@@ -1,8 +1,9 @@
 use mojito::ast::{
-    ArgConvention, Capture, CaptureKind, CollectionKind, ComprehensionClause, Decorator, Expr,
-    ExprKind, FnParam, FunctionTypeParam, ImportName, ImportNames, InfixOp, KwArg, LoopBindingMode,
-    Method, Param, ParamArg, ParamKind, PrefixOp, Stmt, StmtKind, StructComptime, TStringPart,
-    TraitComptime, TraitMethod, Type, TypeParam, WithItem,
+    ArgConvention, BindingMode, Capture, CaptureKind, CollectionKind, ComprehensionClause,
+    Condition, Decorator, DestructureTarget, DestructureTargetKind, Expr, ExprKind, FnParam,
+    FunctionTypeParam, ImportName, ImportNames, InfixOp, KwArg, MatchPattern, MatchPatternKind,
+    Method, Param, ParamArg, ParamKind, PrefixOp, SequencePattern, SequenceTarget, Stmt, StmtKind,
+    StructComptime, TStringPart, TraitComptime, TraitMethod, Type, TypeParam, WithItem,
 };
 use mojito::{FloatLiteral, Lexer, Parser, parse_diagnostics};
 
@@ -404,11 +405,11 @@ fn parses_if_elif_else() {
         Stmt::from(StmtKind::If {
             branches: vec![
                 (
-                    Expr::from(ExprKind::Identifier("a".into())),
+                    Condition::Expr(Expr::from(ExprKind::Identifier("a".into()))),
                     vec![Stmt::from(StmtKind::Pass)]
                 ),
                 (
-                    Expr::from(ExprKind::Identifier("b".into())),
+                    Condition::Expr(Expr::from(ExprKind::Identifier("b".into()))),
                     vec![Stmt::from(StmtKind::Pass)]
                 ),
             ],
@@ -424,7 +425,7 @@ fn parses_if_without_else() {
         stmts[0],
         Stmt::from(StmtKind::If {
             branches: vec![(
-                Expr::from(ExprKind::Identifier("a".into())),
+                Condition::Expr(Expr::from(ExprKind::Identifier("a".into()))),
                 vec![Stmt::from(StmtKind::Pass)]
             )],
             orelse: None,
@@ -438,7 +439,7 @@ fn parses_while() {
     assert_eq!(
         stmts[0],
         Stmt::from(StmtKind::While {
-            cond: Expr::from(ExprKind::Identifier("a".into())),
+            cond: Condition::Expr(Expr::from(ExprKind::Identifier("a".into()))),
             body: vec![Stmt::from(StmtKind::Pass)],
             orelse: None,
         })
@@ -452,7 +453,7 @@ fn parses_for_over_range() {
         stmts[0],
         Stmt::from(StmtKind::For {
             var: "i".into(),
-            binding: LoopBindingMode::Immutable,
+            binding: BindingMode::Immutable,
             iter: Expr::from(ExprKind::Call {
                 name: "range".into(),
                 param_args: vec![],
@@ -472,7 +473,7 @@ fn parses_var_loop_binding_and_collection_comprehensions() {
         &loop_statement[0].kind,
         StmtKind::For {
             var,
-            binding: LoopBindingMode::Var,
+            binding: BindingMode::Var,
             iter: Expr {
                 kind: ExprKind::Transfer(_),
                 ..
@@ -498,14 +499,14 @@ fn parses_var_loop_binding_and_collection_comprehensions() {
     assert!(matches!(
         clauses[0],
         ComprehensionClause::For {
-            binding: LoopBindingMode::Immutable,
+            binding: BindingMode::Immutable,
             ..
         }
     ));
     assert!(matches!(
         clauses[1],
         ComprehensionClause::For {
-            binding: LoopBindingMode::Immutable,
+            binding: BindingMode::Immutable,
             ..
         }
     ));
@@ -519,7 +520,7 @@ fn parses_explicit_reference_loop_bindings() {
         &loop_statement[0].kind,
         StmtKind::For {
             var,
-            binding: LoopBindingMode::Ref,
+            binding: BindingMode::Ref,
             ..
         } if var == "item"
     ));
@@ -535,7 +536,7 @@ fn parses_explicit_reference_loop_bindings() {
         &clauses[0],
         ComprehensionClause::For {
             var,
-            binding: LoopBindingMode::Ref,
+            binding: BindingMode::Ref,
             ..
         } if var == "item"
     ));
@@ -564,7 +565,7 @@ fn parses_break_and_continue() {
     assert_eq!(
         stmts[0],
         Stmt::from(StmtKind::While {
-            cond: Expr::from(ExprKind::Identifier("a".into())),
+            cond: Condition::Expr(Expr::from(ExprKind::Identifier("a".into()))),
             body: vec![Stmt::from(StmtKind::Break), Stmt::from(StmtKind::Continue)],
             orelse: None,
         })
@@ -1137,7 +1138,7 @@ fn parses_comptime_if_with_else() {
             assert_eq!(branches.len(), 1);
             assert_eq!(
                 branches[0].0,
-                Expr::from(ExprKind::Infix(InfixOp::Gt, ident("N"), int(4)))
+                Condition::Expr(Expr::from(ExprKind::Infix(InfixOp::Gt, ident("N"), int(4))))
             );
             assert_eq!(branches[0].1, vec![Stmt::from(StmtKind::Pass)]);
             assert_eq!(orelse, &Some(vec![Stmt::from(StmtKind::Pass)]));
@@ -1956,28 +1957,32 @@ fn parses_call_as_assignment_target() {
 
 #[test]
 fn parses_tuple_unpacking() {
+    // `x, y = point` is a tuple target of two name places.
     assert_eq!(
         parse("x, y = point\n")[0],
-        Stmt::from(StmtKind::Unpack {
-            targets: vec![
-                Expr::from(ExprKind::Identifier("x".into())),
-                Expr::from(ExprKind::Identifier("y".into()))
-            ],
+        Stmt::from(StmtKind::Destructure {
+            target: DestructureTarget::from(DestructureTargetKind::Tuple(vec![
+                place("x"),
+                place("y"),
+            ])),
             value: Expr::from(ExprKind::Identifier("point".into())),
-            declares: false,
         })
     );
 }
 
 #[test]
 fn parses_var_tuple_destructuring() {
-    assert!(matches!(
-        &parse("var left, right = pair\n")[0].kind,
-        StmtKind::Unpack { targets, value, declares }
-            if *declares
-                && targets.len() == 2
-                && matches!(&value.kind, ExprKind::Identifier(name) if name == "pair")
-    ));
+    // `var left, right = pair` declares every leaf.
+    assert_eq!(
+        parse("var left, right = pair\n")[0],
+        Stmt::from(StmtKind::Destructure {
+            target: DestructureTarget::from(DestructureTargetKind::Tuple(vec![
+                declare("left", BindingMode::Var),
+                declare("right", BindingMode::Var),
+            ])),
+            value: Expr::from(ExprKind::Identifier("pair".into())),
+        })
+    );
 }
 
 #[test]
@@ -1985,29 +1990,417 @@ fn tuple_unpacking_allows_place_targets() {
     // Each target obeys the assignment-target rule: a NAME or a place.
     assert!(matches!(
         &parse("p.x, xs[0] = t\n")[0].kind,
-        StmtKind::Unpack { targets, .. }
-            if matches!(targets[0].kind, ExprKind::Member { .. })
-                && matches!(targets[1].kind, ExprKind::Index { .. })
+        StmtKind::Destructure { target, .. }
+            if matches!(&target.kind, DestructureTargetKind::Tuple(items)
+                if matches!(&items[0].kind, DestructureTargetKind::Place(Expr { kind: ExprKind::Member { .. }, .. }))
+                    && matches!(&items[1].kind, DestructureTargetKind::Place(Expr { kind: ExprKind::Index { .. }, .. })))
     ));
 }
 
 #[test]
 fn tuple_unpacking_allows_a_trailing_comma() {
-    // `a, = t` is a one-target unpack (a trailing comma terminates the list).
+    // `a, = t` is a one-target tuple (a trailing comma terminates the list).
     assert_eq!(
         parse("a, = t\n")[0],
-        Stmt::from(StmtKind::Unpack {
-            targets: vec![Expr::from(ExprKind::Identifier("a".into()))],
+        Stmt::from(StmtKind::Destructure {
+            target: DestructureTarget::from(DestructureTargetKind::Tuple(vec![place("a")])),
             value: Expr::from(ExprKind::Identifier("t".into())),
-            declares: false,
         })
     );
 }
 
 #[test]
-fn rejects_non_place_unpacking_target() {
-    let mut parser = Parser::new(Lexer::new("a, f() = t\n"));
+fn call_unpacking_target_is_a_destructuring_place() {
+    // A call is an assignment target when it returns a mutable reference
+    // (the checker's rule), so a comma list holding one is a destructuring
+    // target with a call place rather than a parse error.
+    assert!(matches!(
+        &parse("a, f() = t\n")[0].kind,
+        StmtKind::Destructure { target, .. }
+            if matches!(&target.kind, DestructureTargetKind::Tuple(items)
+                if matches!(&items[1].kind, DestructureTargetKind::Place(Expr { kind: ExprKind::Call { .. }, .. })))
+    ));
+}
+
+// --- Recursive destructuring targets ---
+
+fn declare(name: &str, mode: BindingMode) -> DestructureTarget {
+    DestructureTarget::from(DestructureTargetKind::Declare {
+        name: name.into(),
+        mode,
+    })
+}
+
+fn place(name: &str) -> DestructureTarget {
+    DestructureTarget::from(DestructureTargetKind::Place(Expr::from(
+        ExprKind::Identifier(name.into()),
+    )))
+}
+
+fn discard() -> DestructureTarget {
+    DestructureTarget::from(DestructureTargetKind::Discard)
+}
+
+#[test]
+fn parses_nested_mixed_destructuring_target() {
+    // `(var a, (ref b, _)) = pair`: a leaf declares, writes, or discards.
+    assert_eq!(
+        parse("(var a, (ref b, _)) = pair\n")[0],
+        Stmt::from(StmtKind::Destructure {
+            target: DestructureTarget::from(DestructureTargetKind::Tuple(vec![
+                declare("a", BindingMode::Var),
+                DestructureTarget::from(DestructureTargetKind::Tuple(vec![
+                    declare("b", BindingMode::Ref),
+                    discard(),
+                ])),
+            ])),
+            value: Expr::from(ExprKind::Identifier("pair".into())),
+        })
+    );
+}
+
+#[test]
+fn var_prefix_distributes_to_every_leaf() {
+    // `var (x, (y, z)) = e` declares each name; `var (p, q), r = ...` forms
+    // a tuple with the trailing name, which the prefix covers too.
+    assert_eq!(
+        parse("var (x, (y, z)) = e\n")[0],
+        Stmt::from(StmtKind::Destructure {
+            target: DestructureTarget::from(DestructureTargetKind::Tuple(vec![
+                declare("x", BindingMode::Var),
+                DestructureTarget::from(DestructureTargetKind::Tuple(vec![
+                    declare("y", BindingMode::Var),
+                    declare("z", BindingMode::Var),
+                ])),
+            ])),
+            value: Expr::from(ExprKind::Identifier("e".into())),
+        })
+    );
+    assert!(matches!(
+        &parse("var (p, q), r = (7, 8), 9\n")[0].kind,
+        StmtKind::Destructure { target, .. }
+            if matches!(&target.kind, DestructureTargetKind::Tuple(items)
+                if items.len() == 2 && items[1] == declare("r", BindingMode::Var))
+    ));
+}
+
+#[test]
+fn parses_sequence_destructuring_targets() {
+    // `var [first, *middle, last] = values` and the assignment form
+    // `[x, y] = values`; a starred leaf is the slice between the others.
+    assert_eq!(
+        parse("var [first, *middle, last] = values\n")[0],
+        Stmt::from(StmtKind::Destructure {
+            target: DestructureTarget::from(DestructureTargetKind::Sequence(vec![
+                SequenceTarget::Element(declare("first", BindingMode::Var)),
+                SequenceTarget::Star(declare("middle", BindingMode::Var)),
+                SequenceTarget::Element(declare("last", BindingMode::Var)),
+            ])),
+            value: Expr::from(ExprKind::Identifier("values".into())),
+        })
+    );
+    assert_eq!(
+        parse("[x, y] = values\n")[0],
+        Stmt::from(StmtKind::Destructure {
+            target: DestructureTarget::from(DestructureTargetKind::Sequence(vec![
+                SequenceTarget::Element(place("x")),
+                SequenceTarget::Element(place("y")),
+            ])),
+            value: Expr::from(ExprKind::Identifier("values".into())),
+        })
+    );
+    let mut parser = Parser::new(Lexer::new("[a, *b, *c] = values\n"));
     assert!(parser.parse_program().is_err());
+}
+
+#[test]
+fn parenthesized_display_statements_stay_expressions() {
+    // A leading `(` or `[` is a target only when `=` follows: a grouped
+    // expression, a tuple display, and a list method call are expressions.
+    assert!(matches!(
+        &parse("(a + 1).foo()\n")[0].kind,
+        StmtKind::Expr(Expr {
+            kind: ExprKind::MethodCall { .. },
+            ..
+        })
+    ));
+    assert!(matches!(
+        &parse("(a, b)\n")[0].kind,
+        StmtKind::Expr(Expr { kind: ExprKind::TupleLit(items), .. }) if items.len() == 2
+    ));
+    assert!(matches!(
+        &parse("[1, 2].append(3)\n")[0].kind,
+        StmtKind::Expr(Expr {
+            kind: ExprKind::MethodCall { .. },
+            ..
+        })
+    ));
+    assert!(matches!(
+        &parse("[f(x) for x in xs]\n")[0].kind,
+        StmtKind::Expr(Expr {
+            kind: ExprKind::Comprehension { .. },
+            ..
+        })
+    ));
+    // A declaring leaf without `=` is an error, not a display.
+    let mut parser = Parser::new(Lexer::new("(var a, b)\n"));
+    assert!(parser.parse_program().is_err());
+}
+
+// --- `match` and `case` patterns ---
+
+fn pat(kind: MatchPatternKind) -> MatchPattern {
+    MatchPattern::from(kind)
+}
+
+fn bind(name: &str) -> MatchPattern {
+    pat(MatchPatternKind::Bind {
+        name: name.into(),
+        mode: BindingMode::Immutable,
+    })
+}
+
+fn lit(n: i64) -> MatchPattern {
+    pat(MatchPatternKind::Literal(int_expr(n)))
+}
+
+fn match_cases(source: &str) -> Vec<mojito::ast::MatchCase> {
+    let body = match &parse(source)[0].kind {
+        StmtKind::Def { body, .. } => body.clone(),
+        other => panic!("expected a def, got {other:?}"),
+    };
+    match &body[0].kind {
+        StmtKind::Match { cases, .. } => cases.clone(),
+        other => panic!("expected a match, got {other:?}"),
+    }
+}
+
+#[test]
+fn parses_match_in_both_case_layouts() {
+    // Cases may share the `match` indent (Mojo style) or sit one level in
+    // (Python style); a case body may be on the `case` line.
+    let same_indent =
+        match_cases("def f(x: Int):\n    match x:\n    case 0:\n        pass\n    case _: pass\n");
+    let indented = match_cases(
+        "def f(x: Int):\n    match x:\n        case 0:\n            pass\n\n        case _:\n            pass\n",
+    );
+    for cases in [&same_indent, &indented] {
+        assert_eq!(cases.len(), 2);
+        assert_eq!(cases[0].pattern, lit(0));
+        assert_eq!(cases[1].pattern, pat(MatchPatternKind::Wildcard));
+        assert_eq!(cases[0].body, vec![Stmt::from(StmtKind::Pass)]);
+    }
+    // A statement after the same-indent cases belongs to the enclosing body.
+    let stmts = parse("def f(x: Int):\n    match x:\n    case 0:\n        pass\n    return 1\n");
+    let StmtKind::Def { body, .. } = &stmts[0].kind else {
+        panic!("expected a def");
+    };
+    assert_eq!(body.len(), 2);
+    assert!(matches!(body[1].kind, StmtKind::Return(Some(_))));
+}
+
+#[test]
+fn match_subject_and_patterns_form_tuples_on_commas() {
+    let source = "def f(a: Int, b: Int):\n    match a, b:\n    case 0, y:\n        pass\n";
+    let cases = match_cases(source);
+    let stmts = parse(source);
+    let StmtKind::Def { body, .. } = &stmts[0].kind else {
+        panic!("expected a def");
+    };
+    assert!(matches!(
+        &body[0].kind,
+        StmtKind::Match { subject: Expr { kind: ExprKind::TupleLit(items), .. }, .. } if items.len() == 2
+    ));
+    assert_eq!(
+        cases[0].pattern,
+        pat(MatchPatternKind::Tuple(vec![lit(0), bind("y")]))
+    );
+}
+
+#[test]
+fn parses_pattern_forms_and_precedence() {
+    // `|` binds tighter than `as`, which binds per comma element; a guard
+    // follows the pattern; `==` takes a unary operand so a signed literal
+    // and a call compare by value.
+    let cases = match_cases(
+        "def f(x: Int):\n    match x:\n    case 1 | 2 as k if k > 0:\n        pass\n    case == -3:\n        pass\n    case == f(1):\n        pass\n    case var v:\n        pass\n    case ref r:\n        pass\n",
+    );
+    assert_eq!(
+        cases[0].pattern,
+        pat(MatchPatternKind::As {
+            pattern: Box::new(pat(MatchPatternKind::Or(vec![lit(1), lit(2)]))),
+            name: "k".into(),
+        })
+    );
+    assert!(cases[0].guard.is_some());
+    assert_eq!(
+        cases[1].pattern,
+        pat(MatchPatternKind::Equal(Expr::from(ExprKind::Prefix(
+            PrefixOp::Neg,
+            int(3)
+        ))))
+    );
+    assert!(matches!(
+        &cases[2].pattern.kind,
+        MatchPatternKind::Equal(Expr {
+            kind: ExprKind::Call { .. },
+            ..
+        })
+    ));
+    assert_eq!(
+        cases[3].pattern,
+        pat(MatchPatternKind::Bind {
+            name: "v".into(),
+            mode: BindingMode::Var
+        })
+    );
+    assert_eq!(
+        cases[4].pattern,
+        pat(MatchPatternKind::Bind {
+            name: "r".into(),
+            mode: BindingMode::Ref
+        })
+    );
+}
+
+#[test]
+fn parses_structural_patterns() {
+    let cases = match_cases(
+        "def f(x: Int):\n    match x:\n    case (a, (b, _)):\n        pass\n    case [first, *rest, 0]:\n        pass\n    case Point(x=0, y=yv):\n        pass\n    case .Some(ref s):\n        pass\n    case Optional.None:\n        pass\n    case {v=1} as whole:\n        pass\n    case ():\n        pass\n    case (n,):\n        pass\n",
+    );
+    assert_eq!(
+        cases[0].pattern,
+        pat(MatchPatternKind::Tuple(vec![
+            bind("a"),
+            pat(MatchPatternKind::Tuple(vec![
+                bind("b"),
+                pat(MatchPatternKind::Wildcard)
+            ])),
+        ]))
+    );
+    assert!(matches!(
+        &cases[1].pattern.kind,
+        MatchPatternKind::Sequence(items)
+            if items.len() == 3
+                && matches!(&items[1], SequencePattern::Star { name: Some(name), .. } if name == "rest")
+                && matches!(&items[2], SequencePattern::Element(last) if **last == lit(0))
+    ));
+    assert!(matches!(
+        &cases[2].pattern.kind,
+        MatchPatternKind::Call { head: Expr { kind: ExprKind::Identifier(name), .. }, args, kwargs }
+            if name == "Point" && args.is_empty() && kwargs.len() == 2 && kwargs[1].0 == "y"
+    ));
+    assert!(matches!(
+        &cases[3].pattern.kind,
+        MatchPatternKind::Call { head: Expr { kind: ExprKind::Member { field, .. }, .. }, args, kwargs }
+            if field == "Some" && args.len() == 1 && kwargs.is_empty()
+    ));
+    assert!(matches!(
+        &cases[4].pattern.kind,
+        MatchPatternKind::Head(Expr { kind: ExprKind::Member { field, .. }, .. }) if field == "None"
+    ));
+    assert!(matches!(
+        &cases[5].pattern.kind,
+        MatchPatternKind::As { pattern, name }
+            if name == "whole" && matches!(&pattern.kind, MatchPatternKind::Fields(fields) if fields.len() == 1)
+    ));
+    assert_eq!(cases[6].pattern, pat(MatchPatternKind::Tuple(vec![])));
+    assert_eq!(
+        cases[7].pattern,
+        pat(MatchPatternKind::Tuple(vec![bind("n")]))
+    );
+}
+
+#[test]
+fn match_pattern_bindings_are_listed_in_source_order() {
+    let cases = match_cases(
+        "def f(x: Int):\n    match x:\n    case (var a, [b, *c]) | (ref a, _) as d:\n        pass\n",
+    );
+    let bindings = cases[0].pattern.bindings();
+    assert_eq!(
+        bindings,
+        vec![
+            ("a", BindingMode::Var),
+            ("b", BindingMode::Immutable),
+            ("c", BindingMode::Immutable),
+            ("a", BindingMode::Ref),
+            ("d", BindingMode::Immutable),
+        ]
+    );
+}
+
+#[test]
+fn rejects_malformed_match_forms() {
+    for (source, needle) in [
+        (
+            "def f(x: Int):\n    match x:\n        pass\n",
+            "expected a 'case' block",
+        ),
+        ("def f(x: Int):\n    case 1: pass\n", "outside of a 'match'"),
+        (
+            "def f(x: Int):\n    match x:\n    case -3: pass\n",
+            "use '=='",
+        ),
+        (
+            "def f(x: Int):\n    match x:\n    case 0 as 1: pass\n",
+            "name after 'as'",
+        ),
+        (
+            "def f(x: Int):\n    match x:\n    case [a, *b, *c]: pass\n",
+            "multiple starred",
+        ),
+        (
+            "def f(x: Int):\n    match x:\n    case var ref y: pass\n",
+            "redundant",
+        ),
+        (
+            "def f(x: Int):\n    match x:\n    case P(x=0, x=1): pass\n",
+            "already used",
+        ),
+        (
+            "def f(x: Int):\n    match x:\n    case P(0, *y): pass\n",
+            "positional or unpacked",
+        ),
+        (
+            "def f(x: Int):\n    comptime if case 1 = x:\n        pass\n",
+            "comptime if case",
+        ),
+    ] {
+        let mut parser = Parser::new(Lexer::new(source));
+        let error = parser.parse_program().expect_err(source).to_string();
+        assert!(error.contains(needle), "{source}: {error}");
+    }
+}
+
+#[test]
+fn parses_case_conditions_and_comptime_match() {
+    let stmts = parse(
+        "def f(x: Int):\n    if case (var a, 0) = get(1):\n        pass\n    elif case [b] = xs:\n        pass\n    elif x > 0:\n        pass\n    while case (k, 0) = get(x):\n        pass\n    comptime match x:\n        case 1:\n            pass\n        case _:\n            pass\n",
+    );
+    let StmtKind::Def { body, .. } = &stmts[0].kind else {
+        panic!("expected a def");
+    };
+    let StmtKind::If { branches, .. } = &body[0].kind else {
+        panic!("expected an if");
+    };
+    assert!(matches!(
+        &branches[0].0,
+        Condition::Case { pattern, value: Expr { kind: ExprKind::Call { .. }, .. } }
+            if matches!(&pattern.kind, MatchPatternKind::Tuple(items) if items.len() == 2)
+    ));
+    assert!(matches!(&branches[1].0, Condition::Case { .. }));
+    assert!(matches!(&branches[2].0, Condition::Expr(_)));
+    assert!(matches!(
+        &body[1].kind,
+        StmtKind::While {
+            cond: Condition::Case { .. },
+            ..
+        }
+    ));
+    assert!(matches!(
+        &body[2].kind,
+        StmtKind::ComptimeMatch { cases, .. } if cases.len() == 2
+    ));
 }
 
 // --- The `parse` convenience helper (parse-only front end) ---
