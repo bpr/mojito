@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A trait-valued parameter bounds a type binder, as on the pin: `T: Tr`,
+  `*Ts: Tr`, and `T: Tr & Hashable` over `Tr: type_of(Copyable)` see `Tr`'s
+  declared bound in the body, and each use checks its arguments against the
+  trait `Tr` receives, rejecting one with the pin's "'g' parameter 'T' has
+  'Copyable' type, but value has type 'AnyStruct[NC]'". A trait is a type
+  where KGEN holds one: a raw list's element may be a trait or `Tr`
+  (`_MLIR.KGENParamListType[Tr]`, `` !kgen.param_list<AnyType> ``), a type
+  pack's `Ts.values` is such a list, an infer-only `Tr` solves from it, and
+  `k[Copyable]()` binds a `!kgen.type` parameter
+  (`assets/ok/trait_bounded_type_parameter.mojo`). A list of values, or of
+  a trait the bound does not accept, is the pin's "cannot be converted".
+  Inferring `Tr` from the types it bounds is R1176. MIR text schema 1.78
+  spells `trait_type([...])` and a type parameter's `trait_param`, and the
+  package format is 73. This closes R1167.
+
 - A compile-time bracket list binds as on the pin: positional arguments
   fill the parameters that are not infer-only, in order, then each keyword
   binds its parameter by name, an infer-only binder included, wherever it

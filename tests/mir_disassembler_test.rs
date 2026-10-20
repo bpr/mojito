@@ -146,6 +146,7 @@ fn metadata_program() -> MirProgram {
                 id: mojito::param_expr::ParamId::new("$test:T", 0),
                 name: "T".into(),
                 bounds: vec!["Copyable".into()],
+                trait_param: None,
                 callable_bound: None,
                 default: None,
                 infer_only: false,

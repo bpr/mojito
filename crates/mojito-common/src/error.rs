@@ -402,6 +402,14 @@ pub enum TypeError {
         expected: String,
         found: String,
     },
+    /// A raw list argument whose element does not convert to its
+    /// parameter's (`KGENParamList[AnyType]` for `KGENParamList[Tr]` over
+    /// `Tr: type_of(Copyable)`, or a list of values for a list of types).
+    ParamListConversion {
+        param: String,
+        from: String,
+        to: String,
+    },
     /// A value parameter was declared with a type other than `Int` (the only
     /// value-parameter type supported).
     BadValueParamType {
@@ -937,6 +945,10 @@ impl fmt::Display for TypeError {
                 f,
                 "invalid call to '{callee}': '{callee}' parameter '{param}' has '{expected}' \
                  type, but value has type '{found}'"
+            ),
+            Self::ParamListConversion { param, from, to } => write!(
+                f,
+                "value passed to '{param}' cannot be converted from '{from}' to '{to}'"
             ),
             Self::BadValueParamType { name, ty } => {
                 write!(f, "value parameter '{name}' must have type Int, not '{ty}'")

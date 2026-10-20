@@ -1935,6 +1935,56 @@ impl Checker {
         })
     }
 
+    /// The raw list type a type pack's `Ts.values` has, as upstream types
+    /// it: a list of the pack's bound used as a type
+    /// (`KGENParamList[AnyType]`), or of the trait-valued binder bounding it
+    /// (`*Ts: Tr` lists `Tr`). `None` when `pack` names no type pack.
+    pub(super) fn type_pack_list_ty(&self, pack: &ParamExpr) -> Option<Ty> {
+        let binder = pack.as_decl_ref()?;
+        if pack.meta() != &mojito_types::param_expr::MetaTy::type_list() {
+            return None;
+        }
+        let element = if let Some(trait_binder) = self.trait_bounded_binders.get(&binder.id) {
+            let reference = self
+                .value_parameter_in_scope(&trait_binder.name)
+                .filter(|reference| {
+                    reference
+                        .as_decl_ref()
+                        .is_some_and(|reference| reference.id == trait_binder.id)
+                })
+                .map(CtValue::Expr)
+                .or_else(|| self.self_param_value(&trait_binder.name))?;
+            let reference = match reference {
+                CtValue::Expr(expr) => expr,
+                value => self.param_context.constant(value).ok()?,
+            };
+            mojito_types::types::DependentType::resolve(reference)
+        } else {
+            let bounds = self
+                .tparams
+                .iter()
+                .flat_map(HashMap::values)
+                .find_map(|ty| match ty.kind() {
+                    TyKind::Param {
+                        binder: declared,
+                        bounds,
+                        ..
+                    } if declared.id == binder.id => Some(bounds.clone()),
+                    _ => None,
+                })
+                .or_else(|| {
+                    self.self_decls.iter().find_map(|decl| match decl {
+                        ParamDecl::Type { id, bounds, .. } if id == &binder.id => {
+                            Some(bounds.clone())
+                        }
+                        _ => None,
+                    })
+                })?;
+            TyKind::Trait(mojito_types::types::trait_set(bounds)).into()
+        };
+        Some(TyKind::ParamList(element).into())
+    }
+
     /// The type pack an expression names by itself while it is still a
     /// parameter: a bare `Ts` of an enclosing `def` or method, or the
     /// enclosing struct's `Self.Ts`. The counterpart of

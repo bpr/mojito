@@ -157,7 +157,10 @@ fn require_concrete(head: &str, role: &str, ty: &Ty, errors: &mut Vec<String>) {
     // A trait or a type is a compile-time value: no run-time value holds
     // one.
     if mojito_types::types::mentions(ty, &|ty| {
-        matches!(ty.kind(), TyKind::AnyTrait(_) | TyKind::TypeType)
+        matches!(
+            ty.kind(),
+            TyKind::AnyTrait(_) | TyKind::Trait(_) | TyKind::TypeType
+        )
     }) {
         errors.push(format!(
             "{head} {role} holds the compile-time-only metatype `{ty}`"

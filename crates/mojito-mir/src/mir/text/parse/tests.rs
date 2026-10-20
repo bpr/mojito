@@ -151,6 +151,7 @@ fn type_families_reprint_byte_identically() {
                 id: test_id("T"),
                 name: "T".into(),
                 bounds: vec!["Copyable".into()],
+                trait_param: None,
                 callable_bound: None,
                 default: Some(Ty::int()),
                 infer_only: true,
@@ -717,6 +718,7 @@ fn sample_subscript_call() -> MirSubscriptCall {
             id: test_id("T"),
             name: "T".into(),
             bounds: vec!["Copyable".into()],
+            trait_param: None,
             callable_bound: None,
             default: None,
             infer_only: false,
@@ -1424,6 +1426,7 @@ fn declaration_metadata_reprints_byte_identically() {
             id: test_id("T"),
             name: "T".into(),
             bounds: vec!["Copyable".into()],
+            trait_param: None,
             callable_bound: None,
             default: None,
             infer_only: false,
@@ -2201,6 +2204,70 @@ fn kgen_type_metatype_round_trips() {
     assert!(write::program(&program).contains("TypeType"));
 }
 
+/// Schema 1.78 spells a trait used as a type `trait_type([...])` and a type
+/// binder's trait-parameter bound `trait_param: present(binder {...})`.
+#[test]
+fn trait_types_and_trait_parameter_bounds_round_trip() {
+    let decls = vec![
+        ParamDecl::Value {
+            id: test_id("Tr"),
+            name: "Tr".into(),
+            ty: TyKind::AnyTrait(vec!["Copyable".into()]).into(),
+            default: None,
+            callable_default: None,
+            infer_only: true,
+            variadic: false,
+            constraints: Vec::new(),
+        },
+        ParamDecl::Type {
+            id: test_id("Ts"),
+            name: "*Ts".into(),
+            bounds: vec!["Copyable".into()],
+            trait_param: Some(test_binder("Tr")),
+            callable_bound: None,
+            default: None,
+            infer_only: false,
+            variadic: true,
+            constraints: Vec::new(),
+        },
+    ];
+    let generic = TyKind::GenericFunc(Box::new(GenericFuncTy {
+        decls: decls.clone(),
+        func: FuncTy {
+            environment: CallableEnvironment::Thin,
+            params: Vec::new(),
+            names: Vec::new(),
+            ret: Ty::none(),
+            required: Vec::new(),
+            variadic: None,
+            kw_variadic: None,
+            positional_only: None,
+            keyword_only: None,
+            raises: false,
+            error: None,
+            conventions: Vec::new(),
+            ref_params: Vec::new(),
+            ref_return: None,
+            transfers: TransferSet(Vec::new()),
+        },
+    }));
+    let list = Ty::new(TyKind::ParamList(
+        TyKind::Trait(vec!["AnyType".into()]).into(),
+    ));
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(vec![generic.into(), list], Vec::new()),
+    )]);
+    assert_reprints(&program);
+    let text = write::program(&program);
+    assert!(text.contains("param_list(trait_type([AnyType]))"), "{text}");
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    match (parsed.program.functions[0].1.reg_types[&0]).kind() {
+        TyKind::GenericFunc(generic) => assert_eq!(generic.decls, decls),
+        other => panic!("expected a generic function type, read {other}"),
+    }
+}
+
 /// Schema 1.34 carries the static address of a parameter list's elements,
 /// the list a template's parameter or an instance's closed tuple.
 #[test]
@@ -2459,6 +2526,7 @@ fn constraint_binders_round_trip_and_read_from_older_artifacts() {
                 id: test_id("T"),
                 name: "T".into(),
                 bounds: vec!["AnyType".into()],
+                trait_param: None,
                 callable_bound: None,
                 default: None,
                 infer_only: false,

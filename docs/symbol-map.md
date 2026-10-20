@@ -1757,6 +1757,36 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   the metatype (`verify/concrete.rs`).
 - The elaborator classifies the binder by `any_trait_source_type`
   (`mojito-comptime`, `comptime.rs`).
+- A type binder bounded by a trait-valued sibling (`T: Tr`, `*Ts: Tr`) is a
+  `ParamDecl::Type` whose `trait_param` names that sibling (upstream's
+  `ParamType`) and whose `bounds` hold the sibling's declared set, the
+  body's view. The checker classifies it in `classify_params_in_scope`
+  through `sibling_trait_binder` (`declarations.rs`) and records it in
+  `Checker::trait_bounded_binders`, which `is_deinitable` (`traits.rs`)
+  reads to destroy such a value by the generic default; the elaborator's
+  `classify_ct_param` (`comptime/params.rs`) agrees.
+  `Checker::validate_trait_parameter_bounds` (`checker.rs`), beside
+  `validate_callable_parameter_bounds`, checks each argument against the
+  trait the sibling received and reports `TypeError::ParamValueType`.
+- A trait used as a type is `TyKind::Trait` (upstream's `TraitType`,
+  displayed `A & B`), a raw list's element in `KGENParamList[AnyType]`.
+  `DependentType::resolve` maps a trait constant to it, and
+  `MetaTy::value` reads a value of a trait type (or of a trait-valued
+  binder's dependent type) as a type. `Checker::trait_type_arg`
+  (`type_resolution.rs`) resolves a trait, a composition, or a trait-valued
+  binder where a trait is a type: a raw list's element
+  (`mlir_param_list_type`) and a `!kgen.type` binder's argument
+  (`resolve_param_arg`, `lower_assoc_application_arg`).
+- A type pack's `Ts.values` is the pack itself (`eval_associated_ct`,
+  `compile_dependent_ct_expr`), typed by `Checker::type_pack_list_ty`
+  (`comptime_validation.rs`) as a list of the pack's bound or of `Tr`;
+  `CtValue::is_metatype_valued` gives it no run-time form. An infer-only
+  trait binder solves from such a list in `solve_trait_binders_from_lists`
+  (`declarations.rs`), a later parameter's type sees the bound trait
+  through `with_trait_arguments`, and `Checker::param_list_converts`
+  (`traits.rs`) accepts a list of a refining trait or reports
+  `TypeError::ParamListConversion`. `MetaTy::is_trait_metatype_of` lets a
+  trait-valued binder forward to one of a weaker bound.
 - Upstream's KGEN metatype `` __mlir_type.`!kgen.type` `` is
   `TyKind::TypeType` (displayed `__TypeOfAllTypes`), the value of a
   `comptime` alias of it (`Checker::eval_associated_ct`, `constraints.rs`;

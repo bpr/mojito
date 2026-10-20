@@ -1595,6 +1595,7 @@ impl ParamContext {
             _ => value.clone(),
         };
         if *value.meta() != declared
+            && !value.meta().is_trait_metatype_of(&declared)
             && !value.meta().is_unresolved_struct(&declared)
             && !value.meta().is_list_of(&declared)
         {
@@ -2427,10 +2428,22 @@ pub enum MetaTy {
 impl MetaTy {
     /// The meta-type of a value of type `ty`. A raw parameter list
     /// (`KGENParamList[T]`) is the same ordered list a `*values: T` binder
-    /// declares, so it has one encoding.
+    /// declares, so it has one encoding; a value of a trait type
+    /// (`KGENParamList[AnyType]`'s element, or of a trait-valued binder's
+    /// `Tr`) is a type.
     pub fn value(ty: Ty) -> Self {
         match ty.kind() {
             TyKind::ParamList(element) => Self::ParamList(Box::new(Self::value(element.clone()))),
+            TyKind::Trait(_) => Self::Type,
+            TyKind::Dependent(dependent)
+                if dependent
+                    .expr()
+                    .meta()
+                    .as_value()
+                    .is_some_and(|meta| matches!(meta.kind(), TyKind::AnyTrait(_))) =>
+            {
+                Self::Type
+            }
             _ => Self::Value(ty),
         }
     }
@@ -2447,6 +2460,17 @@ impl MetaTy {
 
     pub fn int() -> Self {
         Self::value(Ty::int())
+    }
+
+    /// Whether this trait metatype converts to `declared`, another one: a
+    /// trait-valued binder forwards to one whose bound its own refines
+    /// (`g[Tr=Tr2]` over `Tr2: type_of(Copyable)`), which the checker
+    /// proved.
+    pub fn is_trait_metatype_of(&self, declared: &Self) -> bool {
+        [self, declared].iter().all(|meta| {
+            meta.as_value()
+                .is_some_and(|ty| matches!(ty.kind(), TyKind::AnyTrait(_)))
+        })
     }
 
     pub fn bool() -> Self {

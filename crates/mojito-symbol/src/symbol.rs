@@ -1436,6 +1436,7 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         TyKind::ComptimeList(elem) => format!("__ComptimeList${}", ty_raw_in(elem, self_ty, mode)),
         TyKind::ParamList(elem) => format!("__ParamList${}", ty_raw_in(elem, self_ty, mode)),
         TyKind::AnyTrait(traits) => format!("__AnyTrait${}", traits.join("$")),
+        TyKind::Trait(traits) => format!("__Trait${}", traits.join("$")),
         TyKind::TypeType => mojito_types::types::TYPE_OF_ALL_TYPES.to_string(),
         TyKind::Tuple(elems) => format!(
             "Tuple${}",

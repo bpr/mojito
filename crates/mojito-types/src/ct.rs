@@ -656,11 +656,11 @@ impl CtValue {
 
     /// Whether a bracket argument solved to this value has no run-time form
     /// at its call, which carries it as a parameter attribute alone, as
-    /// Mojo's call does: a string, a [trait](Self::is_trait_valued), or
-    /// any value [`Self::is_folded_parameter_argument`] accepts.
+    /// Mojo's call does: a string, a [trait or type list](Self::is_metatype_valued),
+    /// or any value [`Self::is_folded_parameter_argument`] accepts.
     pub fn is_parameter_attribute(&self) -> bool {
         matches!(self, Self::Str(_))
-            || self.is_trait_valued()
+            || self.is_metatype_valued()
             || self.is_folded_parameter_argument()
     }
 
@@ -675,6 +675,15 @@ impl CtValue {
                 .is_some_and(|ty| matches!(ty.kind(), TyKind::AnyTrait(_))),
             _ => false,
         }
+    }
+
+    /// Whether this value is compile-time data whose elements are types or
+    /// traits, which no run-time value holds: a
+    /// [trait](Self::is_trait_valued), or a parameter expression over a
+    /// list of types (a type pack's `Ts.values`).
+    pub fn is_metatype_valued(&self) -> bool {
+        self.is_trait_valued()
+            || matches!(self, Self::Expr(expr) if *expr.meta() == crate::param_expr::MetaTy::type_list())
     }
 
     /// Whether this value is closed data a constant holds whole: a closed

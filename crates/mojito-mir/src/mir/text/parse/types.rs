@@ -34,6 +34,7 @@ impl Decoder {
                 "comptime_list" => TyKind::ComptimeList(self.ty(inner)?).into(),
                 "param_list" => TyKind::ParamList(self.ty(inner)?).into(),
                 "any_trait" => TyKind::AnyTrait(self.strings(inner)).into(),
+                "trait_type" => TyKind::Trait(self.strings(inner)).into(),
                 "tuple" => TyKind::Tuple(self.types(inner)).into(),
                 "runtime_pack" => TyKind::RuntimePack(self.types(inner)).into(),
                 "variadic_pack" => TyKind::VariadicPack(self.ty(inner)?).into(),
@@ -308,6 +309,12 @@ impl Decoder {
             "type_param" => {
                 let name = self.req(value, fields, "name", Self::symbol)?;
                 let bounds = self.req(value, fields, "bounds", |d, v| Some(d.strings(v)))?;
+                // Schema 1.78; an older record has no trait-parameter bound.
+                let trait_param = self
+                    .field(fields, "trait_param")
+                    .ok()
+                    .and_then(|v| self.option_value(Some(v)))
+                    .and_then(|v| self.binder_ref(v));
                 let callable_bound = self.req(value, fields, "callable_bound", |d, v| {
                     Some(d.option_ty(Some(v)))
                 })?;
@@ -324,6 +331,7 @@ impl Decoder {
                         "slot",
                         "name",
                         "bounds",
+                        "trait_param",
                         "callable_bound",
                         "default",
                         "infer_only",
@@ -335,6 +343,7 @@ impl Decoder {
                     id: self.binder_id(value, fields, &name)?,
                     name,
                     bounds,
+                    trait_param,
                     callable_bound,
                     default,
                     infer_only,

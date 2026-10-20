@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1176**.
+Next free ID: **R1178**.
 
 ## Ordered Work
 
@@ -4852,28 +4852,49 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1167 A type binder or raw list bounded by a trait parameter is
-  rejected**
+- [ ] **R1176 An infer-only trait parameter is not inferred from the types
+  it bounds**
 
-  Problem: `def g[Tr: type_of(AnyType), //, *Ts: Tr]() -> Int: return
-  Ts.length` prints `3` for `g[Int, Bool, String]()` and `1` for
-  `g[Tr=Copyable, Int]()` at the pin, and a struct parameter ``values:
-  __mlir_type[`!kgen.param_list<`, Tr, `>`]`` fed `Ts.values` runs there.
-  - A type binder's bounds are trait names (`ParamDecl::Type::bounds` is a
-    `Vec<String>`), so a bound that is a trait parameter has no form.
-  - A raw list's element must be a type: a trait there stops with "unknown
-    type 'AnyType'".
-  - An infer-only trait binder must solve from a raw list's type, as
-    `TypeList[Ts.values]` solves `Trait` from `Ts`'s bound.
-  - Probe: a trait argument to a `!kgen.type` binder, `k[Copyable]()` over
-    `def k[T: __mlir_type.`!kgen.type`]()`, prints `2` at the pin and stops
-    with "unknown type 'Copyable'": a type binder's argument is a type
-    (`TyArg::Ty`), and a trait has no such form.
-  - Found while planning R805 (2026-10-19).
-  - Depends on R1166, R1150 (the raw list's `!kgen.type` element), and R449
-    (`g[Tr=Copyable, Int]()` supplies an infer-only binder by keyword before
-    a positional argument).
-  - Model: Fable, Planned.
+  Problem: `g[Int, Bool, String]()` over `def g[Tr: type_of(AnyType), //,
+  *Ts: Tr]() -> Int` prints `3` at the pin and stops with "cannot infer type
+  parameter 'Tr' of 'g' from the arguments", as do `S[Int, Bool]` over
+  `struct S[Tr: type_of(AnyType), //, *Ts: Tr]` and `f(3)` over `def f[Tr:
+  type_of(AnyType), //, T: Tr](x: T)`.
+  - The pin infers `Tr` as the join of the arguments' metatypes: one
+    argument gives its own struct metatype (`AnyStruct[Int]`, or
+    `AnyStruct[IntLiteral[3]]` from `f(3)`), several give the traits every
+    one conforms to, and none fails to infer.
+  - Mojito has no trait value for a struct metatype (upstream's
+    `StructMetaType` converting to `AnyTrait`, `ExprConversions.cpp`), and
+    no conformance join over the known traits.
+  - Upstream's stdlib relies on it in `TypeList.of[...]` without `Trait=`
+    (`std/builtin/bool.mojo`, `std/collections/optional.mojo`).
+  - Probes: `var w: W[AnyType] = g[Int]()` over `-> W[Tr]` reports
+    "cannot implicitly convert 'W[AnyStruct[Int]]' value to 'W[AnyType]'"
+    at the pin, `g[Int, Bool]()` reports `W[Boolable & Comparable &
+    ...]`, and `g[]()` "failed to infer parameter 'Tr'".
+  - A body's use of `T: Tr` against a bound `Tr` does not imply (`need[Ts[0]]()`
+    over `Tr: type_of(AnyType)`) names the trait parameter at the pin ("has
+    'Copyable' type, but value has type 'Tr'") and the element in Mojito.
+  - Found while landing R1167 (2026-10-20).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1177 A struct's trait parameter does not bound a method's type
+  parameter**
+
+  Problem: `def m[T: Self.Tr](self)` in `struct S[Tr: type_of(AnyType)]`
+  runs `S[Copyable]().m[Int]()` at the pin and stops with "type 'S[Tr]' has
+  no associated type 'Tr'".
+  - The parser reads a `Self.X` bound as a value parameter typed by
+    `Self.X`, and the checker's trait-parameter bound
+    (`ParamDecl::Type::trait_param`) names only a sibling of the same list.
+  - The use-site check (`Checker::validate_trait_parameter_bounds`) reads
+    the trait from the declaration's own arguments, while this one is the
+    receiver's struct argument.
+  - Found while landing R1167 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1171 A trait is not a `comptime` binding**
 
@@ -5291,6 +5312,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The parser reads `name[]` as `EmptySubscript` whatever `name` denotes;
     the checker would type it as an application when the callee is a
     generic `def`.
+  - Probe: `g[]()` over `def g[Tr: type_of(AnyType), //, *Ts: Tr]()`,
+    which the pin rejects with "failed to infer parameter 'Tr'" (R1176).
   - Found while landing R318 (2026-10-05).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -8775,9 +8798,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 
 - [ ] **R1169 A type pack is not a `TypeList` value**
 
-  Problem: `var x = Ts`, `comptime raw = Ts.values`, and `comptime tl:
-  TypeList[Trait=Movable, Ts.values] = Ts` stop with "Undefined variable
-  'Ts'", where the pin runs them, and `len(Ts)` is a checker rule rather
+  Problem: `var x = Ts` and `comptime tl: TypeList[Trait=Movable,
+  Ts.values] = Ts` stop with "Undefined variable 'Ts'", where the pin runs
+  them, and `len(Ts)` is a checker rule rather
   than `TypeList.__len__`.
   - Read the pack in a runtime position as `TypeList[Ts.values]()`, as
     `infer_value_pack_read` reads a value pack as

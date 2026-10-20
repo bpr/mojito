@@ -1695,6 +1695,7 @@ fn a_struct_pack_binds_element_by_element_or_whole() {
         id: mojito_types::param_expr::ParamId::new("$test:Row", 0),
         name: "*Ts".to_string(),
         bounds: Vec::new(),
+        trait_param: None,
         callable_bound: None,
         default: None,
         infer_only: false,

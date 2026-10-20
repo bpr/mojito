@@ -91,6 +91,19 @@ impl Checker {
         })
     }
 
+    /// Whether a raw list of `from` converts to a raw list of `to`
+    /// (`KGENParamList[Copyable]` to `KGENParamList[AnyType]`): the element
+    /// is the same, or `to` is a trait every type of `from` conforms to.
+    pub(super) fn param_list_converts(&self, from: &Ty, to: &Ty) -> bool {
+        let (TyKind::ParamList(from), TyKind::ParamList(to)) = (from.kind(), to.kind()) else {
+            return false;
+        };
+        from == to
+            || matches!(to.kind(), TyKind::Trait(required)
+                if mojito_types::types::trait_type_bound(from)
+                    .is_some_and(|available| self.traits_satisfy(available, required)))
+    }
+
     /// Upstream names a trait's members only through a conforming type or a
     /// bound, so `Trait.method(x)` is rejected rather than read as a value.
     pub(super) fn reject_direct_trait_member(&self, object: &Expr) -> Result<(), TypeError> {
@@ -1694,7 +1707,10 @@ impl Checker {
     pub(super) fn ct_value_ty(&self, value: &CtValue, self_ty: &Ty) -> Option<Ty> {
         match value {
             CtValue::Int(_) | CtValue::Deferred(_) | CtValue::Marker(_) => Some(Ty::int()),
-            CtValue::Expr(expr) => expr.meta().value_ty(),
+            CtValue::Expr(expr) => expr
+                .meta()
+                .value_ty()
+                .or_else(|| self.type_pack_list_ty(expr)),
             // A closed raw parameter list holds its elements as a tuple.
             CtValue::Tuple(values) if let TyKind::ParamList(element) = self_ty.kind() => {
                 let first = values.first().map_or_else(
@@ -2848,7 +2864,10 @@ impl Checker {
                     true
                 }
             }),
-            TyKind::Param { bounds, .. } => self.bounds_prove_deinitable(bounds),
+            TyKind::Param { binder, bounds, .. } => {
+                self.trait_bounded_binders.contains_key(&binder.id)
+                    || self.bounds_prove_deinitable(bounds)
+            }
             // Every other type answers by its shape, an aggregate by its
             // elements.
             _ => mojito_types::conformance::leaf_conforms(ty, "Deinitable", &mut |element, _| {

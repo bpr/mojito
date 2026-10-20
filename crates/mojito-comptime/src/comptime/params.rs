@@ -66,10 +66,27 @@ pub(super) fn classify_ct_param(
     {
         return Some(value(ty));
     }
+    let trait_param = tp
+        .bounds
+        .iter()
+        .find_map(|bound| sibling_trait_binder(tp, bound, siblings, owner));
+    let bounds = match &trait_param {
+        Some((binder, declared)) => declared
+            .iter()
+            .chain(tp.bounds.iter().filter(|bound| **bound != *binder.name))
+            .fold(Vec::new(), |mut bounds, bound| {
+                if !bounds.contains(bound) {
+                    bounds.push(bound.clone());
+                }
+                bounds
+            }),
+        None => tp.bounds.clone(),
+    };
     Some(ParamDecl::Type {
         id: elaborated_binder(tp, siblings, owner),
         name: tp.name.clone(),
-        bounds: tp.bounds.clone(),
+        bounds,
+        trait_param: trait_param.map(|(binder, _)| binder),
         callable_bound: None,
         default: tp.default.as_ref().and_then(|value| match &value.kind {
             ExprKind::Identifier(name) => scalar_type_name(name),
@@ -157,6 +174,36 @@ pub(super) fn simd_source_dims(args: &[ParamArg]) -> Option<(mojito_ast::ast::Dt
     };
     let width = width.wrapping_signed(64)?;
     (width >= 1 && (width & (width - 1)) == 0).then_some((dtype, width))
+}
+
+/// The trait-valued binder `name` (`Tr: type_of(Copyable)`) declared before
+/// `tp`, with its declared trait set: a bound `T: Tr` is that binder's
+/// symbolic bound, as the checker classifies it.
+fn sibling_trait_binder(
+    tp: &TypeParam,
+    name: &str,
+    siblings: &[TypeParam],
+    owner: &str,
+) -> Option<(mojito_types::param_expr::ParamRef, Vec<String>)> {
+    let position = siblings
+        .iter()
+        .position(|sibling| sibling.name == tp.name)?;
+    let sibling = siblings[..position]
+        .iter()
+        .find(|sibling| sibling.name == name)?;
+    let ParamDecl::Value { id, ty, .. } = classify_ct_param(sibling, siblings, owner)? else {
+        return None;
+    };
+    let TyKind::AnyTrait(bound) = ty.kind() else {
+        return None;
+    };
+    Some((
+        mojito_types::param_expr::ParamRef {
+            id,
+            name: std::sync::Arc::from(name),
+        },
+        bound.clone(),
+    ))
 }
 
 /// The `TyKind::Param` of the type binder `name` when it is a non-variadic

@@ -8423,3 +8423,61 @@ fn trait_valued_parameters_reject_what_their_bound_does_not_accept() {
         TypeError::Unsupported(_)
     ));
 }
+
+#[test]
+fn trait_parameter_bounds_check_the_bound_trait_at_the_use() {
+    ok_std(
+        "def g[Tr: type_of(AnyType), //, *Ts: Tr]() -> Int:\n    return Ts.length\n\
+         def h[Tr: type_of(Copyable), //, T: Tr](x: T) -> Int:\n    var y = x.copy()\n    return 1\n\
+         def main():\n    print(g[Tr=Copyable & Hashable, Int, String](), h[Tr=Copyable](3))\n",
+    );
+    let rejects = |call: &str, param: &str| {
+        let error = err_std(&format!(
+            "struct NC:\n    def __init__(out self):\n        pass\n\
+             def g[Tr: type_of(AnyType), //, T: Tr]() -> Int:\n    return 1\n\
+             def p[Tr: type_of(AnyType), //, *Ts: Tr]() -> Int:\n    return 1\n\
+             def main():\n    print({call})\n"
+        ));
+        assert!(
+            matches!(&error, TypeError::ParamValueType { param: p, expected, found, .. }
+                if p == param && expected == "Copyable" && found == "AnyStruct[NC]"),
+            "{error:?}"
+        );
+    };
+    rejects("g[Tr=Copyable, NC]()", "T");
+    rejects("p[Tr=Copyable, Int, NC]()", "Ts");
+}
+
+#[test]
+fn raw_lists_of_traits_solve_and_convert_their_trait_binder() {
+    let program = |body: &str| {
+        format!(
+            "from std.builtin.variadics import _MLIR\n\
+             struct L[Tr: type_of(Copyable), //, values: _MLIR.KGENParamListType[Tr]]:\n\
+             \x20   def __init__(out self):\n        pass\n\
+             struct A[Tr: type_of(AnyType), //, values: _MLIR.KGENParamListType[Tr]]:\n\
+             \x20   def __init__(out self):\n        pass\n{body}\
+             def main():\n    pass\n"
+        )
+    };
+    ok_std(&program(
+        "def f[*Ts: Copyable]():\n    var a: L[Tr=Copyable, Ts.values] = L[Ts.values]()\n\
+         \x20   _ = A[Tr=AnyType, Ts.values]()\n",
+    ));
+    for (body, from) in [
+        (
+            "def f[*Ts: AnyType]():\n    _ = L[Ts.values]()\n",
+            "KGENParamList[AnyType]",
+        ),
+        (
+            "def f[*vs: Int]():\n    _ = A[vs.values]()\n",
+            "KGENParamList[Int]",
+        ),
+    ] {
+        let error = err_std(&program(body));
+        assert!(
+            matches!(&error, TypeError::ParamListConversion { from: f, .. } if f == from),
+            "{error:?}"
+        );
+    }
+}

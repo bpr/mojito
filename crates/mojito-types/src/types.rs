@@ -126,10 +126,12 @@ pub enum DependentType {
 
 impl DependentType {
     /// The type `expr` denotes: the contained type when it is a closed Type
-    /// constant, and the symbolic wrapper otherwise.
+    /// constant, the trait type of a trait constant (a trait is a type in
+    /// KGEN), and the symbolic wrapper otherwise.
     pub fn resolve(expr: ParamExpr) -> Ty {
         match expr.as_constant() {
             Some(CtValue::Type(ty)) => (*ty).clone(),
+            Some(CtValue::Trait(traits)) => TyKind::Trait(traits.clone()).into(),
             _ => TyKind::Dependent(Self::Parameter(expr)).into(),
         }
     }
@@ -599,6 +601,12 @@ pub enum TyKind {
     /// list is the bound's canonical trait set ([`trait_set`]). It is
     /// compile-time only; no runtime register holds one.
     AnyTrait(Vec<String>),
+    /// Upstream's `TraitType` (`!lit.trait<@A, @B>`): a trait, or a `&`
+    /// composition, used as a type, the type of every type conforming to the
+    /// canonical set ([`trait_set`]), displayed `A & B`. It is a raw list's
+    /// element in `KGENParamList[AnyType]`, a list of types. It is
+    /// compile-time only; no runtime register holds one.
+    Trait(Vec<String>),
     /// Upstream's KGEN metatype `!kgen.type` (`_MLIR.KGENTypeType`), the
     /// type of every type and trait, displayed `__TypeOfAllTypes`. A
     /// parameter it types is a type binder bound by [`TYPE_OF_ALL_TYPES`].
@@ -1604,6 +1612,12 @@ pub enum ParamDecl {
         id: ParamId,
         name: String,
         bounds: Vec<String>,
+        /// The trait-valued sibling binder whose value bounds this one
+        /// (`T: Tr` over `Tr: type_of(Copyable)`), upstream's `ParamType`
+        /// metatype. `bounds` then holds that binder's declared trait set,
+        /// all a generic body may assume of `T`; a use site checks the
+        /// argument against the trait `Tr` receives.
+        trait_param: Option<ParamRef>,
         /// Checked anonymous callable-trait contract, when this parameter was
         /// declared with `F: def(...) -> ...`.
         callable_bound: Option<Ty>,
@@ -2220,6 +2234,7 @@ impl fmt::Display for TyKind {
             Self::ComptimeList(elem) => write!(f, "<comptime-list[{elem}]>"),
             Self::ParamList(elem) => write!(f, "KGENParamList[{elem}]"),
             Self::AnyTrait(traits) => write!(f, "AnyTrait[{}]", traits.join(" & ")),
+            Self::Trait(traits) => f.write_str(&traits.join(" & ")),
             Self::TypeType => write!(f, "{TYPE_OF_ALL_TYPES}"),
             Self::Tuple(elems) => {
                 write!(f, "Tuple[")?;
@@ -2646,6 +2661,7 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         (TyKind::ComptimeList(a), TyKind::ComptimeList(b)) => coerces(a, b),
         (TyKind::ParamList(a), TyKind::ParamList(b)) => a == b,
         (TyKind::AnyTrait(a), TyKind::AnyTrait(b)) => a == b,
+        (TyKind::Trait(a), TyKind::Trait(b)) => a == b,
         (TyKind::TypeType, TyKind::TypeType) => true,
         (
             TyKind::Pointer {
@@ -3165,6 +3181,7 @@ pub fn canonical_generic_signature(
                 id,
                 name: _,
                 bounds,
+                trait_param,
                 callable_bound,
                 default: _,
                 infer_only: _,
@@ -3199,6 +3216,12 @@ pub fn canonical_generic_signature(
                     id: canonical_id,
                     name: canonical_name,
                     bounds: bounds.clone(),
+                    trait_param: trait_param.as_ref().map(|binder| {
+                        binders
+                            .get(&binder.id)
+                            .cloned()
+                            .unwrap_or_else(|| binder.clone())
+                    }),
                     callable_bound: canonical_callable_bound,
                     // Binder defaults and the `//` inference marker govern a
                     // call through the contract; current Mojo does not make
@@ -3328,6 +3351,7 @@ pub fn reown_generic_signature(
             let (id, constraints) = match &mut decl {
                 ParamDecl::Type {
                     id,
+                    trait_param,
                     callable_bound,
                     default,
                     constraints,
@@ -3335,6 +3359,11 @@ pub fn reown_generic_signature(
                 } => {
                     for ty in callable_bound.iter_mut().chain(default.iter_mut()) {
                         *ty = moved(ty);
+                    }
+                    if let Some(binder) = trait_param
+                        && let Some(reowned) = binders.get(&binder.id)
+                    {
+                        *binder = reowned.clone();
                     }
                     (id, constraints)
                 }
@@ -3487,6 +3516,7 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
                         id,
                         name,
                         bounds,
+                        trait_param,
                         callable_bound,
                         default,
                         infer_only,
@@ -3496,6 +3526,7 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
                         id: id.clone(),
                         name: name.clone(),
                         bounds: bounds.clone(),
+                        trait_param: trait_param.clone(),
                         callable_bound: callable_bound
                             .as_ref()
                             .map(|bound| substitute(bound, &nested)),
@@ -3707,6 +3738,7 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
         | TyKind::Infer
         | TyKind::Dtype
         | TyKind::AnyTrait(_)
+        | TyKind::Trait(_)
         | TyKind::TypeType
         | TyKind::SelfType
         | TyKind::Error => ty.clone(),
@@ -4150,6 +4182,22 @@ pub fn trait_set<I: IntoIterator<Item = String>>(names: I) -> Vec<String> {
     traits
 }
 
+/// The traits every type of the trait type `ty` conforms to.
+///
+/// That is the set a [`TyKind::Trait`] is, or the bound of the trait-valued
+/// binder a dependent type reads (`Tr: type_of(Copyable)`); `None` for any
+/// other type.
+pub fn trait_type_bound(ty: &Ty) -> Option<&[String]> {
+    match ty.kind() {
+        TyKind::Trait(traits) => Some(traits),
+        TyKind::Dependent(dependent) => match dependent.expr().meta().as_value()?.kind() {
+            TyKind::AnyTrait(bound) => Some(bound),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// Whether `ty` still mentions something only an instantiation can resolve.
 ///
 /// A type parameter, an associated or dependent projection, `Self`, or an
@@ -4184,6 +4232,7 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         TyKind::Simd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
         TyKind::Dtype
         | TyKind::AnyTrait(_)
+        | TyKind::Trait(_)
         | TyKind::TypeType
         | TyKind::Int
         | TyKind::UInt
@@ -4553,6 +4602,7 @@ fn rewrite_decl(decl: &ParamDecl, rewrite: &mut dyn TyRewrite) -> Result<ParamDe
             id,
             name,
             bounds,
+            trait_param,
             callable_bound,
             default,
             infer_only,
@@ -4562,6 +4612,7 @@ fn rewrite_decl(decl: &ParamDecl, rewrite: &mut dyn TyRewrite) -> Result<ParamDe
             id: id.clone(),
             name: name.clone(),
             bounds: bounds.clone(),
+            trait_param: trait_param.clone(),
             callable_bound: optional(callable_bound, rewrite)?,
             default: optional(default, rewrite)?,
             infer_only: *infer_only,
@@ -5083,6 +5134,7 @@ mod encoding_tests {
                 id: ParamId::new("f", 0),
                 name: "T".to_string(),
                 bounds: vec!["Copyable".to_string()],
+                trait_param: None,
                 callable_bound: None,
                 default: None,
                 infer_only: false,

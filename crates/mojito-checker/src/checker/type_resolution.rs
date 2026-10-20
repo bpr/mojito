@@ -5,8 +5,8 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy, TransferSet};
+use mojito_types::types::{TYPE_OF_ALL_TYPES, TyKind};
 
 /// Current Mojo treats a bare `def(...)` in a general type position (struct
 /// field, collection element) as a trait, not a storable callable-value type;
@@ -69,12 +69,12 @@ pub(super) fn bracket_attribute(
     match argument {
         ParamArg::Named { value, .. } => bracket_attribute(value, bound),
         ParamArg::Type(_) => Some(bound.clone()),
-        // A trait has no run-time form, so a trait argument is an attribute
-        // like a type.
+        // A trait or a type list has no run-time form, so such an argument
+        // is an attribute like a type.
         ParamArg::Value(_) => matches!(bound, TyArg::Ty(_) | TyArg::Origin(_))
             .then(|| bound.clone())
             .or_else(|| match bound {
-                TyArg::Val(value) if value.is_trait_valued() => Some(bound.clone()),
+                TyArg::Val(value) if value.is_metatype_valued() => Some(bound.clone()),
                 _ => None,
             }),
     }
@@ -653,6 +653,13 @@ impl Checker {
         if is_value_parameter(param) {
             return Ok(TyArg::Val(self.eval_associated_ct(arg, &HashMap::new())?));
         }
+        // A `!kgen.type` binder takes a trait as a type
+        // (`_MLIR.KGENParamListType[Tr]`).
+        if matches!(param.bounds.as_slice(), [only] if only == TYPE_OF_ALL_TYPES)
+            && let Some(ty) = self.trait_type_arg(&ParamArg::Value(arg.clone()))
+        {
+            return ty.map(TyArg::Ty);
+        }
         // A type parameter: a bare identifier names a type; otherwise the
         // argument must evaluate to a compile-time type value.
         let ty = match &arg.kind {
@@ -780,15 +787,69 @@ impl Checker {
             }
             _ => return Err(unsupported_mlir_type()),
         };
-        let element = match element {
-            ParamArg::Type(ty) => self.ty_from_anno(ty)?,
-            ParamArg::Value(Expr {
-                kind: ExprKind::Identifier(name),
-                ..
-            }) => self.ty_from_anno(&SourceType::Named(name.clone(), Vec::new()))?,
-            _ => return Err(unsupported_mlir_type()),
+        let element = match self.trait_type_arg(element) {
+            Some(element) => element?,
+            None => match element {
+                ParamArg::Type(ty) => self.ty_from_anno(ty)?,
+                ParamArg::Value(Expr {
+                    kind: ExprKind::Identifier(name),
+                    ..
+                }) => self.ty_from_anno(&SourceType::Named(name.clone(), Vec::new()))?,
+                _ => return Err(unsupported_mlir_type()),
+            },
         };
         Ok(TyKind::ParamList(element).into())
+    }
+
+    /// The type a bracket argument denotes where a trait is a type (a raw
+    /// list's element, a `!kgen.type` binder's argument), as KGEN holds a
+    /// trait as the type `!lit.trait<…>`: a trait or a `&` composition is
+    /// its [`TyKind::Trait`], and a trait-valued binder in scope (`Tr`) the
+    /// symbolic type it binds. `None` when the argument names neither.
+    pub(super) fn trait_type_arg(
+        &self,
+        arg: &mojito_ast::ast::ParamArg,
+    ) -> Option<Result<Ty, TypeError>> {
+        use mojito_ast::ast::ParamArg;
+        let trait_binder = |name: &str| {
+            self.value_parameter_in_scope(name)
+                .filter(|reference| {
+                    reference
+                        .meta()
+                        .as_value()
+                        .is_some_and(|ty| matches!(ty.kind(), TyKind::AnyTrait(_)))
+                })
+                .map(|reference| Ok(DependentType::resolve(reference)))
+        };
+        let expr = match arg {
+            ParamArg::Named { value, .. } => return self.trait_type_arg(value),
+            ParamArg::Value(expr) => expr,
+            ParamArg::Type(SourceType::Named(name, args)) if args.is_empty() => {
+                return trait_binder(name).or_else(|| {
+                    (name != TYPE_OF_ALL_TYPES
+                        && self.check_trait_name(name).is_ok()
+                        && self.lookup(name).is_none())
+                    .then(|| Ok(TyKind::Trait(vec![name.clone()]).into()))
+                });
+            }
+            ParamArg::Type(SourceType::SelfParam(param)) => {
+                return self.self_param_value(param).and_then(|value| match value {
+                    CtValue::Trait(traits) => Some(Ok(TyKind::Trait(traits).into())),
+                    CtValue::Expr(expr) if value.is_trait_valued() => {
+                        Some(Ok(DependentType::resolve(expr)))
+                    }
+                    _ => None,
+                });
+            }
+            ParamArg::Type(_) => return None,
+        };
+        if let Some(traits) = self.trait_value(expr) {
+            return Some(traits.map(|traits| TyKind::Trait(traits).into()));
+        }
+        match &expr.kind {
+            ExprKind::Identifier(name) => trait_binder(name),
+            _ => None,
+        }
     }
 
     /// The type a compiler-known name applies to `args` (`Never`, `SIMD`,
@@ -2096,6 +2157,19 @@ impl Checker {
     ) -> Result<TyArg, TypeError> {
         use mojito_ast::ast::ParamArg;
         match decl {
+            // A trait is a type in KGEN, so `!kgen.type` binds one
+            // (`_MLIR.KGENParamListType[Tr]`, `k[Copyable]()`).
+            ParamDecl::Type { bounds, .. }
+                if matches!(bounds.as_slice(), [only] if only == TYPE_OF_ALL_TYPES)
+                    && let Some(ty) = self.trait_type_arg(arg) =>
+            {
+                let ty = ty?;
+                if let ParamArg::Value(expr) = arg {
+                    self.record_at(expr.source_span()).argument_attribute =
+                        Some(TyArg::Ty(ty.clone()));
+                }
+                Ok(TyArg::Ty(ty))
+            }
             ParamDecl::Type { name, bounds, .. } => {
                 // A bare or parameterized type argument the parser encoded as a
                 // value expression records the type as its attribute, only
@@ -2254,7 +2328,19 @@ impl Checker {
                                 found: "a non-materializable compile-time value".to_string(),
                                 context: format!("value parameter '{name}'"),
                             })?;
-                    if !coerces(&actual, ty) && !self.converts_to_parameter(expr, &value, ty) {
+                    if matches!(actual.kind(), TyKind::ParamList(_))
+                        && matches!(ty.kind(), TyKind::ParamList(element)
+                            if mojito_types::types::trait_type_bound(element).is_some())
+                    {
+                        if !self.param_list_converts(&actual, ty) {
+                            return Err(TypeError::ParamListConversion {
+                                param: name.trim_start_matches('*').to_string(),
+                                from: actual.to_string(),
+                                to: ty.to_string(),
+                            });
+                        }
+                    } else if !coerces(&actual, ty) && !self.converts_to_parameter(expr, &value, ty)
+                    {
                         return Err(TypeError::TypeMismatch {
                             expected: ty.to_string(),
                             found: actual.to_string(),
@@ -2262,6 +2348,11 @@ impl Checker {
                         });
                     }
                     self.record_literal_materializations(expr, &actual, ty)?;
+                    // A type list (`Ts.values`) has no run-time form.
+                    if value.is_metatype_valued() {
+                        self.record_at(expr.source_span()).argument_attribute =
+                            Some(TyArg::Val(value.clone()));
+                    }
                     // A symbolic enclosing-scope parameter stays symbolic here;
                     // specialization bakes it out like the callable case above.
                     if matches!(value, CtValue::Expr(_)) {
@@ -3508,6 +3599,7 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         | TyKind::FloatLiteral
         | TyKind::Dtype
         | TyKind::AnyTrait(_)
+        | TyKind::Trait(_)
         | TyKind::TypeType
         | TyKind::Error => false,
         TyKind::Func(_) | TyKind::GenericFunc(_) => ty

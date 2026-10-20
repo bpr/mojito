@@ -443,6 +443,7 @@ mod tests {
             id: ParamId::new(owner, 0),
             name: name.into(),
             bounds: Vec::new(),
+            trait_param: None,
             callable_bound: None,
             default: None,
             infer_only: false,

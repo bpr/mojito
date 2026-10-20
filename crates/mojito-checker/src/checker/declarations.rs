@@ -814,19 +814,41 @@ impl Checker {
                 decls.push(self.value_param_decl(tp, binder_id(decls.len()), ty)?);
                 continue;
             }
-            let trait_bounds = tp
+            // A bound naming an earlier trait-valued binder (`T: Tr`, `T: Tr
+            // & Hashable` over `Tr: type_of(Copyable)`) is upstream's
+            // symbolic `ParamType`: the body sees the binder's declared
+            // bound beside the other traits, and each use site checks the
+            // trait the binder receives.
+            let trait_param = tp
                 .bounds
                 .iter()
-                .filter(|bound| bound.as_str() != "<function type>")
-                .cloned()
-                .collect::<Vec<_>>();
-            for bound in &trait_bounds {
+                .find_map(|bound| sibling_trait_binder(&decls, bound));
+            let mut trait_bounds = trait_param
+                .as_ref()
+                .map(|(_, declared)| declared.clone())
+                .unwrap_or_default();
+            for bound in &tp.bounds {
+                if bound == "<function type>"
+                    || trait_param
+                        .as_ref()
+                        .is_some_and(|(binder, _)| *binder.name == **bound)
+                {
+                    continue;
+                }
                 self.check_trait_name(bound)?;
+                if !trait_bounds.contains(bound) {
+                    trait_bounds.push(bound.clone());
+                }
+            }
+            if let Some((binder, _)) = &trait_param {
+                self.trait_bounded_binders
+                    .insert(binder_id(decls.len()), binder.clone());
             }
             decls.push(ParamDecl::Type {
                 id: binder_id(decls.len()),
                 name: tp.name.clone(),
                 bounds: trait_bounds,
+                trait_param: trait_param.map(|(binder, _)| binder),
                 callable_bound: None,
                 // A callable RHS is initially represented by this temporary
                 // type declaration, but its default is a function value rather
@@ -3272,10 +3294,17 @@ impl Checker {
             self.solve_binders_from_values(decls, &mut subst, |index, declared| {
                 self.bound_value_ty(&bound[index], declared)
             })?;
+            let trait_solutions = self.solve_trait_binders_from_lists(
+                decls,
+                |index| bound[index].is_empty(),
+                |index, declared| self.bound_value_ty(&bound[index], declared),
+            )?;
             let mut tyargs = Vec::with_capacity(decls.len());
             let mut value_environment = HashMap::new();
             for (decl, arguments) in decls.iter().zip(bound) {
                 let typed = substituted_value_decl(decl, &subst);
+                let typed =
+                    with_trait_arguments(typed.as_ref().unwrap_or(decl), decls, &tyargs).or(typed);
                 let decl = typed.as_ref().unwrap_or(decl);
                 let variadic = matches!(
                     decl,
@@ -3392,6 +3421,8 @@ impl Checker {
                     let resolved = self.resolve_param_arg(decl, argument)?;
                     attributes[*position] = bracket_attribute(argument, &resolved);
                     resolved
+                } else if let Some(solved) = trait_solutions.get(decl.id()) {
+                    TyArg::Val(solved.clone())
                 } else if let ParamDecl::Value {
                     callable_default: Some(_),
                     ..
@@ -3447,6 +3478,7 @@ impl Checker {
                 }
             }
             self.validate_callable_parameter_bounds(name, decls, &tyargs)?;
+            self.validate_trait_parameter_bounds(name, decls, &tyargs)?;
             self.validate_generic_constraints(name, decls, &tyargs)?;
             return Ok(BoundParameters {
                 subst,
@@ -3627,6 +3659,7 @@ impl Checker {
             }
         }
         self.validate_callable_parameter_bounds(name, decls, &tyargs)?;
+        self.validate_trait_parameter_bounds(name, decls, &tyargs)?;
         self.validate_generic_constraints(name, decls, &tyargs)?;
         Ok(BoundParameters {
             subst,
@@ -3735,6 +3768,71 @@ impl Checker {
             }
         }
         Ok(())
+    }
+
+    /// Solve each open trait-valued binder a raw list parameter's element
+    /// names (`values: KGENParamList[Tr]`) from the list its argument is, as
+    /// upstream solves `TypeList[Ts.values]`'s `Trait` from `Ts`'s bound: a
+    /// list of a trait binds that trait, a list of a trait binder in scope
+    /// forwards the binder. A list whose element is no trait refining the
+    /// binder's bound does not convert. `open` answers whether a binder has
+    /// no explicit argument, and `value_ty` the type of a parameter's.
+    fn solve_trait_binders_from_lists(
+        &self,
+        decls: &[ParamDecl],
+        open: impl Fn(usize) -> bool,
+        value_ty: impl Fn(usize, &Ty) -> Option<Ty>,
+    ) -> Result<HashMap<ParamId, CtValue>, TypeError> {
+        let mut solutions = HashMap::new();
+        for (index, decl) in decls.iter().enumerate() {
+            let ParamDecl::Value { name, ty, .. } = decl else {
+                continue;
+            };
+            let TyKind::ParamList(element) = ty.kind() else {
+                continue;
+            };
+            let TyKind::Dependent(dependent) = element.kind() else {
+                continue;
+            };
+            let Some(binder) = dependent.expr().as_decl_ref() else {
+                continue;
+            };
+            let Some((position, ParamDecl::Value { ty: binder_ty, .. })) = decls
+                .iter()
+                .enumerate()
+                .find(|(_, sibling)| sibling.id() == &binder.id)
+            else {
+                continue;
+            };
+            let (TyKind::AnyTrait(bound), true) = (binder_ty.kind(), open(position)) else {
+                continue;
+            };
+            if solutions.contains_key(&binder.id) {
+                continue;
+            }
+            let Some(actual) = value_ty(index, ty) else {
+                continue;
+            };
+            let solved = match actual.kind() {
+                TyKind::ParamList(element) => mojito_types::types::trait_type_bound(element)
+                    .filter(|available| self.traits_satisfy(available, bound))
+                    .and_then(|_| match element.kind() {
+                        TyKind::Trait(traits) => Some(CtValue::Trait(traits.clone())),
+                        TyKind::Dependent(forwarded) => {
+                            Some(CtValue::Expr(forwarded.expr().clone()))
+                        }
+                        _ => None,
+                    }),
+                _ => None,
+            };
+            let solved = solved.ok_or_else(|| TypeError::ParamListConversion {
+                param: name.trim_start_matches('*').to_string(),
+                from: actual.to_string(),
+                to: ty.to_string(),
+            })?;
+            solutions.insert(binder.id.clone(), solved);
+        }
+        Ok(solutions)
     }
 
     /// The type of the value the first bracket argument bound to a
@@ -4133,6 +4231,51 @@ fn sibling_type_binder(decls: &[ParamDecl], name: &str) -> Option<Ty> {
                 )
         })
         .and_then(type_parameter)
+}
+
+/// The earlier trait-valued binder `name` names in a list being classified
+/// (`Tr: type_of(Copyable)`), with its declared trait set.
+fn sibling_trait_binder(decls: &[ParamDecl], name: &str) -> Option<(ParamRef, Vec<String>)> {
+    decls.iter().find_map(|decl| match decl {
+        ParamDecl::Value {
+            ty,
+            variadic: false,
+            ..
+        } if decl.name() == name
+            && let TyKind::AnyTrait(bound) = ty.kind() =>
+        {
+            Some((decl.binder(), bound.clone()))
+        }
+        _ => None,
+    })
+}
+
+/// `decl` with each earlier trait-valued binder its value type names
+/// (`values: KGENParamList[Tr]`) replaced by the argument `arguments` bound
+/// it, or `None` when it names none.
+fn with_trait_arguments(
+    decl: &ParamDecl,
+    decls: &[ParamDecl],
+    arguments: &[TyArg],
+) -> Option<ParamDecl> {
+    let ParamDecl::Value { ty, .. } = decl else {
+        return None;
+    };
+    let context = mojito_types::param_expr::ParamContext::detached();
+    let mut bindings = mojito_types::param_expr::ParamBindings::new();
+    for (sibling, argument) in decls.iter().zip(arguments) {
+        if let (ParamDecl::Value { ty: binder_ty, .. }, TyArg::Val(value)) = (sibling, argument)
+            && matches!(binder_ty.kind(), TyKind::AnyTrait(_))
+            && let Some(value) = match value {
+                CtValue::Expr(expr) => Some(expr.clone()),
+                value => context.constant(value.clone()).ok(),
+            }
+        {
+            bindings.bind(sibling.id().clone(), value);
+        }
+    }
+    let solved = mojito_types::types::replace_parameters(&context, ty, &bindings, 0).ok()?;
+    (solved != **ty).then(|| decl.with_value_type(solved))
 }
 
 /// `decl` with the binders its value type names replaced by their solutions

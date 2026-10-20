@@ -686,6 +686,7 @@ impl ScopeCx<'_> {
             | TyKind::Infer
             | TyKind::Dtype
             | TyKind::AnyTrait(_)
+            | TyKind::Trait(_)
             | TyKind::TypeType
             | TyKind::SelfType
             | TyKind::Error => {}
@@ -771,7 +772,7 @@ impl ScopeCx<'_> {
         expected: &MetaTy,
         nested: &mut Vec<(ParamId, MetaTy)>,
     ) {
-        if expr.meta() != expected {
+        if expr.meta() != expected && !expr.meta().is_trait_metatype_of(expected) {
             self.errors.push(format!(
                 "{} {role} has {slot} `{expr}` of kind `{}`, not `{expected}`",
                 self.head,
@@ -1370,6 +1371,7 @@ mod tests {
                 id: ParamId::new("Bag", 0),
                 name: "Ts".into(),
                 bounds: Vec::new(),
+                trait_param: None,
                 callable_bound: None,
                 default: None,
                 infer_only: false,

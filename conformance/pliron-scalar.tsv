@@ -976,6 +976,7 @@ assets/ok/ternary.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/thin_nested_def_reads_value_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_bound_argument_drop_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_bound_comparison_drop_order.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/trait_bounded_type_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_default_calls_later_function.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_default_comptime_if.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_default_method.mojo	-	ineligible	no-scalar-entry-shape

@@ -1981,7 +1981,8 @@ public compatibility queries and are not part of lowering.
 
 Specialization values include `CtValue::Dtype`, nominal `CtValue::Struct`
 instances, `CtValue::Trait` (a trait bound to a trait-valued parameter,
-which has no run-time form), and `CtValue::Pointer { memory, offset }`
+which has no run-time form, and which a type binder bounded by that
+parameter, `T: Tr`, is checked against at each use), and `CtValue::Pointer { memory, offset }`
 leaves. A live pointer
 freezes its allocation recursively; an absent slot remains uninitialized,
 `None` memory denotes a dangling pointer, and an empty allocation remains

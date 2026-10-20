@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.77
+mojito-mir 1.78
 ```
 
-The writer emits 1.77. The reader accepts 1.0 through 1.77; *Schema 1.0*
+The writer emits 1.78. The reader accepts 1.0 through 1.78; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -815,12 +815,22 @@ compile-time parameter declarations only.
 `__TypeOfAllTypes`. It is compile-time only, as `any_trait` is; a type binder
 it types records the bound `__TypeOfAllTypes`.
 
+`trait_type([trait, ...])` (schema 1.78) is upstream's `TraitType`: a trait,
+or a composition, used as a type, the type of every type conforming to its
+canonical trait set. It is a raw list's element (`param_list(trait_type([AnyType]))`
+is `!kgen.param_list<AnyType>`, a list of types) and is compile-time only, as
+`any_trait` is.
+
 `ParamDecl` is
-`type_param { owner, slot, name, bounds, callable_bound, default, infer_only, variadic, constraints }`
+`type_param { owner, slot, name, bounds, trait_param, callable_bound, default, infer_only, variadic, constraints }`
 or
 `value_param { owner, slot, name, type, default, callable_default, infer_only, variadic, constraints }`.
 Callable defaults use `default_symbol`, `default_parameter`, or
-`default_if { condition, then_value, else_value }`.
+`default_if { condition, then_value, else_value }`. A type parameter's
+`trait_param` (schema 1.78; `absent` when an older record omits it) is
+`present(binder { owner, slot, name })` when a trait-valued sibling bounds it
+(`T: Tr`, upstream's `ParamType`), its `bounds` then that sibling's declared
+trait set.
 
 #### Binder identity
 
@@ -1076,10 +1086,10 @@ lowering unit, one record per library declaration, and one module table
 holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 72`.
+MLIR bytecode throughout. The format line is `mojito-package 73`.
 
 ```text
-mojito-package 72
+mojito-package 73
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode, then the type section>

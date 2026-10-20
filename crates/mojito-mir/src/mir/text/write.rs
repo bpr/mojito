@@ -2145,6 +2145,7 @@ fn ty_value(ty: &Ty) -> String {
         TyKind::AnyTrait(traits) => {
             positional("any_trait", &list(traits.iter().map(|v| symbol(v))))
         }
+        TyKind::Trait(traits) => positional("trait_type", &list(traits.iter().map(|v| symbol(v)))),
         TyKind::Tuple(values) => positional("tuple", &list(values.iter().map(ty_value))),
         TyKind::RuntimePack(values) => {
             positional("runtime_pack", &list(values.iter().map(ty_value)))
@@ -2241,6 +2242,7 @@ fn param_decl(value: &ParamDecl) -> String {
             id,
             name,
             bounds,
+            trait_param,
             callable_bound,
             default,
             infer_only,
@@ -2253,6 +2255,7 @@ fn param_decl(value: &ParamDecl) -> String {
                 ("slot", id.slot.to_string()),
                 ("name", symbol(name)),
                 ("bounds", list(bounds.iter().map(|v| symbol(v)))),
+                ("trait_param", option(trait_param.as_ref().map(binder_ref))),
                 (
                     "callable_bound",
                     option(callable_bound.as_ref().map(ty_value)),

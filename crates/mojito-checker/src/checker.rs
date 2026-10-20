@@ -738,6 +738,11 @@ pub struct Checker {
     /// vector argument's width slot solves one, while an `Int` binder in the
     /// slot is a conversion the pin leaves unresolved.
     simd_length_binders: HashSet<mojito_types::param_expr::ParamId>,
+    /// The type binders bounded by a trait-valued sibling (`T: Tr`), each
+    /// with that sibling: as upstream decides nothing of a `ParamType` over
+    /// the trait metatype, a value of one is destroyed by the generic
+    /// default, and a pack's `Ts.values` is a list of `Tr`.
+    trait_bounded_binders: HashMap<mojito_types::param_expr::ParamId, ParamRef>,
     /// The types a generic `def` call solved for the callee's binders, held
     /// from the call's typing until its transfer replay takes them.
     call_bindings: RefCell<FactMap<SourceSpan, TySubst>>,
@@ -1014,6 +1019,7 @@ impl Checker {
             node_facts: RefCell::new(FactMap::default()),
             nested_origins_read_only_functions: declaration_table::DeclarationSet::default(),
             simd_length_binders: HashSet::from([builtins::hasher_simd_update_binders().1.id]),
+            trait_bounded_binders: HashMap::new(),
             call_bindings: RefCell::new(FactMap::default()),
             struct_instantiations: RefCell::new(FactVec::default()),
             transfer_frames: RefCell::new(Vec::new()),
@@ -1551,6 +1557,67 @@ impl Checker {
                     reason: Some(format!(
                         "declared callable contract '{actual_contract}' is incompatible"
                     )),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Check each type binder bounded by a trait-valued sibling (`T: Tr`,
+    /// `*Ts: Tr`) against the trait that sibling received, as upstream
+    /// substitutes the symbolic bound at the use: the declared bound the
+    /// argument already satisfied is all a generic body assumes, and the
+    /// bound trait may refine it.
+    fn validate_trait_parameter_bounds(
+        &self,
+        generic_name: &str,
+        decls: &[ParamDecl],
+        arguments: &[TyArg],
+    ) -> Result<(), TypeError> {
+        for (decl, argument) in decls.iter().zip(arguments) {
+            let ParamDecl::Type {
+                name,
+                trait_param: Some(binder),
+                ..
+            } = decl
+            else {
+                continue;
+            };
+            let Some(TyArg::Val(bound)) = decls
+                .iter()
+                .position(|sibling| sibling.id() == &binder.id)
+                .and_then(|index| arguments.get(index))
+            else {
+                continue;
+            };
+            let traits = match bound {
+                CtValue::Trait(traits) => traits.clone(),
+                CtValue::Expr(expr) => match expr.meta().as_value().map(Ty::kind) {
+                    Some(TyKind::AnyTrait(traits)) => traits.clone(),
+                    _ => continue,
+                },
+                _ => continue,
+            };
+            let types: Vec<&Ty> = match argument {
+                TyArg::Ty(ty) => vec![ty],
+                TyArg::Val(CtValue::Tuple(elements)) => elements
+                    .iter()
+                    .filter_map(|element| match element {
+                        CtValue::Type(ty) => Some(ty),
+                        _ => None,
+                    })
+                    .collect(),
+                TyArg::Val(_) | TyArg::Origin(_) => Vec::new(),
+            };
+            if let Some(ty) = types
+                .into_iter()
+                .find(|ty| !traits.iter().all(|required| self.conforms_to(ty, required)))
+            {
+                return Err(TypeError::ParamValueType {
+                    callee: generic_name.to_string(),
+                    param: name.trim_start_matches('*').to_string(),
+                    expected: traits.join(" & "),
+                    found: format!("AnyStruct[{ty}]"),
                 });
             }
         }

@@ -130,6 +130,7 @@ impl StructCatalog {
                                 id: mojito_types::param_expr::ParamId::new(name, 0),
                                 name: "T".to_string(),
                                 bounds: Vec::new(),
+                                trait_param: None,
                                 callable_bound: None,
                                 default: None,
                                 infer_only: false,

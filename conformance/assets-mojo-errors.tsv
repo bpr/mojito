@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	636
+# swept-count	641
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -520,6 +520,8 @@ assets/type_error/predicate_alias_in_type_position.mojo	compile-reject	agree	err
 assets/type_error/print_unknown_keyword.mojo	compile-reject	agree	error: invalid call to 'print': unexpected keyword argument 'foo'
 assets/type_error/raising_constructor_unhandled.mojo	compile-reject	agree	error: cannot call function that may raise in a context that cannot raise
 assets/type_error/raising_prefix_operator_unhandled.mojo	compile-reject	agree	error: cannot call function that may raise in a context that cannot raise
+assets/type_error/raw_list_of_values_for_types.mojo	compile-reject	agree	error: value passed to 'values' cannot be converted from 'KGENParamList[Int]' to 'KGENParamList[$0]'
+assets/type_error/raw_list_trait_unrefined.mojo	compile-reject	agree	error: value passed to 'values' cannot be converted from 'KGENParamList[AnyType]' to 'KGENParamList[$0]'
 assets/type_error/read_parameter_transfer_generic.mojo	compile-reject	agree	error: cannot transfer out of immutable reference
 assets/type_error/read_parameter_transfer_into_var_argument.mojo	compile-reject	agree	error: cannot transfer out of immutable reference
 assets/type_error/read_parameter_transfer_returned.mojo	compile-reject	agree	error: cannot transfer out of immutable reference
@@ -597,6 +599,9 @@ assets/type_error/template_method_reference_read_requires_copy.mojo	compile-reje
 assets/type_error/template_method_transfer_requires_movable.mojo	compile-reject	agree	error: cannot transfer value into destination, because 'T' doesn't conform to 'Movable'
 assets/type_error/template_pack_element_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'Ts.values[SIMDLength(paramfor_next_value[_ZeroStartingRange](iter))]' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/template_where_instance_violated.mojo	compile-reject	agree	error: invalid call to 'small': violated constraint
+assets/type_error/trait_bound_body_assumes_bound.mojo	compile-reject	agree	error: 'T' value has no attribute 'copy'
+assets/type_error/trait_bound_pack_element.mojo	compile-reject	agree	error: invalid call to 'g': 'g' parameter 'Ts' has 'Copyable' type, but value has type 'AnyStruct[NC]'
+assets/type_error/trait_bound_type_argument.mojo	compile-reject	agree	error: invalid call to 'g': 'g' parameter 'T' has 'Copyable' type, but value has type 'AnyStruct[NC]'
 assets/type_error/trait_comptime_member.mojo	compile-reject	agree	error: 'Box[T]' does not implement all requirements for 'HasElement'
 assets/type_error/trait_default_checked_without_conformer.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["oops"]' value to 'Int'
 assets/type_error/trait_default_conflicting_implementations.mojo	compile-reject	agree	error: trait method requirement 'name' has conflicting default implementations in 'Left' and 'Right'; you must implement it manually

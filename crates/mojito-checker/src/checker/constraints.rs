@@ -774,6 +774,14 @@ impl Checker {
             {
                 Ok(CtValue::Dtype(dtype))
             }
+            // A type pack's raw list (`Ts.values`, `Self.Ts.values`): the
+            // pack itself, a list of types.
+            ExprKind::Member { object, field }
+                if field == "values"
+                    && let Some(pack) = self.type_pack_named(object) =>
+            {
+                Ok(CtValue::Expr(pack))
+            }
             // Upstream's KGEN metatype (`comptime KGENTypeType =
             // __mlir_type.`!kgen.type``).
             ExprKind::Member { object, field }
@@ -1410,6 +1418,13 @@ impl Checker {
                 if let Some(projection) = self.struct_value_field(object, field) =>
             {
                 projection
+            }
+            // A type pack's raw list (`Ts.values`): the pack itself.
+            ExprKind::Member { object, field }
+                if field == "values"
+                    && let Some(pack) = self.type_pack_named(object) =>
+            {
+                Ok(pack)
             }
             // A type's value member (`T.K`, `Self.T.K`): the member read the
             // elaborator answers per instance.
