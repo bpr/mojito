@@ -7877,20 +7877,58 @@ fn param_list_address_outside_the_bundled_variadics_is_rejected() {
 }
 
 #[test]
-fn parameter_list_brackets_spelled_by_user_code_are_rejected() {
-    // The pin's `ParameterList` takes its list as one parameter
-    // (`ParameterList[values.values]`) and rejects `ParameterList[1, 2]`;
-    // only the construction the compiler spells for a value pack read applies
-    // the bundled port's variadic brackets.
-    for source in [
-        "def main():\n    var p = ParameterList[1, 2]()\n    print(len(p))\n",
+fn parameter_list_takes_a_packs_raw_list() {
+    // `ParameterList[vs.values]` applies upstream's one raw-list parameter,
+    // a `comptime` binding of `vs.values` is that list, and a struct's
+    // value parameter reads through its type (`S[7].n`).
+    ok_std(
+        "struct S[n: Int]:\n    def __init__(out self):\n        pass\n\n\ndef f[*vs: Int]() -> Int:\n    comptime raw = vs.values\n    var p = ParameterList[vs.values]()\n    return len(p) + ParameterList[raw].size + S[7].n\n\n\ndef main():\n    print(f[1, 2]())\n",
+    );
+}
+
+#[test]
+fn parameter_list_rejects_explicit_elements() {
+    // The pin's `ParameterList[1, 2]` is "unexpected parameter": the list
+    // is one raw-list parameter, never its elements.
+    let error = err_std("def main():\n    var p = ParameterList[1, 2]()\n    print(len(p))\n");
+    assert!(
+        error
+            .to_string()
+            .contains("infer-only parameter 'type' cannot be supplied explicitly"),
+        "{error}"
+    );
+}
+
+#[test]
+fn parameter_list_rejects_a_spread_pack() {
+    // A pack spread is no raw list, as the pin's "cannot be converted from
+    // 'ParameterList[values]' to 'KGENParamList[$0]'" says.
+    let error = err_std(
         "def f[*vs: Int]() -> Int:\n    var p = ParameterList[*vs]()\n    return len(p)\n\n\ndef main():\n    print(f[1, 2]())\n",
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("cannot infer type parameter 'type' of 'ParameterList'"),
+        "{error}"
+    );
+}
+
+#[test]
+fn raw_parameter_list_is_no_pack() {
+    // A raw-list parameter (`raw: _MLIR.KGENParamListType[t]`) and a
+    // `comptime` binding of `vs.values` are no value pack: a runtime read of
+    // either is rejected, not spelled as a `ParameterList` construction.
+    for source in [
+        "def f[*vs: Int]():\n    comptime raw = vs.values\n    var x = raw\n    _ = x\n\n\ndef main():\n    f[1, 2]()\n",
+        "def f[*vs: Int]():\n    var x = vs.values\n    _ = x\n\n\ndef main():\n    f[1, 2]()\n",
+        "from std.builtin.variadics import _MLIR\n\n\ndef h[t: AnyType, //, raw: _MLIR.KGENParamListType[t]]():\n    var x = raw\n    _ = x\n\n\ndef f[*vs: Int]():\n    h[vs.values]()\n\n\ndef main():\n    f[1, 2]()\n",
     ] {
         let error = err_std(source);
         assert!(
             error
                 .to_string()
-                .contains("'ParameterList' takes its list as one parameter"),
+                .contains("a raw parameter list ('KGENParamList["),
             "{error}"
         );
     }

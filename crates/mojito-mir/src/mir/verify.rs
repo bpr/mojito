@@ -127,7 +127,6 @@ use loans::verify_loan_instruction;
 use places::*;
 pub use places::{instruction_places, instruction_places_mut, place_base_ty};
 pub use regs::*;
-pub(crate) use scope::declared_kind;
 use scope::verify_scope;
 pub use scope::{instruction_named_types, instruction_variant_indices};
 use structure::{verify_region_terminator, verify_regions};

@@ -489,6 +489,10 @@ fn rewrite_type(
                 }
             }
         }
+        Type::IndexedProjection { base, index } => {
+            rewrite_type(base, names, namespaces);
+            rewrite_expr(index, names, namespaces);
+        }
         _ => {}
     }
 }

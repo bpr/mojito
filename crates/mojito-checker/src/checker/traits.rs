@@ -1658,10 +1658,18 @@ impl Checker {
     pub(super) fn ct_value_ty(&self, value: &CtValue, self_ty: &Ty) -> Option<Ty> {
         match value {
             CtValue::Int(_) | CtValue::Deferred(_) | CtValue::Marker(_) => Some(Ty::int()),
-            CtValue::Expr(expr) => match expr.meta() {
-                mojito_types::param_expr::MetaTy::Value(ty) => Some((*ty).clone()),
-                _ => None,
-            },
+            CtValue::Expr(expr) => expr.meta().value_ty(),
+            // A closed raw parameter list holds its elements as a tuple.
+            CtValue::Tuple(values) if let TyKind::ParamList(element) = self_ty.kind() => {
+                let first = values.first().map_or_else(
+                    || Some(element.clone()),
+                    |value| self.ct_value_ty(value, element),
+                )?;
+                values
+                    .iter()
+                    .all(|value| self.ct_value_ty(value, element).as_ref() == Some(&first))
+                    .then(|| TyKind::ParamList(first).into())
+            }
             CtValue::UInt(_) => Some(Ty::uint()),
             CtValue::Float(_) => Some(Ty::float64()),
             CtValue::IntLiteral(_) => Some(Ty::int_literal()),
@@ -3378,6 +3386,18 @@ pub(super) fn reads_value_parameter(default: &mojito_ast::ast::Expr, decls: &[Pa
         .iter()
         .filter(|decl| matches!(decl, ParamDecl::Value { .. }))
         .any(|decl| reads_name(default, decl.name()))
+}
+
+/// Whether a parameter of `params` is typed by another declaration's member
+/// (`values: _MLIR.KGENParamListType[type]`), which classifies only once
+/// that declaration's member types resolve.
+pub(super) fn names_member_type(params: &[mojito_ast::ast::TypeParam]) -> bool {
+    params.iter().any(|param| {
+        matches!(
+            param.value_type,
+            Some(SourceType::Assoc { .. } | SourceType::IndexedProjection { .. })
+        )
+    })
 }
 
 fn unfoldable_requirement_default() -> TypeError {

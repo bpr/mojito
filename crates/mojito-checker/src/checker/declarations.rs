@@ -735,6 +735,9 @@ impl Checker {
             if let Some(scope) = self.vparams.last_mut() {
                 *scope = value_scope(&decls);
             }
+            if let Some(scope) = self.value_packs.last_mut() {
+                *scope = value_pack_scope(&decls);
+            }
             if let Some(scope) = self.tparams.last_mut() {
                 *scope = type_scope(&decls);
             }
@@ -3280,13 +3283,30 @@ impl Checker {
                         continue;
                     }
                     // A spread of a value pack that is still a parameter
-                    // (`PL[*vs]`, `PL[*Self.vs]`) forwards that pack whole.
+                    // (`PL[*vs]`, `PL[*Self.vs]`) forwards that pack whole,
+                    // and a spread `ParameterList` construction its raw list
+                    // (`It[*ParameterList[Self.values]()]`).
                     if let [(position, argument)] = arguments.as_slice()
                         && matches!(decl, ParamDecl::Value { .. })
-                        && let Some(pack) = self.value_pack_spread(argument)
+                        && let Some(list) = self
+                            .value_pack_spread(argument)
+                            .map(|pack| Ok(CtValue::Expr(pack)))
+                            .or_else(|| {
+                                self.parameter_list_spread(argument)
+                                    .map(|spread| spread.map(|(_, raw)| raw))
+                            })
                     {
-                        let value = TyArg::Val(CtValue::Expr(pack));
-                        attributes[*position] = bracket_attribute(argument, &value);
+                        let value = TyArg::Val(list?);
+                        // The spread construction is compile-time only: the
+                        // list it binds is its attribute.
+                        attributes[*position] = match argument {
+                            mojito_ast::ast::ParamArg::Value(spread) => {
+                                self.record_at(spread.source_span()).argument_attribute =
+                                    Some(value.clone());
+                                Some(value.clone())
+                            }
+                            _ => bracket_attribute(argument, &value),
+                        };
                         if let TyArg::Val(value) = &value {
                             value_environment.insert(
                                 decl.name().trim_start_matches('*').to_string(),
@@ -3703,6 +3723,9 @@ impl Checker {
         declared: &Ty,
     ) -> Option<Ty> {
         let (_, argument) = arguments.first()?;
+        if let Some(spread) = self.parameter_list_spread(argument) {
+            return spread.ok().map(|(element, _)| element);
+        }
         match self.value_pack_spread(argument) {
             Some(pack) => match pack.meta() {
                 mojito_types::param_expr::MetaTy::ParamList(element) => element.as_value().cloned(),

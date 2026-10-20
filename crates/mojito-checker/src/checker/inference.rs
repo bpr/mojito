@@ -1102,13 +1102,46 @@ impl Checker {
                         },
                     ));
                 }
+                // A raw-list parameter (`raw: KGENParamList[T]`) has no
+                // runtime form: a compile-time position reads the binder.
+                if let Some(ty) = self.lookup(name)
+                    && matches!(ty.kind(), TyKind::ParamList(_))
+                {
+                    if self.crosses_to_runtime() {
+                        return Err(super::comptime_validation::raw_list_runtime_read(
+                            &mojito_types::param_expr::MetaTy::value(ty.clone()),
+                        ));
+                    }
+                    if let Some(value) = self.value_parameter_in_scope(name) {
+                        self.record_at(expr.source_span()).adjustment = Some(Box::new(
+                            mojito_checked::checked::SemanticAdjustment::ParamValue {
+                                value,
+                                materialized: None,
+                            },
+                        ));
+                    }
+                }
                 self.lookup(name)
                     .map(|ty| match ty.kind() {
                         TyKind::Ref(reference) => reference.referent.clone(),
                         _ => ty.clone(),
                     })
                     .map(|ty| self.bake_value_transfer_effects(name, ty))
-                    .ok_or_else(|| TypeError::UndefinedVariable(name.clone()))
+                    .map_or_else(
+                        || match self.raw_list_named(name) {
+                            // A compile-time position reads a raw parameter
+                            // list as the value it is; it has no runtime form.
+                            Some(raw) if !self.crosses_to_runtime() => raw
+                                .meta()
+                                .value_ty()
+                                .ok_or_else(|| TypeError::UndefinedVariable(name.clone())),
+                            Some(raw) => Err(super::comptime_validation::raw_list_runtime_read(
+                                raw.meta(),
+                            )),
+                            None => Err(TypeError::UndefinedVariable(name.clone())),
+                        },
+                        Ok,
+                    )
             }
             ExprKind::Prefix(op, operand) => self.infer_prefix(expr.source_span(), *op, operand),
             ExprKind::Infix(op, left, right) => {

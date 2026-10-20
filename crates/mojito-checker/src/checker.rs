@@ -544,6 +544,10 @@ pub struct Checker {
     /// Variadic type packs in scope by bare name, level for level beside
     /// `tparams`: the parameter-list references a pack element indexes.
     pack_params: Vec<HashMap<String, ParamExpr>>,
+    /// Variadic value packs (`*values: T`) in scope by bare name, level for
+    /// level beside `vparams`: what tells a pack from a raw parameter list
+    /// (`values: KGENParamList[T]`), whose references share its meta-type.
+    value_packs: Vec<HashSet<String>>,
     /// The dependent pack element each bounded view of one stands for, by the
     /// view's parameter name (see `opaque_element`).
     pack_element_views: RefCell<HashMap<String, Ty>>,
@@ -724,11 +728,6 @@ pub struct Checker {
     /// declarations may name compiler-private storage types (`__UninitStorage`)
     /// in sourceless type-annotation positions.
     bundled_stdlib_declaration: bool,
-    /// Set while checking a `ParameterList[...]` construction the compiler
-    /// spelled for a value pack read, or one in the bundled
-    /// `std/builtin/variadics.mojo`: the pin's `ParameterList` takes its list
-    /// as one parameter, so no other bracket spelling of it is admitted.
-    parameter_list_brackets: std::cell::Cell<bool>,
     /// Every fact the check decided at an occurrence, in the occurrence's one
     /// record (`node_facts`): the checked handoff, written as it is decided.
     node_facts: RefCell<FactMap<SourceSpan, mojito_checked::checked::NodeFacts>>,
@@ -971,6 +970,7 @@ impl Checker {
             tparams: Vec::new(),
             vparams: Vec::new(),
             pack_params: Vec::new(),
+            value_packs: Vec::new(),
             pack_element_views: RefCell::new(HashMap::new()),
             param_context: ParamContext::detached(),
             self_decls: Vec::new(),
@@ -1011,7 +1011,6 @@ impl Checker {
             self_initializing: false,
             parametric_write_frames: RefCell::new(Vec::new()),
             bundled_stdlib_declaration: false,
-            parameter_list_brackets: std::cell::Cell::new(false),
             node_facts: RefCell::new(FactMap::default()),
             nested_origins_read_only_functions: declaration_table::DeclarationSet::default(),
             simd_length_binders: HashSet::from([builtins::hasher_simd_update_binders().1.id]),

@@ -356,20 +356,8 @@ impl Scope {
 
     fn declare(&mut self, decls: &[ParamDecl]) {
         for decl in decls {
-            self.kinds.insert(decl.id().clone(), declared_kind(decl));
+            self.kinds.insert(decl.id().clone(), decl.binder_meta());
         }
-    }
-}
-
-/// The kind a declaration's binder is referenced at.
-pub fn declared_kind(decl: &ParamDecl) -> MetaTy {
-    match decl {
-        ParamDecl::Value {
-            ty, variadic: true, ..
-        } => MetaTy::ParamList(Box::new(MetaTy::value((*ty).clone()))),
-        ParamDecl::Value { ty, .. } => MetaTy::value((*ty).clone()),
-        ParamDecl::Type { variadic: true, .. } => MetaTy::type_list(),
-        ParamDecl::Type { .. } => MetaTy::Type,
     }
 }
 
@@ -624,7 +612,7 @@ impl ScopeCx<'_> {
                 nested.extend(
                     decls
                         .iter()
-                        .map(|decl| (decl.id().clone(), declared_kind(decl))),
+                        .map(|decl| (decl.id().clone(), decl.binder_meta())),
                 );
                 for decl in decls {
                     match decl {
@@ -680,6 +668,7 @@ impl ScopeCx<'_> {
                 }
             }
             TyKind::ComptimeList(element)
+            | TyKind::ParamList(element)
             | TyKind::VariadicPack(element)
             | TyKind::Pointer { element, .. } => {
                 self.walk_in(role, element, nested);
@@ -734,13 +723,8 @@ impl ScopeCx<'_> {
                 TyArg::Val(value) => {
                     let expected = declared
                         .and_then(|decls| decls.get(slot))
-                        .and_then(|decl| match decl {
-                            ParamDecl::Value {
-                                ty, variadic: true, ..
-                            } => Some(MetaTy::ParamList(Box::new(MetaTy::value((*ty).clone())))),
-                            ParamDecl::Value { ty, .. } => Some(MetaTy::value((*ty).clone())),
-                            ParamDecl::Type { .. } => None,
-                        })
+                        .filter(|decl| matches!(decl, ParamDecl::Value { .. }))
+                        .map(ParamDecl::binder_meta)
                         .map(|expected| expected.substitute(&types));
                     self.value(role, value, expected.as_ref(), nested);
                 }

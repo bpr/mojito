@@ -2367,7 +2367,7 @@ impl ComptimeThunks {
                 context.decl_ref(
                     binder.id.clone(),
                     binder.name.trim_start_matches('*'),
-                    verify::declared_kind(declaration),
+                    declaration.binder_meta(),
                 )
             })
             .collect();

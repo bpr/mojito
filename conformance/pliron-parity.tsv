@@ -541,6 +541,8 @@ assets/ok/param_expr_normal_form.mojo	main	exe-differential	sanitized
 assets/ok/param_expr_overflow.mojo	main	exe-differential	sanitized
 assets/ok/param_expr_where.mojo	main	exe-differential	sanitized
 assets/ok/param_expr_where_assumption.mojo	main	exe-differential	sanitized
+assets/ok/parameter_list_raw_parameter.mojo	main	exe-differential	sanitized
+assets/ok/parameter_list_raw_values.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_concrete.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_origin.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_self_origin.mojo	main	exe-differential	sanitized

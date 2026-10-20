@@ -455,10 +455,7 @@ impl Checker {
                     if base == "__mlir_type" && base_args.is_empty()) =>
             {
                 if name != "index" || !args.is_empty() {
-                    return Err(TypeError::Unsupported(format!(
-                        "'__mlir_type.{name}' is outside the supported subset; only \
-                         '__mlir_type.index' is accepted"
-                    )));
+                    return Err(unsupported_mlir_type());
                 }
                 Ty::int()
             }
@@ -710,9 +707,6 @@ impl Checker {
             }
         }
         if let Some(info) = self.structs.get(name) {
-            if name == super::comptime_validation::PARAMETER_LIST && !args.is_empty() {
-                self.admit_parameter_list_brackets()?;
-            }
             let decls = info.decls.clone();
             let source_params = info.source_params.clone();
             let BoundParameters {
@@ -753,6 +747,34 @@ impl Checker {
         Err(TypeError::UnknownType(name.to_string()))
     }
 
+    /// Upstream's `_MLIR.KGENParamListType[T]` body,
+    /// ``__mlir_type[`!kgen.param_list<`, T, `>`]``: the raw parameter list
+    /// of `T`. Every other bracketed MLIR type spelling is outside the subset.
+    fn mlir_param_list_type(&self, args: &[mojito_ast::ast::ParamArg]) -> Result<Ty, TypeError> {
+        use mojito_ast::ast::ParamArg;
+        let delimiter = |arg: &ParamArg, text: &str| {
+            matches!(arg, ParamArg::Value(Expr { kind: ExprKind::Identifier(spelled), .. })
+                if spelled == text)
+        };
+        let element = match args {
+            [open, element, close]
+                if delimiter(open, "!kgen.param_list<") && delimiter(close, ">") =>
+            {
+                element
+            }
+            _ => return Err(unsupported_mlir_type()),
+        };
+        let element = match element {
+            ParamArg::Type(ty) => self.ty_from_anno(ty)?,
+            ParamArg::Value(Expr {
+                kind: ExprKind::Identifier(name),
+                ..
+            }) => self.ty_from_anno(&SourceType::Named(name.clone(), Vec::new()))?,
+            _ => return Err(unsupported_mlir_type()),
+        };
+        Ok(TyKind::ParamList(element).into())
+    }
+
     /// The type a compiler-known name applies to `args` (`Never`, `SIMD`,
     /// `Scalar`, the compiler-private storage types, a type parameter in
     /// scope), beside its bracket attributes; `None` for any other name.
@@ -773,6 +795,11 @@ impl Checker {
             }) => Some(trait_name),
             _ => None,
         });
+        if name == "__mlir_type" {
+            return self
+                .mlir_param_list_type(args)
+                .map(|ty| Some((ty, vec![None; args.len()])));
+        }
         if name == "Some"
             && args.len() == 1
             && let Some(trait_name) = existential_trait
@@ -1529,6 +1556,9 @@ impl Checker {
             TyKind::ComptimeList(element) => {
                 TyKind::ComptimeList(self.resolve_dependent_ty(element, parameters)?).into()
             }
+            TyKind::ParamList(element) => {
+                TyKind::ParamList(self.resolve_dependent_ty(element, parameters)?).into()
+            }
             TyKind::Tuple(elements) => TyKind::Tuple(
                 elements
                     .iter()
@@ -1925,6 +1955,7 @@ impl Checker {
                 map_tyargs(args, |t| self.resolve_assoc_ty(t)),
             )),
             TyKind::ComptimeList(elem) => TyKind::ComptimeList(self.resolve_assoc_ty(elem)).into(),
+            TyKind::ParamList(elem) => TyKind::ParamList(self.resolve_assoc_ty(elem)).into(),
             TyKind::Tuple(elems) => {
                 TyKind::Tuple(elems.iter().map(|t| self.resolve_assoc_ty(t)).collect()).into()
             }
@@ -3369,7 +3400,9 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         | TyKind::Tuple(types)
         | TyKind::RuntimePack(types)
         | TyKind::Variant(types) => types.iter().any(type_is_symbolic),
-        TyKind::ComptimeList(element) | TyKind::VariadicPack(element) => type_is_symbolic(element),
+        TyKind::ComptimeList(element)
+        | TyKind::ParamList(element)
+        | TyKind::VariadicPack(element) => type_is_symbolic(element),
         TyKind::Pointer { element, .. } => type_is_symbolic(element),
         TyKind::Ref(reference) => type_is_symbolic(&reference.referent),
     }
@@ -3453,6 +3486,14 @@ fn origin_has_subtree_tail(origin: &mojito_types::origin::PointerOrigin) -> bool
         }
         _ => false,
     }
+}
+
+fn unsupported_mlir_type() -> TypeError {
+    TypeError::Unsupported(
+        "this MLIR type spelling is outside the supported subset; only \
+         '__mlir_type.index' and '__mlir_type[`!kgen.param_list<`, T, `>`]' are accepted"
+            .to_string(),
+    )
 }
 
 fn subtree_is_terminal_error() -> TypeError {

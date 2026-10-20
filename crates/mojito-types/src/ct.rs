@@ -888,6 +888,12 @@ impl CtValue {
                     })
                     .flatten()
             }
+            // A closed raw parameter list holds its elements as a tuple.
+            (Self::Tuple(values), TyKind::ParamList(element)) => values
+                .into_iter()
+                .map(|value| value.materialize_as(element))
+                .collect::<Option<Vec<_>>>()
+                .map(CtValue::Tuple),
             (Self::List(values), TyKind::ComptimeList(element)) => values
                 .into_iter()
                 .map(|value| value.materialize_as(element))

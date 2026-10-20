@@ -615,12 +615,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 &Token::Colon,
                 "A type parameter requires a ': bound' (e.g. 'T: Copyable')",
             )?;
-            let (first_bound, callable_bound, fixed_mutability) =
+            let (first_bound, callable_bound, fixed_mutability, spelled_bound) =
                 if matches!(self.peek_token()?, Some(Token::Def)) {
                     (
                         "<function type>".to_string(),
                         Some(self.parse_type()?),
                         None,
+                        String::new(),
                     )
                 } else {
                     let bound = self.expect_identifier(
@@ -641,6 +642,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                         first_bound,
                         None,
                         fixed.map(|flag| Expr::new(ExprKind::Bool(flag), bound_span)),
+                        bound,
                     )
                 };
             // Origin parameters use `Origin[mut=<bool expression>]`. Preserve the
@@ -661,6 +663,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 let spelled = format!("Self.{param}");
                 value_type = Some(Type::SelfParam(param));
                 spelled
+            } else if callable_bound.is_none() && matches!(self.peek_token()?, Some(Token::Dot)) {
+                // `x: M.A` or `raw: _MLIR.KGENParamListType[t]` is a value
+                // parameter typed by a qualified type.
+                let qualified =
+                    self.parse_type_assoc_tail(Type::Named(spelled_bound.clone(), Vec::new()))?;
+                value_type = Some(qualified);
+                spelled_bound
             } else {
                 first_bound
             };

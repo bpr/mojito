@@ -611,7 +611,7 @@ impl Checker {
                 && param_args.is_empty()
                 && kwargs.is_empty()
                 && let [list] = args.as_slice()
-                && let Some(pack) = self.reads_raw_parameter_list(list)
+                && let Some(pack) = self.bundled_raw_list_operand(list)
                 && let Some(pack) = pack.as_decl_ref() =>
             {
                 Ok(CtValue::Expr(self.param_context.pack_query(
@@ -1137,7 +1137,29 @@ impl Checker {
         self.pack_params.truncate(depth);
         self.pack_params.resize_with(depth, HashMap::new);
         self.pack_params.push(pack_scope(decls));
+        self.value_packs.truncate(depth);
+        self.value_packs.resize_with(depth, HashSet::new);
+        self.value_packs.push(value_pack_scope(decls));
         self.tparams.push(type_scope(decls));
+    }
+
+    /// The parameter-list reference a bare name denotes when it is a
+    /// variadic value pack of an enclosing declaration that no local
+    /// `comptime` binding shadows.
+    pub(super) fn value_pack_in_scope(&self, name: &str) -> Option<ParamExpr> {
+        let level = (0..self.tparams.len()).rev().find(|level| {
+            self.vparams
+                .get(*level)
+                .is_some_and(|scope| scope.contains_key(name))
+        })?;
+        if !self.value_packs.get(level)?.contains(name) {
+            return None;
+        }
+        let pack = self
+            .param_context
+            .intern(self.vparams.get(level)?.get(name)?);
+        self.value_parameter_in_scope(name)
+            .filter(|found| *found == pack)
     }
 
     /// The parameter-list reference a bare name denotes when it is a variadic
@@ -1527,20 +1549,15 @@ impl Checker {
                 })
             }
             TyKind::Struct(name, arguments) => {
-                let info = self.structs.get(name)?;
-                let value = info
-                    .associated
-                    .get(field)
-                    .filter(|value| !matches!(value, CtValue::Type(_)))?;
-                Some(self.struct_member_at(info, arguments, value))
+                self.struct_value_member(self.structs.get(name)?, arguments, field)
             }
             _ => None,
         }
     }
 
-    /// The value member `field` of the `ParameterList` a value pack is
-    /// (`vs.size`), at the pack. `None` when the bundled struct declares no
-    /// such value member.
+    /// The value member or value parameter `field` of the `ParameterList` a
+    /// value pack is (`vs.size`, `vs.values`), at the pack. `None` when the
+    /// bundled struct declares no such value.
     fn parameter_list_member(
         &self,
         pack: ParamExpr,
@@ -1549,19 +1566,31 @@ impl Checker {
         let info = self
             .structs
             .get(super::comptime_validation::PARAMETER_LIST)?;
-        let value = info
-            .associated
-            .get(field)
-            .filter(|value| !matches!(value, CtValue::Type(_)))?;
         let mojito_types::param_expr::MetaTy::ParamList(element) = pack.meta() else {
             return None;
         };
         let element = element.as_value()?.clone();
-        Some(self.struct_member_at(
+        self.struct_value_member(
             info,
             &[TyArg::Ty(element), TyArg::Val(CtValue::Expr(pack))],
-            value,
-        ))
+            field,
+        )
+    }
+
+    /// The value `field` names on the struct application `arguments`: a
+    /// value member at the arguments, else the argument a value parameter
+    /// of that name holds (`S[7].n`). `None` when `field` names neither.
+    fn struct_value_member(
+        &self,
+        info: &StructInfo,
+        arguments: &[TyArg],
+        field: &str,
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        match info.associated.get(field) {
+            Some(CtValue::Type(_)) => None,
+            Some(value) => Some(self.struct_member_at(info, arguments, value)),
+            None => self.struct_parameter_at(info, arguments, field),
+        }
     }
 
     /// The pack a collector named by `object` spreads (`args` of `*args:
@@ -3068,6 +3097,31 @@ impl Checker {
             .replace(&value, &bindings)
             .and_then(|replaced| context.fold(&replaced))
             .map_err(param_error)
+    }
+
+    /// The argument a struct application `arguments` holds at its value
+    /// parameter `field`: upstream's parameter read through a type
+    /// (`S[7].n`, `ParameterList[vs.values].values`), folded when closed.
+    /// `None` when `field` names no value parameter of the struct.
+    pub(super) fn struct_parameter_at(
+        &self,
+        info: &StructInfo,
+        arguments: &[TyArg],
+        field: &str,
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        let slot = info.decls.iter().position(|decl| {
+            matches!(decl, ParamDecl::Value { .. }) && decl.name().trim_start_matches('*') == field
+        })?;
+        let TyArg::Val(value) = arguments.get(slot)? else {
+            return None;
+        };
+        let context = &self.param_context;
+        Some(
+            context
+                .constant(value.clone())
+                .and_then(|value| context.fold(&value))
+                .map_err(param_error),
+        )
     }
 
     /// Bind each of `decls` to its argument in `arguments` by binder id: a

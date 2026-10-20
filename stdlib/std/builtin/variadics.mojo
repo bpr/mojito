@@ -1,11 +1,14 @@
 # Upstream's `std/builtin/variadics.mojo` surface for the proof subset:
-# `ParameterList`, the zero-sized runtime value a homogeneous value pack
-# (`*values: Int`) is when it is read at run time, and its iterator.
+# `_MLIR`'s raw parameter list type, `ParameterList`, the zero-sized runtime
+# value a homogeneous value pack (`*values: Int`) is when it is read at run
+# time, and its iterator.
 #
-# Upstream's `values` is one `KGENParamListType[type]` parameter; here it is
-# the variadic `*values: type` upstream's own `_ParameterListIter` spells.
+# `ParameterList`'s `values` is upstream's one raw `KGENParamListType[type]`
+# parameter, and a pack's `vs.values` is that list. `_MLIR` bounds
+# `KGENParamListType`'s element by `AnyType`, not upstream's
+# `Self.KGENTypeType` (`!kgen.type`), and declares no `POPArrayType`.
 # `get_span` addresses the elements through the compiler-private
-# `__param_list_address[*values]()`, which stands for upstream's
+# `__param_list_address[values]()`, which stands for upstream's
 # `global_constant` over `#pop.variadic_to_array`. `write_repr_to` writes
 # the text upstream's `FormatStruct` builder writes, directly.
 from std.collections.optional import Optional
@@ -13,6 +16,12 @@ from std.iter import Iterable, Iterator, StopIteration
 from std.range import range
 from std.reflection.type_info import _unqualified_type_name
 from std.span import Span
+
+
+struct _MLIR:
+    comptime KGENParamListType[elt_type: AnyType] = __mlir_type[
+        `!kgen.param_list<`, elt_type, `>`
+    ]
 
 
 @fieldwise_init
@@ -53,7 +62,7 @@ struct _ParameterListIter[type: Copyable, //, *values: type](
         return (len, {len})
 
 
-struct ParameterList[type: AnyType, //, *values: type](
+struct ParameterList[type: AnyType, //, values: _MLIR.KGENParamListType[type]](
     Sized,
     TrivialRegisterPassable,
     Writable where conforms_to(type, Writable),
@@ -94,7 +103,7 @@ struct ParameterList[type: AnyType, //, *values: type](
         Returns:
             A span of the elements on the variadic list.
         """
-        var first_elt = __param_list_address[*Self.values]()
+        var first_elt = __param_list_address[Self.values]()
         return Span(unsafe_ptr=first_elt, length=Self.size)
 
     @inline(.always)
@@ -173,13 +182,17 @@ struct ParameterList[type: AnyType, //, *values: type](
 
     # We can only support iteration when the elements are Copyable, because
     # iterators currently need to return the elements by value.
+    # Upstream launders the list through `rebind[_MLIR.KGENParamListType[
+    # downcast[Self.type, Copyable]]](Self.values)` and returns `{0}`.
     @inline(.always)
     def __iter__(
         ref self,
-    ) -> _ParameterListIter[*Self.values] where conforms_to(Self.type, Copyable):
+    ) -> _ParameterListIter[*ParameterList[Self.values]()] where conforms_to(
+        Self.type, Copyable
+    ):
         """Iterate over the list.
 
         Returns:
             An iterator to the start of the list.
         """
-        return _ParameterListIter[*Self.values](0)
+        return _ParameterListIter[*ParameterList[Self.values]()](0)

@@ -533,6 +533,7 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
         TyKind::Variant(v) => TyKind::Variant(sub_spread_types(v, bindings)?).into(),
         TyKind::Overload(v) => TyKind::Overload(sub_types(v, bindings)?).into(),
         TyKind::ComptimeList(v) => TyKind::ComptimeList(substitute_ty(v, bindings)?).into(),
+        TyKind::ParamList(v) => TyKind::ParamList(substitute_ty(v, bindings)?).into(),
         // A collector over a bound type pack is the tuple of its elements.
         TyKind::VariadicPack(v)
             if let Some(TyKind::Param { binder, .. }) =

@@ -191,6 +191,7 @@ pub(super) fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
             a.len() == b.len() && a.iter().zip(b).all(|(a, b)| ty_equal_modulo_origins(a, b))
         }
         (TyKind::ComptimeList(a), TyKind::ComptimeList(b))
+        | (TyKind::ParamList(a), TyKind::ParamList(b))
         | (TyKind::VariadicPack(a), TyKind::VariadicPack(b)) => ty_equal_modulo_origins(a, b),
         // Callable environments (`thin` vs `capturing[origin@N]`) and
         // parameter-name/convention spellings erase from the runtime ABI:

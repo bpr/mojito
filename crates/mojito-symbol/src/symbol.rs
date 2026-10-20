@@ -1434,6 +1434,7 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         TyKind::StringLiteral => "StringLiteral".to_string(),
         TyKind::None => "None".to_string(),
         TyKind::ComptimeList(elem) => format!("__ComptimeList${}", ty_raw_in(elem, self_ty, mode)),
+        TyKind::ParamList(elem) => format!("__ParamList${}", ty_raw_in(elem, self_ty, mode)),
         TyKind::Tuple(elems) => format!(
             "Tuple${}",
             elems
@@ -2340,6 +2341,7 @@ pub fn canonical_specialization_type(ty: &Ty) -> Ty {
             mojito_types::types::map_tyargs(args, respell),
         )),
         TyKind::ComptimeList(element) => TyKind::ComptimeList(respell(element)).into(),
+        TyKind::ParamList(element) => TyKind::ParamList(respell(element)).into(),
         TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(respell).collect()).into(),
         TyKind::RuntimePack(elements) => {
             TyKind::RuntimePack(elements.iter().map(respell).collect()).into()

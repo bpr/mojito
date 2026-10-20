@@ -697,7 +697,6 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
-        let _brackets = self.parameter_list_brackets_at(&span, name, param_args)?;
         if name == "__RuntimeTuple"
             && (self.bundled_stdlib_declaration
                 || super::overload_support::is_bundled_module_source(span.source.as_deref()))
@@ -2174,13 +2173,13 @@ impl Checker {
     ) -> Result<Ty, TypeError> {
         let (argument, values) = match param_args {
             [argument] if args.is_empty() => self
-                .value_pack_spread(argument)
+                .raw_list_argument(argument)
                 .map(|values| (argument, values)),
             _ => None,
         }
         .ok_or_else(|| {
             TypeError::Unsupported(format!(
-                "'{PARAM_LIST_ADDRESS}' takes one value pack spread and no arguments"
+                "'{PARAM_LIST_ADDRESS}' takes one raw parameter list and no arguments"
             ))
         })?;
         self.record_bracket_attributes(

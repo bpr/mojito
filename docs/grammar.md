@@ -391,6 +391,10 @@ A value parameter's `type` may be an earlier type parameter of the same list
 `Self.NAME` naming the enclosing struct's type parameter (`def pick[v:
 Self.T](self)`); the parser records `Self.NAME` as the value type, and the
 checker reads a lone bound naming an earlier type binder as that binder's type.
+A qualified type, `NAME ('.' NAME)+ ['[' expression ']']`, is a value
+parameter's type too (`[x: M.A]`, `[t: AnyType, //, raw:
+_MLIR.KGENParamListType[t]]`); the parser records it as the same associated
+lookup or dependent projection a type annotation produces.
 
 A `params_decl` list may follow the name in a `struct` or `def` header, declaring
 compile-time **parameters**. Each `NAME: X` is either a **type parameter** — when `X`

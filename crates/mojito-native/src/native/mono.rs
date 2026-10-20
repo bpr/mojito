@@ -684,6 +684,7 @@ fn origin_erased(ty: &Ty) -> Ty {
             TyKind::Variant(alternatives.iter().map(recur).collect()).into()
         }
         TyKind::ComptimeList(element) => TyKind::ComptimeList(recur(element)).into(),
+        TyKind::ParamList(element) => TyKind::ParamList(recur(element)).into(),
         TyKind::VariadicPack(element) => TyKind::VariadicPack(recur(element)).into(),
         TyKind::Ref(reference) => {
             let mut reference = reference.clone();

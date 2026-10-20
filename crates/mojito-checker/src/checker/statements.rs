@@ -89,7 +89,11 @@ impl Checker {
                 self.predeclared_traits.insert(name.clone());
             }
         }
-        for statement in stmts {
+        // A shell whose parameter is typed by another struct's member
+        // (`values: _MLIR.KGENParamListType[type]`) waits for that struct's
+        // member types, and registers as soon as they resolve.
+        let mut deferred_shells = Vec::new();
+        for (index, statement) in stmts.iter().enumerate() {
             // A type-parameter default may still spell the alias it names
             // (`H: Hasher = default_hasher`): registering module-level
             // aliases in source order beside the shells lets a shell resolve
@@ -98,9 +102,16 @@ impl Checker {
             let Some(declaration) = struct_declaration(statement) else {
                 continue;
             };
-            self.check_struct_shell(&declaration)?;
-            self.predeclared_structs
-                .insert(declaration.name.to_string());
+            match self.check_struct_shell(&declaration) {
+                Ok(()) => {
+                    self.predeclared_structs
+                        .insert(declaration.name.to_string());
+                }
+                Err(_) if super::traits::names_member_type(declaration.type_params) => {
+                    deferred_shells.push(index);
+                }
+                Err(error) => return Err(error),
+            }
         }
         drop(phase);
         let phase = timing::span("declarations.traits");
@@ -175,11 +186,18 @@ impl Checker {
         }
         drop(phase);
         let phase = timing::span("declarations.types");
-        for statement in stmts {
+        for (index, statement) in stmts.iter().enumerate() {
             let Some(declaration) = struct_declaration(statement) else {
                 continue;
             };
+            if deferred_shells.contains(&index) {
+                deferred_shells.retain(|deferred| *deferred != index);
+                self.check_struct_shell(&declaration)?;
+                self.predeclared_structs
+                    .insert(declaration.name.to_string());
+            }
             self.check_struct_types(&declaration)?;
+            self.retry_deferred_shells(stmts, &mut deferred_shells);
         }
         drop(phase);
         let phase = timing::span("declarations.signatures");
@@ -293,6 +311,22 @@ impl Checker {
     /// alias, or a constant whose body is a type expression — ahead of the
     /// declarations that may name it. Any other statement, and an alias
     /// already registered, is left alone.
+    /// Register each deferred struct shell the member types resolved so far
+    /// let classify, dropping it from `deferred`.
+    fn retry_deferred_shells(&mut self, stmts: &[Stmt], deferred: &mut Vec<usize>) {
+        deferred.retain(|index| {
+            let Some(declaration) = struct_declaration(&stmts[*index]) else {
+                return false;
+            };
+            if self.check_struct_shell(&declaration).is_err() {
+                return true;
+            }
+            self.predeclared_structs
+                .insert(declaration.name.to_string());
+            false
+        });
+    }
+
     fn register_module_alias(&mut self, statement: &Stmt) -> Result<(), TypeError> {
         let StmtKind::Comptime {
             name,

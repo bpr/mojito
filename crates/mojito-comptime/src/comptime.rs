@@ -718,6 +718,22 @@ fn source_type_from_ty_with_origins(
                 origin_names,
             )?)],
         ),
+        // Upstream's `_MLIR.KGENParamListType[T]` body.
+        TyKind::ParamList(element) => {
+            let delimiter = |text: &str| {
+                ParamArg::Value(mojito_ast::ast::Expr::from(
+                    mojito_ast::ast::ExprKind::Identifier(text.to_string()),
+                ))
+            };
+            Type::Named(
+                "__mlir_type".to_string(),
+                vec![
+                    delimiter("!kgen.param_list<"),
+                    ParamArg::Type(source_type_from_ty_with_origins(element, origin_names)?),
+                    delimiter(">"),
+                ],
+            )
+        }
         TyKind::Tuple(elements) => Type::Named(
             "__RuntimeTuple".to_string(),
             elements

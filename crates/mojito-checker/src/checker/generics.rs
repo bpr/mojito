@@ -120,6 +120,12 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<()
             }
             Ok(())
         }
+        // A raw parameter list solves through its element
+        // (`KGENParamList[type]` against `KGENParamList[Int]`).
+        TyKind::ParamList(pattern_element) => match actual.kind() {
+            TyKind::ParamList(element) => unify(pattern_element, element, subst),
+            _ => Ok(()),
+        },
         // A reference pattern solves through its referent; the actual may be
         // the bare referent type (reference reads type as the referent).
         TyKind::Ref(pattern_reference) => match actual.kind() {
@@ -483,6 +489,7 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
         TyKind::ComptimeList(elem) => {
             TyKind::ComptimeList(substitute_self(elem, replacement)).into()
         }
+        TyKind::ParamList(elem) => TyKind::ParamList(substitute_self(elem, replacement)).into(),
         TyKind::Tuple(elems) => TyKind::Tuple(
             elems
                 .iter()
@@ -638,6 +645,7 @@ fn substitute_values(ty: &Ty, values: &HashMap<String, CtValue>) -> Ty {
             TyKind::Variant(alternatives.iter().map(recur).collect()).into()
         }
         TyKind::ComptimeList(element) => TyKind::ComptimeList(recur(element)).into(),
+        TyKind::ParamList(element) => TyKind::ParamList(recur(element)).into(),
         TyKind::Dependent(dependent) => {
             let resolved = mojito_types::types::replace_parameters(&context, ty, &bindings, 0)
                 .unwrap_or_else(|_| ty.clone());

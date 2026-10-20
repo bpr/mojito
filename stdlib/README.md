@@ -69,15 +69,15 @@ point, as upstream's toolchain does.
   for` iterator at compile time. The prelude links them for their bodies:
   the compiler names them by module path, and no user spelling reaches
   them.
-- `std/builtin/variadics.mojo` — upstream's `ParameterList[type: AnyType, //,
-  *values: type]`, the zero-sized value a homogeneous value pack is when read
-  at run time, and its `_ParameterListIter`. Its elements live in a constant
-  array laid out once per program; `get_span` addresses it through the
-  compiler-private `__param_list_address[*values]()`, admitted only in this
-  module, where upstream calls `global_constant`. Upstream's list is one
-  `KGENParamList` parameter, so only the compiler spells this port's
-  brackets. It is `Writable` where its element type is; `write_repr_to`
-  writes upstream's `FormatStruct` text directly.
+- `std/builtin/variadics.mojo` — upstream's `_MLIR.KGENParamListType[T]`
+  raw-list alias, `ParameterList[type: AnyType, //, values:
+  _MLIR.KGENParamListType[type]]`, the zero-sized value a homogeneous value
+  pack is when read at run time (`ParameterList[vs.values]()`), and its
+  `_ParameterListIter`. Its elements live in a constant array laid out once
+  per program; `get_span` addresses it through the compiler-private
+  `__param_list_address[values]()`, admitted only in this module, where
+  upstream calls `global_constant`. It is `Writable` where its element type
+  is; `write_repr_to` writes upstream's `FormatStruct` text directly.
 - `std/collections/optional.mojo` — a generic `Optional[T]` using zero-or-one value storage,
   including an empty constructor for generic absent values.
 - `std/iter.mojo` — minimal self-hosted `Iterator`, `Iterable`, and

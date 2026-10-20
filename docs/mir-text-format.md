@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.74
+# Mojito Textual MIR Format, Version 1.75
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.74 is implemented end to end for inspection and loading: canonical
+Version 1.75 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.74
+mojito-mir 1.75
 ```
 
-The writer emits 1.74. The reader accepts 1.0 through 1.74; *Schema 1.0*
+The writer emits 1.75. The reader accepts 1.0 through 1.75; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -784,7 +784,7 @@ assoc { base, member, arguments }
 dependent_parameter(param-expr)
 struct_type { name, arguments }
 simd { dtype, width }
-comptime_list(type) tuple([type...]) runtime_pack([type...])
+comptime_list(type) param_list(type) tuple([type...]) runtime_pack([type...])
 variadic_pack(type) variant([type...])
 pointer { element, origin }
 ref { referent, origin, mutability }
@@ -797,6 +797,11 @@ slot is a dtype or an integer, or `ct_expr(<param-expr>)` for a lane still
 symbolic; the verifier keeps a symbolic slot out of every artifact, so that
 form only serves lossless round trips, and a closed expression folds back to
 the canonical concrete type on read.
+
+`param_list(type)` (schema 1.75) is upstream's raw parameter list
+`!kgen.param_list<type>`, the type of `ParameterList`'s `values` parameter. It
+types compile-time parameter declarations only: elaborated MIR rejects a
+register, slot, or signature that holds one.
 
 `ParamDecl` is
 `type_param { owner, slot, name, bounds, callable_bound, default, infer_only, variadic, constraints }`
@@ -1059,10 +1064,10 @@ lowering unit, one record per library declaration, and one module table
 holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 69`.
+MLIR bytecode throughout. The format line is `mojito-package 70`.
 
 ```text
-mojito-package 69
+mojito-package 70
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode, then the type section>

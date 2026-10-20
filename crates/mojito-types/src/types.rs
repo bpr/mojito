@@ -570,6 +570,11 @@ pub enum TyKind {
     /// Compile-time-only list shape used while materializing `CtValue::List`.
     /// Checked executable List values use `Struct("List", ...)`.
     ComptimeList(Ty),
+    /// Upstream's raw parameter list `!kgen.param_list<T>`
+    /// (`_MLIR.KGENParamListType[T]`, spelled `KGENParamList[T]`): the type
+    /// of `ParameterList`'s `values` parameter and of a value pack's
+    /// `vs.values`. It is compile-time only; no runtime register holds one.
+    ParamList(Ty),
     /// Compiler-private `__RuntimeTuple[T1, ..., Tn]` storage. Public
     /// `Tuple[T1, ..., Tn]` values are nominal standard-library structs.
     Tuple(Vec<Ty>),
@@ -1919,6 +1924,21 @@ impl ParamDecl {
         bound
     }
 
+    /// The meta-type a reference to this binder has: a value binder's
+    /// domain, which is a parameter list for a pack (`*values: T`) or a raw
+    /// list (`values: KGENParamList[T]`); a type binder's `Type`, or a type
+    /// list for a type pack.
+    pub fn binder_meta(&self) -> MetaTy {
+        match self {
+            Self::Value {
+                ty, variadic: true, ..
+            } => MetaTy::ParamList(Box::new(MetaTy::value(ty.clone()))),
+            Self::Value { ty, .. } => MetaTy::value(ty.clone()),
+            Self::Type { variadic: true, .. } => MetaTy::type_list(),
+            Self::Type { .. } => MetaTy::Type,
+        }
+    }
+
     /// The reference a use of this binder carries: its identity with its
     /// spelling attached.
     pub fn binder(&self) -> ParamRef {
@@ -1957,18 +1977,11 @@ impl ParamDecl {
                 }
                 .into(),
             ),
-            Self::Value { ty, variadic, .. } => {
-                let element = MetaTy::value((*ty).clone());
-                TyArg::Val(CtValue::Expr(ParamContext::detached().decl_ref(
-                    self.id().clone(),
-                    self.name().trim_start_matches('*'),
-                    if *variadic {
-                        MetaTy::ParamList(Box::new(element))
-                    } else {
-                        element
-                    },
-                )))
-            }
+            Self::Value { .. } => TyArg::Val(CtValue::Expr(ParamContext::detached().decl_ref(
+                self.id().clone(),
+                self.name().trim_start_matches('*'),
+                self.binder_meta(),
+            ))),
         }
     }
 }
@@ -2153,6 +2166,7 @@ impl fmt::Display for TyKind {
             }
             Self::Ref(reference) => write!(f, "ref {}", reference.referent),
             Self::ComptimeList(elem) => write!(f, "<comptime-list[{elem}]>"),
+            Self::ParamList(elem) => write!(f, "KGENParamList[{elem}]"),
             Self::Tuple(elems) => {
                 write!(f, "Tuple[")?;
                 for (i, t) in elems.iter().enumerate() {
@@ -2263,6 +2277,7 @@ pub fn erase_origin_arguments(ty: &Ty) -> Ty {
             TyKind::Variant(alternatives.iter().map(recur).collect()).into()
         }
         TyKind::ComptimeList(element) => TyKind::ComptimeList(recur(element)).into(),
+        TyKind::ParamList(element) => TyKind::ParamList(recur(element)).into(),
         TyKind::VariadicPack(element) => TyKind::VariadicPack(recur(element)).into(),
         TyKind::Pointer { element, origin } => TyKind::Pointer {
             element: recur(element),
@@ -2328,6 +2343,7 @@ pub fn substitute_origin_params<S: std::hash::BuildHasher>(
             TyKind::Variant(alternatives.iter().map(recur).collect()).into()
         }
         TyKind::ComptimeList(element) => TyKind::ComptimeList(recur(element)).into(),
+        TyKind::ParamList(element) => TyKind::ParamList(recur(element)).into(),
         TyKind::Dependent(dependent) => dependent.map_types(recur),
         _ => ty.clone(),
     }
@@ -2564,6 +2580,7 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
                 })
         }
         (TyKind::ComptimeList(a), TyKind::ComptimeList(b)) => coerces(a, b),
+        (TyKind::ParamList(a), TyKind::ParamList(b)) => a == b,
         (
             TyKind::Pointer {
                 element: a,
@@ -3353,6 +3370,7 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
                 .unwrap_or_else(|_| ty.clone())
         }
         TyKind::ComptimeList(elem) => TyKind::ComptimeList(substitute(elem, subst)).into(),
+        TyKind::ParamList(elem) => TyKind::ParamList(substitute(elem, subst)).into(),
         TyKind::Tuple(elems) => {
             TyKind::Tuple(elems.iter().map(|t| substitute(t, subst)).collect()).into()
         }
@@ -3560,6 +3578,7 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
         )),
         TyKind::Dependent(dependent) => DependentType::resolve(rewrite.expr(dependent.expr())?),
         TyKind::ComptimeList(element) => TyKind::ComptimeList(rewrite_ty(element, rewrite)?).into(),
+        TyKind::ParamList(element) => TyKind::ParamList(rewrite_ty(element, rewrite)?).into(),
         TyKind::VariadicPack(element) => TyKind::VariadicPack(rewrite_ty(element, rewrite)?).into(),
         TyKind::Tuple(elements) => TyKind::Tuple(list(elements, rewrite)?).into(),
         TyKind::RuntimePack(elements) => TyKind::RuntimePack(list(elements, rewrite)?).into(),
@@ -4076,6 +4095,7 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         | TyKind::RuntimePack(types)
         | TyKind::Variant(types) => types.iter().any(is_symbolic),
         TyKind::ComptimeList(element)
+        | TyKind::ParamList(element)
         | TyKind::VariadicPack(element)
         | TyKind::Pointer { element, .. } => is_symbolic(element),
         TyKind::Ref(reference) => is_symbolic(&reference.referent),
@@ -4262,6 +4282,7 @@ fn mentions_below(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool, skip_closed: bool) -
         TyKind::Struct(..) if skip_closed && ty.is_closed() => false,
         TyKind::Struct(_, arguments) => arguments.iter().any(argument_mentions),
         TyKind::ComptimeList(element)
+        | TyKind::ParamList(element)
         | TyKind::VariadicPack(element)
         | TyKind::Pointer { element, .. } => mentions(element, predicate),
         TyKind::Dependent(dependent) => expr_mentions(dependent.expr(), predicate),
@@ -4323,6 +4344,7 @@ fn decorated(ty: &Ty) -> bool {
         }
         TyKind::Struct(_, arguments) => arguments.iter().any(argument_decorated),
         TyKind::ComptimeList(element)
+        | TyKind::ParamList(element)
         | TyKind::VariadicPack(element)
         | TyKind::Pointer { element, .. } => element.carries_decorations(),
         TyKind::Ref(reference) => reference.referent.carries_decorations(),
@@ -4424,7 +4446,9 @@ fn closed_kind(kind: &TyKind) -> bool {
         TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
             elements.iter().all(Ty::is_closed)
         }
-        TyKind::ComptimeList(element) | TyKind::VariadicPack(element) => element.is_closed(),
+        TyKind::ComptimeList(element)
+        | TyKind::ParamList(element)
+        | TyKind::VariadicPack(element) => element.is_closed(),
         _ => false,
     }
 }

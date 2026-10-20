@@ -31,6 +31,7 @@ impl Decoder {
             ValueKind::Positional(tag, inner) => Some(match tag.as_str() {
                 "overload" => TyKind::Overload(self.types(inner)).into(),
                 "comptime_list" => TyKind::ComptimeList(self.ty(inner)?).into(),
+                "param_list" => TyKind::ParamList(self.ty(inner)?).into(),
                 "tuple" => TyKind::Tuple(self.types(inner)).into(),
                 "runtime_pack" => TyKind::RuntimePack(self.types(inner)).into(),
                 "variadic_pack" => TyKind::VariadicPack(self.ty(inner)?).into(),

@@ -849,6 +849,27 @@ fn parses_a_method_value_parameter_typed_by_self_param() {
 }
 
 #[test]
+fn parses_value_parameters_typed_by_qualified_types() {
+    let statements = parse("def h[t: AnyType, //, x: M.A, raw: M.L[t]]():\n    pass\n");
+    let StmtKind::Def { type_params, .. } = &statements[0].kind else {
+        panic!("expected def");
+    };
+    let assoc = |name: &str| Type::Assoc {
+        base: Box::new(Type::Named("M".into(), vec![])),
+        name: name.into(),
+        args: vec![],
+    };
+    assert_eq!(type_params[1].value_type, Some(assoc("A")));
+    assert_eq!(
+        type_params[2].value_type,
+        Some(Type::IndexedProjection {
+            base: Box::new(assoc("L")),
+            index: Box::new(Expr::from(ExprKind::Identifier("t".into()))),
+        })
+    );
+}
+
+#[test]
 fn retains_conditional_struct_conformance_predicates() {
     let statements =
         parse("struct Wrapper[T: AnyType](Writable where conforms_to(T, Writable)):\n    pass\n");

@@ -2140,6 +2140,7 @@ fn ty_value(ty: &Ty) -> String {
             ],
         ),
         TyKind::ComptimeList(value) => positional("comptime_list", &ty_value(value)),
+        TyKind::ParamList(value) => positional("param_list", &ty_value(value)),
         TyKind::Tuple(values) => positional("tuple", &list(values.iter().map(ty_value))),
         TyKind::RuntimePack(values) => {
             positional("runtime_pack", &list(values.iter().map(ty_value)))

@@ -235,18 +235,14 @@ pub(super) fn value_parameter(decl: &ParamDecl, ty: &Ty) -> CtValue {
     CtValue::Expr(value_parameter_expr(decl, ty))
 }
 
-/// A value pack (`*values: Int`) is a parameter list of its element type.
+/// The reference to the value binder `decl` typed `ty`, at the meta-type its
+/// binder declares: a pack (`*values: Int`) or a raw list is a parameter list.
 pub(super) fn value_parameter_expr(decl: &ParamDecl, ty: &Ty) -> ParamExpr {
-    if matches!(decl, ParamDecl::Value { variadic: true, .. }) {
-        return ParamContext::detached().decl_ref(
-            decl.id().clone(),
-            decl.name().trim_start_matches('*'),
-            mojito_types::param_expr::MetaTy::ParamList(Box::new(
-                mojito_types::param_expr::MetaTy::value(ty.clone()),
-            )),
-        );
-    }
-    value_binder_expr(decl.id().clone(), decl.name(), ty)
+    ParamContext::detached().decl_ref(
+        decl.id().clone(),
+        decl.name().trim_start_matches('*'),
+        decl.with_value_type(ty.clone()).binder_meta(),
+    )
 }
 
 /// The binder `slot` of a parameterized associated member or generic alias
@@ -347,6 +343,15 @@ pub(super) fn pack_scope(decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
 }
 
 /// The value-parameter scope a declaration's own binders open.
+/// The variadic value packs `decls` declares, by bare name.
+pub(super) fn value_pack_scope(decls: &[ParamDecl]) -> HashSet<String> {
+    decls
+        .iter()
+        .filter(|decl| matches!(decl, ParamDecl::Value { variadic: true, .. }))
+        .map(|decl| decl.name().trim_start_matches('*').to_string())
+        .collect()
+}
+
 pub(super) fn value_scope(decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
     decls
         .iter()

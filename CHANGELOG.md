@@ -100,7 +100,25 @@ to evolve under the `0.x` compatibility rules.
   check. A struct member over its own pack's element (`comptime first =
   Self.values[0]`) also resolves. The package format is 69.
 
+- `ParameterList` is declared as upstream declares it, over one raw-list
+  parameter: `ParameterList[type: AnyType, //, values:
+  _MLIR.KGENParamListType[type]]`, with upstream's `_MLIR` alias whose
+  body `__mlir_type[`!kgen.param_list<`, T, `>`]` is the compile-time-only
+  type `KGENParamList[T]`. A pack's `vs.values` is that list, so
+  `ParameterList[vs.values]()`, its `.size`, a `comptime raw = vs.values`
+  binding, and a user parameter `raw: _MLIR.KGENParamListType[t]` run as on
+  the pin, and a pack read at run time is spelled
+  `ParameterList[vs.values]()`. A struct's value parameter reads through
+  its type (`S[7].n`), and a parameter may be typed by a struct's member
+  (`[x: M.A]`). The bracket gate that admitted only compiler-spelled
+  `ParameterList[...]` is gone. MIR text is 1.75 (`param_list(type)`) and
+  the package format is 70.
+
 ### Fixed
+
+- Linking renames the base of a dependent type projection (`M.Wrap[t]`),
+  so a linked module, the bundled library among them, may spell one over
+  its own struct.
 
 - `ref y = x` over a loop's element reference (`for x in xs`) forwards the
   element handle instead of failing MIR verification, `ref r = Box(2)`

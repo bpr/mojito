@@ -25,11 +25,18 @@ pub const CONTEXTUAL_SENTINEL: &str = "$contextual";
 
 /// The derivation ordinal of a compiler-spelled value pack read.
 ///
-/// The `ParameterList[...]()` construction the compiler spells in place of a
-/// value pack read at run time takes `SyntaxId::derived(read, this)`. The
-/// checker admits a bracket application of `ParameterList` only so spelled,
-/// or in its bundled module.
+/// The `ParameterList[values.values]()` construction the compiler spells in
+/// place of a value pack read at run time takes
+/// `SyntaxId::derived(read, this)`.
 pub const VALUE_PACK_READ_ORDINAL: u32 = u32::MAX;
+
+/// The derivation ordinal of the `values.values` argument a spelled value
+/// pack read passes to `ParameterList`: an occurrence of its own, apart from
+/// the construction the read's facts record.
+pub const VALUE_PACK_RAW_LIST_ORDINAL: u32 = u32::MAX - 1;
+
+/// The derivation ordinal of the pack operand of that `values.values`.
+pub const VALUE_PACK_OPERAND_ORDINAL: u32 = u32::MAX - 2;
 
 /// Whether a definition's decorators mark it as a parametric closure
 /// (`@__parameter`; the pre-rename `@parameter` still warns-and-runs upstream,

@@ -393,6 +393,13 @@ pub(super) fn instantiate_checked_type(
             bound_values,
         )?)
         .into(),
+        TyKind::ParamList(element) => TyKind::ParamList(instantiate_checked_type(
+            element,
+            type_arguments,
+            value_arguments,
+            bound_values,
+        )?)
+        .into(),
         TyKind::Tuple(elements) => TyKind::Tuple(
             elements
                 .iter()
@@ -576,9 +583,9 @@ pub(super) fn residual_arguments_conflict(found: &Ty, expected: &Ty) -> bool {
 pub(super) fn contains_type_param(ty: &Ty) -> bool {
     match ty.kind() {
         TyKind::Param { .. } | TyKind::Assoc { .. } | TyKind::Dependent(_) => true,
-        TyKind::ComptimeList(inner) | TyKind::Pointer { element: inner, .. } => {
-            contains_type_param(inner)
-        }
+        TyKind::ComptimeList(inner)
+        | TyKind::ParamList(inner)
+        | TyKind::Pointer { element: inner, .. } => contains_type_param(inner),
         TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
             elements.iter().any(contains_type_param)
         }

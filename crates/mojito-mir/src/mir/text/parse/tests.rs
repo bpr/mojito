@@ -2135,6 +2135,22 @@ fn type_expression_constructions_round_trip() {
     ));
 }
 
+/// Schema 1.75 spells upstream's raw parameter list type `param_list(type)`.
+#[test]
+fn raw_param_list_types_round_trip() {
+    let ty = Ty::new(TyKind::ParamList(Ty::int()));
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            vec![ty.clone()],
+            vec![MirInstr::ConstructType { dest: Reg(0), ty }],
+        ),
+    )]);
+    assert_reprints(&program);
+    let text = write::program(&program);
+    assert!(text.contains("param_list(Int)"), "{text}");
+}
+
 /// Schema 1.34 carries the static address of a parameter list's elements,
 /// the list a template's parameter or an instance's closed tuple.
 #[test]

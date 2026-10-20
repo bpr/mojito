@@ -418,6 +418,10 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
             TyKind::ComptimeList(a) | TyKind::VariadicPack(a) => unify(p, a, bindings),
             _ => Err(format!("expected `{pattern}`, found `{actual}`")),
         },
+        TyKind::ParamList(p) => match actual.kind() {
+            TyKind::ParamList(a) => unify(p, a, bindings),
+            _ => Err(format!("expected `{pattern}`, found `{actual}`")),
+        },
         TyKind::Pointer { element: p, .. } => match actual.kind() {
             TyKind::Pointer { element: a, .. } => unify(p, a, bindings),
             _ => Err(format!("expected `{pattern}`, found `{actual}`")),

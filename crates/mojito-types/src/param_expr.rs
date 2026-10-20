@@ -2423,9 +2423,24 @@ pub enum MetaTy {
 }
 
 impl MetaTy {
-    /// A runtime value domain.
-    pub const fn value(ty: Ty) -> Self {
-        Self::Value(ty)
+    /// The meta-type of a value of type `ty`. A raw parameter list
+    /// (`KGENParamList[T]`) is the same ordered list a `*values: T` binder
+    /// declares, so it has one encoding.
+    pub fn value(ty: Ty) -> Self {
+        match ty.kind() {
+            TyKind::ParamList(element) => Self::ParamList(Box::new(Self::value(element.clone()))),
+            _ => Self::Value(ty),
+        }
+    }
+
+    /// The type a meta-type's values have, when it names one: a runtime
+    /// value domain, or the raw parameter list (`KGENParamList[T]`) of one.
+    pub fn value_ty(&self) -> Option<Ty> {
+        match self {
+            Self::Value(ty) => Some(ty.clone()),
+            Self::ParamList(element) => element.value_ty().map(|ty| TyKind::ParamList(ty).into()),
+            _ => None,
+        }
     }
 
     pub fn int() -> Self {

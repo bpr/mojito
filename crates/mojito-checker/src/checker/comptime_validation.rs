@@ -14,19 +14,6 @@ use mojito_types::types::{ConstraintOperand, GenericConstraint};
 /// The bundled `ParameterList`'s linked name, its implicit public identity.
 pub(super) const PARAMETER_LIST: &str = "ParameterList";
 
-/// The scope in which a compiler-spelled `ParameterList[...]` construction
-/// is checked: its brackets are admitted until the scope ends.
-pub(super) struct ParameterListBrackets<'a> {
-    checker: &'a Checker,
-    outer: bool,
-}
-
-impl Drop for ParameterListBrackets<'_> {
-    fn drop(&mut self) {
-        self.checker.parameter_list_brackets.set(self.outer);
-    }
-}
-
 /// A local `comptime` binding of a display the elaborator evaluates per
 /// instance (`comptime L = [n, n + 1]`).
 #[derive(Debug, Clone)]
@@ -129,6 +116,19 @@ pub(in crate::checker) struct ApplicableFunction {
     /// Whether it is declared `raises`, which no type or parameter argument
     /// may call.
     raises: bool,
+}
+
+/// The rejection of a raw parameter list (`KGENParamList[T]`, a pack's
+/// `vs.values`) read as a runtime value, which the pin materializes and
+/// Mojito does not.
+pub(super) fn raw_list_runtime_read(meta: &mojito_types::param_expr::MetaTy) -> TypeError {
+    let spelled = meta
+        .value_ty()
+        .map_or_else(|| meta.to_string(), |ty| ty.to_string());
+    TypeError::Unsupported(format!(
+        "a raw parameter list ('{spelled}') read at run time is not supported; \
+         read it through 'ParameterList[...]'"
+    ))
 }
 
 /// The callables a compile-time call applies by name
@@ -1231,8 +1231,20 @@ impl Checker {
                     });
                 }
             }
+            // A raw parameter list (`comptime raw = vs.values`) is
+            // compile-time data with no runtime form: the binding is its
+            // parameter expression alone, which every read names.
+            let raw_list = self.value_pack_named(value).is_none()
+                && expression.as_decl_ref().is_some()
+                && matches!(
+                    expression.meta(),
+                    mojito_types::param_expr::MetaTy::ParamList(_)
+                );
             if let Some(scope) = self.local_comptime_parameters.last_mut() {
                 scope.insert(name.to_string(), (level, expression));
+            }
+            if raw_list {
+                return Ok(true);
             }
         }
         if let Some((element, ty, construction)) = self.evaluated_display_binding(value) {
@@ -1969,37 +1981,59 @@ impl Checker {
             Some(_) => return None,
             None => {}
         }
-        self.value_parameter_in_scope(name).filter(|pack| {
-            pack.as_decl_ref().is_some()
-                && matches!(pack.meta(), mojito_types::param_expr::MetaTy::ParamList(_))
-        })
+        self.value_pack_in_scope(name)
+    }
+
+    /// The raw parameter list a bare name denotes when it is no runtime
+    /// binding and no pack: a `values: KGENParamList[T]` parameter, or a
+    /// local `comptime raw = vs.values`.
+    pub(super) fn raw_list_named(&self, name: &str) -> Option<ParamExpr> {
+        if self.lookup(name).is_some() || self.value_pack_in_scope(name).is_some() {
+            return None;
+        }
+        self.value_parameter_in_scope(name)
+            .filter(|raw| matches!(raw.meta(), mojito_types::param_expr::MetaTy::ParamList(_)))
     }
 
     /// A value pack read as a runtime value (`for v in values`, `var l =
     /// values`, `values[i]` at a runtime index): the zero-sized
-    /// `ParameterList[*values]()` the pin types the read as, spelled in the
-    /// read's place and checked as any construction is.
+    /// `ParameterList[values.values]()` the pin types the read as, spelled in
+    /// the read's place and checked as any construction is.
     pub(super) fn infer_value_pack_read(&self, expression: &Expr) -> Result<Ty, TypeError> {
         if !self.structs.contains_key(PARAMETER_LIST) {
             return Err(TypeError::Unsupported(format!(
                 "a value pack read at run time needs the bundled '{VARIADICS_MODULE}' module"
             )));
         }
-        let spread = match &expression.kind {
-            ExprKind::Member { field, .. } => SourceType::SelfParam(format!("*{field}")),
-            ExprKind::Identifier(name) => SourceType::Named(format!("*{name}"), Vec::new()),
-            _ => {
-                return Err(TypeError::InvariantViolation(
-                    "a value pack read names no pack".to_string(),
-                ));
-            }
-        };
+        if !matches!(
+            expression.kind,
+            ExprKind::Member { .. } | ExprKind::Identifier(_)
+        ) {
+            return Err(TypeError::InvariantViolation(
+                "a value pack read names no pack".to_string(),
+            ));
+        }
+        let pack = super::initializer_list::spelled_node(
+            expression,
+            mojito_ast::ast::VALUE_PACK_OPERAND_ORDINAL,
+            expression.kind.clone(),
+            expression.span,
+        );
+        let raw = super::initializer_list::spelled_node(
+            expression,
+            mojito_ast::ast::VALUE_PACK_RAW_LIST_ORDINAL,
+            ExprKind::Member {
+                object: Box::new(pack),
+                field: "values".to_string(),
+            },
+            expression.span,
+        );
         let construction = super::initializer_list::spelled_node(
             expression,
             mojito_ast::ast::VALUE_PACK_READ_ORDINAL,
             ExprKind::Call {
                 name: PARAMETER_LIST.to_string(),
-                param_args: vec![ParamArg::Type(spread)],
+                param_args: vec![ParamArg::Value(raw)],
                 args: Vec::new(),
                 kwargs: Vec::new(),
             },
@@ -2010,79 +2044,79 @@ impl Checker {
         Ok(ty)
     }
 
-    /// Admit a bracket application of `ParameterList` where one is being
-    /// checked. The pin's `ParameterList` takes its list as one parameter
-    /// (`ParameterList[values.values]`), so only the construction the
-    /// compiler spells for a value pack read, and the bundled module's own,
-    /// apply it.
-    pub(super) fn admit_parameter_list_brackets(&self) -> Result<(), TypeError> {
-        if self.parameter_list_brackets.get() {
-            return Ok(());
-        }
-        Err(TypeError::Unsupported(
-            "'ParameterList' takes its list as one parameter at the pin \
-             ('ParameterList[values.values]'), which is not supported yet; a value pack \
-             read at run time is already its 'ParameterList'"
-                .to_string(),
-        ))
-    }
-
-    /// The scope a call `name[param_args](...)` at `span` is checked in: a
-    /// bracket application of `ParameterList` the compiler spelled admits
-    /// its brackets for the call's check, and any other is rejected.
-    pub(super) fn parameter_list_brackets_at(
-        &self,
-        span: &SourceSpan,
-        name: &str,
-        param_args: &[ParamArg],
-    ) -> Result<Option<ParameterListBrackets<'_>>, TypeError> {
-        if name != PARAMETER_LIST || param_args.is_empty() {
-            return Ok(None);
-        }
-        if !self.spells_parameter_list(span) {
-            self.admit_parameter_list_brackets()?;
-            return Ok(None);
-        }
-        Ok(Some(ParameterListBrackets {
-            checker: self,
-            outer: self.parameter_list_brackets.replace(true),
-        }))
-    }
-
-    /// Whether the `ParameterList[...]` construction at `span` may apply its
-    /// brackets: the compiler spelled it for a value pack read (in a
-    /// template, or in a clone the elaborator rewrote), or it is the bundled
-    /// module's own.
-    pub(super) fn spells_parameter_list(&self, span: &SourceSpan) -> bool {
-        super::overload_support::is_bundled_variadics_source(span.source.as_deref())
-            || span
-                .syntax
-                .map(|id| self.syntax_origins.origin(id))
-                .and_then(mojito_common::token::SyntaxId::derivation)
-                .is_some_and(|(_, ordinal)| ordinal == mojito_ast::ast::VALUE_PACK_READ_ORDINAL)
-    }
-
-    /// The raw parameter list `expr` reads: `Self.values` inside the bundled
-    /// `ParameterList` itself, which is upstream's `KGENParamListType`
-    /// parameter rather than a `ParameterList` value. Its `len` and its
-    /// compile-time subscript there stand for upstream's
-    /// `#kgen.param_list.size` and `.get` attributes, as
-    /// `__param_list_address` stands for its static array. Everywhere else
-    /// a struct's own pack is a `ParameterList` value, read through its
-    /// members.
-    pub(super) fn reads_raw_parameter_list(&self, expr: &Expr) -> Option<ParamExpr> {
+    /// The raw parameter list `expr` reads where `len` of it stands for
+    /// upstream's `#kgen.param_list.size` attribute: a struct's own
+    /// `Self.values` in the bundled `std/builtin/variadics.mojo`, as
+    /// `__param_list_address` there stands for its static array.
+    pub(super) fn bundled_raw_list_operand(&self, expr: &Expr) -> Option<ParamExpr> {
         let ExprKind::Member { object, field } = &expr.kind else {
             return None;
         };
-        let reads_self = matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
-            && matches!(
-                self.self_ty.as_ref().map(Ty::kind),
-                Some(TyKind::Struct(name, _)) if name == PARAMETER_LIST
-            )
+        let bundled = matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
             && super::overload_support::is_bundled_variadics_source(
                 expr.source_span().source.as_deref(),
             );
-        reads_self.then(|| self.self_value_pack(field)).flatten()
+        bundled.then(|| self.self_raw_list(field)).flatten()
+    }
+
+    /// The raw parameter list a bracket argument names: the enclosing
+    /// struct's own `Self.values`, or any compile-time value that is one
+    /// (`vs.values`, a `raw: KGENParamList[T]` parameter).
+    pub(super) fn raw_list_argument(&self, argument: &ParamArg) -> Option<ParamExpr> {
+        match argument {
+            ParamArg::Type(SourceType::SelfParam(name)) => self.self_raw_list(name),
+            ParamArg::Value(expr) => self.compile_dependent_ct_expr(expr).ok().filter(|raw| {
+                raw.as_decl_ref().is_some()
+                    && matches!(raw.meta(), mojito_types::param_expr::MetaTy::ParamList(_))
+            }),
+            _ => None,
+        }
+    }
+
+    /// The element type and raw list of a `ParameterList` construction a
+    /// bracket argument spreads (`*ParameterList[Self.values]()`), which
+    /// binds a variadic value parameter to that list whole, as upstream's
+    /// `_ParameterListIter[*ParameterList[...]()]` does. `None` for any other
+    /// argument.
+    pub(super) fn parameter_list_spread(
+        &self,
+        argument: &ParamArg,
+    ) -> Option<Result<(Ty, CtValue), TypeError>> {
+        let ParamArg::Value(Expr {
+            kind: ExprKind::Spread(operand),
+            ..
+        }) = argument
+        else {
+            return None;
+        };
+        let ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } = &operand.kind
+        else {
+            return None;
+        };
+        if name != PARAMETER_LIST || !args.is_empty() || !kwargs.is_empty() {
+            return None;
+        }
+        Some(
+            self.applied_type(name, param_args)
+                .and_then(|(ty, _)| match ty.kind() {
+                    TyKind::Struct(_, arguments) => match arguments.as_slice() {
+                        [TyArg::Ty(element), TyArg::Val(raw), ..] => {
+                            Ok((element.clone(), raw.clone()))
+                        }
+                        _ => Err(TypeError::InvariantViolation(format!(
+                            "'{ty}' binds no raw parameter list"
+                        ))),
+                    },
+                    _ => Err(TypeError::InvariantViolation(format!(
+                        "'{ty}' is not a 'ParameterList'"
+                    ))),
+                }),
+        )
     }
 
     /// The value pack a bracket argument spreads whole: `*vs` of a `def`'s
@@ -2104,6 +2138,26 @@ impl Checker {
             }
             _ => None,
         }
+    }
+
+    /// The enclosing struct's own value pack or raw parameter list
+    /// `Self.<field>`, as the parameter-list reference its binder declares.
+    fn self_raw_list(&self, field: &str) -> Option<ParamExpr> {
+        self.self_decls.iter().find_map(|decl| match decl {
+            ParamDecl::Value { ty, .. }
+                if decl.name().trim_start_matches('*') == field
+                    && matches!(
+                        decl.binder_meta(),
+                        mojito_types::param_expr::MetaTy::ParamList(_)
+                    ) =>
+            {
+                Some(
+                    self.param_context
+                        .intern(&super::annotations::value_parameter_expr(decl, ty)),
+                )
+            }
+            _ => None,
+        })
     }
 
     /// The enclosing struct's own value pack `Self.<field>`, as the

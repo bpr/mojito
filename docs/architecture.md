@@ -3385,8 +3385,10 @@ the bundled `ParameterList.get_span`'s stand-in for upstream's
 `global_constant`: a template names the list as a parameter constant, the
 elaborator closes it to a tuple, and each backend lays the list out once per
 program (a never-freed VM allocation, a private constant global natively).
-A value pack read at run time reaches it as the `ParameterList[*values]()`
-construction the checker spells in the read's place: a runtime subscript
+A value pack read at run time reaches it as the
+`ParameterList[values.values]()` construction the checker spells in the
+read's place, over the pack's raw list `KGENParamList[T]`, a compile-time-only
+type no elaborated register, slot, or signature may hold: a runtime subscript
 calls `__getitem__` and a runtime length `__len__`, even at a compile-time
 index. A compile-time length is the struct's `size` member, read through
 the value (`values.size`), whose body the bundled struct alone spells over

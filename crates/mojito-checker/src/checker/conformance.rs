@@ -201,40 +201,43 @@ impl ConformanceOracle {
                 value,
             );
         }
+        // A struct whose parameter is typed by another struct's member
+        // (`values: _MLIR.KGENParamListType[type]`) registers once that
+        // struct's members are lowered below.
+        let mut member_typed = Vec::new();
         for index in deferred_structs {
-            register_struct(&mut checker, &stmts[index], None, index)?;
+            let waits = matches!(&stmts[index].kind, StmtKind::Struct { type_params, .. }
+                if super::traits::names_member_type(type_params));
+            register_struct(
+                &mut checker,
+                &stmts[index],
+                waits.then_some(&mut member_typed),
+                index,
+            )?;
         }
         // Struct `where` clauses compile after alias registration and attach
         // to the registered declaration's final parameter (or validate
         // immediately for a non-generic struct), as in the full checker.
-        for statement in stmts {
-            let StmtKind::Struct {
-                name,
-                type_params,
-                where_clauses,
-                ..
-            } = &statement.kind
-            else {
-                continue;
-            };
-            for condition in where_clauses {
-                let constraint = checker.compile_where_clause(condition)?;
-                let info = checker
-                    .structs
-                    .get_mut(name)
-                    .expect("struct was registered by the loop above");
-                let constraint = constraint.bind(&[&info.decls]);
-                if let Some(last) = info.decls.last_mut() {
-                    match last {
-                        ParamDecl::Type { constraints, .. }
-                        | ParamDecl::Value { constraints, .. } => constraints.push(constraint),
-                    }
-                } else if type_params.is_empty() {
-                    checker.validate_declaration_constraint(name, &constraint)?;
-                }
+        for (index, statement) in stmts.iter().enumerate() {
+            if !member_typed.contains(&index) {
+                attach_struct_where_clauses(&mut checker, statement)?;
             }
         }
-        for statement in stmts {
+        for (index, statement) in stmts.iter().enumerate() {
+            let mut waiting = Vec::new();
+            for deferred in std::mem::take(&mut member_typed) {
+                let fatal = deferred == index;
+                register_struct(
+                    &mut checker,
+                    &stmts[deferred],
+                    (!fatal).then_some(&mut waiting),
+                    deferred,
+                )?;
+                if waiting.last() != Some(&deferred) {
+                    attach_struct_where_clauses(&mut checker, &stmts[deferred])?;
+                }
+            }
+            member_typed = waiting;
             let StmtKind::Struct {
                 name,
                 type_params,
@@ -445,4 +448,38 @@ impl ConformanceOracle {
             .as_ref()
             .map(|(installed, _)| installed)
     }
+}
+
+/// Compile a registered struct's `where` clauses and attach them to its
+/// final parameter, or validate them at once for a non-generic struct, as
+/// the full checker does.
+fn attach_struct_where_clauses(checker: &mut Checker, statement: &Stmt) -> Result<(), TypeError> {
+    let StmtKind::Struct {
+        name,
+        type_params,
+        where_clauses,
+        ..
+    } = &statement.kind
+    else {
+        return Ok(());
+    };
+    for condition in where_clauses {
+        let constraint = checker.compile_where_clause(condition)?;
+        let Some(info) = checker.structs.get_mut(name) else {
+            return Err(TypeError::InvariantViolation(format!(
+                "struct '{name}' was not registered before its where clauses"
+            )));
+        };
+        let constraint = constraint.bind(&[&info.decls]);
+        if let Some(last) = info.decls.last_mut() {
+            match last {
+                ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
+                    constraints.push(constraint);
+                }
+            }
+        } else if type_params.is_empty() {
+            checker.validate_declaration_constraint(name, &constraint)?;
+        }
+    }
+    Ok(())
 }

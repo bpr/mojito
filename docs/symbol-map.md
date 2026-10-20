@@ -102,7 +102,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   registry of `ComptimeAlias` entries — classified `ParamDecl`s plus an
   `AliasBody`: a symbolic type template or, for a Bool-bodied predicate
   alias, a symbolic `GenericConstraint`; `check_program` pre-registers
-  module-level aliases like struct shells). A local `comptime` binding whose
+  module-level aliases like struct shells; a shell whose parameter is typed
+  by another struct's member, `traits::names_member_type`, waits until that
+  struct's member types resolve, `retry_deferred_shells`, as the
+  conformance oracle's registration waits through
+  `attach_struct_where_clauses`). A local `comptime` binding whose
   value names a compile-time value in scope (`comptime lane = dt`,
   `Checker::names_value_binder`) is no generic alias: it binds as an alias
   of that parameter expression (`local_comptime_parameters`, and the
@@ -1622,9 +1626,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `infer_member` (`Ts.length`, `indexing.rs`), `infer_len` (`len(Ts)`,
   `builtins.rs`), and the `Invoke` arm of `infer` (`Ts.contains[X]()`,
   `Ts.all_conforms_to[T]()`, `inference.rs`). A value pack that is still a
-  parameter (`*values: Int`) is a `ParamList` of its element
-  (`annotations::value_parameter_expr`, `verify::declared_kind`):
-  `Checker::value_pack_named` resolves it — a struct's own `Self.values`
+  parameter (`*values: Int`) is a `ParamList` of its element, as is a
+  raw-list binder (`values: KGENParamList[T]`, `TyKind::ParamList`, which
+  `MetaTy::value` canonicalizes and `MetaTy::value_ty` inverts): every
+  binder's meta-type is `ParamDecl::binder_meta` (`mojito-types`,
+  `types.rs`), read by `annotations::value_parameter_expr` and the MIR
+  scope verifier. `Checker::value_pack_named` resolves a pack — the bare
+  name through `value_pack_in_scope` (the `value_packs` scope beside
+  `vparams` tells a pack from a raw list), a struct's own `Self.values`
   through `self_value_pack`, which `infer_member` types as the pack. Only a
   parameter position reads the pack itself: `compile_dependent_ct_expr`'s
   `Index` arm makes `values[i]` a `ListGet` (upstream's
@@ -1634,25 +1643,35 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   the instance arm of `infer_member` (`indexing.rs`, any struct's value
   member) or, at run time, by `ParameterList.__len__`; a parameter-position
   `len(values)` is a lifted application of that call. Inside the bundled
-  struct alone `len(Self.values)` is the raw list's length
-  (`Checker::reads_raw_parameter_list`, `eval_associated_ct`), the stand-in
-  for upstream's `#kgen.param_list.size`. Any other read
+  module `len(Self.values)` is the raw list's length
+  (`Checker::bundled_raw_list_operand`, `eval_associated_ct`), the stand-in
+  for upstream's `#kgen.param_list.size`. A pack's `values.values` is its
+  raw list, `ParameterList`'s own value parameter read through the
+  application (`Checker::struct_value_member` / `struct_parameter_at`,
+  `constraints.rs`, which also serve `S[7].n`); a compile-time position
+  reads a raw list as `KGENParamList[T]`, a runtime one is rejected
+  (`comptime_validation::raw_list_runtime_read`). Any other pack read
   (`for v in values`, any runtime index, a whole binding) is the bundled
-  `ParameterList[*values]()` (`stdlib/std/builtin/variadics.mojo`, with
-  `_ParameterListIter`): `Checker::infer_value_pack_read` (top of
-  `infer_impl`) spells that construction as a `SpelledConstruction` whose
-  identity is derived at `ast::VALUE_PACK_READ_ORDINAL`, the checked arena
-  and HIR (the read's operand is that construction's node) lower it in the
-  read's place,
+  `ParameterList[values.values]()` (`stdlib/std/builtin/variadics.mojo`,
+  over `_MLIR.KGENParamListType`, with `_ParameterListIter`):
+  `Checker::infer_value_pack_read` (top of `infer_impl`) spells that
+  construction as a `SpelledConstruction` whose identity is derived at
+  `ast::VALUE_PACK_READ_ORDINAL` (its argument and the argument's pack at
+  `VALUE_PACK_RAW_LIST_ORDINAL` and `VALUE_PACK_OPERAND_ORDINAL`), the
+  checked arena and HIR (the read's operand is that construction's node)
+  lower it in the read's place,
   and `origin_place` / `materialize_borrow_owner` treat the read as that
-  temporary. `Checker::spells_parameter_list` and
-  `admit_parameter_list_brackets` admit `ParameterList`'s brackets only
-  there and in its bundled module, since upstream's list is one parameter.
+  temporary. A spread construction binds a variadic value parameter to its
+  raw list (`_ParameterListIter[*ParameterList[Self.values]()]`,
+  `Checker::parameter_list_spread`, `resolve_use_params`). The checker
+  resolves upstream's `__mlir_type[`!kgen.param_list<`, T, `>`]` body
+  (`Checker::mlir_param_list_type`, `type_resolution.rs`).
   The bundled struct conforms to `Writable` where its element type does
   (`_write_elements`, `write_to`, `write_repr_to`, upstream's members).
   `ParameterList.get_span` takes the elements' static address from the
-  module-private `__param_list_address[*values]()`
-  (`infer_param_list_address`, `call_inference.rs`;
+  module-private `__param_list_address[values]()`
+  (`infer_param_list_address` over `Checker::raw_list_argument`,
+  `call_inference.rs`;
   `SemanticAdjustment::ParamListAddress`), which MIR lowers to
   `MirInstr::ParamListAddress` (schema 1.34), mono closes in
   `answer_param_constants`, the VM allocates once per list

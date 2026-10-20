@@ -6159,13 +6159,14 @@ node_facts! {
         rebind_assertion: RebindAssertion,
         /// What each bracket argument of a call or type application
         /// resolved to, in source order: `Some` for a type-shaped one or a
-        /// value-shaped one the check bound to a type or an origin
+        /// value-shaped one the check bound to a type, an origin, or a raw
+        /// parameter list (`*ParameterList[...]()`)
         /// ([`CheckedParamArg::Attribute`]), `None` for a value-shaped one
         /// that is a run-time value, which is a node of its own.
         parameter_attributes: Vec<Option<mojito_types::types::TyArg>>,
-        /// The type or origin a value-shaped bracket argument resolved to
-        /// when the check bound it, which the call's `parameter_attributes`
-        /// carries in its place.
+        /// The type, origin, or raw parameter list a value-shaped bracket
+        /// argument resolved to when the check bound it, which the call's
+        /// `parameter_attributes` carries in its place.
         argument_attribute: mojito_types::types::TyArg,
         /// The type a type in value position resolved to.
         type_operand: Ty,

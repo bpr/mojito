@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1148**.
+Next free ID: **R1153**.
 
 ## Ordered Work
 
@@ -3718,7 +3718,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `ct::source_type`, which has no spelling for a type parameter or a
     value-pack argument.
   - The bundled `ParameterList.__iter__` spells
-    `_ParameterListIter[*Self.values](0)` where upstream writes `{0}`.
+    `_ParameterListIter[*ParameterList[Self.values]()](0)` where upstream
+    writes `{0}`.
   - Found while landing R325 (2026-10-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -3912,6 +3913,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `Dict[Int, T](keys=[1], values=[x.copy()], __dict_literal__=None)`.
   - Keep a `comptime if conforms_to(T, ...)` arm's folding as it is.
   - Found while landing R694 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1152 A typed raise does not convert to the `Error` its context
+  propagates**
+
+  Problem: `print(g())` inside `def f() raises:` for `def g() raises
+  StopIteration -> Int` is rejected ("raising operation produces
+  'StopIteration', but this context propagates 'Error'"), where the pin
+  runs it and an `except e:` around `f()` prints `caught StopIteration`.
+  - `Checker::require_error` (`checker.rs`) accepts only an error type
+    equal to the context's.
+  - Probe: `ParameterList.__iter__().__next__()` read in a plain `raises`
+    function.
+  - Found while landing R807 (2026-10-19).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4626,31 +4642,65 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     projection requires exactly one compile-time value index".
   - With call parentheses, `S[Int].Of[Bool]()` fails in the checker with
     "a parameterized type is not a value".
+  - A parameter annotation may name a struct's member since R807
+    (`raw: _MLIR.KGENParamListType[t]`), but only with an identifier
+    argument: `raw: _MLIR.KGENParamListType[Int]` and `M.Buf[3]` fail
+    with the same "exactly one compile-time value index".
   - Update `docs/grammar.md` first.
   - It blocks `ParameterList.of` (R809).
   - Found while planning R493 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R807 `ParameterList` takes a variadic `*values: type`, not
-  upstream's one raw-list parameter**
+- [ ] **R1148 A struct parameter read through a value is rejected**
 
-  Problem: upstream declares `ParameterList[type, //, values:
-  _MLIR.KGENParamListType[type]]`, so `vs.values` and
-  `ParameterList[vs.values]` have no spelling in Mojito.
-  - Port upstream's `struct _MLIR` with `KGENParamListType[elt_type]` as a
-    compiler-known type, the type of today's `MetaTy::ParamList`.
-  - Make `vs.values` project a pack's raw list, and respell the checker's
-    runtime read (`Checker::infer_value_pack_read`) as
-    `ParameterList[vs.values]()`.
-  - Admit a user's `ParameterList[vs.values]`, and delete
-    `admit_parameter_list_brackets` and its helpers.
-  - Port `__iter__`'s `_ParameterListIter[*ParameterList[...]()]` spread.
-  - Likely bumps the MIR schema and the package format.
-  - A session should plan this first and split it if it does not fit.
-  - Found while planning R493 (2026-10-13).
+  Problem: `pl.values` of a `comptime pl = ParameterList[vs.values]()` and
+  `s.n` of a `var s = S[3]()` fail, where the pin answers each with the
+  instance's argument (`comptime pl2 = ParameterList[pl.values]` then
+  `pl2.size` prints `2`, `print(s.n)` prints `3`).
+  - A read through a type works since R807 (`S[7].n`, `vs.values`):
+    `Checker::struct_parameter_at` (`checker/constraints.rs`) answers it.
+  - The value-receiver paths never ask it: `struct_value_field` (a
+    compile-time struct value) and the instance arm of `infer_member`
+    (`checker/indexing.rs`, a runtime value).
+  - Probe: `_ParameterListIter[*pl](0)` over that `comptime pl` (the pin
+    runs it), since `Checker::parameter_list_spread` takes only a literal
+    `ParameterList[...]()` construction, not a value whose type is one.
+  - Found while landing R807 (2026-10-19).
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1149 A raw parameter list has no runtime form**
+
+  Problem: `var x = vs.values` is rejected ("a raw parameter list
+  ('KGENParamList[Int]') read at run time is not supported"), where the pin
+  materializes the list as a value of type `KGENParamList[Int]`.
+  - `TyKind::ParamList` has no layout, no VM value, and no native
+    representation; the checker rejects every runtime read
+    (`comptime_validation::raw_list_runtime_read`), and elaborated MIR
+    rejects a register, slot, or signature that holds one
+    (`verify/concrete.rs`).
+  - Probes: a `comptime raw = vs.values` then `var x = raw`, and a runtime
+    read of a `raw: _MLIR.KGENParamListType[t]` parameter.
+  - Found while landing R807 (2026-10-19).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1150 `_MLIR.KGENParamListType`'s element bound is `AnyType`, not
+  upstream's `!kgen.type`**
+
+  Problem: upstream bounds the alias's `elt_type` by `Self.KGENTypeType =
+  __mlir_type.`!kgen.type``, the meta-type of types, where the bundled
+  `stdlib/std/builtin/variadics.mojo` port bounds it by `AnyType`.
+  - `__mlir_type.`!kgen.type`` is outside the subset
+    (`Checker::mlir_param_list_type` and the `__mlir_type.index` arm of
+    `checker/type_resolution.rs`), and a parameter bounded by an alias of
+    it would classify as a value parameter, not a type parameter.
+  - Upstream's `_MLIR.POPArrayType` is not ported either.
+  - Related to R805, whose `TypeList` is a `KGENParamListType` of a trait.
+  - Found while landing R807 (2026-10-19).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R808 A `__generator_type[...] T` parameter and an unbound
   application `Alias[a, _]` are not supported**
@@ -4679,7 +4729,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - `Self.values` is a `ParameterList` value, so the member applies its
     `__len__` at compile time, which a struct member cannot do yet (R489).
   - Only the bundled `ParameterList` reads its own raw list's length
-    (`Checker::reads_raw_parameter_list`).
+    (`Checker::bundled_raw_list_operand`).
   - Found while landing R494 (2026-10-13).
   - Depends on R489, which lets a struct member apply a function.
   - Model: Opus, Not Planned.
@@ -8435,7 +8485,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     display constants and must keep doing so.
   - Add `comptime __getitem_param__[idx: Int]: Self.type = Self.values[idx]`
     to `stdlib/std/builtin/variadics.mojo`, read under the raw-list gate
-    (`Checker::reads_raw_parameter_list`), as `size` already is.
+    (`Checker::bundled_raw_list_operand`), as `size` already is.
   - Upstream's index parameter is `idx: SIMDLength`, which Mojito lacks, so
     the port spells it `Int` and records that in the module header.
   - A runtime subscript already calls `__getitem__`, and the length is
@@ -9038,6 +9088,26 @@ follow-ups the landed producer stages filed come last.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
+- [ ] **R1151 A variadic value parameter is typed by its element, not by
+  upstream's raw list**
+
+  Problem: upstream's `*values: T` binder is a `!kgen.param_list<T>` with
+  variadic binding sugar, where Mojito declares it `ParamDecl::Value { ty:
+  T, variadic: true }` and re-derives the list in
+  `ParamDecl::binder_meta`.
+  - A raw-list binder (`values: KGENParamList[T]`) and a pack therefore
+    share a meta-type but not a declared type, so the checker keeps a
+    second scope to tell them apart (`Checker::value_packs`,
+    `value_pack_in_scope`).
+  - Every reader of a variadic declaration's `ty` moves with the change:
+    `value_pack_scope`, `self_value_pack`, the variadic arm of
+    `resolve_use_params`, `bound_value_ty`, and the MIR verifier's pack
+    checks.
+  - A session should plan this first and split it if it does not fit.
+  - Found while landing R807 (2026-10-19).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 ### Grow The CPU Standard Library *(demand-first)*
 
 Track: `stdlib`.
@@ -9493,6 +9563,10 @@ residue found inside a task moves to the task that owns its fix.
   the parameter.
   - `Dict.keys` needs copyable values as well as keys, since the key view
     wraps the entry view.
+  - The bundled `ParameterList.__iter__` omits upstream's
+    `rebind[_MLIR.KGENParamListType[downcast[Self.type, Copyable]]]`
+    laundering of `Self.values` and is gated `where conforms_to(Self.type,
+    Copyable)`.
   - Depends on nothing.
   - Model: Opus, Planned.
 

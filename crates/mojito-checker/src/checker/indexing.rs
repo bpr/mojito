@@ -36,6 +36,8 @@ impl Checker {
     pub(super) fn place_storage_ty(&self, place: &Expr) -> Option<Ty> {
         match &place.kind {
             ExprKind::Identifier(name) => self.lookup(name).cloned(),
+            // A value pack's member (`vs.values`) reads no storage.
+            ExprKind::Member { object, .. } if self.value_pack_named(object).is_some() => None,
             ExprKind::Member { object, field } => self.infer(object).ok().and_then(|base| {
                 let TyKind::Struct(name, arguments) = base.kind() else {
                     return None;
@@ -2031,7 +2033,16 @@ impl Checker {
             Ok(value) => value,
             Err(error) => return Some(Err(error)),
         };
-        let ty = value.meta().as_value().cloned()?;
+        // A raw parameter list (`vs.values`) is typed where a compile-time
+        // position reads it, and has no runtime form.
+        if let mojito_types::param_expr::MetaTy::ParamList(_) = value.meta()
+            && self.crosses_to_runtime()
+        {
+            return Some(Err(super::comptime_validation::raw_list_runtime_read(
+                value.meta(),
+            )));
+        }
+        let ty = value.meta().value_ty()?;
         self.record_member_value(span, value);
         Some(Ok(ty))
     }

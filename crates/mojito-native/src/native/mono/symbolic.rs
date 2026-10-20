@@ -130,9 +130,10 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
         TyKind::Tuple(v) | TyKind::RuntimePack(v) | TyKind::Variant(v) | TyKind::Overload(v) => {
             v.iter().any(is_symbolic)
         }
-        TyKind::ComptimeList(v) | TyKind::VariadicPack(v) | TyKind::Pointer { element: v, .. } => {
-            is_symbolic(v)
-        }
+        TyKind::ComptimeList(v)
+        | TyKind::ParamList(v)
+        | TyKind::VariadicPack(v)
+        | TyKind::Pointer { element: v, .. } => is_symbolic(v),
         TyKind::Ref(v) => is_symbolic(&v.referent),
         TyKind::Simd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
         TyKind::Func(func) => {
@@ -324,7 +325,10 @@ pub(super) fn collect_nested_types(ty: &Ty, output: &mut Vec<Ty>) {
         TyKind::Tuple(v) | TyKind::RuntimePack(v) | TyKind::Variant(v) | TyKind::Overload(v) => {
             output.extend(v.iter().cloned());
         }
-        TyKind::ComptimeList(v) | TyKind::VariadicPack(v) | TyKind::Pointer { element: v, .. } => {
+        TyKind::ComptimeList(v)
+        | TyKind::ParamList(v)
+        | TyKind::VariadicPack(v)
+        | TyKind::Pointer { element: v, .. } => {
             output.push((*v).clone());
         }
         TyKind::Ref(v) => output.push(v.referent.clone()),
