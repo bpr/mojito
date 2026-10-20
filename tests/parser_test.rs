@@ -870,6 +870,45 @@ fn parses_value_parameters_typed_by_qualified_types() {
 }
 
 #[test]
+fn parses_a_subscript_of_a_construction_as_a_type_projection() {
+    let statements = parse(
+        "def f[*Ts: AnyType](ref x: TypeList[Ts.values]()[1]) -> ref[x] TypeList[Ts.values]()[1]:\n    \
+         var y: TypeList[Ts.values]()[1] = x\n    \
+         return rebind[TypeList[Ts.values]()[1]](y)\n",
+    );
+    let StmtKind::Def {
+        params, ret, body, ..
+    } = &statements[0].kind
+    else {
+        panic!("expected def");
+    };
+    let is_construction = |value: &Expr| {
+        matches!(&value.kind, ExprKind::Call { name, param_args, args, .. }
+            if name == "TypeList" && param_args.len() == 1 && args.is_empty())
+    };
+    let is_projection = |ty: &Type| {
+        matches!(ty, Type::IndexedProjection { base, .. }
+            if matches!(base.as_ref(), Type::Value(value) if is_construction(value)))
+    };
+    assert!(is_projection(&params[0].ty));
+    assert!(matches!(ret, Some(Type::Ref { referent, .. }) if is_projection(referent)));
+    let StmtKind::VarDecl { ty: Some(ty), .. } = &body[0].kind else {
+        panic!("expected a var declaration");
+    };
+    assert!(is_projection(ty));
+    let StmtKind::Return(Some(value)) = &body[1].kind else {
+        panic!("expected a return");
+    };
+    let ExprKind::Call { param_args, .. } = &value.kind else {
+        panic!("expected a rebind call");
+    };
+    assert!(matches!(param_args.as_slice(), [ParamArg::Value(Expr {
+        kind: ExprKind::Index { object, .. },
+        ..
+    })] if is_construction(object)));
+}
+
+#[test]
 fn parses_trait_valued_parameters_spelled_type_of() {
     let statements = parse(
         "struct Box[Tr: type_of(Copyable & Hashable), //, n: Int]:\n    pass\n\

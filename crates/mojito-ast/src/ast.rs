@@ -189,6 +189,11 @@ pub enum Type {
     /// composition of traits, whose type is the trait metatype
     /// (`type_of(AnyType)` types a trait-valued parameter).
     TypeOf(Box<Expr>),
+    /// A compile-time value where the type grammar expects a type: a struct
+    /// construction such as `TypeList[Trait=AnyType, Ts.values]()`. It is a
+    /// type only as the base of an `IndexedProjection`, which reads the
+    /// value's `__getitem_param__[index]`; alone, the checker rejects it.
+    Value(Box<Expr>),
 }
 
 /// One parameter in a source-level function/closure type.
@@ -2725,7 +2730,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                         }
                     }
                 }
-                Type::TypeOf(operand) => self.expr(operand),
+                Type::TypeOf(operand) | Type::Value(operand) => self.expr(operand),
                 Type::Func {
                     type_params,
                     params,

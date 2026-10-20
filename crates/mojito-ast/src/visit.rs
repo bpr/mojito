@@ -500,7 +500,7 @@ pub fn walk_type<V: Visitor>(visitor: &mut V, ty: &Type) {
             walk_type(visitor, base);
             walk_expr(visitor, index);
         }
-        Type::TypeOf(operand) => walk_expr(visitor, operand),
+        Type::TypeOf(operand) | Type::Value(operand) => walk_expr(visitor, operand),
         Type::Func {
             type_params,
             params,
@@ -1310,7 +1310,7 @@ fn walk_type_children_mut<V: MutVisitor>(visitor: &mut V, ty: &mut Type) {
             walk_type_mut(visitor, base);
             walk_expr_mut(visitor, index);
         }
-        Type::TypeOf(operand) => walk_expr_mut(visitor, operand),
+        Type::TypeOf(operand) | Type::Value(operand) => walk_expr_mut(visitor, operand),
         Type::Ref { referent, origin } => {
             walk_type_mut(visitor, referent);
             if let Some(origins) = origin {

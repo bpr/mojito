@@ -3433,6 +3433,12 @@ pub(super) fn assoc_body_source_type(value: &Expr) -> Result<SourceType, TypeErr
                 index: index.clone(),
             })
         }
+        ExprKind::Index { object, index } if matches!(object.kind, ExprKind::Call { .. }) => {
+            Ok(SourceType::IndexedProjection {
+                base: Box::new(SourceType::Value(object.clone())),
+                index: index.clone(),
+            })
+        }
         // A type application such as `List[T]` parses as a subscript over the
         // type's name; recover the parameter-argument list from the index.
         ExprKind::Index { object, index } => {

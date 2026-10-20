@@ -512,7 +512,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   the dependent element (`ParamContext::list_get`,
   `DependentType::pack_element` in `mojito-types`), lowered from the
   bundled `Self.values[idx]` (`ty_from_anno`'s bundled `IndexedProjection`
-  arm), and `opaque_element` is its
+  arm). A subscript of a construction in type position
+  (`TypeList[Ts.values]()[i]`) is `Type::Value` (`mojito-ast`, built by
+  `parse_type`'s construction arm in `parser/types.rs`) under an
+  `IndexedProjection`, which `resolve_ty_from_anno_at_depth`'s value-base
+  arm reads through `compile_time_value_type` and
+  `parameterized_assoc_application`, the explicit
+  `.__getitem_param__[i]` spelling's own path; as a bracket argument or a
+  member body it reaches that arm through `assoc_body_source_type`'s
+  construction arm (`constraints.rs`). `opaque_element` is the element's
   bounded `TyKind::Param` view and `restore_pack_elements` the way back,
   `infer_pack_element_construction` types an element's `Ts[i]()` and, over
   a symbolic pack, records `SemanticAdjustment::ConstructPackElement`, which

@@ -1036,6 +1036,7 @@ assets/ok/typelist_comptime_vocabulary.mojo	main	exe-differential	sanitized
 assets/ok/typelist_over_member_raw_list.mojo	main	exe-differential	sanitized
 assets/ok/typelist_reverse_concat.mojo	main	exe-differential	sanitized
 assets/ok/typelist_self_pack_member_clause.mojo	main	exe-differential	sanitized
+assets/ok/typelist_value_subscript_type.mojo	main	exe-differential	sanitized
 assets/ok/typelist_where_clauses.mojo	main	exe-differential	sanitized
 assets/ok/uint_and_scalar_value_parameters.mojo	main	exe-differential	sanitized
 assets/ok/unread_callable_parameter_instances.mojo	main	exe-differential	sanitized

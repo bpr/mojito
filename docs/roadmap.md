@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1198**.
+Next free ID: **R1204**.
 
 ## Ordered Work
 
@@ -2719,7 +2719,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (`TypeList.of`), R1187 (the `_enum_elt_type_for_case` default), R809
     (`ParameterList.of`), R505 (the `_enum_is_exhaustive` default), R74
     (`comptime assert` in the getter), R679 and R352 (the getter's
-    origin-cast return).
+    origin-cast return), R1201 (the getter through `T: EnumLike`), R1196
+    (`Self._enum_case_types` in brackets), and R1198 (the getter as a
+    requirement).
   - Model: Fable, Planned.
 
 - [ ] **R1133 Enum case patterns select by discriminant and payload**
@@ -3951,6 +3953,26 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1198 A trait requirement whose signature indexes the method's own
+  pack never matches its witness**
+
+  Problem: `def get[*Us: AnyType](self, ref x: Us[1]) -> Int` in a trait,
+  and the same method in a conformer, fail with "struct 'S' method 'get'
+  does not match the signature required by trait 'Getter'", where the pin
+  prints `9`.
+  - `canonical_generic_signature` (`mojito-types/src/types.rs`)
+    substitutes `TyKind::Param` and binds value slots by name, but does not
+    rename a type-pack binder inside a dependent type's `ParamExpr`. The two
+    methods' `Us` stay distinct.
+  - Probe: the parameter spelled `ref x: TypeList[Us.values]()[1]` fails
+    the same way.
+  - Probe: R1132's payload getter, `-> ref[self] TypeList[Trait=AnyType,
+    Self._enum_case_types]()[id]`, as a requirement and a conformer's
+    witness. It also needs R1196 for `Self._enum_case_types` in brackets.
+  - Found while landing R1185 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R550 A refining trait cannot restate an inherited requirement**
 
   Problem: `trait D(A)` declaring `def a(self) -> Int: ...` that `A`
@@ -4835,7 +4857,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     parse ("Expected newline, ';', or EOF"), and the pin runs `var x:
     Q.E[0] = 3` over `struct Q(HasE)`, which omits `E`.
   - Found while planning R1132 (2026-10-20).
-  - Depends on R505, R1146, and R1185 (the default's type expression).
+  - Depends on R505, R1146, R1185 (the default's type expression), and
+    R1202 (the default closing at a conformer).
   - Model: Opus, Not Planned.
 
 - [ ] **R806 A parameterized alias read through a struct is not parsed**
@@ -4856,6 +4879,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: a member-alias argument, `raw: M.ListOf[M.KGENTypeType]` over
     a struct `M` whose `ListOf[elt_type: Self.KGENTypeType]` is upstream's
     raw list, stops with "unsupported associated comptime member access".
+  - Probe: a construction through a qualified alias in type position,
+    `var y: TypeList.of[Trait=AnyType, Bool, Int]()[1] = 4`, fails with the
+    same "exactly one compile-time value index", where the pin prints `4`.
+    The type grammar's construction takes only `NAME [param_args] '('`.
   - Update `docs/grammar.md` first.
   - It blocks `ParameterList.of` (R809).
   - Found while planning R493 (2026-10-13).
@@ -4886,6 +4913,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     = _MLIR.KGENParamListType[Self.type]`, stops packaging with "not an
     associated comptime expression". It keeps `_mlir_type` off the bundled
     `ParameterList` and `TypeList`.
+  - Probe: the subscript spelling in a local `comptime`, `comptime T =
+    TypeList[Trait=AnyType, Ts.values]()[1]`, fails with "type
+    'TypeList[AnyType, Ts]' cannot be indexed here", where the pin runs it.
   - Found while landing R1168 (2026-10-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -5039,6 +5069,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `comptime n = TypeList[Self._types].length` beside `comptime
     _types: _MLIR.KGENParamListType[AnyType] = Self.Ts.values`, where the
     pin prints `2` for `S[Int, Bool].n`.
+  - Probe: a method signature or body passing a member as the bracket
+    value, `-> ref[self] TypeList[Trait=AnyType,
+    Self._types].__getitem_param__[id]` or `return TypeList[Trait=AnyType,
+    Self._types]().length`, fails with "type mismatch for value parameter
+    'values': expected a value, found a type", in a struct or a trait.
   - Found while landing R1184 (2026-10-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -5061,28 +5096,95 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1185 A subscript of a `TypeList` value is not a type expression**
+- [ ] **R1201 A `TypeList` element read through a bound keeps neither its
+  type in the body nor closes at the call**
 
-  Problem: a parameter typed `TypeList[Trait=AnyType, Ts.values]()[1]`, and
-  a result type `-> ref[self] TypeList[Trait=AnyType,
-  Self._enum_case_types]()[id]`, fail to parse ("Expected ')' after
-  parameters"), where the pin reads them through `__getitem_param__`.
-  - `docs/grammar.md` first: a type expression takes a postfix `()`
-    followed by `[index]`.
-  - The checker reads it as the instance's `__getitem_param__[index]`, the
-    path R1168 built (`type_pack_element`): a `ListGet` while the list or
-    the index is symbolic, and a `Select` once both are constant.
-  - A trait requirement with that result type is satisfied by a conformer
-    spelling it identically, `Self` substituted and the method's `id`
-    still symbolic.
-  - A generic body's `var x: TypeList[...]()[1] = 3` is rejected at the
-    pin too ("cannot implicitly convert 'IntLiteral[3]' value to
-    'Ts.values[1]'"), since the element stays symbolic.
-  - Probe: `conformance/probes/typelist_value_subscript_type.mojo`. Its
-    closed annotation also needs R1186.
-  - Found while planning R1132 (2026-10-20).
-  - Depends on R1184 (`Trait=` and a non-pack raw list in the receiver).
+  Problem: `def first[T: HasTypes](ref x: TypeList[Trait=AnyType,
+  T._types]()[0]) -> ref[x] TypeList[Trait=AnyType, T._types]()[0]` stops
+  with "type mismatch for return: expected T._types[0], found element[0]",
+  where the pin prints `3` for `first[S[Int, Bool]](n)`.
+  - The explicit spelling `TypeList[Trait=AnyType,
+    T._types].__getitem_param__[0]` fails the same way ("found
+    TypeList.__getitem_param__[0]").
+  - The body half: `opaque_params` (`checker/statements.rs`) makes a
+    parameter of a dependent type opaque unless its list is a pack in
+    scope. A `ParamKind::TypeMember` list (`T._types`) needs the same
+    exception.
+  - The call half: with that exception the call fails with "expected S[(Int,
+    Bool)]._types[0], found Int". The checker never answers a concrete
+    struct's `TypeMember` in a substituted type. Only the elaborator does,
+    through `ParamContext::answer_type_members` (`native/mono/symbolic.rs`).
+  - Probe: the signature above over `trait HasTypes` declaring `comptime
+    _types: _MLIR.KGENParamListType[AnyType]` and `struct S[*Ts: AnyType]`
+    defining it as `Self.Ts.values`.
+  - R1132's payload getter through `T: EnumLike` reads its result type this
+    way.
+  - Found while landing R1185 (2026-10-20).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1202 A struct's parameterized type member over its own pack does
+  not close at an instance**
+
+  Problem: `comptime E[id: Int]: AnyType = Self.Ts[id]` in `struct W[*Ts:
+  AnyType]`, read as `var x: W[Bool, Int].E[1] = 6`, fails with "type
+  mismatch for variable 'x': expected Ts[1], found Int", where the pin
+  prints `6`.
+  - `Checker::resolve_parameterized_member` substitutes the member's own
+    `id` but not the struct's `Ts`, so the element stays symbolic.
+  - Probe: the body spelled `TypeList[Trait=AnyType, Self.Ts.values]()[id]`
+    fails the same way.
+  - R1187's `_enum_elt_type_for_case` default is such a member.
+  - Found while landing R1185 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1203 A `comptime` name bound to a `TypeList` value is not
+  subscripted in type position**
+
+  Problem: `comptime tl = TypeList.of[Trait=AnyType, Bool, Int]()` then
+  `var x: tl[1] = 3` fails with "unknown type 'tl'", where the pin prints
+  `3`.
+  - A type subscript reads a value's `__getitem_param__` only when the
+    value is a construction written in place
+    (`Checker::compile_time_value_type`, `checker/type_resolution.rs`).
+  - A named value parses as `Type::Named`, so the checker never asks
+    whether the name is a local `comptime` value. `typelist_receiver`
+    follows `local_comptime_value` for the same question in a constraint.
+  - The interplay with R1194's lifted local `comptime` needs settling here.
+  - Found while landing R1185 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1200 A raw-list value parameter does not bind as a `TypeList`'s
+  `values`**
+
+  Problem: `def h[raw: _MLIR.KGENParamListType[AnyType]]() -> Int: return
+  TypeList[Trait=AnyType, raw].length`, called as `h[Ts.values]()`, fails
+  with "a parameterized type is not a value", where the pin prints `2`.
+  - Probe: a signature over the binder, `ref x: TypeList[Trait=AnyType,
+    raw].__getitem_param__[id]`, fails with "expected KGENParamList[AnyType],
+    found a non-materializable compile-time value", where the pin compiles
+    it.
+  - R1184 found that `MetaTy::value` erases a raw list's trait element,
+    which is the likely cause: the binder's list and the `values` slot's
+    `KGENParamList[Trait]` do not meet.
+  - Found while landing R1185 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1199 A trait method's signature cannot read a struct's value
+  member**
+
+  Problem: `def get(self, x: Q[P[Int, Bool].n]) -> Int: ...` in a trait
+  fails with "not a compile-time Int constant: unsupported associated
+  comptime member access", where the pin compiles it.
+  - The same annotation in a struct method or a `def` runs.
+  - The trait's abstract signature evaluates its bracket values without
+    the struct table the other signature paths consult.
+  - Found while landing R1185 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1174 A parameter typed by an imported package struct's
   `!kgen.type` alias is a value parameter**
@@ -9962,6 +10064,9 @@ residue found inside a task moves to the task that owns its fix.
     spelling rules. It leaves R1182's list, since `of` needs no
     generator.
   - Probe: `conformance/probes/typelist_of_values.mojo`.
+  - Probe: `conformance/probes/typelist_value_subscript_type.mojo`, whose
+    closed annotation reads `TypeList.of[...].values` inside a subscripted
+    construction.
   - Found while planning R1132 (2026-10-20).
   - Depends on R806 (an alias read through the struct) and R1184 (the
     `Trait=` keyword in the receiver).

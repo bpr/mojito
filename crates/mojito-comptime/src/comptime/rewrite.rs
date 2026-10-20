@@ -56,6 +56,10 @@ pub(super) fn substitute_type_bindings_in_type(ty: &mut Type, subs: TypeSubs) {
     substitute_source_type_bindings(ty, subs);
 }
 
+pub(super) fn substitute_type_bindings_in_expr(e: &mut Expr, subs: TypeSubs) {
+    retype_expr(e, subs);
+}
+
 pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
     if let Some(mut folded) = fold_pack_typelist_use(e, subs) {
         // The fold keeps the use's identity, as a folded loop variable
@@ -773,7 +777,7 @@ pub(super) fn rewrite_type(ty: &mut Type, subs: Subs) {
                 rewrite_expr(origin, subs);
             }
         }
-        Type::TypeOf(operand) => rewrite_expr(operand, subs),
+        Type::TypeOf(operand) | Type::Value(operand) => rewrite_expr(operand, subs),
         Type::Int
         | Type::UInt
         | Type::Bool

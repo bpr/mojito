@@ -603,6 +603,7 @@ fn substitute_source_type_bindings(ty: &mut Type, subs: rewrite::TypeSubs) {
         // The operand of `type_of` is an expression, which names no type
         // binder.
         Type::TypeOf(_) => {}
+        Type::Value(value) => rewrite::substitute_type_bindings_in_expr(value, subs),
         Type::Int
         | Type::UInt
         | Type::Bool

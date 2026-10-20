@@ -64,12 +64,28 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 // Any other identifier names a struct type or an in-scope type
                 // parameter (the checker decides), optionally with parameter args.
                 _ => {
+                    let start = self.last_span.0;
                     let args = if matches!(self.peek_token()?, Some(Token::LBracket)) {
                         self.parse_param_args()?
                     } else {
                         Vec::new()
                     };
-                    Ok(Type::Named(id, args))
+                    if matches!(self.peek_token()?, Some(Token::LParen)) {
+                        self.next_token()?;
+                        let (call_args, kwargs) = self.parse_call_args()?;
+                        self.expect(&Token::RParen, "Expected ')' after arguments")?;
+                        Ok(Type::Value(Box::new(Expr::new(
+                            ExprKind::Call {
+                                name: id,
+                                param_args: args,
+                                args: call_args,
+                                kwargs,
+                            },
+                            (start, self.last_span.1),
+                        ))))
+                    } else {
+                        Ok(Type::Named(id, args))
+                    }
                 }
             },
             token => Err(ParseError::UnexpectedToken(
@@ -408,6 +424,11 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     "expected ']' in call argument list".to_string(),
                 ));
             }
+            if let Type::Value(value) = ty {
+                return Ok(ParamArg::Value(
+                    self.parse_expression_from(*value, Precedence::Lowest)?,
+                ));
+            }
             if matches!(self.peek_token()?, Some(Token::LParen)) {
                 let name = match &ty {
                     Type::Int => Some("Int"),
@@ -526,7 +547,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     self.next_token()?;
                     let (call_args, kwargs) = self.parse_call_args()?;
                     self.expect(&Token::RParen, "Expected ')' after arguments")?;
-                    return Ok(ParamArg::Value(Expr::new(
+                    let call = Expr::new(
                         ExprKind::Call {
                             name: id,
                             param_args: args,
@@ -534,7 +555,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                             kwargs,
                         },
                         (id_span.0, self.last_span.1),
-                    )));
+                    );
+                    return Ok(ParamArg::Value(
+                        self.parse_expression_from(call, Precedence::Lowest)?,
+                    ));
                 }
                 // A member of the applied type (`Grid[n].cells()`, a static
                 // method call) is a value expression over the application.

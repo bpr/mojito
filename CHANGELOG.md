@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A subscript of a `TypeList[...]()` construction is a type, as on the pin,
+  which reads it as the construction's `__getitem_param__[i]`: a parameter,
+  a `ref` result, a local annotation, and a `rebind` target spell
+  `TypeList[Trait=AnyType, Ts.values]()[i]`, over a pack, `Self.Ts.values`,
+  or a struct member's raw list, with a symbolic or a constant index
+  (`assets/ok/typelist_value_subscript_type.mojo`). The construction parses
+  into a new `Type::Value` node and alone is rejected as a value
+  (`assets/type_error/type_annotation_is_a_construction.mojo`). This closes
+  R1185; the gaps left are R1198–R1203.
+
 - A `TypeList[...]()` construction binds its bracket list as the bundled
   struct's, as on the pin, so `Trait=` and `values=` apply and a raw list a
   struct's `comptime` member holds reads concretely

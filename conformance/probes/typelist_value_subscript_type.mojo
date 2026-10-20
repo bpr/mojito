@@ -1,10 +1,10 @@
-# PROBE: a subscript of a `TypeList` value (`TypeList[...]()[1]`) as a parameter type, a result type, and a local annotation (roadmap R1185).
+# PROBE: a subscript of a `TypeList` value (`TypeList[...]()[1]`) as a parameter type, a result type, and a local annotation (roadmap R1186).
 #
 # The pin prints:
 #   3 4
 #
 # Observed 2026-10-20 against `Mojo 1.2.0.dev2026101705 (46f49943)`.
-# Mojito: fails to parse at the parameter's `()` ("Expected ')' after parameters"). The closed annotation also needs `TypeList.of` (R1186).
+# Mojito: the signature runs since R1185; the closed annotation stops parsing at `TypeList.of[...].values` ("only named functions can be called"), which needs `TypeList.of` (R1186).
 # When Mojito runs it, promote it to `assets/ok/` with its manifest rows.
 #
 # Run:    mojo run typelist_value_subscript_type.mojo

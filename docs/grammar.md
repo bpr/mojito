@@ -1043,6 +1043,9 @@ type:
     | NAME [param_args]            # struct type, optionally with type/value arguments
     | '__mlir_type' '.' 'index'    # the Indexer requirement's return spelling (the only `__mlir_type` form accepted)
     | 'type_of' '(' expression ')' # the type of a compile-time expression (`type_of(AnyType)`, the trait metatype)
+    | NAME [param_args] '(' [call_args] ')'  # a compile-time value (a struct construction); a type only through a subscript
+    | type type_projection        # a member or a subscript of a type, or of a construction
+type_projection: '.' NAME | '[' expression ']'
 function_type: 'def' [params_decl] '(' [','.function_type_param+] ')' fn_effect* '->' type
 function_type_param:
     | 'var' '**' NAME ':' type
@@ -1082,6 +1085,15 @@ The checker accepts a trait or a `&` composition of traits, whose type is
 the trait metatype (displayed `AnyTrait[Copyable]`, which has no source
 spelling). `type_of` of a value or of a struct type (`var y: type_of(x) =
 3`) is a checker error.
+A struct **construction** in type position (`TypeList[Trait=AnyType,
+Ts.values]()`) parses into `Type::Value`, a compile-time value kept whole.
+It is a type only as the base of a subscript: `TypeList[Trait=AnyType,
+Ts.values]()[i]` reads the construction's `__getitem_param__[i]`, as at the
+pin, in a parameter, a result, a local annotation, and a bracket type
+argument. A construction alone is a checker error ("expected a type, not a
+value" at the pin). In a bracket list, a construction continues the postfix
+chain it starts, so `rebind[TypeList[Ts.values]()[i]](x)` passes the
+subscript as its argument.
 A **reference type** `ref[origin] T` parses into `Type::Ref` with its origin
 retained. Signature checking substitutes parameter/receiver origins at calls and
 rejects invalid escapes. `ref` is contextual here — it is the reference form only

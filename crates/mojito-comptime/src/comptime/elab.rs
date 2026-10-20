@@ -651,6 +651,9 @@ impl Elab<'_> {
             Type::Float64 => Ok(Ty::float64()),
             Type::None => Ok(Ty::none()),
             Type::Named(name, args) => self.type_from_name(name, args, scope),
+            Type::Value(_) => Err(ComptimeError::NotComptime(
+                "expected a type, not a value".to_string(),
+            )),
             Type::TypeOf(operand) => any_trait_source_type(operand).ok_or_else(|| {
                 ComptimeError::NotComptime(
                     "'type_of' of a value or a struct type is not supported yet".to_string(),

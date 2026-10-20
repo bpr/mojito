@@ -480,6 +480,28 @@ impl Checker {
                 let base_ty = self.ty_from_anno(base)?;
                 self.associated_type_from_base(&base_ty, name, &[])?
             }
+            // A compile-time value is a type only through a subscript, as at
+            // the pin ("expected a type, not a value").
+            SourceType::Value(_) => {
+                return Err(TypeError::TypeMismatch {
+                    expected: "a type".to_string(),
+                    found: "a value".to_string(),
+                    context: "type annotation".to_string(),
+                });
+            }
+            // `TypeList[Trait=AnyType, Ts.values]()[i]`: the value's
+            // `__getitem_param__[i]`, the path its explicit spelling takes.
+            SourceType::IndexedProjection { base, index }
+                if let SourceType::Value(value) = base.as_ref() =>
+            {
+                let ty = self.compile_time_value_type(value)?;
+                self.parameterized_assoc_application(
+                    &ty,
+                    "__getitem_param__",
+                    std::slice::from_ref(index),
+                )?
+                .ok_or_else(|| TypeError::NotIndexable(ty.to_string()))?
+            }
             // `Self.Ts[index]` (or a `def`'s own `Ts[index]`) while the pack
             // is still a parameter: the dependent element type.
             SourceType::IndexedProjection { base, index }
@@ -2248,6 +2270,17 @@ impl Checker {
                         self.ty_from_anno(&SourceType::Named(applied.clone(), args.clone()))?,
                         Some(expression.source_span()),
                     ),
+                    ParamArg::Value(
+                        expression @ Expr {
+                            kind: ExprKind::Index { object, .. },
+                            ..
+                        },
+                    ) if matches!(object.kind, ExprKind::Call { .. }) => (
+                        self.ty_from_anno(&super::constraints::assoc_body_source_type(
+                            expression,
+                        )?)?,
+                        Some(expression.source_span()),
+                    ),
                     // A struct's type member (`g[M.E]()`, `k[_MLIR.KGENTypeType]()`).
                     ParamArg::Value(
                         expression @ Expr {
@@ -3087,6 +3120,43 @@ impl Checker {
             }
             _ => None,
         }
+    }
+
+    /// The type of the compile-time value a type expression subscripts: a
+    /// struct construction (`TypeList[Ts.values]()`) whose struct has an
+    /// `__init__` taking no argument.
+    fn compile_time_value_type(&self, value: &Expr) -> Result<Ty, TypeError> {
+        let ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } = &value.kind
+        else {
+            return Err(TypeError::Unsupported(
+                "a subscript in a type takes a struct construction".to_string(),
+            ));
+        };
+        let info = self.structs.get(name).ok_or_else(|| {
+            TypeError::Unsupported("a subscript in a type takes a struct construction".to_string())
+        })?;
+        if !args.is_empty() || !kwargs.is_empty() {
+            return Err(TypeError::Unsupported(
+                "a type expression subscripts a construction that takes no arguments".to_string(),
+            ));
+        }
+        let nullary = info.methods.get("__init__").is_some_and(|overloads| {
+            overloads
+                .iter()
+                .any(|overload| overload.required.iter().all(|required| !required))
+        }) || (info.fieldwise_init && info.declared_field_names.is_empty());
+        if !nullary {
+            return Err(TypeError::BadCall {
+                func: name.clone(),
+                reason: "no '__init__' overload takes no arguments".to_string(),
+            });
+        }
+        Ok(self.applied_type(name, param_args)?.0)
     }
 
     /// Whether a nearer type parameter shadows the pack `*Ts`: a nested
