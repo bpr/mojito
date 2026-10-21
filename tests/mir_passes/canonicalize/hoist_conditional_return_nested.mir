@@ -1,0 +1,41 @@
+mojito-mir 1.81
+artifact {
+  features: [],
+  files: [
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: nested_returns, param_names: [c, d, x], param_types: [Bool, Bool, Int], defaults: [absent, absent, absent], required: [true, true, true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent, absent, absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false, false, false], param_writes: [false, false, false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: nested_returns,
+        registers: 8,
+        vars: 3,
+        var_names: [c, d, x],
+        params: 3,
+        param_types: [Bool, Bool, Int],
+        owned_params: [false, false, false],
+        deinit_params: [false, false, false],
+        ref_params: [false, false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Bool }, var_type { var: $v1, type: Bool }, var_type { var: $v2, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Bool }, reg_type { reg: %r1, type: Bool }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              if { results: [%r7], condition: %r0, then: [bb0 { instructions: [var.use { dest: %r1, var: $v1, mode: copy }, if { results: [%r4], condition: %r1, then: [bb0 { instructions: [const { dest: %r2, value: int(1) }], terminator: return { value: present(%r2) } }], elifs: [], else: [bb0 { instructions: [var.use { dest: %r3, var: $v2, mode: copy }], terminator: yield { values: [%r3] } }] }, binary { op: add, dest: %r5, a: %r4, b: %r4, resolved: absent, raises: absent }], terminator: yield { values: [%r5] } }], elifs: [], else: [bb0 { instructions: [const { dest: %r6, value: int(0) }], terminator: yield { values: [%r6] } }] }
+            ],
+            terminator: return { value: present(%r7) }
+          }
+        ]
+      }
+  ]
+}

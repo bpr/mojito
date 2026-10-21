@@ -1,0 +1,33 @@
+  functions: [
+      fn {
+        name: results,
+        registers: 10,
+        vars: 1,
+        var_names: [c],
+        params: 1,
+        param_types: [Bool],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Bool }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Bool }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r9, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              if { results: [%r3], condition: %r0, then: [bb0 { instructions: [const { dest: %r1, value: int(1) }], terminator: yield { values: [%r1] } }], elifs: [], else: [bb0 { instructions: [const { dest: %r2, value: int(1) }], terminator: yield { values: [%r2] } }] },
+              const { dest: %r4, value: int(2) },
+              if { results: [%r7], condition: %r0, then: [bb0 { instructions: [const { dest: %r5, value: int(1) }], terminator: yield { values: [%r5] } }], elifs: [], else: [bb0 { instructions: [const { dest: %r6, value: int(2) }], terminator: yield { values: [%r6] } }] },
+              binary { op: add, dest: %r8, a: %r7, b: %r7, resolved: absent, raises: absent },
+              binary { op: add, dest: %r9, a: %r4, b: %r8, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r9) }
+          }
+        ]
+      }
+  ]

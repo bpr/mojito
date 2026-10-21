@@ -114,15 +114,19 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
   does (stage 8), and field drops, copy elision, destructor and
   constructor naming, and the copy/move lowering read the same regions
   after it (stage 9).
-- **`canonicalize`** (`analysis/canonicalize.rs`, R836) threads
-  pass-through blocks, folds identical-successor branches, and merges
-  single-predecessor blocks: MLIR `cf` patterns standing in for structure
-  MIR does not have.
+- **The pre-elaboration passes read regions, but get blocks.** `sccp`
+  walks a structured body as `SCCP` walks `hlcf`, `canonicalize` applies
+  the `hlcf` patterns (`analysis/canonicalize/hlcf.rs`), and `mem-2-reg`
+  solves reaching stores over regions (stage 10a). Since the seams lower
+  first, production bodies still take `canonicalize`'s R836 CFG rewrites
+  (pass-through threading, identical-successor folds, single-predecessor
+  merges), which the post-elaboration pipeline also runs.
 - **The elaborator recovers structure.** `mono/unroll.rs`'s `loop_body`
   finds a `comptime for` body as the blocks its `body` target dominates, and
   `outermost_loop` finds the enclosing loop. A region op would hold both.
 - **Versions.** MIR text `1.54`, `PACKAGE_FORMAT` `"mojito-package 55"`
-  since stage 1. Packaged bodies are MIR, so structured bodies change both.
+  since stage 1. A package holds checked units, never MIR, so moving the
+  lowering point changes neither.
 
 ## Target
 
@@ -380,11 +384,19 @@ last producer. Every stage keeps program output unchanged; the
      tracks fields in `DestructorInsertion`'s one walk (filed on the
      roadmap).
    - `elaborate-drops` pass output is structured.
-10. **Pre-elaboration pipeline and package.** `canonicalize` gains the
-    `hlcf` patterns and loses R836's; `sccp` walks regions; package bodies
-    are structured (`PACKAGE_FORMAT` bump). It starts from stage 9's
-    seams, which lower after `lower-lit`; the lowering point moves to the
-    elaborator's entry.
+10. **Pre-elaboration pipeline.** Three stages, one session each:
+    - **10a (landed, R879).** The walkers that entered only `try`
+      (`fold::replace_folded`, `callable_values.rs`, `cut_try_cleanups`)
+      read every region; `sccp` walks regions as `SCCP` does;
+      `canonicalize` gains `RemoveStaticCondition`, `ConditionPropagation`,
+      both hoists, `HoistYieldResults`, `RemoveUnusedResults`,
+      `RemoveDeadLoop`, and `ComptimeIfOp::canonicalize` with
+      `checkTrivialBlocks`; `mem-2-reg` promotes by structured dominance.
+      R836's CFG rewrites stay for lowered bodies until stage 12.
+    - **10b (R1253).** `inline-parametric` inlines structured callees,
+      wrapping a multi-exit one in a labelled loop.
+    - **10c (R1254).** The seams stop lowering, and the elaborator lowers
+      each template where it first fetches it (`Bodies::get`).
 11. **Elaborator.** Instantiation, substitution, and `ComptimeIf`/
     `ComptimeFor` work on regions; the dominator code is deleted; a CTFE
     fragment is lowered before `call_concrete`. The lowering point moves to

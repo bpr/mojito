@@ -5370,7 +5370,38 @@ point where a slot declared in a loop is uninitialized again.
   (`analysis/fold.rs`, as MLIR's `OperationFolder` serves `SCCP` and the
   greedy driver alike), so upstream's first round folds constant operators
   with no `SCCP` in it, and Mojito's first `canonicalize` folds what
-  straight-line constants decide. It then rewrites a `branch` whose
+  straight-line constants decide. On a structured body it then applies
+  upstream's `hlcf` canonicalization patterns (`HLCFOpsCanonicalizers.cpp`,
+  in `analysis/canonicalize/hlcf.rs`, R879), innermost regions first and
+  alternating with the folding until no pattern applies, as the greedy
+  driver's worklist does: `RemoveStaticCondition` splices the arm an `if`
+  on a constant takes (an elif whose condition region is trivial, one
+  block of `const`s, is decided or promoted to the `if`'s condition, and
+  a non-trivial one fails the pattern), `ConditionPropagation` reads the
+  condition inside an arm of an `if` without elifs as a constant defined
+  before the `if`, `HoistUnconditionalReturn` hoists one `return`,
+  `break`, or `continue` every arm ends in after a new `if` the arms yield
+  to, `HoistConditionalReturn` moves the rest of the block into the one
+  arm that yields when the others `return` or `break` (climbing out
+  through enclosing `if`s without elifs, as `findParentTermOp` does),
+  `HoistYieldResults` replaces a result all bare-yield arms yield alike, or
+  a `Bool` true/false pair by the condition, and erases an `if` left
+  unread with its elif condition regions, as upstream does (the pin skips
+  a call in such a condition), `RemoveUnusedResults` drops unread results,
+  `RemoveDeadLoop` removes a loop whose body only breaks, and
+  `ComptimeIfOp::canonicalize` erases a trivial `comptime if`
+  (`checkTrivialBlocks`) and decides one on a constant `Bool`, hoisting
+  its live arm's instructions up to a `comptime for` and keeping the op as
+  a parameter scope with an `unreachable` dead arm when they do not all
+  hoist. A `return` with a cleanup list is no `return` to the hoists. Each
+  pattern has its own `--timings` counter (`removed_static_conditions`,
+  `propagated_conditions`, `hoisted_unconditional_exits`,
+  `hoisted_conditional_returns`, `hoisted_yield_results`,
+  `removed_unused_results`, `removed_dead_loops`, `folded_comptime_ifs`).
+  The seams still lower control flow before the pipeline (R1254), so in
+  production every body the pipeline reads is lowered, and the patterns
+  run on the structured inputs `mojito opt` reads.
+  On a lowered body it rewrites a `branch` whose
   condition has one definition, a `const bool`, to a `jump` to the arm it
   takes, a comparison it just folded included (R781, as
   `hlcf.if`'s `RemoveStaticCondition` keeps the arm a static condition
@@ -5387,10 +5418,10 @@ point where a slot declared in a loop is uninitialized again.
   (`SimplifyBrToBlockWithSinglePred`). Upstream needs none of these: its
   generators keep run-time control flow as structured `hlcf` region ops
   until `LowerControlFlow`, after elaboration, so a join or a loop latch is
-  no block there; MIR is a CFG before elaboration, and the rewrites remove
-  the blocks that structure would not have. The staged move to that structure, which
-  replaces these rewrites with `hlcf`'s own canonicalizations, is
-  `docs/structured-control-flow-plan.md`. A `comptime for` header's
+  no block there; a lowered body has them, and the rewrites remove the
+  blocks that structure would not have. They go with the CFG paths once
+  the post-elaboration pipeline reads regions too (R881,
+  `docs/structured-control-flow-plan.md`). A `comptime for` header's
   targets are never rewritten, since the elaborator finds a loop's body as
   the blocks its `body` target dominates; an escape counts as a
   predecessor and is never rewritten; an edge that would close a cycle of
@@ -5403,8 +5434,10 @@ point where a slot declared in a loop is uninitialized again.
   (`mir::prune_unreachable_blocks`, MLIR's `eraseUnreachableBlocks`), and
   cuts each `try`'s raise-edge cleanup to the slots a remaining raise path
   still holds (`verify::cut_try_cleanups`, over the slot-ends walk of
-  `verify/drops.rs`), as erasing a raise point erases the destructors on
-  its edge. It
+  `verify/drops.rs`; a structured body is walked through its
+  `lower-control-flow` lowering, which moves each list whole, so a list is
+  found again by its buffer), as erasing a raise point erases the
+  destructors on its edge. It
   then folds each `value.copy` that is the identity to its operand (R780,
   `MirInstr::forwarded_operand`, MLIR's `fold` returning an operand): when
   source and destination are typed alike by a type
@@ -5661,13 +5694,23 @@ point where a slot declared in a loop is uninitialized again.
   mentions go, and the slot leaves the function (`mir::retire_slots`). The
   `canonicalize` after it forwards the copies. A slot whose reads merge two
   stores keeps its slot (R927): upstream carries such an allocation through
-  `hlcf` region arguments and results, and MIR is a CFG at this seam, whose
-  blocks take none. The elaborator copies a `comptime for` body once per
+  `hlcf` region arguments and results, and MIR's blocks and regions take
+  none. A structured body is walked region by region instead
+  (`region_walk::walk_forward` with a reaching-store `ForwardScan`): its
+  mentions may sit in several regions of one `try` part (a mention inside
+  a `try` part with another outside keeps the slot, as upstream's
+  `userCrossesFunctionCFG` refuses to cross `lit.try`), a store need not
+  share its block with its register's definition, and a read is promoted
+  when its one reaching store lies before it in its own block or in a
+  block enclosing it, so the stored register is visible there; a store in
+  an arm or a loop body read after the op keeps its slot (R927). The elaborator copies a `comptime for` body once per
   iteration with every register renumbered (`mono/unroll.rs`
   `renumber_block`), so a read and its store must lie on the same side of
   every loop body's boundary (`mir::comptime_for_body`); the guard goes when
-  the elaborator clones regions (R880). Its `--timings` counters are
-  `promoted_slots` and `erased_slot_instructions`.
+  the elaborator clones regions (R880); in a structured body, no read and
+  its store may sit on two sides of a `comptime for` region's boundary.
+  Its `--timings` counters are `promoted_slots` and
+  `erased_slot_instructions`.
 - **`sccp` runs between the two `canonicalize` runs** (`analysis::SCCP`,
   `analysis/sccp.rs`, R781), upstream's `SCCP` (MLIR's sparse conditional
   constant propagation). Each register takes a lattice value, unknown, one
@@ -5675,7 +5718,12 @@ point where a slot declared in a loop is uninitialized again.
   `branch` makes only its taken arm executable while its condition is one
   constant, a `comptime if` or `comptime for` both of its targets, and a
   `try` its regions, whose escapes make their function-level targets
-  executable. A scalar `const` (`Int`, `Float64`, `Bool`, `IntLiteral`,
+  executable. On a structured body an `if` without elifs makes only the
+  arm a constant condition takes executable, none while the condition is
+  unknown, and both otherwise, as `IfOp::getEntryTargets` does, its results
+  meeting the values its executable arms yield; a loop's body, every
+  region of an `if` with elifs, a `comptime if`, a `match`, and a `try` are
+  executable, their results overdefined. A scalar `const` (`Int`, `Float64`, `Bool`, `IntLiteral`,
   `FloatLiteral`, or a `UInt` or SIMD `Const::Value`, `Const::is_folded`)
   is its constant; a parameter read
   (`Const::Param`) and an aggregate `Const::Value` are overdefined, the

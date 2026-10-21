@@ -1,0 +1,28 @@
+  functions: [
+      fn {
+        name: early_return,
+        registers: 5,
+        vars: 1,
+        var_names: [x],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r1, value: int(1) }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      }
+  ]

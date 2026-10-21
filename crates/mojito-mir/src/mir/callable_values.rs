@@ -8,7 +8,7 @@
 //! call's omitted arguments. A call of a nested `def` by name is a direct
 //! call and needs none of this.
 
-use crate::mir::{Const, MirBlock, MirFunction, MirInstr, MirPlace};
+use crate::mir::{Const, MirBlock, MirFunction, MirInstr, MirPlace, instruction_regions};
 use std::collections::{HashMap, HashSet};
 
 /// The function each register of `function` statically holds, beside
@@ -18,7 +18,7 @@ use std::collections::{HashMap, HashSet};
 /// variables. A variable names its callable only while nothing writes it
 /// but its definitions (see [`rebound_variables`]) and every definition
 /// holds the same callable (`var g = use; g = use`). The walk descends into
-/// `try` regions only.
+/// every region.
 pub fn callable_targets(function: &MirFunction) -> HashMap<u32, (String, bool)> {
     let mut rebound = rebound_variables(function);
     loop {
@@ -41,26 +41,14 @@ pub fn callable_targets(function: &MirFunction) -> HashMap<u32, (String, bool)> 
     }
 }
 
-/// Every instruction of `blocks` in order, descending into `try` regions.
+/// Every instruction of `blocks` in order, each region op followed by its
+/// regions' instructions.
 pub fn nested_instructions(blocks: &[MirBlock]) -> Vec<&MirInstr> {
     let mut instructions = Vec::new();
     for instruction in blocks.iter().flat_map(|block| &block.instrs) {
         instructions.push(instruction);
-        if let MirInstr::Try {
-            body,
-            handler,
-            orelse,
-            finalbody,
-            ..
-        } = instruction
-        {
-            for blocks in [Some(body), handler.as_ref().map(|(_, blocks)| blocks)]
-                .into_iter()
-                .chain([orelse.as_ref(), finalbody.as_ref()])
-                .flatten()
-            {
-                instructions.extend(nested_instructions(blocks));
-            }
+        for blocks in instruction_regions(instruction) {
+            instructions.extend(nested_instructions(blocks));
         }
     }
     instructions
@@ -122,24 +110,8 @@ fn visit_callables(
                     }
                 }
             }
-            if let MirInstr::Try {
-                body,
-                handler,
-                orelse,
-                finalbody,
-                ..
-            } = instruction
-            {
-                changed |= visit_callables(body, rebound, registers, variables, conflicting);
-                if let Some((_, blocks)) = handler {
-                    changed |= visit_callables(blocks, rebound, registers, variables, conflicting);
-                }
-                if let Some(blocks) = orelse {
-                    changed |= visit_callables(blocks, rebound, registers, variables, conflicting);
-                }
-                if let Some(blocks) = finalbody {
-                    changed |= visit_callables(blocks, rebound, registers, variables, conflicting);
-                }
+            for blocks in instruction_regions(instruction) {
+                changed |= visit_callables(blocks, rebound, registers, variables, conflicting);
             }
         }
     }

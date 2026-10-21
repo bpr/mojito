@@ -5,31 +5,34 @@
 //! instruction [`MirInstr::folded_constant`] folds over operands defined
 //! once by a constant becomes that `const`, as MLIR's greedy driver applies
 //! a `fold` that returns an attribute (through the replacement `sccp`
-//! shares, `fold::replace_folded`); a `branch` on a constant condition
-//! becomes a `jump` to the taken arm, as
-//! `hlcf.if`'s `RemoveStaticCondition` pattern keeps the arm a static
-//! condition takes; blocks the entry does not reach go, as MLIR's
-//! `eraseUnreachableBlocks` erases them; an instruction that folds to one of
-//! its operands ([`MirInstr::forwarded_operand`], an identity `value.copy`,
-//! or a copy of a closure of reference captures, a struct of pointers) is
-//! replaced by that operand in every reader, as MLIR's greedy driver
-//! applies a `fold` that returns an operand; and an instruction whose
-//! results nothing reads goes when it has no effect but reading
+//! shares, `fold::replace_folded`); blocks the entry does not reach go, as
+//! MLIR's `eraseUnreachableBlocks` erases them; an instruction that folds to
+//! one of its operands ([`MirInstr::forwarded_operand`], an identity
+//! `value.copy`, or a copy of a closure of reference captures, a struct of
+//! pointers) is replaced by that operand in every reader, as MLIR's greedy
+//! driver applies a `fold` that returns an operand; and an instruction
+//! whose results nothing reads goes when it has no effect but reading
 //! ([`MirInstr::would_be_trivially_dead`]), repeated until nothing changes.
 //!
-//! Upstream's generators keep run-time control flow as structured `hlcf`
-//! region ops until `LowerControlFlow`, after elaboration, so a join or a
-//! loop latch is no block there. MIR is a CFG before elaboration, and the
-//! blocks that structure would not have are removed here by MLIR's own CFG
-//! rewrites: an edge into an empty block that only jumps on is threaded to
-//! where it goes (`SimplifyPassThroughBr`), a branch whose arms name one
-//! block becomes a jump (`SimplifyCondBranchIdenticalSuccessors`, as
-//! `hlcf.if`'s `HoistYieldResults` and `comptime.if`'s `checkTrivialBlocks`
-//! erase an `if` whose arms are bare yields), and a block a jump alone
+//! A structured body's region ops take upstream's `hlcf` canonicalization
+//! patterns (`hlcf`): an `if` on a constant keeps the arm it selects, exits
+//! every arm shares are hoisted after the `if`, arms that only yield fold
+//! into the results, a loop that only breaks goes, and a `comptime if` on a
+//! constant keeps its live arm. Folding and the patterns alternate until
+//! the patterns stop, as the greedy driver's worklist does.
+//!
+//! A lowered body, which the post-elaboration pipeline still canonicalizes,
+//! takes MLIR's own CFG rewrites in their place: a `branch` on a constant
+//! condition becomes a `jump` to the taken arm, an edge into an empty block
+//! that only jumps on is threaded to where it goes (`SimplifyPassThroughBr`),
+//! a branch whose arms name one block becomes a jump
+//! (`SimplifyCondBranchIdenticalSuccessors`), and a block a jump alone
 //! reaches is merged into its predecessor
 //! (`SimplifyBrToBlockWithSinglePred`). A `comptime for` header's targets
 //! are never rewritten: the elaborator finds the loop body as the blocks its
-//! `body` target dominates.
+//! `body` target dominates. Neither set applies to the other's shape.
+
+mod hlcf;
 
 use super::fold;
 use super::pre_elaboration::BodyPass;
@@ -52,12 +55,14 @@ pub const CANONICALIZE: BodyPass = BodyPass {
 /// Fold constants and constant branches, simplify the control flow, and
 /// erase what `function` no longer reaches or reads.
 ///
-/// Each instruction over constant operands becomes a `const`, each `branch`
-/// on a constant a `jump`; unreachable blocks go, identity copies are
-/// forwarded, and dead instructions are erased. Constants fold first, so a comparison folded to a `const bool` decides
-/// its `branch` in the same run. Erasure and control-flow simplification repeat until neither changes
-/// anything: an erased instruction can empty a block, and a branch folded
-/// to a jump leaves its condition unread. A removed instruction's results
+/// Each instruction over constant operands becomes a `const`, each region
+/// op the `hlcf` patterns match is rewritten, and each `branch` on a
+/// constant becomes a `jump`; unreachable blocks go, identity copies are
+/// forwarded, and dead instructions are erased. Constants fold first, so a
+/// comparison folded to a `const bool` decides its `if` or `branch` in the
+/// same run. Erasure, the patterns, and control-flow simplification repeat
+/// until none changes anything: an erased instruction can empty a block or
+/// an arm, and a branch folded to a jump leaves its condition unread. A removed instruction's results
 /// lose their types and spans; registers are not renumbered. Returns
 /// whether any of these rewrites applied.
 pub fn canonicalize(
@@ -65,7 +70,17 @@ pub fn canonicalize(
     function: &mut MirFunction,
     declarations: &MirDeclarations,
 ) -> bool {
-    let folded_constants = fold_constants(function, declarations);
+    let mut erased = HashSet::new();
+    let mut folded_constants = 0;
+    let mut patterns = 0;
+    loop {
+        folded_constants += fold_constants(function, declarations);
+        let rewritten = hlcf::hlcf_patterns(function, &mut erased);
+        if rewritten == 0 {
+            break;
+        }
+        patterns += rewritten;
+    }
     let folded_branches = fold_constant_branches(function);
     timing::count("folded_constants", folded_constants as u64);
     timing::count("folded_branches", folded_branches as u64);
@@ -74,15 +89,16 @@ pub fn canonicalize(
     prune_unreachable_blocks(function);
     let forwarded_copies = forward_copies(function, declarations);
     timing::count("forwarded_copies", forwarded_copies as u64);
-    let mut erased = HashSet::new();
     loop {
         let before = erased.len();
         erase_dead_until_none(function, &mut erased);
         if erased.len() == before {
             break;
         }
+        let rewritten = hlcf::hlcf_patterns(function, &mut erased);
+        patterns += rewritten;
         let round = simplify_control_flow(&mut function.blocks, true);
-        if round == ControlFlowEdits::default() {
+        if round == ControlFlowEdits::default() && rewritten == 0 {
             break;
         }
         edits.add(round);
@@ -97,6 +113,7 @@ pub fn canonicalize(
     timing::count("merged_blocks", edits.merged as u64);
     timing::count("erased_instructions", erased.len() as u64);
     folded_constants
+        + patterns
         + folded_branches
         + forwarded_copies
         + erased_blocks

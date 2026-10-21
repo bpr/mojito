@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1253**.
+Next free ID: **R1258**.
 
 ## Ordered Work
 
@@ -98,27 +98,68 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1251, whose field-sensitive drop state this walk needs.
   - Model: Fable, Not Planned.
 
-- [ ] **R879 The pre-elaboration pipeline and the package hold CFG bodies,
-  and `canonicalize` simplifies blocks `hlcf` would not have**
+- [ ] **R1257 `remove-unused-params` records a self-recursive callee's
+  removed parameter twice in `callee_removed_params`**
 
-  Upstream's generator `Canonicalizer` applies `hlcf`'s structural patterns
-  (`HLCFOpsCanonicalizers.cpp`), and R836's rewrites thread and merge
-  blocks that structured MIR does not have.
-  - Stage 10 of `docs/structured-control-flow-plan.md`.
-  - `canonicalize` gains `RemoveStaticCondition`, `HoistYieldResults`,
-    `RemoveUnusedResults`, `HoistUnconditionalReturn`,
-    `HoistConditionalReturn`, `RemoveDeadLoop`, and `checkTrivialBlocks`.
-  - R836's pass-through threading, identical-successor fold, and
-    single-predecessor merge are deleted, and their
-    `tests/mir_passes/canonicalize/` cases are rewritten as `hlcf`-pattern
-    cases.
-  - `sccp` walks regions.
-  - Package bodies are structured, so `PACKAGE_FORMAT` is bumped.
+  The pass case `tests/mir_passes/remove-unused-params/forwarded.mir`
+  fails: `rec`'s entry lists `param_id { owner: "rec", slot: 0 }` twice,
+  where its `.expected` lists it once.
+  - It fails at `2fa8c8fa`, before R879's session; the self-recursive
+    discount `self_forwarded_parameters` feeds (5b1b7744, R1034) is the
+    likely source.
+  - Probe: `mojito opt --pass remove-unused-params` on that case, diffed
+    against its `.expected`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1253 `inline-parametric` refuses every callee with structured
+  control flow and splices blocks, where `InlineParametric` wraps the body
+  in an `inlined_cf_scope` loop**
+
+  `is_closed` refuses a callee holding an `if`, loop, `comptime if`,
+  `comptime for`, or `match`, and `splice` splits the caller's block, so
+  the pass can only inline lowered bodies.
+  - Upstream wraps every inlined body in a labelled `hlcf.loop` and turns
+    each `hlcf.return` into a labelled `hlcf.break`
+    (`InlineParametric.cpp:129-348`).
+  - Slice S4 of `R879-the-pre-elaboration-pipeline-and-the-plan.md`: a
+    structured splice beside the CFG one, a single-exit callee spliced
+    flat, a multi-exit one wrapped in a fresh-labelled `Loop` whose
+    `break`s store the result slot (`Break` carries no value, R886).
+  - `inlined_blocks`, `result_of`, `raise_held`, `inline_cost`, and
+    `back_edges` read every region; the price must not move.
+  - Its pass cases are structured twins of `multi_return`,
+    `generic_comptime_branch`, `comptime_for_callee`, `in_try_region`, and
+    `raising_in_try`.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R1254 The seams lower control flow before the pre-elaboration
+  pipeline, where upstream keeps `hlcf` until LLVM**
+
+  `Compiler::elaborated_mir` and `pre_elaboration::finish_drops` run
+  `lower-control-flow` before the pipeline, so every pre-elaboration pass
+  and the elaborator read CFG bodies, though `sccp`, `canonicalize`, and
+  `mem-2-reg` now read regions.
+  - Slices S5 and S6 of
+    `R879-the-pre-elaboration-pipeline-and-the-plan.md`: the seams stop
+    lowering, and `mono/bodies.rs` `Bodies::get` lowers each template
+    once (an arena outside the `Specializer`, `PackageBodies::template`).
+  - The inliner's CFG splice and its CFG-shaped pass inputs go.
+  - No package holds MIR, so `PACKAGE_FORMAT` does not change.
+  - Probe: `@no_inline def f[n: Int]() -> Int` whose body is
+    `comptime if False: comptime k = n * 2; return k` then `return 3`
+    gets `removed_params` naming `n` in `emit-mir` (a scratch build with
+    the move showed it), and the features row's `comptime if False`
+    caveat goes.
+  - Probe: `if c: pass elif f(): pass` then skips `f()`, as the pin does,
+    since `HoistYieldResults` erases the op with its condition regions.
+  - The scratch build matched every `if`/loop/`try`/`match` fixture's
+    output; its structured `mem-2-reg` promoted 369 slots where the CFG
+    path promotes 384, before R1253.
   - Updates `docs/architecture.md` §Pre-Elaboration Pipeline and
     `docs/features.md`'s pipeline row.
-  - After it lands, `lower-control-flow` runs at the elaborator's entry, as
-    each template is materialized.
-  - Depends on R878.
+  - Depends on R1253.
   - Model: Fable, Planned.
 
 - [ ] **R880 The elaborator unrolls `comptime for` by recovering its body
@@ -133,7 +174,7 @@ which names the upstream pass each one follows. Each is measured by the
   - `unroll.rs`'s `loop_body` and `outermost_loop` are deleted.
   - A CTFE fragment is lowered before `call_concrete`.
   - After it lands, `lower-control-flow` runs at the end of elaboration.
-  - Depends on R879.
+  - Depends on R1254.
   - Model: Fable, Planned.
 
 - [ ] **R881 The post-elaboration pipeline runs on a CFG and has no
@@ -143,6 +184,10 @@ which names the upstream pass each one follows. Each is measured by the
   Mojito's post-elaboration `sccp`/`canonicalize` read lowered blocks.
   - Stage 12 of `docs/structured-control-flow-plan.md`.
   - `sccp`/`canonicalize` run on regions in `post_elaboration.rs`.
+  - Then R836's CFG rewrites in `canonicalize` (pass-through threading,
+    identical-successor fold, single-predecessor merge) go with their
+    eight CFG cases, and so do the CFG paths of `sccp`, `canonicalize`'s
+    constant-branch fold, and `mem-2-reg`, which only lowered bodies use.
   - Add `SimplifyCF`'s trivial-loop removal (`lib/Transforms/SimplifyCF.cpp`).
   - After it lands, `lower-control-flow` runs at the backend boundary
     (`src/compiler.rs`, `src/artifact.rs`, the Pliron entry).
@@ -472,6 +517,38 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R927.
   - Model: Opus, Not Planned.
 
+- [ ] **R1255 MIR has no select instruction, so `canonicalize` cannot turn
+  an `if` into one**
+
+  The generator `Canonicalizer` rewrites an `hlcf.if` whose arms only
+  yield values into `pop.select` (`EmptyIfToSelect`, `IfToSelect`,
+  `IfYieldSelect`, `lib/Transforms/Canonicalizer.cpp`), and Mojito keeps
+  the `if`.
+  - Shape: an `if` whose two arms yield different constants, such as
+    `x = 1 if c else 2`, stays an `if` with a result; `HoistYieldResults`
+    folds only equal yields and a `Bool` true/false pair.
+  - The fix adds a select instruction to MIR, the VM, and Pliron, and the
+    three patterns to `canonicalize/hlcf.rs`.
+  - Depends on R1254, before which no structured body reaches the pass.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1256 `canonicalize` folds a constant in place, where MLIR's
+  folder materializes one per value at the region's entry**
+
+  `OperationFolder` hoists each folded constant to the entry of the
+  isolated region and reuses one per value, and `fold::replace_folded`
+  turns the folded instruction itself into a `const` where it stands.
+  - Shape: an elif condition region holding its own `const bool` is
+    trivial to `RemoveStaticCondition` only because `trivial_condition`
+    accepts `const`s in the region, where upstream's region holds only
+    the yield.
+  - Shape: equal constants stay one `const` per use, so instance sizes
+    count them.
+  - Deciding it changes every instance size, so it waits for the
+    structured seam.
+  - Depends on R1254.
+  - Model: Fable, Not Planned.
+
 - [ ] **R924 Mojito inlines `nodebug` callees the pin refuses**
 
   The pin keeps a call to a `nodebug` callee holding `"abc"`-literal
@@ -698,13 +775,17 @@ which names the upstream pass each one follows. Each is measured by the
   - MIR is a CFG at the pre-elaboration seam and its blocks take no
     arguments, so the pass solves reaching stores over blocks instead
     (`analysis/mem2reg.rs`).
+  - On a structured body the pass now walks regions, but promotes a read
+    only when its store's block encloses it, since Mojito's regions take
+    no arguments: probe `tests/mir_passes/mem-2-reg/region_store_in_arm_kept.mir`
+    and the loop-body store in `region_loop_read.mir`.
   - The fix rewrites the pass as `processRegion`'s scoped walk over
     structured bodies with region values.
   - The pass's `comptime for` guard (a read and its store on one side of a
     loop body's boundary) goes once the elaborator clones regions.
   - About two thirds of the promotable-type slot mentions in the
     pre-elaboration bodies of `collections_many` are merged ones.
-  - Depends on R879 (structured bodies at the seam), R886 (region values),
+  - Depends on R1254 (structured bodies at the seam), R886 (region values),
     R880 (regions cloned).
   - Model: Fable, Planned.
 

@@ -3,11 +3,11 @@
 //! `SCCP` and the greedy pattern driver.
 
 use mojito_mir::mir::verify::instruction_result_regs;
-use mojito_mir::mir::{Const, MirBlock, MirDeclarations, MirInstr, Reg};
+use mojito_mir::mir::{Const, MirBlock, MirDeclarations, MirInstr, Reg, instruction_regions_mut};
 use mojito_types::types::Ty;
 use std::collections::HashMap;
 
-/// Replace each instruction of `blocks` and their `try` regions that folds
+/// Replace each instruction of `blocks` and their regions that folds
 /// ([`MirInstr::folded_constant`]) over `constant`'s operands by a `const`
 /// defining the same register, as MLIR materializes the constant and erases
 /// the op; returns how many were replaced. A folded producer's in-place
@@ -23,19 +23,9 @@ pub(super) fn replace_folded(
     for block in blocks {
         let mut folded_here = Vec::new();
         for instruction in &mut block.instrs {
-            if let MirInstr::Try {
-                body,
-                handler,
-                orelse,
-                finalbody,
-                ..
-            } = instruction
-            {
-                for region in std::iter::once(body)
-                    .chain(handler.as_mut().map(|(_, blocks)| blocks))
-                    .chain(orelse.as_mut())
-                    .chain(finalbody.as_mut())
-                {
+            let regions = instruction_regions_mut(instruction);
+            if !regions.is_empty() {
+                for region in regions {
                     folded += replace_folded(region, constant, reg_types, declarations);
                 }
                 continue;

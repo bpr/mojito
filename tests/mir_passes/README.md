@@ -27,7 +27,9 @@ below. Labels are `<pass>/<case>.mir`, so the reports hold no machine path.
    `mojito emit-mir`. A pass in `analysis::PIPELINE` takes this post-drop
    form; emit it with `MOJITO_PRE_ELABORATION=0`, or the pipeline will
    already have run (`eliminate-dead-symbols` would have removed what its
-   case is about). This form is also past `lower-lit`, so it holds no
+   case is about). The CLI prints that form lowered; `sccp`,
+   `canonicalize`, and `mem-2-reg` also read a structured body, so their
+   region cases are built by hand, as `lower-control-flow/*.mir` are. This form is also past `lower-lit`, so it holds no
    `lifetime.keep_alive` or `interiors.invalidate`. `elaborate-drops` takes
    pre-drop MIR in its structured form (every region one block, as
    `verify_structured_shape` checks; `opt` refuses a lowered body), which

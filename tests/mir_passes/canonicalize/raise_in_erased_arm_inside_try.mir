@@ -1,0 +1,66 @@
+mojito-mir 1.81
+artifact {
+  features: [],
+  files: [
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: erased_raise, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: None, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: fail, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: None, returns_reference: false, raises: true, error_type: present(Error), ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: erased_raise,
+        registers: 5,
+        vars: 3,
+        var_names: [x, s, e],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: Error }],
+        return_type: absent,
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Bool }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: None }, reg_type { reg: %r3, type: None }, reg_type { reg: %r4, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              try { body: [bb0 { instructions: [const { dest: %r0, value: bool(true) }, var.use { dest: %r1, var: $v0, mode: copy }, var.store { var: $v1, src: %r1, binding_type: absent, in_place: false }, if { results: [], condition: %r0, then: [bb0 { instructions: [drop.var { var: $v1 }, call { dest: %r2, func: fail, raises: present(Error), args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: yield { values: [] } }], elifs: [], else: [bb0 { instructions: [call { dest: %r3, func: fail, raises: present(Error), args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, drop.var { var: $v1 }], terminator: yield { values: [] } }] }], terminator: try.yield {} }], handler: present(handler { error_var: present($v2), blocks: [bb0 { instructions: [var.use { dest: %r4, var: $v2, mode: copy }, drop.var { var: $v2 }], terminator: try.yield {} }] }), orelse: absent, finalbody: absent, cleanup: [drop { var: $v1 }] }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: fail,
+        registers: 0,
+        vars: 1,
+        var_names: [x],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: absent,
+        raises: true,
+        error_type: present(Error),
+        register_types: [],
+        locations: [],
+        blocks: [
+          bb0 {
+            instructions: [
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      }
+  ]
+}

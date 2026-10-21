@@ -4,8 +4,13 @@
 //!
 //! Each register takes a lattice value: unknown, one constant, or
 //! overdefined. Blocks become executable from the entry, a `branch` making
-//! only its taken arm executable while its condition is one constant, and
-//! the instructions of executable blocks are evaluated until nothing
+//! only its taken arm executable while its condition is one constant. A
+//! structured body is walked region by region, as `SCCP` walks `hlcf`: an
+//! `if` without elifs enters only the arm a constant condition takes, its
+//! results meeting the values its executable arms yield, while a loop's
+//! body, every region of an `if` with elifs, a `comptime if`, a `match`,
+//! and a `try` are executable, their results overdefined. The
+//! instructions of executable blocks are evaluated until nothing
 //! changes: a scalar or SIMD `const` ([`Const::is_folded`], a `UInt` or
 //! SIMD `Const::Value` included) is its constant, an instruction
 //! that folds ([`MirInstr::folded_constant`]) over constant operands is the
@@ -25,7 +30,7 @@
 //! The first `canonicalize` has already folded what straight-line constants
 //! decide, so `sccp` adds the folds that need its executable-block reasoning
 //! or a lattice meet. Terminators are left alone: the `Canonicalizer` after
-//! it folds a `branch` on a constant.
+//! it folds a `branch` on a constant and decides an `if` on one.
 
 use super::fold;
 use super::pre_elaboration::BodyPass;
@@ -97,12 +102,24 @@ struct Solver<'a> {
 }
 
 impl Solver<'_> {
-    /// Evaluate the executable block `block`, with every region its `try`
-    /// instructions hold, and return the blocks of its list it makes
+    /// Evaluate the executable block `block`, with the executable regions
+    /// of its region ops, and return the blocks of its list it makes
     /// executable. Escape targets, which name the function's blocks, go to
     /// `escapes`.
     fn visit(&mut self, block: &MirBlock, escapes: &mut Vec<MirBlockId>) -> Vec<MirBlockId> {
         for instruction in &block.instrs {
+            if let MirInstr::If {
+                results,
+                cond,
+                then,
+                elifs,
+                orelse,
+            } = instruction
+                && elifs.is_empty()
+            {
+                self.visit_if(results, *cond, [then, orelse], escapes);
+                continue;
+            }
             self.transfer(instruction);
             for region in instruction_regions(instruction) {
                 self.visit_region(region, escapes);
@@ -142,16 +159,57 @@ impl Solver<'_> {
         }
     }
 
-    /// Evaluate a `try` region's executable blocks, from its entry.
-    fn visit_region(&mut self, blocks: &[MirBlock], escapes: &mut Vec<MirBlockId>) {
+    /// Evaluate an `if` without elifs, as `IfOp::getEntryTargets` enters
+    /// it: a constant condition makes only its arm executable, an unknown
+    /// one neither yet, and any other both. Each result meets the values
+    /// the executable arms yield to it.
+    fn visit_if(
+        &mut self,
+        results: &[Reg],
+        cond: Reg,
+        [then, orelse]: [&[MirBlock]; 2],
+        escapes: &mut Vec<MirBlockId>,
+    ) {
+        let arms = match self.lattice.get(cond.0 as usize) {
+            Some(Lattice::Constant(Const::Bool(true))) => vec![then],
+            Some(Lattice::Constant(Const::Bool(false))) => vec![orelse],
+            Some(Lattice::Unknown) => Vec::new(),
+            _ => vec![then, orelse],
+        };
+        for arm in arms {
+            for values in self.visit_region(arm, escapes) {
+                for (result, value) in results.iter().zip(values) {
+                    let value = self
+                        .lattice
+                        .get(value.0 as usize)
+                        .cloned()
+                        .unwrap_or(Lattice::Overdefined);
+                    self.meet(*result, value);
+                }
+            }
+        }
+    }
+
+    /// Evaluate a region's executable blocks, from its entry, and return
+    /// the values each of them yields to the op holding the region.
+    fn visit_region(
+        &mut self,
+        blocks: &[MirBlock],
+        escapes: &mut Vec<MirBlockId>,
+    ) -> Vec<Vec<Reg>> {
         let mut executable = vec![false; blocks.len()];
         let mut pending = vec![0];
+        let mut yields = Vec::new();
         while let Some(block) = pending.pop() {
             if block >= blocks.len() || std::mem::replace(&mut executable[block], true) {
                 continue;
             }
             pending.extend(self.visit(&blocks[block], escapes));
+            if let MirTerm::Yield(values) | MirTerm::ComptimeYield(values) = &blocks[block].term {
+                yields.push(values.clone());
+            }
         }
+        yields
     }
 
     /// Meet each result of `instruction` with the value it computes.

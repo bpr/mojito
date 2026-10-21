@@ -1,0 +1,32 @@
+  functions: [
+      fn {
+        name: taken_arm,
+        registers: 8,
+        vars: 1,
+        var_names: [x],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Bool }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(1) },
+              const { dest: %r1, value: int_literal(2) },
+              const { dest: %r2, value: bool(true) },
+              if { results: [%r5], condition: %r2, then: [bb0 { instructions: [const { dest: %r3, value: int(7) }], terminator: yield { values: [%r3] } }], elifs: [], else: [bb0 { instructions: [const { dest: %r4, value: int(8) }, binary { op: add, dest: %r7, a: %r4, b: %r4, resolved: absent, raises: absent }], terminator: yield { values: [%r7] } }] },
+              const { dest: %r6, value: int(14) }
+            ],
+            terminator: return { value: present(%r6) }
+          }
+        ]
+      }
+  ]

@@ -616,6 +616,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The pre-elaboration passes read structured bodies as upstream's
+  generator passes read `hlcf`: `sccp` enters only the arm an `if` on a
+  constant takes and meets the `if`'s results from its arms' yields;
+  `canonicalize` applies `RemoveStaticCondition`, `ConditionPropagation`,
+  `HoistUnconditionalReturn`, `HoistConditionalReturn`,
+  `HoistYieldResults`, `RemoveUnusedResults`, `RemoveDeadLoop`, and
+  `ComptimeIfOp::canonicalize`; and `mem-2-reg` promotes a read whose store
+  lies before it in an enclosing block. Constant folding, callable-value
+  resolution, and a `try`'s cleanup cut now see every region. Both seams
+  still lower control flow first, so no program's output or MIR changes
+  yet; `mojito opt` runs the new paths, and the rest of R879 is R1253
+  (structured inlining) and R1254 (the seams stop lowering). This closes
+  R879.
+
 - `EnumLike` stays undeclared: upstream's `std/builtin/enum_like.mojo` and
   the `Optional` members that conform to it use spellings Mojito cannot read
   yet, so R1132 now names its prerequisites as roadmap entries (`!kgen.string`

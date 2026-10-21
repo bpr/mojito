@@ -1,0 +1,28 @@
+  functions: [
+      fn {
+        name: yields_condition,
+        registers: 4,
+        vars: 1,
+        var_names: [c],
+        params: 1,
+        param_types: [Bool],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Bool }],
+        return_type: present(Bool),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Bool }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy }
+            ],
+            terminator: return { value: present(%r0) }
+          }
+        ]
+      }
+  ]

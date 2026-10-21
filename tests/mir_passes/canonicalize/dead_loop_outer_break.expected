@@ -1,0 +1,28 @@
+  functions: [
+      fn {
+        name: outer_break,
+        registers: 4,
+        vars: 1,
+        var_names: [x],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: absent,
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: None }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              loop { label: present(loop0), body: [bb0 { instructions: [var.use { dest: %r0, var: $v0, mode: copy }, call { dest: %r1, func: print, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: break { label: present(loop0) } }] }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      }
+  ]

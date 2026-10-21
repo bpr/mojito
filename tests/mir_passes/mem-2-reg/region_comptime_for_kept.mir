@@ -1,0 +1,43 @@
+mojito-mir 1.81
+artifact {
+  features: [],
+  files: [
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: count, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "count", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: count,
+        registers: 9,
+        vars: 1,
+        var_names: [total],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Bool }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: None }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int(0) },
+              var.store { var: $v0, src: %r0, binding_type: present(Int), in_place: false },
+              comptime.for { binder: binder { owner: "$comptime_for@cases.mojo:10..18", slot: 0, name: "$iter" }, initial: param_apply { function: "$comptime$count$0", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), args: [param_decl_ref { owner: "count", slot: 0, name: n, type: meta_value(Int) }] }, has_next: param_apply { function: "__module$std$builtin$$stubs$paramfor_has_next", type: meta_value(Bool), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@cases.mojo:10..18", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }, next_iter: param_apply { function: "__module$std$builtin$$stubs$paramfor_next_iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@cases.mojo:10..18", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }, next_value: param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@cases.mojo:10..18", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }, body: [bb0 { instructions: [comptime.if { results: [], conditions: [eq { left: operand_expr(param_apply { function: "__module$std$builtin$$stubs$paramfor_has_next", type: meta_value(Bool), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@cases.mojo:10..18", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }), right: operand_value(ct_bool(true)) }], arms: [[bb0 { instructions: [const { dest: %r1, value: int(1) }, const { dest: %r2, value: param(param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@cases.mojo:10..18", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }) }, binary { op: eq, dest: %r3, a: %r2, b: %r1, resolved: absent, raises: absent }, if { results: [], condition: %r3, then: [bb0 { instructions: [], terminator: comptime.for.break {} }], elifs: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }, var.use { dest: %r4, var: $v0, mode: copy }, const { dest: %r5, value: param(param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@cases.mojo:10..18", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }) }, binary { op: add, dest: %r6, a: %r4, b: %r5, resolved: absent, raises: absent }, call { dest: %r8, func: print, raises: absent, args: [%r6], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: comptime.for.continue {} }]], else: [bb0 { instructions: [], terminator: comptime.for.break {} }] }], terminator: unreachable {} }], else: [bb0 { instructions: [], terminator: unreachable {} }] },
+              var.use { dest: %r7, var: $v0, mode: copy }
+            ],
+            terminator: return { value: present(%r7) }
+          }
+        ]
+      }
+  ]
+}
