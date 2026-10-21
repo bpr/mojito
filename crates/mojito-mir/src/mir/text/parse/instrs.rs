@@ -834,6 +834,7 @@ impl Decoder {
             }),
             "loop" => Some(MirInstr::Loop {
                 label: self.req(value, fields, "label", |d, v| Some(d.option_loop_label(v)))?,
+                results: self.regs_since_1_82(fields, "results"),
                 body: self.req(value, fields, "body", |d, v| Some(d.region_blocks(v)))?,
             }),
             "comptime.if" => Some(MirInstr::ComptimeIf {
@@ -977,6 +978,7 @@ impl Decoder {
             )?)),
             "break" => Some(MirTerm::Break {
                 label: self.req(value, fields, "label", |d, v| Some(d.option_loop_label(v)))?,
+                values: self.regs_since_1_82(fields, "values"),
             }),
             "continue" => Some(MirTerm::Continue {
                 label: self.req(value, fields, "label", |d, v| Some(d.option_loop_label(v)))?,

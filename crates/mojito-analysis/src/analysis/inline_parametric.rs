@@ -159,9 +159,9 @@ use mojito_mir::mir::{
     MirPlace, MirSubscriptCall, MirTerm, Proj, Reg, RegionFrame, UseMode, callable_targets,
     cleanup_slots, count_register_reads, erase_removed_operands, fresh_register, has_no_destructor,
     instruction_regions, instruction_regions_mut, instruction_regs_mut, instruction_slots,
-    lower_copies_and_moves, name_constructors, region_exit, removed_argument_operands,
-    renumber_block_slots, terminator_regs_mut, with_removed_argument_forwards_erased,
-    without_removed_arguments,
+    loop_breaks_mut, lower_copies_and_moves, name_constructors, region_exit,
+    removed_argument_operands, renumber_block_slots, terminator_regs_mut,
+    with_removed_argument_forwards_erased, without_removed_arguments,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{
@@ -688,12 +688,12 @@ impl Registers {
 enum Returned {
     /// Nothing: the callee returns `None`.
     None,
-    /// A slot every return stores to, which the call's register takes
-    /// forwarded, with no move initializer, as upstream's break carries
-    /// the value.
-    Slot,
+    /// The wrapper loop's result, which each `break` carries, as
+    /// upstream's `hlcf.break` does: the call's register is that result,
+    /// with no move initializer.
+    Value,
     /// A constructor's `out self` slot, which the call's register takes
-    /// forwarded, as [`Returned::Slot`].
+    /// forwarded.
     Out,
 }
 
@@ -1490,19 +1490,7 @@ impl<'c> Inliner<'_, 'c> {
         } else {
             result_of(callee)
         };
-        let result_slot = var_base + callee.n_vars as VarId;
-        // A returned reference is the call's, of the caller's reference
-        // type; the callee's own spells its origin untracked.
-        let result_ty = if callee.returns_reference {
-            function.reg_types.get(&dest.0).cloned()
-        } else {
-            callee.ret_ty.clone()
-        };
-        let exit = ReturnExit {
-            result,
-            slot: result_slot,
-            ty: result_ty.clone(),
-        };
+        let exit = ReturnExit { result, dest };
 
         let call_span = function.spans.0.get(&dest.0).map(|(span, _)| span.clone());
         for reg in 0..callee.n_regs {
@@ -1515,13 +1503,17 @@ impl<'c> Inliner<'_, 'c> {
             }
         }
         function.n_regs += callee.n_regs;
-        // A reference the body stores to the result slot is the call's.
+        // A reference the body's breaks carry is the call's, of the
+        // caller's reference type, and so is one a break of a loop it
+        // returns the result of carries; the callee's own spells its origin
+        // untracked.
         if callee.returns_reference
-            && result == Returned::Slot
-            && let Some(ty) = &result_ty
+            && result == Returned::Value
+            && let Some(ty) = function.reg_types.get(&dest.0).cloned()
         {
             let mut returned = Vec::new();
             references_and_returns(&blocks, &mut HashMap::new(), &mut returned);
+            carried_by_breaks(&mut blocks, &mut returned);
             for reg in returned {
                 function.reg_types.insert(reg.0, ty.clone());
             }
@@ -1555,19 +1547,7 @@ impl<'c> Inliner<'_, 'c> {
                 mode: UseMode::Forward,
                 constructor: None,
             }),
-            Returned::Slot => {
-                function.var_names.push(format!("$inline{var_base}$result"));
-                if let Some(ty) = result_ty {
-                    function.var_tys.insert(result_slot, ty);
-                }
-                function.n_vars += 1;
-                resumed.push(MirInstr::UseVar {
-                    dest,
-                    var: result_slot,
-                    mode: UseMode::Forward,
-                    constructor: None,
-                });
-            }
+            Returned::Value => {}
         }
         resumed.extend(bindings.iter().enumerate().filter_map(|(param, binding)| {
             let var = param as VarId + var_base;
@@ -1675,6 +1655,7 @@ fn splice_region(
     let at = caller.instrs.len();
     caller.instrs.push(MirInstr::Loop {
         label: Some(LoopLabel::INLINED_CF_SCOPE),
+        results: exit.results(),
         body: blocks,
     });
     caller.instrs.extend(resumed);
@@ -1682,36 +1663,42 @@ fn splice_region(
 }
 
 /// How an inlined body's returns leave it: through what it returns, and
-/// the result slot `slot` of type `ty` its returns store when that is a
-/// [`Returned::Slot`].
+/// `dest`, the call's register, which a [`Returned::Value`] makes the
+/// wrapper loop's result.
 struct ReturnExit {
     result: Returned,
-    slot: VarId,
-    ty: Option<Ty>,
+    dest: Reg,
 }
 
 impl ReturnExit {
-    /// Rewrite a return ending `block` into `leave`, storing the returned
-    /// value to the result slot first when it goes through one. A
+    /// The wrapper loop's results: the call's register when the body
+    /// returns a value.
+    fn results(&self) -> Vec<Reg> {
+        if self.result == Returned::Value {
+            vec![self.dest]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Rewrite a return ending `block` into a break of the wrapper loop,
+    /// carrying the returned value when the loop has a result. A
     /// value-less return after a raise is never taken, the raise leaving
     /// the body as it left the callee, and one from a function returning a
-    /// value is the checker's unreachable fall-off.
-    fn rewrite(&self, block: &mut MirBlock, leave: MirTerm) {
-        let raised = matches!(block.instrs.last(), Some(MirInstr::Raise { .. }));
+    /// value is the checker's unreachable fall-off; a break carrying no
+    /// value cannot leave a loop with a result, so both are unreachable
+    /// there.
+    fn rewrite(&self, block: &mut MirBlock) {
+        let leave = |values| MirTerm::Break {
+            label: Some(LoopLabel::INLINED_CF_SCOPE),
+            values,
+        };
         block.term = match std::mem::replace(&mut block.term, MirTerm::Unreachable) {
-            MirTerm::Return(Some(value)) if self.result == Returned::Slot => {
-                block.instrs.push(MirInstr::DefVar {
-                    var: self.slot,
-                    src: value,
-                    binding_ty: self.ty.clone(),
-                    in_place: false,
-                });
-                leave
+            MirTerm::Return(Some(value)) if self.result == Returned::Value => leave(vec![value]),
+            MirTerm::Return(_) if matches!(self.result, Returned::None | Returned::Out) => {
+                leave(Vec::new())
             }
-            MirTerm::Return(_) if matches!(self.result, Returned::None | Returned::Out) => leave,
-            MirTerm::Return(Some(_)) => leave,
-            MirTerm::Return(None) if raised => leave,
-            MirTerm::Return(None) => MirTerm::Unreachable,
+            MirTerm::Return(_) => MirTerm::Unreachable,
             term => term,
         };
     }
@@ -1724,12 +1711,7 @@ impl ReturnExit {
             for region in block.instrs.iter_mut().flat_map(instruction_regions_mut) {
                 self.break_returns(region);
             }
-            self.rewrite(
-                block,
-                MirTerm::Break {
-                    label: Some(LoopLabel::INLINED_CF_SCOPE),
-                },
-            );
+            self.rewrite(block);
         }
     }
 }
@@ -2121,6 +2103,31 @@ fn references_and_returns<'b>(
         }
         if let MirTerm::Return(Some(value)) = block.term {
             returned.push(value);
+        }
+    }
+}
+
+/// Add to `returned` each value a `break` of `blocks`, at any depth,
+/// carries for a loop result `returned` holds, outer loops first, so a
+/// nested loop's result an outer break carries brings its own breaks'.
+fn carried_by_breaks(blocks: &mut [MirBlock], returned: &mut Vec<Reg>) {
+    for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+        if let MirInstr::Loop {
+            label,
+            results,
+            body,
+        } = instruction
+        {
+            for (at, result) in results.iter().enumerate() {
+                if returned.contains(result) {
+                    loop_breaks_mut(body, *label, &mut |values, _| {
+                        returned.extend(values.get(at));
+                    });
+                }
+            }
+        }
+        for region in instruction_regions_mut(instruction) {
+            carried_by_breaks(region, returned);
         }
     }
 }
@@ -2587,7 +2594,7 @@ impl ContinueWalk {
                 .iter()
                 .chain(std::iter::once(orelse))
                 .fold(false, |completes, arm| self.region(arm) | completes),
-            MirInstr::Loop { label, body } => self.framed(RegionFrame::Loop(*label), body).0,
+            MirInstr::Loop { label, body, .. } => self.framed(RegionFrame::Loop(*label), body).0,
             MirInstr::ComptimeFor { body, .. } => self.framed(RegionFrame::ComptimeFor, body).0,
             MirInstr::Match { cases, orelse } => {
                 let mut completes = false;
@@ -2615,8 +2622,8 @@ impl ContinueWalk {
     }
 }
 
-/// What the callee returns through: nothing when it returns `None`, else a
-/// slot, since no register the body's loop defines is read after it.
+/// What the callee returns through: nothing when it returns `None`, else
+/// the wrapper loop's result.
 fn result_of(callee: &MirFunction) -> Returned {
     if callee
         .ret_ty
@@ -2625,7 +2632,7 @@ fn result_of(callee: &MirFunction) -> Returned {
     {
         Returned::None
     } else {
-        Returned::Slot
+        Returned::Value
     }
 }
 
@@ -3595,6 +3602,7 @@ mod tests {
         let continue_after_raise = one(
             vec![MirInstr::Loop {
                 label: Some(LoopLabel(0)),
+                results: Vec::new(),
                 body: one(
                     vec![raise],
                     MirTerm::Continue {
@@ -3611,6 +3619,7 @@ mod tests {
                 Vec::new(),
                 MirTerm::Break {
                     label: Some(LoopLabel(0)),
+                    values: Vec::new(),
                 },
             ),
             elifs: Vec::new(),
@@ -3618,12 +3627,14 @@ mod tests {
                 Vec::new(),
                 MirTerm::Break {
                     label: Some(LoopLabel(0)),
+                    values: Vec::new(),
                 },
             ),
         };
         let dead_continue = one(
             vec![MirInstr::Loop {
                 label: Some(LoopLabel(0)),
+                results: Vec::new(),
                 body: one(
                     vec![breaking_if],
                     MirTerm::Continue {
@@ -3636,9 +3647,11 @@ mod tests {
         let outer_continue = one(
             vec![MirInstr::Loop {
                 label: Some(LoopLabel(0)),
+                results: Vec::new(),
                 body: one(
                     vec![MirInstr::Loop {
                         label: Some(LoopLabel(1)),
+                        results: Vec::new(),
                         body: one(
                             vec![MirInstr::If {
                                 results: Vec::new(),
@@ -3654,6 +3667,7 @@ mod tests {
                                     Vec::new(),
                                     MirTerm::Break {
                                         label: Some(LoopLabel(1)),
+                                        values: Vec::new(),
                                     },
                                 ),
                             }],
@@ -3662,6 +3676,7 @@ mod tests {
                     }],
                     MirTerm::Break {
                         label: Some(LoopLabel(0)),
+                        values: Vec::new(),
                     },
                 ),
             }],
@@ -3670,6 +3685,7 @@ mod tests {
         let match_to_orelse = one(
             vec![MirInstr::Loop {
                 label: Some(LoopLabel(0)),
+                results: Vec::new(),
                 body: one(
                     vec![MirInstr::Match {
                         cases: vec![

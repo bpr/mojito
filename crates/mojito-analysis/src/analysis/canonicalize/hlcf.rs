@@ -16,8 +16,8 @@ use mojito_common::timing;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
     Const, LoopLabel, MirBlock, MirElif, MirFunction, MirInstr, MirTerm, Reg, count_register_reads,
-    fresh_register, instruction_regions, instruction_regions_mut, instruction_regs_mut,
-    terminator_regs_mut,
+    fresh_register, instruction_regions, instruction_regions_mut, loop_breaks_mut,
+    replace_register_reads, resolve_replacements,
 };
 use mojito_types::types::{GenericConstraint, Ty};
 use std::collections::{HashMap, HashSet};
@@ -49,8 +49,8 @@ pub(super) fn hlcf_patterns(function: &mut MirFunction, erased: &mut HashSet<u32
             counts: round,
             ..
         } = walk;
-        let resolved = resolve(&replaced);
-        replace_reads(&mut blocks, &resolved);
+        let resolved = resolve_replacements(&replaced);
+        replace_register_reads(&mut blocks, &resolved);
         function.blocks = blocks;
         erased.extend(replaced.keys());
         if round.total() == 0 {
@@ -74,6 +74,7 @@ struct Counts {
     yield_results: usize,
     unused_results: usize,
     dead_loops: usize,
+    unused_loop_results: usize,
     comptime_ifs: usize,
 }
 
@@ -86,6 +87,7 @@ impl Counts {
             + self.yield_results
             + self.unused_results
             + self.dead_loops
+            + self.unused_loop_results
             + self.comptime_ifs
     }
 
@@ -97,6 +99,7 @@ impl Counts {
         self.yield_results += other.yield_results;
         self.unused_results += other.unused_results;
         self.dead_loops += other.dead_loops;
+        self.unused_loop_results += other.unused_loop_results;
         self.comptime_ifs += other.comptime_ifs;
     }
 
@@ -109,6 +112,7 @@ impl Counts {
             ("hoisted_yield_results", self.yield_results),
             ("removed_unused_results", self.unused_results),
             ("removed_dead_loops", self.dead_loops),
+            ("removed_unused_loop_results", self.unused_loop_results),
             ("folded_comptime_ifs", self.comptime_ifs),
         ] {
             timing::count(name, count as u64);
@@ -203,8 +207,8 @@ impl Walk<'_> {
     /// Apply the first pattern that matches the op at `index` of `block`,
     /// in upstream's order: `RemoveStaticCondition`, `ConditionPropagation`,
     /// the hoists, `HoistYieldResults`, and `RemoveUnusedResults` for an
-    /// `if`; `RemoveDeadLoop` for a loop; `ComptimeIfOp::canonicalize` for a
-    /// `comptime if`.
+    /// `if`; `RemoveDeadLoop` and `RemoveUnusedLoopResults` for a loop;
+    /// `ComptimeIfOp::canonicalize` for a `comptime if`.
     fn apply(&mut self, block: &mut MirBlock, index: usize, enclosing: &[Enclosing]) -> bool {
         match &block.instrs[index] {
             MirInstr::If { .. } => {
@@ -215,7 +219,9 @@ impl Walk<'_> {
                     || self.hoist_yield_results(block, index)
                     || self.remove_unused_results(block, index)
             }
-            MirInstr::Loop { .. } => self.remove_dead_loop(block, index),
+            MirInstr::Loop { .. } => {
+                self.remove_dead_loop(block, index) || self.remove_unused_loop_results(block, index)
+            }
             MirInstr::ComptimeIf { .. } => self.canonicalize_comptime_if(block, index),
             _ => false,
         }
@@ -370,7 +376,7 @@ impl Walk<'_> {
             self.reads.push(1);
             if let MirInstr::If { then, orelse, .. } = &mut block.instrs[index] {
                 let arm = if value { then } else { orelse };
-                replace_reads(arm, &HashMap::from([(cond.0, dest)]));
+                replace_register_reads(arm, &HashMap::from([(cond.0, dest)]));
             }
             constants.push(MirInstr::Const {
                 dest,
@@ -454,7 +460,10 @@ impl Walk<'_> {
         self.erase_ops(&tail);
         block.term = match kind {
             ExitKind::Return => MirTerm::Return(new_results.first().copied()),
-            ExitKind::Break => MirTerm::Break { label },
+            ExitKind::Break => MirTerm::Break {
+                label,
+                values: new_results,
+            },
             ExitKind::Continue => MirTerm::Continue { label },
         };
         self.counts.unconditional_returns += 1;
@@ -583,7 +592,10 @@ impl Walk<'_> {
         }
         block.term = match kind {
             ExitKind::Return => MirTerm::Return(new_results.first().copied()),
-            ExitKind::Break | ExitKind::Continue => MirTerm::Break { label },
+            ExitKind::Break | ExitKind::Continue => MirTerm::Break {
+                label,
+                values: new_results,
+            },
         };
         self.counts.conditional_returns += 1;
         true
@@ -708,16 +720,25 @@ impl Walk<'_> {
     }
 
     /// `RemoveDeadLoop`: a loop whose body is just a `break` goes. A break
-    /// out of it leaves nothing; one naming an outer loop replaces the loop
-    /// and the rest of the block.
+    /// out of it replaces its results by the values it carries; one naming
+    /// an outer loop replaces the loop and the rest of the block.
     fn remove_dead_loop(&mut self, block: &mut MirBlock, index: usize) -> bool {
-        let MirInstr::Loop { label, body } = &block.instrs[index] else {
+        let MirInstr::Loop {
+            label,
+            results,
+            body,
+        } = &block.instrs[index]
+        else {
             return false;
         };
         let [
             MirBlock {
                 instrs,
-                term: MirTerm::Break { label: target },
+                term:
+                    term @ MirTerm::Break {
+                        label: target,
+                        values,
+                    },
             },
         ] = body.as_slice()
         else {
@@ -726,15 +747,60 @@ impl Walk<'_> {
         if !instrs.is_empty() {
             return false;
         }
-        let target = *target;
-        if target.is_none() || target == *label {
+        if target.is_none() || target == label {
+            for (result, value) in results.iter().zip(values) {
+                self.replaced.insert(result.0, *value);
+            }
             block.instrs.remove(index);
         } else {
+            let term = term.clone();
             let tail = block.instrs.split_off(index);
             self.erase_ops(&tail);
-            block.term = MirTerm::Break { label: target };
+            block.term = term;
         }
         self.counts.dead_loops += 1;
+        true
+    }
+
+    /// `RemoveUnusedLoopResults`: a loop result nothing reads goes, with
+    /// its operand of every `break` that leaves the loop.
+    fn remove_unused_loop_results(&mut self, block: &mut MirBlock, index: usize) -> bool {
+        let MirInstr::Loop {
+            label,
+            results,
+            body,
+        } = &mut block.instrs[index]
+        else {
+            return false;
+        };
+        let unused: Vec<bool> = results
+            .iter()
+            .map(|result| {
+                self.reads.get(result.0 as usize) == Some(&0)
+                    && !self.replaced.contains_key(&result.0)
+            })
+            .collect();
+        if !unused.contains(&true) {
+            return false;
+        }
+        loop_breaks_mut(body, *label, &mut |values, _| {
+            if values.len() == unused.len() {
+                let mut at = 0;
+                values.retain(|_| {
+                    at += 1;
+                    !unused[at - 1]
+                });
+            }
+        });
+        let mut at = 0;
+        results.retain(|result| {
+            at += 1;
+            if unused[at - 1] {
+                self.erased.insert(result.0);
+            }
+            !unused[at - 1]
+        });
+        self.counts.unused_loop_results += 1;
         true
     }
 
@@ -897,7 +963,7 @@ fn trivial_comptime_if(block: &MirBlock, index: usize) -> bool {
         match region.as_slice() {
             [MirBlock { instrs, term }] if instrs.is_empty() => match term {
                 MirTerm::ComptimeYield(values) if values.is_empty() => {}
-                MirTerm::Break { .. } => all_yield = false,
+                MirTerm::Break { values, .. } if values.is_empty() => all_yield = false,
                 _ => return false,
             },
             _ => return false,
@@ -910,7 +976,7 @@ fn trivial_comptime_if(block: &MirBlock, index: usize) -> bool {
 fn exit_of(term: &MirTerm) -> Option<(ExitKind, Option<LoopLabel>, Vec<Reg>)> {
     match term {
         MirTerm::Return(value) => Some((ExitKind::Return, None, value.iter().copied().collect())),
-        MirTerm::Break { label } => Some((ExitKind::Break, *label, Vec::new())),
+        MirTerm::Break { label, values } => Some((ExitKind::Break, *label, values.clone())),
         MirTerm::Continue { label } => Some((ExitKind::Continue, *label, Vec::new())),
         _ => None,
     }
@@ -923,7 +989,7 @@ fn exit_of(term: &MirTerm) -> Option<(ExitKind, Option<LoopLabel>, Vec<Reg>)> {
 fn climb(term: &MirTerm, enclosing: &[Enclosing]) -> Option<(MirTerm, Vec<Reg>)> {
     match term {
         MirTerm::Return(value) => Some((term.clone(), value.iter().copied().collect())),
-        MirTerm::Break { .. } => Some((term.clone(), Vec::new())),
+        MirTerm::Break { values, .. } => Some((term.clone(), values.clone())),
         MirTerm::Yield(values) => {
             let (parent, outer) = enclosing.split_last()?;
             if parent.has_elifs || !parent.last {
@@ -1059,52 +1125,6 @@ fn erased_results(instruction: &MirInstr, erased: &mut HashSet<u32>) {
     for region in instruction_regions(instruction) {
         for nested in region.iter().flat_map(|block| &block.instrs) {
             erased_results(nested, erased);
-        }
-    }
-}
-
-/// Resolve each replaced register through chains of replacements.
-fn resolve(replaced: &HashMap<u32, Reg>) -> HashMap<u32, Reg> {
-    replaced
-        .keys()
-        .map(|&reg| {
-            let mut root = replaced[&reg];
-            for _ in 0..replaced.len() {
-                match replaced.get(&root.0) {
-                    Some(next) => root = *next,
-                    None => break,
-                }
-            }
-            (reg, root)
-        })
-        .collect()
-}
-
-/// Rewrite every read in `blocks`, at any depth, of a key of `roots` to its
-/// root; definitions are left alone.
-fn replace_reads(blocks: &mut [MirBlock], roots: &HashMap<u32, Reg>) {
-    if roots.is_empty() {
-        return;
-    }
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            let mut results = Vec::new();
-            instruction_result_regs(instruction, &mut results);
-            for reg in instruction_regs_mut(instruction) {
-                if let Some(at) = results.iter().position(|result| result == reg) {
-                    results.swap_remove(at);
-                } else if let Some(root) = roots.get(&reg.0) {
-                    *reg = *root;
-                }
-            }
-            for region in instruction_regions_mut(instruction) {
-                replace_reads(region, roots);
-            }
-        }
-        for reg in terminator_regs_mut(&mut block.term) {
-            if let Some(root) = roots.get(&reg.0) {
-                *reg = *root;
-            }
         }
     }
 }

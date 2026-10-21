@@ -1696,12 +1696,12 @@ fn loop_labels(
     leaves: &mut Vec<Option<LoopLabel>>,
 ) {
     for block in blocks {
-        if let MirTerm::Break { label } | MirTerm::Continue { label } = &block.term {
+        if let MirTerm::Break { label, .. } | MirTerm::Continue { label } = &block.term {
             leaves.push(*label);
         }
         for instruction in &block.instrs {
             match instruction {
-                MirInstr::Loop { label, body } => {
+                MirInstr::Loop { label, body, .. } => {
                     labels.extend(*label);
                     loop_labels(body, labels, leaves);
                 }

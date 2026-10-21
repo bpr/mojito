@@ -4014,7 +4014,7 @@ The structure mirrors source-level exception semantics:
 `Try` is one of six region ops. The other five are upstream's `hlcf` ops
 (`docs/structured-control-flow-plan.md`): `If { results, cond, then, elifs,
 orelse }` (`hlcf.if`, each `MirElif` a condition region and an arm), `Loop {
-label, body }` (`hlcf.loop`), `ComptimeIf { results, conds, arms, orelse }`
+label, results, body }` (`hlcf.loop`), `ComptimeIf { results, conds, arms, orelse }`
 (`hlcf.comptime.if`), `ComptimeFor { binder, source, body, orelse }`
 (`hlcf.comptime.for`, its `orelse` one `Unreachable` block), and `Match {
 cases, orelse }` (`hlcf.match`: each case a region that tests its pattern
@@ -4023,7 +4023,10 @@ after the last — or by `MatchComplete` for the op's end; `orelse` ends in
 `Yield` with no values). Their regions are block lists like a `try` part's,
 and end in the region terminators `Yield`, `ElifCond`, `Break`/`Continue`
 (an optional `LoopLabel` naming the nearest enclosing loop carrying it, a
-`match` case between them being no loop), `ComptimeYield`, `ComptimeBreak`/
+`match` case between them being no loop; a `Break`'s `values` define that
+loop's `results`, and `mir::loop_breaks_mut` visits every break that leaves
+a given loop, with the `BreakSite` saying whether a `try` part or a
+`comptime for` body lies between them), `ComptimeYield`, `ComptimeBreak`/
 `ComptimeContinue`, `MatchNext`/`MatchComplete`, and `Unreachable`;
 `Return` may end any region.
 `instruction_regions`/`instruction_regions_mut` walk every op's regions in
@@ -4044,8 +4047,14 @@ elaborator runs once on each template where it first fetches it
 `Templates` arena, a package body's in `PackageBodies::template`), after
 the pre-elaboration pipeline has read the structured body, lowers them to blocks and the CFG terminators: a
 region's blocks are appended to its list, the rest of the block moves to a
-join, an op's results go through one slot each, stored at a `yield` and
-forwarded at the join, a `break`/`continue` leaving a `try` part to a
+join, an op's results go through one slot each, stored at a `yield` or
+`break` and forwarded at the join, except that a loop left by one `break`
+in its own list (no `try` part or `comptime for` body between them, the
+first escaping and the second copied per iteration by the elaborator) has
+each result replaced by the value that break carries, as a block argument
+with one predecessor is its operand once upstream's `LowerControlFlow` has
+run (`tests/mir_passes/lower-control-flow/loop_result_*.mir`), a
+`break`/`continue` leaving a `try` part to a
 function-level loop is an `EscapeJump`, a `match` case's `match.next` and
 `match.complete` jump to the next case's entry and to the join through a
 frame like a loop's (`tests/mir_passes/lower-control-flow/match_cases.mir`),
@@ -5392,7 +5401,10 @@ point where a slot declared in a loop is uninitialized again.
   a `Bool` true/false pair by the condition, and erases an `if` left
   unread with its elif condition regions, as upstream does (the pin skips
   a call in such a condition), `RemoveUnusedResults` drops unread results,
-  `RemoveDeadLoop` removes a loop whose body only breaks, and
+  `RemoveDeadLoop` removes a loop whose body only breaks, its results
+  replaced by the values the break carries, `RemoveUnusedLoopResults` drops
+  an unread loop result with its operand of every break that leaves the
+  loop, and
   `ComptimeIfOp::canonicalize` erases a trivial `comptime if`
   (`checkTrivialBlocks`) and decides one on a constant `Bool`, hoisting
   its live arm's instructions up to a `comptime for` and keeping the op as
@@ -5401,7 +5413,8 @@ point where a slot declared in a loop is uninitialized again.
   pattern has its own `--timings` counter (`removed_static_conditions`,
   `propagated_conditions`, `hoisted_unconditional_exits`,
   `hoisted_conditional_returns`, `hoisted_yield_results`,
-  `removed_unused_results`, `removed_dead_loops`, `folded_comptime_ifs`).
+  `removed_unused_results`, `removed_dead_loops`,
+  `removed_unused_loop_results`, `folded_comptime_ifs`).
   Every body the pipeline reads is structured, so these patterns are the
   production path; the lowered-body rules below run on the CFG inputs
   `mojito opt` reads, until the post-elaboration pipeline reads regions
@@ -5506,10 +5519,14 @@ point where a slot declared in a loop is uninitialized again.
   source loop carries, appended to the call's block, so the callee's one
   block goes into the caller's list's one block (a call in a list of more
   blocks, or of a callee whose body has more, stays a call). Each return
-  stores its value to a result slot and breaks the loop, and the call's
-  register takes the slot (or an initializer's `out self` slot) forwarded,
-  `UseMode::Forward`, so no move initializer runs, as upstream's break
-  carries the value. The
+  becomes a `break` carrying its value, and the call's register is the
+  loop's one result (`Returned::Value`), as upstream's `hlcf.break`
+  carries it and `replaceOp` gives the call the loop's results, so no slot
+  is made and no move initializer runs; an initializer's call takes its
+  `out self` slot forwarded, `UseMode::Forward`. A value-less return in a
+  callee returning a value (after a raise, or the checker's fall-off) is
+  `unreachable`. A returned reference, and one a break of a loop whose
+  result the body returns carries, takes the call's reference type. The
   body's registers and slots move past the caller's
   (`mir::renumber_block_slots`), regions included, and its slot names gain
   `$inline{n}`, so no binder name or `self` matches them. The call's block binds each owned
@@ -5530,12 +5547,9 @@ point where a slot declared in a loop is uninitialized again.
   slot, and a loan's interior of one is an interior of that slot; a
   parameter bound so that the callee names it otherwise as a slot keeps
   the call (R1099). In a wrapped body every return, at any depth, is a
-  `break` of the wrapper that first stores a returned value to a
-  `$inline{n}$result` slot the call's register moves from after the loop,
-  where upstream's `hlcf.break` carries the value as the loop's result
-  (R886). A spliced body's one returned register becomes the call's,
-  several returns store to that slot, and every return jumps to a new
-  block holding what followed the call. A `None` result is a constant, and
+  `break` of the wrapper carrying the returned value, which defines the
+  wrapper's one result, the call's register, as upstream's `hlcf.break`
+  carries it. A `None` result is a constant, and
   an `in_place` binding of the call's result drops the flag. The
   caller-side reads that bind an argument (`loaded_place`,
   `forwarded_slot`, `trivially_copied`, a register's defining constant,
@@ -5746,9 +5760,10 @@ point where a slot declared in a loop is uninitialized again.
   executable. On a structured body an `if` without elifs makes only the
   arm a constant condition takes executable, none while the condition is
   unknown, and both otherwise, as `IfOp::getEntryTargets` does, its results
-  meeting the values its executable arms yield; a loop's body, every
-  region of an `if` with elifs, a `comptime if`, a `match`, and a `try` are
-  executable, their results overdefined. A scalar `const` (`Int`, `Float64`, `Bool`, `IntLiteral`,
+  meeting the values its executable arms yield; a loop's results meet the
+  values its executable `break`s carry, as `SCCP`'s `resolveBreak` does;
+  a loop's body, every region of an `if` with elifs, a `comptime if`, a
+  `match`, and a `try` are executable, the other ops' results overdefined. A scalar `const` (`Int`, `Float64`, `Bool`, `IntLiteral`,
   `FloatLiteral`, or a `UInt` or SIMD `Const::Value`, `Const::is_folded`)
   is its constant; a parameter read
   (`Const::Param`) and an aggregate `Const::Value` are overdefined, the

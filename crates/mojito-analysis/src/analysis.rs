@@ -477,12 +477,14 @@ mod interior_origin_tests {
     fn labelled(body: Vec<MirBlock>) -> MirInstr {
         MirInstr::Loop {
             label: Some(LoopLabel(0)),
+            results: Vec::new(),
             body,
         }
     }
 
     const BREAK: MirTerm = MirTerm::Break {
         label: Some(LoopLabel(0)),
+        values: Vec::new(),
     };
     const CONTINUE: MirTerm = MirTerm::Continue {
         label: Some(LoopLabel(0)),
@@ -963,6 +965,7 @@ mod structured_move_tests {
     fn labelled(body: Vec<MirBlock>) -> MirInstr {
         MirInstr::Loop {
             label: Some(LoopLabel(0)),
+            results: Vec::new(),
             body,
         }
     }
@@ -979,6 +982,7 @@ mod structured_move_tests {
 
     const BREAK: MirTerm = MirTerm::Break {
         label: Some(LoopLabel(0)),
+        values: Vec::new(),
     };
     const CONTINUE: MirTerm = MirTerm::Continue {
         label: Some(LoopLabel(0)),

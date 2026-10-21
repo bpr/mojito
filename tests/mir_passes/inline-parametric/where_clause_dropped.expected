@@ -29,15 +29,15 @@
       fn {
         name: where_clause_dropped,
         registers: 2,
-        vars: 2,
-        var_names: ["n$inline0", "$inline0$result"],
+        vars: 1,
+        var_names: ["n$inline0"],
         params: 0,
         param_types: [],
         owned_params: [],
         deinit_params: [],
         ref_params: [],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }],
+        var_types: [var_type { var: $v0, type: Int }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
@@ -46,8 +46,7 @@
         blocks: [
           bb0 {
             instructions: [
-              loop { label: present(loop4294967295), body: [bb0 { instructions: [const { dest: %r1, value: int(2) }, var.store { var: $v1, src: %r1, binding_type: present(Int), in_place: false }], terminator: break { label: present(loop4294967295) } }] },
-              var.use { dest: %r0, var: $v1, mode: forward }
+              loop { results: [%r0], label: present(loop4294967295), body: [bb0 { instructions: [const { dest: %r1, value: int(2) }], terminator: break { label: present(loop4294967295), values: [%r1] } }] }
             ],
             terminator: return { value: present(%r0) }
           }

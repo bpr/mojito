@@ -1,0 +1,58 @@
+  functions: [
+      fn {
+        name: two_breaks,
+        registers: 4,
+        vars: 2,
+        var_names: [c, "$yield1"],
+        params: 1,
+        param_types: [Bool],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Bool }, var_type { var: $v1, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Bool }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+            ],
+            terminator: jump { target: bb2 }
+          },
+          bb1 {
+            instructions: [
+              var.use { dest: %r3, var: $v1, mode: forward }
+            ],
+            terminator: return { value: present(%r3) }
+          },
+          bb2 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy }
+            ],
+            terminator: branch { condition: %r0, then: bb4, else: bb5 }
+          },
+          bb3 {
+            instructions: [
+              const { dest: %r2, value: int(2) },
+              var.store { var: $v1, src: %r2, binding_type: absent, in_place: false }
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb4 {
+            instructions: [
+              const { dest: %r1, value: int(1) },
+              var.store { var: $v1, src: %r1, binding_type: absent, in_place: false }
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb5 {
+            instructions: [
+            ],
+            terminator: jump { target: bb3 }
+          }
+        ]
+      }
+  ]

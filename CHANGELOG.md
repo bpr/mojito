@@ -616,6 +616,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A structured `loop` has results and a `break` carries the values that
+  define them, as upstream's `hlcf.loop` and `hlcf.break` do (MIR text
+  1.82, whose reader takes an older loop or break as carrying none). An
+  inlined call's register is now its `inlined_cf_scope` loop's result,
+  each return a `break` carrying the value, as `inlineGeneratorCall`
+  replaces the call by the loop's results, so the `$inline{n}$result` slot
+  is gone. `lower-control-flow` replaces a result whose loop one `break`
+  in its own list leaves by that break's value and stores any other in a
+  slot; `canonicalize`'s `RemoveDeadLoop`, the hoists, and the new
+  `RemoveUnusedLoopResults` carry break values, and `sccp` meets a loop's
+  results with them. `tuple_reverse_concat` elaborates to about a fifth
+  fewer concrete instructions. Loop-carried operands, elif and `match`
+  region arguments, and `match`/`comptime for` results remain (R1258,
+  R1259, R1260). This closes R886.
 - The seams no longer lower control flow: the pre-elaboration pipeline,
   `emit-mir`, and the artifacts keep structured bodies, one block per
   region, as upstream's generators keep `hlcf`, and the elaborator lowers

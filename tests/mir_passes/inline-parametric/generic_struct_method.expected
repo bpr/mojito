@@ -59,15 +59,15 @@
       fn {
         name: struct_method,
         registers: 11,
-        vars: 7,
-        var_names: [b, "self$inline1", "Self$inline1", "$inline1$result", "self$inline4", "j$inline4", "$inline4$result"],
+        vars: 5,
+        var_names: [b, "self$inline1", "Self$inline1", "self$inline3", "j$inline3"],
         params: 1,
         param_types: [struct_type { name: Box, arguments: [value_arg(ct_int(3))] }],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: Box, arguments: [value_arg(ct_int(3))] } }, var_type { var: $v1, type: struct_type { name: Box, arguments: [value_arg(ct_int(3))] } }, var_type { var: $v2, type: struct_type { name: Box, arguments: [value_arg(ct_int(3))] } }, var_type { var: $v3, type: Int }, var_type { var: $v4, type: struct_type { name: Box, arguments: [value_arg(ct_int(3))] } }, var_type { var: $v5, type: Int }, var_type { var: $v6, type: Int }],
+        var_types: [var_type { var: $v0, type: struct_type { name: Box, arguments: [value_arg(ct_int(3))] } }, var_type { var: $v1, type: struct_type { name: Box, arguments: [value_arg(ct_int(3))] } }, var_type { var: $v2, type: struct_type { name: Box, arguments: [value_arg(ct_int(3))] } }, var_type { var: $v3, type: struct_type { name: Box, arguments: [value_arg(ct_int(3))] } }, var_type { var: $v4, type: Int }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
@@ -77,11 +77,9 @@
           bb0 {
             instructions: [
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [value_arg(ct_int(3))] }), projections: [], type: present(struct_type { name: Box, arguments: [value_arg(ct_int(3))] }), through: absent } },
-              loop { label: present(loop4294967295), body: [bb0 { instructions: [place.load { dest: %r5, place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [value_arg(ct_int(3))] }), projections: [projection { op: field(value), type: Int }], type: present(Int), through: absent } }, const { dest: %r6, value: int(3) }, binary { op: add, dest: %r7, a: %r5, b: %r6, resolved: absent, raises: absent }, var.store { var: $v3, src: %r7, binding_type: present(Int), in_place: false }], terminator: break { label: present(loop4294967295) } }] },
-              var.use { dest: %r1, var: $v3, mode: forward },
+              loop { results: [%r1], label: present(loop4294967295), body: [bb0 { instructions: [place.load { dest: %r5, place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [value_arg(ct_int(3))] }), projections: [projection { op: field(value), type: Int }], type: present(Int), through: absent } }, const { dest: %r6, value: int(3) }, binary { op: add, dest: %r7, a: %r5, b: %r6, resolved: absent, raises: absent }], terminator: break { label: present(loop4294967295), values: [%r7] } }] },
               place.load { dest: %r2, place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [value_arg(ct_int(3))] }), projections: [], type: present(struct_type { name: Box, arguments: [value_arg(ct_int(3))] }), through: absent } },
-              loop { label: present(loop4294967295), body: [bb0 { instructions: [place.load { dest: %r8, place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [value_arg(ct_int(3))] }), projections: [projection { op: field(value), type: Int }], type: present(Int), through: absent } }, const { dest: %r9, value: int(2) }, binary { op: mul, dest: %r10, a: %r8, b: %r9, resolved: absent, raises: absent }, var.store { var: $v6, src: %r10, binding_type: present(Int), in_place: false }], terminator: break { label: present(loop4294967295) } }] },
-              var.use { dest: %r3, var: $v6, mode: forward },
+              loop { results: [%r3], label: present(loop4294967295), body: [bb0 { instructions: [place.load { dest: %r8, place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [value_arg(ct_int(3))] }), projections: [projection { op: field(value), type: Int }], type: present(Int), through: absent } }, const { dest: %r9, value: int(2) }, binary { op: mul, dest: %r10, a: %r8, b: %r9, resolved: absent, raises: absent }], terminator: break { label: present(loop4294967295), values: [%r10] } }] },
               binary { op: add, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent }
             ],
             terminator: return { value: present(%r4) }

@@ -220,7 +220,11 @@ enum RegionKind {
     IfArm(Vec<Reg>),
     /// An elif's condition region, ended by `ElifCond`.
     ElifCond,
-    LoopBody(Option<super::LoopLabel>),
+    /// A loop's body, left by a `Break` carrying its op's results.
+    LoopBody {
+        label: Option<super::LoopLabel>,
+        results: Vec<Reg>,
+    },
     /// A `comptime if` arm, ended by `ComptimeYield` with its op's results.
     ComptimeIfArm(Vec<Reg>),
     ComptimeForBody,

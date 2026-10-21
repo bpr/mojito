@@ -163,6 +163,7 @@ impl<'a> Flatten<'a> {
                 let body = self.hir_region(body);
                 self.emit(MirInstr::Loop {
                     label: Some(LoopLabel(*label)),
+                    results: Vec::new(),
                     body,
                 });
             }
@@ -3739,6 +3740,7 @@ impl<'a> Flatten<'a> {
             }
             Terminator::Break(label) => MirTerm::Break {
                 label: Some(LoopLabel(*label)),
+                values: Vec::new(),
             },
             Terminator::Continue(label) => MirTerm::Continue {
                 label: Some(LoopLabel(*label)),

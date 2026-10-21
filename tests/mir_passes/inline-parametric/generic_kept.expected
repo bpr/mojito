@@ -60,15 +60,15 @@
       fn {
         name: generic_kept,
         registers: 6,
-        vars: 4,
-        var_names: [x, "x$inline1", "f$inline1", "$inline1$result"],
+        vars: 3,
+        var_names: [x, "x$inline1", "f$inline1"],
         params: 1,
         param_types: [Int],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: func { environment: thin, param_decls: [], params: [Int], names: [arg0], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }, var_type { var: $v3, type: Int }],
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: func { environment: thin, param_decls: [], params: [Int], names: [arg0], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
@@ -80,8 +80,7 @@
               const { dest: %r0, value: function(double) },
               var.use { dest: %r1, var: $v0, mode: copy },
               var.store { var: $v1, src: %r1, binding_type: present(Int), in_place: false },
-              loop { label: present(loop4294967295), body: [bb0 { instructions: [const { dest: %r3, value: function(double) }, var.use { dest: %r4, var: $v1, mode: copy }, call.indirect { dest: %r5, callee: %r3, resolved: present("__trait_dispatch.__call__$ov$Int"), raises: absent, args: [%r4], kwargs: [], callee_place: absent, arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent }, var.store { var: $v3, src: %r5, binding_type: present(Int), in_place: false }], terminator: break { label: present(loop4294967295) } }] },
-              var.use { dest: %r2, var: $v3, mode: forward }
+              loop { results: [%r2], label: present(loop4294967295), body: [bb0 { instructions: [const { dest: %r3, value: function(double) }, var.use { dest: %r4, var: $v1, mode: copy }, call.indirect { dest: %r5, callee: %r3, resolved: present("__trait_dispatch.__call__$ov$Int"), raises: absent, args: [%r4], kwargs: [], callee_place: absent, arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent }], terminator: break { label: present(loop4294967295), values: [%r5] } }] }
             ],
             terminator: return { value: present(%r2) }
           }

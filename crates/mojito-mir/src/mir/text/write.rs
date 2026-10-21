@@ -1535,9 +1535,14 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("else", blocks_value(orelse)),
             ],
         ),
-        MirInstr::Loop { label, body } => record(
+        MirInstr::Loop {
+            label,
+            results,
+            body,
+        } => record(
             tag,
             &[
+                ("results", list(results.iter().map(|v| reg_value(*v)))),
                 ("label", option(label.map(loop_label))),
                 ("body", blocks_value(body)),
             ],
@@ -1713,9 +1718,14 @@ fn term_value(term: &MirTerm) -> String {
             &[("values", list(values.iter().map(|v| reg_value(*v))))],
         ),
         MirTerm::ElifCond(cond) => record(tag, &[("condition", reg_value(*cond))]),
-        MirTerm::Break { label } | MirTerm::Continue { label } => {
-            record(tag, &[("label", option(label.map(loop_label)))])
-        }
+        MirTerm::Break { label, values } => record(
+            tag,
+            &[
+                ("label", option(label.map(loop_label))),
+                ("values", list(values.iter().map(|v| reg_value(*v)))),
+            ],
+        ),
+        MirTerm::Continue { label } => record(tag, &[("label", option(label.map(loop_label)))]),
         MirTerm::EscapeJump { target, cleanup } => record(
             tag,
             &[

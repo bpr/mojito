@@ -83,15 +83,15 @@
       fn {
         name: two,
         registers: 10,
-        vars: 6,
-        var_names: [a, b, "$fwd_arg_r1", "$fwd_arg_r4", "xs$inline4", "$inline4$result"],
+        vars: 5,
+        var_names: [a, b, "$fwd_arg_r1", "$fwd_arg_r4", "xs$inline4"],
         params: 2,
         param_types: [Int, Int],
         owned_params: [false, false],
         deinit_params: [false, false],
         ref_params: [false, false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: struct_type { name: Token, arguments: [] } }, var_type { var: $v3, type: struct_type { name: Token, arguments: [] } }, var_type { var: $v4, type: variadic_pack(struct_type { name: Token, arguments: [] }) }, var_type { var: $v5, type: Int }],
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: struct_type { name: Token, arguments: [] } }, var_type { var: $v3, type: struct_type { name: Token, arguments: [] } }, var_type { var: $v4, type: variadic_pack(struct_type { name: Token, arguments: [] }) }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
@@ -110,8 +110,7 @@
               var.use { dest: %r5, var: $v3, mode: forward },
               tuple.make { dest: %r9, elems: [%r2, %r5], element_types: present([struct_type { name: Token, arguments: [] }, struct_type { name: Token, arguments: [] }]) },
               var.store { var: $v4, src: %r9, binding_type: present(variadic_pack(struct_type { name: Token, arguments: [] })), in_place: false },
-              loop { label: present(loop4294967295), body: [bb0 { instructions: [place.load { dest: %r7, place: place { root: $v4, root_type: present(variadic_pack(struct_type { name: Token, arguments: [] })), projections: [], type: present(variadic_pack(struct_type { name: Token, arguments: [] })), through: absent } }, call { dest: %r8, func: len, raises: absent, args: [%r7], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, drop.var { var: $v4 }, var.store { var: $v5, src: %r8, binding_type: present(Int), in_place: false }], terminator: break { label: present(loop4294967295) } }] },
-              var.use { dest: %r6, var: $v5, mode: forward }
+              loop { results: [%r6], label: present(loop4294967295), body: [bb0 { instructions: [place.load { dest: %r7, place: place { root: $v4, root_type: present(variadic_pack(struct_type { name: Token, arguments: [] })), projections: [], type: present(variadic_pack(struct_type { name: Token, arguments: [] })), through: absent } }, call { dest: %r8, func: len, raises: absent, args: [%r7], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, drop.var { var: $v4 }], terminator: break { label: present(loop4294967295), values: [%r8] } }] }
             ],
             terminator: return { value: present(%r6) }
           }

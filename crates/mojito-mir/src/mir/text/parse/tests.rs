@@ -2936,6 +2936,7 @@ fn structured_region_ops_and_terminators_reprint() {
         },
         MirInstr::Loop {
             label: Some(LoopLabel(3)),
+            results: vec![Reg(2)],
             body: vec![
                 MirBlock {
                     instrs: Vec::new(),
@@ -2949,6 +2950,7 @@ fn structured_region_ops_and_terminators_reprint() {
                     instrs: Vec::new(),
                     term: MirTerm::Break {
                         label: Some(LoopLabel(3)),
+                        values: vec![Reg(1)],
                     },
                 },
                 MirBlock {
@@ -3014,9 +3016,8 @@ fn structured_region_ops_and_terminators_reprint() {
         "if {",
         "if.elifcond.yield {",
         "yield {",
-        "loop {",
-        "label: present(loop3)",
-        "break {",
+        "loop { results: [%r2], label: present(loop3)",
+        "break { label: present(loop3), values: [%r1] }",
         "continue {",
         "comptime.if {",
         "comptime.yield {",
@@ -3031,4 +3032,34 @@ fn structured_region_ops_and_terminators_reprint() {
     ] {
         assert!(text.contains(mnemonic), "missing `{mnemonic}` in {text}");
     }
+}
+
+/// A loop and a break written before schema 1.82 carry no `results` or
+/// `values` field: the reader takes the op as carrying none.
+#[test]
+fn a_loop_and_break_without_values_read_as_carrying_none() {
+    let one = |instrs: Vec<MirInstr>, term: MirTerm| vec![MirBlock { instrs, term }];
+    let mut function = function_with(
+        vec![Ty::bool()],
+        vec![MirInstr::Loop {
+            label: None,
+            results: Vec::new(),
+            body: one(
+                Vec::new(),
+                MirTerm::Break {
+                    label: None,
+                    values: Vec::new(),
+                },
+            ),
+        }],
+    );
+    function.blocks[0].term = MirTerm::Return(None);
+    let program = program_with(vec![("old".into(), function)]);
+    let text = write::program(&program);
+    let old = text
+        .replace("loop { results: [], ", "loop { ")
+        .replace("label: absent, values: [] }", "label: absent }");
+    assert_ne!(old, text);
+    let parsed = artifact(old.as_bytes(), "old.mir".to_string()).expect("parse artifact");
+    assert_eq!(write::program(&parsed.program), text);
 }

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1258**.
+Next free ID: **R1261**.
 
 ## Ordered Work
 
@@ -127,6 +127,12 @@ which names the upstream pass each one follows. Each is measured by the
     with that recovery.
   - A CTFE fragment is lowered before `call_concrete`.
   - After it lands, `lower-control-flow` runs at the end of elaboration.
+  - A loop whose one `break` sits in a `comptime for` body it holds keeps
+    its result in a `$yield` slot, since the elaborator copies that body
+    per iteration after lowering; once each iteration is its own region
+    the break is in the loop's own list and the result folds to its value:
+    probe `lower_control_flow`'s unit test
+    `a_break_in_a_comptime_for_keeps_its_result_slot`.
   - Depends on R1254.
   - Model: Fable, Planned.
 
@@ -173,6 +179,11 @@ which names the upstream pass each one follows. Each is measured by the
     region ops to LLVM blocks.
   - The transitional pass and `Jump`, `Branch`, `ComptimeBranch`, the
     `ComptimeFor` terminator, `FallOff`, and `EscapeJump` are deleted.
+  - Until then an op result reached by several edges travels through a
+    `$yield` slot, since MIR blocks take no arguments, where
+    `LowerControlFlow` makes it an argument of the exit block: probes
+    `tests/mir_passes/lower-control-flow/loop_result_two_breaks.mir`,
+    `loop_result_break_in_try.mir`, and `if_results.mir`.
   - Depends on R882.
   - Model: Opus, Planned.
 
@@ -741,12 +752,8 @@ which names the upstream pass each one follows. Each is measured by the
     loop body's boundary) goes once the elaborator clones regions.
   - About two thirds of the promotable-type slot mentions in the
     pre-elaboration bodies of `collections_many` are merged ones.
-  - An inlined body's `$inline{n}$result` slot is stored inside its
-    `inlined_cf_scope` loop and read after it, so it stays a slot even for
-    a single-exit callee: probe
-    `tests/mir_passes/inline-parametric/region_return_in_loop.expected`.
-  - Depends on R1254 (structured bodies at the seam), R886 (region values),
-    R880 (regions cloned).
+  - Depends on R1254 (structured bodies at the seam), R1258, R1259, R1260
+    (region values), R880 (regions cloned).
   - Model: Fable, Planned.
 
 - [ ] **R1105 `mem-2-reg` keeps a slot that a body reads through a
@@ -10063,28 +10070,65 @@ follow-ups the landed producer stages filed come last.
   - Depends on R874.
   - Model: Fable, Planned.
 
-- [ ] **R886 Structured region ops carry no values across a region
-  boundary, where upstream's `hlcf` ops pass operands and results**
+- [ ] **R1258 A region takes no arguments, so a loop carries no values
+  from one iteration to the next, where upstream's `hlcf.loop` passes
+  operands to its body's arguments and each `hlcf.continue` the next
+  iteration's**
 
-  Upstream's `hlcf.loop` and `hlcf.comptime.for` carry loop operands and
-  results, and `hlcf.break`, `hlcf.continue`, and `if.elifcond.yield` pass
-  values; Mojito's `Loop`, `ComptimeFor`, `Break`, `Continue`, and
-  `ElifCond` carry none, since MIR blocks have no arguments.
-  - Values cross those boundaries in slots, as they do in today's CFG.
-  - `If`/`ComptimeIf` results already travel through `Yield`/
-    `ComptimeYield`; `lower-control-flow` stores them in slots.
-  - Register promotion is the lever: values the producers keep in slots
-    become operands once a promoted register can cross a region.
-  - An inlined body's `inlined_cf_scope` loop returns its value through a
-    `$inline{n}$result` slot each `break` stores, where upstream's
-    `hlcf.break` carries it as the loop's result: probe
-    `tests/mir_passes/inline-parametric/region_multi_return.expected`.
-  - Since every inlined body is wrapped (R1254), that slot traffic costs
-    about 1.8 % more corpus concrete instructions (the planning sweep), and
-    pre-elaboration `mem-2-reg` promotes fewer slots, since a result slot
-    stored inside the wrapper and read after it keeps its slot; a `break`
-    carrying the value recovers both.
-  - Depends on R787, R872.
+  Mojito's region ops have no region arguments, so `Loop` has no
+  loop-carried operands and `Continue` carries no values; a value a loop
+  body updates stays in a slot.
+  - Upstream's `hlcf.loop` body block takes one argument per operand, and
+    `hlcf.continue` passes the next iteration's values
+    (`HLCFOps.td`, `RemoveUnusedLoopArgs` in `HLCFOpsCanonicalizers.cpp`).
+  - The fix adds region arguments with `Loop { operands, args, .. }` and
+    `Continue { values }` as their first user, in the MIR text, the
+    verifier, `mir::loop_breaks_mut`'s walk, `canonicalize`
+    (`RemoveUnusedLoopArgs`, `RemoveDeadLoop`'s argument case), and
+    `sccp`.
+  - `lower-control-flow` stores the operands and each `continue`'s values
+    in one slot per argument, read at the body's entry, as it stores loop
+    results with several breaks.
+  - The producer is R927's `mem-2-reg`; until then only pass cases
+    exercise it: probe the loop-body store in
+    `tests/mir_passes/mem-2-reg/region_loop_read.mir`.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1259 An elif condition and a `match` case pass no values into
+  the region they enter, where upstream's `if.elifcond.yield` and
+  `match.next` pass operands to that region's arguments**
+
+  A value computed in an elif condition region and read in its arm, or one
+  a failed `match` case leaves for the next case, stays in a slot.
+  - Upstream's `if.elifcond.yield` carries its `Bool` plus values passed
+    to the then or else region's arguments, "enabling mem2reg promotion of
+    values stored in the condition block"; `match.next` operands pass on
+    to the next case region.
+  - Mojito's `ElifCond` carries only the condition and `MatchNext`
+    nothing.
+  - The fix extends R1258's region arguments to an elif's `then` and the
+    next condition or else region, and to each `match` case region.
+  - Depends on R1258.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1260 A `match` and a `comptime for` define no results, where
+  upstream's `hlcf.match` and `hlcf.comptime.for` have results their
+  terminators carry**
+
+  Mojito's `Match`, `MatchComplete`, `ComptimeFor`, `ComptimeBreak`, and
+  `ComptimeContinue` carry no values, so a value a `match` or a
+  `comptime for` body produces for the code after it stays in a slot.
+  - Upstream's `hlcf.match` results come from `match.complete` and the
+    else region's `yield`; `hlcf.comptime.for` has operands ("values
+    promoted within the loop by mem2reg") and results its break and
+    continue pass.
+  - `Loop` results and valued `Break`s are the precedent: the verifier's
+    `RegionKind`, `lower-control-flow`'s slots, `canonicalize`, and `sccp`
+    learn the new values the same way.
+  - The elaborator's unroll must pass each iteration's values to the
+    next; before R880 it reads them through `lower-control-flow`'s slots.
+  - Depends on R1258.
   - Model: Fable, Not Planned.
 
 - [ ] **R890 A `for` over a raising iterator tests a `TryNext` flag where

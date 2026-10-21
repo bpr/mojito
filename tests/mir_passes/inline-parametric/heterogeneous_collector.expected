@@ -29,15 +29,15 @@
       fn {
         name: two,
         registers: 6,
-        vars: 4,
-        var_names: [a, b, "args$inline2", "$inline2$result"],
+        vars: 3,
+        var_names: [a, b, "args$inline2"],
         params: 2,
         param_types: [Int, Bool],
         owned_params: [false, false],
         deinit_params: [false, false],
         ref_params: [false, false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Bool }, var_type { var: $v2, type: tuple([Int, Bool]) }, var_type { var: $v3, type: Int }],
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Bool }, var_type { var: $v2, type: tuple([Int, Bool]) }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
@@ -50,8 +50,7 @@
               var.use { dest: %r1, var: $v1, mode: copy },
               tuple.make { dest: %r5, elems: [%r0, %r1], element_types: present([Int, Bool]) },
               var.store { var: $v2, src: %r5, binding_type: present(tuple([Int, Bool])), in_place: false },
-              loop { label: present(loop4294967295), body: [bb0 { instructions: [place.load { dest: %r3, place: place { root: $v2, root_type: present(tuple([Int, Bool])), projections: [], type: present(tuple([Int, Bool])), through: absent } }, call { dest: %r4, func: len, raises: absent, args: [%r3], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, var.store { var: $v3, src: %r4, binding_type: present(Int), in_place: false }], terminator: break { label: present(loop4294967295) } }] },
-              var.use { dest: %r2, var: $v3, mode: forward }
+              loop { results: [%r2], label: present(loop4294967295), body: [bb0 { instructions: [place.load { dest: %r3, place: place { root: $v2, root_type: present(tuple([Int, Bool])), projections: [], type: present(tuple([Int, Bool])), through: absent } }, call { dest: %r4, func: len, raises: absent, args: [%r3], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: break { label: present(loop4294967295), values: [%r4] } }] }
             ],
             terminator: return { value: present(%r2) }
           }

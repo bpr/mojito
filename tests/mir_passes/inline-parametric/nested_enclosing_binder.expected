@@ -2,15 +2,15 @@
       fn {
         name: scaled_by,
         registers: 5,
-        vars: 4,
-        var_names: [x, "y$inline1", "k$inline1", "$inline1$result"],
+        vars: 3,
+        var_names: [x, "y$inline1", "k$inline1"],
         params: 1,
         param_types: [Int],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: Int }, var_type { var: $v3, type: Int }],
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: Int }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
@@ -21,8 +21,7 @@
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
               var.store { var: $v1, src: %r0, binding_type: present(Int), in_place: false },
-              loop { label: present(loop4294967295), body: [bb0 { instructions: [var.use { dest: %r2, var: $v1, mode: copy }, const { dest: %r3, value: param(param_decl_ref { owner: "scaled_by", slot: 0, name: k, type: meta_value(Int) }) }, binary { op: mul, dest: %r4, a: %r2, b: %r3, resolved: absent, raises: absent }, var.store { var: $v3, src: %r4, binding_type: present(Int), in_place: false }], terminator: break { label: present(loop4294967295) } }] },
-              var.use { dest: %r1, var: $v3, mode: forward }
+              loop { results: [%r1], label: present(loop4294967295), body: [bb0 { instructions: [var.use { dest: %r2, var: $v1, mode: copy }, const { dest: %r3, value: param(param_decl_ref { owner: "scaled_by", slot: 0, name: k, type: meta_value(Int) }) }, binary { op: mul, dest: %r4, a: %r2, b: %r3, resolved: absent, raises: absent }], terminator: break { label: present(loop4294967295), values: [%r4] } }] }
             ],
             terminator: return { value: present(%r1) }
           }

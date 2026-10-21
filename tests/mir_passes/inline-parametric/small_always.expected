@@ -65,15 +65,15 @@
       fn {
         name: small_always,
         registers: 14,
-        vars: 3,
-        var_names: [x, "x$inline1", "$inline1$result"],
+        vars: 2,
+        var_names: [x, "x$inline1"],
         params: 1,
         param_types: [Int],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: Int }],
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
@@ -85,8 +85,7 @@
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
               var.store { var: $v1, src: %r0, binding_type: present(Int), in_place: false },
-              loop { label: present(loop4294967295), body: [bb0 { instructions: [const { dest: %r6, value: int_literal(100) }, literal.materialize { dest: %r7, value: %r6, target: Int }, var.use { dest: %r5, var: $v1, mode: copy }, binary { op: lt, dest: %r8, a: %r5, b: %r7, resolved: absent, raises: absent }, if { results: [], condition: %r8, then: [bb0 { instructions: [const { dest: %r10, value: int_literal(3) }, literal.materialize { dest: %r11, value: %r10, target: Int }, var.use { dest: %r9, var: $v1, mode: copy }, binary { op: add, dest: %r12, a: %r9, b: %r11, resolved: absent, raises: absent }, var.store { var: $v2, src: %r12, binding_type: present(Int), in_place: false }], terminator: break { label: present(loop4294967295) } }], elifs: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }, var.use { dest: %r13, var: $v1, mode: copy }, var.store { var: $v2, src: %r13, binding_type: present(Int), in_place: false }], terminator: break { label: present(loop4294967295) } }] },
-              var.use { dest: %r1, var: $v2, mode: forward },
+              loop { results: [%r1], label: present(loop4294967295), body: [bb0 { instructions: [const { dest: %r6, value: int_literal(100) }, literal.materialize { dest: %r7, value: %r6, target: Int }, var.use { dest: %r5, var: $v1, mode: copy }, binary { op: lt, dest: %r8, a: %r5, b: %r7, resolved: absent, raises: absent }, if { results: [], condition: %r8, then: [bb0 { instructions: [const { dest: %r10, value: int_literal(3) }, literal.materialize { dest: %r11, value: %r10, target: Int }, var.use { dest: %r9, var: $v1, mode: copy }, binary { op: add, dest: %r12, a: %r9, b: %r11, resolved: absent, raises: absent }], terminator: break { label: present(loop4294967295), values: [%r12] } }], elifs: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }, var.use { dest: %r13, var: $v1, mode: copy }], terminator: break { label: present(loop4294967295), values: [%r13] } }] },
               var.use { dest: %r2, var: $v0, mode: copy },
               call { dest: %r3, func: wide, raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               binary { op: add, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent }

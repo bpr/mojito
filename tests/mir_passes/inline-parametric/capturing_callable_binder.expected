@@ -31,15 +31,15 @@
       fn {
         name: outer,
         registers: 11,
-        vars: 7,
-        var_names: [k, "x$inline1", "f$inline1", "$inline1$result", "k$inline4", "y$inline4", "$inline4$result"],
+        vars: 5,
+        var_names: [k, "x$inline1", "f$inline1", "k$inline3", "y$inline3"],
         params: 1,
         param_types: [Int],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v130, path: [] }, access: read }])), param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }, var_type { var: $v3, type: Int }, var_type { var: $v4, type: Int }, var_type { var: $v5, type: Int }, var_type { var: $v6, type: Int }],
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v130, path: [] }, access: read }])), param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }, var_type { var: $v3, type: Int }, var_type { var: $v4, type: Int }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
@@ -53,8 +53,7 @@
               literal.materialize { dest: %r2, value: %r1, target: Int },
               var.store { var: $v1, src: %r2, binding_type: present(Int), in_place: false },
               var.store { var: $v2, src: %r0, binding_type: present(func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v130, path: [] }, access: read }])), param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] }), in_place: false },
-              loop { label: present(loop4294967295), body: [bb0 { instructions: [var.use { dest: %r4, var: $v2, mode: copy }, var.use { dest: %r5, var: $v1, mode: copy }, var.store { var: $v5, src: %r5, binding_type: present(Int), in_place: false }, loop { label: present(loop4294967295), body: [bb0 { instructions: [ref.make { dest: %r9, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } }, ref.read { dest: %r8, reference: %r9 }, var.use { dest: %r7, var: $v5, mode: copy }, binary { op: add, dest: %r10, a: %r7, b: %r8, resolved: absent, raises: absent }, var.store { var: $v6, src: %r10, binding_type: present(Int), in_place: false }], terminator: break { label: present(loop4294967295) } }] }, var.use { dest: %r6, var: $v6, mode: forward }, drop.var { var: $v2 }, var.store { var: $v3, src: %r6, binding_type: present(Int), in_place: false }], terminator: break { label: present(loop4294967295) } }] },
-              var.use { dest: %r3, var: $v3, mode: forward }
+              loop { results: [%r3], label: present(loop4294967295), body: [bb0 { instructions: [var.use { dest: %r4, var: $v2, mode: copy }, var.use { dest: %r5, var: $v1, mode: copy }, var.store { var: $v4, src: %r5, binding_type: present(Int), in_place: false }, loop { results: [%r6], label: present(loop4294967295), body: [bb0 { instructions: [ref.make { dest: %r9, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } }, ref.read { dest: %r8, reference: %r9 }, var.use { dest: %r7, var: $v4, mode: copy }, binary { op: add, dest: %r10, a: %r7, b: %r8, resolved: absent, raises: absent }], terminator: break { label: present(loop4294967295), values: [%r10] } }] }, drop.var { var: $v2 }], terminator: break { label: present(loop4294967295), values: [%r6] } }] }
             ],
             terminator: return { value: present(%r3) }
           }

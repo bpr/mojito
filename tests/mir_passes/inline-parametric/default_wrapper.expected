@@ -56,15 +56,15 @@
       fn {
         name: default_wrapper,
         registers: 4,
-        vars: 3,
-        var_names: [s, "self$inline1", "$inline1$result"],
+        vars: 2,
+        var_names: [s, "self$inline1"],
         params: 1,
         param_types: [struct_type { name: S, arguments: [] }],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: S, arguments: [] } }, var_type { var: $v1, type: struct_type { name: S, arguments: [] } }, var_type { var: $v2, type: Int }],
+        var_types: [var_type { var: $v0, type: struct_type { name: S, arguments: [] } }, var_type { var: $v1, type: struct_type { name: S, arguments: [] } }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
@@ -74,8 +74,7 @@
           bb0 {
             instructions: [
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [], type: present(struct_type { name: S, arguments: [] }), through: absent } },
-              loop { label: present(loop4294967295), body: [bb0 { instructions: [place.load { dest: %r2, place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [], type: present(struct_type { name: S, arguments: [] }), through: absent } }, call { dest: %r3, func: "Tr.m", raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [type_arg(struct_type { name: S, arguments: [] })], spread: absent }, var.store { var: $v2, src: %r3, binding_type: present(Int), in_place: false }], terminator: break { label: present(loop4294967295) } }] },
-              var.use { dest: %r1, var: $v2, mode: forward }
+              loop { results: [%r1], label: present(loop4294967295), body: [bb0 { instructions: [place.load { dest: %r2, place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [], type: present(struct_type { name: S, arguments: [] }), through: absent } }, call { dest: %r3, func: "Tr.m", raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [type_arg(struct_type { name: S, arguments: [] })], spread: absent }], terminator: break { label: present(loop4294967295), values: [%r3] } }] }
             ],
             terminator: return { value: present(%r1) }
           }

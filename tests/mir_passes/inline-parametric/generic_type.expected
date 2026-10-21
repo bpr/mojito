@@ -28,15 +28,15 @@
       fn {
         name: generic_type,
         registers: 3,
-        vars: 3,
-        var_names: [x, "x$inline1", "$inline1$result"],
+        vars: 2,
+        var_names: [x, "x$inline1"],
         params: 1,
         param_types: [Int],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: Int }],
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
@@ -47,8 +47,7 @@
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
               var.store { var: $v1, src: %r0, binding_type: present(Int), in_place: false },
-              loop { label: present(loop4294967295), body: [bb0 { instructions: [var.use { dest: %r2, var: $v1, mode: copy }, var.store { var: $v2, src: %r2, binding_type: present(Int), in_place: false }], terminator: break { label: present(loop4294967295) } }] },
-              var.use { dest: %r1, var: $v2, mode: forward }
+              loop { results: [%r1], label: present(loop4294967295), body: [bb0 { instructions: [var.use { dest: %r2, var: $v1, mode: copy }], terminator: break { label: present(loop4294967295), values: [%r2] } }] }
             ],
             terminator: return { value: present(%r1) }
           }

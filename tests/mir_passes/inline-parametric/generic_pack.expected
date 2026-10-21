@@ -30,15 +30,15 @@
       fn {
         name: generic_pack,
         registers: 6,
-        vars: 5,
-        var_names: [t, x, "t$inline2", "x$inline2", "$inline2$result"],
+        vars: 4,
+        var_names: [t, x, "t$inline2", "x$inline2"],
         params: 2,
         param_types: [struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Int)] }, Int],
         owned_params: [false, false],
         deinit_params: [false, false],
         ref_params: [false, false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Int)] } }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Int)] } }, var_type { var: $v3, type: Int }, var_type { var: $v4, type: Int }],
+        var_types: [var_type { var: $v0, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Int)] } }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Int)] } }, var_type { var: $v3, type: Int }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
@@ -50,8 +50,7 @@
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Int)] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Int)] }), through: absent } },
               var.use { dest: %r1, var: $v1, mode: copy },
               var.store { var: $v3, src: %r1, binding_type: present(Int), in_place: false },
-              loop { label: present(loop4294967295), body: [bb0 { instructions: [const { dest: %r4, value: int(2) }, var.use { dest: %r3, var: $v3, mode: copy }, binary { op: add, dest: %r5, a: %r3, b: %r4, resolved: absent, raises: absent }, var.store { var: $v4, src: %r5, binding_type: present(Int), in_place: false }], terminator: break { label: present(loop4294967295) } }] },
-              var.use { dest: %r2, var: $v4, mode: forward }
+              loop { results: [%r2], label: present(loop4294967295), body: [bb0 { instructions: [const { dest: %r4, value: int(2) }, var.use { dest: %r3, var: $v3, mode: copy }, binary { op: add, dest: %r5, a: %r3, b: %r4, resolved: absent, raises: absent }], terminator: break { label: present(loop4294967295), values: [%r5] } }] }
             ],
             terminator: return { value: present(%r2) }
           }
@@ -60,15 +59,15 @@
       fn {
         name: generic_pack_forwarded,
         registers: 7,
-        vars: 4,
-        var_names: [t, "t$inline1", "x$inline1", "$inline1$result"],
+        vars: 3,
+        var_names: [t, "t$inline1", "x$inline1"],
         params: 1,
         param_types: [struct_type { name: Tuple, arguments: [type_arg(param { owner: "generic_pack_forwarded", slot: 0, name: "*Us", bounds: [Copyable], callable_bound: absent })] }],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: Tuple, arguments: [type_arg(param { owner: "generic_pack_forwarded", slot: 0, name: "*Us", bounds: [Copyable], callable_bound: absent })] } }, var_type { var: $v1, type: struct_type { name: Tuple, arguments: [type_arg(param { owner: "generic_pack_forwarded", slot: 0, name: "*Us", bounds: [Copyable], callable_bound: absent })] } }, var_type { var: $v2, type: Int }, var_type { var: $v3, type: Int }],
+        var_types: [var_type { var: $v0, type: struct_type { name: Tuple, arguments: [type_arg(param { owner: "generic_pack_forwarded", slot: 0, name: "*Us", bounds: [Copyable], callable_bound: absent })] } }, var_type { var: $v1, type: struct_type { name: Tuple, arguments: [type_arg(param { owner: "generic_pack_forwarded", slot: 0, name: "*Us", bounds: [Copyable], callable_bound: absent })] } }, var_type { var: $v2, type: Int }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
@@ -81,8 +80,7 @@
               literal.materialize { dest: %r2, value: %r1, target: Int },
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [type_arg(param { owner: "generic_pack_forwarded", slot: 0, name: "*Us", bounds: [Copyable], callable_bound: absent })] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(param { owner: "generic_pack_forwarded", slot: 0, name: "*Us", bounds: [Copyable], callable_bound: absent })] }), through: absent } },
               var.store { var: $v2, src: %r2, binding_type: present(Int), in_place: false },
-              loop { label: present(loop4294967295), body: [bb0 { instructions: [const { dest: %r5, value: param(param_pack_query { pack: binder { owner: "generic_pack_forwarded", slot: 0, name: Us }, query: pack_length }) }, var.use { dest: %r4, var: $v2, mode: copy }, binary { op: add, dest: %r6, a: %r4, b: %r5, resolved: absent, raises: absent }, var.store { var: $v3, src: %r6, binding_type: present(Int), in_place: false }], terminator: break { label: present(loop4294967295) } }] },
-              var.use { dest: %r3, var: $v3, mode: forward }
+              loop { results: [%r3], label: present(loop4294967295), body: [bb0 { instructions: [const { dest: %r5, value: param(param_pack_query { pack: binder { owner: "generic_pack_forwarded", slot: 0, name: Us }, query: pack_length }) }, var.use { dest: %r4, var: $v2, mode: copy }, binary { op: add, dest: %r6, a: %r4, b: %r5, resolved: absent, raises: absent }], terminator: break { label: present(loop4294967295), values: [%r6] } }] }
             ],
             terminator: return { value: present(%r3) }
           }

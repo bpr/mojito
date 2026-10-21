@@ -586,7 +586,10 @@ impl<'a> Flatten<'a> {
                         elifs: Vec::new(),
                         orelse: vec![MirBlock {
                             instrs: Vec::new(),
-                            term: MirTerm::Break { label },
+                            term: MirTerm::Break {
+                                label,
+                                values: Vec::new(),
+                            },
                         }],
                     });
                     if protocol.exhaustion.is_none() {
@@ -629,7 +632,11 @@ impl<'a> Flatten<'a> {
                     this.comprehension_clauses(plan, index + 1);
                     MirTerm::Continue { label }
                 });
-                self.emit(MirInstr::Loop { label, body });
+                self.emit(MirInstr::Loop {
+                    label,
+                    results: Vec::new(),
+                    body,
+                });
                 if split_source
                     && !borrowed
                     && protocol.source_retained

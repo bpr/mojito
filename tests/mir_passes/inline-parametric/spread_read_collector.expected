@@ -29,15 +29,15 @@
       fn {
         name: outer,
         registers: 4,
-        vars: 3,
-        var_names: [args, "args$inline1", "$inline1$result"],
+        vars: 2,
+        var_names: [args, "args$inline1"],
         params: 1,
         param_types: [variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }) }, var_type { var: $v1, type: variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }) }, var_type { var: $v2, type: Int }],
+        var_types: [var_type { var: $v0, type: variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }) }, var_type { var: $v1, type: variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }) }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
@@ -47,8 +47,7 @@
           bb0 {
             instructions: [
               place.load { dest: %r0, place: place { root: $v0, root_type: present(variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), projections: [], type: present(variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), through: absent } },
-              loop { label: present(loop4294967295), body: [bb0 { instructions: [place.load { dest: %r2, place: place { root: $v0, root_type: present(variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), projections: [], type: present(variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), through: absent } }, call { dest: %r3, func: len, raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, var.store { var: $v2, src: %r3, binding_type: present(Int), in_place: false }], terminator: break { label: present(loop4294967295) } }] },
-              var.use { dest: %r1, var: $v2, mode: forward }
+              loop { results: [%r1], label: present(loop4294967295), body: [bb0 { instructions: [place.load { dest: %r2, place: place { root: $v0, root_type: present(variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), projections: [], type: present(variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), through: absent } }, call { dest: %r3, func: len, raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: break { label: present(loop4294967295), values: [%r3] } }] }
             ],
             terminator: return { value: present(%r1) }
           }

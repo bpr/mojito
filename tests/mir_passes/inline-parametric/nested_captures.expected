@@ -2,15 +2,15 @@
       fn {
         name: captured,
         registers: 9,
-        vars: 5,
-        var_names: [x, base, "base$inline2", "y$inline2", "$inline2$result"],
+        vars: 4,
+        var_names: [x, base, "base$inline2", "y$inline2"],
         params: 1,
         param_types: [Int],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: Int }, var_type { var: $v3, type: Int }, var_type { var: $v4, type: Int }],
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: Int }, var_type { var: $v3, type: Int }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
@@ -25,8 +25,7 @@
               literal.materialize { dest: %r2, value: %r1, target: Int },
               place.load { dest: %r3, place: place { root: $v1, root_type: present(Int), projections: [], type: present(Int), through: absent } },
               var.store { var: $v3, src: %r2, binding_type: present(Int), in_place: false },
-              loop { label: present(loop4294967295), body: [bb0 { instructions: [ref.make { dest: %r6, place: place { root: $v1, root_type: present(Int), projections: [], type: present(Int), through: absent } }, ref.read { dest: %r5, reference: %r6 }, var.use { dest: %r7, var: $v3, mode: copy }, binary { op: add, dest: %r8, a: %r5, b: %r7, resolved: absent, raises: absent }, var.store { var: $v4, src: %r8, binding_type: present(Int), in_place: false }], terminator: break { label: present(loop4294967295) } }] },
-              var.use { dest: %r4, var: $v4, mode: forward },
+              loop { results: [%r4], label: present(loop4294967295), body: [bb0 { instructions: [ref.make { dest: %r6, place: place { root: $v1, root_type: present(Int), projections: [], type: present(Int), through: absent } }, ref.read { dest: %r5, reference: %r6 }, var.use { dest: %r7, var: $v3, mode: copy }, binary { op: add, dest: %r8, a: %r5, b: %r7, resolved: absent, raises: absent }], terminator: break { label: present(loop4294967295), values: [%r8] } }] },
               drop.var { var: $v1 }
             ],
             terminator: return { value: present(%r4) }
@@ -86,7 +85,7 @@
               literal.materialize { dest: %r1, value: %r0, target: Int },
               var.store { var: $v0, src: %r1, binding_type: present(Int), in_place: false },
               place.load { dest: %r2, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } },
-              loop { label: present(loop4294967295), body: [bb0 { instructions: [ref.make { dest: %r6, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } }, ref.read { dest: %r5, reference: %r6 }, const { dest: %r7, value: int_literal(1) }, literal.materialize { dest: %r8, value: %r7, target: Int }, binary { op: add, dest: %r9, a: %r5, b: %r8, resolved: absent, raises: absent }, ref.make { dest: %r11, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } }, ref.write { reference: %r11, value: %r9 }], terminator: break { label: present(loop4294967295) } }] },
+              loop { results: [], label: present(loop4294967295), body: [bb0 { instructions: [ref.make { dest: %r6, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } }, ref.read { dest: %r5, reference: %r6 }, const { dest: %r7, value: int_literal(1) }, literal.materialize { dest: %r8, value: %r7, target: Int }, binary { op: add, dest: %r9, a: %r5, b: %r8, resolved: absent, raises: absent }, ref.make { dest: %r11, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } }, ref.write { reference: %r11, value: %r9 }], terminator: break { label: present(loop4294967295), values: [] } }] },
               const { dest: %r3, value: none },
               var.use { dest: %r4, var: $v0, mode: copy },
               drop.var { var: $v0 }

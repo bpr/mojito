@@ -36,7 +36,7 @@ which is, in order:
 | 3 | R877 | drop elaboration (`DestructorInsertion` on region exits, not CFG edges) |
 | 4 | R878 | field drops, copy elision, and the lifecycle-call namings |
 | 5 | R879 | the pre-elaboration pipeline and the package hold structured bodies |
-| 6 | R886 | region ops carry values across a region boundary (`mojo-shape`) |
+| 6 | R886 (loop results and valued breaks landed), R1258–R1260 | region ops carry values across a region boundary (`mojo-shape`) |
 | 7 | R880 | the elaborator unrolls `comptime for` by cloning the region |
 | 8 | R927 | `Mem2Reg` through region values |
 

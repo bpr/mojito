@@ -59,7 +59,9 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         MirInstr::EstablishLoans { marker, .. }
         | MirInstr::InvalidateInteriors { marker, .. }
         | MirInstr::ConsumePlace { marker, .. } => out.push(*marker),
-        MirInstr::If { results, .. } | MirInstr::ComptimeIf { results, .. } => {
+        MirInstr::If { results, .. }
+        | MirInstr::ComptimeIf { results, .. }
+        | MirInstr::Loop { results, .. } => {
             out.extend(results.iter().copied());
         }
         _ => {}

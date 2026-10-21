@@ -30,7 +30,7 @@ artifact {
         blocks: [
           bb0 {
             instructions: [
-              loop { label: absent, body: [bb0 { instructions: [], terminator: break { label: absent } }] },
+              loop { results: [], label: absent, body: [bb0 { instructions: [], terminator: break { label: absent, values: [] } }] },
               var.use { dest: %r0, var: $v0, mode: copy }
             ],
             terminator: return { value: present(%r0) }

@@ -149,7 +149,9 @@ pub fn terminator_regs_mut(term: &mut MirTerm) -> Vec<&mut Reg> {
         | MirTerm::ReturnWithCleanup {
             value: Some(reg), ..
         } => vec![reg],
-        MirTerm::Yield(values) | MirTerm::ComptimeYield(values) => values.iter_mut().collect(),
+        MirTerm::Yield(values) | MirTerm::ComptimeYield(values) | MirTerm::Break { values, .. } => {
+            values.iter_mut().collect()
+        }
         MirTerm::Jump(_)
         | MirTerm::ComptimeBranch { .. }
         | MirTerm::ComptimeFor { .. }
@@ -157,7 +159,6 @@ pub fn terminator_regs_mut(term: &mut MirTerm) -> Vec<&mut Reg> {
         | MirTerm::ReturnWithCleanup { value: None, .. }
         | MirTerm::TryYield
         | MirTerm::EscapeJump { .. }
-        | MirTerm::Break { .. }
         | MirTerm::Continue { .. }
         | MirTerm::ComptimeBreak
         | MirTerm::ComptimeContinue
@@ -175,7 +176,9 @@ pub fn terminator_regs(term: &MirTerm) -> Vec<Reg> {
         | MirTerm::ReturnWithCleanup {
             value: Some(reg), ..
         } => vec![*reg],
-        MirTerm::Yield(values) | MirTerm::ComptimeYield(values) => values.clone(),
+        MirTerm::Yield(values) | MirTerm::ComptimeYield(values) | MirTerm::Break { values, .. } => {
+            values.clone()
+        }
         MirTerm::Jump(_)
         | MirTerm::ComptimeBranch { .. }
         | MirTerm::ComptimeFor { .. }
@@ -183,7 +186,6 @@ pub fn terminator_regs(term: &MirTerm) -> Vec<Reg> {
         | MirTerm::ReturnWithCleanup { value: None, .. }
         | MirTerm::TryYield
         | MirTerm::EscapeJump { .. }
-        | MirTerm::Break { .. }
         | MirTerm::Continue { .. }
         | MirTerm::ComptimeBreak
         | MirTerm::ComptimeContinue
@@ -222,13 +224,87 @@ impl RegionFrame {
 /// it; `None` for every other terminator.
 pub const fn region_exit(term: &MirTerm) -> Option<(RegionFrame, bool)> {
     match term {
-        MirTerm::Break { label } => Some((RegionFrame::Loop(*label), false)),
+        MirTerm::Break { label, .. } => Some((RegionFrame::Loop(*label), false)),
         MirTerm::Continue { label } => Some((RegionFrame::Loop(*label), true)),
         MirTerm::ComptimeBreak => Some((RegionFrame::ComptimeFor, false)),
         MirTerm::ComptimeContinue => Some((RegionFrame::ComptimeFor, true)),
         MirTerm::MatchComplete => Some((RegionFrame::MatchCase, false)),
         MirTerm::MatchNext => Some((RegionFrame::MatchCase, true)),
         _ => None,
+    }
+}
+
+/// What lies between a [`MirInstr::Loop`] and a `break` that leaves it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BreakSite {
+    /// The `break` sits in a `try` part the loop holds.
+    pub in_try_part: bool,
+    /// The `break` sits in a `comptime for` body the loop holds.
+    pub in_comptime_for: bool,
+}
+
+/// Visit the `values` of every `break` that leaves the loop labelled
+/// `label` whose body is `body`, with what lies between them.
+///
+/// A break resolves as `RemoveUnusedLoopResults`' `getParentLoop` resolves
+/// it: an unlabelled one leaves the nearest loop, a labelled one the
+/// nearest carrying its label.
+pub fn loop_breaks_mut(
+    body: &mut [MirBlock],
+    label: Option<LoopLabel>,
+    visit: &mut impl FnMut(&mut Vec<Reg>, BreakSite),
+) {
+    breaks_in(body, label, &mut Vec::new(), BreakSite::default(), visit);
+}
+
+/// Resolve each replaced register through chains of replacements.
+pub fn resolve_replacements<S: std::hash::BuildHasher>(
+    replaced: &HashMap<u32, Reg, S>,
+) -> HashMap<u32, Reg> {
+    replaced
+        .keys()
+        .map(|&reg| {
+            let mut root = replaced[&reg];
+            for _ in 0..replaced.len() {
+                match replaced.get(&root.0) {
+                    Some(next) => root = *next,
+                    None => break,
+                }
+            }
+            (reg, root)
+        })
+        .collect()
+}
+
+/// Rewrite every read in `blocks`, at any depth, of a key of `roots` to its
+/// root; definitions are left alone.
+pub fn replace_register_reads<S: std::hash::BuildHasher>(
+    blocks: &mut [MirBlock],
+    roots: &HashMap<u32, Reg, S>,
+) {
+    if roots.is_empty() {
+        return;
+    }
+    for block in blocks {
+        for instruction in &mut block.instrs {
+            let mut results = Vec::new();
+            verify::instruction_result_regs(instruction, &mut results);
+            for reg in instruction_regs_mut(instruction) {
+                if let Some(at) = results.iter().position(|result| result == reg) {
+                    results.swap_remove(at);
+                } else if let Some(root) = roots.get(&reg.0) {
+                    *reg = *root;
+                }
+            }
+            for region in instruction_regions_mut(instruction) {
+                replace_register_reads(region, roots);
+            }
+        }
+        for reg in terminator_regs_mut(&mut block.term) {
+            if let Some(root) = roots.get(&reg.0) {
+                *reg = *root;
+            }
+        }
     }
 }
 
@@ -475,12 +551,13 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         | MirInstr::GetIter { .. }
         | MirInstr::Unsupported(_)
         | MirInstr::Try { .. }
-        | MirInstr::Loop { .. }
         | MirInstr::ComptimeFor { .. }
         | MirInstr::ComptimeAssert { .. }
         | MirInstr::Match { .. } => {}
         MirInstr::If { results, cond, .. } => out.extend(results.iter_mut().chain([cond])),
-        MirInstr::ComptimeIf { results, .. } => out.extend(results.iter_mut()),
+        MirInstr::ComptimeIf { results, .. } | MirInstr::Loop { results, .. } => {
+            out.extend(results.iter_mut());
+        }
         MirInstr::ConstructTypeParam {
             dest,
             kwargs,
@@ -2549,12 +2626,13 @@ pub enum MirInstr {
         elifs: Vec<MirElif>,
         orelse: Vec<MirBlock>,
     },
-    /// `hlcf.loop`: run `body` until a [`MirTerm::Break`] leaves it;
-    /// [`MirTerm::Continue`] starts the next iteration. `label` names the
-    /// loop for a labelled `break`/`continue`, which targets the nearest
-    /// enclosing loop carrying it.
+    /// `hlcf.loop`: run `body` until a [`MirTerm::Break`] leaves it, its
+    /// values defining `results`; [`MirTerm::Continue`] starts the next
+    /// iteration. `label` names the loop for a labelled `break`/`continue`,
+    /// which targets the nearest enclosing loop carrying it.
     Loop {
         label: Option<LoopLabel>,
+        results: Vec<Reg>,
         body: Vec<MirBlock>,
     },
     /// `hlcf.comptime.if`: run the arm of the first condition of `conds`
@@ -3196,9 +3274,11 @@ pub enum MirTerm {
     /// `Bool` that selects its arm.
     ElifCond(Reg),
     /// `hlcf.break`: leave the nearest enclosing [`MirInstr::Loop`], or
-    /// the nearest one carrying `label`.
+    /// the nearest one carrying `label`, its `values` defining that loop's
+    /// results.
     Break {
         label: Option<LoopLabel>,
+        values: Vec<Reg>,
     },
     /// `hlcf.continue`: start the next iteration of the loop
     /// [`MirTerm::Break`] would leave.
@@ -3467,6 +3547,48 @@ fn ct_const(value: CtValue, ty: &Ty) -> Option<Const> {
             const_ct_value(&constant, ty).is_some().then_some(constant)
         }
         _ => None,
+    }
+}
+
+/// [`loop_breaks_mut`] over `blocks`, which sit inside the loops labelled
+/// `nested` (innermost last) between them and the loop labelled `label`.
+fn breaks_in(
+    blocks: &mut [MirBlock],
+    label: Option<LoopLabel>,
+    nested: &mut Vec<Option<LoopLabel>>,
+    site: BreakSite,
+    visit: &mut impl FnMut(&mut Vec<Reg>, BreakSite),
+) {
+    for block in blocks {
+        for instruction in &mut block.instrs {
+            let inner = match instruction {
+                MirInstr::Loop { label, .. } => Some(*label),
+                _ => None,
+            };
+            let site = BreakSite {
+                in_try_part: site.in_try_part || matches!(instruction, MirInstr::Try { .. }),
+                in_comptime_for: site.in_comptime_for
+                    || matches!(instruction, MirInstr::ComptimeFor { .. }),
+            };
+            nested.extend(inner);
+            for region in instruction_regions_mut(instruction) {
+                breaks_in(region, label, nested, site, visit);
+            }
+            if inner.is_some() {
+                nested.pop();
+            }
+        }
+        if let MirTerm::Break {
+            label: named,
+            values,
+        } = &mut block.term
+            && match named {
+                None => nested.is_empty(),
+                Some(_) => !nested.contains(named) && *named == label,
+            }
+        {
+            visit(values, site);
+        }
     }
 }
 
@@ -3755,7 +3877,13 @@ mod tests {
                 MirTerm::Jump(2),
             ),
             block(Vec::new(), MirTerm::Unreachable),
-            block(Vec::new(), MirTerm::Break { label: None }),
+            block(
+                Vec::new(),
+                MirTerm::Break {
+                    label: None,
+                    values: Vec::new(),
+                },
+            ),
         ];
         let mut f = function(vec![
             block(
@@ -3767,7 +3895,11 @@ mod tests {
                         elifs: Vec::new(),
                         orelse: arm,
                     },
-                    MirInstr::Loop { label: None, body },
+                    MirInstr::Loop {
+                        label: None,
+                        results: Vec::new(),
+                        body,
+                    },
                 ],
                 MirTerm::Return(None),
             ),

@@ -402,7 +402,7 @@ where
             observer,
             frames,
         ),
-        MirInstr::Loop { label, body } => walk_loop(
+        MirInstr::Loop { label, body, .. } => walk_loop(
             scan,
             entry,
             RegionFrame::Loop(*label),
@@ -1069,7 +1069,7 @@ impl<S: BackwardScan> BackWalk<'_, S> {
                 }
                 live
             }
-            MirInstr::Loop { label, body } => {
+            MirInstr::Loop { label, body, .. } => {
                 self.looped(RegionFrame::Loop(*label), body, exit, recorder)
             }
             MirInstr::ComptimeFor { body, .. } => {

@@ -7,9 +7,10 @@
 //! only its taken arm executable while its condition is one constant. A
 //! structured body is walked region by region, as `SCCP` walks `hlcf`: an
 //! `if` without elifs enters only the arm a constant condition takes, its
-//! results meeting the values its executable arms yield, while a loop's
+//! results meeting the values its executable arms yield, and a loop's
+//! results meet the values its executable `break`s carry, while a loop's
 //! body, every region of an `if` with elifs, a `comptime if`, a `match`,
-//! and a `try` are executable, their results overdefined. The
+//! and a `try` are executable, the other ops' results overdefined. The
 //! instructions of executable blocks are evaluated until nothing
 //! changes: a scalar or SIMD `const` ([`Const::is_folded`], a `UInt` or
 //! SIMD `Const::Value` included) is its constant, an instruction
@@ -37,8 +38,8 @@ use super::pre_elaboration::BodyPass;
 use mojito_common::timing;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
-    Const, MirBlock, MirBlockId, MirDeclarations, MirFunction, MirInstr, MirTerm, Reg,
-    instruction_regions,
+    Const, LoopLabel, MirBlock, MirBlockId, MirDeclarations, MirFunction, MirInstr, MirTerm, Reg,
+    RegionFrame, instruction_regions,
 };
 use mojito_types::types::Ty;
 use std::collections::HashMap;
@@ -57,6 +58,7 @@ pub fn sccp(_name: &str, function: &mut MirFunction, declarations: &MirDeclarati
         reg_types: &function.reg_types,
         declarations,
         changed: true,
+        loops: Vec::new(),
     };
     while std::mem::take(&mut solver.changed) {
         let mut escapes = Vec::new();
@@ -93,12 +95,15 @@ enum Lattice {
     Overdefined,
 }
 
-/// The fixpoint's state: the lattice, and whether a walk raised it.
+/// The fixpoint's state: the lattice, whether a walk raised it, and the
+/// loops enclosing the block being walked, innermost last, with their
+/// results.
 struct Solver<'a> {
     lattice: Vec<Lattice>,
     reg_types: &'a HashMap<u32, Ty>,
     declarations: &'a MirDeclarations,
     changed: bool,
+    loops: Vec<(Option<LoopLabel>, Vec<Reg>)>,
 }
 
 impl Solver<'_> {
@@ -120,12 +125,27 @@ impl Solver<'_> {
                 self.visit_if(results, *cond, [then, orelse], escapes);
                 continue;
             }
+            if let MirInstr::Loop {
+                label,
+                results,
+                body,
+            } = instruction
+            {
+                self.loops.push((*label, results.clone()));
+                self.visit_region(body, escapes);
+                self.loops.pop();
+                continue;
+            }
             self.transfer(instruction);
             for region in instruction_regions(instruction) {
                 self.visit_region(region, escapes);
             }
         }
         match &block.term {
+            MirTerm::Break { label, values } => {
+                self.resolve_break(*label, values);
+                Vec::new()
+            }
             MirTerm::Jump(target) => vec![*target],
             MirTerm::Branch {
                 cond,
@@ -148,7 +168,6 @@ impl Solver<'_> {
             | MirTerm::TryYield
             | MirTerm::Yield(_)
             | MirTerm::ElifCond(_)
-            | MirTerm::Break { .. }
             | MirTerm::Continue { .. }
             | MirTerm::ComptimeYield(_)
             | MirTerm::ComptimeBreak
@@ -187,6 +206,27 @@ impl Solver<'_> {
                     self.meet(*result, value);
                 }
             }
+        }
+    }
+
+    /// Meet each result of the loop an executable `break` labelled `label`
+    /// leaves with the value it carries, as `SCCP`'s `resolveBreak` does.
+    fn resolve_break(&mut self, label: Option<LoopLabel>, values: &[Reg]) {
+        let Some((_, results)) = self
+            .loops
+            .iter()
+            .rev()
+            .find(|(found, _)| RegionFrame::Loop(label).names(RegionFrame::Loop(*found)))
+        else {
+            return;
+        };
+        for (result, value) in results.clone().into_iter().zip(values) {
+            let value = self
+                .lattice
+                .get(value.0 as usize)
+                .cloned()
+                .unwrap_or(Lattice::Overdefined);
+            self.meet(result, value);
         }
     }
 

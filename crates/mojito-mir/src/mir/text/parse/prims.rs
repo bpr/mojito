@@ -247,6 +247,13 @@ impl Decoder {
         let slot = self.req(value, fields, "slot", Self::uint)?;
         Some(mojito_types::param_expr::ParamId::new(&owner, slot))
     }
+    /// A register list schema 1.82 added (a loop's `results`, a break's
+    /// `values`): an older artifact's op carried none, so its absence reads
+    /// exactly as empty.
+    pub(super) fn regs_since_1_82(&mut self, fields: &[Field], name: &str) -> Vec<Reg> {
+        self.field(fields, name)
+            .map_or_else(|()| Vec::new(), |found| self.regs(found))
+    }
     /// A field the canonical emitter always writes; absence is a diagnostic,
     /// never a silent default.
     pub(super) fn required<'a>(

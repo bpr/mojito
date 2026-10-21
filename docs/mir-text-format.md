@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.81
+mojito-mir 1.82
 ```
 
-The writer emits 1.81. The reader accepts 1.0 through 1.81; *Schema 1.0*
+The writer emits 1.82. The reader accepts 1.0 through 1.82; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -313,6 +313,13 @@ the position in `args` of the caller's collector (`count(*args^)`). The
 elaborator replaces it with the bound pack's element places before it names
 the lifted body's instance, so elaborated MIR records `absent`. An older
 artifact reads as recording no spread.
+
+Minor version 82 carries values across a loop's boundary, as upstream's
+`hlcf.loop` results and `hlcf.break` operands do: a `loop` gains `results`
+and a `break` gains `values`, the registers that define the results of the
+loop it leaves. An older artifact's loop had no results and its break
+carried nothing, so the reader reads either field's absence as an empty
+list; the writer always writes both.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -1008,7 +1015,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `ConsumeVar` / `ConsumePlace` | `consume.var` / `consume.place` |
 | `Unsupported` | `unsupported { message: string }` |
 | `If` | `if { results: [reg...], condition: %rN, then: [block...], elifs: [elif { condition: [block...], then: [block...] }...], else: [block...] }` — `hlcf.if` (schema 1.54) |
-| `Loop` | `loop { label: option<loopN>, body: [block...] }` — `hlcf.loop` (schema 1.54); `loop4294967295` is upstream's `inlined_cf_scope`, the label `inline-parametric` wraps an inlined body in, which no source loop carries |
+| `Loop` | `loop { results: [reg...], label: option<loopN>, body: [block...] }` — `hlcf.loop` (schema 1.54), its `results` (schema 1.82) defined by the values of the `break` that leaves it; `loop4294967295` is upstream's `inlined_cf_scope`, the label `inline-parametric` wraps an inlined body in, which no source loop carries, its one result the call's |
 | `Match` | `match { cases: [[block...]...], else: [block...] }` — `hlcf.match`: the cases in order, each a region that tests its pattern and runs its body, leaving by `match.next` (the next case, or `else` after the last) or `match.complete` (the op's end); `else` runs when no case completed and ends in `yield` with no values (schema 1.74) |
 | `ComptimeIf` | `comptime.if { results: [reg...], conditions: [<constraint>...], arms: [[block...]...], else: [block...] }` — `hlcf.comptime.if`, one arm per condition (schema 1.54) |
 | `ComptimeFor` | `comptime.for { binder: <binder>, initial: <param_expr>, has_next: <param_expr>, next_iter: <param_expr>, next_value: <param_expr>, body: [block...], else: [block...] }` — `hlcf.comptime.for`; the four sequence fields are the `ComptimeFor` terminator's; `else` is one block ending in `unreachable {}`; `body` is one block ending in `unreachable {}` that holds a `comptime.if` on `eq { left: operand_expr(<has_next>), right: operand_value(ct_bool(true)) }`, whose arm is the suite and whose else arm is the stop arm, ending in `comptime.for.break {}`, as `LowerSemanticCF` leaves upstream's body (schema 1.54; the `slot` field and the `elements` source withdrawn, schema 1.57; the body's `has_next` test, schema 1.58) |
@@ -1053,7 +1060,7 @@ as explicit options/lists. Backends must not reconstruct omitted selections.
 | `EscapeJump` | `escape { target: bbN, cleanup: [drop { var: $vN, destructor: "<symbol>" }...] }` — `cleanup` runs at the escape, before the `finally` blocks it crosses; each entry names its destructor as a `try`'s does (schema 1.72) |
 | `Yield` | `yield { values: [reg...] }` — `hlcf.yield`: ends an `if` arm, its values defining the op's results (schema 1.54) |
 | `ElifCond` | `if.elifcond.yield { condition: %rN }` — ends an elif condition region with its `Bool` (schema 1.54) |
-| `Break` / `Continue` | `break { label: option<loopN> }` / `continue { label: option<loopN> }` — `hlcf.break`/`hlcf.continue`: the nearest enclosing `loop`, or the nearest carrying the label (schema 1.54) |
+| `Break` / `Continue` | `break { label: option<loopN>, values: [reg...] }` / `continue { label: option<loopN> }` — `hlcf.break`/`hlcf.continue`: the nearest enclosing `loop`, or the nearest carrying the label (schema 1.54); a break's `values` (schema 1.82) define the results of the loop it leaves, one per result |
 | `ComptimeYield` | `comptime.yield { values: [reg...] }` — ends a `comptime.if` arm (schema 1.54) |
 | `ComptimeBreak` / `ComptimeContinue` | `comptime.for.break {}` / `comptime.for.continue {}` — the nearest enclosing `comptime.for` (schema 1.54) |
 | `MatchNext` / `MatchComplete` | `match.next {}` / `match.complete {}` — `hlcf.match.next`/`hlcf.match.complete`: leave the nearest enclosing `match` case for the next case or for the op's end (schema 1.74) |
