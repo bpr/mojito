@@ -203,7 +203,9 @@ assets/ok/defines_main.mojo	main	exe-differential	sanitized
 assets/ok/deinit_body_field_last_use.mojo	main	exe-differential	sanitized
 assets/ok/deinit_param_destruction_timing.mojo	main	exe-differential	sanitized
 assets/ok/delegated_ref_return_projection.mojo	main	exe-differential	sanitized
+assets/ok/destructure_list_wrong_length_raises.mojo	main	exe-differential	sanitized
 assets/ok/destructure_nested_targets.mojo	main	exe-differential	sanitized
+assets/ok/destructure_sequence_targets.mojo	main	exe-differential	sanitized
 assets/ok/destructure_swap_and_places.mojo	main	exe-differential	sanitized
 assets/ok/dict_display_literal_constructor.mojo	main	exe-differential	sanitized
 assets/ok/dict_hasher_forwarding.mojo	main	exe-differential	sanitized
@@ -1121,6 +1123,7 @@ assets/ok/where_repeated_clauses.mojo	main	exe-differential	sanitized
 assets/ok/while.mojo	main	exe-differential	sanitized
 assets/ok/with_enter_only.mojo	main	exe-differential	sanitized
 assets/ok/with_exit_error_swallow.mojo	main	exe-differential	sanitized
+assets/ok/with_inside_match_case.mojo	main	exe-differential	sanitized
 assets/ok/with_multiple.mojo	main	exe-differential	sanitized
 assets/ok/with_multiple_dependent.mojo	main	exe-differential	sanitized
 assets/ok/with_statement.mojo	main	exe-differential	sanitized

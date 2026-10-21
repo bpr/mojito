@@ -116,8 +116,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   applies the lambda-specific capture-default/thinness/diagnostic deltas.
   A trait member (`checking_trait_member`) may take a `deinit` receiver,
   and a parameter named `self` is writable by its own convention.
-- `checker/destructure.rs` owns destructuring assignment (`check_destructure`):
-  the recursive walk of a `DestructureTarget` against the value's tuple type,
+- `checker/destructure.rs` owns destructuring assignment (`check_destructure`).
+  A sequence target is `check_sequence_destructure`'s desugar (anchor,
+  raising `check_list_length`, per-element `__getitem__(i)` reads stored by
+  `store_sequence_element`, a subscript leaf gated by
+  `require_mutable_subscript`), recorded in `statement_desugars`. A tuple
+  target is the recursive walk of a `DestructureTarget` against the value's tuple type,
   declaring `var`/`ref` leaves (their binding and storage type recorded at
   the leaf's occurrence, which the checked target carries), writing name and
   place leaves, and attaching the extraction plan — a tree of
@@ -125,8 +129,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   the value node (`SemanticAdjustment::TupleUnpack`); MIR's
   `lower_destructure` (`mir/lower_stmt.rs`) consumes it.
 - `checker/patterns.rs` owns the `match` statement (`check_match`): it
-  synthesizes the hidden `$match<id>` anchor over the subject (`Synth`, as
-  `with` does) — `ref $match<id> = place` for a place, `var $match<id> =
+  synthesizes the hidden `$match<id>` anchor over the subject (`Synth`;
+  `anchor_subject`, which sequence destructuring shares with
+  `make_reference_immutable` and the `require_sized` gate) — `ref $match<id> = place` for a place, `var $match<id> =
   value` for a temporary — checks every case in its own scope through
   `compile_pattern` — a literal or `== expr` pattern becomes a synthesized
   `subject == value` test, a binding (`bind_subject`) a synthesized
@@ -186,14 +191,19 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `checker/with_stmt.rs` owns the `with` statement: `check_with` classifies
   the manager into a `WithForm` (`context_manager_form`: consuming
   `__enter__`, plain and error-taking `__exit__` overloads, upstream's
-  rejections), synthesizes the desugar (`Synth` node factory, whose node
-  identities are `SyntaxId::derived` from the statement's, hidden
-  `$with<id>_*` names) and checks it in a block scope, recording a
-  `WithDesugar` (its statements); and
-  `splice_with_desugars` replaces every checked `with` in the final tree
-  before `explicit_destroy`; `KEEP_ALIVE_BUILTIN` names the
+  rejections), synthesizes the desugar (hidden `$with<id>_*` names) and
+  checks it in a block scope, recording a `StatementDesugar`;
+  `KEEP_ALIVE_BUILTIN` names the
   `_mojito_keep_alive` liveness anchor the call inference accepts and MIR's
   `lower_stmt.rs` lowers to `KeepAlive`.
+- `checker/desugar.rs` owns the statements the checker desugars: the
+  `Synth` node factory (node identities `SyntaxId::derived` from the
+  statement's, used by `with`, sequence destructuring, and `match`'s
+  commands), `StatementDesugar` (a statement's replacement, kept in
+  `Checker::statement_desugars`), and `splice_desugars`, which replaces
+  every checked `with` and sequence `Destructure` in the final tree (through
+  every nested block, `match` case bodies included) before
+  `explicit_destroy`.
 - `checker/bound_defaults.rs` owns the requirement defaults bound at a call
   through a trait bound: `record_bound_default_arguments` (called from the
   bound branch, `resolve_bound_method` in `method_calls/resolution.rs`)

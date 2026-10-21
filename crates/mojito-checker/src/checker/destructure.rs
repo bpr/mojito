@@ -1,31 +1,49 @@
 //! Destructuring assignment: `a, b = t`, `var a, b = t`,
-//! `(var a, (ref b, _)) = pair`, nested places. The value is read once and
-//! its tuple elements distributed to the target's leaves through one
-//! extraction plan ([`CheckedTupleUnpackElement`]), which MIR lowers.
+//! `(var a, (ref b, _)) = pair`, `var [a, b] = values`, nested places.
+//!
+//! A tuple target reads the value once and distributes its tuple elements
+//! to the target's leaves through one extraction plan
+//! ([`CheckedTupleUnpackElement`]), which MIR lowers.
+//!
+//! A sequence target is upstream's list-pattern store, a straight line of
+//! ordinary calls and stores, so it is a checked desugar (`desugar.rs`)
+//! rather than a plan: the value is anchored once
+//! (`ref $seq<id> = place` made immutable, or `var $seq<id> = value`), its
+//! type must declare `Sized`, the raising
+//! `check_list_length($seq<id>, n, True)` runs before any store, and then
+//! each element is read through `$seq<id>.__getitem__(i)` and stored into
+//! its target in order, the target's own subexpressions evaluating after
+//! that read. `_` still reads its element, an owned element moves into a
+//! `var` leaf, and a nested tuple or sequence target destructures the
+//! element read into a hidden `$elem<id>`.
 
+use super::desugar::{StatementDesugar, Synth};
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_ast::ast::{BindingMode, DestructureTarget, DestructureTargetKind};
+use mojito_ast::ast::{BindingMode, DestructureTarget, DestructureTargetKind, SequenceTarget};
 use mojito_checked::checked::CheckedTupleUnpackElement;
+use mojito_common::literal::IntLiteral;
 use mojito_types::origin::{Mutability, Origin, OriginPlace, RefTy};
 use mojito_types::types::TyKind;
 
 impl Checker {
-    /// Check `target = value`: the value must be a tuple of the target's
-    /// arity at every tuple level, each leaf is declared, written, or
-    /// discarded, and the plan recording each element's read is attached to
-    /// the value node.
+    /// Check the statement `stmt`, `target = value`. For a tuple target the
+    /// value must be a tuple of the target's arity at every tuple level,
+    /// each leaf is declared, written, or discarded, and the plan recording
+    /// each element's read is attached to the value node; a sequence target
+    /// is checked as its desugar (see the module docs).
     pub(super) fn check_destructure(
         &mut self,
+        stmt: &Stmt,
         target: &DestructureTarget,
         value: &Expr,
+        ret: Option<&Ty>,
+        in_loop: bool,
     ) -> Result<(), TypeError> {
         let items = match &target.kind {
             DestructureTargetKind::Tuple(items) => items,
-            DestructureTargetKind::Sequence(_) => {
-                return Err(TypeError::Unsupported(
-                    "sequence destructuring targets".into(),
-                ));
+            DestructureTargetKind::Sequence(items) => {
+                return self.check_sequence_destructure(stmt, items, value, ret, in_loop);
             }
             DestructureTargetKind::Discard
             | DestructureTargetKind::Declare { .. }
@@ -73,6 +91,229 @@ impl Checker {
         }
         self.record_at(value.source_span()).tuple_unpack_plan = Some(plan);
         Ok(())
+    }
+
+    /// Check `[t0, t1, ...] = value`, the statement `stmt`, as upstream's
+    /// list-pattern store, and record the statements it desugars to: the
+    /// anchor, the raising length check, then each element's read and
+    /// store, each checked in the current scope so the leaves outlive it.
+    fn check_sequence_destructure(
+        &mut self,
+        stmt: &Stmt,
+        items: &[SequenceTarget],
+        value: &Expr,
+        ret: Option<&Ty>,
+        in_loop: bool,
+    ) -> Result<(), TypeError> {
+        let items = items
+            .iter()
+            .map(|item| match item {
+                SequenceTarget::Element(target) => Ok(target),
+                SequenceTarget::Star(_) => Err(TypeError::Unsupported(
+                    "starred sequence destructuring targets".into(),
+                )),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let synth = Synth::for_statement(stmt, value.source.clone());
+        let anchor_name = format!("$seq{}", synth.parent().0);
+        let (anchor, ty, _) =
+            self.anchor_subject(&synth, &anchor_name, value, true, ret, in_loop)?;
+        if matches!(
+            ty.kind(),
+            TyKind::Int | TyKind::UInt | TyKind::Float64 | TyKind::Simd { .. }
+        ) {
+            return Err(TypeError::Unsupported(format!(
+                "sequence destructuring of '{ty}', which has no '__len__'/'__getitem__' yet"
+            )));
+        }
+        self.require_sized(&ty)?;
+        let check_list_length = builtin_stub("check_list_length");
+        if self.lookup(&check_list_length).is_none() {
+            return Err(TypeError::Unsupported(format!(
+                "sequence destructuring needs the bundled '{STUBS_MODULE}' module"
+            )));
+        }
+        if !self.raising_allowed() {
+            return Err(TypeError::UnhandledRaise(
+                "a sequence destructuring assignment".into(),
+            ));
+        }
+        let length_check = synth.stmt(StmtKind::Expr(synth.expr(ExprKind::Call {
+            name: check_list_length,
+            param_args: Vec::new(),
+            args: vec![
+                synth.identifier(&anchor_name),
+                int_literal(&synth, items.len()),
+                synth.expr(ExprKind::Bool(true)),
+            ],
+            kwargs: Vec::new(),
+        })));
+        self.check_stmt(&length_check, ret, in_loop)?;
+        let mut statements = vec![anchor, length_check];
+        for (index, item) in items.into_iter().enumerate() {
+            let read = synth.expr(ExprKind::MethodCall {
+                object: Box::new(synth.identifier(&anchor_name)),
+                method: "__getitem__".to_string(),
+                args: vec![int_literal(&synth, index)],
+                kwargs: Vec::new(),
+            });
+            self.store_sequence_element(&synth, item, read, &mut statements, ret, in_loop)?;
+        }
+        self.statement_desugars
+            .borrow_mut()
+            .insert(stmt.source_span(), StatementDesugar { statements });
+        Ok(())
+    }
+
+    /// Store the element `read` reads into the sequence target `item`,
+    /// appending the checked statements that do it to `statements`: `_`
+    /// discards the read, a `var` leaf declares it, a `ref` leaf binds it to
+    /// read, a name is assigned it, and any other place, tuple, or sequence
+    /// target takes the read through a hidden `$elem<id>` first, since its
+    /// own subexpressions evaluate after the read.
+    fn store_sequence_element(
+        &mut self,
+        synth: &Synth,
+        item: &DestructureTarget,
+        read: Expr,
+        statements: &mut Vec<Stmt>,
+        ret: Option<&Ty>,
+        in_loop: bool,
+    ) -> Result<(), TypeError> {
+        let read_span = read.source_span();
+        let store = match &item.kind {
+            DestructureTargetKind::Discard => StmtKind::Assign {
+                name: "_".to_string(),
+                value: read,
+            },
+            DestructureTargetKind::Declare {
+                name,
+                mode: BindingMode::Var,
+            } => StmtKind::VarDecl {
+                name: name.clone(),
+                ty: None,
+                value: read,
+            },
+            DestructureTargetKind::Declare {
+                name,
+                mode: BindingMode::Ref,
+            } => {
+                let declaration = synth.stmt(StmtKind::RefDecl {
+                    name: name.clone(),
+                    value: read,
+                });
+                self.check_stmt(&declaration, ret, in_loop)?;
+                self.make_reference_immutable(name, &declaration, read_span);
+                statements.push(declaration);
+                return Ok(());
+            }
+            DestructureTargetKind::Declare {
+                name,
+                mode: BindingMode::Immutable,
+            } => {
+                return Err(TypeError::InvariantViolation(format!(
+                    "destructuring leaf '{name}' declares without a convention"
+                )));
+            }
+            DestructureTargetKind::Place(place) => {
+                if let ExprKind::Identifier(name) = &place.kind {
+                    if self.lookup(name).is_none() {
+                        return Err(TypeError::AssignToUndeclared(name.clone()));
+                    }
+                    StmtKind::Assign {
+                        name: name.clone(),
+                        value: read,
+                    }
+                } else {
+                    self.require_mutable_subscript(place)?;
+                    let (element, owned) =
+                        self.read_into_hidden(synth, read, statements, ret, in_loop)?;
+                    let element = if owned {
+                        synth.expr(ExprKind::Transfer(Box::new(element)))
+                    } else {
+                        element
+                    };
+                    StmtKind::SetPlace {
+                        place: place.clone(),
+                        value: element,
+                    }
+                }
+            }
+            DestructureTargetKind::Tuple(_) | DestructureTargetKind::Sequence(_) => {
+                let (element, _) = self.read_into_hidden(synth, read, statements, ret, in_loop)?;
+                StmtKind::Destructure {
+                    target: item.clone(),
+                    value: element,
+                }
+            }
+        };
+        let store = synth.stmt(store);
+        self.check_stmt(&store, ret, in_loop)?;
+        statements.push(store);
+        Ok(())
+    }
+
+    /// A nominal subscript target (`s[i]`) must name a mutable place, a
+    /// getter's mutable reference: upstream stores into the subscript's
+    /// reference and never calls `__setitem__`.
+    fn require_mutable_subscript(&self, place: &Expr) -> Result<(), TypeError> {
+        let ExprKind::Index { object, index } = &place.kind else {
+            return Ok(());
+        };
+        if self.type_keyed_projection(object, index)
+            || !matches!(self.infer(object)?.kind(), TyKind::Struct(name, _) if self.structs.contains_key(name))
+        {
+            return Ok(());
+        }
+        self.infer(place)?;
+        if self
+            .infer_reference_value(place)
+            .is_some_and(|reference| reference.mutability == Mutability::Mutable)
+        {
+            return Ok(());
+        }
+        Err(TypeError::NotMutableInCollectionLiteral(
+            place_root_name(place).map_or_else(
+                || "a subscript".to_string(),
+                |root| format!("a subscript of '{root}'"),
+            ),
+        ))
+    }
+
+    /// Read `read` into a hidden `$elem<id>`, appending its checked
+    /// declaration to `statements`: `ref` (to read) over a reference
+    /// result, `var` over an owned one. The hidden name and whether the
+    /// read is owned.
+    fn read_into_hidden(
+        &mut self,
+        synth: &Synth,
+        read: Expr,
+        statements: &mut Vec<Stmt>,
+        ret: Option<&Ty>,
+        in_loop: bool,
+    ) -> Result<(Expr, bool), TypeError> {
+        let read_span = read.source_span();
+        let name = format!("$elem{}", read.syntax_id.0);
+        self.infer(&read)?;
+        let reference = self.infer_reference_value(&read).is_some();
+        let declaration = synth.stmt(if reference {
+            StmtKind::RefDecl {
+                name: name.clone(),
+                value: read,
+            }
+        } else {
+            StmtKind::VarDecl {
+                name: name.clone(),
+                ty: None,
+                value: read,
+            }
+        });
+        self.check_stmt(&declaration, ret, in_loop)?;
+        if reference {
+            self.make_reference_immutable(&name, &declaration, read_span);
+        }
+        statements.push(declaration);
+        Ok((synth.identifier(&name), !reference))
     }
 
     /// The plan for the elements of a tuple-typed value `vt`, read through
@@ -161,7 +402,7 @@ impl Checker {
                 }
                 DestructureTargetKind::Sequence(_) => {
                     return Err(TypeError::Unsupported(
-                        "sequence destructuring targets".into(),
+                        "a sequence target inside a tuple target".into(),
                     ));
                 }
             }
@@ -297,4 +538,11 @@ impl Checker {
         }
         Ok(())
     }
+}
+
+/// The integer literal `value`, made by `synth`.
+fn int_literal(synth: &Synth, value: usize) -> Expr {
+    synth.expr(ExprKind::Int(IntLiteral::from(
+        u64::try_from(value).unwrap_or(u64::MAX),
+    )))
 }

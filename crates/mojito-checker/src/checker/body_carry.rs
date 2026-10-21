@@ -143,7 +143,7 @@ pub struct InternalStores {
     nested_def_params: FactMap<SourceSpan, Vec<OwnerId>>,
     view_result_interiors: FactMap<SourceSpan, Vec<String>>,
     call_parameters: FactMap<SourceSpan, Vec<super::CallParameter>>,
-    with_desugars: FactMap<SourceSpan, super::with_stmt::WithDesugar>,
+    statement_desugars: FactMap<SourceSpan, super::desugar::StatementDesugar>,
     lifted_expressions: FactMap<SourceSpan, mojito_types::param_expr::ParamExpr>,
     copyable_reference_result_reads: FactSet<SourceSpan>,
     discarded_reference_results: FactSet<SourceSpan>,
@@ -219,7 +219,7 @@ macro_rules! carried_stores {
             internal map nested_def_params = nested_def_params;
             internal map view_result_interiors = view_result_interiors;
             internal map call_parameters = call_parameters;
-            internal map with_desugars = with_desugars;
+            internal map statement_desugars = statement_desugars;
             internal map lifted_expressions = lifted_expressions;
             internal set copyable_reference_result_reads = copyable_reference_result_reads;
             internal set discarded_reference_results = discarded_reference_results;
@@ -375,7 +375,7 @@ macro_rules! define_carry_ops {
                     nested_def_params: self.nested_def_params.into_inner(),
                     view_result_interiors: self.view_result_interiors.into_inner(),
                     call_parameters: self.call_parameters.into_inner(),
-                    with_desugars: self.with_desugars.into_inner(),
+                    statement_desugars: self.statement_desugars.into_inner(),
                     lifted_expressions: self.lifted_expressions.into_inner(),
                     copyable_reference_result_reads: self.copyable_reference_result_reads.into_inner(),
                     discarded_reference_results: self.discarded_reference_results.into_inner(),

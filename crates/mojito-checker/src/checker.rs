@@ -332,9 +332,9 @@ fn check_program_carrying(
         let _export = timing::span("export_interfaces");
         context.interfaces = Some(checker.export_interfaces(&expanded, &context.elaborated));
     }
-    // Context managers are desugared by the checker; later phases see only
-    // the ordinary statements it checked.
-    with_stmt::splice_with_desugars(&mut expanded, &checker.with_desugars.borrow());
+    // Context managers and sequence destructuring are desugared by the
+    // checker; later phases see only the ordinary statements it checked.
+    desugar::splice_desugars(&mut expanded, &checker.statement_desugars.borrow());
     let explicit_destroy_types = {
         let _finish = timing::span("explicit_destroy");
         let explicit_destroy_types = explicit_destroy_types(&checker);
@@ -858,9 +858,10 @@ pub struct Checker {
             mojito_checked::checked::DeclarationEffect,
         >,
     >,
-    /// Each checked `with` statement's desugar (keyed by the statement),
-    /// spliced into the final tree after the last transfer round.
-    with_desugars: RefCell<FactMap<SourceSpan, with_stmt::WithDesugar>>,
+    /// Each desugared statement's replacement (a `with` statement or a
+    /// sequence destructuring assignment, keyed by the statement), spliced
+    /// into the final tree after the last transfer round.
+    statement_desugars: RefCell<FactMap<SourceSpan, desugar::StatementDesugar>>,
     /// Positive site-sensitive drop facts retained for the later explicit-
     /// destroy CFG pass. Conditional conformances are meaningful only in the
     /// constraint environment in which a binding was checked.
@@ -1053,7 +1054,7 @@ impl Checker {
             declaration_types: RefCell::new(FactMap::default()),
             generic_parameters: RefCell::new(FactMap::default()),
             declaration_effects: RefCell::new(FactMap::default()),
-            with_desugars: RefCell::new(FactMap::default()),
+            statement_desugars: RefCell::new(FactMap::default()),
             explicit_destroy_deletability: RefCell::new(
                 crate::explicit_destroy::CheckedDeletability::default(),
             ),
@@ -3181,6 +3182,7 @@ mod ffi_calls;
 
 mod bound_defaults;
 mod destructure;
+mod desugar;
 mod patterns;
 pub use patterns::irrefutable as irrefutable_pattern;
 mod statements;

@@ -1,7 +1,7 @@
 //! The `with` statement: a type-aware desugar into ordinary statements
 //! (`VarDecl`, `Try`, `If`, `Raise`, `Expr`) that is checked in place and
-//! spliced into the final checked tree, so HIR, MIR, and the backends never
-//! see a context manager. The manager type selects the shape:
+//! spliced into the final checked tree (`desugar.rs`), so HIR, MIR, and the
+//! backends never see a context manager. The manager type selects the shape:
 //!
 //! - a consuming `__enter__` (`var self`, no `__exit__` allowed): the enter
 //!   result stands in for the manager and lives to the end of the block;
@@ -15,13 +15,13 @@
 //! like any local (the pinned Mojo destroys it before the block ends); only
 //! the manager — or its consuming-enter stand-in — is kept alive through the
 //! block, via the compiler-private `_mojito_keep_alive(name)` statement HIR
-//! lowers to a liveness anchor. Extracted from `statements.rs`; see
-//! `docs/symbol-map.md`.
+//! lowers to a liveness anchor. The splice and the node factory live in
+//! `desugar.rs`; see `docs/symbol-map.md`.
 
+use super::desugar::{StatementDesugar, Synth};
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::WithItem;
-use mojito_common::token::SyntaxId;
 use mojito_types::types::TyKind;
 
 /// The desugar a `with` statement takes.
@@ -49,35 +49,6 @@ enum WithForm {
 /// copying or moving it (HIR lowers it to `KeepAlive`).
 pub const KEEP_ALIVE_BUILTIN: &str = "_mojito_keep_alive";
 
-/// A checked `with` statement's desugar: the statements that replace it.
-#[derive(Debug, Clone)]
-pub(super) struct WithDesugar {
-    pub(super) statements: Vec<Stmt>,
-}
-
-/// Replace every checked `with` statement in `stmts` (recursively, through
-/// every nested block and declaration body) by its recorded desugar. A `with`
-/// without a recorded desugar stays as written.
-pub(super) fn splice_with_desugars(
-    stmts: &mut Vec<Stmt>,
-    desugars: &HashMap<SourceSpan, WithDesugar>,
-) {
-    let mut index = 0;
-    while index < stmts.len() {
-        if matches!(stmts[index].kind, StmtKind::With { .. })
-            && let Some(replacement) = desugars.get(&stmts[index].source_span())
-        {
-            // The replacement may itself hold a nested `with` (a later item of
-            // a multi-item statement, or one written in the body); re-examine
-            // from the same index.
-            stmts.splice(index..=index, replacement.statements.iter().cloned());
-            continue;
-        }
-        splice_nested(&mut stmts[index], desugars);
-        index += 1;
-    }
-}
-
 impl Checker {
     /// Check `with items: body` by desugaring it (see the module docs),
     /// checking the desugar in a block scope, and recording it for the
@@ -97,7 +68,7 @@ impl Checker {
         let result = self.check_with_item(item, body, &synth, ret, in_loop);
         self.pop_scope();
         let desugar = result?;
-        self.with_desugars
+        self.statement_desugars
             .borrow_mut()
             .insert(stmt.source_span(), desugar);
         Ok(())
@@ -110,8 +81,8 @@ impl Checker {
         synth: &Synth,
         ret: Option<&Ty>,
         in_loop: bool,
-    ) -> Result<WithDesugar, TypeError> {
-        let manager = synth.name("mgr");
+    ) -> Result<StatementDesugar, TypeError> {
+        let manager = hidden_name(synth, "mgr");
         let mut statements = vec![manager_declaration(item, synth, &manager)];
         self.check_stmt(&statements[0], ret, in_loop)?;
         let manager_ty = self.lookup(&manager).cloned().ok_or_else(|| {
@@ -122,7 +93,7 @@ impl Checker {
         for statement in &statements[1..] {
             self.check_stmt(statement, ret, in_loop)?;
         }
-        Ok(WithDesugar { statements })
+        Ok(StatementDesugar { statements })
     }
 
     /// The desugar form a manager's protocol selects, from its declared
@@ -181,83 +152,9 @@ impl Checker {
     }
 }
 
-/// Node factory for one `with` statement's desugar: every synthesized node
-/// carries the statement's span and provenance, and the next identity
-/// derived from the statement's own ([`SyntaxId::derived`]), so building the
-/// desugar again yields the same occurrences. Hidden names are unique per
-/// statement.
-/// A node factory for syntax the check synthesizes on behalf of statement
-/// `parent`: every node carries the statement's span and module and an
-/// identity derived from the statement's, so its facts are its own.
-pub(super) struct Synth {
-    span: mojito_common::token::Span,
-    module: Option<String>,
-    source: Option<String>,
-    parent: SyntaxId,
-    next: std::cell::Cell<u32>,
-}
-
-impl Synth {
-    /// The factory for the nodes the check synthesizes for `stmt`, their
-    /// expressions sourced as `source`.
-    pub(super) fn for_statement(stmt: &Stmt, source: Option<String>) -> Self {
-        Self {
-            span: stmt.span,
-            module: stmt.module.clone(),
-            source,
-            parent: stmt.syntax_id,
-            next: std::cell::Cell::new(0),
-        }
-    }
-
-    /// The factory for the nodes the check synthesizes for the `case`
-    /// condition whose pattern is `pattern`, their expressions sourced as
-    /// `source`.
-    pub(super) fn for_pattern(
-        pattern: &mojito_ast::ast::MatchPattern,
-        source: Option<String>,
-    ) -> Self {
-        Self {
-            span: pattern.span,
-            module: pattern.source.clone(),
-            source,
-            parent: pattern.syntax_id,
-            next: std::cell::Cell::new(0),
-        }
-    }
-
-    /// The statement's own identity, which hidden names derive from.
-    pub(super) const fn parent(&self) -> SyntaxId {
-        self.parent
-    }
-
-    pub(super) fn stmt(&self, kind: StmtKind) -> Stmt {
-        let mut statement = Stmt::new(kind, self.span);
-        statement.module.clone_from(&self.module);
-        statement.syntax_id = self.identity();
-        statement
-    }
-
-    pub(super) fn expr(&self, kind: ExprKind) -> Expr {
-        let mut expression = Expr::new(kind, self.span);
-        expression.source.clone_from(&self.source);
-        expression.syntax_id = self.identity();
-        expression
-    }
-
-    pub(super) fn identifier(&self, name: &str) -> Expr {
-        self.expr(ExprKind::Identifier(name.to_string()))
-    }
-
-    fn name(&self, role: &str) -> String {
-        format!("$with{}_{role}", self.parent.0)
-    }
-
-    fn identity(&self) -> SyntaxId {
-        let ordinal = self.next.get();
-        self.next.set(ordinal + 1);
-        SyntaxId::derived(self.parent, ordinal)
-    }
+/// The hidden name of the desugar's `role` binding, unique per statement.
+fn hidden_name(synth: &Synth, role: &str) -> String {
+    format!("$with{}_{role}", synth.parent().0)
 }
 
 /// The first context item of `with items: body`, the node factory for its
@@ -323,7 +220,7 @@ fn desugar_tail(
             WithForm::ConsumingEnter {
                 returns_none: false,
             },
-        ) => Some(synth.name("enter")),
+        ) => Some(hidden_name(synth, "enter")),
         (None, _) => None,
     };
     let mut desugar = vec![match &bound {
@@ -373,8 +270,8 @@ fn desugar_tail(
         // not manager.__exit__(err): raise err finally: if not handled:
         // manager.__exit__()`.
         WithForm::ErrorExit => {
-            let handled = synth.name("handled");
-            let error = synth.name("err");
+            let handled = hidden_name(synth, "handled");
+            let error = hidden_name(synth, "err");
             desugar.push(synth.stmt(StmtKind::VarDecl {
                 name: handled.clone(),
                 ty: None,
@@ -417,57 +314,4 @@ fn desugar_tail(
         WithForm::PlainExit => desugar.push(protect(body, None, vec![plain_exit()])),
     }
     desugar
-}
-
-fn splice_nested(stmt: &mut Stmt, desugars: &HashMap<SourceSpan, WithDesugar>) {
-    match &mut stmt.kind {
-        StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
-            for (_, block) in branches {
-                splice_with_desugars(block, desugars);
-            }
-            if let Some(block) = orelse {
-                splice_with_desugars(block, desugars);
-            }
-        }
-        StmtKind::While { body, orelse, .. } | StmtKind::For { body, orelse, .. } => {
-            splice_with_desugars(body, desugars);
-            if let Some(block) = orelse {
-                splice_with_desugars(block, desugars);
-            }
-        }
-        StmtKind::ComptimeFor { body, .. }
-        | StmtKind::With { body, .. }
-        | StmtKind::Scope(body)
-        | StmtKind::Def { body, .. } => splice_with_desugars(body, desugars),
-        StmtKind::Try {
-            body,
-            except,
-            orelse,
-            finalbody,
-        } => {
-            splice_with_desugars(body, desugars);
-            if let Some((_, block)) = except {
-                splice_with_desugars(block, desugars);
-            }
-            if let Some(block) = orelse {
-                splice_with_desugars(block, desugars);
-            }
-            if let Some(block) = finalbody {
-                splice_with_desugars(block, desugars);
-            }
-        }
-        StmtKind::Struct { methods, .. } => {
-            for method in methods {
-                splice_with_desugars(&mut method.body, desugars);
-            }
-        }
-        StmtKind::Trait { methods, .. } => {
-            for method in methods {
-                if let Some(body) = &mut method.default_body {
-                    splice_with_desugars(body, desugars);
-                }
-            }
-        }
-        _ => {}
-    }
 }

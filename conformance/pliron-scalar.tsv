@@ -203,7 +203,9 @@ assets/ok/defines_main.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/deinit_body_field_last_use.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/deinit_param_destruction_timing.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/delegated_ref_return_projection.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/destructure_list_wrong_length_raises.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/destructure_nested_targets.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/destructure_sequence_targets.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/destructure_swap_and_places.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_display_literal_constructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_hasher_forwarding.mojo	-	ineligible	no-scalar-entry-shape
@@ -1121,6 +1123,7 @@ assets/ok/where_repeated_clauses.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/while.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/with_enter_only.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/with_exit_error_swallow.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/with_inside_match_case.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/with_multiple.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/with_multiple_dependent.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/with_statement.mojo	-	ineligible	no-scalar-entry-shape

@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Fixed-length sequence destructuring (`var [a, b] = values`,
+  `[p, q] = mk`, `[xs[i], xs[j]] = make()`, `[var m, ref r, s] = ys`, and
+  nested `var [(c, d), [e, _]] = rows`) now runs as on the pin: the value
+  is evaluated once and must declare `Sized`, upstream's raising
+  `check_list_length` runs before any store (so the statement needs a
+  raising context and a wrong length is caught by `try`), then each element
+  is read through `value.__getitem__(i)` and stored in order, a target's own
+  subexpressions evaluating after its read. The checker desugars it into
+  ordinary statements through the `with` statement's splice, now in
+  `checker/desugar.rs`, which also reaches `match` case bodies, so a `with`
+  inside a `case` no longer reaches MIR unchecked
+  (`assets/ok/with_inside_match_case.mojo`,
+  `assets/ok/destructure_sequence_targets.mojo`,
+  `assets/ok/destructure_list_wrong_length_raises.mojo`,
+  `destructure_sequence_*` in the error folders). This closes R1136.
 - Fixed-length sequence patterns (`case []`, `case [x]`, `case [a, 11, c]`,
   and `if case [_, b, _] = xs`) now run over any subject that declares
   `Sized`, as on the pin: one length test through upstream's

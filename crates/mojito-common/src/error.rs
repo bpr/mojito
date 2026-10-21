@@ -172,6 +172,9 @@ pub enum TypeError {
     /// function parameter. Mojo function arguments are immutable unless their
     /// convention makes them writable (`mut`, `ref`, `out`).
     ImmutableBinding(String),
+    /// A sequence destructuring target that is not a mutable place: a
+    /// subscript whose getter yields no mutable reference.
+    NotMutableInCollectionLiteral(String),
     /// An augmented assignment whose destination binding is immutable.
     ImmutableInPlaceDestination(String),
     /// A `^` transfer out of a place rooted at an immutable binding, such as
@@ -668,6 +671,12 @@ impl fmt::Display for TypeError {
             Self::InvalidDecorator(message) => f.write_str(message),
             Self::ImmutableBinding(name) => {
                 write!(f, "expression must be mutable in assignment ('{name}')")
+            }
+            Self::NotMutableInCollectionLiteral(place) => {
+                write!(
+                    f,
+                    "expression must be mutable in collection literal ({place})"
+                )
             }
             Self::ImmutableInPlaceDestination(name) => {
                 write!(

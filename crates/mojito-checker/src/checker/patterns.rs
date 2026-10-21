@@ -2,7 +2,7 @@
 //! compiles to the commands upstream's `PatternMatchBuilder` builds (tests
 //! and bindings), and the plan is recorded for the checked program.
 //!
-//! The check synthesizes the syntax its commands run on (`with_stmt.rs`'s
+//! The check synthesizes the syntax its commands run on (`desugar.rs`'s
 //! `Synth`): `ref $match<id> = subject` anchors the subject with the
 //! ordinary reference-binding rules (a place keeps its storage, a temporary
 //! gets a hidden slot for the statement), a test is the comparison
@@ -20,7 +20,7 @@
 //! hidden `$elem<id>`: `ref` over a reference result, `var` over an owned
 //! one, which a `var` binding then takes by transfer. `_` reads nothing.
 
-use super::with_stmt::Synth;
+use super::desugar::Synth;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::{BindingMode, MatchCase, MatchPattern, MatchPatternKind, SequencePattern};
@@ -97,7 +97,7 @@ impl Checker {
     /// through the statement (`var name = value`), which no `ref` binding of
     /// a register-passable value may name. The anchor statement, the
     /// subject's type (a reference stripped), and whether it is a temporary.
-    fn anchor_subject(
+    pub(super) fn anchor_subject(
         &mut self,
         synth: &Synth,
         name: &str,
@@ -128,6 +128,53 @@ impl Checker {
             TypeError::InvariantViolation("the match subject's anchor was not declared".into())
         })?;
         Ok((anchor, dereferenced(ty), temporary))
+    }
+
+    /// Make the reference binding `name`, declared by `declaration` over
+    /// the value at `value_span`, read its referent whatever the place's
+    /// capability: the binding, its type, and its borrow are immutable.
+    pub(super) fn make_reference_immutable(
+        &mut self,
+        name: &str,
+        declaration: &Stmt,
+        value_span: SourceSpan,
+    ) {
+        self.set_binding_mutable(name, false);
+        self.record_at(value_span).reference_value_use = Some(false);
+        if let Some(ty) = self.lookup(name).cloned()
+            && let TyKind::Ref(reference) = ty.kind()
+        {
+            let mut reference = reference.clone();
+            reference.mutability = mojito_types::origin::Mutability::Immutable;
+            let ty = Ty::new(TyKind::Ref(reference));
+            self.set_binding_type(name, ty.clone());
+            self.record_at(declaration.source_span()).binding_ty = Some(ty);
+        }
+    }
+
+    /// Whether the check proved the `match` statement `stmt` covers every
+    /// value of its subject, so that nothing falls through it.
+    pub(super) fn match_concluded(&self, stmt: &Stmt) -> bool {
+        self.has_fact(&stmt.source_span(), |facts| {
+            facts.match_plan.as_ref().is_some_and(|plan| plan.concluded)
+        })
+    }
+
+    /// Require `ty` to declare `Sized`, the gate upstream's list patterns
+    /// and list-pattern stores share, with its two diagnostics: an unknown
+    /// conformance of a parameter cannot be proved, any other type does not
+    /// conform.
+    pub(super) fn require_sized(&self, ty: &Ty) -> Result<(), TypeError> {
+        if self.conforms_to(ty, "Sized") {
+            return Ok(());
+        }
+        Err(TypeError::MatchPattern(
+            if matches!(ty.kind(), TyKind::Param { .. }) {
+                format!("cannot prove that value of type '{ty}' conforms to 'Sized'")
+            } else {
+                format!("value of type '{ty}' does not conform to 'Sized'")
+            },
+        ))
     }
 
     fn check_match_cases(
@@ -198,31 +245,6 @@ impl Checker {
         facts.match_plan = Some(plan);
         facts.match_warnings = (!warnings.is_empty()).then_some(warnings);
         Ok(())
-    }
-
-    /// Make the reference binding `name`, declared by `declaration` over
-    /// the value at `value_span`, read its referent whatever the place's
-    /// capability: the binding, its type, and its borrow are immutable.
-    fn make_reference_immutable(&mut self, name: &str, declaration: &Stmt, value_span: SourceSpan) {
-        self.set_binding_mutable(name, false);
-        self.record_at(value_span).reference_value_use = Some(false);
-        if let Some(ty) = self.lookup(name).cloned()
-            && let TyKind::Ref(reference) = ty.kind()
-        {
-            let mut reference = reference.clone();
-            reference.mutability = mojito_types::origin::Mutability::Immutable;
-            let ty = Ty::new(TyKind::Ref(reference));
-            self.set_binding_type(name, ty.clone());
-            self.record_at(declaration.source_span()).binding_ty = Some(ty);
-        }
-    }
-
-    /// Whether the check proved the `match` statement `stmt` covers every
-    /// value of its subject, so that nothing falls through it.
-    pub(super) fn match_concluded(&self, stmt: &Stmt) -> bool {
-        self.has_fact(&stmt.source_span(), |facts| {
-            facts.match_plan.as_ref().is_some_and(|plan| plan.concluded)
-        })
     }
 
     /// One case in its own scope: its pattern's commands, then its body.
@@ -434,18 +456,7 @@ impl Checker {
                 subject.ty
             )));
         }
-        if !self.conforms_to(&subject.ty, "Sized") {
-            return Err(TypeError::MatchPattern(
-                if matches!(subject.ty.kind(), TyKind::Param { .. }) {
-                    format!(
-                        "cannot prove that value of type '{}' conforms to 'Sized'",
-                        subject.ty
-                    )
-                } else {
-                    format!("value of type '{}' does not conform to 'Sized'", subject.ty)
-                },
-            ));
-        }
+        self.require_sized(&subject.ty)?;
         let length_matches = builtin_stub("list_length_matches");
         if self.lookup(&length_matches).is_none() {
             return Err(TypeError::Unsupported(format!(

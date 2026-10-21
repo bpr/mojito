@@ -6410,7 +6410,8 @@ captured stdout or, for `file=`, through its descriptor table; the native
 backend routes every piece of such a call through libc `write` on the
 `RawFileDescriptor`'s value instead of `mjrt_write_stdout`.
 
-The `with` statement is a checker desugar (`checker/with_stmt.rs`), not a
+The `with` statement is a checker desugar (`checker/with_stmt.rs`, spliced
+by `checker/desugar.rs`), not a
 lowering construct: the manager's declared `__enter__`/`__exit__` methods
 select one of a few ordinary statement shapes (`VarDecl`, `Try`, `If`,
 `Raise`, `Expr`), the checker checks that desugar in a block scope, and after
@@ -6427,6 +6428,18 @@ to the end of the block without a copy or a move, while an `as` binding is an
 ordinary local destroyed at its last use, as the pinned Mojo does. The unbound
 result of a non-consuming `__enter__` is not anchored: it is a discarded
 temporary destroyed before the body runs.
+
+A sequence destructuring assignment (`[t0, t1] = value`) is the second
+statement the checker desugars, through the same splice
+(`checker/desugar.rs`, which also owns the `Synth` node factory): upstream's
+list-pattern store is a straight line of ordinary calls and stores, so it is
+not the tuple extraction plan MIR lowers. The desugar anchors the value once
+(`ref $seq<id> = place` made immutable, or `var $seq<id> = value`), calls the
+raising `std.builtin._stubs.check_list_length` before any store, then reads
+each element through `$seq<id>.__getitem__(i)` and stores it into its leaf,
+the leaf's own subexpressions evaluating after the read; a nested target
+destructures a hidden `$elem<id>` the read was bound to, and its own desugar
+is spliced in turn.
 
 A call through a trait bound that leaves out a requirement's default runs
 the requirement's default, as in current Mojo, even though an instance clone

@@ -6,8 +6,13 @@
 #   3
 #   ends 5
 #   5
+#   error: list pattern does not match value length
+# Diagnostics:
+#   warning at line 42: assignment to 'c' was never used; assign to '_' instead?
+#   warning at line 42: assignment to 'd' was never used; assign to '_' instead?
 #
-# Observed 2026-10-17 against `Mojo 1.2.0.dev2026101705 (46f49943)`.
+# Observed 2026-10-17 against `Mojo 1.2.0.dev2026101705 (46f49943)`; the
+# too-short starred target, moved here from R1136's probe, re-run 2026-10-20.
 # Mojito: rejects starred targets until R1137 lands.
 # When Mojito runs it, promote this file to `assets/ok/` with its manifest rows.
 #
@@ -32,3 +37,9 @@ def main() raises:
     match values:
         case [*all]:
             print(len(all))
+    var three: List[Int] = [1, 2, 3]
+    try:
+        var [a, *_, b, c, d] = three
+        print(a, b)
+    except e:
+        print("error:", e)

@@ -202,9 +202,11 @@ t`, the `unpack_assignment` spelling) is the same statement with a flat
 tuple target. A statement-initial `(` or `[` opens a target only when `=`
 follows and no leaf declares: `(a + 1).foo()`, `(a, b)`, and
 `[1, 2].append(3)` remain expressions, while `(var a, b)` without `=` is an
-error. Tuple targets run (`docs/features.md`, Bindings): a nominal subscript
-leaf (`xs[i]`) and sequence targets are parsed and rejected by the checker
-until their slices land.
+error. Tuple targets and fixed-length sequence targets run
+(`docs/features.md`, Bindings); a nominal subscript leaf of a tuple target
+(`xs[i]`), a starred sequence target, and a sequence target nested in a
+tuple target are parsed and rejected by the checker until their slices
+land.
 
 **Augmented assignment** `target OP= e` means `target = target OP e` for the seven
 arithmetic and integer bitwise/shift operators. The target obeys the same place

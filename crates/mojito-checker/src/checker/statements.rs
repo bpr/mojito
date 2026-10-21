@@ -1535,9 +1535,12 @@ impl Checker {
                 Ok(())
             }
 
-            // Destructuring `a, b = t`, `(var a, (ref b, _)) = pair`: the
-            // value's pieces go to the target's leaves (`destructure.rs`).
-            StmtKind::Destructure { target, value } => self.check_destructure(target, value),
+            // Destructuring `a, b = t`, `(var a, (ref b, _)) = pair`,
+            // `var [a, b] = values`: the value's pieces go to the target's
+            // leaves (`destructure.rs`).
+            StmtKind::Destructure { target, value } => {
+                self.check_destructure(stmt, target, value, ret, in_loop)
+            }
 
             // The context-manager protocol is a checked desugar (`with_stmt.rs`).
             StmtKind::With { items, body } => self.check_with(stmt, items, body, ret, in_loop),
@@ -3431,7 +3434,7 @@ impl Checker {
         self.call_result_origins.borrow_mut().remove(span);
         self.view_result_interiors.borrow_mut().remove(span);
         self.call_parameters.borrow_mut().remove(span);
-        self.with_desugars.borrow_mut().remove(span);
+        self.statement_desugars.borrow_mut().remove(span);
         self.comprehension_iterables.borrow_mut().remove(span);
         self.nested_def_params.borrow_mut().remove(span);
         self.copyable_reference_result_reads

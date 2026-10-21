@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1223**.
+Next free ID: **R1226**.
 
 ## Ordered Work
 
@@ -1868,6 +1868,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     `ref` binding reading two elements through the hidden subject (`case
     (1, ref m, var z)`, `case [1, ref m, var z]`); the pin runs all
     (`conformance/probes/access_beside_live_ref_binding.mojo`).
+  - Probe: the aliasing swap `[xs[1], xs[0]] = xs`, whose desugar
+    borrows `xs` as the hidden `$seq<id>` while its leaves write `xs`; the
+    pin runs it and prints `1 1`, and Mojito's rejection names the hidden
+    binding. Add it to `access_beside_live_ref_binding.mojo` when fixing.
   - Found while landing R1037 (2026-10-16).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -2692,22 +2696,23 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1136 Sequence destructuring assigns after a raising length check**
+- [ ] **R1224 A sequence target inside a tuple target is rejected**
 
-  Problem: `var [a, b] = values` parses but is rejected, where the pin
-  stores nothing and raises `list pattern does not match value length` on
-  a wrong length, inside a raising context.
-  - `DestructureTargetKind::Sequence` goes through `check_destructure`
-    (`checker/destructure.rs`) with R1135's decomposition, assignment's
-    raise replacing the next-case failure: the length test comes before
-    any store, and the statement needs a raising context, as at the pin.
-  - The tuple plan's ordering holds: destinations' subexpressions first,
-    the value once, then each element.
-  - Stop: `var [a, b] = values` and mixed place targets run, a wrong
-    length is caught by `try`, a literal target rejects, and destructuring
-    a temporary or loan-carrying collection keeps its owners alive.
-  - Probe: `conformance/probes/destructure_list_wrong_length_raises.mojo`.
-  - Depends on R1135.
+  Problem: `var ([a, b], c) = (values.copy(), 3)` is rejected ("a sequence
+  target inside a tuple target"), where the pin runs it and prints
+  `1 2 3`.
+  - The tuple extraction plan (`destructure_elements` in
+    `checker/destructure.rs`) stores every leaf as one MIR-lowered plan,
+    but a nested sequence target is R1136's checked desugar, a raising
+    length check and per-element calls.
+  - Upstream's `TupleDLValue` stores each element into its destination in
+    order, so the nested list's length check runs before later siblings
+    are stored; the plan must sequence its stores around it, or a tuple
+    holding a sequence target must desugar whole.
+  - Stop: the shape above runs, a wrong inner length raises before `c` is
+    stored, and a non-raising context rejects.
+  - Found while planning R1136 (2026-10-20).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R1137 Starred sequence patterns and targets slice the remainder**
@@ -2724,8 +2729,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     subject fails the match and raises in assignment, mutating or moving
     the source while a remainder borrows it follows the pin, and a
     remainder cannot escape a dead temporary.
-  - Probe: `conformance/probes/destructure_starred_slice.mojo`, and the
-    starred `[_, *_, 12]` half of
+  - The target side extends R1136's desugar (`check_sequence_destructure`
+    in `checker/destructure.rs`), whose starred element rejects today:
+    upstream calls `check_list_length(value, prefix + suffix, False)`.
+  - Probe: `conformance/probes/destructure_starred_slice.mojo` (its last
+    block, the too-short starred target's raise, moved from R1136's
+    probe), and the starred `[_, *_, 12]` half of
     `conformance/probes/match_sequence_custom_sized.mojo`.
   - Depends on R1136.
   - Model: Fable, Not Planned.
@@ -7028,6 +7037,25 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1225 A `var` or `ref` nested under a declaring target prefix
+  declares a name**
+
+  Problem: after `var [c, var d] = values` or `var (ref a, b) = pair`,
+  Mojito declares `d` and `a`, where at the pin the nested convention
+  declares nothing and a later use is `use of unknown declaration 'a'`.
+  - The parser distributes the outer `var` to every leaf and keeps a
+    leaf's own convention (`parse_target_item` in
+    `crates/mojito-parser/src/parser/patterns.rs`), so the nested leaf
+    becomes an ordinary declaration.
+  - Lever: reject a nested convention when the prefix already declares;
+    Mojito may reject what the pin only accepts unused.
+  - Probe: `var (ref a, b) = pair; print(a, b)` is rejected only by the
+    R1082 loan ("access to 'pair' conflicts with live reference 'a'"),
+    since `a` exists.
+  - Found while planning R1136 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1131 A temporary handed to an owning collector runs its move
   initializer**
 
@@ -8981,7 +9009,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The lever: `HandoffStores` builds the `CheckedProgram` from the sealed
     tables and its declaration-level tables, and `DiscoveryResult`,
     `finalize`, and `PassCarry::into_result` go.
-  - Delete the syntax half of `with_stmt::splice_with_desugars` if
+  - Delete the syntax half of `desugar::splice_desugars` if
     nothing but the arena builder reads the spliced statements.
   - This also closes R521.
   - Update `docs/pliron-future.md`'s "checker (+ checked handoff)" row to
@@ -10065,6 +10093,26 @@ residue found inside a task moves to the task that owns its fix.
     `hasher_upstream_spellings.mojo`, and `hasher_user_conformer.mojo`
     spell `finish(var self)`.
   - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1223 `Int`, `UInt`, `Float64`, and `SIMD` have no `__len__` or
+  `__getitem__`**
+
+  Problem: `len(n)`, `n.__getitem__(0)`, and `var [a] = n` reject for an
+  `Int` (`type 'Int' has no method '__len__'`), where the pin's scalars
+  have both, returning 1 and the value, and `SIMD` returns its width and
+  a lane: `var [a, b] = SIMD[DType.int32, 2](1, 2)` prints `1 2`.
+  - `modelled_declares` already calls these types `Sized`, so without the
+    methods R1136's sequence destructuring rejects them explicitly
+    ("sequence destructuring of 'Int', which has no
+    '__len__'/'__getitem__' yet" in `checker/destructure.rs`); lift that
+    rejection when the methods land.
+  - A sequence *pattern* over these types crashes the pin, so
+    `compile_sequence_pattern`'s rejection stays.
+  - Stop: `len(5)`, `var [a] = 5`, the `SIMD` destructuring above, and
+    `var [a, b] = 5` raising the length error all match the pin.
+  - Found while planning R1136 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
