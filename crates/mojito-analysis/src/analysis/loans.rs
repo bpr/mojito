@@ -142,14 +142,6 @@ pub(super) fn projection_covers_domain(
         })
 }
 
-pub(super) fn loan_generation_block_entries(f: &MirFunction) -> Vec<LoanGenerationState> {
-    loan_generation_entries_over(
-        &f.blocks,
-        &LoanGenerationState::default(),
-        &loan_generation_dests(f),
-    )
-}
-
 /// Per-block incoming loan-generation states over an arbitrary block vector (a
 /// function body or a `try` region mini-CFG) with an explicit entry state.
 pub(super) fn loan_generation_entries_over(
@@ -224,25 +216,37 @@ pub(super) enum LoanAccess {
 
 /// Persistent local-loan checking. Reference variables participate in ordinary
 /// backward liveness through `MirPlace::through`, so a loan is active precisely
-/// from `EstablishLoans` through the reference's last use, including CFG
-/// joins/loops. Interior-storage loans have generation semantics instead of
-/// exclusive-owner semantics among themselves (the forward interior-origin
-/// pass checks those), but against a whole-place loan of the same storage
-/// they are ordinary borrows: establishing one beside the other conflicts
-/// when either is mutable (a `for ref` loop over a list while a view of the
-/// list lives, or a view taken inside such a loop).
+/// from `EstablishLoans` through the reference's last use, including branch
+/// joins and loops. Interior-storage loans have generation semantics instead of
+/// exclusive-owner semantics among themselves (the lifetime scan checks
+/// those), but against a whole-place loan of the same storage they are
+/// ordinary borrows: establishing one beside the other conflicts when either
+/// is mutable (a `for ref` loop over a list while a view of the list lives,
+/// or a view taken inside such a loop).
+///
+/// The check walks the structured body twice: backward for reference
+/// liveness (`region_walk.rs`'s `DestructorInsertion`-shaped walk) and
+/// forward for the loan generations reaching each instruction. A `try` is
+/// one instruction to both: it uses every variable read anywhere in its
+/// parts, and neither the loans established nor the accesses made inside it
+/// are checked. Upstream has no persistent-loan check at all (argument
+/// exclusivity is checked at the call), so the exemption keeps the check on
+/// the side of the pin's acceptance.
 pub(super) fn analyze_loans(
     f: &MirFunction,
     callees: &CalleeRefParams<'_>,
 ) -> Result<(), OwnershipError> {
     let mut generations: BTreeMap<u32, Vec<Loan>> = BTreeMap::new();
-    for instr in f.blocks.iter().flat_map(|block| &block.instrs) {
+    let mut references = HashSet::new();
+    for_each_instr_outside_try(&f.blocks, &mut |instr| {
         if let MirInstr::EstablishLoans {
+            reference,
             loans: established,
             marker,
             ..
         } = instr
         {
+            references.insert(*reference);
             generations.insert(
                 marker.0,
                 established
@@ -257,137 +261,35 @@ pub(super) fn analyze_loans(
                     .collect(),
             );
         }
-    }
+    });
     if generations.is_empty() {
         return Ok(());
     }
-
-    let nb = f.blocks.len();
-    let generation_dests = loan_generation_dests(f);
-    let generation_entries = loan_generation_block_entries(f);
-    let mut live_in = vec![HashSet::new(); nb];
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for block in (0..nb).rev() {
-            let live_out = block_live_out(f, block, &live_in);
-            let incoming = transfer_liveness(&f.blocks[block].instrs, live_out);
-            if incoming != live_in[block] {
-                live_in[block] = incoming;
-                changed = true;
-            }
-        }
-    }
-
-    for (block, generation_entry) in generation_entries.iter().enumerate().take(nb) {
-        let instrs = &f.blocks[block].instrs;
-        let mut generation_state = generation_entry.clone();
-        let mut live = block_live_out(f, block, &live_in);
-        let mut live_before = vec![HashSet::new(); instrs.len()];
-        for index in (0..instrs.len()).rev() {
-            if let Some(def) = loan_liveness_def(&instrs[index]) {
-                live.remove(&def);
-            }
-            for (used, _) in var_uses(&instrs[index]) {
-                live.insert(used);
-            }
-            live_before[index].clone_from(&live);
-        }
-
-        for (index, instr) in instrs.iter().enumerate() {
-            // Live references in declaration order, so a conflict names the
-            // same one on every run.
-            let mut active: Vec<VarId> = live_before[index].iter().copied().collect();
+    // The references live just before each instruction, in declaration
+    // order, so a conflict names the same one on every run; keyed by the
+    // instruction's address, which is stable while `f` is borrowed.
+    let mut live_references: HashMap<*const MirInstr, Vec<VarId>> = HashMap::new();
+    walk_backward(&ReferenceLiveness, &f.blocks, &mut |instr, live| {
+        let mut active: Vec<VarId> = live
+            .iter()
+            .copied()
+            .filter(|var| references.contains(var))
+            .collect();
+        if !active.is_empty() {
             active.sort_unstable();
-            if let MirInstr::EstablishLoans {
-                reference,
-                loans: established,
-                marker,
-                ..
-            } = instr
-            {
-                for loan in established {
-                    for other in active.iter().filter(|id| **id != *reference) {
-                        if loan.place.through == Some(*other) {
-                            // A reborrow derives its permission from this live
-                            // reference instead of competing with it. Mutable
-                            // capability still cannot be recovered from a
-                            // shared source reference.
-                            if loan.mutable
-                                && reaching_loans(&generation_state, &generations, *other)
-                                    .iter()
-                                    .any(|source| !source.mutable)
-                            {
-                                let span = f.spans.0.get(&marker.0).map_or_else(
-                                    || {
-                                        mojito_common::token::SourceSpan::new(
-                                            None,
-                                            mojito_common::token::DUMMY_SPAN,
-                                        )
-                                    },
-                                    |(span, _)| span.clone(),
-                                );
-                                return Err(loan_error(f, &loan.place, *other, span));
-                            }
-                            continue;
-                        }
-                        if reaching_loans(&generation_state, &generations, *other)
-                            .iter()
-                            .any(|existing| loans_exclusive(loan, existing))
-                        {
-                            let span = f.spans.0.get(&marker.0).map_or_else(
-                                || {
-                                    mojito_common::token::SourceSpan::new(
-                                        None,
-                                        mojito_common::token::DUMMY_SPAN,
-                                    )
-                                },
-                                |(span, _)| span.clone(),
-                            );
-                            return Err(loan_error(f, &loan.place, *other, span));
-                        }
-                    }
-                }
-                transfer_loan_generation(&mut generation_state, instr, &generation_dests);
-                continue;
-            }
-            for (place, access, span) in loan_accesses(f, instr, callees) {
-                // An access through a shared pointer alias (a stable-pointer
-                // dereference substitutes the owner place) never competes
-                // with another shared alias of the same storage.
-                let through_shared = place.through.is_some_and(|through| {
-                    let loans = reaching_loans(&generation_state, &generations, through);
-                    !loans.is_empty() && loans.iter().all(|loan| loan.shared)
-                });
-                for reference in &active {
-                    let reference_loans =
-                        reaching_loans(&generation_state, &generations, *reference);
-                    if reference_loans.is_empty() {
-                        continue;
-                    }
-                    if place.through == Some(*reference) {
-                        if access == LoanAccess::Write
-                            && reference_loans.iter().any(|loan| !loan.mutable)
-                        {
-                            return Err(loan_error(f, &place, *reference, span));
-                        }
-                        continue;
-                    }
-                    if reference_loans.iter().any(|loan| {
-                        loan.interior.is_none()
-                            && !loan.setup
-                            && !(loan.shared && through_shared)
-                            && mir_places_overlap(&place, &loan.place)
-                            && (access == LoanAccess::Write || excludes_reads(*loan))
-                    }) {
-                        return Err(loan_error(f, &place, *reference, span));
-                    }
-                }
-            }
-            transfer_loan_generation(&mut generation_state, instr, &generation_dests);
+            live_references.insert(std::ptr::from_ref(instr), active);
         }
-    }
-    Ok(())
+    });
+    let scan = LoanScan {
+        dests: loan_generation_dests(f),
+    };
+    let mut check = |state: &LoanGenerationState, instr: &MirInstr| {
+        let active = live_references
+            .get(&std::ptr::from_ref(instr))
+            .map_or(&[][..], Vec::as_slice);
+        check_loans_at(f, callees, &generations, state, active, instr)
+    };
+    walk_forward(&scan, LoanGenerationState::default(), &f.blocks, &mut check).map(|_| ())
 }
 
 /// Whether establishing `new` beside the live `existing` loan is a conflict:
@@ -839,5 +741,133 @@ pub(super) fn loan_error(
         place: place_display(&f.var_names[place.root as usize], &place_path(place)),
         loan: f.var_names[reference as usize].clone(),
         span,
+    }
+}
+
+/// Check one instruction against the loans of the references `active` live
+/// before it, given the loan generations `state` reaching it: establishing a
+/// loan beside an exclusive live one, or accessing a place a live loan
+/// excludes, conflicts.
+fn check_loans_at(
+    f: &MirFunction,
+    callees: &CalleeRefParams<'_>,
+    generations: &BTreeMap<u32, Vec<Loan>>,
+    state: &LoanGenerationState,
+    active: &[VarId],
+    instr: &MirInstr,
+) -> Result<(), OwnershipError> {
+    if let MirInstr::EstablishLoans {
+        reference,
+        loans: established,
+        marker,
+        ..
+    } = instr
+    {
+        let span = || span_for_reg(f, *marker);
+        for loan in established {
+            for other in active.iter().filter(|id| **id != *reference) {
+                let reaching = reaching_loans(state, generations, *other);
+                if loan.place.through == Some(*other) {
+                    // A reborrow derives its permission from this live
+                    // reference instead of competing with it. Mutable
+                    // capability still cannot be recovered from a shared
+                    // source reference.
+                    if loan.mutable && reaching.iter().any(|source| !source.mutable) {
+                        return Err(loan_error(f, &loan.place, *other, span()));
+                    }
+                    continue;
+                }
+                if reaching
+                    .iter()
+                    .any(|existing| loans_exclusive(loan, existing))
+                {
+                    return Err(loan_error(f, &loan.place, *other, span()));
+                }
+            }
+        }
+        return Ok(());
+    }
+    for (place, access, span) in loan_accesses(f, instr, callees) {
+        // An access through a shared pointer alias (a stable-pointer
+        // dereference substitutes the owner place) never competes with
+        // another shared alias of the same storage.
+        let through_shared = place.through.is_some_and(|through| {
+            let loans = reaching_loans(state, generations, through);
+            !loans.is_empty() && loans.iter().all(|loan| loan.shared)
+        });
+        for reference in active {
+            let reference_loans = reaching_loans(state, generations, *reference);
+            if reference_loans.is_empty() {
+                continue;
+            }
+            if place.through == Some(*reference) {
+                if access == LoanAccess::Write && reference_loans.iter().any(|loan| !loan.mutable) {
+                    return Err(loan_error(f, &place, *reference, span));
+                }
+                continue;
+            }
+            if reference_loans.iter().any(|loan| {
+                loan.interior.is_none()
+                    && !loan.setup
+                    && !(loan.shared && through_shared)
+                    && mir_places_overlap(&place, &loan.place)
+                    && (access == LoanAccess::Write || excludes_reads(*loan))
+            }) {
+                return Err(loan_error(f, &place, *reference, span));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The backward liveness of reference variables the loan check reads.
+struct ReferenceLiveness;
+
+impl BackwardScan for ReferenceLiveness {
+    type State = HashSet<VarId>;
+
+    fn join(&self, state: &mut HashSet<VarId>, other: &HashSet<VarId>) {
+        state.extend(other);
+    }
+
+    fn transfer(&self, live: &mut HashSet<VarId>, instr: &MirInstr) {
+        if let Some(def) = loan_liveness_def(instr) {
+            live.remove(&def);
+        }
+        live.extend(var_uses(instr).into_iter().map(|(used, _)| used));
+    }
+}
+
+/// The loan generations reaching each instruction, which a `try` does not
+/// change.
+struct LoanScan {
+    dests: BTreeMap<u32, Option<MirInteriorOrigin>>,
+}
+
+impl ForwardScan for LoanScan {
+    type State = LoanGenerationState;
+
+    fn join(
+        &self,
+        state: &LoanGenerationState,
+        other: &LoanGenerationState,
+    ) -> LoanGenerationState {
+        join_loan_generation_states(state.clone(), other)
+    }
+
+    fn transfer(&self, state: &mut LoanGenerationState, instr: &MirInstr) {
+        transfer_loan_generation(state, instr, &self.dests);
+    }
+
+    fn raise_seed(
+        &self,
+        state: &LoanGenerationState,
+        _next: Option<&MirInstr>,
+    ) -> LoanGenerationState {
+        state.clone()
+    }
+
+    fn enters(&self, instr: &MirInstr) -> bool {
+        !matches!(instr, MirInstr::Try { .. })
     }
 }

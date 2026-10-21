@@ -2,7 +2,8 @@
 
 **Status:** plan recorded 2026-10-14 (R859); stages 1 (R870), 2 (R871),
 3 (R872), 4 (R873), and 5 (R874) landed 2026-10-14, and the `comptime for`
-body's `has_next` test (R885) with them; stage 6 (R875) landed 2026-10-21.
+body's `has_next` test (R885) with them; stages 6 (R875) and 7 (R876)
+landed 2026-10-21.
 The scheduled tasks are on [`docs/roadmap.md`](roadmap.md) track `pmir`,
 one entry per stage below.
 This document is their design record and is updated as stages land. It is
@@ -101,12 +102,13 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
     `Flatten::hir_region`). `verify_structured_shape` checks each body, a
     finding being a MIR invariant error (stage 5); register typing and
     pre-drop verification read the structured body, and the ownership
-    check runs `lower-control-flow` on each body after its move scan, so
-    every phase after that scan still sees blocks (stage 6).
-- **The move scan walks regions; the other analyses work on edges.** The
-  move and initialization scan walks the structure as `CheckLifetimes`
-  does (stage 6). The borrow checks are dataflow over blocks;
-  `analysis/drops.rs` puts drops on edges and splits critical edges.
+    check runs `lower-control-flow` on each body after its last check, so
+    every phase after the ownership check still sees blocks (stages 6–7).
+- **The ownership checks walk regions; drop elaboration works on edges.**
+  The move and initialization scan, carrying interior origins, walks the
+  structure as `CheckLifetimes` does (stages 6–7), and so does the loan
+  check. `analysis/drops.rs` puts drops on edges and splits critical
+  edges.
 - **`canonicalize`** (`analysis/canonicalize.rs`, R836) threads
   pass-through blocks, folds identical-successor branches, and merges
   single-predecessor blocks: MLIR `cf` patterns standing in for structure
@@ -276,7 +278,7 @@ last producer. Every stage keeps program output unchanged; the
    and the else region (`checkMatchOp`), and a `Loop` or `ComptimeFor`
    re-walks its body until its continue set stops changing, its break set
    being its live-out (`checkLoopOp`).
-   - A frame stack (`MoveFrame`) resolves each `Break`/`Continue`,
+   - A frame stack (now `region_walk.rs`'s `Frame`) resolves each `Break`/`Continue`,
      `ComptimeBreak`/`ComptimeContinue`, and `MatchNext`/`MatchComplete` by
      `lower-control-flow`'s rules, so the state at a `break` out of a `try`
      reaches its loop, where it reached the function's exit before.
@@ -292,11 +294,31 @@ last producer. Every stage keeps program output unchanged; the
    - The CFG walker that `observe_move_states` (store drops) still runs on
      lowered bodies joins an `EscapeJump`'s state into its target block, so
      a store after the loop sees the state a `break` out of a `try` left.
-7. **Borrow checks on regions** (loans, register loans, interior). The
-   lowering point moves below the checks.
+7. **Borrow checks on regions** (loans, interior). *Landed (R876).* The
+   lowering point moved below the checks: `check_ownership_program` runs
+   `lower-control-flow` on each body after its loan check.
+   - The forward walk is generic (`analysis/region_walk.rs`'s
+     `ForwardScan`), and the interior-origin check joined the move scan as
+     upstream's `TrackedAndInteriorLiveness`: one walk
+     (`moves.rs`'s `analyze_lifetimes`) carries both states and reports
+     the first complaint in walk order. The state a container mutation
+     leaves at a `break`/`continue` out of a `try` now reaches the loop, as
+     the move state did in stage 6. A use through a reference whose
+     origin's root was moved reports the use of the uninitialized root, as
+     upstream does.
+   - The loan check has no upstream counterpart (it is the kept
+     strictness of `docs/non-goals.md`), so it only reads regions: a
+     backward walk shaped as `DestructorInsertion`'s (`BackwardScan`)
+     gives reference liveness and the forward walk the loan generations.
+     A `try` is one instruction to it, using every variable its parts
+     read; nothing inside a `try` is loan-checked.
+   - Register loans are not a check: they feed drop elaboration, so they
+     moved to stage 8.
 8. **Drop elaboration on regions**, as `DestructorInsertion`: a drop goes
    before a region terminator, at a region's entry, or after the op.
-   Critical-edge splitting is deleted.
+   Critical-edge splitting is deleted. Register loans
+   (`analysis/register_loans.rs`) move with it, and the backward walk of
+   stage 7 is the one it extends, `checkTryOp` included.
 9. **Field drops, store drops, and copy elision on regions.** The lowering
    point moves below them.
 10. **Pre-elaboration pipeline and package.** `canonicalize` gains the

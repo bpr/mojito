@@ -4,11 +4,13 @@
 //! leaves the source **uninitialized**, so using it again is an error. This pass
 //! walks each `MirFunction`'s structured regions, as upstream's
 //! `CheckLifetimes` walks `hlcf`, tracking per variable whether it is
-//! `Owned`, `Moved`, or — where control-flow paths disagree — `MaybeMoved`;
-//! the borrow checks after it read the body lowered to blocks. A use of a `Moved` variable is a **use-after-move**; a
-//! use of a `MaybeMoved` one is a **conditional move** (transferred on some paths
-//! but not others). Diagnostics carry the source [`Span`](mojito_mir::mir::Span) of the
-//! offending use, recovered from the MIR `SpanTable`.
+//! `Owned`, `Moved`, or — where control-flow paths disagree — `MaybeMoved`,
+//! and per reference which interior-origin generations it carries; the loan
+//! check reads the same regions. A use of a `Moved` variable is a
+//! **use-after-move**; a use of a `MaybeMoved` one is a **conditional move**
+//! (transferred on some paths but not others). Diagnostics carry the source
+//! [`Span`](mojito_mir::mir::Span) of the offending use, recovered from the
+//! MIR `SpanTable`.
 //!
 //! This is a distinct compiler stage after MIR lowering. The production
 //! [`Compiler`](crate::compiler::Compiler) always runs it before drop elaboration
@@ -57,6 +59,8 @@ pub use pre_elaboration::{
     pre_elaborate_program, run_pipeline,
 };
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use region_walk::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use register_loans::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use scan::*;
@@ -80,10 +84,10 @@ pub fn check_ownership_checked(
 /// so production MIR is fully verified before execution; it runs on `hlcf`
 /// regions as upstream's `CheckLifetimes` does, before `LowerControlFlow`.
 ///
-/// Per function, the move and initialization scan walks the structured
-/// body, then `lower-control-flow` lowers it, and the interior-origin and
-/// loan checks read the blocks. A body already lowered (MIR text) is
-/// scanned as blocks.
+/// Per function, the lifetime scan (moves and interior origins in one
+/// walk) and the loan check read the structured body; `lower-control-flow`
+/// then lowers it to blocks for drop elaboration. A body already lowered
+/// (MIR text) is scanned as blocks.
 ///
 /// An imported package's bodies were analyzed when it was built; a call
 /// into one reads its reference-parameter mask from the package's function
@@ -123,16 +127,14 @@ pub fn check_ownership_program(prog: &mut MirProgram) -> Result<(), OwnershipErr
     timing::count("functions", functions.len() as u64);
     for (_name, f) in functions.iter_mut() {
         {
-            let _moves = timing::span("moves");
-            analyze_moves(f)?;
+            let _lifetimes = timing::span("lifetimes");
+            analyze_lifetimes(f)?;
+        }
+        {
+            let _loans = timing::span("loans");
+            analyze_loans(f, &callees)?;
         }
         mojito_mir::mir::lower_control_flow(f);
-        {
-            let _origins = timing::span("interior_origins");
-            analyze_interior_origins(f)?;
-        }
-        let _loans = timing::span("loans");
-        analyze_loans(f, &callees)?;
     }
     Ok(())
 }
@@ -284,6 +286,7 @@ mod moves;
 mod opt;
 mod post_elaboration;
 mod pre_elaboration;
+mod region_walk;
 mod register_loans;
 mod scan;
 mod sccp;
@@ -389,7 +392,7 @@ mod constant_tuple_place_tests {
 mod interior_origin_tests {
     use super::*;
     use mojito_common::token::SourceSpan;
-    use mojito_mir::mir::{MirLoan, SpanTable, UseMode};
+    use mojito_mir::mir::{LoopLabel, MirLoan, SpanTable, UseMode};
     use mojito_types::origin::OriginSeg;
     use mojito_types::types::Ty;
     use std::collections::HashMap;
@@ -452,6 +455,38 @@ mod interior_origin_tests {
         MirBlock { instrs, term }
     }
 
+    fn region(instrs: Vec<MirInstr>, term: MirTerm) -> Vec<MirBlock> {
+        vec![block(instrs, term)]
+    }
+
+    fn yields(instrs: Vec<MirInstr>) -> Vec<MirBlock> {
+        region(instrs, MirTerm::Yield(Vec::new()))
+    }
+
+    fn if_else(then: Vec<MirBlock>, orelse: Vec<MirBlock>) -> MirInstr {
+        MirInstr::If {
+            results: Vec::new(),
+            cond: Reg(99),
+            then,
+            elifs: Vec::new(),
+            orelse,
+        }
+    }
+
+    fn labelled(body: Vec<MirBlock>) -> MirInstr {
+        MirInstr::Loop {
+            label: Some(LoopLabel(0)),
+            body,
+        }
+    }
+
+    const BREAK: MirTerm = MirTerm::Break {
+        label: Some(LoopLabel(0)),
+    };
+    const CONTINUE: MirTerm = MirTerm::Continue {
+        label: Some(LoopLabel(0)),
+    };
+
     fn function(blocks: Vec<MirBlock>, spans: &[(u32, (usize, usize))]) -> MirFunction {
         let mut span_table = SpanTable::default();
         for (reg, span) in spans {
@@ -498,7 +533,7 @@ mod interior_origin_tests {
             )],
             &[(1, (10, 20)), (2, (30, 35))],
         );
-        match analyze_interior_origins(&f) {
+        match analyze_lifetimes(&f) {
             Err(OwnershipError::InvalidatedInteriorReference {
                 reference,
                 origin,
@@ -517,52 +552,94 @@ mod interior_origin_tests {
     #[test]
     fn invalidation_on_one_branch_rejects_use_after_join() {
         let f = function(
-            vec![
-                block(
-                    vec![establish(1, 0, Some(element_origin()))],
-                    MirTerm::Branch {
-                        cond: Reg(99),
-                        then_b: 1,
-                        else_b: 2,
-                    },
-                ),
-                block(vec![invalidate(1)], MirTerm::Jump(3)),
-                block(Vec::new(), MirTerm::Jump(3)),
-                block(vec![use_reference(1, 2)], MirTerm::Return(None)),
-            ],
+            vec![block(
+                vec![
+                    establish(1, 0, Some(element_origin())),
+                    if_else(yields(vec![invalidate(1)]), yields(Vec::new())),
+                    use_reference(1, 2),
+                ],
+                MirTerm::Return(None),
+            )],
             &[(1, (10, 20)), (2, (30, 35))],
         );
         assert!(matches!(
-            analyze_interior_origins(&f),
+            analyze_lifetimes(&f),
             Err(OwnershipError::InvalidatedInteriorReference { .. })
         ));
     }
 
     #[test]
     fn invalidation_on_loop_backedge_rejects_maybe_stale_exit() {
+        let exit = if_else(region(Vec::new(), BREAK), yields(Vec::new()));
         let f = function(
-            vec![
-                block(
-                    vec![establish(1, 0, Some(element_origin()))],
-                    MirTerm::Jump(1),
-                ),
-                block(
-                    Vec::new(),
-                    MirTerm::Branch {
-                        cond: Reg(99),
-                        then_b: 2,
-                        else_b: 3,
-                    },
-                ),
-                block(vec![invalidate(1)], MirTerm::Jump(1)),
-                block(vec![use_reference(1, 2)], MirTerm::Return(None)),
-            ],
+            vec![block(
+                vec![
+                    establish(1, 0, Some(element_origin())),
+                    labelled(region(vec![exit, invalidate(1)], CONTINUE)),
+                    use_reference(1, 2),
+                ],
+                MirTerm::Return(None),
+            )],
             &[(1, (10, 20)), (2, (30, 35))],
         );
         assert!(matches!(
-            analyze_interior_origins(&f),
+            analyze_lifetimes(&f),
             Err(OwnershipError::InvalidatedInteriorReference { .. })
         ));
+    }
+
+    #[test]
+    fn invalidation_before_a_break_from_a_try_reaches_the_loop_exit() {
+        let body = MirInstr::Try {
+            body: region(vec![invalidate(1)], BREAK),
+            handler: None,
+            orelse: None,
+            finalbody: None,
+            cleanup: Vec::new(),
+        };
+        let f = function(
+            vec![block(
+                vec![
+                    establish(1, 0, Some(element_origin())),
+                    labelled(region(vec![body], CONTINUE)),
+                    use_reference(1, 2),
+                ],
+                MirTerm::Return(None),
+            )],
+            &[(1, (10, 20)), (2, (30, 35))],
+        );
+        assert!(matches!(
+            analyze_lifetimes(&f),
+            Err(OwnershipError::InvalidatedInteriorReference { .. })
+        ));
+    }
+
+    #[test]
+    fn use_after_the_root_moves_is_a_use_of_the_uninitialized_root() {
+        let moved = MirInstr::UseVar {
+            dest: Reg(1),
+            var: 0,
+            mode: UseMode::Move,
+            constructor: None,
+        };
+        let f = function(
+            vec![block(
+                vec![
+                    establish(1, 0, Some(element_origin())),
+                    moved,
+                    use_reference(1, 2),
+                ],
+                MirTerm::Return(None),
+            )],
+            &[(1, (10, 20)), (2, (30, 35))],
+        );
+        match analyze_lifetimes(&f) {
+            Err(OwnershipError::UseAfterMove { var, span }) => {
+                assert_eq!(var, "values");
+                assert_eq!(span.span, (30, 35));
+            }
+            other => panic!("expected a use of the uninitialized root, got {other:?}"),
+        }
     }
 
     #[test]
@@ -579,31 +656,24 @@ mod interior_origin_tests {
             )],
             &[],
         );
-        assert!(analyze_interior_origins(&f).is_ok());
+        assert!(analyze_lifetimes(&f).is_ok());
     }
 
     #[test]
     fn refresh_on_invalidating_branch_preserves_path_correlation() {
+        let refresh = vec![invalidate(1), establish(1, 2, Some(element_origin()))];
         let f = function(
-            vec![
-                block(
-                    vec![establish(1, 0, Some(element_origin()))],
-                    MirTerm::Branch {
-                        cond: Reg(99),
-                        then_b: 1,
-                        else_b: 2,
-                    },
-                ),
-                block(
-                    vec![invalidate(1), establish(1, 2, Some(element_origin()))],
-                    MirTerm::Jump(3),
-                ),
-                block(Vec::new(), MirTerm::Jump(3)),
-                block(vec![use_reference(1, 3)], MirTerm::Return(None)),
-            ],
+            vec![block(
+                vec![
+                    establish(1, 0, Some(element_origin())),
+                    if_else(yields(refresh), yields(Vec::new())),
+                    use_reference(1, 3),
+                ],
+                MirTerm::Return(None),
+            )],
             &[],
         );
-        assert!(analyze_interior_origins(&f).is_ok());
+        assert!(analyze_lifetimes(&f).is_ok());
     }
 
     #[test]
@@ -693,6 +763,52 @@ mod interior_origin_tests {
     }
 
     #[test]
+    fn a_write_in_an_if_arm_conflicts_with_a_reference_used_after_it() {
+        let write = MirInstr::Store {
+            place: MirPlace::root(0, None),
+            src: Reg(4),
+        };
+        let f = function(
+            vec![block(
+                vec![
+                    establish(1, 0, None),
+                    if_else(yields(vec![write]), yields(Vec::new())),
+                    use_reference(1, 2),
+                ],
+                MirTerm::Return(None),
+            )],
+            &[],
+        );
+        assert!(matches!(
+            analyze_loans(&f, &CalleeRefParams::new()),
+            Err(OwnershipError::LoanConflict { .. })
+        ));
+    }
+
+    #[test]
+    fn a_write_inside_a_try_is_not_loan_checked() {
+        let write = MirInstr::Store {
+            place: MirPlace::root(0, None),
+            src: Reg(4),
+        };
+        let guarded = MirInstr::Try {
+            body: region(vec![write], MirTerm::TryYield),
+            handler: None,
+            orelse: None,
+            finalbody: None,
+            cleanup: Vec::new(),
+        };
+        let f = function(
+            vec![block(
+                vec![establish(1, 0, None), guarded, use_reference(1, 2)],
+                MirTerm::Return(None),
+            )],
+            &[],
+        );
+        assert!(analyze_loans(&f, &CalleeRefParams::new()).is_ok());
+    }
+
+    #[test]
     fn stale_uses_inside_try_handlers_are_checked() {
         let try_instr = MirInstr::Try {
             body: vec![block(
@@ -715,7 +831,7 @@ mod interior_origin_tests {
             &[(1, (10, 20)), (3, (30, 35))],
         );
         assert!(matches!(
-            analyze_interior_origins(&f),
+            analyze_lifetimes(&f),
             Err(OwnershipError::InvalidatedInteriorReference { .. })
         ));
     }
@@ -877,7 +993,7 @@ mod structured_move_tests {
             MirTerm::Return(None),
         );
         assert!(matches!(
-            analyze_moves(&f),
+            analyze_lifetimes(&f),
             Err(OwnershipError::ConditionallyMoved { .. })
         ));
     }
@@ -893,7 +1009,7 @@ mod structured_move_tests {
             MirTerm::Return(None),
         );
         assert!(matches!(
-            analyze_moves(&f),
+            analyze_lifetimes(&f),
             Err(OwnershipError::ConditionallyMoved { .. })
         ));
     }
@@ -906,7 +1022,7 @@ mod structured_move_tests {
             MirTerm::Return(None),
         );
         assert!(matches!(
-            analyze_moves(&f),
+            analyze_lifetimes(&f),
             Err(OwnershipError::UseAfterMove { .. })
         ));
     }
@@ -926,7 +1042,7 @@ mod structured_move_tests {
             vec![labelled(block(vec![body], CONTINUE)), store, read(X, 3)],
             MirTerm::Return(None),
         );
-        assert!(analyze_moves(&f).is_ok());
+        assert!(analyze_lifetimes(&f).is_ok());
     }
 
     #[test]
@@ -939,7 +1055,7 @@ mod structured_move_tests {
             vec![labelled(block(vec![body], CONTINUE)), read(X, 3)],
             MirTerm::Return(None),
         );
-        assert!(analyze_moves(&f).is_ok());
+        assert!(analyze_lifetimes(&f).is_ok());
     }
 
     #[test]
@@ -959,7 +1075,7 @@ mod structured_move_tests {
             MirTerm::Return(None),
         );
         assert!(matches!(
-            analyze_moves(&f),
+            analyze_lifetimes(&f),
             Err(OwnershipError::UseAfterMove { .. })
         ));
     }
@@ -969,10 +1085,10 @@ mod structured_move_tests {
         let mut f = function(vec![take(S, 1)], MirTerm::Unreachable);
         f.ref_params = vec![false, true];
         f.n_params = 2;
-        assert!(analyze_moves(&f).is_ok());
+        assert!(analyze_lifetimes(&f).is_ok());
         f.blocks[0].term = MirTerm::Return(None);
         assert!(matches!(
-            analyze_moves(&f),
+            analyze_lifetimes(&f),
             Err(OwnershipError::ReferenceParameterLeftUninitialized { .. })
         ));
     }

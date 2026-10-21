@@ -714,8 +714,7 @@ total
     hir.lower
     mir.lower
     mir.verify.pre_drop
-    ownership.moves
-    ownership.interior_origins
+    ownership.lifetimes
     ownership.loans
   backend.prepare
     drops.elaborate

@@ -182,33 +182,17 @@ pub(super) fn var_uses(i: &MirInstr) -> Vec<(VarId, Reg)> {
         // use so a borrowed named source (a reference bound before the loop) stays
         // live through the read and is not dropped before the iterator is derived.
         MirInstr::GetIter { source, .. } => vec![(*source, Reg(0))],
-        // A `try` reads every variable its sub-regions read: the outer liveness must
-        // treat it as one big use, so a value used only inside the `try` is not
-        // dropped *before* it.
-        MirInstr::Try {
-            body,
-            handler,
-            orelse,
-            finalbody,
-            ..
-        } => {
+        // A `try` reads every variable its sub-regions read, at any depth:
+        // the outer liveness must treat it as one big use, so a value used
+        // only inside the `try` is not dropped *before* it.
+        MirInstr::Try { .. } => {
             let mut uses = Vec::new();
-            let mut add = |bs: &[MirBlock]| {
-                for b in bs {
-                    for instr in &b.instrs {
+            for region in instruction_regions(i) {
+                for_each_instr_deep(region, &mut |instr| {
+                    if !matches!(instr, MirInstr::Try { .. }) {
                         uses.extend(var_uses(instr));
                     }
-                }
-            };
-            add(body);
-            if let Some((_, h)) = handler {
-                add(h);
-            }
-            if let Some(e) = orelse {
-                add(e);
-            }
-            if let Some(fb) = finalbody {
-                add(fb);
+                });
             }
             uses
         }
@@ -411,6 +395,21 @@ pub(super) fn for_each_instr_deep(blocks: &[MirBlock], visit: &mut impl FnMut(&M
             visit(instr);
             for region in instruction_regions(instr) {
                 for_each_instr_deep(region, visit);
+            }
+        }
+    }
+}
+
+/// Visit every instruction under `blocks` outside any `try`: a `try` is
+/// visited, its regions are not.
+pub(super) fn for_each_instr_outside_try(blocks: &[MirBlock], visit: &mut impl FnMut(&MirInstr)) {
+    for block in blocks {
+        for instr in &block.instrs {
+            visit(instr);
+            if !matches!(instr, MirInstr::Try { .. }) {
+                for region in instruction_regions(instr) {
+                    for_each_instr_outside_try(region, visit);
+                }
             }
         }
     }

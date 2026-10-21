@@ -1356,19 +1356,6 @@ pub(super) const fn rewire_target(term: &mut MirTerm, old: usize, new: usize) {
     }
 }
 
-/// Backward transfer over a block for liveness.
-pub(super) fn transfer_liveness(instrs: &[MirInstr], mut live: HashSet<VarId>) -> HashSet<VarId> {
-    for instr in instrs.iter().rev() {
-        if let Some(d) = loan_liveness_def(instr) {
-            live.remove(&d);
-        }
-        for (u, _) in var_uses(instr) {
-            live.insert(u);
-        }
-    }
-    live
-}
-
 // --- Interior-origin generation analysis ----------------------------------
 
 /// One block's instructions with the analysis facts their drop elaboration

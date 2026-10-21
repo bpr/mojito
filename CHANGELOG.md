@@ -487,6 +487,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- The interior-origin check is now part of the move and initialization
+  scan, as upstream's `TrackedAndInteriorLiveness`, and the loan check
+  reads the same structured regions; `lower-control-flow` runs after both.
+  A container mutation before a `break`/`continue` out of a `try` now
+  invalidates a view used after the loop or in the next iteration, as on
+  the pin, where Mojito ran it
+  (`assets/ownership_error/list_element_view_stale_after_break_from_try.mojo`,
+  `list_element_view_stale_after_continue_from_try.mojo`), and a view used
+  after its owner moves reports `use of uninitialized value` for the owner,
+  as the pin does (`list_element_view_used_after_list_moved.mojo`). The
+  first ownership complaint in walk order is reported. This closes R876.
 - The move and initialization check walks each body's structured regions
   as upstream's `CheckLifetimes` does, before `lower-control-flow` lowers
   the body for the borrow checks: an `if` joins its arms, a `match` case

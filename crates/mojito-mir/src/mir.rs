@@ -4137,7 +4137,7 @@ struct NestedInfo {
 /// declares it as the body lowers. The body stays structured, as upstream's
 /// generators hold it in `hlcf` until `CheckLifetimes` has run: its shape is
 /// verified, a finding recorded in `invariant_errors` under the function's
-/// `name`, and the ownership check lowers it to blocks after its move scan.
+/// `name`, and the ownership check lowers it to blocks after its checks.
 #[allow(clippy::too_many_arguments)]
 fn lower_cfg_nested(
     name: &str,

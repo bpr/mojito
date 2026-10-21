@@ -1,5 +1,7 @@
-//! Interior-origin analysis: generation states for interior references
-//! and their invalidation on mutation, including try regions.
+//! Interior origins, the interior half of the lifetime scan
+//! (`moves.rs`'s `analyze_lifetimes`, upstream's `TrackedAndInteriorLiveness`):
+//! the generations interior references carry, their invalidation by
+//! container mutation, and the check of a use through a stale one.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -16,6 +18,10 @@ pub(super) struct InteriorGeneration {
 pub(super) struct InteriorInvalidationState {
     at: mojito_common::token::SourceSpan,
     origin: MirInteriorOrigin,
+    /// The origin's root was moved away or destroyed rather than mutated: a
+    /// use through the reference is a use of the uninitialized root, as
+    /// upstream reports it.
+    root_moved: bool,
 }
 
 /// Forward may-state for interior origins. `active[reference]` is the set of
@@ -23,113 +29,35 @@ pub(super) struct InteriorInvalidationState {
 /// Invalidations are retained only while their generation remains active; this
 /// preserves path correlation when one branch refreshes a reference after
 /// invalidating it and another branch keeps the old, still-valid reference.
-#[derive(Clone, PartialEq, Eq)]
+/// Mojo interior origins are invalidation generations, not exclusive loans:
+/// ordinary reads and element writes may coexist with references into a
+/// container, while a structural mutation makes every matching old
+/// generation stale.
+#[derive(Clone, Default, PartialEq, Eq)]
 pub(super) struct InteriorState {
-    /// `false` is the dataflow bottom used when a structured region has no
-    /// normal (`TryYield`) exit. It prevents `return`/outer-loop escape paths
-    /// from contaminating instructions that execute after a `try`.
-    reachable: bool,
     active: BTreeMap<VarId, BTreeSet<u32>>,
     invalidated: BTreeMap<u32, InteriorInvalidationState>,
 }
 
-impl Default for InteriorState {
-    fn default() -> Self {
-        Self {
-            reachable: true,
-            active: BTreeMap::new(),
-            invalidated: BTreeMap::new(),
-        }
-    }
-}
-
-impl InteriorState {
-    pub(super) const fn unreachable() -> Self {
-        Self {
-            reachable: false,
-            active: BTreeMap::new(),
-            invalidated: BTreeMap::new(),
-        }
-    }
-}
-
-/// The three ways a structured region can complete. `normal` reaches the next
-/// instruction, `raises` transfers to an enclosing handler, and `exits` carries
-/// `return`/outer-loop `break`/`continue` paths. Keeping these channels separate
-/// is what prevents non-fallthrough invalidations from leaking after a `try`.
-#[derive(Clone)]
-pub(super) struct InteriorFlow {
-    normal: InteriorState,
-    raises: InteriorState,
-    exits: InteriorState,
-}
-
-impl InteriorFlow {
-    pub(super) const fn unreachable() -> Self {
-        Self {
-            normal: InteriorState::unreachable(),
-            raises: InteriorState::unreachable(),
-            exits: InteriorState::unreachable(),
-        }
-    }
-}
-
-/// Mojo interior origins are invalidation generations, not exclusive loans.
-/// Ordinary reads and element writes may coexist with references into a
-/// container, while a structural mutation makes every matching old generation
-/// stale. This forward pass rejects a use when *any* path to it carries an
-/// invalidated generation, including branch joins and loop backedges.
-pub(super) fn analyze_interior_origins(f: &MirFunction) -> Result<(), OwnershipError> {
-    let generations = collect_interior_generations(&f.blocks);
-    if generations.is_empty() {
-        return Ok(());
-    }
-    check_interior_region_uses(&InteriorState::default(), &f.blocks, &generations, f).map(|_| ())
-}
-
+/// Every `EstablishLoans` generation under `blocks`, at any region depth,
+/// that names at least one interior origin.
 pub(super) fn collect_interior_generations(
     blocks: &[MirBlock],
 ) -> BTreeMap<u32, InteriorGeneration> {
-    pub(super) fn collect(
-        blocks: &[MirBlock],
-        generations: &mut BTreeMap<u32, InteriorGeneration>,
-    ) {
-        for instr in blocks.iter().flat_map(|block| &block.instrs) {
-            if let MirInstr::EstablishLoans { loans, marker, .. } = instr {
-                let mut origins: Vec<_> = loans
-                    .iter()
-                    .filter_map(|loan| loan.interior.clone())
-                    .collect();
-                origins.sort();
-                origins.dedup();
-                if !origins.is_empty() {
-                    generations.insert(marker.0, InteriorGeneration { origins });
-                }
-            }
-            if let MirInstr::Try {
-                body,
-                handler,
-                orelse,
-                finalbody,
-                ..
-            } = instr
-            {
-                collect(body, generations);
-                if let Some((_, handler)) = handler {
-                    collect(handler, generations);
-                }
-                if let Some(orelse) = orelse {
-                    collect(orelse, generations);
-                }
-                if let Some(finalbody) = finalbody {
-                    collect(finalbody, generations);
-                }
+    let mut generations = BTreeMap::new();
+    for_each_instr_deep(blocks, &mut |instr| {
+        if let MirInstr::EstablishLoans { loans, marker, .. } = instr {
+            let mut origins: Vec<_> = loans
+                .iter()
+                .filter_map(|loan| loan.interior.clone())
+                .collect();
+            origins.sort();
+            origins.dedup();
+            if !origins.is_empty() {
+                generations.insert(marker.0, InteriorGeneration { origins });
             }
         }
-    }
-
-    let mut generations = BTreeMap::new();
-    collect(blocks, &mut generations);
+    });
     generations
 }
 
@@ -137,12 +65,6 @@ pub(super) fn join_interior_states(
     mut left: InteriorState,
     right: &InteriorState,
 ) -> InteriorState {
-    if !left.reachable {
-        return right.clone();
-    }
-    if !right.reachable {
-        return left;
-    }
     for (reference, generations) in &right.active {
         left.active
             .entry(*reference)
@@ -175,20 +97,6 @@ pub(super) fn invalidation_precedes(
         .then_with(|| candidate.at.span.cmp(&current.at.span))
         .then_with(|| candidate.origin.cmp(&current.origin))
         .is_lt()
-}
-
-pub(super) fn transfer_interior_state(
-    state: &mut InteriorState,
-    instrs: &[MirInstr],
-    generations: &BTreeMap<u32, InteriorGeneration>,
-    f: &MirFunction,
-) {
-    for instr in instrs {
-        if !state.reachable {
-            break;
-        }
-        transfer_interior_instruction(state, instr, generations, f);
-    }
 }
 
 pub(super) fn transfer_interior_instruction(
@@ -261,15 +169,12 @@ pub(super) fn transfer_interior_instruction(
                         InteriorInvalidationState {
                             at: at.clone(),
                             origin: origin.clone(),
+                            root_moved: false,
                         }
                     });
                 }
             }
         }
-        MirInstr::Try { .. } => {
-            *state = summarize_interior_try(state.clone(), instr, generations, f).normal;
-        }
-        MirInstr::Raise { .. } => state.reachable = false,
         _ => {}
     }
 }
@@ -296,6 +201,7 @@ pub(super) fn invalidate_generations_rooted_at(
                     InteriorInvalidationState {
                         at: at(),
                         origin: origin.clone(),
+                        root_moved: true,
                     },
                 );
             }
@@ -318,161 +224,6 @@ pub(super) fn remove_active_interior_reference(state: &mut InteriorState, refere
     }
 }
 
-pub(super) fn interior_region_states(
-    entry: &InteriorState,
-    blocks: &[MirBlock],
-    generations: &BTreeMap<u32, InteriorGeneration>,
-    f: &MirFunction,
-) -> (Vec<Option<InteriorState>>, Vec<Option<InteriorState>>) {
-    let mut preds: Vec<Vec<usize>> = vec![Vec::new(); blocks.len()];
-    for (block, body) in blocks.iter().enumerate() {
-        for successor in terminator_targets(&body.term) {
-            if successor < blocks.len() {
-                preds[successor].push(block);
-            }
-        }
-    }
-    let mut incoming: Vec<Option<InteriorState>> = vec![None; blocks.len()];
-    let mut outgoing: Vec<Option<InteriorState>> = vec![None; blocks.len()];
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for block in 0..blocks.len() {
-            let new_in = if block == 0 {
-                entry.clone()
-            } else {
-                let mut states = preds[block]
-                    .iter()
-                    .filter_map(|predecessor| outgoing[*predecessor].as_ref());
-                let Some(first) = states.next() else {
-                    continue;
-                };
-                states.fold(first.clone(), join_interior_states)
-            };
-            let mut new_out = new_in.clone();
-            transfer_interior_state(&mut new_out, &blocks[block].instrs, generations, f);
-            if incoming[block].as_ref() != Some(&new_in)
-                || outgoing[block].as_ref() != Some(&new_out)
-            {
-                incoming[block] = Some(new_in);
-                outgoing[block] = Some(new_out);
-                changed = true;
-            }
-        }
-    }
-    (incoming, outgoing)
-}
-
-pub(super) fn add_interior_state(target: &mut InteriorState, source: &InteriorState) {
-    *target = join_interior_states(target.clone(), source);
-}
-
-pub(super) fn joined_interior_flow_inputs(flow: &InteriorFlow) -> InteriorState {
-    let joined = join_interior_states(flow.normal.clone(), &flow.raises);
-    join_interior_states(joined, &flow.exits)
-}
-
-pub(super) fn summarize_interior_region(
-    entry: InteriorState,
-    blocks: &[MirBlock],
-    generations: &BTreeMap<u32, InteriorGeneration>,
-    f: &MirFunction,
-) -> InteriorFlow {
-    if blocks.is_empty() {
-        return InteriorFlow {
-            normal: entry,
-            raises: InteriorState::unreachable(),
-            exits: InteriorState::unreachable(),
-        };
-    }
-    let (incoming, _) = interior_region_states(&entry, blocks, generations, f);
-    let mut flow = InteriorFlow::unreachable();
-    for (block, body) in blocks.iter().enumerate() {
-        let Some(mut state) = incoming[block].clone() else {
-            continue;
-        };
-        if !state.reachable {
-            continue;
-        }
-        for instr in &body.instrs {
-            if matches!(instr, MirInstr::Try { .. }) {
-                let nested = summarize_interior_try(state, instr, generations, f);
-                add_interior_state(&mut flow.raises, &nested.raises);
-                add_interior_state(&mut flow.exits, &nested.exits);
-                state = nested.normal;
-            } else {
-                if interior_instruction_directly_raises(instr) {
-                    add_interior_state(&mut flow.raises, &state);
-                }
-                transfer_interior_instruction(&mut state, instr, generations, f);
-            }
-            if !state.reachable {
-                break;
-            }
-        }
-        if !state.reachable {
-            continue;
-        }
-        match body.term {
-            MirTerm::TryYield => add_interior_state(&mut flow.normal, &state),
-            MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. } | MirTerm::EscapeJump { .. } => {
-                add_interior_state(&mut flow.exits, &state);
-            }
-            MirTerm::Jump(_)
-            | MirTerm::Branch { .. }
-            | MirTerm::ComptimeBranch { .. }
-            | MirTerm::ComptimeFor { .. }
-            | MirTerm::Yield(_)
-            | MirTerm::ElifCond(_)
-            | MirTerm::Break { .. }
-            | MirTerm::Continue { .. }
-            | MirTerm::ComptimeYield(_)
-            | MirTerm::ComptimeBreak
-            | MirTerm::ComptimeContinue
-            | MirTerm::MatchNext
-            | MirTerm::MatchComplete
-            | MirTerm::Unreachable => {}
-        }
-    }
-    flow
-}
-
-/// Replay one CFG from its fixed-point states, recursively checking every
-/// nested `try` region. Effects occur after uses: borrowing through a stale
-/// reference is rejected before an establishment can replace its generation.
-pub(super) fn check_interior_region_uses(
-    entry: &InteriorState,
-    blocks: &[MirBlock],
-    generations: &BTreeMap<u32, InteriorGeneration>,
-    f: &MirFunction,
-) -> Result<InteriorFlow, OwnershipError> {
-    let summary = summarize_interior_region(entry.clone(), blocks, generations, f);
-    if blocks.is_empty() {
-        return Ok(summary);
-    }
-    let (incoming, _) = interior_region_states(entry, blocks, generations, f);
-    for (block, body) in blocks.iter().enumerate() {
-        let Some(mut state) = incoming[block].clone() else {
-            continue;
-        };
-        if !state.reachable {
-            continue;
-        }
-        for instr in &body.instrs {
-            if matches!(instr, MirInstr::Try { .. }) {
-                state = check_interior_try_uses(state, instr, generations, f)?.normal;
-            } else {
-                check_interior_instruction_uses(&state, instr, f)?;
-                transfer_interior_instruction(&mut state, instr, generations, f);
-            }
-            if !state.reachable {
-                break;
-            }
-        }
-    }
-    Ok(summary)
-}
-
 pub(super) fn check_interior_instruction_uses(
     state: &InteriorState,
     instr: &MirInstr,
@@ -486,6 +237,12 @@ pub(super) fn check_interior_instruction_uses(
             .iter()
             .find_map(|generation| state.invalidated.get(generation))
         {
+            if invalidation.root_moved {
+                return Err(OwnershipError::UseAfterMove {
+                    var: var_name(f, invalidation.origin.root),
+                    span: span_for_reg(f, marker),
+                });
+            }
             let origin = interior_origin_display(f, &invalidation.origin);
             let name = var_name(f, reference);
             // A call operand's hidden handle slot is named by its origin, as
@@ -503,161 +260,6 @@ pub(super) fn check_interior_instruction_uses(
         }
     }
     Ok(())
-}
-
-pub(super) fn interior_instruction_directly_raises(instr: &MirInstr) -> bool {
-    instr.is_raise_point()
-}
-
-pub(super) fn summarize_interior_try(
-    entry: InteriorState,
-    instr: &MirInstr,
-    generations: &BTreeMap<u32, InteriorGeneration>,
-    f: &MirFunction,
-) -> InteriorFlow {
-    let MirInstr::Try {
-        body,
-        handler,
-        orelse,
-        finalbody,
-        ..
-    } = instr
-    else {
-        return InteriorFlow {
-            normal: entry,
-            raises: InteriorState::unreachable(),
-            exits: InteriorState::unreachable(),
-        };
-    };
-
-    let body_flow = summarize_interior_region(entry, body, generations, f);
-    let mut normal = InteriorState::unreachable();
-    let mut raises = InteriorState::unreachable();
-    let mut exits = body_flow.exits.clone();
-
-    if let Some(orelse) = orelse {
-        let else_flow = summarize_interior_region(body_flow.normal, orelse, generations, f);
-        add_interior_state(&mut normal, &else_flow.normal);
-        add_interior_state(&mut raises, &else_flow.raises);
-        add_interior_state(&mut exits, &else_flow.exits);
-    } else {
-        add_interior_state(&mut normal, &body_flow.normal);
-    }
-
-    if let Some((_, handler)) = handler {
-        let handler_flow = summarize_interior_region(body_flow.raises, handler, generations, f);
-        add_interior_state(&mut normal, &handler_flow.normal);
-        add_interior_state(&mut raises, &handler_flow.raises);
-        add_interior_state(&mut exits, &handler_flow.exits);
-    } else {
-        add_interior_state(&mut raises, &body_flow.raises);
-    }
-
-    apply_interior_finally(
-        InteriorFlow {
-            normal,
-            raises,
-            exits,
-        },
-        finalbody.as_deref(),
-        generations,
-        f,
-    )
-}
-
-pub(super) fn check_interior_try_uses(
-    entry: InteriorState,
-    instr: &MirInstr,
-    generations: &BTreeMap<u32, InteriorGeneration>,
-    f: &MirFunction,
-) -> Result<InteriorFlow, OwnershipError> {
-    let MirInstr::Try {
-        body,
-        handler,
-        orelse,
-        finalbody,
-        ..
-    } = instr
-    else {
-        return Ok(InteriorFlow {
-            normal: entry,
-            raises: InteriorState::unreachable(),
-            exits: InteriorState::unreachable(),
-        });
-    };
-
-    let body_flow = check_interior_region_uses(&entry, body, generations, f)?;
-    let mut normal = InteriorState::unreachable();
-    let mut raises = InteriorState::unreachable();
-    let mut exits = body_flow.exits.clone();
-
-    if let Some(orelse) = orelse {
-        let else_flow = check_interior_region_uses(&body_flow.normal, orelse, generations, f)?;
-        add_interior_state(&mut normal, &else_flow.normal);
-        add_interior_state(&mut raises, &else_flow.raises);
-        add_interior_state(&mut exits, &else_flow.exits);
-    } else {
-        add_interior_state(&mut normal, &body_flow.normal);
-    }
-
-    if let Some((_, handler)) = handler {
-        let handler_flow = check_interior_region_uses(&body_flow.raises, handler, generations, f)?;
-        add_interior_state(&mut normal, &handler_flow.normal);
-        add_interior_state(&mut raises, &handler_flow.raises);
-        add_interior_state(&mut exits, &handler_flow.exits);
-    } else {
-        add_interior_state(&mut raises, &body_flow.raises);
-    }
-
-    let flow = InteriorFlow {
-        normal,
-        raises,
-        exits,
-    };
-    if let Some(finalbody) = finalbody {
-        // `finally` executes for normal, exceptional, and return/escape paths;
-        // checking it from their joined input catches a stale use on any one of
-        // those paths. Only its normal-channel input can reach after the `try`.
-        let all_inputs = joined_interior_flow_inputs(&flow);
-        let _ = check_interior_region_uses(&all_inputs, finalbody, generations, f)?;
-    }
-    Ok(apply_interior_finally(
-        flow,
-        finalbody.as_deref(),
-        generations,
-        f,
-    ))
-}
-
-pub(super) fn apply_interior_finally(
-    flow: InteriorFlow,
-    finalbody: Option<&[MirBlock]>,
-    generations: &BTreeMap<u32, InteriorGeneration>,
-    f: &MirFunction,
-) -> InteriorFlow {
-    let Some(finalbody) = finalbody else {
-        return flow;
-    };
-
-    let normal_final = summarize_interior_region(flow.normal, finalbody, generations, f);
-    let raising_final = summarize_interior_region(flow.raises, finalbody, generations, f);
-    let exiting_final = summarize_interior_region(flow.exits, finalbody, generations, f);
-
-    let mut raises = raising_final.normal;
-    add_interior_state(&mut raises, &normal_final.raises);
-    add_interior_state(&mut raises, &raising_final.raises);
-    add_interior_state(&mut raises, &exiting_final.raises);
-
-    let mut exits = exiting_final.normal;
-    add_interior_state(&mut exits, &normal_final.exits);
-    add_interior_state(&mut exits, &raising_final.exits);
-    add_interior_state(&mut exits, &exiting_final.exits);
-
-    InteriorFlow {
-        normal: normal_final.normal,
-        raises,
-        exits,
-    }
 }
 
 pub(super) fn interior_origin_invalidated_by(

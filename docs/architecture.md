@@ -3414,9 +3414,14 @@ arguments, and any result adapter) and verified as the abstract declaration of
 record. Concrete targets are additionally checked against `MirDeclarations`. The
 pipeline composes it with
 `analysis::check_ownership_program`, which owns the ownership dataflow:
-per function, the move and initialization scan walks the structured body as
-upstream's `CheckLifetimes` walks `hlcf`, then `lower-control-flow` lowers
-it and the interior-origin and loan checks read the blocks; the
+per function, the move and initialization scan, carrying interior origins
+as upstream's `TrackedAndInteriorLiveness`, walks the structured body as
+upstream's `CheckLifetimes` walks `hlcf`, the loan check walks it backward
+for reference liveness and forward for loan generations, and only then does
+`lower-control-flow` lower it. A `try` is one instruction to the loan
+check: it uses every variable its parts read, and no access or loan inside
+it is checked (upstream has no persistent-loan check, so the exemption
+stays on the pin's side). The
 compiler rejects findings as `CompilerError::Verify`, and the VM re-verifies
 the drop-elaborated program it actually executes. The loan analysis reads
 each call's retained argument places against the callee's declaration
@@ -4029,7 +4034,7 @@ conditional expression whose condition the checker found a parameter value,
 `SemanticAdjustment::ComptimeConditional`, is a `ComptimeIf` with results,
 as upstream's `IfElseOpNode` emits `hlcf.comptime.if`), and
 `mir::lower_control_flow` (upstream's `LowerControlFlow`), which
-`analysis::check_ownership_program` runs on each body after its move scan,
+`analysis::check_ownership_program` runs on each body after its loan check,
 lowers them to blocks and the CFG terminators: a
 region's blocks are appended to its list, the rest of the block moves to a
 join, an op's results go through one slot each, stored at a `yield` and
@@ -4046,7 +4051,9 @@ the move scan walks its regions (`analysis/moves.rs`, upstream's
 from its predecessors' `match.next` states, a loop iterates its body until
 its continue set stops changing, its break set being the live-out, and a
 `break`/`continue` joins its state into the loop it names, through any
-`finally` it crosses. Every analysis after the move scan, the elaborator,
+`finally` it crosses. The interior-origin check is part of that scan, and
+the loan check reads the same regions (`analysis/region_walk.rs`).
+Every analysis after the ownership check, the elaborator,
 the VM, and the Pliron backend sees only lowered MIR; `lower_checked_program`
 and its importing and per-unit forms return the lowered program for phase
 tests, and `lower_checked_program_structured` the structured one.

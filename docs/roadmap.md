@@ -56,21 +56,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R876 The borrow checks read a lowered CFG where `CheckLifetimes`
-  walks structured regions**
-
-  Loans, register loans, and interior borrows are block dataflow, and
-  upstream checks them on the structured IR.
-  - Stage 7 of `docs/structured-control-flow-plan.md`.
-  - The lever is `loans`, `register_loans`, and `interior` in
-    `crates/mojito-analysis`.
-  - After it lands, `lower-control-flow` runs after the ownership checks,
-    before drop elaboration.
-  - The entry's planning session may split it by analysis if one session
-    cannot land it, filing the rest as chained entries.
-  - Depends on R875.
-  - Model: Fable, Planned.
-
 - [ ] **R877 Drop elaboration places drops on CFG edges where
   `DestructorInsertion` places them in structured regions**
 
@@ -80,6 +65,13 @@ which names the upstream pass each one follows. Each is measured by the
   - A drop goes before a region terminator, at a region's entry, or after
     the op.
   - Critical-edge splitting is deleted.
+  - The lever includes `register_loans` (`register_loan_uses_over`,
+    `RegisterLoans`, `ArgumentPassing`), which feeds only drop elaboration
+    and field drops.
+  - `analysis/region_walk.rs`'s backward walk (`BackwardScan`, R876's
+    loan liveness) is the `DestructorInsertion` walk to extend; its `try`
+    is one instruction today, and `checkTryOp`'s backward walk is added
+    here.
   - Once drops are placed in regions, `mir::lower_whole_drops`' own
     definite-initialization fold (whole, missing parts, empty), which
     follows `try` regions, reads the move scan's state instead, as
