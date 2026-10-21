@@ -1119,11 +1119,19 @@ impl Checker {
             }
             .into());
         }
+        // A call is a place only through the reference its inference
+        // records (`w.get()` returning `ref[self.x] Int`); any other operand
+        // is a place before it is read.
+        let call = matches!(
+            value.kind,
+            ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
+        );
+        let inferred = call.then(|| self.infer(value)).transpose()?;
         let place = self.origin_place(value).map_err(|error| match error {
             TypeError::UndefinedVariable(_) => error,
             _ => TypeError::Unsupported("Pointer(to=...) requires a place expression".to_string()),
         })?;
-        let element = self.infer(value)?;
+        let element = inferred.map_or_else(|| self.infer(value), Ok)?;
         // A place an accessor returns by reference (`t[0]` on a `Tuple`) is
         // the pointer's referent: the handle is retained, never read out.
         if let Some(reference) = self.infer_reference_value(value) {

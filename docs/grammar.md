@@ -583,7 +583,7 @@ trait_def: 'trait' NAME [conformance] ':' trait_block         # conformance here
 trait_block: NEWLINE INDENT trait_member+ DEDENT
 trait_member: trait_method | trait_comptime | 'pass' NEWLINE  # `pass` declares nothing (`trait Named(Sized): pass`)
 trait_method: decorators 'def' NAME [params_decl] '(' 'self' [',' params] ')' ['raises' [type]] ['->' type] where_clause* ':' NEWLINE INDENT (trait_req | block) DEDENT
-trait_req: '...' NEWLINE                                       # a pure requirement
+trait_req: [STRING NEWLINE] '...' NEWLINE                    # a pure requirement; the STRING is a triple-quoted docstring
 trait_comptime: 'comptime' NAME [params_decl] ':' type where_clause* ['=' expr] NEWLINE
                                                               # a compile-time member requirement, optionally defaulted
 ```
@@ -594,7 +594,8 @@ member a conformer that omits it takes, read with `Self` as that conformer
 
 A `trait` declares **method requirements**: each is a `def` header (with the implicit
 `self` first parameter, like a struct method) whose body is exactly `...` (the ellipsis
-token) — a requirement, not an implementation. A conforming struct must supply
+token), optionally preceded by a triple-quoted docstring — a requirement, not
+an implementation. A docstring followed by statements begins a default body. A conforming struct must supply
 matching methods and associated `comptime` members. Receiver conventions and
 associated type/value facts participate in conformance and generic bounds.
 Raising requirements retain their optional concrete error family. A nonraising

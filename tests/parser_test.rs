@@ -1184,6 +1184,25 @@ fn parses_trait_default_method_body() {
 }
 
 #[test]
+fn parses_documented_trait_requirement() {
+    // A docstring before `...` documents a requirement; before statements it
+    // begins a default body.
+    let source = "trait Q:\n    def q(self) -> Int:\n        \"\"\"Doc.\"\"\"\n        ...\n\n    def r(self) -> Int:\n        \"\"\"Doc.\"\"\"\n        return 1\n";
+    match &parse(source)[0].kind {
+        StmtKind::Trait { methods, .. } => {
+            assert_eq!(methods[0].default_body, None);
+            assert_eq!(
+                methods[1].default_body,
+                Some(vec![Stmt::from(StmtKind::Return(Some(Expr::from(
+                    ExprKind::Int(1i64.into())
+                ))))])
+            );
+        }
+        other => panic!("expected a trait, got {other:?}"),
+    }
+}
+
+#[test]
 fn parses_trait_inheritance_list() {
     // `trait Bird(Animal, Named):` — the refinement (super-trait) list.
     match &parse("trait Bird(Animal, Named):\n    def fly(self):\n        ...\n")[0].kind {

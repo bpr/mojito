@@ -12,6 +12,8 @@ from std.reflection.type_info import _unqualified_type_name
 from std.iter import Iterable, IterableOwned, Iterator, StopIteration
 
 from std.memory.alloc import unsafe_alloc
+from std.builtin.enum_like import EnumLike
+from std.builtin.variadics import ParameterList, TypeList, _MLIR
 
 @fieldwise_init
 struct EmptyOptionalError[T: AnyType](ImplicitlyCopyable, Movable, Writable):
@@ -84,6 +86,7 @@ struct Optional[T: AnyType](
     Copyable where conforms_to(T, Copyable),
     Defaultable,
     Deinitable where conforms_to(T, Deinitable),
+    EnumLike,
     Equatable where conforms_to(T, Equatable),
     Hashable where conforms_to(T, Hashable),
     ImplicitlyCopyable where conforms_to(T, ImplicitlyCopyable),
@@ -231,7 +234,46 @@ struct Optional[T: AnyType](
     # rather than upstream's undefined behavior.
     @inline(.always)
     def unsafe_value(ref self) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:
+        return self._unsafe_unchecked_value()
+
+    @inline(.always)
+    def _unsafe_unchecked_value(
+        ref self,
+    ) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:
         return self.data[0]
+
+    # ===-------------------------------------------------------------------===#
+    # EnumLike
+    # ===-------------------------------------------------------------------===#
+
+    comptime _enum_case_names = ParameterList.of[
+        "None".value, "Some".value
+    ].values
+    comptime _enum_case_types: _MLIR.KGENParamListType[AnyType] = TypeList.of[
+        Trait=AnyType, NoneType, Self.T
+    ].values
+
+    @inline(.always)
+    def _get_enum_discriminant(self) -> Int:
+        """Return 0 for `None` and 1 for `Some`."""
+        return 1 if self else 0
+
+    @inline(.always)
+    def _unsafe_get_enum_payload[
+        id: Int
+    ](ref self) -> ref[self] TypeList[Trait=AnyType, Self._enum_case_types]()[
+        id
+    ]:
+        """Return a reference to the `Some` payload.
+
+        Only valid when the discriminant is `1` (`Some`).
+        """
+        comptime assert id != 0, "cannot get payload for None case"
+        return rebind[TypeList[Trait=AnyType, Self._enum_case_types]()[id]](
+            Pointer(to=self._unsafe_unchecked_value()).unsafe_origin_cast[
+                origin_of(self)
+            ]()[]
+        )
 
     def take(mut self) -> Self.T where conforms_to(Self.T, Movable):
         if self._size == 0:
@@ -298,7 +340,7 @@ struct Optional[T: AnyType](
 # `_to_device_type`/`get_type_name`); the payload lives in an `Optional` rather than an
 # MLIR register variant, so the register-passing guarantee is nominal.
 struct OptionalReg[T: TrivialRegisterPassable](
-    Boolable, Defaultable, TrivialRegisterPassable
+    Boolable, Defaultable, EnumLike, TrivialRegisterPassable
 ):
     var _value: Optional[Self.T]
 
@@ -333,6 +375,41 @@ struct OptionalReg[T: TrivialRegisterPassable](
     @inline(.always)
     def unsafe_value(self) -> Self.T:
         return self._value.unsafe_value()
+
+    # ===-------------------------------------------------------------------===#
+    # EnumLike
+    # ===-------------------------------------------------------------------===#
+
+    comptime _enum_case_names = ParameterList.of[
+        "None".value, "Some".value
+    ].values
+    comptime _enum_case_types: _MLIR.KGENParamListType[AnyType] = TypeList.of[
+        Trait=AnyType, NoneType, Self.T
+    ].values
+
+    @inline(.always)
+    def _get_enum_discriminant(self) -> Int:
+        """Return 0 for `None` and 1 for `Some`."""
+        return 1 if self else 0
+
+    @inline(.always)
+    def _unsafe_get_enum_payload[
+        id: Int
+    ](ref self) -> ref[self] TypeList[Trait=AnyType, Self._enum_case_types]()[
+        id
+    ]:
+        """Return a reference to the `Some` payload.
+
+        Only valid when the discriminant is `1` (`Some`).
+        """
+        comptime assert id != 0, "cannot get payload for None case"
+        # The payload sits in the wrapped `Optional`, not upstream's
+        # `Variant` storage, so the pointer is to its unchecked value.
+        return rebind[TypeList[Trait=AnyType, Self._enum_case_types]()[id]](
+            Pointer(to=self._value._unsafe_unchecked_value()).unsafe_origin_cast[
+                origin_of(self)
+            ]()[]
+        )
 
     def or_else(var self, var default: Self.T) -> Self.T:
         if self._value:

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1233**.
+Next free ID: **R1236**.
 
 ## Ordered Work
 
@@ -2602,6 +2602,26 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1234 `Pointer(to=)` an owned value is rejected instead of
+  materializing it**
+
+  Problem: `var p = Pointer(to=make())` over `def make() -> D` is rejected
+  with "Pointer(to=...) requires a place expression", where the pin
+  materializes the temporary and keeps it alive until the pointer's last
+  use (`after`, `3`, `deinit 3`, `end`).
+  - A call returning a reference is already a place (`Pointer(to=w.get())`
+    runs), through its recorded `ReferenceResult` fact.
+  - Cause: the checker's `Pointer(to=)` arm (`checker/operators.rs`)
+    requires `origin_place` of the operand, and an rvalue has no owner for
+    the pointer's origin to name.
+  - Fix: give the rvalue a hidden owner slot whose lifetime the pointer's
+    loan extends, as a `ref` binding of a temporary
+    (`materialized_reference_actual`) already gets.
+  - Probe: `conformance/probes/pointer_to_owned_temporary.mojo`.
+  - Found while landing R1132 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1213 A method's pointer result over a field of `self` is rejected
   at every call**
 
@@ -2779,42 +2799,20 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1132 `EnumLike` is not declared, so `Optional` has no enum cases**
+- [ ] **R1233 A call with explicit parameters is not an assignment target**
 
-  Problem: `count[Optional[Int]]()` over `def count[T: EnumLike]()` stops
-  with "unknown trait 'EnumLike' in a type-parameter bound", where the pin's
-  `Optional` and `OptionalReg` conform through upstream's
-  `std/builtin/enum_like.mojo`.
-  - Port the trait whole, with upstream's spellings and docstrings, under
-    `stdlib/std/builtin/enum_like.mojo`, and export it from the prelude.
-  - Give `Optional` and `OptionalReg` upstream's members over the existing
-    storage: `ParameterList.of` names, `TypeList.of` payload types, the
-    discriminant, and the `rebind` payload getter through an origin-cast
-    pointer.
-  - The pin validates no metadata at the declaration (three names over two
-    types run, and a repeated name resolves to the first), so neither does
-    Mojito. A conformer missing a member or a method is the ordinary
-    conformance rejection.
-  - The checker's reading of a conformer's cases is R1133's, the
-    construct that consumes it.
-  - `Bool` conforms with its library port (R1189), not by a modelled
-    answer.
-  - Stop: a hand-written enum-like struct and `Optional` run one generic
-    `T: EnumLike` body that reads the discriminant, both list lengths,
-    `_enum_is_exhaustive`, and a payload, from the packaged `std`.
-  - Probe: `conformance/probes/enum_like_optional_bool.mojo` (its `Bool`
-    half needs R1189).
-  - Plan: `R1132-enumlike-is-a-library-protocol-the-plan.md`, Slices 1, 2,
-    and 4.
-  - Depends on R1183 (`!kgen.string` names), R1184 (`TypeList` over a
-    member's raw list), R1185 (the payload getter's result type), R1186
-    (`TypeList.of`), R1187 (the `_enum_elt_type_for_case` default), R809
-    (`ParameterList.of`), R505 (the `_enum_is_exhaustive` default), R74
-    (`comptime assert` in the getter), R679 and R352 (the getter's
-    origin-cast return), R1201 (the getter through `T: EnumLike`), R1196
-    (`Self._enum_case_types` in brackets), and R1198 (the getter as a
-    requirement).
-  - Model: Fable, Planned.
+  Problem: `w.at[0]() = 5` and `w.at[0]() += 1`, over `def at[k: Int](mut
+  self) -> ref[self.x] Int`, are parse errors ("invalid assignment target:
+  Invoke"), where the pin prints `6`.
+  - The same call without a bracket (`w.at() = 5`) runs.
+  - `Parser::parse_expr_or_assign`'s plain and augmented target lists
+    (`crates/mojito-parser/src/parser/stmts.rs`) omit `ExprKind::Invoke`.
+  - With the parser admitting it, the checker's place check
+    (`checker/indexing.rs`) has no `Invoke` arm and rejects it the same way.
+  - Probe: `conformance/probes/invoke_assignment_target.mojo`.
+  - Found while landing R1132 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1133 Enum case patterns select by discriminant and payload**
 
@@ -2846,6 +2844,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Pin texts recorded while planning R1132: "'Z' is not a case of 'Bad'",
     "enum case 'A' has no associated value", and "cannot match on a
     parametric enum type" for a `T: EnumLike` subject.
+  - Find the conformance by the trait's resolved identity, never by the
+    spelling `"EnumLike"`: the bundled trait has no bare identity, so
+    diagnostics print `__module$std$builtin$enum$like$EnumLike` (R607).
   - Probe: `conformance/probes/match_optional_enum_cases.mojo`.
   - Depends on R1132.
   - Model: Fable, Not Planned.
@@ -8315,6 +8316,9 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Removing it means adding `from std.collections import Set` to every
     fixture and bundled module that spells it bare.
   - Probe: `conformance/probes/set_without_import.mojo`.
+  - Probe: `conformance/probes/optional_reg_without_import.mojo`.
+    `OptionalReg` is a prelude name the pin's prelude lacks too ("did you
+    mean to import it from 'std.collections'?").
   - Found while landing R774 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.

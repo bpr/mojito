@@ -1823,6 +1823,7 @@ const PRELUDE_EXPORTS: &[&str] = &[
     "TypeList",
     "Sized",
     "SizedRaising",
+    "EnumLike",
     "range",
     "String",
     "StringSpan",

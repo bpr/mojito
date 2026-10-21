@@ -25,14 +25,21 @@ pub(super) fn eval_reached_ct(expr: &ParamExpr, bindings: &Bindings) -> Result<C
     eval_ct_at(expr, bindings, true)
 }
 
-/// The instance's value solutions as parameter-expression bindings, each
-/// binder by its identity.
+/// The instance's solutions as parameter-expression bindings, each binder
+/// by its identity: a value binder's constant, and a type binder's closed
+/// type, which a type position inside an expression (a struct member's
+/// `TypeList.of[Trait=AnyType, NoneType, Self.T].values`) reads.
 pub(super) fn ct_bindings(bindings: &Bindings) -> ParamBindings {
     let context = ParamContext::detached();
     let mut bound = ParamBindings::new();
     for (binder, value) in &bindings.values {
         if let Ok(value) = context.constant(value.clone()) {
             bound.bind(binder.id.clone(), value);
+        }
+    }
+    for (binder, ty) in &bindings.types {
+        if !is_symbolic(ty) {
+            bound.bind_type(binder.id.clone(), ty.clone());
         }
     }
     bound

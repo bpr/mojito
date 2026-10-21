@@ -14,6 +14,7 @@ from std.collections.set import Set
 from std.collections.dict import Dict
 from std.collections.optional import Optional, OptionalReg
 from std.builtin.len import Sized, SizedRaising
+from std.builtin.enum_like import EnumLike
 from std.builtin.tuple import Tuple
 from std.builtin.variadics import ParameterList, TypeList
 from std.range import range

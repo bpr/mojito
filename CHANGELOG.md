@@ -8,6 +8,25 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `EnumLike` is upstream's library trait, ported whole into the bundled
+  `stdlib/std/builtin/enum_like.mojo` and exported by the prelude, and
+  `Optional` and `OptionalReg` conform with upstream's members: the case
+  names and payload types as raw lists, the discriminant, and a payload
+  getter returning the unchecked value through an origin-cast `Pointer`. A
+  hand-written conformer and `Optional` run one generic `T: EnumLike` body
+  that reads the discriminant, both list lengths, `_enum_is_exhaustive`,
+  and a payload by reference, on both backends; as at the pin no case
+  metadata is validated at the declaration (`assets/ok/enum_like_protocol.mojo`,
+  `assets/type_error/enum_like_*`). Four gaps the port met close with it:
+  a trait whose signature reads a same-module struct's member waits for
+  that struct (`trait_reads_module_struct_member.mojo`), `Pointer(to=)` a
+  reference-returning call points at its place
+  (`pointer_to_reference_call.mojo`), a docstring may precede a trait
+  requirement's `...` (`trait_requirement_docstring.mojo`), and a generic
+  conformer's raw-list member folds when read through a bound
+  (`bound_member_list_generic_conformer.mojo`). A one-argument
+  `ParameterList.of[x]` and `conforms_to(List[String], T)` also resolve now.
+  `Bool` conforms with R1189. This closes R1132.
 - `for` and comprehension targets destructure each element, as on the pin:
   `for a, b in pairs`, `for (var a, _) in pairs`, `for ref (a, b) in
   pairs`, `for i, (var x, ref y) in nested`, `for [first, *rest] in rows`,

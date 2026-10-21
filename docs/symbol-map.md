@@ -106,7 +106,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   by another struct's member, `traits::names_member_type`, waits until that
   struct's member types resolve, `retry_deferred_shells`, as the
   conformance oracle's registration waits through
-  `attach_struct_where_clauses`). A local `comptime` binding whose
+  `attach_struct_where_clauses`; a trait whose signature reads a
+  same-module struct's member or constructs one, `awaits_struct_declarations`,
+  waits with its conformers until those structs' method signatures register,
+  `retry_deferred_traits`). A local `comptime` binding whose
   value names a compile-time value in scope (`comptime lane = dt`,
   `Checker::names_value_binder`) is no generic alias: it binds as an alias
   of that parameter expression (`local_comptime_parameters`, and the
@@ -1626,7 +1629,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   and `mir::matched_parameter_arguments` (`mir/ir.rs`) let a pack take every
   positional compile-time argument; `bind_pack` (`mono/unify.rs`) binds the
   pack from the call's `TyArg::Val(CtValue::Tuple)` or the overflow's types,
-  `ct_bindings` (`mono/symbolic.rs`) carries the solution into `eval_ct` and
+  `ct_bindings` (`mono/symbolic.rs`) carries the solution, value binders'
+  constants and closed type binders' types, into `eval_ct` and
   `substitute_ty` (a `Dependent` element closes through
   `replace_parameters`; a `VariadicPack` over a bound pack is the elements'
   `Tuple`), and `ParamContext::replace` (`mojito-types`) answers a bound

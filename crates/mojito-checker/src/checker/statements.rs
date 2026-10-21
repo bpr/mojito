@@ -161,7 +161,13 @@ impl Checker {
                 self.predeclared_constants.insert(name.clone());
             }
         }
-        for statement in stmts {
+        // A trait whose signature reads a struct member (`_MLIR.
+        // KGENParamListType[AnyType]`) or constructs a struct (`TypeList[...]()`)
+        // waits for that struct's members or method signatures, and so does
+        // every struct conforming to it: a conformer takes the trait's
+        // `comptime` defaults.
+        let mut deferred_traits = Vec::new();
+        for (index, statement) in stmts.iter().enumerate() {
             let StmtKind::Trait {
                 name,
                 refines,
@@ -171,8 +177,20 @@ impl Checker {
             else {
                 continue;
             };
-            self.check_trait(name, refines, methods, comptime_members)?;
-            self.predeclared_traits.insert(name.clone());
+            if refines
+                .iter()
+                .any(|parent| trait_is_deferred(stmts, &deferred_traits, parent))
+            {
+                deferred_traits.push(index);
+                continue;
+            }
+            match self.check_trait(name, refines, methods, comptime_members) {
+                Ok(()) => {
+                    self.predeclared_traits.insert(name.clone());
+                }
+                Err(error) if awaits_struct_declarations(&error) => deferred_traits.push(index),
+                Err(error) => return Err(error),
+            }
         }
         // Generic comptime aliases register before struct types and method
         // signatures: a field annotation or a synthesized conditional-method
@@ -187,6 +205,7 @@ impl Checker {
         }
         drop(phase);
         let phase = timing::span("declarations.types");
+        let mut waiting_conformers = Vec::new();
         for (index, statement) in stmts.iter().enumerate() {
             let Some(declaration) = struct_declaration(statement) else {
                 continue;
@@ -197,16 +216,38 @@ impl Checker {
                 self.predeclared_structs
                     .insert(declaration.name.to_string());
             }
+            if conforms_to_deferred(stmts, &deferred_traits, &declaration) {
+                waiting_conformers.push(index);
+                continue;
+            }
             self.check_struct_types(&declaration)?;
             self.retry_deferred_shells(stmts, &mut deferred_shells);
         }
         drop(phase);
         let phase = timing::span("declarations.signatures");
-        for statement in stmts {
+        let parked_conformers = waiting_conformers.clone();
+        self.retry_deferred_traits(stmts, &mut deferred_traits, &mut waiting_conformers)?;
+        for (index, statement) in stmts.iter().enumerate() {
             let Some(declaration) = struct_declaration(statement) else {
                 continue;
             };
+            if parked_conformers.contains(&index) {
+                continue;
+            }
             self.check_struct_method_signatures(&declaration)?;
+            self.retry_deferred_traits(stmts, &mut deferred_traits, &mut waiting_conformers)?;
+        }
+        // A trait still waiting reports its own rejection.
+        for index in deferred_traits {
+            if let StmtKind::Trait {
+                name,
+                refines,
+                methods,
+                comptime_members,
+            } = &stmts[index].kind
+            {
+                self.check_trait(name, refines, methods, comptime_members)?;
+            }
         }
         drop(phase);
         let phase = timing::span("bodies");
@@ -326,6 +367,68 @@ impl Checker {
                 .insert(declaration.name.to_string());
             false
         });
+    }
+
+    /// Check every deferred trait whose struct declarations have resolved,
+    /// then the conformers no deferred trait holds back any longer: their
+    /// member types, then their method signatures, which may in turn
+    /// resolve another deferred trait.
+    fn retry_deferred_traits(
+        &mut self,
+        stmts: &[Stmt],
+        deferred: &mut Vec<usize>,
+        waiting: &mut Vec<usize>,
+    ) -> Result<(), TypeError> {
+        loop {
+            let mut resolved = false;
+            let mut index = 0;
+            while index < deferred.len() {
+                let StmtKind::Trait {
+                    name,
+                    refines,
+                    methods,
+                    comptime_members,
+                } = &stmts[deferred[index]].kind
+                else {
+                    deferred.remove(index);
+                    continue;
+                };
+                let parent_waits = refines
+                    .iter()
+                    .any(|parent| trait_is_deferred(stmts, deferred, parent));
+                if !parent_waits
+                    && self
+                        .check_trait(name, refines, methods, comptime_members)
+                        .is_ok()
+                {
+                    self.predeclared_traits.insert(name.clone());
+                    deferred.remove(index);
+                    resolved = true;
+                } else {
+                    index += 1;
+                }
+            }
+            if !resolved {
+                return Ok(());
+            }
+            let ready: Vec<usize> = waiting
+                .iter()
+                .copied()
+                .filter(|&conformer| {
+                    struct_declaration(&stmts[conformer]).is_some_and(|declaration| {
+                        !conforms_to_deferred(stmts, deferred, &declaration)
+                    })
+                })
+                .collect();
+            waiting.retain(|conformer| !ready.contains(conformer));
+            for conformer in ready {
+                let Some(declaration) = struct_declaration(&stmts[conformer]) else {
+                    continue;
+                };
+                self.check_struct_types(&declaration)?;
+                self.check_struct_method_signatures(&declaration)?;
+            }
+        }
     }
 
     fn register_module_alias(&mut self, statement: &Stmt) -> Result<(), TypeError> {
@@ -3464,4 +3567,40 @@ impl Checker {
         deletability.bindings.remove(span);
         deletability.linear_bindings.remove(span);
     }
+}
+
+/// Whether `error` is a declaration reading a struct member or constructing
+/// a struct whose members or method signatures have not registered yet.
+fn awaits_struct_declarations(error: &TypeError) -> bool {
+    matches!(error, TypeError::NoSuchAssociatedType { .. })
+        || matches!(error, TypeError::BadCall { reason, .. }
+            if reason == "no '__init__' overload takes no arguments")
+}
+
+/// Whether `name` is a trait of `stmts` whose check waits in `deferred`.
+fn trait_is_deferred(stmts: &[Stmt], deferred: &[usize], name: &str) -> bool {
+    deferred.iter().any(|&index| {
+        matches!(&stmts[index].kind, StmtKind::Trait { name: deferred_name, .. }
+            if deferred_name == name)
+    })
+}
+
+/// Whether `declaration` declares a conformance, unconditional or
+/// conditional, to a trait whose check waits in `deferred`.
+fn conforms_to_deferred(
+    stmts: &[Stmt],
+    deferred: &[usize],
+    declaration: &StructDeclaration<'_>,
+) -> bool {
+    !deferred.is_empty()
+        && declaration
+            .conforms
+            .iter()
+            .chain(
+                declaration
+                    .conformance_conditions
+                    .iter()
+                    .map(|(name, _)| name),
+            )
+            .any(|name| trait_is_deferred(stmts, deferred, name))
 }

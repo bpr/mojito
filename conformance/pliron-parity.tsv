@@ -42,6 +42,7 @@ assets/ok/bool_alias_predicate_where.mojo	main	exe-differential	sanitized
 assets/ok/boolable_and_divmod.mojo	main	exe-differential	sanitized
 assets/ok/borrowed_iteration_temporary_source_drop.mojo	main	exe-differential	sanitized
 assets/ok/bound_generic_write_to.mojo	main	exe-differential	sanitized
+assets/ok/bound_member_list_generic_conformer.mojo	main	exe-differential	sanitized
 assets/ok/bound_value_member_in_signature.mojo	main	exe-differential	sanitized
 assets/ok/builtins_numeric.mojo	main	exe-differential	sanitized
 assets/ok/bundled_def_loan_carrying_argument.mojo	main	exe-differential	sanitized
@@ -246,6 +247,7 @@ assets/ok/dunder_unused_argument_instances.mojo	main	exe-differential	sanitized
 assets/ok/dunder_vec2.mojo	main	exe-differential	sanitized
 assets/ok/element_store_from_same_list.mojo	main	exe-differential	sanitized
 assets/ok/entry_redeclares_library_names.mojo	main	exe-differential	sanitized
+assets/ok/enum_like_protocol.mojo	main	exe-differential	sanitized
 assets/ok/env_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/errno_strerror.mojo	main	exe-differential	sanitized
 assets/ok/evaluated_default_argument.mojo	main	exe-differential	sanitized
@@ -689,6 +691,7 @@ assets/ok/pointer_to_ref_binding.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_ref_binding_twice.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_ref_union_origin.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_ref_write_through.mojo	main	exe-differential	sanitized
+assets/ok/pointer_to_reference_call.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_tuple_element.mojo	main	exe-differential	sanitized
 assets/ok/pointer_tuple_field_write.mojo	main	exe-differential	sanitized
 assets/ok/pointer_type_argument_clone_binder.mojo	main	exe-differential	sanitized
@@ -1019,8 +1022,10 @@ assets/ok/trait_inheritance.mojo	main	exe-differential	sanitized
 assets/ok/trait_method_binder_spelling.mojo	main	exe-differential	sanitized
 assets/ok/trait_parameterized_comptime_default.mojo	main	exe-differential	sanitized
 assets/ok/trait_parameterized_value_requirement.mojo	main	exe-differential	sanitized
+assets/ok/trait_reads_module_struct_member.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_constant_default.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_default_from_caller_parameter.mojo	main	exe-differential	sanitized
+assets/ok/trait_requirement_docstring.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_indexes_own_pack.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_parameter_default.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_variadic_collector.mojo	main	exe-differential	sanitized

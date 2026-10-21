@@ -1837,6 +1837,24 @@ impl Checker {
                     index: index.clone(),
                 })?)
             }
+            // A one-argument struct application over a type name, which
+            // the parser leaves a subscript (`List[String]`).
+            ExprKind::Index { object, index }
+                if matches!(&object.kind, ExprKind::Identifier(name)
+                    if self.structs.contains_key(name))
+                    && matches!(&index.kind, ExprKind::Identifier(argument)
+                        if self.structs.contains_key(argument)
+                            || scalar_type_name(argument).is_some())
+                    && let Some(argument) = index.type_spelling() =>
+            {
+                let ExprKind::Identifier(name) = &object.kind else {
+                    unreachable!("guarded above");
+                };
+                Some(self.ty_from_anno(&SourceType::Named(
+                    name.clone(),
+                    vec![mojito_ast::ast::ParamArg::Type(argument)],
+                ))?)
+            }
             // A member application through a type
             // (`TypeList.of[Trait=AnyType, Int]`).
             ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. }

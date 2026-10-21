@@ -552,17 +552,7 @@ impl Checker {
                     // sequence indexing instead of surfacing a "not a type" error.
                     SourceType::Assoc {
                         base: inner, name, ..
-                    } => match self.member_base(inner) {
-                        Ok((base_ty, generator)) => self
-                            .parameterized_assoc_application(
-                                &base_ty,
-                                name,
-                                &[mojito_ast::ast::ParamArg::Value(index.as_ref().clone())],
-                            )?
-                            .map(|applied| self.generator_member_type(generator, name, applied))
-                            .transpose()?,
-                        Err(_) => None,
-                    },
+                    } => self.member_index_application(inner, name, index)?,
                     _ => None,
                 };
                 if let Some(applied) = application {
@@ -749,6 +739,41 @@ impl Checker {
                 object_type: base_ty.to_string(),
                 member: name.to_string(),
             })
+    }
+
+    /// `inner.name[index]`, a one-argument application of `inner`'s
+    /// parameterized member, or `None` when `inner` names no type or `name`
+    /// is no parameterized member of it. A member with an infer-only
+    /// parameter (`ParameterList.of[1]`) binds its bracket as a whole list
+    /// does, which infers it.
+    fn member_index_application(
+        &self,
+        inner: &SourceType,
+        name: &str,
+        index: &Expr,
+    ) -> Result<Option<Ty>, TypeError> {
+        let Ok((base_ty, generator)) = self.member_base(inner) else {
+            return Ok(None);
+        };
+        let infers = self
+            .parameterized_assoc_params(&base_ty, name)
+            .is_some_and(|params| params.iter().any(|param| param.infer_only));
+        let applied = if infers {
+            let argument = index.type_spelling().map_or_else(
+                || mojito_ast::ast::ParamArg::Value(index.clone()),
+                mojito_ast::ast::ParamArg::Type,
+            );
+            Some(self.member_application(&base_ty, name, &[argument])?)
+        } else {
+            self.parameterized_assoc_application(
+                &base_ty,
+                name,
+                &[mojito_ast::ast::ParamArg::Value(index.clone())],
+            )?
+        };
+        applied
+            .map(|applied| self.generator_member_type(generator, name, applied))
+            .transpose()
     }
 
     /// Lower one application argument of a parameterized associated type into a

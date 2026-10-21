@@ -1032,6 +1032,16 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         if matches!(self.peek_token()?, Some(Token::Newline)) {
             self.next_token()?; // consume the newline after ':'
             self.expect(&Token::Indent, "Expected an indented trait-method body")?;
+            // A docstring may precede the requirement's `...`; before a
+            // default body it is that body's first statement, which checks
+            // as `pass`.
+            if matches!(self.peek_token()?, Some(Token::TripleStringLiteral(_))) {
+                self.next_token()?;
+                self.expect_stmt_end()?;
+                while matches!(self.peek_token()?, Some(Token::Newline)) {
+                    self.next_token()?;
+                }
+            }
             if matches!(self.peek_token()?, Some(Token::Ellipsis)) {
                 self.next_token()?; // consume indented '...'
                 self.expect_stmt_end()?;
