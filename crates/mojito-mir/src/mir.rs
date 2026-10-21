@@ -4189,6 +4189,7 @@ fn lower_cfg_body(
                 .copied()
                 .enumerate()
                 .map(|(slot, binding)| (binding, slot as VarId))
+                .chain(cfg.aliases.iter().map(|(binding, slot)| (*binding, *slot)))
                 .collect(),
             nested: nested.clone(),
             receiver_value_parameters: receiver_value_parameters.to_vec(),

@@ -591,7 +591,7 @@ impl Checker {
     }
 
     /// The boolean expression of a condition. A `case` condition reaching
-    /// here is a `comptime if case`, rejected until R1143 lands.
+    /// here is a `comptime if case`, rejected until R1248 lands.
     pub(super) fn boolean_condition<'c>(
         condition: &'c mojito_ast::ast::Condition,
         statement: &str,

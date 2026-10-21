@@ -8,6 +8,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `match` emits its cases as upstream's `emitCases` / `emitCaseCluster`
+  do: neighbouring cases whose first command tests a spelled literal or an
+  enum case on one path form a cluster that reads the leading value and
+  the discriminant once and tests each distinct key once, in key order (a
+  literal's spelling, so `match 4` over `case 4` / `case 0x4` runs `0x4`,
+  or the case index), each matching case then running its remaining tests
+  before its bindings. Each case keeps its commands in pattern order and
+  makes its path reads when the emission first needs them, a `|`
+  alternative re-reading what the commands before it did not. A match
+  whose cases cover the subject keeps every test and seals its
+  fall-through, so `case (True, var x) | (False, var x): return x`
+  returns on every path, and a nested residual match inside an enclosing
+  case completes that case where the pin falls through
+  (`assets/ok/match_literal_clusters.mojo`, `match_enum_tag_clusters.mojo`,
+  `match_cluster_lifecycle.mojo`). A mapping pattern (`case {"k": v}`) is
+  rejected with the pin's text. This closes R1140, R1237, and R1241.
 - `comptime match` runs as upstream's compile-time conditional chain: each
   case's tests (`== Int` type equality, literals, enum tags, sequence
   lengths) and guard are one compile-time condition over the subject, its

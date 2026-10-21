@@ -2627,20 +2627,37 @@ N+1 times, the exhausted iterator's copy keeping only the stop arm. A `comptime 
 an `HirInstr::ComptimeIf` (`hlcf.comptime.if`): its conditions, computed
 first as upstream's parser does, then one arm region per condition and an
 else region, each arm that completes ended by `Terminator::ComptimeYield`.
-A `match` is an `HirInstr::Match` (`hlcf.match`): one region per case,
-holding its tests as nested `If` ops whose failing arms end in
-`Terminator::MatchNext` (a sequence pattern's `ListLength` test, the call
-to `std.builtin._stubs.list_length_matches`, among them), the element
-reads (`PathValue`, each a hidden `$elem<id>` declaration placed at the
-first command that needs it), its bindings, its guard, and its body, ended
-by `Terminator::MatchComplete`, then an else region ended by `Yield` for
-the fall-through when no case matched. An enum case's tag test is an
-`EnumTag` command (`$match<id>._get_enum_discriminant() == case`, kept
-distinct from `Equal` as upstream's is), and its payload is a `PathValue`
-read of `parent._unsafe_get_enum_payload[case]()`, which nested patterns
-project below. A starred sequence pattern adds no command kind: its
-from-end elements and its slice are `PathValue` reads of ordinary
-subscripts (`$match<id>[$match<id>.__len__() - k]`,
+A `match` is emitted as upstream's `emitCases` emits it, from the
+`MatchEmission` the check records beside each case's command list (the
+decision needs coverage, so the checker plans it, as upstream's
+`PatternMatchBuilder` owns the residual coverage, and HIR, whose region ops
+are `hlcf`, emits it). The cases' runs are cut by `findClusterSize`: a run
+of neighbouring cases whose first command tests a spelled literal or an enum
+case on one path is a cluster, an `HirInstr::If` that reads the leading
+value once (an `EnumTag` command declares the discriminant `$tag<id>` so a
+cluster reads it once), then tests it against each distinct key in key
+order, each arm running its members' residuals — the remaining tests, then
+the bindings — as a nested list of its own, the else arm the trailing
+complement. A list holding one case whose commands all bind is emitted
+inline. Any other list is an `HirInstr::Match` (`hlcf.match`): one region
+per run, holding a case's tests as nested `If` ops whose failing arms end in
+`Terminator::MatchNext` (a sequence pattern's `ListLength` test, the call to
+`std.builtin._stubs.list_length_matches`, among them), its bindings, its
+guard, and its body, ended by `Terminator::MatchComplete`, then an else
+region ended by `Yield` for the fall-through, or by `Terminator::Unreachable`
+when a case concludes the list. Inside an enclosing case a nested list's
+else region advances that case and `match.complete` follows it, where the
+pin falls through (`docs/non-goals.md`). A case earlier ones cover is a
+region sealed `Unreachable`. A command names the chain of path reads its
+path needs — the hidden `$elem<id>` declarations of sequence elements,
+slices, and enum payloads (`parent._unsafe_get_enum_payload[case]()`) —
+and the emission makes each when the first command it emits needs it,
+through a per-region `PatternState`, upstream's `getPathValue` memo: a
+cluster's members name the shared read (`Cfg::aliases`), and a `|`
+alternative starts from a copy of the state, so it re-reads what the
+commands before it did not. A starred sequence pattern adds no command
+kind: its from-end elements and its slice are reads of ordinary subscripts
+(`$match<id>[$match<id>.__len__() - k]`,
 `$match<id>[i:$match<id>.__len__() - k]`).
 No HIR terminator jumps between blocks, so `Cfg::g` holds no edge. HIR
 lowers only a body's live statements (`CheckedTables::live_statements`):
@@ -2674,6 +2691,9 @@ pub enum Terminator {
     Continue(u32),
     ComptimeBreak,
     ComptimeContinue,
+    MatchNext,
+    MatchComplete,
+    Unreachable,
 }
 ```
 

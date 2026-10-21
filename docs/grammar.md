@@ -695,9 +695,8 @@ A boolean condition is any `expression` (the checker requires `Bool`). A
 branch is reached and succeeds when the pattern matches, binding the
 pattern's names in that body only; a `while case` re-evaluates per
 iteration and runs its `else` on the first failure. The pin accepts
-`comptime if case`; Mojito parses it as an error (write `comptime match`).
-`case` conditions are parsed and rejected by the checker until the pattern
-plan lands. `while` / `for`
+`comptime if case`; Mojito parses it as an error (write `comptime match`;
+roadmap R1248). `while` / `for`
 support loop `else`; `break` bypasses it. A `for` target is upstream's
 `parseTargetListExpr`: the destructuring `target_item` grammar of an
 assignment, where a comma list forms a tuple and a star is valid only inside a
@@ -768,7 +767,11 @@ fields, `Point(x=0, y=yv)`) or an enum case with one positional payload
 (`.Some(x)`, `Optional.Some(0)`); a `*`/`**` argument there is a syntax
 error. A sequence pattern's star takes a closed pattern (`*_`, `*rest`,
 `*var rest`, `*[a, b]`), never an `as` pattern or a `|`, and a second star
-is an error. `comptime match` has the same shape over a compile-time subject,
+is an error. A mapping pattern (`{"k": v}`, `{k: v}`) is upstream's
+dictionary literal in pattern position, which upstream has not implemented:
+the parser rejects its key with the pin's "expression is not a valid match
+pattern; use '==' to compare against its value" (`docs/non-goals.md`).
+`comptime match` has the same shape over a compile-time subject,
 and like `comptime if` it belongs in a function body: at module scope the parser
 reports upstream's "'comptime match' must be contained in a function". Every
 pattern form is parsed; which ones the checker accepts is

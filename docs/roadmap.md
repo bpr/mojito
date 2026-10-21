@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1246**.
+Next free ID: **R1251**.
 
 ## Ordered Work
 
@@ -1919,6 +1919,15 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Probe: an `as` binding beside a binding of one of its parts, `case
     (v, _) as whole: print(v, whole[1])` and `case .Some(v) as whole:
     print(v, whole.value())`; the pin prints both.
+  - Probe: a temporary tuple subject whose case reads an enum payload and
+    then tests a later element, `match (r, s): case (.Node(x), 1)`, fails
+    with "access to '$match<id>' conflicts with live reference
+    '$elem<id>'", where the pin prints `disc`, `payload 1`, `eq 2 1`; over
+    a place (`var t = (r, s); match t`) it runs.
+  - Probe: a guard reading an `as` binding, `case .Node(6 as z) if z >
+    10`, keeps the subject's anchor live past the match, so `print(r.n)`
+    after it fails ("access to 'r' conflicts with live reference
+    '$match<id>'"); the pin prints `5`.
   - Found while landing R1037 (2026-10-16).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -2766,6 +2775,28 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
+- [ ] **R1249 A `Boolable` struct's condition copies the struct**
+
+  Problem: `if o:` over `var o = Optional(T(8))`, `T` printing its copies
+  and destructions, prints `copy 8` and destroys only one of the two
+  values, where the pin calls `__bool__` on `o` in place and copies
+  nothing.
+  - The checker marks a `Boolable` condition `Truthiness`, and MIR lowers
+    it as a call `Bool(value)` over the loaded value (`truthiness`,
+    `mir/lower_expr/ctrl.rs`), which copies a non-trivial struct.
+  - Upstream converts a condition with the struct's `__bool__` over the
+    borrowed value.
+  - A concrete `struct C(Boolable)` holding a `T` copies too: both kinds
+    print one `copy` and one `del` for the two values.
+  - Every enum-case pattern over such an `Optional` copies the same way,
+    since `Optional._get_enum_discriminant` is `1 if self else 0`: `case
+    .Some(_)`, `case .Some(u)`, and `case .Some(ref u)` each print `copy`.
+  - Lifecycle fixtures over `Optional` payloads
+    (`assets/ok/match_cluster_lifecycle.mojo`) wait on this.
+  - Found while landing R1140 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1114 `not <Trait>` opts a struct out of a trait in its conformance
   list**
 
@@ -2835,47 +2866,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1237 Consecutive enum cases read the discriminant once per case**
-
-  Problem: three `.Node` cases in a row call `_get_enum_discriminant()`
-  three times in Mojito, where the pin calls it once and branches on the
-  index.
-  - Upstream clusters consecutive cases whose first command is an
-    `EnumTag` (or a literal `Equal`) on the same path
-    (`findClusterSize`/`emitCaseCluster`, `ParserStmts.cpp`); a `|` is not
-    clustered, so `.Leaf | .Node(_)` reads it twice on both.
-  - Mojito plans each case alone (`check_match_cases`,
-    `checker/patterns.rs`), and HIR lowers each case's `EnumTag` as its own
-    test.
-  - Only a discriminant getter with effects shows the difference; literal
-    clusters are not observable.
-  - The cluster key is the leading command's path and case, which
-    `checker/coverage.rs`'s `CoverCommand` already records per case.
-  - Probe: `conformance/probes/match_enum_case_cluster.mojo`.
-  - Found while landing R1133 (2026-10-20).
-  - Depends on R1134.
-  - Model: Fable, Not Planned.
-
-- [ ] **R1241 A concluded `match` drops its concluding case's tests where
-  upstream seals the fall-through**
-
-  Problem: `case (True, var x) | (False, var x): return x` over a
-  `Tuple[Bool, Bool]` is rejected ("'f' does not return a value on every
-  path"), where the pin covers the subject and prints `False`.
-  - Upstream keeps every case's tests and emits the match's else region as
-    `hlcf.unreachable` once a case concludes it (`emitCases`,
-    `ParserStmts.cpp`).
-  - Mojito instead strips the concluding case's tests
-    (`check_match_cases`, `checker/patterns.rs`), which a `|` whose
-    alternatives bind cannot allow (`droppable_test`), so the match stays
-    open.
-  - Lever: give HIR an unreachable terminator for a concluded match's else
-    region, lowered to `MirTerm::Unreachable`, and stop stripping tests.
-  - Probe: the tuple shape above, which the pin runs.
-  - Found while landing R1134 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1242 Dead regions after an always-completing case or condition do
   not warn**
 
@@ -2894,8 +2884,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     the irrefutable condition; `if True: ... else: ...` warns at the
     condition.
   - Probe: `case 1`, then `case 1 if c`, and a repeated tuple case of an
-    11-`Bool` product, warn at the second case's residual, which needs the
-    clustered emission of R1140.
+    11-`Bool` product, warn at the second case's residual in its cluster's
+    arm.
+  - Probe: `conformance/probes/match_cluster_unspelled_members.mojo` warns
+    at its third case's body, the second residual of a group whose first
+    always matches.
   - Found while landing R1134 (2026-10-20).
   - Depends on R1241.
   - Model: Opus, Not Planned.
@@ -2957,30 +2950,53 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1140 Repeated leading tests of neighbouring cases are shared**
+- [ ] **R1246 Bare and `ref` bindings in `|` alternatives are rejected**
 
-  Problem: every `match` case re-runs its own tests (`checker/patterns.rs`
-  emits one program per case), where upstream's `findClusterSize` /
-  `emitClusteredCases` share a safe leading literal or tag test across
-  neighbouring cases.
-  - Share only dominance-safe tests: a leading literal of a trivial type
-    or an enum tag. Keep the order within the residual cases, and never
-    share an effectful equality or getter call.
-  - Stop: a repeated-tag and a repeated-literal fixture produce shared
-    tests with unchanged effect and lifecycle traces, and an
-    effectful-equality fixture stays ordered.
-  - Completion audit of the feature: the package and textual MIR
-    round-trips, source locations, dead arms, and `docs/features.md`.
-    Retire the transitional "until its slice lands" rejections whose
-    slice has landed.
-  - Mapping patterns stay rejected, as upstream's proposal excludes them:
-    record the deferral in `docs/non-goals.md` with upstream's
-    implementation as the reopening criterion.
-  - Probe: the pin clusters literal cases by spelling and reorders the
-    cluster, so `match 4` over `case 4:` then `case 0x4:` runs the `0x4`
-    case.
-  - Depends on R1139, R1137, and R1138.
+  Problem: `case (x, 2) | (1, x)` over `(1, 5)` is rejected ("a bare or
+  'ref' binding in a '|' alternative"), where the pin binds `x` as one
+  immutable reference to whichever element matched and prints `5`.
+  - Only `var` bindings join today (`Join` in `checker/patterns.rs`): the
+    first alternative declares, the later ones assign one slot.
+  - Upstream's `emitOr` declares each bound name before the alternatives
+    and initializes it in every arm (`initOrBindings`), so a reference
+    join holds the union of the alternatives' loans.
+  - Lever: the runtime-handle representation (`runtime_aliases` in
+    `mir/lower_stmt.rs`) in every alternative, since a static alias names
+    one place.
+  - `docs/features.md`'s `match` row names this entry.
+  - Found while landing R1140 (2026-10-20).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1247 A nominal subscript is not a destructuring target**
+
+  Problem: `(xs[0], xs[1]) = pair` is rejected ("a nominal subscript
+  (`xs[i]`) as a destructuring target"), where the pin stores each element
+  through `__setitem__` and prints `3 4`.
+  - `checker/destructure.rs` rejects the leaf because the extraction
+    plan's element store has no `__setitem__` path.
+  - The plain `xs[i] = v` store has one (`lower_subscript_set`).
+  - Fixture to add beside `assets/ok/destructure_swap_and_places.mojo`.
+  - Found while landing R1140 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1248 `comptime if case` is a parse error**
+
+  Problem: `comptime if case 3 = n:` inside `def f[n: Int]()` fails to
+  parse ("'comptime if case' is not supported; use 'comptime match'"),
+  where the pin tests the pattern at compile time and prints `three`.
+  - The pin requires a binding to be a compile-time value (`variable
+    binding ... in 'comptime if case' must be a compile-time value`).
+  - `parse_comptime` (`parser/stmts.rs`) rejects it after parsing the
+    whole chain, so the error lands on the token after the statement (the
+    next `def`, `7:1`) rather than at the `case`.
+  - Lever: `check_comptime_cases`'s compile-time mode with one case per
+    branch, as `comptime match` emits `hlcf.comptime.if`.
+  - `boolean_condition` (`checker/statements.rs`) names this entry.
+  - Found while landing R1140 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1119 `Defaultable` supplies a default `__init__()`**
 
@@ -4256,6 +4272,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `ParameterList.__iter__().__next__()` read in a plain `raises`
     function.
   - Found while landing R807 (2026-10-19).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1250 A `match`'s pattern tests carry the statement's location**
+
+  Problem: every test, path read, and binding a `match` or `case`
+  condition synthesizes sits at the statement's source location, where
+  upstream locates each command at its pattern (`cmd->expr`) and a
+  cluster's elif condition at its group's first pattern.
+  - `Synth::for_statement` (`checker/desugar.rs`) gives every node it
+    builds the statement's span.
+  - Only native line tables show it: a pattern test steps on the `match`
+    line, and neither compiler's run-time error names a location.
+  - Lever: a `Synth` per pattern for the commands it compiles, keeping
+    syntax ids unique per statement.
+  - Found while landing R1140 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -44,7 +44,7 @@ pub(super) enum CoverCommand {
 
 impl CoverCommand {
     /// The path the command tests or binds; a `|` sits at the root.
-    fn path(&self) -> &[Step] {
+    pub(super) fn path(&self) -> &[Step] {
         match self {
             Self::Equal { path, .. }
             | Self::EnumTag { path, .. }
@@ -54,13 +54,14 @@ impl CoverCommand {
         }
     }
 
-    const fn is_bind(&self) -> bool {
+    pub(super) const fn is_bind(&self) -> bool {
         matches!(self, Self::Bind { .. })
     }
 }
 
 /// One case as coverage reads it: its pattern's commands, whether a guard
 /// follows them, and the pattern's span, where its warning goes.
+#[derive(Clone)]
 pub(super) struct CoverCase {
     pub(super) commands: Vec<CoverCommand>,
     pub(super) guarded: bool,
@@ -70,7 +71,7 @@ pub(super) struct CoverCase {
 impl CoverCase {
     /// Whether the case cannot fail once reached: unguarded, and every
     /// command a binding (`_` has none).
-    fn always_matches(&self) -> bool {
+    pub(super) fn always_matches(&self) -> bool {
         !self.guarded && self.commands.iter().all(CoverCommand::is_bind)
     }
 }
@@ -136,6 +137,35 @@ impl Checker {
             concluding,
             warnings,
         })
+    }
+
+    /// The case of the residual list `cases` that closes the covering
+    /// space of the subject type `subject`, upstream's
+    /// `markResidualConcludingCase`: the first that always matches, or the
+    /// first unguarded one whose commands cover the last open value. The
+    /// space is the whole subject's, so a residual whose tests sit below
+    /// the root credits nothing. No warning is made.
+    pub(super) fn residual_concluding(
+        &self,
+        subject: &Ty,
+        cases: &[CoverCase],
+    ) -> Result<Option<usize>, TypeError> {
+        let mut space = self.covering_space(subject)?;
+        for (index, case) in cases.iter().enumerate() {
+            if case.always_matches() {
+                return Ok(Some(index));
+            }
+            if case.guarded {
+                continue;
+            }
+            if space
+                .credit(&case.commands)
+                .is_some_and(|credit| credit.hit && space.covered())
+            {
+                return Ok(Some(index));
+            }
+        }
+        Ok(None)
     }
 
     /// The covering space of the subject type `ty`, upstream's

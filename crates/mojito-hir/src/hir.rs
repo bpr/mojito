@@ -19,8 +19,9 @@
 //! [`Cfg::slots`].
 
 use mojito_checked::checked::{
-    CheckedCommand, CheckedCondition, CheckedExpr, CheckedMatchCase, CheckedNodeId, CheckedOp,
-    CheckedProgram, CheckedStmt, CheckedStmtId, CheckedStmtOp, CheckedTables, SemanticAdjustment,
+    CaseCluster, CheckedCommand, CheckedCondition, CheckedExpr, CheckedMatchCase, CheckedNodeId,
+    CheckedOp, CheckedPathRead, CheckedProgram, CheckedStmt, CheckedStmtId, CheckedStmtOp,
+    CheckedTables, EmittedArm, MatchEmission, ResidualCase, SemanticAdjustment,
 };
 use mojito_types::origin::OwnerId;
 use mojito_types::types::Ty;
@@ -240,8 +241,9 @@ pub enum HirInstr {
     /// pattern and runs its body — a failed test or guard ends in
     /// [`Terminator::MatchNext`], a body that completes in
     /// [`Terminator::MatchComplete`] — then `orelse` when none matched,
-    /// ended by [`Terminator::Yield`]. A `break`/`continue` in a case names
-    /// the enclosing loop.
+    /// ended by [`Terminator::Yield`], or by [`Terminator::Unreachable`]
+    /// when a case concludes the match. A `break`/`continue` in a case
+    /// names the enclosing loop.
     Match {
         cases: Vec<HirRegion>,
         orelse: HirRegion,
@@ -336,6 +338,10 @@ pub enum Terminator {
     /// `hlcf.match.complete`: the innermost [`HirInstr::Match`] case ran;
     /// leave the op.
     MatchComplete,
+    /// `hlcf.unreachable`: no execution reaches the region's end — a case
+    /// earlier ones cover, or the fall-through of a `match` whose cases
+    /// cover its subject.
+    Unreachable,
 }
 
 #[derive(Debug, Default)]
@@ -372,6 +378,10 @@ pub struct Cfg {
     /// The slot of each checked binding this CFG declared or was seeded
     /// with: a local name node's [`Cfg::slots`] entry is its binding's slot.
     pub bindings: HashMap<OwnerId, VarId>,
+    /// The checked bindings whose declarations a `match`'s emission did not
+    /// run, each naming the slot that holds its value: another case's read
+    /// of the same path, or a cluster's discriminant.
+    pub aliases: HashMap<OwnerId, VarId>,
     /// The statement nodes of the body this CFG lowers.
     pub body: Vec<CheckedStmtId>,
     /// The next loop label free after this CFG's loops, from which MIR
@@ -471,6 +481,7 @@ impl Cfg {
             checked,
             slots: HashMap::new(),
             bindings: HashMap::new(),
+            aliases: HashMap::new(),
         };
         let checked = Arc::clone(&lower.checked);
         let body = checked.live_statements(body);
@@ -551,6 +562,16 @@ fn collect_function_implicit_names(
     }
 }
 
+/// What a pattern's emission has read, upstream's
+/// `PatternEmitState::pathValues`: per match-wide path id, the slot holding
+/// the path's value and its runtime name. A case region, a cluster's arm,
+/// and a `|` alternative each start from a copy, so a read one makes is
+/// not seen by its siblings.
+#[derive(Clone, Default)]
+struct PatternState {
+    paths: HashMap<u32, (VarId, String)>,
+}
+
 /// Lowering cursor: appends to the "current" block of the region being
 /// built. Invariant: `cur` is the current insertion point; a block gets its
 /// terminator exactly once, via [`Lower::seal`].
@@ -573,6 +594,9 @@ struct Lower {
     slots: HashMap<CheckedNodeId, VarId>,
     /// The slot of each checked binding declared so far.
     bindings: HashMap<OwnerId, VarId>,
+    /// The bindings a `match`'s emission named by another declaration's
+    /// slot.
+    aliases: HashMap<OwnerId, VarId>,
 }
 
 impl Lower {
@@ -717,6 +741,7 @@ impl Lower {
             checked: self.checked,
             slots: self.slots,
             bindings: self.bindings,
+            aliases: self.aliases,
             body,
             labels: self.next_label,
         }
@@ -936,7 +961,8 @@ impl Lower {
             CheckedStmtOp::Match {
                 anchor: Some(anchor),
                 cases,
-            } => self.match_statement(*anchor, cases),
+                emission,
+            } => self.match_statement(*anchor, cases, emission),
             CheckedStmtOp::ComptimeMatch { anchor, cases } => {
                 self.comptime_match(*anchor, cases);
             }
@@ -1137,7 +1163,10 @@ impl Lower {
                 });
             }
             CheckedCondition::Case {
-                anchor, commands, ..
+                anchor,
+                commands,
+                reads,
+                ..
             } => {
                 self.scopes.push(HashMap::new());
                 if let Some(anchor) = anchor {
@@ -1145,7 +1174,7 @@ impl Lower {
                 }
                 let case = self.region(|this| {
                     this.scopes.push(HashMap::new());
-                    this.case_commands(commands);
+                    this.case_commands(reads, commands, &mut PatternState::default());
                     this.block(body);
                     this.scopes.pop();
                     Terminator::MatchComplete
@@ -1163,62 +1192,262 @@ impl Lower {
         }
     }
 
-    /// `match` as `hlcf.match`: the anchor declares the subject's slot in the
-    /// enclosing scope, then each case is a region of its own scope — every
-    /// test and the guard an `hlcf.if` whose else arm is `match.next`, every
-    /// binding its declaration, then the body, ended by `match.complete` —
-    /// and the else region yields the fall-through when no case matched.
-    fn match_statement(&mut self, anchor: CheckedStmtId, cases: &[CheckedMatchCase]) {
+    /// `match` as upstream's `emitCases` emits it: the anchor declares the
+    /// subject's slot in the enclosing scope, then the cases are emitted as
+    /// `emission` plans them, from a state that has read nothing yet.
+    fn match_statement(
+        &mut self,
+        anchor: CheckedStmtId,
+        cases: &[CheckedMatchCase],
+        emission: &MatchEmission,
+    ) {
         self.stmt(anchor);
-        // A case earlier ones cover is never reached, so it lowers no
-        // region, as upstream seals it with `hlcf.unreachable`.
-        let regions = cases
-            .iter()
-            .filter(|case| !case.unreachable)
-            .map(|case| {
-                self.region(|this| {
-                    this.scopes.push(HashMap::new());
-                    this.case_commands(&case.commands);
-                    if let Some(guard) = case.guard {
-                        this.case_test(guard);
-                    }
-                    this.block(&case.body);
-                    this.scopes.pop();
-                    Terminator::MatchComplete
-                })
-            })
-            .collect();
-        let orelse = self.region(|_| Terminator::Yield);
-        self.push(HirInstr::Match {
-            cases: regions,
-            orelse,
-        });
+        self.emit_cases(cases, emission, &PatternState::default(), false);
     }
 
-    /// A case's commands in order: a test (a comparison, a sequence
-    /// length test, or an enum case's tag test) is a branch whose failure advances, an element read or
-    /// a binding a statement of the case's scope. A `|` pattern's alternatives are an
-    /// inner `hlcf.match` in the case's own scope: each alternative a case
-    /// region whose failed test advances to the next alternative and whose
-    /// success completes to the commands after the `|`, and whose else
-    /// region advances the enclosing case; a binding the first alternative
-    /// declares is the slot the later ones assign.
-    fn case_commands(&mut self, commands: &[CheckedCommand]) {
-        for command in commands {
+    /// One list of case entries, upstream's `emitCases`: one case whose
+    /// commands all bind inline, one cluster as its `hlcf.if`, any other
+    /// list as an `hlcf.match` with one case region per arm, each from its
+    /// own copy of `state`, whose else region yields the fall-through, or
+    /// is unreachable when an entry concludes the list. Inside a case
+    /// region (`in_case`) the list's failure advances the enclosing case
+    /// and its success completes it: a nested match's else region is
+    /// `match.next`, and `match.complete` follows the op.
+    fn emit_cases(
+        &mut self,
+        cases: &[CheckedMatchCase],
+        emission: &MatchEmission,
+        state: &PatternState,
+        in_case: bool,
+    ) {
+        match emission.arms.as_slice() {
+            [EmittedArm::Case(entry)]
+                if entry
+                    .commands
+                    .iter()
+                    .all(|&command| cases[entry.case].commands[command].is_bind()) =>
+            {
+                self.scopes.push(HashMap::new());
+                self.emit_case(cases, entry, &mut state.clone(), in_case);
+                self.scopes.pop();
+            }
+            [EmittedArm::Cluster(cluster)] => {
+                self.emit_case_cluster(cases, cluster, state, in_case);
+            }
+            arms => {
+                let regions = arms
+                    .iter()
+                    .map(|arm| {
+                        self.region(|this| {
+                            this.scopes.push(HashMap::new());
+                            match arm {
+                                EmittedArm::Case(entry) => {
+                                    this.emit_case(cases, entry, &mut state.clone(), true);
+                                }
+                                EmittedArm::Cluster(cluster) => {
+                                    this.emit_case_cluster(cases, cluster, state, true);
+                                }
+                            }
+                            this.scopes.pop();
+                            Terminator::MatchComplete
+                        })
+                    })
+                    .collect();
+                let orelse = self.region(|_| match (emission.concluding, in_case) {
+                    (true, _) => Terminator::Unreachable,
+                    (false, true) => Terminator::MatchNext,
+                    (false, false) => Terminator::Yield,
+                });
+                self.push(HirInstr::Match {
+                    cases: regions,
+                    orelse,
+                });
+                if in_case {
+                    self.seal(Terminator::MatchComplete);
+                }
+            }
+        }
+    }
+
+    /// A cluster of cases sharing a leading test, upstream's
+    /// `emitCaseCluster`: the tested path's value read once (its
+    /// discriminant too, for an enum case), then an `hlcf.if` whose arms
+    /// test it against each group's key in order — every later group's
+    /// test in an elif condition region — and run the group's residuals
+    /// from a copy of the state; the else arm runs the complement, or
+    /// yields, or is unreachable when a member concludes the cluster. A
+    /// member's read of a path the state holds names the state's slot.
+    /// Inside a case region the `hlcf.if` is followed by `match.next`, or
+    /// by `hlcf.unreachable` when the cluster concludes.
+    fn emit_case_cluster(
+        &mut self,
+        cases: &[CheckedMatchCase],
+        cluster: &CaseCluster,
+        state: &PatternState,
+        in_case: bool,
+    ) {
+        let mut state = state.clone();
+        let tested_case = &cases[cluster.tested.case];
+        let tested = &tested_case.commands[cluster.tested.command];
+        self.path_reads(&tested_case.reads, tested.reads(), &mut state);
+        let tag = match tested {
+            CheckedCommand::EnumTag { tag, .. } => {
+                self.stmt(*tag);
+                self.declared_slot(*tag)
+            }
+            _ => None,
+        };
+        // Each group's test is its first member's, naming the state's
+        // value and the cluster's discriminant.
+        let mut groups = Vec::new();
+        for group in &cluster.groups {
+            let case = &cases[group.test.case];
+            let command = &case.commands[group.test.command];
+            self.path_reads(&case.reads, command.reads(), &mut state);
+            if let (CheckedCommand::EnumTag { tag: own, .. }, Some((slot, runtime))) =
+                (command, &tag)
+            {
+                self.alias_declaration(*own, *slot, runtime);
+            }
+            if let Some(test) = command.test() {
+                groups.push((test, group));
+            }
+        }
+        let Some(((test, first), rest)) = groups.split_first() else {
+            return;
+        };
+        let cond = HirCond::Expr(self.expr(*test));
+        let then = self.cluster_arm(cases, &first.residuals, &state, in_case);
+        let elifs = rest
+            .iter()
+            .map(|(test, group)| HirElif {
+                cond: self.region(|this| Terminator::ElifCond(this.expr(*test))),
+                then: self.cluster_arm(cases, &group.residuals, &state, in_case),
+            })
+            .collect();
+        let orelse = match &cluster.complement {
+            Some(complement) => self.cluster_arm(cases, complement, &state, in_case),
+            None if cluster.concluding => self.region(|_| Terminator::Unreachable),
+            None => self.region(|_| Terminator::Yield),
+        };
+        self.push(HirInstr::If {
+            cond,
+            then,
+            elifs,
+            orelse,
+        });
+        if in_case {
+            self.seal(if cluster.concluding {
+                Terminator::Unreachable
+            } else {
+                Terminator::MatchNext
+            });
+        }
+    }
+
+    /// A cluster's arm: the list `residuals` in a scope of its own, from a
+    /// copy of `state`, then `yield`.
+    fn cluster_arm(
+        &mut self,
+        cases: &[CheckedMatchCase],
+        residuals: &MatchEmission,
+        state: &PatternState,
+        in_case: bool,
+    ) -> HirRegion {
+        self.region(|this| {
+            this.scopes.push(HashMap::new());
+            this.emit_cases(cases, residuals, state, in_case);
+            this.scopes.pop();
+            Terminator::Yield
+        })
+    }
+
+    /// One case entry: its commands as [`Self::case_commands`] emits them,
+    /// then its guard and body. A case earlier ones cover runs nothing: its
+    /// region is sealed unreachable, as upstream seals it. Inside a case
+    /// region a failed guard advances and the body completes the case; at
+    /// the top level the body runs under the guard's `hlcf.if` and falls
+    /// through.
+    fn emit_case(
+        &mut self,
+        cases: &[CheckedMatchCase],
+        entry: &ResidualCase,
+        state: &mut PatternState,
+        in_case: bool,
+    ) {
+        let case = &cases[entry.case];
+        if case.unreachable {
+            self.seal(Terminator::Unreachable);
+            return;
+        }
+        let commands: Vec<&CheckedCommand> = entry
+            .commands
+            .iter()
+            .map(|&command| &case.commands[command])
+            .collect();
+        self.case_commands(&case.reads, commands, state);
+        match (case.guard, in_case) {
+            (Some(guard), true) => {
+                self.case_test(guard);
+                self.block(&case.body);
+                self.seal(Terminator::MatchComplete);
+            }
+            (Some(guard), false) => {
+                let cond = HirCond::Expr(self.expr(guard));
+                let then = self.region(|this| {
+                    this.block(&case.body);
+                    Terminator::Yield
+                });
+                let orelse = self.region(|_| Terminator::Yield);
+                self.push(HirInstr::If {
+                    cond,
+                    then,
+                    elifs: Vec::new(),
+                    orelse,
+                });
+            }
+            (None, true) => {
+                self.block(&case.body);
+                self.seal(Terminator::MatchComplete);
+            }
+            (None, false) => self.block(&case.body),
+        }
+    }
+
+    /// A command list, upstream's `emitCommands` then
+    /// `materializeBindings`: each test, after the path reads it needs, a
+    /// branch whose failure advances (an enum case's after its
+    /// discriminant), each binding's path read, and each `|` as an inner
+    /// `hlcf.match` in the case's own scope — each alternative a case region
+    /// from its own copy of `state` whose failed test advances to the next
+    /// alternative and whose success completes to the commands after the
+    /// `|`, and whose else region advances the enclosing case — then every
+    /// binding's declaration, in order, once every test has passed. A
+    /// binding the first alternative declares is the slot the later ones
+    /// assign.
+    fn case_commands<'c>(
+        &mut self,
+        reads: &[CheckedPathRead],
+        commands: impl IntoIterator<Item = &'c CheckedCommand> + Clone,
+        state: &mut PatternState,
+    ) {
+        for command in commands.clone() {
+            self.path_reads(reads, command.reads(), state);
             match command {
-                CheckedCommand::Equal { test }
-                | CheckedCommand::ListLength { test }
-                | CheckedCommand::EnumTag { test, .. } => {
+                CheckedCommand::Equal { test, .. } | CheckedCommand::ListLength { test, .. } => {
                     self.case_test(*test);
                 }
-                CheckedCommand::Bind { declaration }
-                | CheckedCommand::PathValue { declaration } => self.stmt(*declaration),
+                CheckedCommand::EnumTag { tag, test, .. } => {
+                    self.stmt(*tag);
+                    self.case_test(*test);
+                }
+                CheckedCommand::Bind { .. } => {}
                 CheckedCommand::Alternatives(alternatives) => {
                     let cases = alternatives
                         .iter()
                         .map(|commands| {
                             self.region(|this| {
-                                this.case_commands(commands);
+                                this.case_commands(reads, commands, &mut state.clone());
                                 Terminator::MatchComplete
                             })
                         })
@@ -1227,6 +1456,63 @@ impl Lower {
                     self.push(HirInstr::Match { cases, orelse });
                 }
             }
+        }
+        for command in commands {
+            if let CheckedCommand::Bind { declaration, .. } = command {
+                self.stmt(*declaration);
+            }
+        }
+    }
+
+    /// Make the path reads `chain` (indices into `reads`) of a command, as
+    /// upstream's `getPathValue`: a path `state` holds is named by the
+    /// read's declaration, and any other is read by it and noted.
+    fn path_reads(&mut self, reads: &[CheckedPathRead], chain: &[u32], state: &mut PatternState) {
+        for &index in chain {
+            let Some(read) = reads.get(index as usize) else {
+                continue;
+            };
+            if let Some((slot, runtime)) = state.paths.get(&read.path) {
+                let (slot, runtime) = (*slot, runtime.clone());
+                self.alias_declaration(read.declaration, slot, &runtime);
+            } else {
+                self.stmt(read.declaration);
+                if let Some(declared) = self.declared_slot(read.declaration) {
+                    state.paths.insert(read.path, declared);
+                }
+            }
+        }
+    }
+
+    /// The slot the declaration `declaration` declared, and its runtime
+    /// name.
+    fn declared_slot(&self, declaration: CheckedStmtId) -> Option<(VarId, String)> {
+        let statement = self.checked.statement(declaration)?;
+        let slot = statement
+            .binding
+            .and_then(|binding| self.bindings.get(&binding).copied())?;
+        Some((slot, self.vars[slot as usize].clone()))
+    }
+
+    /// Make the declaration `declaration`'s binding name `slot`, whose
+    /// runtime name is `runtime`, without running it: another case's read
+    /// of the same path, or a cluster's discriminant, holds its value.
+    fn alias_declaration(&mut self, declaration: CheckedStmtId, slot: VarId, runtime: &str) {
+        let checked = Arc::clone(&self.checked);
+        let Some(statement) = checked.statement(declaration) else {
+            return;
+        };
+        let (CheckedStmtOp::RefDecl { name, .. } | CheckedStmtOp::VarDecl { name, .. }) =
+            &statement.op
+        else {
+            return;
+        };
+        if let Some(binding) = statement.binding {
+            self.bindings.insert(binding, slot);
+            self.aliases.insert(binding, slot);
+        }
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(name.clone(), runtime.to_string());
         }
     }
 
@@ -1460,7 +1746,10 @@ impl Lower {
             // and leaves, as a false condition does, and the bindings exist
             // in the body alone.
             CheckedCondition::Case {
-                anchor, commands, ..
+                anchor,
+                commands,
+                reads,
+                ..
             } => self.region(|this| {
                 this.scopes.push(HashMap::new());
                 if let Some(anchor) = anchor {
@@ -1474,7 +1763,7 @@ impl Lower {
                 });
                 let case = this.region(|this| {
                     this.scopes.push(HashMap::new());
-                    this.case_commands(commands);
+                    this.case_commands(reads, commands, &mut PatternState::default());
                     this.loops.push(EnclosingLoop {
                         target: LoopTarget::Loop(label),
                         cleanup: Vec::new(),

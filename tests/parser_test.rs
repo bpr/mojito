@@ -2759,6 +2759,24 @@ fn parses_parameterized_pattern_heads() {
 }
 
 #[test]
+fn mapping_patterns_are_rejected_with_upstreams_sentence() {
+    for source in [
+        "def f(x: Int):\n    match x:\n    case {\"a\": v}:\n        pass\n",
+        "def f(x: Int):\n    match x:\n    case {k: v}:\n        pass\n",
+    ] {
+        let error = Parser::new(Lexer::new(source))
+            .parse_program()
+            .expect_err("a mapping pattern is rejected");
+        assert!(
+            error.to_string().contains(
+                "expression is not a valid match pattern; use '==' to compare against its value"
+            ),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn match_pattern_bindings_are_listed_in_source_order() {
     let cases = match_cases(
         "def f(x: Int):\n    match x:\n    case (var a, [b, *c]) | (ref a, _) as d:\n        pass\n",

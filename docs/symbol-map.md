@@ -157,11 +157,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   compiles each element's pattern over an unread element subject — a
   `Step::SequenceElement`, `SequenceFromEnd`, or the star's
   `SequenceSlice`, spelled by `spell` — which
-  `materialize` reads at the first command that needs it into a hidden
-  `$elem<id>` (`PlannedCommand::PathValue`: `ref` over a reference
-  result, `var` over an owned one, moved into a lone `var` binding),
-  remembered per path in `Commands::reads` (an alternative starts from a
-  clone, so it re-reads what the commands before the `|` did not); an
+  `materialize` declares at the first command that needs it as a hidden
+  `$elem<id>` (a `PlannedRead` in `Commands::reads`, its path numbered by
+  the statement's `PathTable`: `ref` over a reference result, keeping the
+  subject's capability when some case binds by reference
+  (`MatchSubject::mutable_reads`), `var` over an owned one, moved into a
+  lone `var` binding), remembered per path in `Commands::cached` (an
+  alternative starts from a clone, so it re-reads what the commands before
+  the `|` did not), and returns the chain of read indices each command
+  carries; an
   unread element rejects typed patterns, as upstream's untyped list
   element path does; over a subject declaring the bundled `EnumLike`
   (`is_enum_like`, by `checker::enum_like_trait`'s linked identity) an
@@ -170,17 +174,19 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `check_enum_owner`) through `enum_case_index` / `enum_case_payload`
   over the conformer's folded `_enum_case_names` / `_enum_case_types`
   (`enum_like_list`, through `constraints.rs`'s `struct_value_member`),
-  pushes a `PlannedCommand::EnumTag` (`enum_tag_test`, checked as
-  `CheckedCommand::EnumTag`), and compiles its payload pattern over a
+  pushes a `PlannedCommand::EnumTag` (`enum_tag_test`: the discriminant
+  `var $tag<id> = subject._get_enum_discriminant()` and its test `$tag<id>
+  == case`, checked as `CheckedCommand::EnumTag`), and compiles its payload pattern over a
   `Step::EnumPayload` read, which `materialize` reads along the path like
   an element; over any other subject a bare head is an `equality_test`;
   a `|` pattern (`compile_or_pattern`) compiles each
   alternative as a program of its own under a `Join` (the first alternative
   declares its `var` bindings, the later ones assign them, names and types
-  compared) — orders every test before every binding (`Commands`), checks
-  the guard once the bindings exist, and attaches the `MatchPlan` (anchor
-  statement, per-case `PlannedCommand`s, `Alternatives` nested) at the
-  statement's facts; `MatchSubject` is the projected subject (the hidden
+  compared) — keeps each case's commands in pattern order, one per
+  coverage command (`Commands::program`), checks the guard once the
+  bindings exist, and attaches the `MatchPlan` (anchor statement, per-case
+  `PlannedCommand`s and `PlannedRead`s, `Alternatives` nested, and the
+  `MatchEmission`) at the statement's facts; `MatchSubject` is the projected subject (the hidden
   name, a path of `Step`s, the projection's type, whether the whole
   subject is a temporary and whether its projections are of one, whether
   it is the root, whether it is an owned path read, and the path's
@@ -200,17 +206,27 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `CoverageVerdict` — the unreachable cases, the concluding case, and the
   warnings in emission order (`NodeFacts::match_warnings`, which
   `CheckedProgram::new` gathers per statement in source order into
-  `CheckedProgram::warnings`). The plan records `MatchPlan::concluded`
-  (the concluding case's redundant tests are dropped so no path falls
-  through) and `MatchPlan::unreachable`; `Checker::match_reach` answers
+  `CheckedProgram::warnings`). `checker/clusters.rs`'s
+  `Checker::plan_match_emission` then ports upstream's `emitCases` /
+  `emitCaseCluster` decisions over the same commands: `find_cluster_size`
+  cuts the cases into runs, `Entry::key` is `SpellingOrEnumCase`,
+  `Entry::residual_entry` is `internResidualCommandList`, and
+  `mark_residual_concluding` calls `coverage.rs`'s `residual_concluding`
+  (`markResidualConcludingCase`) on each group's residuals, giving the
+  `MatchEmission` tree (`EmittedArm::Case`/`Cluster`, `CaseCluster`,
+  `ClusterGroup`, `ResidualCase`, `CommandRef` in `checked.rs`). The plan
+  records `MatchPlan::concluded` (the emission seals the fall-through) and
+  `MatchPlan::unreachable`; `Checker::match_reach` answers
   both as a `MatchReach` to the return and initialization analyses
   (`declarations.rs`'s `match_reach`, which adds the irrefutable-case
   fallback), `explicit_destroy` reads them from the fact, and the checked
   program carries each case's `CheckedMatchCase::unreachable`. The checked
   program carries the commands as `CheckedCommand`s
-  (`crates/mojito-checked/src/checked.rs`: `Equal`, `ListLength`, `Bind`,
-  `PathValue`, `Alternatives`; `statements()` lists the reads and
-  bindings). `check_comptime_match` runs the same builder in
+  (`crates/mojito-checked/src/checked.rs`: `Equal`, `ListLength`,
+  `EnumTag`, `Bind`, `Alternatives`, each test or binding with its read
+  chain), the reads as `CheckedMatchCase::reads` (`CheckedPathRead`), and
+  the emission as `CheckedStmtOp::Match::emission`; `statements()` lists
+  the reads, discriminants, and bindings. `check_comptime_match` runs the same builder in
   compile-time mode (`MatchSubject::comptime`): `anchor_comptime_subject`
   reads a type or compile-time name in place (`MatchSubject::base`) or
   binds `comptime $match<id> = subject`, `push_test` checks each test with
@@ -223,19 +239,32 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   case's condition (`conjoin`), checks the body under `assume_condition`,
   and `check_comptime_cases` records `MatchPlan::conditions` (the
   concluding case's dropped); `CheckedMatchCase::condition` carries it, and
-  HIR's `comptime_match` emits `HirInstr::ComptimeIf`. HIR's `case_commands` lowers a test (`Equal`, `ListLength`)
-  to a conditional whose else advances, a read or binding to its
-  statement, and `Alternatives` to an inner `hlcf.match` whose else region
-  advances the enclosing case. `check_case_condition` checks an
+  HIR's `comptime_match` emits `HirInstr::ComptimeIf`. HIR's `case_commands` is upstream's `emitCommands` then
+  `materializeBindings`: each command first makes its read chain through a
+  `PatternState` (`path_reads`, upstream's `getPathValue` memo: a path the
+  state holds names its slot by `alias_declaration`, recorded in
+  `Cfg::aliases`, which MIR's `owner_vars` is seeded with), a test
+  (`Equal`, `ListLength`, `EnumTag` after its discriminant) lowers to a
+  conditional whose else advances, `Alternatives` to an inner `hlcf.match`
+  whose alternatives start from copies of the state and whose else region
+  advances the enclosing case, and every binding's declaration follows the
+  commands. `check_case_condition` checks an
   `if`/`elif`/`while` `case pattern = value` branch the same way (the
   anchor by `anchor_subject`, the plan recorded at the pattern, the body in
   the bindings' scope); `CheckedCondition::Case` carries the anchor and
   commands, and HIR's `conditional_chain` and `while_loop` lower them as a
   one-case `hlcf.match` in the chain's else region or the loop's header.
   `main.rs`'s `format_warning` prints `CompiledProgram::warnings()` after a
-  successful compile. HIR's `match_statement` builds the
-  `HirInstr::Match` region op from the plan, lowering no region for an
-  unreachable case; MIR's `lower_match`
+  successful compile. HIR's `match_statement` walks the
+  `MatchEmission`: `emit_cases` emits one case whose commands all bind
+  inline, one cluster through `emit_case_cluster` (the tested path's read
+  and discriminant once, then an `HirInstr::If` with an elif per further
+  key, each arm a `cluster_arm` over the group's residuals from a copy of
+  the state, the else arm the complement), and any other list as an
+  `HirInstr::Match` region op whose else region yields, advances the
+  enclosing case, or is `Terminator::Unreachable` when the list concludes;
+  `emit_case` seals an unreachable case's region and runs a case's
+  commands, guard, and body. MIR's `lower_match`
   (`mir/lower_control_flow.rs`) lowers its exits.
 - `checker/with_stmt.rs` owns the `with` statement: `check_with` classifies
   the manager into a `WithForm` (`context_manager_form`: consuming

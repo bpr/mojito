@@ -3747,6 +3747,7 @@ impl<'a> Flatten<'a> {
             Terminator::ComptimeContinue => MirTerm::ComptimeContinue,
             Terminator::MatchNext => MirTerm::MatchNext,
             Terminator::MatchComplete => MirTerm::MatchComplete,
+            Terminator::Unreachable => MirTerm::Unreachable,
         }
     }
 }

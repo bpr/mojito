@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	738
+# swept-count	739
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -128,6 +128,7 @@ assets/parse_error/destructure_sequence_literal_target.mojo	compile-reject	agree
 assets/parse_error/for_target_trailing_comma.mojo	compile-reject	agree	error: unexpected token in expression
 assets/parse_error/lambda_missing_colon.mojo	compile-reject	agree	error: unknown function effect 'x', expected 'raises', 'capturing', or 'thin'
 assets/parse_error/lambda_unparenthesized_args.mojo	compile-reject	agree	error: unparenthesized lambda arguments are not supported; write them in parentheses, with types, e.g. `lambda (x: Int, y: Int) -> Int: x + y`
+assets/parse_error/match_mapping_pattern.mojo	compile-reject	agree	error: expression is not a valid match pattern; use '==' to compare against its value
 assets/parse_error/missing_colon.mojo	compile-reject	agree	error: expected ':' in function definition
 assets/parse_error/parameter_closure_capture_list.mojo	compile-reject	agree	error: expected ':' in function definition
 assets/parse_error/read_convention_removed.mojo	compile-reject	agree	error: 'read' was removed; use 'imm'

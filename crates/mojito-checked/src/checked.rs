@@ -2000,11 +2000,12 @@ pub enum CheckedStmtOp {
     },
     /// `match`: the statement anchoring the subject (`ref $match<id> =
     /// subject`, the check's own declaration, evaluated once), then each
-    /// case's pattern nodes, commands, guard, and body. `None` when the
-    /// check recorded no plan.
+    /// case's pattern nodes, commands, guard, and body, and how the cases
+    /// are emitted. `None` when the check recorded no plan.
     Match {
         anchor: Option<CheckedStmtId>,
         cases: Vec<CheckedMatchCase>,
+        emission: MatchEmission,
     },
     For {
         var: String,
@@ -2163,7 +2164,7 @@ impl CheckedStmtOp {
             Self::For { body, orelse, .. } => std::iter::once(body.as_slice())
                 .chain(orelse.as_deref())
                 .collect(),
-            Self::Match { anchor, cases } | Self::ComptimeMatch { anchor, cases } => anchor
+            Self::Match { anchor, cases, .. } | Self::ComptimeMatch { anchor, cases } => anchor
                 .iter()
                 .map(std::slice::from_ref)
                 .chain(cases.iter().flat_map(|case| {
@@ -2229,18 +2230,7 @@ impl CheckedStmtOp {
         let cases = |map: &mut dyn NodeMap, cases: &[CheckedMatchCase]| {
             cases
                 .iter()
-                .map(|case| CheckedMatchCase {
-                    pattern: case.pattern.map_operands(map),
-                    commands: case
-                        .commands
-                        .iter()
-                        .map(|command| command.map_operands(map))
-                        .collect(),
-                    guard: case.guard.map(|guard| map.expression(guard)),
-                    condition: case.condition.map(|condition| map.expression(condition)),
-                    body: block(map, &case.body),
-                    unreachable: case.unreachable,
-                })
+                .map(|case| case.map_operands(map))
                 .collect::<Vec<_>>()
         };
         match self {
@@ -2380,9 +2370,11 @@ impl CheckedStmtOp {
             Self::Match {
                 anchor,
                 cases: arms,
+                emission,
             } => Self::Match {
                 anchor: anchor.map(|anchor| map.statement(anchor)),
                 cases: cases(map, arms),
+                emission: emission.clone(),
             },
             Self::ComptimeMatch {
                 anchor,
@@ -2679,13 +2671,14 @@ pub enum CheckedCondition {
     Expr(CheckedNodeId),
     /// `case pattern = value`: the value's node, the anchor declaring the
     /// hidden subject the check synthesized over it, and the pattern's
-    /// commands, as a `match` case's; a failed test takes the branch's
-    /// else path.
+    /// commands and path reads, as a `match` case's; a failed test takes
+    /// the branch's else path.
     Case {
         pattern: CheckedPattern,
         value: CheckedNodeId,
         anchor: Option<CheckedStmtId>,
         commands: Vec<CheckedCommand>,
+        reads: Vec<CheckedPathRead>,
     },
 }
 
@@ -2721,10 +2714,14 @@ impl CheckedCondition {
         match self {
             Self::Expr(_) => Vec::new(),
             Self::Case {
-                anchor, commands, ..
+                anchor,
+                commands,
+                reads,
+                ..
             } => anchor
                 .iter()
                 .map(std::slice::from_ref)
+                .chain(reads.iter().map(CheckedPathRead::statement))
                 .chain(commands.iter().flat_map(CheckedCommand::statements))
                 .collect(),
         }
@@ -2738,16 +2735,21 @@ impl CheckedCondition {
                 value,
                 anchor,
                 commands,
+                reads,
             } => {
                 let value = map.expression(*value);
+                let pattern = pattern.map_operands(map);
+                let anchor = anchor.map(|anchor| map.statement(anchor));
+                let reads = reads.iter().map(|read| read.map_operands(map)).collect();
                 Self::Case {
-                    pattern: pattern.map_operands(map),
+                    pattern,
                     value,
-                    anchor: anchor.map(|anchor| map.statement(anchor)),
+                    anchor,
                     commands: commands
                         .iter()
                         .map(|command| command.map_operands(map))
                         .collect(),
+                    reads,
                 }
             }
         }
@@ -2755,13 +2757,19 @@ impl CheckedCondition {
 }
 
 /// One `case` arm of a `match`: its pattern, the commands the check
-/// compiled it to, its guard, and its body.
+/// compiled it to and the path reads they make, its guard, and its body.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedMatchCase {
     pub pattern: CheckedPattern,
-    /// The case's program, in order: each test, which advances to the next
-    /// case when it fails, and each binding, as upstream's command list.
+    /// The case's command list in pattern order, as upstream's: each test,
+    /// which advances to the next case when it fails, and each binding,
+    /// whose declaration is made once every test has passed. A `comptime
+    /// match` case's is its bindings alone.
     pub commands: Vec<CheckedCommand>,
+    /// The case's path reads (sequence elements, enum payloads), which its
+    /// commands name by index: each is made when the first command needing
+    /// its path runs, as upstream's per-path values are.
+    pub reads: Vec<CheckedPathRead>,
     pub guard: Option<CheckedNodeId>,
     /// A `comptime match` case's compile-time condition: the conjunction of
     /// its tests and its guard, recorded as a `comptime if` condition is;
@@ -2786,47 +2794,119 @@ impl CheckedMatchCase {
             .collect()
     }
 
-    /// The statements the case's commands run (element reads and
-    /// bindings), in command order, each a statement of its own.
+    /// The statements the case runs before its body (path reads, enum
+    /// discriminants, and bindings), each a statement of its own.
     pub fn statements(&self) -> Vec<&[CheckedStmtId]> {
-        self.commands
+        self.reads
             .iter()
-            .flat_map(CheckedCommand::statements)
+            .map(CheckedPathRead::statement)
+            .chain(self.commands.iter().flat_map(CheckedCommand::statements))
             .collect()
+    }
+
+    /// The case with each node it names replaced by `map`'s, in the order
+    /// the case's nodes are built: the pattern's, the reads', the
+    /// commands', the guard, the condition, then the body.
+    fn map_operands(&self, map: &mut dyn NodeMap) -> Self {
+        let pattern = self.pattern.map_operands(map);
+        let reads = self
+            .reads
+            .iter()
+            .map(|read| read.map_operands(map))
+            .collect();
+        let commands = self
+            .commands
+            .iter()
+            .map(|command| command.map_operands(map))
+            .collect();
+        let guard = self.guard.map(|guard| map.expression(guard));
+        let condition = self.condition.map(|condition| map.expression(condition));
+        let body = self
+            .body
+            .iter()
+            .map(|statement| map.statement(*statement))
+            .collect();
+        Self {
+            pattern,
+            commands,
+            reads,
+            guard,
+            condition,
+            body,
+            unreachable: self.unreachable,
+        }
     }
 }
 
-/// One step of a case's program, as upstream's `PatternCommand`.
+/// One path read of a case: the match-wide id of the path it reads, and
+/// the declaration the check synthesized for it.
+///
+/// The declaration is `ref $elem<id> = parent[i]` or `ref $elem<id> =
+/// parent._unsafe_get_enum_payload[case]()` over a reference result, and
+/// `var $elem<id> = parent[i]` over an owned one; later reads of the path
+/// name it, as upstream's `PatternEmitState::getPathValue` memoizes it.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CheckedPathRead {
+    pub path: u32,
+    pub declaration: CheckedStmtId,
+}
+
+impl CheckedPathRead {
+    /// The read's declaration, a statement of its own.
+    pub const fn statement(&self) -> &[CheckedStmtId] {
+        std::slice::from_ref(&self.declaration)
+    }
+
+    fn map_operands(&self, map: &mut dyn NodeMap) -> Self {
+        Self {
+            path: self.path,
+            declaration: map.statement(self.declaration),
+        }
+    }
+}
+
+/// One step of a case's program, as upstream's `PatternCommand`, with the
+/// chain of the case's path reads (indices into
+/// [`CheckedMatchCase::reads`], outermost first) its path needs.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum CheckedCommand {
     /// Compare the subject through the `__eq__` the check selected: the
     /// node of the comparison it synthesized (`$match<id> == value`), whose
     /// `Bool` selects; `False` advances to the next case.
-    Equal { test: CheckedNodeId },
+    Equal {
+        test: CheckedNodeId,
+        reads: Vec<u32>,
+    },
     /// Test a sequence pattern's subject length: the node of the call the
     /// check synthesized to `std.builtin._stubs.list_length_matches`
     /// (`list_length_matches($match<id>, arity, True)`), whose `Bool`
     /// selects; `False` advances to the next case before any element is
     /// read.
-    ListLength { test: CheckedNodeId },
-    /// Test an enum-like subject's case: the node of the comparison the
-    /// check synthesized (`$match<id>._get_enum_discriminant() == case`),
-    /// whose `Bool` selects, as upstream's `EnumTag` on the path.
-    EnumTag { test: CheckedNodeId, case: usize },
-    /// Read one element of a sequence pattern's subject, or an enum case's
-    /// payload, once, at the first command that needs it: the declaration
-    /// the check synthesized (`ref $elem<id> = parent[i]` or `ref $elem<id>
-    /// = parent._unsafe_get_enum_payload[case]()` over a reference result,
-    /// `var $elem<id> = parent[i]` over an owned one), which the path's
-    /// later commands name, as upstream's per-path value.
-    PathValue { declaration: CheckedStmtId },
+    ListLength {
+        test: CheckedNodeId,
+        reads: Vec<u32>,
+    },
+    /// Test an enum-like subject's case, as upstream's `EnumTag` on the
+    /// path: the declaration of the discriminant the check synthesized
+    /// (`var $tag<id> = $match<id>._get_enum_discriminant()`), then the
+    /// node of its comparison (`$tag<id> == case`), whose `Bool` selects.
+    EnumTag {
+        tag: CheckedStmtId,
+        test: CheckedNodeId,
+        case: usize,
+        reads: Vec<u32>,
+    },
     /// Bind a name to the subject: the declaration the check synthesized
     /// for it (`ref name = $match<id>`, `var name = $match<id>`), or the
     /// assignment a later `|` alternative makes to the first's binding.
-    Bind { declaration: CheckedStmtId },
-    /// The alternatives of a `|` pattern, each a program of its own: the
-    /// first whose tests all pass selects, and the case advances when none
-    /// does.
+    Bind {
+        declaration: CheckedStmtId,
+        reads: Vec<u32>,
+    },
+    /// The alternatives of a `|` pattern, each a command list of its own
+    /// that reads what it needs afresh, from the reads made before the
+    /// `|`: the first whose tests all pass selects, and the case advances
+    /// when none does.
     Alternatives(Vec<Vec<Self>>),
 }
 
@@ -2835,10 +2915,12 @@ impl CheckedCommand {
     /// included.
     pub fn expressions(&self) -> Vec<CheckedNodeId> {
         match self {
-            Self::Equal { test } | Self::ListLength { test } | Self::EnumTag { test, .. } => {
+            Self::Equal { test, .. }
+            | Self::ListLength { test, .. }
+            | Self::EnumTag { test, .. } => {
                 vec![*test]
             }
-            Self::Bind { .. } | Self::PathValue { .. } => Vec::new(),
+            Self::Bind { .. } => Vec::new(),
             Self::Alternatives(alternatives) => alternatives
                 .iter()
                 .flatten()
@@ -2847,14 +2929,17 @@ impl CheckedCommand {
         }
     }
 
-    /// The statements the command runs (element reads and bindings),
+    /// The statements the command runs (discriminants and bindings),
     /// alternatives' included.
     pub fn statements(&self) -> Vec<&[CheckedStmtId]> {
         match self {
-            Self::Bind { declaration } | Self::PathValue { declaration } => {
+            Self::Bind { declaration, .. }
+            | Self::EnumTag {
+                tag: declaration, ..
+            } => {
                 vec![std::slice::from_ref(declaration)]
             }
-            Self::Equal { .. } | Self::ListLength { .. } | Self::EnumTag { .. } => Vec::new(),
+            Self::Equal { .. } | Self::ListLength { .. } => Vec::new(),
             Self::Alternatives(alternatives) => alternatives
                 .iter()
                 .flatten()
@@ -2863,23 +2948,58 @@ impl CheckedCommand {
         }
     }
 
+    /// The chain of path reads the command's path needs; a `|`'s
+    /// alternatives make their own.
+    pub fn reads(&self) -> &[u32] {
+        match self {
+            Self::Equal { reads, .. }
+            | Self::ListLength { reads, .. }
+            | Self::EnumTag { reads, .. }
+            | Self::Bind { reads, .. } => reads,
+            Self::Alternatives(_) => &[],
+        }
+    }
+
+    /// The node of the command's `Bool` test: an equality, a length test,
+    /// or an enum case's; none for a binding or a `|`.
+    pub const fn test(&self) -> Option<CheckedNodeId> {
+        match self {
+            Self::Equal { test, .. }
+            | Self::ListLength { test, .. }
+            | Self::EnumTag { test, .. } => Some(*test),
+            Self::Bind { .. } | Self::Alternatives(_) => None,
+        }
+    }
+
+    /// Whether the command is a binding, which cannot fail.
+    pub const fn is_bind(&self) -> bool {
+        matches!(self, Self::Bind { .. })
+    }
+
     fn map_operands(&self, map: &mut dyn NodeMap) -> Self {
         match self {
-            Self::Equal { test } => Self::Equal {
+            Self::Equal { test, reads } => Self::Equal {
                 test: map.expression(*test),
+                reads: reads.clone(),
             },
-            Self::ListLength { test } => Self::ListLength {
+            Self::ListLength { test, reads } => Self::ListLength {
                 test: map.expression(*test),
+                reads: reads.clone(),
             },
-            Self::EnumTag { test, case } => Self::EnumTag {
+            Self::EnumTag {
+                tag,
+                test,
+                case,
+                reads,
+            } => Self::EnumTag {
+                tag: map.statement(*tag),
                 test: map.expression(*test),
                 case: *case,
+                reads: reads.clone(),
             },
-            Self::Bind { declaration } => Self::Bind {
+            Self::Bind { declaration, reads } => Self::Bind {
                 declaration: map.statement(*declaration),
-            },
-            Self::PathValue { declaration } => Self::PathValue {
-                declaration: map.statement(*declaration),
+                reads: reads.clone(),
             },
             Self::Alternatives(alternatives) => Self::Alternatives(
                 alternatives
@@ -2896,21 +3016,101 @@ impl CheckedCommand {
     }
 }
 
+/// How one list of a `match`'s case entries is emitted, upstream's
+/// `emitCases`.
+///
+/// The arms are each a case tested alone or a cluster of neighbouring
+/// cases sharing a leading test; `concluding` says whether some entry of
+/// the list concludes it, so that nothing falls through.
+///
+/// A list holding one case whose commands all bind is emitted inline, one
+/// holding a single cluster as that cluster's `hlcf.if`, and any other as
+/// an `hlcf.match` with one case region per arm.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct MatchEmission {
+    pub arms: Vec<EmittedArm>,
+    pub concluding: bool,
+}
+
+/// One arm of a [`MatchEmission`].
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum EmittedArm {
+    Case(ResidualCase),
+    Cluster(CaseCluster),
+}
+
+/// One case entry as a list emits it: the case and the commands it still
+/// runs, in order.
+///
+/// `case` indexes the statement's cases and `commands` that case's command
+/// list. A cluster's member runs the residual of its commands: the shared
+/// leading test dropped and the tests that remain ahead of the bindings, as
+/// upstream's `internResidualCommandList`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ResidualCase {
+    pub case: usize,
+    pub commands: Vec<usize>,
+}
+
+/// Neighbouring cases whose first command tests one path for a literal or
+/// an enum case, upstream's `emitCaseCluster`.
+///
+/// The leading value is read once, its discriminant too for an enum, then
+/// one `hlcf.if` arm per distinct literal spelling or case index, in that
+/// order, runs its members' residuals, and the else arm runs the trailing
+/// complement, when there is one.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CaseCluster {
+    /// The first tested member's leading command, whose path value (and
+    /// discriminant) the arms compare.
+    pub tested: CommandRef,
+    pub groups: Vec<ClusterGroup>,
+    /// The trailing members that need no test of their own: a case that
+    /// always matches, or the members a concluding case's key closes.
+    pub complement: Option<MatchEmission>,
+    /// Whether some member concludes the cluster: the else arm, absent a
+    /// complement, is never reached, nor is the code after the `hlcf.if`.
+    pub concluding: bool,
+}
+
+/// One arm of a [`CaseCluster`]: its first member's leading test, and its
+/// members' residuals.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ClusterGroup {
+    pub test: CommandRef,
+    pub residuals: MatchEmission,
+}
+
+/// One command of one case: indices into the statement's cases and that
+/// case's command list.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct CommandRef {
+    pub case: usize,
+    pub command: usize,
+}
+
 /// The check's plan for one `match`, recorded at the statement.
 ///
-/// It holds the declaration anchoring the subject, each case's commands,
-/// which the checked program's nodes are built from, and whether the
-/// cases cover every value of the subject, so that nothing falls through.
-/// A `comptime match`'s plan also holds each case's compile-time condition.
+/// It holds the declaration anchoring the subject, each case's commands
+/// and path reads, which the checked program's nodes are built from, how
+/// the cases are emitted, and whether the cases cover every value of the
+/// subject, so that nothing falls through. A `comptime match`'s plan also
+/// holds each case's compile-time condition.
 #[derive(Debug, Clone)]
 pub struct MatchPlan {
     /// `ref $match<id> = subject` or `var $match<id> = subject`; for a
     /// `comptime match`, `comptime $match<id> = subject`, or none when the
     /// subject is a compile-time name the cases read directly.
     pub anchor: Option<Stmt>,
-    /// Per case, its program; a `comptime match` case's is its bindings
-    /// alone (`comptime name = path`), its tests being its condition.
+    /// Per case, its command list; a `comptime match` case's is its
+    /// bindings alone (`comptime name = path`), its tests being its
+    /// condition.
     pub cases: Vec<Vec<PlannedCommand>>,
+    /// Per case, its path reads, which its commands name by index.
+    pub reads: Vec<Vec<PlannedRead>>,
+    /// How a runtime `match`'s cases are emitted; empty for a `comptime
+    /// match` and a `case` condition.
+    pub emission: MatchEmission,
     /// Per `comptime match` case, the conjunction of its tests and its
     /// guard, a compile-time `Bool` (none when the case always matches);
     /// empty for a runtime `match`.
@@ -2930,23 +3130,38 @@ pub struct Warning {
 }
 
 /// One step of a planned case: the synthesized syntax the check recorded
-/// facts for.
+/// facts for, with the chain of the case's path reads it needs.
 #[derive(Debug, Clone)]
 pub enum PlannedCommand {
     /// The comparison `$match<id> == value`.
-    Equal(Expr),
+    Equal { test: Expr, reads: Vec<u32> },
     /// The length test `list_length_matches($match<id>, arity, True)`.
-    ListLength(Expr),
-    /// The case test `$match<id>._get_enum_discriminant() == case`.
-    EnumTag { test: Expr, case: usize },
-    /// The path read `ref $elem<id> = parent[i]`, `var $elem<id> =
-    /// parent[i]`, or `ref $elem<id> = parent._unsafe_get_enum_payload[case]()`.
-    PathValue(Box<Stmt>),
+    ListLength { test: Expr, reads: Vec<u32> },
+    /// The discriminant `var $tag<id> = $match<id>._get_enum_discriminant()`
+    /// and the case test `$tag<id> == case`.
+    EnumTag {
+        tag: Box<Stmt>,
+        test: Expr,
+        case: usize,
+        reads: Vec<u32>,
+    },
     /// The declaration `ref name = $match<id>` or `var name = $match<id>`,
     /// or a later `|` alternative's assignment to the first's binding.
-    Bind(Box<Stmt>),
-    /// The alternatives of a `|` pattern, each a program of its own.
+    Bind {
+        declaration: Box<Stmt>,
+        reads: Vec<u32>,
+    },
+    /// The alternatives of a `|` pattern, each a command list of its own.
     Alternatives(Vec<Vec<Self>>),
+}
+
+/// One planned path read: the match-wide id of its path, and its
+/// declaration (`ref $elem<id> = parent[i]`, `var $elem<id> = parent[i]`,
+/// or `ref $elem<id> = parent._unsafe_get_enum_payload[case]()`).
+#[derive(Debug, Clone)]
+pub struct PlannedRead {
+    pub path: u32,
+    pub declaration: Stmt,
 }
 
 /// A checked `case` pattern: the source pattern
@@ -3591,7 +3806,7 @@ impl CheckedTables {
                 }
                 walk(orelse.as_deref().unwrap_or_default(), visit);
             }
-            CheckedStmtOp::Match { anchor, cases }
+            CheckedStmtOp::Match { anchor, cases, .. }
             | CheckedStmtOp::ComptimeMatch { anchor, cases } => {
                 if let Some(anchor) = anchor {
                     walk(std::slice::from_ref(anchor), visit);
@@ -3602,6 +3817,9 @@ impl CheckedTables {
                     }
                     if let Some(condition) = case.condition {
                         self.walk_expression(condition, visit);
+                    }
+                    for read in &case.reads {
+                        walk(read.statement(), visit);
                     }
                     for command in &case.commands {
                         for node in command.expressions() {
@@ -4922,23 +5140,18 @@ impl<'a> ArenaBuilder<'a> {
             mojito_ast::ast::Condition::Case { pattern, value } => {
                 let value = self.expr(value);
                 let plan = self.facts(&pattern.source_span()).match_plan.clone();
+                let pattern = self.pattern(pattern);
+                let anchor = plan
+                    .as_ref()
+                    .and_then(|plan| plan.anchor.as_ref())
+                    .map(|anchor| self.stmt(anchor));
+                let (commands, reads) = self.case_program(plan.as_ref(), 0);
                 CheckedCondition::Case {
-                    pattern: self.pattern(pattern),
+                    pattern,
                     value,
-                    anchor: plan
-                        .as_ref()
-                        .and_then(|plan| plan.anchor.as_ref())
-                        .map(|anchor| self.stmt(anchor)),
-                    commands: plan
-                        .as_ref()
-                        .and_then(|plan| plan.cases.first())
-                        .map(|commands| {
-                            commands
-                                .iter()
-                                .map(|command| self.command(command))
-                                .collect()
-                        })
-                        .unwrap_or_default(),
+                    anchor,
+                    commands,
+                    reads,
                 }
             }
         }
@@ -5448,21 +5661,28 @@ impl<'a> ArenaBuilder<'a> {
     /// or statement converted, alternatives recursively.
     fn command(&mut self, planned: &PlannedCommand) -> CheckedCommand {
         match planned {
-            PlannedCommand::Equal(test) => CheckedCommand::Equal {
+            PlannedCommand::Equal { test, reads } => CheckedCommand::Equal {
                 test: self.expr(test),
+                reads: reads.clone(),
             },
-            PlannedCommand::ListLength(test) => CheckedCommand::ListLength {
+            PlannedCommand::ListLength { test, reads } => CheckedCommand::ListLength {
                 test: self.expr(test),
+                reads: reads.clone(),
             },
-            PlannedCommand::EnumTag { test, case } => CheckedCommand::EnumTag {
+            PlannedCommand::EnumTag {
+                tag,
+                test,
+                case,
+                reads,
+            } => CheckedCommand::EnumTag {
+                tag: self.stmt(tag),
                 test: self.expr(test),
                 case: *case,
+                reads: reads.clone(),
             },
-            PlannedCommand::Bind(declaration) => CheckedCommand::Bind {
+            PlannedCommand::Bind { declaration, reads } => CheckedCommand::Bind {
                 declaration: self.stmt(declaration),
-            },
-            PlannedCommand::PathValue(declaration) => CheckedCommand::PathValue {
-                declaration: self.stmt(declaration),
+                reads: reads.clone(),
             },
             PlannedCommand::Alternatives(alternatives) => CheckedCommand::Alternatives(
                 alternatives
@@ -5476,6 +5696,37 @@ impl<'a> ArenaBuilder<'a> {
                     .collect(),
             ),
         }
+    }
+
+    /// One case's planned commands and path reads as the checked
+    /// program's, the reads built first.
+    fn case_program(
+        &mut self,
+        plan: Option<&MatchPlan>,
+        index: usize,
+    ) -> (Vec<CheckedCommand>, Vec<CheckedPathRead>) {
+        let reads = plan
+            .and_then(|plan| plan.reads.get(index))
+            .map(|reads| {
+                reads
+                    .iter()
+                    .map(|read| CheckedPathRead {
+                        path: read.path,
+                        declaration: self.stmt(&read.declaration),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let commands = plan
+            .and_then(|plan| plan.cases.get(index))
+            .map(|commands| {
+                commands
+                    .iter()
+                    .map(|command| self.command(command))
+                    .collect()
+            })
+            .unwrap_or_default();
+        (commands, reads)
     }
 
     fn stmt(&mut self, statement: &Stmt) -> CheckedStmtId {
@@ -5688,30 +5939,27 @@ impl<'a> ArenaBuilder<'a> {
                 cases
                     .iter()
                     .enumerate()
-                    .map(|(index, case)| CheckedMatchCase {
-                        pattern: this.pattern(&case.pattern),
-                        commands: plan
-                            .and_then(|plan| plan.cases.get(index))
-                            .map(|commands| {
-                                commands
-                                    .iter()
-                                    .map(|command| this.command(command))
-                                    .collect()
-                            })
-                            .unwrap_or_default(),
-                        guard: case
-                            .guard
-                            .as_ref()
-                            .filter(|_| !comptime)
-                            .map(|guard| this.expr(guard)),
-                        condition: plan
-                            .and_then(|plan| plan.conditions.get(index))
-                            .and_then(Option::as_ref)
-                            .map(|condition| this.expr(condition)),
-                        body: this.block(&case.body),
-                        unreachable: plan
-                            .and_then(|plan| plan.unreachable.get(index).copied())
-                            .unwrap_or(false),
+                    .map(|(index, case)| {
+                        let pattern = this.pattern(&case.pattern);
+                        let (commands, reads) = this.case_program(plan, index);
+                        CheckedMatchCase {
+                            pattern,
+                            commands,
+                            reads,
+                            guard: case
+                                .guard
+                                .as_ref()
+                                .filter(|_| !comptime)
+                                .map(|guard| this.expr(guard)),
+                            condition: plan
+                                .and_then(|plan| plan.conditions.get(index))
+                                .and_then(Option::as_ref)
+                                .map(|condition| this.expr(condition)),
+                            body: this.block(&case.body),
+                            unreachable: plan
+                                .and_then(|plan| plan.unreachable.get(index).copied())
+                                .unwrap_or(false),
+                        }
                     })
                     .collect::<Vec<_>>()
             };
@@ -5807,6 +6055,7 @@ impl<'a> ArenaBuilder<'a> {
                 CheckedStmtOp::Match {
                     anchor,
                     cases: cases(self, arms, plan.as_ref()),
+                    emission: plan.map(|plan| plan.emission).unwrap_or_default(),
                 }
             }
             StmtKind::ComptimeMatch { cases: arms, .. } => {

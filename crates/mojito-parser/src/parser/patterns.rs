@@ -642,11 +642,20 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         Ok(MatchPatternKind::Sequence(items))
     }
 
-    /// `{name=p, ...}` after the consumed `{`.
+    /// `{name=p, ...}` after the consumed `{`. A mapping pattern (`{"k":
+    /// v}`, `{k: v}`) is upstream's dictionary literal in pattern position,
+    /// which no pattern accepts, as upstream has not implemented mapping
+    /// patterns.
     fn parse_fields_pattern(&mut self) -> Result<MatchPatternKind, ParseError> {
         let mut fields = Vec::new();
         while !matches!(self.peek_token()?, Some(Token::RBrace)) {
+            if !matches!(self.peek_token()?, Some(Token::Identifier(_))) {
+                return Err(not_a_pattern());
+            }
             let name = self.expect_identifier("expected a field name in a struct pattern")?;
+            if matches!(self.peek_token()?, Some(Token::Colon)) {
+                return Err(not_a_pattern());
+            }
             self.expect(&Token::Assign, "expected '=' after the field name")?;
             fields.push((name, self.parse_pattern()?));
             if matches!(self.peek_token()?, Some(Token::Comma)) {
@@ -860,4 +869,12 @@ pub(super) fn expr_to_target(value: Expr) -> Result<DestructureTarget, ParseErro
         }
     };
     Ok(DestructureTarget::new(kind, span))
+}
+
+/// Upstream's rejection of an expression in pattern position that is no
+/// pattern.
+fn not_a_pattern() -> ParseError {
+    ParseError::Message(
+        "expression is not a valid match pattern; use '==' to compare against its value".into(),
+    )
 }

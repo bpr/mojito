@@ -53,7 +53,7 @@ use super::desugar::Synth;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::{BindingMode, MatchCase, MatchPattern, MatchPatternKind, SequencePattern};
-use mojito_checked::checked::{MatchPlan, PlannedCommand};
+use mojito_checked::checked::{MatchEmission, MatchPlan, PlannedCommand, PlannedRead};
 
 impl Checker {
     /// Check `match subject:` with its `cases`: anchor the subject, compile
@@ -70,12 +70,13 @@ impl Checker {
         let synth = Synth::for_statement(stmt, subject.source.clone());
         let name = format!("$match{}", synth.parent().0);
         let read_only = !cases.iter().any(|case| binds_by_reference(&case.pattern));
+        let paths = PathTable::new(!read_only);
         // The hidden subject lives in a scope of its own around the cases.
         self.push_scope();
         let checked = self
             .anchor_subject(&synth, &name, subject, read_only, ret, in_loop)
             .and_then(|(anchor, ty, temporary)| {
-                let subject = MatchSubject::root(&synth, &name, ty, temporary);
+                let subject = MatchSubject::root(&synth, &paths, &name, ty, temporary);
                 self.check_match_cases(stmt, &subject, anchor, cases, ret, in_loop)
             });
         self.pop_scope();
@@ -102,9 +103,10 @@ impl Checker {
             ));
         }
         let synth = Synth::for_statement(stmt, subject.source.clone());
+        let paths = PathTable::new(false);
         self.push_scope();
         let checked = self
-            .anchor_comptime_subject(&synth, subject)
+            .anchor_comptime_subject(&synth, &paths, subject)
             .and_then(|(anchor, root)| {
                 self.check_comptime_cases(stmt, &root, anchor, cases, ret, in_loop)
             });
@@ -128,17 +130,21 @@ impl Checker {
         let synth = Synth::for_pattern(pattern, value.source.clone());
         let name = format!("$case{}", synth.parent().0);
         let read_only = !binds_by_reference(pattern);
+        let paths = PathTable::new(!read_only);
         self.push_scope();
         let checked = self
             .anchor_subject(&synth, &name, value, read_only, ret, in_loop)
             .and_then(|(anchor, ty, temporary)| {
-                let subject = MatchSubject::root(&synth, &name, ty, temporary);
+                let subject = MatchSubject::root(&synth, &paths, &name, ty, temporary);
                 let mut commands = Commands::default();
                 self.compile_pattern(pattern, &subject, Join::None, &mut commands)?;
                 self.check_block(body, ret, in_loop)?;
+                let (program, reads, _) = commands.into_parts();
                 self.record_at(pattern.source_span()).match_plan = Some(MatchPlan {
                     anchor: Some(anchor),
-                    cases: vec![commands.into_parts().0],
+                    cases: vec![program],
+                    reads: vec![reads],
+                    emission: MatchEmission::default(),
                     conditions: Vec::new(),
                     concluded: false,
                     unreachable: Vec::new(),
@@ -281,14 +287,16 @@ impl Checker {
         let before = self.uninitialized.borrow().clone();
         let mut exits = Vec::new();
         let mut programs = Vec::new();
+        let mut reads = Vec::new();
         let mut covers = Vec::new();
         for case in cases {
             (*self.uninitialized.borrow_mut()).clone_from(&before);
             self.push_scope();
             let checked = self.check_case(case, subject, ret, in_loop);
             self.pop_scope();
-            let (program, commands) = checked?;
+            let (program, case_reads, commands) = checked?.into_parts();
             programs.push(program);
+            reads.push(case_reads);
             covers.push(CoverCase {
                 commands,
                 guarded: case.guard.is_some(),
@@ -297,29 +305,14 @@ impl Checker {
             exits.push(self.uninitialized.borrow().clone());
         }
         let verdict = self.match_coverage(&subject.ty, &covers, &stmt.source_span())?;
-        // The proof made the concluding case's tests pass whenever it is
-        // reached: it runs without them, so no path falls through. (A `|`
-        // that binds keeps its tests, and the fall-through.)
-        let concluded = verdict.concluding.filter(|&index| {
-            let concluding = &mut programs[index];
-            let droppable = concluding.iter().all(droppable_test);
-            if droppable {
-                concluding.retain(|command| {
-                    matches!(
-                        command,
-                        PlannedCommand::Bind(_) | PlannedCommand::PathValue(_)
-                    )
-                });
-            }
-            droppable
-        });
-        // Nothing falls through a concluded match, and no case earlier ones
-        // cover is reached.
+        let emission = self.plan_match_emission(&subject.ty, &covers, verdict.concluding)?;
+        // Nothing falls through a concluded match, as its emission seals
+        // the fall-through, and no case earlier ones cover is reached.
         let reached = exits
             .into_iter()
             .zip(&verdict.unreachable)
             .filter_map(|(exit, unreachable)| (!unreachable).then_some(exit));
-        let fall_through = concluded.is_none().then_some(before);
+        let fall_through = verdict.concluding.is_none().then_some(before);
         *self.uninitialized.borrow_mut() = reached
             .chain(fall_through)
             .flatten()
@@ -328,8 +321,10 @@ impl Checker {
         facts.match_plan = Some(MatchPlan {
             anchor: Some(anchor),
             cases: programs,
+            reads,
+            emission,
             conditions: Vec::new(),
-            concluded: concluded.is_some(),
+            concluded: verdict.concluding.is_some(),
             unreachable: verdict.unreachable,
         });
         facts.match_warnings = (!verdict.warnings.is_empty()).then_some(verdict.warnings);
@@ -345,6 +340,7 @@ impl Checker {
     fn anchor_comptime_subject<'s>(
         &mut self,
         synth: &'s Synth,
+        paths: &'s PathTable,
         subject: &Expr,
     ) -> Result<(Option<Stmt>, MatchSubject<'s>), TypeError> {
         let name = format!("$match{}", synth.parent().0);
@@ -360,7 +356,7 @@ impl Checker {
             let ty = declared
                 .map_or_else(|| self.infer(subject), Ok)
                 .map_or_else(|_| Ty::error(), dereferenced);
-            let mut root = MatchSubject::root(synth, &name, ty, false);
+            let mut root = MatchSubject::root(synth, paths, &name, ty, false);
             root.reading = Reading::Comptime(Some(subject.clone()));
             return Ok((None, root));
         }
@@ -375,7 +371,7 @@ impl Checker {
         let ty = self.lookup(&name).cloned().ok_or_else(|| {
             TypeError::InvariantViolation("the comptime match subject was not declared".into())
         })?;
-        let mut root = MatchSubject::root(synth, &name, dereferenced(ty), false);
+        let mut root = MatchSubject::root(synth, paths, &name, dereferenced(ty), false);
         root.reading = Reading::Comptime(None);
         Ok((Some(anchor), root))
     }
@@ -450,7 +446,9 @@ impl Checker {
         let mut facts = self.record_at(stmt.source_span());
         facts.match_plan = Some(MatchPlan {
             anchor,
+            reads: vec![Vec::new(); programs.len()],
             cases: programs,
+            emission: MatchEmission::default(),
             conditions,
             concluded: verdict.concluding.is_some(),
             unreachable: verdict.unreachable,
@@ -487,7 +485,10 @@ impl Checker {
             });
             self.check_comptime_declaration(&declaration, &binding.name)?;
             self.record_at(binding.span.clone()).binding = self.lookup_owner(&binding.name);
-            declarations.push(PlannedCommand::Bind(Box::new(declaration)));
+            declarations.push(PlannedCommand::Bind {
+                declaration: Box::new(declaration),
+                reads: Vec::new(),
+            });
         }
         let mut conjuncts = std::mem::take(&mut commands.conditions);
         if let Some(guard) = &case.guard {
@@ -527,7 +528,7 @@ impl Checker {
         subject: &MatchSubject,
         ret: Option<&Ty>,
         in_loop: bool,
-    ) -> Result<(Vec<PlannedCommand>, Vec<CoverCommand>), TypeError> {
+    ) -> Result<Commands, TypeError> {
         let mut commands = Commands::default();
         self.compile_pattern(&case.pattern, subject, Join::None, &mut commands)?;
         if let Some(guard) = &case.guard {
@@ -535,7 +536,7 @@ impl Checker {
             self.expect_bool(guard, "case guard")?;
         }
         self.check_block(&case.body, ret, in_loop)?;
-        Ok(commands.into_parts())
+        Ok(commands)
     }
 
     /// The commands `pattern` compiles to over `subject`: a literal or
@@ -610,8 +611,8 @@ impl Checker {
             }
             MatchPatternKind::Head(head) if self.is_enum_like(subject) => {
                 let case = self.enum_case(head, subject)?.0;
-                let tested = self.materialize(subject, commands)?;
-                self.enum_tag_test(case, &tested, commands)?;
+                let (tested, reads) = self.materialize(subject, commands)?;
+                self.enum_tag_test(case, &tested, reads, commands)?;
                 commands.cover.push(CoverCommand::EnumTag {
                     path: subject.path.clone(),
                     case,
@@ -625,10 +626,11 @@ impl Checker {
         }
     }
 
-    /// `p0 | p1 | ...`: each alternative's commands as a program of its
-    /// own, the first that matches selecting. Every alternative binds the
-    /// same names, the first's declarations being the bindings the later
-    /// ones assign, each with the first's type.
+    /// `p0 | p1 | ...`: each alternative's commands as a list of its own,
+    /// the first that matches selecting. Every alternative binds the same
+    /// names, the first's declarations being the bindings the later ones
+    /// assign, each with the first's type. An alternative names a path read
+    /// the commands before the `|` made, and reads afresh any other.
     fn compile_or_pattern(
         &mut self,
         alternatives: &[MatchPattern],
@@ -643,10 +645,9 @@ impl Checker {
         let mut programs = Vec::new();
         let mut covers = Vec::new();
         for alternative in alternatives {
-            // An alternative re-reads an element the commands before the
-            // `|` did not.
             let mut program = Commands {
-                reads: commands.reads.clone(),
+                cached: commands.cached.clone(),
+                reads: std::mem::take(&mut commands.reads),
                 ..Commands::default()
             };
             let mut bound = Vec::new();
@@ -655,7 +656,9 @@ impl Checker {
             } else {
                 Join::Declare(&mut bound)
             };
-            self.compile_pattern(alternative, subject, inner, &mut program)?;
+            let compiled = self.compile_pattern(alternative, subject, inner, &mut program);
+            commands.reads = std::mem::take(&mut program.reads);
+            compiled?;
             if let Some(first) = &first {
                 if let Some(missing) = first
                     .iter()
@@ -670,14 +673,15 @@ impl Checker {
             } else {
                 first = Some(bound);
             }
-            let (program, cover) = program.into_parts();
-            programs.push(program);
-            covers.push(cover);
+            programs.push(program.program);
+            covers.push(program.cover);
         }
         if let Some(names) = first {
             join.record(names);
         }
-        commands.tests.push(PlannedCommand::Alternatives(programs));
+        commands
+            .program
+            .push(PlannedCommand::Alternatives(programs));
         commands.cover.push(CoverCommand::Or(covers));
         Ok(())
     }
@@ -871,17 +875,21 @@ impl Checker {
                 "a starred sequence pattern in 'comptime match'".into(),
             ));
         }
+        let (tested, reads) = self.materialize(subject, commands)?;
         let test = synth.expr(ExprKind::Call {
             name: length_matches,
             param_args: Vec::new(),
             args: vec![
-                subject.value(),
+                tested.value(),
                 synth.int(count - usize::from(star.is_some())),
                 synth.expr(ExprKind::Bool(star.is_none())),
             ],
             kwargs: Vec::new(),
         });
-        self.push_test(test, subject, commands, PlannedCommand::ListLength)?;
+        self.push_test(test, subject, commands, |test| PlannedCommand::ListLength {
+            test,
+            reads,
+        })?;
         commands.cover.push(CoverCommand::ListLength {
             path: subject.path.clone(),
         });
@@ -899,7 +907,7 @@ impl Checker {
                 step,
                 Ty::error(),
                 ElementRead {
-                    by_reference: binds_by_reference(pattern),
+                    by_reference: subject.paths.mutable_reads,
                     moves: root_bindings(pattern) <= 1,
                 },
             );
@@ -910,49 +918,61 @@ impl Checker {
 
     /// The subject a test or binding reads: `subject` itself, or, below a
     /// sequence element or an enum payload, the hidden `$elem<id>` holding
-    /// its read under the path's remaining steps. Each read along the path
-    /// is made by this case's (or `|` alternative's) first command that
-    /// needs it, as `ref $elem<id> = parent[i]` over a reference result (to
-    /// read unless the element binds by reference) and `var $elem<id> =
-    /// parent[i]` over an owned one, and reused by every later command.
+    /// its read under the path's remaining steps, and the chain of the
+    /// case's reads the path needs, outermost first. Each read along the
+    /// path is declared by this case's (or `|` alternative's) first command
+    /// that needs it, as `ref $elem<id> = parent[i]` over a reference result
+    /// (to read unless the match binds by reference) and `var $elem<id> =
+    /// parent[i]` over an owned one, and named by every later command; the
+    /// emission makes it when the first command it emits needs it.
     fn materialize<'s>(
         &mut self,
         subject: &MatchSubject<'s>,
         commands: &mut Commands,
-    ) -> Result<MatchSubject<'s>, TypeError> {
+    ) -> Result<(MatchSubject<'s>, Vec<u32>), TypeError> {
         // A compile-time path is its expression, as upstream's parameter
         // path value is.
         if subject.comptime() {
-            return Ok(MatchSubject {
-                reads: Vec::new(),
-                ..subject.clone()
-            });
+            return Ok((
+                MatchSubject {
+                    reads: Vec::new(),
+                    ..subject.clone()
+                },
+                Vec::new(),
+            ));
         }
         let mut base = (subject.name.clone(), 0);
         let mut last = None;
+        let mut chain = Vec::new();
         for &(depth, element) in &subject.reads {
             let key = subject.path[..depth].to_vec();
-            let read = if let Some(read) = commands.reads.get(&key) {
-                read.clone()
+            let (index, read) = if let Some(cached) = commands.cached.get(&key) {
+                cached.clone()
             } else {
                 let value = spell(subject.synth, &base.0, None, &subject.path[base.1..depth]);
-                let read = self.read_path(subject.synth, value, element)?;
-                commands
-                    .tests
-                    .push(PlannedCommand::PathValue(Box::new(read.1)));
-                commands.reads.insert(key, read.0.clone());
-                read.0
+                let (read, declaration) = self.read_path(subject.synth, value, element)?;
+                let index = u32::try_from(commands.reads.len()).map_err(|_| {
+                    TypeError::InvariantViolation("too many pattern path reads".into())
+                })?;
+                commands.reads.push(PlannedRead {
+                    path: subject.paths.id(&key),
+                    declaration,
+                });
+                commands.cached.insert(key, (index, read.clone()));
+                (index, read)
             };
+            chain.push(index);
             base = (read.name.clone(), depth);
             last = Some((read, element));
         }
         let Some((read, element)) = last else {
-            return Ok(subject.clone());
+            return Ok((subject.clone(), chain));
         };
         let path = subject.path[base.1..].to_vec();
         let whole = path.is_empty();
-        Ok(MatchSubject {
+        let subject = MatchSubject {
             synth: subject.synth,
+            paths: subject.paths,
             name: read.name,
             ty: if whole { read.ty } else { subject.ty.clone() },
             temporary: false,
@@ -962,7 +982,8 @@ impl Checker {
             reading: Reading::Runtime,
             reads: Vec::new(),
             path,
-        })
+        };
+        Ok((subject, chain))
     }
 
     /// Declare the hidden `$elem<id>` over the path read `value`: a
@@ -1101,8 +1122,8 @@ impl Checker {
                 ));
             }
         };
-        let tested = self.materialize(subject, commands)?;
-        self.enum_tag_test(case, &tested, commands)?;
+        let (tested, reads) = self.materialize(subject, commands)?;
+        self.enum_tag_test(case, &tested, reads, commands)?;
         commands.cover.push(CoverCommand::EnumTag {
             path: subject.path.clone(),
             case,
@@ -1111,7 +1132,7 @@ impl Checker {
             Step::EnumPayload(case),
             payload,
             ElementRead {
-                by_reference: binds_by_reference(pattern) && !subject.rvalue,
+                by_reference: subject.paths.mutable_reads && !subject.rvalue,
                 moves: root_bindings(pattern) <= 1,
             },
         );
@@ -1202,11 +1223,17 @@ impl Checker {
             })
     }
 
-    /// Push the tag test `subject._get_enum_discriminant() == case`.
+    /// Push the tag test of `case` over `subject`, whose path needs the
+    /// case's `reads`: the discriminant `var $tag<id> =
+    /// subject._get_enum_discriminant()`, then `$tag<id> == case`, so that a
+    /// cluster reads it once, as upstream's `emitTestableValue`; in
+    /// compile-time mode the conjunct `subject._get_enum_discriminant() ==
+    /// case`.
     fn enum_tag_test(
-        &self,
+        &mut self,
         case: usize,
         subject: &MatchSubject,
+        reads: Vec<u32>,
         commands: &mut Commands,
     ) -> Result<(), TypeError> {
         let synth = subject.synth;
@@ -1216,14 +1243,33 @@ impl Checker {
             args: Vec::new(),
             kwargs: Vec::new(),
         });
+        if subject.comptime() {
+            let test = synth.expr(ExprKind::Infix(
+                InfixOp::Eq,
+                Box::new(discriminant),
+                Box::new(synth.int(case)),
+            ));
+            self.check_comptime_condition(&test, ComptimeTest::MatchSubject)?;
+            commands.conditions.push(test);
+            return Ok(());
+        }
+        let name = format!("$tag{}", discriminant.syntax_id.0);
+        let tag = synth.stmt(StmtKind::VarDecl {
+            name: name.clone(),
+            ty: None,
+            value: discriminant,
+        });
+        self.check_stmt(&tag, None, false)?;
         let test = synth.expr(ExprKind::Infix(
             InfixOp::Eq,
-            Box::new(discriminant),
+            Box::new(synth.identifier(&name)),
             Box::new(synth.int(case)),
         ));
         self.push_test(test, subject, commands, |test| PlannedCommand::EnumTag {
+            tag: Box::new(tag),
             test,
             case,
+            reads,
         })
     }
 
@@ -1240,14 +1286,17 @@ impl Checker {
             path: subject.path.clone(),
             spelling: spelling.map(str::to_string),
         });
-        let subject = &self.materialize(subject, commands)?;
+        let (subject, reads) = self.materialize(subject, commands)?;
         let test = subject.synth.expr(ExprKind::Infix(
             InfixOp::Eq,
             Box::new(subject.value()),
             Box::new(value.clone()),
         ));
         self.register_named_bindings(&test)?;
-        self.push_test(test, subject, commands, PlannedCommand::Equal)
+        self.push_test(test, &subject, commands, |test| PlannedCommand::Equal {
+            test,
+            reads,
+        })
     }
 
     /// Push the test `test` over `subject`: a `Bool` the case's program
@@ -1266,7 +1315,7 @@ impl Checker {
             commands.conditions.push(test);
         } else {
             self.expect_bool(&test, "case pattern")?;
-            commands.tests.push(planned(test));
+            commands.program.push(planned(test));
         }
         Ok(())
     }
@@ -1327,7 +1376,8 @@ impl Checker {
         if subject.comptime() {
             return comptime_binding(name, binding, pattern_span, subject, join, commands);
         }
-        let subject = &self.materialize(subject, commands)?;
+        let (subject, reads) = self.materialize(subject, commands)?;
+        let subject = &subject;
         match join {
             Join::None => {}
             Join::Declare(_) | Join::Assign(_) if binding != Binding::Var => {
@@ -1358,9 +1408,10 @@ impl Checker {
                     value,
                 });
                 self.check_stmt(&assignment, None, false)?;
-                commands
-                    .binds
-                    .push(PlannedCommand::Bind(Box::new(assignment)));
+                commands.program.push(PlannedCommand::Bind {
+                    declaration: Box::new(assignment),
+                    reads,
+                });
                 return Ok(());
             }
         }
@@ -1396,9 +1447,10 @@ impl Checker {
             self.make_reference_immutable(name, &declaration, value_span);
         }
         self.record_at(pattern_span).binding = self.lookup_owner(name);
-        commands
-            .binds
-            .push(PlannedCommand::Bind(Box::new(declaration)));
+        commands.program.push(PlannedCommand::Bind {
+            declaration: Box::new(declaration),
+            reads,
+        });
         Ok(())
     }
 }
@@ -1474,6 +1526,8 @@ pub(super) enum Step {
 #[derive(Clone)]
 struct MatchSubject<'a> {
     synth: &'a Synth,
+    /// The statement's path ids and read mode, shared by its cases.
+    paths: &'a PathTable,
     name: String,
     /// The projection's type, any reference stripped; unknown for an
     /// unread sequence element, as upstream's list element path is
@@ -1503,9 +1557,10 @@ struct MatchSubject<'a> {
 
 impl<'a> MatchSubject<'a> {
     /// The whole subject, the hidden `name` the anchor declared.
-    fn root(synth: &'a Synth, name: &str, ty: Ty, temporary: bool) -> Self {
+    fn root(synth: &'a Synth, paths: &'a PathTable, name: &str, ty: Ty, temporary: bool) -> Self {
         MatchSubject {
             synth,
+            paths,
             name: name.to_string(),
             ty,
             temporary,
@@ -1561,6 +1616,7 @@ impl<'a> MatchSubject<'a> {
         path.push(step);
         MatchSubject {
             synth: self.synth,
+            paths: self.paths,
             name: self.name.clone(),
             ty,
             temporary: false,
@@ -1591,31 +1647,60 @@ enum Reading {
     Comptime(Option<Expr>),
 }
 
-/// A case's commands as they are collected: its tests and element reads,
-/// then its bindings, as upstream runs every test of a pattern before any
-/// binding materializes (a failed alternative copies nothing), with the
-/// element reads made so far, by path, as upstream's per-path values, and
-/// each command's shape at its path, in pattern order, as coverage reads
-/// upstream's command list.
+/// A case's commands as they are collected: its command list in pattern
+/// order, each command's shape at its path aligned with it (as coverage
+/// reads upstream's command list), the case's path reads, and the reads
+/// visible here by path, as upstream's per-path values — inside a `|`
+/// alternative, those made before it too.
 /// In compile-time mode the tests are `conditions` and the bindings
 /// `bindings` instead.
 #[derive(Default)]
 struct Commands {
-    tests: Vec<PlannedCommand>,
-    binds: Vec<PlannedCommand>,
-    reads: HashMap<Vec<Step>, Read>,
+    program: Vec<PlannedCommand>,
     cover: Vec<CoverCommand>,
+    reads: Vec<PlannedRead>,
+    cached: HashMap<Vec<Step>, (u32, Read)>,
     conditions: Vec<Expr>,
     bindings: Vec<ComptimeBinding>,
 }
 
 impl Commands {
-    /// The program the case runs, and the shapes coverage reads.
-    fn into_parts(self) -> (Vec<PlannedCommand>, Vec<CoverCommand>) {
-        (
-            self.tests.into_iter().chain(self.binds).collect(),
-            self.cover,
-        )
+    /// The command list the case runs, its path reads, and the shapes
+    /// coverage reads.
+    fn into_parts(self) -> (Vec<PlannedCommand>, Vec<PlannedRead>, Vec<CoverCommand>) {
+        (self.program, self.reads, self.cover)
+    }
+}
+
+/// A statement's pattern paths from its subject, each numbered once, as
+/// upstream uniques its `PatternPath`s per `match`, and how its path reads
+/// are made: keeping the subject's capability when some case binds by
+/// reference (`mutable_reads`), so that the reads of one path have one type
+/// across the cases, which a cluster shares.
+struct PathTable {
+    ids: RefCell<Vec<Vec<Step>>>,
+    mutable_reads: bool,
+}
+
+impl PathTable {
+    const fn new(mutable_reads: bool) -> Self {
+        Self {
+            ids: RefCell::new(Vec::new()),
+            mutable_reads,
+        }
+    }
+
+    /// The id of `path`, numbered on its first use.
+    fn id(&self, path: &[Step]) -> u32 {
+        let mut paths = self.ids.borrow_mut();
+        let index = paths
+            .iter()
+            .position(|known| known == path)
+            .unwrap_or_else(|| {
+                paths.push(path.to_vec());
+                paths.len() - 1
+            });
+        u32::try_from(index).unwrap_or(u32::MAX)
     }
 }
 
@@ -1825,22 +1910,6 @@ fn root_bindings(pattern: &MatchPattern) -> usize {
             alternatives.iter().map(root_bindings).max().unwrap_or(0)
         }
         _ => 0,
-    }
-}
-
-/// Whether `command` may be dropped from a case whose tests the coverage
-/// proof made redundant: a test, or alternatives that only test.
-fn droppable_test(command: &PlannedCommand) -> bool {
-    match command {
-        PlannedCommand::Equal(_)
-        | PlannedCommand::ListLength(_)
-        | PlannedCommand::EnumTag { .. }
-        | PlannedCommand::Bind(_)
-        | PlannedCommand::PathValue(_) => true,
-        PlannedCommand::Alternatives(alternatives) => alternatives
-            .iter()
-            .flatten()
-            .all(|command| !matches!(command, PlannedCommand::Bind(_)) && droppable_test(command)),
     }
 }
 

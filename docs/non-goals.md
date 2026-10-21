@@ -49,7 +49,39 @@ failed the fifth, overhead. The record is
   pinned printer and parser are several times faster, and the same focused
   lane then passes.
 
+### Mapping patterns
+
+Not planned while upstream has none: upstream's pattern-matching proposal
+(`Mojo/proposals/pattern-matching.md`, §9) specifies mapping patterns and
+lists them under *Implementation status* as not yet implemented.
+
+- The pin reads `case {"a": x}` as a dictionary literal in pattern
+  position and rejects it: "expression is not a valid match pattern; use
+  '==' to compare against its value". Mojito's parser rejects the key with
+  the same sentence (`assets/parse_error/match_mapping_pattern.mojo`).
+- `{name=p}` stays the contextual struct-field pattern.
+- Reopen when the pin accepts `case {"k": v}`.
+
 ## Kept On Purpose
+
+### A cluster's nested residual match completes its enclosing case
+
+When a cluster of cases sits inside an enclosing `hlcf.match` case and one
+group's residual cases form a nested `hlcf.match`, the pinned Mojo follows
+the nested match with `hlcf.match.next`, or with `hlcf.unreachable` when the
+residuals conclude (`emitCases`, `ParserStmts.cpp`). A residual body that
+runs therefore falls into the next enclosing case or into an unreachable
+op: the pin prints the body's output and then crashes, or runs a later
+case's test first, which is undefined behavior.
+
+- Mojito emits the intended semantics: the nested match's else region
+  advances the enclosing case, and `match.complete` of the enclosing case
+  follows the nested match.
+- Fixtures avoid the shape, so the corpus pins nothing the pin cannot run.
+  `conformance/probes/match_cluster_nested_completion.mojo` records the
+  pin's crash.
+- Reopen if a re-pin shows upstream completing the enclosing case there;
+  the probe's shape may then move into a fixture.
 
 ### Direct `ref` struct fields stay a Mojito extension
 
