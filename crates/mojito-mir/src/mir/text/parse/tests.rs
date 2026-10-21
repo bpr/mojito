@@ -2989,6 +2989,7 @@ fn structured_region_ops_and_terminators_reprint() {
             )),
         },
         MirInstr::Match {
+            results: vec![Reg(3)],
             else_args: Vec::new(),
             cases: vec![
                 crate::mir::MirCase {
@@ -2997,15 +2998,18 @@ fn structured_region_ops_and_terminators_reprint() {
                 },
                 crate::mir::MirCase {
                     args: vec![Reg(5)],
-                    body: one(Vec::new(), MirTerm::MatchComplete),
+                    body: one(Vec::new(), MirTerm::MatchComplete(vec![Reg(5)])),
                 },
             ],
-            orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            orelse: one(Vec::new(), MirTerm::Yield(vec![Reg(4)])),
         },
     ];
     instrs.push(MirInstr::ComptimeFor {
         binder,
         source,
+        operands: vec![Reg(2)],
+        args: vec![Reg(1)],
+        results: vec![Reg(3)],
         body: vec![
             MirBlock {
                 instrs: Vec::new(),
@@ -3017,11 +3021,11 @@ fn structured_region_ops_and_terminators_reprint() {
             },
             MirBlock {
                 instrs: Vec::new(),
-                term: MirTerm::ComptimeBreak,
+                term: MirTerm::ComptimeBreak(vec![Reg(1)]),
             },
             MirBlock {
                 instrs: Vec::new(),
-                term: MirTerm::ComptimeContinue,
+                term: MirTerm::ComptimeContinue(vec![Reg(1)]),
             },
         ],
         orelse: one(Vec::new(), MirTerm::Unreachable),
@@ -3053,15 +3057,17 @@ fn structured_region_ops_and_terminators_reprint() {
         "continue { label: absent, values: [%r1] }",
         "comptime.if {",
         "comptime.yield {",
-        "comptime.for {",
-        "comptime.for.break {}",
-        "comptime.for.continue {}",
+        "comptime.for { results: [%r3], binder: ",
+        "operands: [%r2], arguments: [%r1], body: [",
+        "comptime.for.break { values: [%r1] }",
+        "comptime.for.continue { values: [%r1] }",
         "comptime.assert {",
-        "match { cases: [case { arguments: [], body: [",
+        "match { results: [%r3], cases: [case { arguments: [], body: [",
         "case { arguments: [%r5], body: [",
         "else_arguments: [], else: [",
         "match.next { values: [%r2] }",
-        "match.complete {}",
+        "match.complete { values: [%r5] }",
+        "yield { values: [%r4] }",
         "unreachable {}",
     ] {
         assert!(text.contains(mnemonic), "missing `{mnemonic}` in {text}");
@@ -3131,6 +3137,7 @@ fn an_if_and_match_without_arguments_read_as_carrying_none() {
                 orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
             },
             MirInstr::Match {
+                results: Vec::new(),
                 cases: vec![MirCase {
                     args: Vec::new(),
                     body: one(Vec::new(), MirTerm::MatchNext(Vec::new())),
@@ -3155,6 +3162,79 @@ fn an_if_and_match_without_arguments_read_as_carrying_none() {
         .replace("match.next { values: [] }", "match.next {}");
     assert_ne!(old, text);
     assert!(!old.contains("case {"), "{old}");
+    let parsed = artifact(old.as_bytes(), "old.mir".to_string()).expect("parse artifact");
+    assert_eq!(write::program(&parsed.program), text);
+}
+
+/// A `match` and a `comptime for` written before schema 1.85 carry no
+/// `results`, `operands`, or `arguments` field, and their terminators no
+/// `values`: the reader takes each op as carrying none.
+#[test]
+fn a_match_and_comptime_for_without_values_read_as_carrying_none() {
+    use crate::mir::MirCase;
+    let one = |instrs: Vec<MirInstr>, term: MirTerm| vec![MirBlock { instrs, term }];
+    let source = mojito_checked::checked::ComptimeSequence {
+        initial: int_parameter("$test:it", 0, "it"),
+        has_next: int_parameter("$test:has", 0, "has"),
+        next_iter: int_parameter("$test:next", 0, "next"),
+        next_value: int_parameter("$test:value", 0, "value"),
+    };
+    let mut function = function_with(
+        vec![Ty::bool()],
+        vec![
+            MirInstr::Match {
+                results: Vec::new(),
+                cases: vec![MirCase {
+                    args: Vec::new(),
+                    body: one(Vec::new(), MirTerm::MatchComplete(Vec::new())),
+                }],
+                else_args: Vec::new(),
+                orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            },
+            MirInstr::ComptimeFor {
+                binder: test_binder("i"),
+                source,
+                operands: Vec::new(),
+                args: Vec::new(),
+                results: Vec::new(),
+                body: vec![
+                    MirBlock {
+                        instrs: Vec::new(),
+                        term: MirTerm::Branch {
+                            cond: Reg(0),
+                            then_b: 1,
+                            else_b: 2,
+                        },
+                    },
+                    MirBlock {
+                        instrs: Vec::new(),
+                        term: MirTerm::ComptimeBreak(Vec::new()),
+                    },
+                    MirBlock {
+                        instrs: Vec::new(),
+                        term: MirTerm::ComptimeContinue(Vec::new()),
+                    },
+                ],
+                orelse: one(Vec::new(), MirTerm::Unreachable),
+            },
+        ],
+    );
+    function.n_vars = 1;
+    function.var_names = vec!["i".to_string()];
+    function.blocks[0].term = MirTerm::Return(None);
+    let program = program_with(vec![("old".into(), function)]);
+    let text = write::program(&program);
+    let old = text
+        .replace("match { results: [], ", "match { ")
+        .replace("comptime.for { results: [], ", "comptime.for { ")
+        .replace("operands: [], arguments: [], body", "body")
+        .replace("match.complete { values: [] }", "match.complete {}")
+        .replace("comptime.for.break { values: [] }", "comptime.for.break {}")
+        .replace(
+            "comptime.for.continue { values: [] }",
+            "comptime.for.continue {}",
+        );
+    assert_ne!(old, text);
     let parsed = artifact(old.as_bytes(), "old.mir".to_string()).expect("parse artifact");
     assert_eq!(write::program(&parsed.program), text);
 }

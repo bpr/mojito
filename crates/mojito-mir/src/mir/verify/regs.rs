@@ -59,10 +59,38 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         MirInstr::EstablishLoans { marker, .. }
         | MirInstr::InvalidateInteriors { marker, .. }
         | MirInstr::ConsumePlace { marker, .. } => out.push(*marker),
-        MirInstr::If { results, .. } | MirInstr::ComptimeIf { results, .. } => {
-            out.extend(results.iter().copied());
+        MirInstr::If {
+            results,
+            elifs,
+            else_args,
+            ..
+        } => out.extend(
+            results
+                .iter()
+                .chain(
+                    elifs
+                        .iter()
+                        .flat_map(|elif| elif.cond_args.iter().chain(&elif.then_args)),
+                )
+                .chain(else_args)
+                .copied(),
+        ),
+        MirInstr::Match {
+            results,
+            cases,
+            else_args,
+            ..
+        } => out.extend(
+            results
+                .iter()
+                .chain(cases.iter().flat_map(|case| &case.args))
+                .chain(else_args)
+                .copied(),
+        ),
+        MirInstr::ComptimeIf { results, .. } => out.extend(results.iter().copied()),
+        MirInstr::Loop { results, args, .. } | MirInstr::ComptimeFor { results, args, .. } => {
+            out.extend(results.iter().chain(args).copied());
         }
-        MirInstr::Loop { results, args, .. } => out.extend(results.iter().chain(args).copied()),
         _ => {}
     }
 }
@@ -339,7 +367,9 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         }
         MirInstr::Raise { src } => out.push(*src),
         MirInstr::If { cond, .. } => out.push(*cond),
-        MirInstr::Loop { operands, .. } => out.extend(operands.iter().copied()),
+        MirInstr::Loop { operands, .. } | MirInstr::ComptimeFor { operands, .. } => {
+            out.extend(operands.iter().copied());
+        }
         MirInstr::Drop { reg } => out.push(*reg),
         MirInstr::DefVar { src, .. } => out.push(*src),
         MirInstr::InvalidateInteriors { .. }
@@ -360,7 +390,6 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::Unsupported(_)
         | MirInstr::Try { .. }
         | MirInstr::ComptimeIf { .. }
-        | MirInstr::ComptimeFor { .. }
         | MirInstr::ComptimeAssert { .. }
         | MirInstr::Match { .. } => {}
     }

@@ -67,10 +67,10 @@ impl FnLowering<'_> {
             | MirTerm::Break { .. }
             | MirTerm::Continue { .. }
             | MirTerm::ComptimeYield(_)
-            | MirTerm::ComptimeBreak
-            | MirTerm::ComptimeContinue
+            | MirTerm::ComptimeBreak(_)
+            | MirTerm::ComptimeContinue(_)
             | MirTerm::MatchNext(_)
-            | MirTerm::MatchComplete
+            | MirTerm::MatchComplete(_)
             | MirTerm::Unreachable => Err(self.unsupported(
                 format!(
                     "the region terminator `{}` reached native lowering",

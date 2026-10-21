@@ -3286,7 +3286,10 @@ element out; the elaborator drops it from a step that returns the element.
 Structured control flow is checked in both modes: each region terminator
 sits in the region of the op it ends, with the op's result arity and types;
 a `break`/`continue` names an enclosing loop; a `comptime.for.break` or
-`continue` has a `comptime for` as its nearest loop (`verify/structure.rs`).
+`continue` has a `comptime for` as its nearest loop and carries its
+results or its body's arguments, whose operands and results agree as
+`ComptimeForOp::verify` requires; a `match.complete` and a `match`'s else
+`yield` carry its results (`verify/structure.rs`).
 The slot-ends check runs on a body's `lower-control-flow` lowering, and a
 structured body that ends no slot (no `drop.var`, `var.consume`, or
 cleanup list), as every pre-drop body is but for explicit destroys, has no
@@ -4017,12 +4020,17 @@ else_args, orelse }` (`hlcf.if`, each `MirElif` a condition region and an
 arm with their arguments, `cond_args` and `then_args`), `Loop {
 label, operands, args, results, body }` (`hlcf.loop`, its `args` the body
 block's arguments, which its `operands` define on entry), `ComptimeIf { results, conds, arms, orelse }`
-(`hlcf.comptime.if`), `ComptimeFor { binder, source, body, orelse }`
-(`hlcf.comptime.for`, its `orelse` one `Unreachable` block), and `Match {
-cases, else_args, orelse }` (`hlcf.match`: each `MirCase` a region with its
+(`hlcf.comptime.if`), `ComptimeFor { binder, source, operands, args,
+results, body, orelse }` (`hlcf.comptime.for`, its `args` the body's
+arguments, which its `operands` define on entry and each
+`ComptimeContinue`'s values for the next iteration, each
+`ComptimeBreak`'s values defining its `results`; its `orelse` one
+`Unreachable` block taking no arguments), and `Match { results, cases,
+else_args, orelse }` (`hlcf.match`: each `MirCase` a region with its
 `args` that tests its pattern and runs its body, left by `MatchNext` for
 the next case — the `orelse` after the last — or by `MatchComplete` for
-the op's end; `orelse` ends in `Yield` with no values). An `if` and a
+the op's end, whose values define `results`; `orelse` ends in `Yield`,
+whose values define them too). An `if` and a
 `match` enter their first region with no values, as upstream's
 `getEntryTargets` do; every later region's arguments are defined by the
 terminators entering it: an `ElifCond { cond, values }`'s values by its
@@ -4032,7 +4040,12 @@ values to both targets, and a `MatchNext`'s values by the next case's
 `args` (`else_args` after the last), every `match.next` leaving a case
 being visited by `mir::match_nexts_mut`, which resolves one as
 `MatchOp::getCaseRegionIndexContaining` does (a nested match's cases
-capture their own, its `else` region does not). Their regions are block
+capture their own, its `else` region does not), and every `match.complete`
+by `mir::match_completes_mut`, which resolves one alike. Every
+`comptime.for.break` and `comptime.for.continue` names the nearest
+enclosing `comptime for`, as `isParentNode` (`isa<ComptimeForOp>`) does;
+`mir::comptime_for_breaks_mut` and `mir::comptime_for_continues_mut` visit
+them. Their regions are block
 lists like a `try` part's, and end in the region terminators `Yield`,
 `ElifCond`, `Break`/`Continue`
 (an optional `LoopLabel` naming the nearest enclosing loop carrying it, a
@@ -4080,7 +4093,17 @@ has each argument replaced by its operand
 its entry, except that a region entered from one such terminator in the
 op's own list has each argument replaced by the value it carries
 (`tests/mir_passes/lower-control-flow/elif_arguments.mir`,
-`match_next_arguments.mir`), a
+`match_next_arguments.mir`), a `match`'s results go through one slot each,
+stored at every `match.complete` and at the else region's `yield`, except
+that a `match` whose join one such edge in its own list reaches has each
+result replaced by the value that edge carries
+(`match_results.mir`, `match_result_one_complete.mir`), a `comptime for`'s
+arguments go through one slot each as a loop's do, or are replaced by its
+operands when no `comptime.for.continue` resumes it, and its results
+always go through one slot each, stored at every `comptime.for.break`,
+because every break sits in the body the elaborator copies per iteration
+and no break's register is readable after the loop
+(`comptime_for_values.mir`), a
 `break`/`continue` leaving a `try` part to a
 function-level loop is an `EscapeJump`, a `match` case's `match.next` and
 `match.complete` jump to the next case's entry and to the join through a

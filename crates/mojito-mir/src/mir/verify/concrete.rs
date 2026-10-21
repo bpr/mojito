@@ -225,10 +225,10 @@ fn concrete_blocks(
             | MirTerm::Break { .. }
             | MirTerm::Continue { .. }
             | MirTerm::ComptimeYield(_)
-            | MirTerm::ComptimeBreak
-            | MirTerm::ComptimeContinue
+            | MirTerm::ComptimeBreak(_)
+            | MirTerm::ComptimeContinue(_)
             | MirTerm::MatchNext(_)
-            | MirTerm::MatchComplete
+            | MirTerm::MatchComplete(_)
             | MirTerm::Unreachable => errors.push(format!(
                 "{head} keeps the region terminator `{}` in elaborated MIR",
                 crate::mir::text::terminator_mnemonic(&block.term)

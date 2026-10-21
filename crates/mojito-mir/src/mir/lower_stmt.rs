@@ -182,6 +182,7 @@ impl<'a> Flatten<'a> {
                     .collect();
                 let orelse = self.hir_region(orelse);
                 self.emit(MirInstr::Match {
+                    results: Vec::new(),
                     cases,
                     else_args: Vec::new(),
                     orelse,
@@ -3647,6 +3648,9 @@ impl<'a> Flatten<'a> {
             self.emit(MirInstr::ComptimeFor {
                 binder,
                 source,
+                operands: Vec::new(),
+                args: Vec::new(),
+                results: Vec::new(),
                 body: vec![MirBlock {
                     instrs: vec![test],
                     term: MirTerm::Unreachable,
@@ -3764,10 +3768,10 @@ impl<'a> Flatten<'a> {
                 label: Some(LoopLabel(*label)),
                 values: Vec::new(),
             },
-            Terminator::ComptimeBreak => MirTerm::ComptimeBreak,
-            Terminator::ComptimeContinue => MirTerm::ComptimeContinue,
+            Terminator::ComptimeBreak => MirTerm::ComptimeBreak(Vec::new()),
+            Terminator::ComptimeContinue => MirTerm::ComptimeContinue(Vec::new()),
             Terminator::MatchNext => MirTerm::MatchNext(Vec::new()),
-            Terminator::MatchComplete => MirTerm::MatchComplete,
+            Terminator::MatchComplete => MirTerm::MatchComplete(Vec::new()),
             Terminator::Unreachable => MirTerm::Unreachable,
         }
     }

@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.84
+# Mojito Textual MIR Format, Version 1.85
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.84 is implemented end to end for inspection and loading: canonical
+Version 1.85 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.84
+mojito-mir 1.85
 ```
 
-The writer emits 1.84. The reader accepts 1.0 through 1.84; *Schema 1.0*
+The writer emits 1.85. The reader accepts 1.0 through 1.85; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -341,6 +341,18 @@ else region), and a `match.next`'s the next case's (the else region's after
 the last). An older artifact's regions took no arguments and its
 terminators carried nothing, so the reader reads each field's absence as an
 empty list and a bare region in `cases` as a case without arguments; the
+writer always writes them.
+
+Minor version 85 carries values out of a `match` and through a `comptime
+for`, as upstream's `hlcf.match` results and `hlcf.comptime.for` operands,
+body arguments, and results do: a `match` gains `results`, which each
+`match.complete` and the else region's `yield` define, and a
+`comptime.for` gains `results`, `operands`, and `arguments`, the operands
+defining the body's arguments on entry, each `comptime.for.continue`
+defining them for the next iteration, and each `comptime.for.break` the
+results. `match.complete`, `comptime.for.break`, and
+`comptime.for.continue` gain `values`. An older artifact's ops carried no
+values, so the reader reads each field's absence as an empty list; the
 writer always writes them.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
@@ -1038,9 +1050,9 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `Unsupported` | `unsupported { message: string }` |
 | `If` | `if { results: [reg...], condition: %rN, then: [block...], elifs: [elif { condition_arguments: [reg...], condition: [block...], then_arguments: [reg...], then: [block...] }...], else_arguments: [reg...], else: [block...] }` — `hlcf.if` (schema 1.54); the region arguments (schema 1.84) are defined by the `if.elifcond.yield` entering each region, and the op enters `then`, the first elif's condition, and an `else` without elifs with none |
 | `Loop` | `loop { results: [reg...], label: option<loopN>, operands: [reg...], arguments: [reg...], body: [block...] }` — `hlcf.loop` (schema 1.54), its `results` (schema 1.82) defined by the values of the `break` that leaves it, its body's `arguments` (schema 1.83) defined by its `operands` on entry and by the values of each `continue` that resumes it, one operand per argument; `loop4294967295` is upstream's `inlined_cf_scope`, the label `inline-parametric` wraps an inlined body in, which no source loop carries, its one result the call's |
-| `Match` | `match { cases: [case { arguments: [reg...], body: [block...] }...], else_arguments: [reg...], else: [block...] }` — `hlcf.match`: the cases in order, each a region that tests its pattern and runs its body, leaving by `match.next` (the next case, or `else` after the last) or `match.complete` (the op's end); `else` runs when no case completed and ends in `yield` with no values (schema 1.74); a case's `arguments` and the `else_arguments` (schema 1.84) are defined by the `match.next`s leaving the region before, and the first case takes none |
+| `Match` | `match { results: [reg...], cases: [case { arguments: [reg...], body: [block...] }...], else_arguments: [reg...], else: [block...] }` — `hlcf.match`: the cases in order, each a region that tests its pattern and runs its body, leaving by `match.next` (the next case, or `else` after the last) or `match.complete` (the op's end); `else` runs when no case completed and ends in `yield` (schema 1.74); a case's `arguments` and the `else_arguments` (schema 1.84) are defined by the `match.next`s leaving the region before, and the first case takes none; the `results` (schema 1.85) are defined by each `match.complete` leaving a case and by the else region's `yield` |
 | `ComptimeIf` | `comptime.if { results: [reg...], conditions: [<constraint>...], arms: [[block...]...], else: [block...] }` — `hlcf.comptime.if`, one arm per condition (schema 1.54) |
-| `ComptimeFor` | `comptime.for { binder: <binder>, initial: <param_expr>, has_next: <param_expr>, next_iter: <param_expr>, next_value: <param_expr>, body: [block...], else: [block...] }` — `hlcf.comptime.for`; the four sequence fields are the `ComptimeFor` terminator's; `else` is one block ending in `unreachable {}`; `body` is one block ending in `unreachable {}` that holds a `comptime.if` on `eq { left: operand_expr(<has_next>), right: operand_value(ct_bool(true)) }`, whose arm is the suite and whose else arm is the stop arm, ending in `comptime.for.break {}`, as `LowerSemanticCF` leaves upstream's body (schema 1.54; the `slot` field and the `elements` source withdrawn, schema 1.57; the body's `has_next` test, schema 1.58) |
+| `ComptimeFor` | `comptime.for { results: [reg...], binder: <binder>, initial: <param_expr>, has_next: <param_expr>, next_iter: <param_expr>, next_value: <param_expr>, operands: [reg...], arguments: [reg...], body: [block...], else: [block...] }` — `hlcf.comptime.for`; the four sequence fields are the `ComptimeFor` terminator's; `else` is one block ending in `unreachable {}`; `body` is one block ending in `unreachable {}` that holds a `comptime.if` on `eq { left: operand_expr(<has_next>), right: operand_value(ct_bool(true)) }`, whose arm is the suite and whose else arm is the stop arm, ending in `comptime.for.break`, as `LowerSemanticCF` leaves upstream's body (schema 1.54; the `slot` field and the `elements` source withdrawn, schema 1.57; the body's `has_next` test, schema 1.58); the `operands` define the body's `arguments` on entry and each `comptime.for.continue` for the next iteration, each `comptime.for.break` defines the `results`, and operands and results agree in number and type, as `ComptimeForOp::verify` requires (schema 1.85) |
 | `ComptimeAssert` | `comptime.assert { condition: <constraint> }` — upstream's `kgen.param.assert`, a `comptime assert` over the function's binders, its message (if any) a `with_message` around the condition; the elaborator judges it per reached instance, failing the instance `constraint failed: MESSAGE`, and concrete MIR carries none (schema 1.81) |
 | `GetIter` / `HasNext` / `Next` / `TryNext` | `iter.init` / `iter.has_next` / `iter.next` / `iter.try_next` (schema 1.71: an `iter.try_next` whose `call` has a `result_adapter` carries `adapter_constructor: "<symbol>"` after its operands, as `call.method` does) |
 
@@ -1084,8 +1096,8 @@ as explicit options/lists. Backends must not reconstruct omitted selections.
 | `ElifCond` | `if.elifcond.yield { condition: %rN, values: [reg...] }` — ends an elif condition region with its `Bool` (schema 1.54); its `values` (schema 1.84) define the arguments of its arm and of the next region, one per argument |
 | `Break` / `Continue` | `break { label: option<loopN>, values: [reg...] }` / `continue { label: option<loopN>, values: [reg...] }` — `hlcf.break`/`hlcf.continue`: the nearest enclosing `loop`, or the nearest carrying the label (schema 1.54); a break's `values` (schema 1.82) define the results of the loop it leaves, one per result, and a continue's (schema 1.83) the arguments of its next iteration, one per argument |
 | `ComptimeYield` | `comptime.yield { values: [reg...] }` — ends a `comptime.if` arm (schema 1.54) |
-| `ComptimeBreak` / `ComptimeContinue` | `comptime.for.break {}` / `comptime.for.continue {}` — the nearest enclosing `comptime.for` (schema 1.54) |
-| `MatchNext` / `MatchComplete` | `match.next { values: [reg...] }` / `match.complete {}` — `hlcf.match.next`/`hlcf.match.complete`: leave the nearest enclosing `match` case for the next case or for the op's end (schema 1.74); a `match.next`'s `values` (schema 1.84) define the next region's arguments, one per argument |
+| `ComptimeBreak` / `ComptimeContinue` | `comptime.for.break { values: [reg...] }` / `comptime.for.continue { values: [reg...] }` — the nearest enclosing `comptime.for` (schema 1.54); a break's `values` define its results and a continue's its body's arguments for the next iteration, one per register (schema 1.85) |
+| `MatchNext` / `MatchComplete` | `match.next { values: [reg...] }` / `match.complete { values: [reg...] }` — `hlcf.match.next`/`hlcf.match.complete`: leave the nearest enclosing `match` case for the next case or for the op's end (schema 1.74); a `match.next`'s `values` (schema 1.84) define the next region's arguments, one per argument, and a `match.complete`'s (schema 1.85) the op's results, one per result |
 | `Unreachable` | `unreachable {}` — `hlcf.unreachable` (schema 1.54) |
 
 The structured terminators end only the region of their op; the verifier

@@ -312,9 +312,9 @@ where
             MirTerm::EscapeJump { target, .. } => flow.escapes.push((target, state)),
             MirTerm::Break { .. }
             | MirTerm::Continue { .. }
-            | MirTerm::ComptimeBreak
-            | MirTerm::ComptimeContinue
-            | MirTerm::MatchComplete
+            | MirTerm::ComptimeBreak(_)
+            | MirTerm::ComptimeContinue(_)
+            | MirTerm::MatchComplete(_)
             | MirTerm::MatchNext(_) => {
                 if let Some((target, resume)) = region_exit(&block.term) {
                     leave_to(scan, frames, target, resume, &state);
@@ -992,9 +992,9 @@ impl<S: BackwardScan> BackWalk<'_, S> {
             MirTerm::EscapeJump { .. } | MirTerm::Unreachable => S::State::default(),
             MirTerm::Break { .. }
             | MirTerm::Continue { .. }
-            | MirTerm::ComptimeBreak
-            | MirTerm::ComptimeContinue
-            | MirTerm::MatchComplete
+            | MirTerm::ComptimeBreak(_)
+            | MirTerm::ComptimeContinue(_)
+            | MirTerm::MatchComplete(_)
             | MirTerm::MatchNext(_) => {
                 let Some((target, resume)) = region_exit(term) else {
                     return S::State::default();

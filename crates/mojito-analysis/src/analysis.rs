@@ -1079,15 +1079,16 @@ mod structured_move_tests {
         );
         let f = function(
             vec![MirInstr::Match {
+                results: Vec::new(),
                 else_args: Vec::new(),
                 cases: vec![
                     mojito_mir::mir::MirCase {
                         args: Vec::new(),
-                        body: block(vec![test], MirTerm::MatchComplete),
+                        body: block(vec![test], MirTerm::MatchComplete(Vec::new())),
                     },
                     mojito_mir::mir::MirCase {
                         args: Vec::new(),
-                        body: block(vec![read(X, 2)], MirTerm::MatchComplete),
+                        body: block(vec![read(X, 2)], MirTerm::MatchComplete(Vec::new())),
                     },
                 ],
                 orelse: yields(Vec::new()),

@@ -26,7 +26,15 @@
 //! region's after the last case), and the region's entry forwards them. A
 //! region entered from one `if.elifcond.yield` or one `match.next` in the
 //! case's own list folds each argument to the value that terminator
-//! carries.
+//! carries. A `match`'s results travel like an `if`'s, stored at each
+//! `match.complete` and at the else region's `yield`, and fold when one of
+//! those edges, in the case's own list, reaches the join. A `comptime
+//! for`'s arguments travel like a loop's, stored before the jump to its
+//! header and at each `comptime.for.continue`, and fold to its operands
+//! when nothing continues it; its results always take slots, stored at each
+//! `comptime.for.break`, because every break sits in the body the
+//! elaborator copies per iteration, so no break's register is readable
+//! after the loop.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -84,16 +92,18 @@ struct Lowering<'f> {
     /// The loops enclosing the region being emitted, innermost last.
     frames: Vec<Frame>,
     /// Each result of a loop left by one `break` in its own list, and the
-    /// value that break carries; each argument of a loop no `continue`
-    /// resumes, and its operand; each argument of an `if` or `match` region
-    /// entered from one terminator, and the value it carries.
+    /// value that break carries; each argument of a loop or `comptime for`
+    /// no `continue` resumes, and its operand; each argument of an `if` or
+    /// `match` region entered from one terminator, and each result of a
+    /// `match` whose join one edge reaches, and the value it carries.
     folded: HashMap<u32, Reg>,
 }
 
-/// A loop a `break`/`continue` may name, or a `match` case a `match.next`/
-/// `match.complete` leaves: where it continues (a loop's header, the next
-/// case's entry), where it exits, the list its blocks are in, and the slots
-/// a loop's `break` and `continue`, or a case's `match.next`, store their
+/// A loop a `break`/`continue` may name, a `comptime for` a
+/// `comptime.for.break`/`continue` leaves, or a `match` case a
+/// `match.next`/`match.complete` leaves: where it continues (a loop's
+/// header, the next case's entry), where it exits, the list its blocks are
+/// in, and the slots its leaving and resuming terminators store their
 /// values into.
 struct Frame {
     kind: RegionFrame,
@@ -229,27 +239,44 @@ impl Lowering<'_> {
             MirInstr::ComptimeFor {
                 binder,
                 source,
-                body,
+                operands,
+                args,
+                results,
+                mut body,
                 orelse: _,
             } => {
+                let slots = self.value_slots(&results, "yield");
+                let arg_slots = self.comptime_argument_slots(&operands, &args, &mut body);
+                instrs.extend(stores(&operands, &arg_slots));
                 let header = self.reserve(1);
                 let kind = RegionFrame::ComptimeFor;
-                let body = self.lower_loop(kind, body, join, Some(header), Vec::new(), Vec::new());
+                let entry = self.lower_loop(
+                    kind,
+                    body,
+                    join,
+                    Some(header),
+                    slots.clone(),
+                    arg_slots.clone(),
+                );
+                let opening = &mut self.out[entry].instrs;
+                opening.splice(0..0, forwards(&args, &arg_slots));
                 self.out[header].term = MirTerm::ComptimeFor {
                     binder,
                     source,
-                    body,
+                    body: entry,
                     exit: join,
                 };
-                (MirTerm::Jump(header), Vec::new())
+                (MirTerm::Jump(header), forwards(&results, &slots))
             }
             MirInstr::Match {
-                cases,
+                results,
+                mut cases,
                 else_args,
                 orelse,
             } => {
-                let entry = self.lower_match(cases, (else_args, orelse), join);
-                (MirTerm::Jump(entry), Vec::new())
+                let slots = self.match_slots(&results, &mut cases, &orelse);
+                let entry = self.lower_match(cases, (else_args, orelse), join, &slots);
+                (MirTerm::Jump(entry), forwards(&results, &slots))
             }
             other => (MirTerm::Jump(join), vec![other]),
         }
@@ -257,14 +284,16 @@ impl Lowering<'_> {
 
     /// Lower a `match`: each case region under a frame whose `header` is
     /// the next case's entry (the else region's after the last), whose
-    /// `exit` is the join, and whose argument slots are the next region's,
-    /// so `match.next` and `match.complete` resolve to jumps; the else
-    /// region yields to the join. Returns the first case's entry.
+    /// `exit` is the join, whose argument slots are the next region's, and
+    /// whose result slots are `slots`, so `match.next` and `match.complete`
+    /// resolve to jumps; the else region yields to the join. Returns the
+    /// first case's entry.
     fn lower_match(
         &mut self,
         mut cases: Vec<MirCase>,
         (else_args, orelse): (Vec<Reg>, Vec<MirBlock>),
         join: MirBlockId,
+        slots: &[VarId],
     ) -> MirBlockId {
         let mut entering = Vec::new();
         for index in 0..cases.len() {
@@ -274,11 +303,11 @@ impl Lowering<'_> {
             });
             let args = cases.get(index + 1).map_or(&else_args, |next| &next.args);
             let args = args.clone();
-            entering.push(self.entry_slots(&args, &nexts));
+            entering.push(self.edge_slots(&args, &nexts, "arg"));
         }
         let arm = RegionEnd::Arm {
             join,
-            slots: Vec::new(),
+            slots: slots.to_vec(),
         };
         let mut next = self.region(orelse, &arm);
         let mut args = else_args;
@@ -292,7 +321,7 @@ impl Lowering<'_> {
                 header: next,
                 exit: join,
                 depth: self.depth,
-                slots: Vec::new(),
+                slots: slots.to_vec(),
                 arg_slots,
             });
             self.fill(case.body, entry, &RegionEnd::Body);
@@ -333,8 +362,8 @@ impl Lowering<'_> {
             let next_args = elifs
                 .get(index + 1)
                 .map_or(&else_args, |next| &next.cond_args);
-            let then_slots = self.entry_slots(&elif.then_args, &yields);
-            let next_slots = self.entry_slots(next_args, &yields);
+            let then_slots = self.edge_slots(&elif.then_args, &yields, "arg");
+            let next_slots = self.edge_slots(next_args, &yields, "arg");
             tests.push((then_slots, next_slots));
         }
         let mut arms = Vec::new();
@@ -450,18 +479,7 @@ impl Lowering<'_> {
         loop_breaks_mut(body, label, &mut |values, site| {
             breaks.push((values.clone(), site));
         });
-        match breaks.as_slice() {
-            [(values, site)] if *site == BreakSite::default() => {
-                self.folded.extend(
-                    results
-                        .iter()
-                        .zip(values)
-                        .map(|(result, value)| (result.0, *value)),
-                );
-                Vec::new()
-            }
-            _ => self.value_slots(results, "yield"),
-        }
+        self.edge_slots(results, &breaks, "yield")
     }
 
     /// The slots a loop's arguments travel through: none when no
@@ -478,6 +496,12 @@ impl Lowering<'_> {
         }
         let mut continued = false;
         loop_continues_mut(body, label, &mut |_, _| continued = true);
+        self.carried_slots(continued, operands, args)
+    }
+
+    /// The slots loop-carried `args` travel through when `continued`, else
+    /// none, each folded to its operand of `operands`.
+    fn carried_slots(&mut self, continued: bool, operands: &[Reg], args: &[Reg]) -> Vec<VarId> {
         if continued {
             return self.value_slots(args, "arg");
         }
@@ -489,21 +513,72 @@ impl Lowering<'_> {
         Vec::new()
     }
 
-    /// The slots the arguments `args` of an `if` or `match` region travel
-    /// through, entered by terminators carrying `entries`: none when one
-    /// terminator in the op's own list enters it, whose values the arguments
-    /// fold to.
-    fn entry_slots(&mut self, args: &[Reg], entries: &[(Vec<Reg>, BreakSite)]) -> Vec<VarId> {
+    /// The slots a `match`'s results travel through: none when one edge
+    /// reaches its join, a `match.complete` in a case's own list or the
+    /// else region's `yield`, whose values the results fold to.
+    fn match_slots(
+        &mut self,
+        results: &[Reg],
+        cases: &mut [MirCase],
+        orelse: &[MirBlock],
+    ) -> Vec<VarId> {
+        if results.is_empty() {
+            return Vec::new();
+        }
+        let mut edges = Vec::new();
+        for case in cases {
+            match_completes_mut(&mut case.body, &mut |values, site| {
+                edges.push((values.clone(), site));
+            });
+        }
+        edges.extend(orelse.iter().filter_map(|block| match &block.term {
+            MirTerm::Yield(values) => Some((values.clone(), BreakSite::default())),
+            _ => None,
+        }));
+        self.edge_slots(results, &edges, "yield")
+    }
+
+    /// The slots a `comptime for`'s arguments travel through: none when no
+    /// `comptime.for.continue` resumes it, whose operands the arguments
+    /// fold to, as [`Self::argument_slots`] folds a loop's.
+    fn comptime_argument_slots(
+        &mut self,
+        operands: &[Reg],
+        args: &[Reg],
+        body: &mut [MirBlock],
+    ) -> Vec<VarId> {
         if args.is_empty() {
             return Vec::new();
         }
-        match entries {
+        let mut continued = false;
+        comptime_for_continues_mut(body, &mut |_, _| continued = true);
+        self.carried_slots(continued, operands, args)
+    }
+
+    /// The slots the registers `defined` travel through, defined along
+    /// `edges`, each carrying its values: none when one edge in the op's own
+    /// list defines them, whose values they fold to; else one slot each,
+    /// named after `prefix`.
+    fn edge_slots(
+        &mut self,
+        defined: &[Reg],
+        edges: &[(Vec<Reg>, BreakSite)],
+        prefix: &str,
+    ) -> Vec<VarId> {
+        if defined.is_empty() {
+            return Vec::new();
+        }
+        match edges {
             [(values, site)] if *site == BreakSite::default() => {
-                self.folded
-                    .extend(args.iter().zip(values).map(|(arg, value)| (arg.0, *value)));
+                self.folded.extend(
+                    defined
+                        .iter()
+                        .zip(values)
+                        .map(|(reg, value)| (reg.0, *value)),
+                );
                 Vec::new()
             }
-            _ => self.value_slots(args, "arg"),
+            _ => self.value_slots(defined, prefix),
         }
     }
 
@@ -579,7 +654,10 @@ impl Lowering<'_> {
                     let values = match &term {
                         MirTerm::Break { values, .. }
                         | MirTerm::Continue { values, .. }
-                        | MirTerm::MatchNext(values) => values.as_slice(),
+                        | MirTerm::ComptimeBreak(values)
+                        | MirTerm::ComptimeContinue(values)
+                        | MirTerm::MatchNext(values)
+                        | MirTerm::MatchComplete(values) => values.as_slice(),
                         _ => &[],
                     };
                     self.leave(instrs, target, resume, values).unwrap_or(term)
@@ -593,9 +671,9 @@ impl Lowering<'_> {
     /// frame it resolves to, its header when it `resume`s, else its exit: a
     /// jump within its list, an escape to the function's list
     /// from a `try` part, and the unsupported boundary from a `try` part
-    /// nested in another. A `break`'s `values` are stored into the frame's
-    /// result slots first, a `continue`'s or `match.next`'s into its
-    /// argument slots. `None`
+    /// nested in another. A leaving terminator's `values` are stored into
+    /// the frame's result slots first, a resuming one's (`continue`,
+    /// `comptime.for.continue`, `match.next`) into its argument slots. `None`
     /// when no frame encloses it, which the verifier rejects.
     fn leave(
         &self,
@@ -632,9 +710,9 @@ impl Lowering<'_> {
     }
 }
 
-/// The stores of the values a `yield`, `break`, `continue`,
-/// `if.elifcond.yield`, or `match.next` carries, or of a loop's operands,
-/// each into the slot of what it defines.
+/// The stores of the values a `yield`, `if.elifcond.yield`, or a region
+/// exit carries, or of a loop's or `comptime for`'s operands, each into the
+/// slot of what it defines.
 fn stores(values: &[Reg], slots: &[VarId]) -> Vec<MirInstr> {
     values
         .iter()
@@ -812,15 +890,16 @@ mod tests {
             orelse: one(Vec::new(), MirTerm::MatchNext(Vec::new())),
         };
         MirInstr::Match {
+            results: Vec::new(),
             else_args: Vec::new(),
             cases: vec![
                 MirCase {
                     args: Vec::new(),
-                    body: one(vec![test], MirTerm::MatchComplete),
+                    body: one(vec![test], MirTerm::MatchComplete(Vec::new())),
                 },
                 MirCase {
                     args: Vec::new(),
-                    body: one(Vec::new(), MirTerm::MatchComplete),
+                    body: one(Vec::new(), MirTerm::MatchComplete(Vec::new())),
                 },
             ],
             orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
@@ -898,10 +977,11 @@ mod tests {
                 elifs: Vec::new(),
                 orelse: one(Vec::new(), MirTerm::MatchNext(Vec::new())),
             }],
-            MirTerm::MatchComplete,
+            MirTerm::MatchComplete(Vec::new()),
         );
         let body = one(
             vec![MirInstr::Match {
+                results: Vec::new(),
                 else_args: Vec::new(),
                 cases: vec![MirCase {
                     args: Vec::new(),
@@ -1044,9 +1124,14 @@ mod tests {
         assert!(!function.reg_types.contains_key(&1));
     }
 
-    /// A loop with result `r1` whose one `break`, carrying `r2`, sits in
-    /// the suite of a `comptime for` its body holds.
-    fn loop_left_from_a_comptime_for() -> MirInstr {
+    /// A `comptime for` taking `operands` into `args` and defining
+    /// `results`, whose `has_next` test runs `suite` and leaves through
+    /// `stop` when the sequence ends.
+    fn comptime_for(
+        suite: Vec<MirBlock>,
+        stop: MirTerm,
+        [operands, args, results]: [Vec<Reg>; 3],
+    ) -> MirInstr {
         use mojito_checked::checked::ComptimeSequence;
         use mojito_types::ct::CtValue;
         use mojito_types::param_expr::{ParamContext, ParamId, ParamRef};
@@ -1061,24 +1146,35 @@ mod tests {
         let test = MirInstr::ComptimeIf {
             results: Vec::new(),
             conds: vec![source.stop_test()],
-            arms: vec![one(
-                Vec::new(),
-                MirTerm::Break {
-                    label: None,
-                    values: vec![Reg(2)],
-                },
-            )],
-            orelse: one(Vec::new(), MirTerm::ComptimeBreak),
+            arms: vec![suite],
+            orelse: one(Vec::new(), stop),
         };
-        let comptime_for = MirInstr::ComptimeFor {
+        MirInstr::ComptimeFor {
             binder: ParamRef {
                 id: ParamId::new("$comptime_for@f:0..1", 0),
                 name: "i".into(),
             },
             source,
+            operands,
+            args,
+            results,
             body: one(vec![test], MirTerm::Unreachable),
             orelse: one(Vec::new(), MirTerm::Unreachable),
-        };
+        }
+    }
+
+    /// A loop with result `r1` whose one `break`, carrying `r2`, sits in
+    /// the suite of a `comptime for` its body holds.
+    fn loop_left_from_a_comptime_for() -> MirInstr {
+        let suite = one(
+            Vec::new(),
+            MirTerm::Break {
+                label: None,
+                values: vec![Reg(2)],
+            },
+        );
+        let stop = MirTerm::ComptimeBreak(Vec::new());
+        let comptime_for = comptime_for(suite, stop, Default::default());
         MirInstr::Loop {
             label: None,
             operands: Vec::new(),
@@ -1258,6 +1354,7 @@ mod tests {
     /// `r4`, which stores that.
     fn carrying_match(first: Vec<MirBlock>) -> MirInstr {
         MirInstr::Match {
+            results: Vec::new(),
             cases: vec![
                 MirCase {
                     args: Vec::new(),
@@ -1325,6 +1422,186 @@ mod tests {
         assert_eq!(stored(&function), [Reg(2), Reg(2)]);
         assert!(!function.reg_types.contains_key(&3));
         assert!(!function.reg_types.contains_key(&4));
+    }
+
+    /// A `match` defining `r3` whose first case leaves through `first`
+    /// and whose second completes with `r2`, its else region `orelse`;
+    /// the slot `x` stores `r3` after it.
+    fn valued_match(first: Vec<MirBlock>, orelse: Vec<MirBlock>) -> Vec<MirBlock> {
+        let op = MirInstr::Match {
+            results: vec![Reg(3)],
+            cases: vec![
+                MirCase {
+                    args: Vec::new(),
+                    body: first,
+                },
+                MirCase {
+                    args: Vec::new(),
+                    body: one(Vec::new(), MirTerm::MatchComplete(vec![Reg(2)])),
+                },
+            ],
+            else_args: Vec::new(),
+            orelse,
+        };
+        storing_after(op, Reg(3))
+    }
+
+    /// The block a bare `jump` goes to.
+    fn jump_target(term: &MirTerm) -> Option<MirBlockId> {
+        match term {
+            MirTerm::Jump(to) => Some(*to),
+            _ => None,
+        }
+    }
+
+    /// `op`, then a store of `reg` into the slot `x`.
+    fn storing_after(op: MirInstr, reg: Reg) -> Vec<MirBlock> {
+        let store = MirInstr::DefVar {
+            var: 0,
+            src: reg,
+            binding_ty: None,
+            in_place: false,
+        };
+        one(vec![op, store], MirTerm::Return(None))
+    }
+
+    #[test]
+    fn a_match_completed_twice_takes_its_results_through_a_slot() {
+        let first = one(Vec::new(), MirTerm::MatchComplete(vec![Reg(1)]));
+        let orelse = one(Vec::new(), MirTerm::Yield(vec![Reg(1)]));
+        let function = lowered(function_over(valued_match(first, orelse), 1));
+        assert_eq!(function.var_names, ["x", "$yield1"]);
+        // Both completions and the else region's `yield` store their value
+        // before their jump to the join, which forwards the result.
+        let stores: Vec<(Reg, Option<MirBlockId>)> = function
+            .blocks
+            .iter()
+            .filter_map(|block| match block.instrs.as_slice() {
+                [MirInstr::DefVar { var: 1, src, .. }] => Some((*src, jump_target(&block.term))),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            stores,
+            [(Reg(1), Some(1)), (Reg(2), Some(1)), (Reg(1), Some(1)),],
+            "{:?}",
+            function.blocks
+        );
+        assert!(matches!(
+            function.blocks[1].instrs.as_slice(),
+            [
+                MirInstr::UseVar {
+                    dest: Reg(3),
+                    var: 1,
+                    mode: UseMode::Forward,
+                    constructor: None,
+                },
+                MirInstr::DefVar {
+                    var: 0,
+                    src: Reg(3),
+                    ..
+                },
+            ]
+        ));
+    }
+
+    #[test]
+    fn a_match_completed_once_folds_its_results() {
+        let first = one(Vec::new(), MirTerm::MatchNext(Vec::new()));
+        let orelse = one(Vec::new(), MirTerm::Unreachable);
+        let function = lowered(function_over(valued_match(first, orelse), 1));
+        assert_eq!(function.n_vars, 1, "no slot is made for the result");
+        assert_eq!(stored(&function), [Reg(2)]);
+        assert!(!function.reg_types.contains_key(&3));
+    }
+
+    /// The `comptime for` of [`comptime_for`] taking `r1` into `r3` and
+    /// defining `r4`, whose suite ends in `next` and whose stop arm breaks
+    /// with `r3`; the slot `x` stores `r4` after it.
+    fn carrying_comptime_for(next: MirTerm) -> Vec<MirBlock> {
+        let values = [vec![Reg(1)], vec![Reg(3)], vec![Reg(4)]];
+        let stop = MirTerm::ComptimeBreak(vec![Reg(3)]);
+        storing_after(comptime_for(one(Vec::new(), next), stop, values), Reg(4))
+    }
+
+    #[test]
+    fn a_comptime_for_carries_its_arguments_and_results_through_slots() {
+        let body = carrying_comptime_for(MirTerm::ComptimeContinue(vec![Reg(2)]));
+        let function = lowered(function_over(body, 2));
+        assert_eq!(function.var_names, ["x", "$yield1", "$arg2"]);
+        let block_storing = |var: VarId, value: Reg| {
+            function.blocks.iter().find(|block| {
+                matches!(
+                    block.instrs.as_slice(),
+                    [MirInstr::DefVar { var: v, src, .. }] if *v == var && *src == value
+                )
+            })
+        };
+        // The operand is stored before the jump to the header.
+        let MirTerm::Jump(header) = function.blocks[0].term else {
+            panic!("the comptime for is entered by a jump");
+        };
+        assert!(matches!(
+            function.blocks[0].instrs.last(),
+            Some(MirInstr::DefVar {
+                var: 2,
+                src: Reg(1),
+                ..
+            })
+        ));
+        let MirTerm::ComptimeFor {
+            body: entry,
+            exit: 1,
+            ..
+        } = function.blocks[header].term
+        else {
+            panic!("the header exits to the join");
+        };
+        // The body's entry forwards the argument out of its slot.
+        assert!(matches!(
+            function.blocks[entry].instrs.first(),
+            Some(MirInstr::UseVar {
+                dest: Reg(3),
+                var: 2,
+                mode: UseMode::Forward,
+                ..
+            })
+        ));
+        // The continue stores its value and goes back to the header; the
+        // stop arm's break stores the result and leaves to the join.
+        let continued = block_storing(2, Reg(2)).expect("the continue's store");
+        assert_eq!(jump_target(&continued.term), Some(header));
+        let broke = block_storing(1, Reg(3)).expect("the break's store");
+        assert_eq!(jump_target(&broke.term), Some(1));
+        assert!(matches!(
+            function.blocks[1].instrs.first(),
+            Some(MirInstr::UseVar {
+                dest: Reg(4),
+                var: 1,
+                mode: UseMode::Forward,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_comptime_for_never_continued_folds_its_arguments() {
+        let body = carrying_comptime_for(MirTerm::ComptimeBreak(vec![Reg(3)]));
+        let function = lowered(function_over(body, 2));
+        // The arguments fold to the operand; the results keep their slot.
+        assert_eq!(function.var_names, ["x", "$yield1"]);
+        let stores: Vec<Reg> = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instrs)
+            .filter_map(|instruction| match instruction {
+                MirInstr::DefVar { var: 1, src, .. } => Some(*src),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(stores, [Reg(1), Reg(1)]);
+        assert!(!function.reg_types.contains_key(&3));
+        assert_eq!(stored(&function), [Reg(4)]);
     }
 
     #[test]

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1262**.
+Next free ID: **R1263**.
 
 ## Ordered Work
 
@@ -133,6 +133,12 @@ which names the upstream pass each one follows. Each is measured by the
     the break is in the loop's own list and the result folds to its value:
     probe `lower_control_flow`'s unit test
     `a_break_in_a_comptime_for_keeps_its_result_slot`.
+  - A `comptime for`'s arguments and results go through `$arg`/`$yield`
+    slots because the elaborator copies the lowered body; upstream's
+    `processComptimeForOp` feeds each iteration loop's results to the next
+    clone's arguments (`replaceArgs`, `nextOperands`) and breaks
+    `param_for_outer` with the last: probe
+    `tests/mir_passes/lower-control-flow/comptime_for_values.mir`.
   - Depends on R1254.
   - Model: Fable, Planned.
 
@@ -746,10 +752,14 @@ which names the upstream pass each one follows. Each is measured by the
     only when its store's block encloses it: probe
     `tests/mir_passes/mem-2-reg/region_store_in_arm_kept.mir` and the
     loop-body store in `region_loop_read.mir`.
-  - Loop bodies, elif regions, and `match` case and else regions now take
-    arguments that `continue`, `if.elifcond.yield`, and `match.next` carry
-    (R1258, R1259), which the pass would produce; `match` and `comptime
-    for` results come with R1260.
+  - Every region op upstream gives values now has them (R886, R1258,
+    R1259, R1260): loop, elif, `match` case and else region, and `comptime
+    for` arguments, and loop, `if`, `match`, and `comptime for` results,
+    which the pass would produce.
+  - The ownership walks (`region_walk.rs`, `moves.rs`) and
+    `close_register_types` track and type no value carried through them,
+    so the producer must; an owned value through a `comptime for`'s shared
+    `$arg` slot across unrolled copies is unprobed.
   - `region_loop_read.mir`'s `y` is stored in the body and read only
     after the loop, so upstream carries it as a loop argument and a loop
     result whose initial operand is `currValueOrUndef`'s undef: MIR has no
@@ -760,7 +770,7 @@ which names the upstream pass each one follows. Each is measured by the
     loop body's boundary) goes once the elaborator clones regions.
   - About two thirds of the promotable-type slot mentions in the
     pre-elaboration bodies of `collections_many` are merged ones.
-  - Depends on R1260 (region values), R880 (regions cloned).
+  - Depends on R880 (regions cloned).
   - Model: Fable, Planned.
 
 - [ ] **R1105 `mem-2-reg` keeps a slot that a body reads through a
@@ -10077,25 +10087,6 @@ follow-ups the landed producer stages filed come last.
   - Depends on R874.
   - Model: Fable, Planned.
 
-- [ ] **R1260 A `match` and a `comptime for` define no results, where
-  upstream's `hlcf.match` and `hlcf.comptime.for` have results their
-  terminators carry**
-
-  Mojito's `Match`, `MatchComplete`, `ComptimeFor`, `ComptimeBreak`, and
-  `ComptimeContinue` carry no values, so a value a `match` or a
-  `comptime for` body produces for the code after it stays in a slot.
-  - Upstream's `hlcf.match` results come from `match.complete` and the
-    else region's `yield`; `hlcf.comptime.for` has operands ("values
-    promoted within the loop by mem2reg") and results its break and
-    continue pass.
-  - `Loop` results and valued `Break`s are the precedent: the verifier's
-    `RegionKind`, `lower-control-flow`'s slots, `canonicalize`, and `sccp`
-    learn the new values the same way.
-  - The elaborator's unroll must pass each iteration's values to the
-    next; before R880 it reads them through `lower-control-flow`'s slots.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1261 The MIR verifier never checks that a register's definition
   dominates its reads, where MLIR's verifier rejects an operand that does
   not dominate its use**
@@ -10113,11 +10104,32 @@ follow-ups the landed producer stages filed come last.
     Int"), found while landing R1259 (2026-10-21).
   - Probe: a read of an `if`'s, `loop`'s, or `match`'s region argument
     after the op verifies.
+  - Probe: a `comptime.for` whose operand is defined after the op
+    verifies, and the VM reads `None` for it (found while landing R1260).
   - The fix is a scoped walk over each structured body (lowered bodies by
     `mir::immediate_dominators`), each region seeing the registers defined
     before it in the regions enclosing it plus its own arguments.
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R1262 `sccp` follows elif conditions and `match.next`s to the
+  regions they enter, where upstream's `SCCP` gives an `if` with elifs and
+  a `match` its generic treatment**
+
+  Mojito's `sccp` enters only the arm a constant elif condition takes, and
+  a `match` case only from an executable `match.next`, meeting each region
+  argument with the values carried in.
+  - `SCCP.cpp`'s `processControlFlowNode` sends a multi-arm `hlcf.if` to
+    the generic path ("fall through to the generic path until that is
+    supported") and has no `hlcf.match` case.
+  - The generic path processes every region and puts each region argument
+    and result at its entry state.
+  - Mojito's form is sound but folds what the pin does not.
+  - R1260 already leaves `match` results overdefined, as upstream does.
+  - Probe: `tests/mir_passes/sccp/elif_argument_constant.mir` and
+    `match_next_argument_constant.mir` fold where the pin keeps.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R890 A `for` over a raising iterator tests a `TryNext` flag where
   upstream calls `__next__` in a `try` whose handler breaks to the loop's

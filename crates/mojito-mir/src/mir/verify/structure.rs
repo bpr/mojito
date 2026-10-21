@@ -119,10 +119,14 @@ pub(super) fn verify_regions(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
         }
         MirInstr::ComptimeFor {
             source,
+            operands,
+            args,
+            results,
             body,
             orelse,
             ..
         } => {
+            comptime_for_values(cx, operands, args, results, errors);
             let tests_has_next = matches!(
                 body.as_slice(),
                 [MirBlock {
@@ -152,10 +156,15 @@ pub(super) fn verify_regions(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
                     cx.prefix
                 ));
             }
-            verify_region(cx, RegionKind::ComptimeForBody, protected, body, errors);
+            let kind = RegionKind::ComptimeForBody {
+                args: args.clone(),
+                results: results.clone(),
+            };
+            verify_region(cx, kind, protected, body, errors);
             verify_region(cx, RegionKind::ComptimeForElse, protected, orelse, errors);
         }
         MirInstr::Match {
+            results,
             cases,
             else_args,
             orelse,
@@ -172,10 +181,17 @@ pub(super) fn verify_regions(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
                 let next_args = cases.get(index + 1).map_or(else_args, |next| &next.args);
                 let kind = RegionKind::MatchCase {
                     next_args: next_args.clone(),
+                    results: results.clone(),
                 };
                 verify_region(cx, kind, protected, &case.body, errors);
             }
-            verify_region(cx, RegionKind::IfArm(Vec::new()), protected, orelse, errors);
+            verify_region(
+                cx,
+                RegionKind::IfArm(results.clone()),
+                protected,
+                orelse,
+                errors,
+            );
         }
         _ => {}
     }
@@ -187,8 +203,11 @@ pub(super) fn verify_regions(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
 /// its arm's arguments and the next region's; `break` and `continue` inside
 /// the loop they name (the nearest, or the nearest carrying the label);
 /// `comptime.for.break`/`continue` where the nearest enclosing loop is a
-/// `comptime for`; `match.next`/`match.complete` inside a `match` case, a
-/// `match.next` with values for the next region's arguments. `unreachable`
+/// `comptime for`, with values for its results or its body's arguments;
+/// `match.next`/`match.complete` inside a `match` case, a `match.next` with
+/// values for the next region's arguments and a `match.complete` with the
+/// op's results; a `match`'s else region's `yield` with those results too.
+/// `unreachable`
 /// ends any region. Values are checked against each region they enter, as
 /// upstream's `verifyTerminator` checks each target, stopping at the first
 /// finding.
@@ -247,30 +266,39 @@ pub(super) fn verify_region_terminator(
                 }
             }
         }
-        (MirTerm::ComptimeBreak | MirTerm::ComptimeContinue, _) => {
+        (MirTerm::ComptimeBreak(values) | MirTerm::ComptimeContinue(values), _) => {
             let nearest = context.regions.iter().rev().find(|kind| {
                 matches!(
                     kind,
-                    RegionKind::LoopBody { .. } | RegionKind::ComptimeForBody
+                    RegionKind::LoopBody { .. } | RegionKind::ComptimeForBody { .. }
                 )
             });
-            if !matches!(nearest, Some(RegionKind::ComptimeForBody)) {
-                errors.push(format!(
+            match nearest {
+                Some(RegionKind::ComptimeForBody { args, results }) => {
+                    let (expected, target) = if matches!(terminator, MirTerm::ComptimeContinue(_)) {
+                        (args, YieldTarget::Arguments)
+                    } else {
+                        (results, YieldTarget::Results)
+                    };
+                    yielded_values(prefix, function, mnemonic, values, expected, target, errors);
+                }
+                _ => errors.push(format!(
                     "{prefix}: `{mnemonic}` is not inside a comptime for body"
-                ));
+                )),
             }
         }
-        (MirTerm::MatchNext(values), _) => match enclosing_case(context) {
-            None => errors.push(format!("{prefix}: `{mnemonic}` is not inside a match case")),
-            Some(next_args) => {
-                let target = YieldTarget::Arguments;
-                yielded_values(
-                    prefix, function, mnemonic, values, next_args, target, errors,
-                );
+        (MirTerm::MatchNext(values) | MirTerm::MatchComplete(values), _) => {
+            match enclosing_case(context) {
+                None => errors.push(format!("{prefix}: `{mnemonic}` is not inside a match case")),
+                Some((next_args, results)) => {
+                    let (expected, target) = if matches!(terminator, MirTerm::MatchNext(_)) {
+                        (next_args, YieldTarget::Arguments)
+                    } else {
+                        (results, YieldTarget::Results)
+                    };
+                    yielded_values(prefix, function, mnemonic, values, expected, target, errors);
+                }
             }
-        },
-        (MirTerm::MatchComplete, _) if enclosing_case(context).is_none() => {
-            errors.push(format!("{prefix}: `{mnemonic}` is not inside a match case"));
         }
         _ => {}
     }
@@ -362,13 +390,61 @@ fn yielded_values(
     }
 }
 
-/// The arguments of the region a `match.next` enters: the nearest
-/// enclosing `match` case's `next_args`; `None` outside every case.
-fn enclosing_case(context: &RegionContext) -> Option<&[Reg]> {
+/// The arguments of the region a `match.next` enters and the results a
+/// `match.complete` defines: the nearest enclosing `match` case's
+/// `next_args` and its op's `results`; `None` outside every case.
+fn enclosing_case(context: &RegionContext) -> Option<(&[Reg], &[Reg])> {
     context.regions.iter().rev().find_map(|kind| match kind {
-        RegionKind::MatchCase { next_args } => Some(next_args.as_slice()),
+        RegionKind::MatchCase { next_args, results } => {
+            Some((next_args.as_slice(), results.as_slice()))
+        }
         _ => None,
     })
+}
+
+/// A `comptime for`'s loop-carried values: its operands and results agree
+/// in number and type, as `ComptimeForOp::verify` requires, and the
+/// operands enter its body's arguments.
+fn comptime_for_values(
+    cx: &InstrCx<'_>,
+    operands: &[Reg],
+    args: &[Reg],
+    results: &[Reg],
+    errors: &mut Vec<String>,
+) {
+    if operands.len() != results.len() {
+        errors.push(format!(
+            "{}: `comptime.for` has {} operands but {} results; it should be the same",
+            cx.prefix,
+            operands.len(),
+            results.len()
+        ));
+        return;
+    }
+    for (index, (operand, result)) in operands.iter().zip(results).enumerate() {
+        if let (Some(found), Some(expected)) = (
+            cx.function.reg_types.get(&operand.0),
+            cx.function.reg_types.get(&result.0),
+        ) && !types_compatible(found, expected)
+        {
+            errors.push(format!(
+                "{}: `comptime.for` operand #{index} has type {found} but corresponding result has type {expected}",
+                cx.prefix
+            ));
+            return;
+        }
+    }
+    let target = YieldTarget::Arguments;
+    let mnemonic = "comptime.for";
+    yielded_values(
+        cx.prefix,
+        cx.function,
+        mnemonic,
+        operands,
+        args,
+        target,
+        errors,
+    );
 }
 
 /// The arguments and results of the loop a `break`/`continue` with `label`
@@ -462,7 +538,7 @@ mod tests {
             results: Vec::new(),
             conds: vec![source.stop_test()],
             arms: vec![suite],
-            orelse: one(Vec::new(), MirTerm::ComptimeBreak),
+            orelse: one(Vec::new(), MirTerm::ComptimeBreak(Vec::new())),
         };
         bare_comptime_for(source, one(vec![test], MirTerm::Unreachable))
     }
@@ -474,6 +550,9 @@ mod tests {
                 name: "i".into(),
             },
             source,
+            operands: Vec::new(),
+            args: Vec::new(),
+            results: Vec::new(),
             body,
             orelse: one(Vec::new(), MirTerm::Unreachable),
         }
@@ -726,15 +805,16 @@ mod tests {
             orelse: one(Vec::new(), MirTerm::MatchNext(Vec::new())),
         };
         MirInstr::Match {
+            results: Vec::new(),
             else_args: Vec::new(),
             cases: vec![
                 crate::mir::MirCase {
                     args: Vec::new(),
-                    body: one(vec![test], MirTerm::MatchComplete),
+                    body: one(vec![test], MirTerm::MatchComplete(Vec::new())),
                 },
                 crate::mir::MirCase {
                     args: Vec::new(),
-                    body: one(Vec::new(), MirTerm::MatchComplete),
+                    body: one(Vec::new(), MirTerm::MatchComplete(Vec::new())),
                 },
             ],
             orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
@@ -748,6 +828,7 @@ mod tests {
         // A case may be left from a loop nested in it, and a loop in a case
         // keeps its own `break`.
         let nested = function_with(vec![MirInstr::Match {
+            results: Vec::new(),
             else_args: Vec::new(),
             cases: vec![crate::mir::MirCase {
                 args: Vec::new(),
@@ -761,7 +842,7 @@ mod tests {
                             vec![MirInstr::If {
                                 results: Vec::new(),
                                 cond: Reg(0),
-                                then: one(Vec::new(), MirTerm::MatchComplete),
+                                then: one(Vec::new(), MirTerm::MatchComplete(Vec::new())),
                                 else_args: Vec::new(),
                                 elifs: Vec::new(),
                                 orelse: one(
@@ -794,17 +875,18 @@ mod tests {
             then: one(Vec::new(), MirTerm::MatchNext(Vec::new())),
             else_args: Vec::new(),
             elifs: Vec::new(),
-            orelse: one(Vec::new(), MirTerm::MatchComplete),
+            orelse: one(Vec::new(), MirTerm::MatchComplete(Vec::new())),
         }]);
         let found = findings(&next);
         assert_finding(&found, "`match.next` is not inside a match case");
         assert_finding(&found, "`match.complete` is not inside a match case");
         // The else region is an arm, not a case.
         let orelse = function_with(vec![MirInstr::Match {
+            results: Vec::new(),
             else_args: Vec::new(),
             cases: vec![crate::mir::MirCase {
                 args: Vec::new(),
-                body: one(Vec::new(), MirTerm::MatchComplete),
+                body: one(Vec::new(), MirTerm::MatchComplete(Vec::new())),
             }],
             orelse: one(Vec::new(), MirTerm::MatchNext(Vec::new())),
         }]);
@@ -813,6 +895,7 @@ mod tests {
             "`match.next` is not inside a match case",
         );
         let empty = function_with(vec![MirInstr::Match {
+            results: Vec::new(),
             else_args: Vec::new(),
             cases: Vec::new(),
             orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
@@ -914,6 +997,7 @@ mod tests {
             orelse: one(Vec::new(), MirTerm::MatchNext(first.clone())),
         };
         MirInstr::Match {
+            results: Vec::new(),
             cases: vec![
                 crate::mir::MirCase {
                     args: Vec::new(),
@@ -958,9 +1042,10 @@ mod tests {
     fn a_match_whose_first_case_takes_arguments_is_a_finding() {
         let function = function_over(
             vec![MirInstr::Match {
+                results: Vec::new(),
                 cases: vec![crate::mir::MirCase {
                     args: vec![Reg(3)],
-                    body: one(Vec::new(), MirTerm::MatchComplete),
+                    body: one(Vec::new(), MirTerm::MatchComplete(Vec::new())),
                 }],
                 else_args: Vec::new(),
                 orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
@@ -977,22 +1062,24 @@ mod tests {
     fn a_match_next_in_an_else_names_the_enclosing_case() {
         let outer = |args: Vec<Reg>| {
             let inner = MirInstr::Match {
+                results: Vec::new(),
                 cases: vec![crate::mir::MirCase {
                     args: Vec::new(),
-                    body: one(Vec::new(), MirTerm::MatchComplete),
+                    body: one(Vec::new(), MirTerm::MatchComplete(Vec::new())),
                 }],
                 else_args: Vec::new(),
                 orelse: one(Vec::new(), MirTerm::MatchNext(vec![Reg(1)])),
             };
             MirInstr::Match {
+                results: Vec::new(),
                 cases: vec![
                     crate::mir::MirCase {
                         args: Vec::new(),
-                        body: one(vec![inner], MirTerm::MatchComplete),
+                        body: one(vec![inner], MirTerm::MatchComplete(Vec::new())),
                     },
                     crate::mir::MirCase {
                         args,
-                        body: one(Vec::new(), MirTerm::MatchComplete),
+                        body: one(Vec::new(), MirTerm::MatchComplete(Vec::new())),
                     },
                 ],
                 else_args: Vec::new(),
@@ -1005,6 +1092,154 @@ mod tests {
         assert_finding(
             &findings(&dropped),
             "`match.next` yields 1 values for 0 arguments",
+        );
+    }
+
+    /// A `match` defining `results` whose one case completes with `first`
+    /// and whose else region yields `orelse`.
+    fn valued_match(results: Vec<Reg>, first: Vec<Reg>, orelse: Vec<Reg>) -> MirInstr {
+        MirInstr::Match {
+            results,
+            cases: vec![crate::mir::MirCase {
+                args: Vec::new(),
+                body: one(Vec::new(), MirTerm::MatchComplete(first)),
+            }],
+            else_args: Vec::new(),
+            orelse: one(Vec::new(), MirTerm::Yield(orelse)),
+        }
+    }
+
+    #[test]
+    fn a_valued_match_verifies() {
+        let valued = valued_match(vec![Reg(3)], vec![Reg(1)], vec![Reg(2)]);
+        let function = function_over(vec![valued], &[Ty::int()]);
+        assert_eq!(findings(&function), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_match_completing_with_the_wrong_values_is_a_finding() {
+        let complete = valued_match(vec![Reg(3)], Vec::new(), vec![Reg(2)]);
+        let complete = function_over(vec![complete], &[Ty::int()]);
+        assert_finding(
+            &findings(&complete),
+            "`match.complete` yields 0 values for 1 results",
+        );
+        let orelse = valued_match(vec![Reg(3)], vec![Reg(1)], Vec::new());
+        let orelse = function_over(vec![orelse], &[Ty::int()]);
+        assert_finding(&findings(&orelse), "`yield` yields 0 values for 1 results");
+        let typed = valued_match(vec![Reg(3)], vec![Reg(0)], vec![Reg(2)]);
+        let typed = function_over(vec![typed], &[Ty::int()]);
+        let found = findings(&typed);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_finding(
+            &found,
+            "`match.complete` yields Bool for a result of type Int",
+        );
+    }
+
+    #[test]
+    fn a_match_complete_in_an_else_names_the_enclosing_case() {
+        let outer = |results: Vec<Reg>| {
+            let inner = MirInstr::Match {
+                results: Vec::new(),
+                cases: vec![crate::mir::MirCase {
+                    args: Vec::new(),
+                    body: one(Vec::new(), MirTerm::MatchComplete(Vec::new())),
+                }],
+                else_args: Vec::new(),
+                orelse: one(Vec::new(), MirTerm::MatchComplete(vec![Reg(1)])),
+            };
+            MirInstr::Match {
+                results,
+                cases: vec![crate::mir::MirCase {
+                    args: Vec::new(),
+                    body: one(vec![inner], MirTerm::MatchComplete(vec![Reg(2)])),
+                }],
+                else_args: Vec::new(),
+                orelse: one(Vec::new(), MirTerm::Unreachable),
+            }
+        };
+        let carried = function_over(vec![outer(vec![Reg(3)])], &[Ty::int()]);
+        assert_eq!(findings(&carried), Vec::<String>::new());
+        let dropped = function_with(vec![outer(Vec::new())]);
+        assert_finding(
+            &findings(&dropped),
+            "`match.complete` yields 1 values for 0 results",
+        );
+    }
+
+    /// A `comptime for` entering with `operands` as `args` and defining
+    /// `results`, whose suite continues with `next` and whose stop arm
+    /// breaks with `out`.
+    fn valued_comptime_for(
+        [operands, args, results]: [Vec<Reg>; 3],
+        next: Vec<Reg>,
+        out: Vec<Reg>,
+    ) -> MirInstr {
+        let source = sequence();
+        let test = MirInstr::ComptimeIf {
+            results: Vec::new(),
+            conds: vec![source.stop_test()],
+            arms: vec![one(Vec::new(), MirTerm::ComptimeContinue(next))],
+            orelse: one(Vec::new(), MirTerm::ComptimeBreak(out)),
+        };
+        let mut op = bare_comptime_for(source, one(vec![test], MirTerm::Unreachable));
+        if let MirInstr::ComptimeFor {
+            operands: op_operands,
+            args: op_args,
+            results: op_results,
+            ..
+        } = &mut op
+        {
+            *op_operands = operands;
+            *op_args = args;
+            *op_results = results;
+        }
+        op
+    }
+
+    #[test]
+    fn a_valued_comptime_for_verifies() {
+        let values = [vec![Reg(1)], vec![Reg(3)], vec![Reg(4)]];
+        let valued = valued_comptime_for(values, vec![Reg(3)], vec![Reg(3)]);
+        let function = function_over(vec![valued], &[Ty::int(), Ty::int()]);
+        assert_eq!(findings(&function), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_comptime_for_exit_carrying_the_wrong_values_is_a_finding() {
+        let values = || [vec![Reg(1)], vec![Reg(3)], vec![Reg(4)]];
+        let arity = valued_comptime_for(values(), vec![Reg(3)], Vec::new());
+        let arity = function_over(vec![arity], &[Ty::int(), Ty::int()]);
+        assert_finding(
+            &findings(&arity),
+            "`comptime.for.break` yields 0 values for 1 results",
+        );
+        let typed = valued_comptime_for(values(), vec![Reg(0)], vec![Reg(3)]);
+        let typed = function_over(vec![typed], &[Ty::int(), Ty::int()]);
+        let found = findings(&typed);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_finding(
+            &found,
+            "`comptime.for.continue` yields Bool for an argument of type Int",
+        );
+    }
+
+    #[test]
+    fn a_comptime_for_whose_operands_and_results_differ_is_a_finding() {
+        let values = [vec![Reg(1)], vec![Reg(3)], Vec::new()];
+        let counted = valued_comptime_for(values, vec![Reg(3)], Vec::new());
+        let counted = function_over(vec![counted], &[Ty::int()]);
+        assert_finding(
+            &findings(&counted),
+            "`comptime.for` has 1 operands but 0 results; it should be the same",
+        );
+        let values = [vec![Reg(0)], vec![Reg(3)], vec![Reg(4)]];
+        let typed = valued_comptime_for(values, vec![Reg(3)], vec![Reg(3)]);
+        let typed = function_over(vec![typed], &[Ty::int(), Ty::int()]);
+        assert_finding(
+            &findings(&typed),
+            "`comptime.for` operand #0 has type Bool but corresponding result has type Int",
         );
     }
 
@@ -1078,9 +1313,9 @@ mod tests {
                 operands: Vec::new(),
                 args: Vec::new(),
                 results: Vec::new(),
-                body: one(Vec::new(), MirTerm::ComptimeBreak),
+                body: one(Vec::new(), MirTerm::ComptimeBreak(Vec::new())),
             }],
-            MirTerm::ComptimeContinue,
+            MirTerm::ComptimeContinue(Vec::new()),
         ))]);
         let found = findings(&through_loop);
         assert_finding(
@@ -1094,12 +1329,12 @@ mod tests {
     fn a_comptime_for_body_opens_with_its_has_next_test() {
         let tested = function_with(vec![comptime_for(one(
             Vec::new(),
-            MirTerm::ComptimeContinue,
+            MirTerm::ComptimeContinue(Vec::new()),
         ))]);
         assert_eq!(findings(&tested), Vec::<String>::new());
         let bare = function_with(vec![bare_comptime_for(
             sequence(),
-            one(Vec::new(), MirTerm::ComptimeContinue),
+            one(Vec::new(), MirTerm::ComptimeContinue(Vec::new())),
         )]);
         assert_finding(
             &findings(&bare),

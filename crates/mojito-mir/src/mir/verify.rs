@@ -234,12 +234,20 @@ enum RegionKind {
     },
     /// A `comptime if` arm, ended by `ComptimeYield` with its op's results.
     ComptimeIfArm(Vec<Reg>),
-    ComptimeForBody,
+    /// A `comptime for`'s body, entered with its op's operands as its
+    /// `args` and resumed by a `ComptimeContinue` carrying them, left by a
+    /// `ComptimeBreak` carrying its op's results.
+    ComptimeForBody {
+        args: Vec<Reg>,
+        results: Vec<Reg>,
+    },
     ComptimeForElse,
-    /// A `match` case, left by `MatchComplete`, or by `MatchNext` carrying
-    /// the next case's or the else region's arguments, `next_args`.
+    /// A `match` case, left by `MatchComplete` carrying its op's
+    /// `results`, or by `MatchNext` carrying the next case's or the else
+    /// region's arguments, `next_args`.
     MatchCase {
         next_args: Vec<Reg>,
+        results: Vec<Reg>,
     },
 }
 

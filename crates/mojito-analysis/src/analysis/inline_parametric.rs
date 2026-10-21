@@ -3716,6 +3716,7 @@ mod tests {
                 results: Vec::new(),
                 body: one(
                     vec![MirInstr::Match {
+                        results: Vec::new(),
                         else_args: Vec::new(),
                         cases: vec![
                             mojito_mir::mir::MirCase {

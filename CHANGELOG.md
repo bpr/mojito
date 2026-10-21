@@ -616,6 +616,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `match` has results, which each `match.complete` and its else
+  region's `yield` carry, and a `comptime for` has operands, body
+  arguments, and results, which its `comptime.for.continue`s and
+  `comptime.for.break`s carry, as upstream's `hlcf.match` and
+  `hlcf.comptime.for` do (MIR text 1.85, whose reader takes an older op
+  or terminator as carrying none). The verifier checks every edge and,
+  as `ComptimeForOp::verify` does, that a `comptime for`'s operands and
+  results agree; `sccp` leaves the new values overdefined, as upstream's
+  generic path does; `lower-control-flow` folds a `match` result one
+  edge defines and a never-continued `comptime for`'s arguments and
+  stores the others, and every `comptime for` result, in slots. The
+  verifier's register lists now also cover R1259's `if` and `match`
+  region arguments. Nothing produces the values until `mem-2-reg`
+  promotes into them (R927), so programs run unchanged. This closes
+  R1260.
 - An elif's condition region and arm, an `if`'s and a `match`'s else
   region, and each `match` case after the first take arguments, which the
   `if.elifcond.yield` or `match.next`s entering them carry, as upstream's

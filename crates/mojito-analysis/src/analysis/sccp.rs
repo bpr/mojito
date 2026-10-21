@@ -13,11 +13,14 @@
 //! the values it carries; the `if`'s results meet the values its executable
 //! arms yield. A `match` enters its first case, and each executable
 //! `match.next` the next case (the else region after the last), its values
-//! meeting that region's arguments. A loop's arguments meet its operands
-//! and the values its executable `continue`s carry, and its results meet
-//! the values its executable `break`s carry, while a loop's body, a
-//! `comptime if`, and a `try` are executable, the other ops' results
-//! overdefined. The
+//! meeting that region's arguments; its results are overdefined, as
+//! `SCCP`'s generic path leaves every node it does not special-case. A
+//! loop's arguments meet its operands and the values its executable
+//! `continue`s carry, and its results meet the values its executable
+//! `break`s carry, while a loop's body, a `comptime if`, a `comptime for`,
+//! and a `try` are executable, the other ops' results overdefined (a
+//! `comptime for`'s arguments too, as that generic path leaves each region
+//! argument at its entry state). The
 //! instructions of executable blocks are evaluated until nothing
 //! changes: a scalar or SIMD `const` ([`Const::is_folded`], a `UInt` or
 //! SIMD `Const::Value` included) is its constant, an instruction
@@ -150,12 +153,16 @@ impl Solver<'_> {
                 continue;
             }
             if let MirInstr::Match {
+                results,
                 cases,
                 else_args,
                 orelse,
             } = instruction
             {
                 self.visit_match(cases, (else_args, orelse), escapes);
+                for result in results {
+                    self.meet(*result, Lattice::Overdefined);
+                }
                 continue;
             }
             if let MirInstr::Loop {
@@ -221,9 +228,9 @@ impl Solver<'_> {
             | MirTerm::Yield(_)
             | MirTerm::ElifCond { .. }
             | MirTerm::ComptimeYield(_)
-            | MirTerm::ComptimeBreak
-            | MirTerm::ComptimeContinue
-            | MirTerm::MatchComplete
+            | MirTerm::ComptimeBreak(_)
+            | MirTerm::ComptimeContinue(_)
+            | MirTerm::MatchComplete(_)
             | MirTerm::Unreachable => Vec::new(),
         }
     }

@@ -1572,22 +1572,32 @@ fn instruction_value(instruction: &MirInstr) -> String {
         MirInstr::ComptimeFor {
             binder,
             source,
+            operands,
+            args,
+            results,
             body,
             orelse,
         } => {
-            let mut fields = vec![("binder", binder_ref(binder))];
+            let mut fields = vec![("results", regs(results)), ("binder", binder_ref(binder))];
             fields.extend(sequence_fields(source));
-            fields.extend([("body", blocks_value(body)), ("else", blocks_value(orelse))]);
+            fields.extend([
+                ("operands", regs(operands)),
+                ("arguments", regs(args)),
+                ("body", blocks_value(body)),
+                ("else", blocks_value(orelse)),
+            ]);
             record(tag, &fields)
         }
         MirInstr::ComptimeAssert { cond } => record(tag, &[("condition", constraint(cond))]),
         MirInstr::Match {
+            results,
             cases,
             else_args,
             orelse,
         } => record(
             tag,
             &[
+                ("results", regs(results)),
                 (
                     "cases",
                     list(cases.iter().map(|case| {
@@ -1731,17 +1741,16 @@ fn term_value(term: &MirTerm) -> String {
                 ("cleanup", cleanup_value(cleanup)),
             ],
         ),
-        MirTerm::TryYield
-        | MirTerm::ComptimeBreak
-        | MirTerm::ComptimeContinue
-        | MirTerm::MatchComplete
-        | MirTerm::Unreachable => record(tag, &[]),
-        MirTerm::Yield(values) | MirTerm::ComptimeYield(values) | MirTerm::MatchNext(values) => {
-            record(
-                tag,
-                &[("values", list(values.iter().map(|v| reg_value(*v))))],
-            )
-        }
+        MirTerm::TryYield | MirTerm::Unreachable => record(tag, &[]),
+        MirTerm::Yield(values)
+        | MirTerm::ComptimeYield(values)
+        | MirTerm::MatchNext(values)
+        | MirTerm::MatchComplete(values)
+        | MirTerm::ComptimeBreak(values)
+        | MirTerm::ComptimeContinue(values) => record(
+            tag,
+            &[("values", list(values.iter().map(|v| reg_value(*v))))],
+        ),
         MirTerm::ElifCond { cond, values } => record(
             tag,
             &[("condition", reg_value(*cond)), ("values", regs(values))],

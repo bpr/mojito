@@ -2278,10 +2278,10 @@ impl VmBackend {
                 | MirTerm::Break { .. }
                 | MirTerm::Continue { .. }
                 | MirTerm::ComptimeYield(_)
-                | MirTerm::ComptimeBreak
-                | MirTerm::ComptimeContinue
+                | MirTerm::ComptimeBreak(_)
+                | MirTerm::ComptimeContinue(_)
                 | MirTerm::MatchNext(_)
-                | MirTerm::MatchComplete
+                | MirTerm::MatchComplete(_)
                 | MirTerm::Unreachable => {
                     return Err(parametric_instruction(&format!(
                         "the region terminator `{}`",

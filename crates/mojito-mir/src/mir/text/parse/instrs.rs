@@ -852,6 +852,9 @@ impl Decoder {
             "comptime.for" => Some(MirInstr::ComptimeFor {
                 binder: self.req(value, fields, "binder", Self::binder_ref)?,
                 source: self.comptime_sequence(value, fields)?,
+                operands: self.added_regs(fields, "operands"),
+                args: self.added_regs(fields, "arguments"),
+                results: self.added_regs(fields, "results"),
                 body: self.req(value, fields, "body", |d, v| Some(d.region_blocks(v)))?,
                 orelse: self.req(value, fields, "else", |d, v| Some(d.region_blocks(v)))?,
             }),
@@ -859,6 +862,7 @@ impl Decoder {
                 cond: Box::new(self.req(value, fields, "condition", Self::constraint)?),
             }),
             "match" => Some(MirInstr::Match {
+                results: self.added_regs(fields, "results"),
                 cases: self.req(value, fields, "cases", |d, v| Some(d.cases(v)))?,
                 else_args: self.added_regs(fields, "else_arguments"),
                 orelse: self.req(value, fields, "else", |d, v| Some(d.region_blocks(v)))?,
@@ -989,10 +993,12 @@ impl Decoder {
                 "values",
                 |d, v| Some(d.regs(v)),
             )?)),
-            "comptime.for.break" => Some(MirTerm::ComptimeBreak),
-            "comptime.for.continue" => Some(MirTerm::ComptimeContinue),
+            "comptime.for.break" => Some(MirTerm::ComptimeBreak(self.added_regs(fields, "values"))),
+            "comptime.for.continue" => {
+                Some(MirTerm::ComptimeContinue(self.added_regs(fields, "values")))
+            }
             "match.next" => Some(MirTerm::MatchNext(self.added_regs(fields, "values"))),
-            "match.complete" => Some(MirTerm::MatchComplete),
+            "match.complete" => Some(MirTerm::MatchComplete(self.added_regs(fields, "values"))),
             "unreachable" => Some(MirTerm::Unreachable),
             other => {
                 self.error(value.span, format!("unknown terminator `{other}`"));

@@ -33,7 +33,7 @@ artifact {
               var.use { dest: %r0, var: $v0, mode: copy },
               const { dest: %r1, value: int(1) },
               const { dest: %r2, value: int(2) },
-              match { cases: [case { arguments: [], body: [bb0 { instructions: [if { results: [], condition: %r0, then: [bb0 { instructions: [], terminator: yield { values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: match.next { values: [%r1] } }] }], terminator: match.next { values: [%r2] } }] }, case { arguments: [%r3], body: [bb0 { instructions: [binary { op: add, dest: %r4, a: %r3, b: %r1, resolved: absent, raises: absent }], terminator: match.next { values: [%r4] } }] }], else_arguments: [%r5], else: [bb0 { instructions: [], terminator: return { value: present(%r5) } }] }
+              match { results: [], cases: [case { arguments: [], body: [bb0 { instructions: [if { results: [], condition: %r0, then: [bb0 { instructions: [], terminator: yield { values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: match.next { values: [%r1] } }] }], terminator: match.next { values: [%r2] } }] }, case { arguments: [%r3], body: [bb0 { instructions: [binary { op: add, dest: %r4, a: %r3, b: %r1, resolved: absent, raises: absent }], terminator: match.next { values: [%r4] } }] }], else_arguments: [%r5], else: [bb0 { instructions: [], terminator: return { value: present(%r5) } }] }
             ],
             terminator: return { value: present(%r1) }
           }
