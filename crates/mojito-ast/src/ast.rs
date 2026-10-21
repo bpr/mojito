@@ -1161,8 +1161,8 @@ impl MatchPattern {
 
     fn collect_expressions<'a>(&'a self, out: &mut Vec<&'a Expr>) {
         match &self.kind {
-            MatchPatternKind::Literal(value)
-            | MatchPatternKind::Equal(value)
+            MatchPatternKind::Literal { value, .. }
+            | MatchPatternKind::Equal { value, .. }
             | MatchPatternKind::Head(value) => out.push(value),
             MatchPatternKind::As { pattern, .. } => pattern.collect_expressions(out),
             MatchPatternKind::Tuple(items) | MatchPatternKind::Or(items) => {
@@ -1195,8 +1195,8 @@ impl MatchPattern {
 
     fn collect_expressions_mut<'a>(&'a mut self, out: &mut Vec<&'a mut Expr>) {
         match &mut self.kind {
-            MatchPatternKind::Literal(value)
-            | MatchPatternKind::Equal(value)
+            MatchPatternKind::Literal { value, .. }
+            | MatchPatternKind::Equal { value, .. }
             | MatchPatternKind::Head(value) => out.push(value),
             MatchPatternKind::As { pattern, .. } => pattern.collect_expressions_mut(out),
             MatchPatternKind::Tuple(items) | MatchPatternKind::Or(items) => {
@@ -1258,8 +1258,8 @@ impl MatchPattern {
                 }
             }
             MatchPatternKind::Wildcard
-            | MatchPatternKind::Literal(_)
-            | MatchPatternKind::Equal(_)
+            | MatchPatternKind::Literal { .. }
+            | MatchPatternKind::Equal { .. }
             | MatchPatternKind::Head(_) => {}
         }
     }
@@ -1289,10 +1289,19 @@ pub enum MatchPatternKind {
     /// `name`, `var name`, or `ref name` — matches anything and binds it.
     Bind { name: String, mode: BindingMode },
     /// A literal (`0`, `2.5`, `"s"`, `True`, `None`), compared through
-    /// `__eq__`. The expression keeps the literal's spelling and span.
-    Literal(Expr),
-    /// `== expr` — an explicit equality test against any expression.
-    Equal(Expr),
+    /// `__eq__`, with its source spelling (`0x4`, `'a'`, `True`) as
+    /// upstream's literal node keeps it for coverage; an implicitly
+    /// concatenated string and `None` have none.
+    Literal {
+        value: Expr,
+        spelling: Option<String>,
+    },
+    /// `== expr` — an explicit equality test against any expression, with
+    /// the operand's spelling when it is one literal token.
+    Equal {
+        value: Expr,
+        spelling: Option<String>,
+    },
     /// `(p, q)`, `p, q`, `()`, `(p,)` — a tuple of subpatterns.
     Tuple(Vec<MatchPattern>),
     /// `[p, *rest, q]` — a sequence of subpatterns with at most one star.
@@ -2551,8 +2560,8 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
         fn pattern(&mut self, pattern: &mut MatchPattern) {
             pattern.syntax_id = self.id(pattern.syntax_id);
             match &mut pattern.kind {
-                MatchPatternKind::Literal(value)
-                | MatchPatternKind::Equal(value)
+                MatchPatternKind::Literal { value, .. }
+                | MatchPatternKind::Equal { value, .. }
                 | MatchPatternKind::Head(value) => self.expr(value),
                 MatchPatternKind::As { pattern, .. } => self.pattern(pattern),
                 MatchPatternKind::Tuple(items) | MatchPatternKind::Or(items) => {

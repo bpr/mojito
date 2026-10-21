@@ -2237,6 +2237,7 @@ impl CheckedStmtOp {
                         .collect(),
                     guard: case.guard.map(|guard| map.expression(guard)),
                     body: block(map, &case.body),
+                    unreachable: case.unreachable,
                 })
                 .collect::<Vec<_>>()
         };
@@ -2761,6 +2762,9 @@ pub struct CheckedMatchCase {
     pub commands: Vec<CheckedCommand>,
     pub guard: Option<CheckedNodeId>,
     pub body: Vec<CheckedStmtId>,
+    /// Whether earlier cases cover every value the case matches: it is
+    /// checked, and sealed unreached, as upstream's `hlcf.unreachable`.
+    pub unreachable: bool,
 }
 
 impl CheckedMatchCase {
@@ -2896,6 +2900,9 @@ pub struct MatchPlan {
     pub anchor: Stmt,
     pub cases: Vec<Vec<PlannedCommand>>,
     pub concluded: bool,
+    /// Per case, whether earlier cases cover every value it matches, so
+    /// that it is never reached (empty for a `case` condition).
+    pub unreachable: Vec<bool>,
 }
 
 /// A nonfatal diagnostic the check recorded at a source location: the
@@ -4323,15 +4330,18 @@ impl CheckedProgram {
             mut default_wrappers,
             trait_members,
         } = discovery;
-        let mut warnings: Vec<Warning> = node_facts
-            .values()
-            .flat_map(|facts| facts.match_warnings.iter().flatten().cloned())
+        // Each statement's warnings in the order the check emitted them, the
+        // statements in source order: an enclosing `match`'s come before a
+        // nested one's, as upstream emits them.
+        let mut warned: Vec<(&SourceSpan, &Vec<Warning>)> = node_facts
+            .iter()
+            .filter_map(|(at, facts)| Some((at, facts.match_warnings.as_ref()?)))
             .collect();
-        warnings.sort_by(|left, right| {
-            (&left.span.source, left.span.span)
-                .cmp(&(&right.span.source, right.span.span))
-                .then_with(|| left.message.cmp(&right.message))
-        });
+        warned.sort_by_key(|(at, _)| (&at.source, at.span, at.syntax.map(|syntax| syntax.0)));
+        let warnings: Vec<Warning> = warned
+            .into_iter()
+            .flat_map(|(_, warnings)| warnings.iter().cloned())
+            .collect();
         let expressions_span = mojito_common::timing::span("expressions");
         let signatures = Signatures {
             checked_types: &checked_types,
@@ -4929,8 +4939,10 @@ impl<'a> ArenaBuilder<'a> {
                 name: name.clone(),
                 mode: *mode,
             },
-            MatchPatternKind::Literal(value) => CheckedPatternKind::Literal(self.expr(value)),
-            MatchPatternKind::Equal(value) => CheckedPatternKind::Equal(self.expr(value)),
+            MatchPatternKind::Literal { value, .. } => {
+                CheckedPatternKind::Literal(self.expr(value))
+            }
+            MatchPatternKind::Equal { value, .. } => CheckedPatternKind::Equal(self.expr(value)),
             MatchPatternKind::Head(value) => CheckedPatternKind::Head(self.expr(value)),
             MatchPatternKind::Tuple(items) => {
                 CheckedPatternKind::Tuple(items.iter().map(|item| self.pattern(item)).collect())
@@ -5672,6 +5684,9 @@ impl<'a> ArenaBuilder<'a> {
                             .unwrap_or_default(),
                         guard: case.guard.as_ref().map(|guard| this.expr(guard)),
                         body: this.block(&case.body),
+                        unreachable: plan
+                            .and_then(|plan| plan.unreachable.get(index).copied())
+                            .unwrap_or(false),
                     })
                     .collect::<Vec<_>>()
             };

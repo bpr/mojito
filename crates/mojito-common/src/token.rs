@@ -346,14 +346,17 @@ pub enum Token {
     // Identifiers (includes type names like `Int`, `String`, `Bool`)
     Identifier(String),
 
-    // Literals
-    IntLiteral(crate::literal::IntLiteral),
-    FloatLiteral(crate::literal::FloatLiteral),
+    // Literals: a number or string carries its value, then its source
+    // spelling (separators, radix prefix, and quotes intact), which a
+    // literal pattern's coverage keys on, as upstream's literal nodes keep
+    // their token text. The exact float is boxed, keeping tokens small.
+    IntLiteral(crate::literal::IntLiteral, Box<str>),
+    FloatLiteral(Box<crate::literal::FloatLiteral>, Box<str>),
     BoolLiteral(bool),
-    StringLiteral(String),
+    StringLiteral(String, Box<str>),
     /// A triple-quoted string. Kept distinct through parsing so a standalone
     /// literal can be recognized as a Mojo docstring.
-    TripleStringLiteral(String),
+    TripleStringLiteral(String, Box<str>),
     /// A t-string (`t"…{expr}…"`) or raw t-string (`rt"…"`), lexed into
     /// alternating literal text and raw interpolation-expression text; the parser
     /// re-parses each interpolation into a real `Expr`. `raw` is true for `rt`.

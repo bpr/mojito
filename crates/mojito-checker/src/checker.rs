@@ -3188,6 +3188,7 @@ mod call_inference;
 mod ffi_calls;
 
 mod bound_defaults;
+mod coverage;
 mod destructure;
 mod desugar;
 mod patterns;

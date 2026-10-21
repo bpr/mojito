@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `match` coverage ports upstream's covering spaces over each case's
+  command shapes (`checker/coverage.rs`): a closed `EnumLike` (`Optional`,
+  `Bool`) is its constructors, an open one keeps its fall-through and only
+  finds repeats, a tuple or struct of closed leaves is its Cartesian cells
+  (up to 1024, else "too complex to check for exhaustivity"), and any other
+  subject finds repeated root literal spellings (`4` and `0x4` differ). A
+  payload test refines without covering, a guard adds nothing, and the
+  missing-case warning names eight values with an Oxford comma and counts
+  the rest. A `.Some(x)` / `.None` match whose cases return now satisfies
+  return analysis, and a case earlier ones cover is checked, sealed, and
+  exempt from return and initialization analysis. Warnings keep the pin's
+  emission order, `case None` and a non-static `_enum_is_exhaustive` are
+  rejected with the pin's texts, and literal tokens keep their source
+  spelling (`assets/ok/match_coverage_enums_and_products.mojo`,
+  `match_coverage_enum_like_conformers.mojo`). This closes R1134.
 - Enum case patterns run as on the pin: over a subject whose type declares
   `EnumLike`, `case .Some(x)`, `case Optional.None`, and a bare tag test
   `case .Some` find the case by name in `_enum_case_names`, test

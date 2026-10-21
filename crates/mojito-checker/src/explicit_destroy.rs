@@ -1205,23 +1205,25 @@ fn check_stmt(
         StmtKind::Match { subject, cases } => {
             check_expr(subject, &mut env, node_facts, types)?;
             finish_statement(&mut env, types)?;
+            let plan = node_facts
+                .get(&stmt.source_span())
+                .and_then(|facts| facts.match_plan.as_ref());
             let mut exits = Vec::new();
-            for case in cases {
+            for (index, case) in cases.iter().enumerate() {
                 let mut branch = env.clone();
                 if let Some(guard) = &case.guard {
                     check_expr(guard, &mut branch, node_facts, types)?;
                     finish_statement(&mut branch, types)?;
                 }
-                if let Some(exit) =
-                    check_block(&case.body, branch, true, node_facts, deletability, types)?
-                {
-                    exits.push(exit);
-                }
+                let exit = check_block(&case.body, branch, true, node_facts, deletability, types)?;
+                // A case earlier ones cover is never reached: its exit joins
+                // nothing.
+                let unreachable = plan
+                    .and_then(|plan| plan.unreachable.get(index).copied())
+                    .unwrap_or(false);
+                exits.extend(exit.filter(|_| !unreachable));
             }
-            let concluded = node_facts
-                .get(&stmt.source_span())
-                .and_then(|facts| facts.match_plan.as_ref())
-                .is_some_and(|plan| plan.concluded)
+            let concluded = plan.is_some_and(|plan| plan.concluded)
                 || cases.iter().any(|case| {
                     case.guard.is_none() && crate::checker::irrefutable_pattern(&case.pattern)
                 });

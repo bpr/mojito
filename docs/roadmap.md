@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1241**.
+Next free ID: **R1243**.
 
 ## Ordered Work
 
@@ -1905,7 +1905,8 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     three (`conformance/probes/read_beside_live_ref_binding.mojo`).
   - Probe: a second element reference beside a live one (`ref a = t[0];
     ref b = t[1]`), a temporary `match` subject's two element bindings
-    (`match (1, 2): case (p, q)` and `case [p, q]`), a reference or write
+    (`match (1, 2): case (p, q)` and `case [p, q]`, and `if case (x, y) =
+    (1, 2)`), a reference or write
     taken through the live binding itself (`ref m = a[1]; m = 20; a[0] =
     5`, `ref d = c; d.append(4); c.append(5)`), and a `match` case with a
     `ref` binding reading two elements through the hidden subject (`case
@@ -2834,43 +2835,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1134 Coverage spans enums, products, and payload refinement**
-
-  Problem: the coverage model (`Coverage`/`Space` in
-  `checker/patterns.rs`) knows `Bool` and tuples of `Bool`, so an
-  `Optional` without a `.None` case and a `(Bool, Int)` product with a
-  correlated wildcard warn nothing, where the pin reports the missing
-  cells.
-  - A closed `EnumLike`, `Bool` included, is the set of its constructors.
-    An open one (`_enum_is_exhaustive = False`) keeps an unknown
-    remainder that only an unguarded wildcard or binding closes.
-  - A finite tuple or struct product is its Cartesian cells, never
-    independent field masks. An omitted struct field is a wildcard, and
-    an open leaf keeps the product open.
-  - A constructor is covered only by an irrefutable payload pattern:
-    `Some(0)` covers no whole `Some`, and `Some(_)` makes a later
-    refinement unreachable. `|` unions its alternatives. A guard adds
-    nothing, even a constant `True`.
-  - An open subject (`Int`, `String`) tracks duplicate root literal
-    spellings only, with no `4` versus `0x4` canonicalization and no
-    payload-domain solver. Sequence patterns cover nothing but through a
-    catch-all.
-  - A product above 1024 cells warns to add a catch-all and keeps the
-    fall-through until coverage is proven. Multiply with overflow checks
-    before allocating cells.
-  - Stop: `(True, True)` plus `(False, False)` warns the two missing
-    cells, correlated wildcards finish coverage, and an open enum keeps
-    its catch-all path. Warning order is stable across packaging.
-  - Named analysis tests pin the cap and the overflow check.
-  - Probe: `conformance/probes/match_optional_enum_cases.mojo`, whose
-    `describe` returns from a `.Some(x)` and a `.None` case with no
-    catch-all and is rejected ("does not return a value on every path").
-  - Probe: a duplicate `.Some(y)` after `.Some(x)` and a `_` after both
-    `Optional` cases each warn unreachable at the pin, and a conformer
-    naming `Leaf` twice warns "missing case for 'Leaf'" over its first.
-  - Depends on R1133.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1237 Consecutive enum cases read the discriminant once per case**
 
   Problem: three `.Node` cases in a row call `_get_enum_discriminant()`
@@ -2885,10 +2849,56 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     test.
   - Only a discriminant getter with effects shows the difference; literal
     clusters are not observable.
+  - The cluster key is the leading command's path and case, which
+    `checker/coverage.rs`'s `CoverCommand` already records per case.
   - Probe: `conformance/probes/match_enum_case_cluster.mojo`.
   - Found while landing R1133 (2026-10-20).
   - Depends on R1134.
   - Model: Fable, Not Planned.
+
+- [ ] **R1241 A concluded `match` drops its concluding case's tests where
+  upstream seals the fall-through**
+
+  Problem: `case (True, var x) | (False, var x): return x` over a
+  `Tuple[Bool, Bool]` is rejected ("'f' does not return a value on every
+  path"), where the pin covers the subject and prints `False`.
+  - Upstream keeps every case's tests and emits the match's else region as
+    `hlcf.unreachable` once a case concludes it (`emitCases`,
+    `ParserStmts.cpp`).
+  - Mojito instead strips the concluding case's tests
+    (`check_match_cases`, `checker/patterns.rs`), which a `|` whose
+    alternatives bind cannot allow (`droppable_test`), so the match stays
+    open.
+  - Lever: give HIR an unreachable terminator for a concluded match's else
+    region, lowered to `MirTerm::Unreachable`, and stop stripping tests.
+  - Probe: the tuple shape above, which the pin runs.
+  - Found while landing R1134 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1242 Dead regions after an always-completing case or condition do
+  not warn**
+
+  Problem: the pin warns `unreachable code after match case that always
+  completes`, `unreachable code after match that always completes`, and
+  `'if' condition always evaluates to 'True'; 'else' branch is
+  unreachable`, where Mojito warns nothing.
+  - Upstream's `LowerSemanticCF` (`markRegionDeadDueToConstantCond`)
+    walks the structured regions, marks a region dead once an earlier case
+    always completes or a condition folds, and warns at its first
+    statement.
+  - Mojito has no pass that reports dead structured regions; only the
+    checker's coverage warnings reach `CheckedProgram::warnings`.
+  - Probe: `case _ | True:` then `case False:` over a `Bool` warns at the
+    `True` alternative; the `else` of `if case (x, y) = (1, 2)` warns after
+    the irrefutable condition; `if True: ... else: ...` warns at the
+    condition.
+  - Probe: `case 1`, then `case 1 if c`, and a repeated tuple case of an
+    11-`Bool` product, warn at the second case's residual, which needs the
+    clustered emission of R1140.
+  - Found while landing R1134 (2026-10-20).
+  - Depends on R1241.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1238 A leading-dot operand of `==` has no contextual type**
 
@@ -2919,6 +2929,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     or a `|` alternative.
   - The lever is `compile_pattern`'s `Equal` arm (`checker/patterns.rs`),
     recording a `Warning` as the coverage warnings do.
+  - Upstream warns while it builds the case's commands, so the warning
+    goes before the match's coverage warnings in `match_warnings`
+    (`check_match_cases`).
   - Add the cases to `assets/ok/match_coverage_warnings.mojo` or a sibling
     fixture that pins warnings.
   - Found while planning R1135 (2026-10-20).
@@ -2946,6 +2959,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     guards run in plain and generic functions, untaken-arm diagnostics
     agree with the pin, and the textual MIR round-trip keeps the
     parametric conditions.
+  - Coverage reuses `Checker::match_coverage` (`checker/coverage.rs`) over
+    the same recorded command shapes.
   - Probe: `conformance/probes/comptime_match_forms.mojo`.
   - Depends on R1134.
   - Model: Fable, Planned.
@@ -2969,6 +2984,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Mapping patterns stay rejected, as upstream's proposal excludes them:
     record the deferral in `docs/non-goals.md` with upstream's
     implementation as the reopening criterion.
+  - Probe: the pin clusters literal cases by spelling and reorders the
+    cluster, so `match 4` over `case 4:` then `case 0x4:` runs the `0x4`
+    case.
   - Depends on R1139, R1137, and R1138.
   - Model: Fable, Not Planned.
 
@@ -9568,6 +9586,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     never-called payload getter.
   - Probe: the `Bool` half of
     `conformance/probes/enum_like_optional_bool.mojo`.
+  - Delete the modelled-`Bool` arm of `enum_constructors`
+    (`checker/coverage.rs`) once the library `Bool` conforms.
   - Found while planning R1132 (2026-10-20).
   - Depends on R1132 (the trait) and R1188 (a library `Bool`).
   - Model: Opus, Not Planned.

@@ -117,9 +117,9 @@ impl<'a> Lexer<'a> {
             if rem.starts_with(&delim) {
                 self.pos += delim.len(); // consume the closing delimiter
                 return Ok(if triple {
-                    Token::TripleStringLiteral(value)
+                    Token::TripleStringLiteral(value, self.spelling())
                 } else {
-                    Token::StringLiteral(value)
+                    Token::StringLiteral(value, self.spelling())
                 });
             }
             let Some(c) = rem.chars().next() else {
@@ -392,10 +392,16 @@ impl<'a> Lexer<'a> {
     fn emit(&mut self, token: Token) {
         self.last_token_was_string = matches!(
             &token,
-            Token::StringLiteral(_) | Token::TripleStringLiteral(_) | Token::TString { .. }
+            Token::StringLiteral(..) | Token::TripleStringLiteral(..) | Token::TString { .. }
         );
         self.pending_tokens
             .push_back((token, (self.token_start, self.pos)));
+    }
+
+    /// The source text scanned since this token began, as a literal token
+    /// keeps it.
+    fn spelling(&self) -> Box<str> {
+        self.input[self.token_start..self.pos].into()
     }
 
     /// Mojo joins an adjacent string on the following physical line when that
@@ -699,7 +705,9 @@ impl Iterator for Lexer<'_> {
                             .filter(|&ch| ch != '_')
                             .collect();
                         match mojito_common::literal::FloatLiteral::parse_decimal(&cleaned) {
-                            Some(value) => self.emit(Token::FloatLiteral(value)),
+                            Some(value) => {
+                                self.emit(Token::FloatLiteral(Box::new(value), self.spelling()));
+                            }
                             None => return Some(Err(LexError::InvalidFloat(start))),
                         }
                     } else {
@@ -937,7 +945,7 @@ impl Iterator for Lexer<'_> {
                             .filter(|&c| c != '_')
                             .collect();
                         match mojito_common::literal::IntLiteral::parse_radix(&cleaned, radix) {
-                            Some(num) => self.emit(Token::IntLiteral(num)),
+                            Some(num) => self.emit(Token::IntLiteral(num, self.spelling())),
                             None => return Some(Err(LexError::InvalidInteger(start))),
                         }
                         continue;
@@ -974,7 +982,9 @@ impl Iterator for Lexer<'_> {
                         .collect();
                     if is_float {
                         match mojito_common::literal::FloatLiteral::parse_decimal(&cleaned) {
-                            Some(num) => self.emit(Token::FloatLiteral(num)),
+                            Some(num) => {
+                                self.emit(Token::FloatLiteral(Box::new(num), self.spelling()));
+                            }
                             None => return Some(Err(LexError::InvalidFloat(start))),
                         }
                     } else if cleaned.len() > 1
@@ -984,7 +994,7 @@ impl Iterator for Lexer<'_> {
                         return Some(Err(LexError::InvalidInteger(start)));
                     } else {
                         match mojito_common::literal::IntLiteral::parse_radix(&cleaned, 10) {
-                            Some(num) => self.emit(Token::IntLiteral(num)),
+                            Some(num) => self.emit(Token::IntLiteral(num, self.spelling())),
                             None => return Some(Err(LexError::InvalidInteger(start))),
                         }
                     }

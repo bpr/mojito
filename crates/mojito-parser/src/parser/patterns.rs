@@ -465,16 +465,21 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 self.parse_binding_pattern(BindingMode::Ref)?
             }
             Some(
-                Token::IntLiteral(_)
-                | Token::FloatLiteral(_)
+                Token::IntLiteral(..)
+                | Token::FloatLiteral(..)
                 | Token::BoolLiteral(_)
-                | Token::StringLiteral(_)
-                | Token::TripleStringLiteral(_)
+                | Token::StringLiteral(..)
+                | Token::TripleStringLiteral(..)
                 | Token::None,
-            ) => MatchPatternKind::Literal(self.parse_prefix()?),
+            ) => {
+                let (value, spelling) = self.parse_spelled_operand(Self::parse_prefix)?;
+                MatchPatternKind::Literal { value, spelling }
+            }
             Some(Token::EqEq) => {
                 self.next_token()?;
-                MatchPatternKind::Equal(self.parse_expression(Precedence::Unary)?)
+                let (value, spelling) = self
+                    .parse_spelled_operand(|parser| parser.parse_expression(Precedence::Unary))?;
+                MatchPatternKind::Equal { value, spelling }
             }
             Some(Token::LParen) => {
                 self.next_token()?;
@@ -549,6 +554,29 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             }
         };
         Ok(MatchPattern::new(kind, (start, self.last_significant_end)))
+    }
+
+    /// A literal or `==` operand parsed by `parse`, with its source spelling
+    /// when it is exactly one literal token (`0x4`, `'a'`, `True`), as
+    /// upstream's literal node keeps it; `(4)`, `-3`, and an implicitly
+    /// concatenated string have none.
+    fn parse_spelled_operand(
+        &mut self,
+        parse: impl FnOnce(&mut Self) -> Result<Expr, ParseError>,
+    ) -> Result<(Expr, Option<String>), ParseError> {
+        let spelling = match self.peek_token()? {
+            Some(
+                Token::IntLiteral(_, spelling)
+                | Token::FloatLiteral(_, spelling)
+                | Token::StringLiteral(_, spelling)
+                | Token::TripleStringLiteral(_, spelling),
+            ) => Some(spelling.to_string()),
+            Some(Token::BoolLiteral(value)) => Some(if *value { "True" } else { "False" }.into()),
+            _ => None,
+        };
+        let value = parse(self)?;
+        let spelling = spelling.filter(|spelling| value.span.1 - value.span.0 == spelling.len());
+        Ok((value, spelling))
     }
 
     /// A member name in a pattern head: a member name, or `None`, which

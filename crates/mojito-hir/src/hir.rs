@@ -1165,8 +1165,11 @@ impl Lower {
     /// and the else region yields the fall-through when no case matched.
     fn match_statement(&mut self, anchor: CheckedStmtId, cases: &[CheckedMatchCase]) {
         self.stmt(anchor);
+        // A case earlier ones cover is never reached, so it lowers no
+        // region, as upstream seals it with `hlcf.unreachable`.
         let regions = cases
             .iter()
+            .filter(|case| !case.unreachable)
             .map(|case| {
                 self.region(|this| {
                     this.scopes.push(HashMap::new());

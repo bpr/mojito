@@ -286,8 +286,8 @@ pub fn walk_case<V: Visitor>(visitor: &mut V, case: &MatchCase) {
 pub fn walk_pattern<V: Visitor>(visitor: &mut V, pattern: &MatchPattern) {
     visitor.visit_pattern(pattern);
     match &pattern.kind {
-        MatchPatternKind::Literal(value)
-        | MatchPatternKind::Equal(value)
+        MatchPatternKind::Literal { value, .. }
+        | MatchPatternKind::Equal { value, .. }
         | MatchPatternKind::Head(value) => walk_expr(visitor, value),
         MatchPatternKind::As { pattern, .. } => walk_pattern(visitor, pattern),
         MatchPatternKind::Tuple(items) | MatchPatternKind::Or(items) => {
@@ -1114,8 +1114,8 @@ pub fn walk_condition_mut<V: MutVisitor>(visitor: &mut V, condition: &mut Condit
 /// Walk one pattern in place, children first.
 pub fn walk_pattern_mut<V: MutVisitor>(visitor: &mut V, pattern: &mut MatchPattern) {
     match &mut pattern.kind {
-        MatchPatternKind::Literal(value)
-        | MatchPatternKind::Equal(value)
+        MatchPatternKind::Literal { value, .. }
+        | MatchPatternKind::Equal { value, .. }
         | MatchPatternKind::Head(value) => walk_expr_mut(visitor, value),
         MatchPatternKind::As { pattern, .. } => walk_pattern_mut(visitor, pattern),
         MatchPatternKind::Tuple(items) | MatchPatternKind::Or(items) => {

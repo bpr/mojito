@@ -742,7 +742,7 @@ closed_pattern:
     | '_'                                               # wildcard
     | NAME                                              # binds the value (`case Int:` binds `Int`)
     | 'var' NAME | 'ref' NAME                           # binds a mutable copy / a reference
-    | literal                                           # INT | FLOAT | STRING | 'True' | 'False' | 'None'
+    | literal                                           # INT | FLOAT | STRING | 'True' | 'False' | 'None' (rejected: `== None`)
     | '==' unary_expression                             # explicit equality (`== -3`, `== f(x)`)
     | '(' ')' | '(' pattern ')' | '(' pattern (',' pattern)* ','? ')'   # grouping or tuple
     | '[' [seq_pattern (',' seq_pattern)* ','?] ']'     # sequence, at most one star

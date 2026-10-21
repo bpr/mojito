@@ -74,7 +74,8 @@ let execution = compiler.execute(&program)?;
 ```
 
 `CompiledProgram` exposes the check's nonfatal diagnostics (`warnings()`,
-the `Warning` list `CheckedProgram` gathers from its facts in source order;
+the `Warning` list `CheckedProgram` gathers from its facts per statement in
+source order, each statement's in emission order;
 the CLI prints them after a successful compile) and privately retains the
 `CheckedProgram` and three MIR phases,
 each named by its accessor and each computed once:

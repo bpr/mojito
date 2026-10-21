@@ -1,19 +1,43 @@
 use mojito::token::{TStringChunk, Token};
 use mojito::{FloatLiteral, IntLiteral, Lexer};
 
-/// Collect all tokens, panicking if the lexer reports an error.
+/// Collect all tokens, panicking if the lexer reports an error, each
+/// literal's source spelling blanked so a token compares by value
+/// (`lexes_literal_spellings` pins the spellings).
 fn lex_all(source: &str) -> Vec<Token> {
     Lexer::new(source)
-        .map(|r| r.expect("lexer error").0)
+        .map(|r| unspelled(r.expect("lexer error").0))
         .collect()
 }
 
+/// `token` with a literal's spelling blanked.
+fn unspelled(token: Token) -> Token {
+    match token {
+        Token::IntLiteral(value, _) => Token::IntLiteral(value, "".into()),
+        Token::FloatLiteral(value, _) => Token::FloatLiteral(value, "".into()),
+        Token::StringLiteral(value, _) => Token::StringLiteral(value, "".into()),
+        Token::TripleStringLiteral(value, _) => Token::TripleStringLiteral(value, "".into()),
+        other => other,
+    }
+}
+
 fn int(value: i64) -> Token {
-    Token::IntLiteral(value.into())
+    Token::IntLiteral(value.into(), "".into())
 }
 
 fn float(source: &str) -> Token {
-    Token::FloatLiteral(FloatLiteral::parse_decimal(source).expect("valid float literal"))
+    Token::FloatLiteral(
+        Box::new(FloatLiteral::parse_decimal(source).expect("valid float literal")),
+        "".into(),
+    )
+}
+
+fn string(value: &str) -> Token {
+    Token::StringLiteral(value.into(), "".into())
+}
+
+fn triple_string(value: &str) -> Token {
+    Token::TripleStringLiteral(value.into(), "".into())
 }
 
 #[test]
@@ -97,7 +121,7 @@ fn lexes_keywords_and_string_literal() {
             Token::Colon,
             Token::Identifier("String".into()),
             Token::Assign,
-            Token::StringLiteral("a\nb".into()), // escape decoded
+            string("a\nb"), // escape decoded
             Token::And,
             Token::Not,
             Token::BoolLiteral(false),
@@ -111,7 +135,7 @@ fn lexes_keywords_and_string_literal() {
 /// decoded value.
 fn lex_str(source: &str) -> String {
     match &lex_all(source)[0] {
-        Token::StringLiteral(s) => s.clone(),
+        Token::StringLiteral(s, _) => s.clone(),
         other => panic!("expected a string literal, got {other:?}"),
     }
 }
@@ -186,7 +210,8 @@ fn lexes_current_numeric_literal_spellings() {
         lex_literal("18446744073709551615"),
         Token::IntLiteral(
             IntLiteral::parse_radix("18446744073709551615", 10)
-                .expect("arbitrary-precision integer")
+                .expect("arbitrary-precision integer"),
+            "".into()
         )
     );
 }
@@ -461,25 +486,42 @@ fn lexes_digit_separators() {
 
 #[test]
 fn lexes_single_and_triple_quoted_strings() {
-    assert_eq!(lex_literal("'hello'"), Token::StringLiteral("hello".into()));
-    assert_eq!(
-        lex_literal("\"plain\""),
-        Token::StringLiteral("plain".into())
-    );
+    assert_eq!(lex_literal("'hello'"), string("hello"));
+    assert_eq!(lex_literal("\"plain\""), string("plain"));
     assert_eq!(
         lex_all("var x = \"\"\"multi\nline\"\"\"")[3],
-        Token::TripleStringLiteral("multi\nline".into())
+        triple_string("multi\nline")
     );
-    assert_eq!(
-        lex_all("var x = '''a\nb'''")[3],
-        Token::TripleStringLiteral("a\nb".into())
-    );
+    assert_eq!(lex_all("var x = '''a\nb'''")[3], triple_string("a\nb"));
+}
+
+/// A literal token keeps its source text, separators, radix prefix,
+/// string prefix, and quotes intact, as upstream's literal nodes do.
+#[test]
+fn lexes_literal_spellings() {
+    let spelling = |source: &str| match Lexer::new(&format!("var x = {source}"))
+        .nth(3)
+        .expect("a literal token")
+        .expect("lexer error")
+        .0
+    {
+        Token::IntLiteral(_, spelling)
+        | Token::FloatLiteral(_, spelling)
+        | Token::StringLiteral(_, spelling)
+        | Token::TripleStringLiteral(_, spelling) => spelling.to_string(),
+        other => panic!("expected a literal, got {other:?}"),
+    };
+    for source in [
+        "0x4", "1_000", "0.50", "2.e3", "'a'", "\"a\"", "r'\\n'", "'''x'''",
+    ] {
+        assert_eq!(spelling(source), source);
+    }
 }
 
 #[test]
 fn lexes_raw_and_case_insensitive_string_prefixes() {
-    assert_eq!(lex_literal(r#"r"\n""#), Token::StringLiteral("\\n".into()));
-    assert_eq!(lex_literal(r"R'\t'"), Token::StringLiteral("\\t".into()));
+    assert_eq!(lex_literal(r#"r"\n""#), string("\\n"));
+    assert_eq!(lex_literal(r"R'\t'"), string("\\t"));
     assert_eq!(
         lex_literal(r#"Tr"value={x}""#),
         Token::TString {
@@ -492,7 +534,7 @@ fn lexes_raw_and_case_insensitive_string_prefixes() {
     );
     assert_eq!(
         lex_all("var x = \"\"\"a\\\n    b\"\"\"")[3],
-        Token::TripleStringLiteral("a    b".into())
+        triple_string("a    b")
     );
 }
 

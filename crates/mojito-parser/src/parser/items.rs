@@ -236,7 +236,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 Token::Newline => {
                     self.next_token()?;
                 }
-                Token::TripleStringLiteral(_) => {
+                Token::TripleStringLiteral(..) => {
                     self.next_token()?;
                     self.expect_stmt_end()?;
                 }
@@ -431,7 +431,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 Token::Newline => {
                     self.next_token()?;
                 }
-                Token::TripleStringLiteral(_) | Token::Pass => {
+                Token::TripleStringLiteral(..) | Token::Pass => {
                     self.next_token()?;
                     self.expect_stmt_end()?;
                 }

@@ -102,7 +102,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         } else {
             matches!(
                 self.peek_token()?,
-                Some(Token::StringLiteral(_) | Token::TripleStringLiteral(_))
+                Some(Token::StringLiteral(..) | Token::TripleStringLiteral(..))
             )
         } {
             tokens.push(self.next_token()?);
@@ -112,7 +112,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             let mut value = String::new();
             for token in tokens {
                 match token {
-                    Token::StringLiteral(piece) | Token::TripleStringLiteral(piece) => {
+                    Token::StringLiteral(piece, _) | Token::TripleStringLiteral(piece, _) => {
                         value.push_str(&piece);
                     }
                     _ => unreachable!("t-string entered an ordinary literal sequence"),
@@ -214,11 +214,11 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         let start = self.peek_start();
         let token = self.next_token()?;
         match token {
-            Token::IntLiteral(val) => Ok(self.node(ExprKind::Int(val), start)),
-            Token::FloatLiteral(val) => Ok(self.node(ExprKind::Float(val), start)),
+            Token::IntLiteral(val, _) => Ok(self.node(ExprKind::Int(val), start)),
+            Token::FloatLiteral(val, _) => Ok(self.node(ExprKind::Float(*val), start)),
             Token::BoolLiteral(val) => Ok(self.node(ExprKind::Bool(val), start)),
-            token @ (Token::StringLiteral(_)
-            | Token::TripleStringLiteral(_)
+            token @ (Token::StringLiteral(..)
+            | Token::TripleStringLiteral(..)
             | Token::TString { .. }) => self.build_string_sequence(token, start),
             Token::None => Ok(self.node(ExprKind::None, start)),
             Token::Ellipsis => Ok(self.node(ExprKind::Identifier("...".into()), start)),

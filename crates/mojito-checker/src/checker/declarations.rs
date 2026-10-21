@@ -1,6 +1,7 @@
 //! Declaration collection, signature construction, and body-checking support.
 
 use super::decorators::DecoratorSite;
+use super::patterns::MatchReach;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::DeclaredParam;
@@ -44,8 +45,8 @@ impl BodyParam<'_> {
     }
 }
 
-pub(super) fn definitely_returns(body: &[Stmt], concluded: &dyn Fn(&Stmt) -> bool) -> bool {
-    body.iter().any(|stmt| stmt_returns(stmt, concluded))
+pub(super) fn definitely_returns(body: &[Stmt], reach: &dyn Fn(&Stmt) -> MatchReach) -> bool {
+    body.iter().any(|stmt| stmt_returns(stmt, reach))
 }
 
 /// How many compile-time parameters a per-call clone of a declaration bakes,
@@ -123,10 +124,11 @@ pub(super) fn unify_through_callable_bounds(
     Ok(())
 }
 
-/// Whether `stmt` never completes normally. `concluded` says whether a
-/// `match` statement's cases cover every value of its subject (the check's
-/// coverage fact); a case the subject cannot miss concludes it regardless.
-pub(super) fn stmt_returns(stmt: &Stmt, concluded: &dyn Fn(&Stmt) -> bool) -> bool {
+/// Whether `stmt` never completes normally. `reach` gives a `match`
+/// statement's coverage facts: whether its cases cover every value of its
+/// subject, and which cases earlier ones already cover; a case the subject
+/// cannot miss concludes it regardless.
+pub(super) fn stmt_returns(stmt: &Stmt, reach: &dyn Fn(&Stmt) -> MatchReach) -> bool {
     match &stmt.kind {
         StmtKind::Return(_) => true,
         // A `raise` diverges (it never falls through to the end), so for
@@ -144,19 +146,18 @@ pub(super) fn stmt_returns(stmt: &Stmt, concluded: &dyn Fn(&Stmt) -> bool) -> bo
         StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
             orelse
                 .as_ref()
-                .is_some_and(|e| definitely_returns(e, concluded))
-                && branches
-                    .iter()
-                    .all(|(_, b)| definitely_returns(b, concluded))
+                .is_some_and(|e| definitely_returns(e, reach))
+                && branches.iter().all(|(_, b)| definitely_returns(b, reach))
         }
         // A `match` falls through unless its cases cover the subject or a
-        // case the subject cannot miss concludes it; then every case must
-        // return.
+        // case the subject cannot miss concludes it; then every case a value
+        // reaches must return.
         StmtKind::Match { cases, .. } => {
-            match_concluded(stmt, cases, concluded)
-                && cases
-                    .iter()
-                    .all(|case| definitely_returns(&case.body, concluded))
+            let reached = match_reach(stmt, cases, reach);
+            reached.concluded
+                && reached
+                    .reachable(cases)
+                    .all(|case| definitely_returns(&case.body, reach))
         }
         // A `comptime for` reaches here only under source validation. How
         // often it unrolls, and which of its `comptime if` arms survive, is
@@ -165,7 +166,7 @@ pub(super) fn stmt_returns(stmt: &Stmt, concluded: &dyn Fn(&Stmt) -> bool) -> bo
         StmtKind::ComptimeFor { body, .. } => block_holds_return(body),
         // A `with` body runs exactly once (its desugar is a `try`/`finally`
         // whose cleanup cannot divert control), so it diverges iff the body does.
-        StmtKind::With { body, .. } | StmtKind::Scope(body) => definitely_returns(body, concluded),
+        StmtKind::With { body, .. } | StmtKind::Scope(body) => definitely_returns(body, reach),
         // A `try` definitely diverges when: a `finally` does (it overrides every
         // path); or the **normal-completion** path diverges (the body — or, if the
         // body may complete, the `else`) *and* the **exceptional** path does (every
@@ -179,18 +180,16 @@ pub(super) fn stmt_returns(stmt: &Stmt, concluded: &dyn Fn(&Stmt) -> bool) -> bo
         } => {
             if finalbody
                 .as_ref()
-                .is_some_and(|fb| definitely_returns(fb, concluded))
+                .is_some_and(|fb| definitely_returns(fb, reach))
             {
                 return true;
             }
             let normal = match orelse {
-                Some(else_) => {
-                    definitely_returns(body, concluded) || definitely_returns(else_, concluded)
-                }
-                None => definitely_returns(body, concluded),
+                Some(else_) => definitely_returns(body, reach) || definitely_returns(else_, reach),
+                None => definitely_returns(body, reach),
             };
             let exceptional = match except {
-                Some((_, handler)) => definitely_returns(handler, concluded),
+                Some((_, handler)) => definitely_returns(handler, reach),
                 None => true,
             };
             normal && exceptional
@@ -199,18 +198,19 @@ pub(super) fn stmt_returns(stmt: &Stmt, concluded: &dyn Fn(&Stmt) -> bool) -> bo
     }
 }
 
-/// Whether the `match` statement `stmt` with `cases` never falls through:
-/// the check proved its cases cover the subject, or an unguarded case the
-/// subject cannot miss concludes it.
-pub(super) fn match_concluded(
+/// The coverage facts of the `match` statement `stmt` with `cases`: it
+/// never falls through when the check proved its cases cover the subject,
+/// or when an unguarded case the subject cannot miss concludes it.
+pub(super) fn match_reach(
     stmt: &Stmt,
     cases: &[mojito_ast::ast::MatchCase],
-    concluded: &dyn Fn(&Stmt) -> bool,
-) -> bool {
-    concluded(stmt)
-        || cases
-            .iter()
-            .any(|case| case.guard.is_none() && super::patterns::irrefutable(&case.pattern))
+    reach: &dyn Fn(&Stmt) -> MatchReach,
+) -> MatchReach {
+    let mut reached = reach(stmt);
+    reached.concluded |= cases
+        .iter()
+        .any(|case| case.guard.is_none() && super::patterns::irrefutable(&case.pattern));
+    reached
 }
 
 /// Conservative definite-initialization check for a named `out` result. A
@@ -219,7 +219,7 @@ pub(super) fn match_concluded(
 pub(super) fn definitely_initializes_named_result(
     body: &[Stmt],
     name: &str,
-    concluded: &dyn Fn(&Stmt) -> bool,
+    reach: &dyn Fn(&Stmt) -> MatchReach,
 ) -> bool {
     let mut initialized = false;
     for stmt in body {
@@ -246,25 +246,27 @@ pub(super) fn definitely_initializes_named_result(
             }) if is_diverging_intrinsic(name) => return true,
             StmtKind::Return(None) => return initialized,
             StmtKind::Scope(body) => {
-                initialized |= definitely_initializes_named_result(body, name, concluded);
+                initialized |= definitely_initializes_named_result(body, name, reach);
             }
             StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
                 let Some(orelse) = orelse else { continue };
                 if branches
                     .iter()
-                    .all(|(_, branch)| definitely_initializes_named_result(branch, name, concluded))
-                    && definitely_initializes_named_result(orelse, name, concluded)
+                    .all(|(_, branch)| definitely_initializes_named_result(branch, name, reach))
+                    && definitely_initializes_named_result(orelse, name, reach)
                 {
                     return true;
                 }
             }
-            StmtKind::Match { cases, .. }
-                if match_concluded(stmt, cases, concluded)
-                    && cases.iter().all(|case| {
-                        definitely_initializes_named_result(&case.body, name, concluded)
-                    }) =>
-            {
-                return true;
+            StmtKind::Match { cases, .. } => {
+                let reached = match_reach(stmt, cases, reach);
+                if reached.concluded
+                    && reached
+                        .reachable(cases)
+                        .all(|case| definitely_initializes_named_result(&case.body, name, reach))
+                {
+                    return true;
+                }
             }
             _ => {}
         }
@@ -279,9 +281,9 @@ pub(super) fn definitely_initializes_named_result(
 pub(super) fn definitely_initializes_self_field(
     body: &[Stmt],
     field: &str,
-    concluded: &dyn Fn(&Stmt) -> bool,
+    reach: &dyn Fn(&Stmt) -> MatchReach,
 ) -> bool {
-    let flow = init_field_flow(body, field, false, concluded);
+    let flow = init_field_flow(body, field, false, reach);
     flow.valid && flow.normal.is_none_or(|initialized| initialized)
 }
 
@@ -421,7 +423,7 @@ fn init_field_flow(
     body: &[Stmt],
     field: &str,
     mut initialized: bool,
-    concluded: &dyn Fn(&Stmt) -> bool,
+    reach: &dyn Fn(&Stmt) -> MatchReach,
 ) -> InitFieldFlow {
     let mut valid = true;
     for stmt in body {
@@ -458,10 +460,10 @@ fn init_field_flow(
             StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
                 let mut flows: Vec<_> = branches
                     .iter()
-                    .map(|(_, branch)| init_field_flow(branch, field, initialized, concluded))
+                    .map(|(_, branch)| init_field_flow(branch, field, initialized, reach))
                     .collect();
                 flows.push(match orelse {
-                    Some(orelse) => init_field_flow(orelse, field, initialized, concluded),
+                    Some(orelse) => init_field_flow(orelse, field, initialized, reach),
                     None => InitFieldFlow {
                         normal: Some(initialized),
                         valid: true,
@@ -479,14 +481,15 @@ fn init_field_flow(
                     }
                 };
             }
-            // A `match` is a branch per case, plus the fall-through when no
-            // case concludes it.
+            // A `match` is a branch per case a value reaches, plus the
+            // fall-through when no case concludes it.
             StmtKind::Match { cases, .. } => {
-                let mut flows: Vec<_> = cases
-                    .iter()
-                    .map(|case| init_field_flow(&case.body, field, initialized, concluded))
+                let reached = match_reach(stmt, cases, reach);
+                let mut flows: Vec<_> = reached
+                    .reachable(cases)
+                    .map(|case| init_field_flow(&case.body, field, initialized, reach))
                     .collect();
-                if !match_concluded(stmt, cases, concluded) {
+                if !reached.concluded {
                     flows.push(InitFieldFlow {
                         normal: Some(initialized),
                         valid: true,
@@ -508,12 +511,12 @@ fn init_field_flow(
             // establish initialization after the loop. Returns inside it still
             // have to be safe.
             StmtKind::While { body, .. } | StmtKind::For { body, .. } => {
-                valid &= init_field_flow(body, field, initialized, concluded).valid;
+                valid &= init_field_flow(body, field, initialized, reach).valid;
             }
             // A `with` body, like a kept compile-time block, runs exactly
             // once, straight through.
             StmtKind::With { body, .. } | StmtKind::Scope(body) => {
-                let flow = init_field_flow(body, field, initialized, concluded);
+                let flow = init_field_flow(body, field, initialized, reach);
                 valid &= flow.valid;
                 match flow.normal {
                     Some(state) => initialized = state,
@@ -531,10 +534,10 @@ fn init_field_flow(
                 orelse,
                 finalbody,
             } => {
-                let body_flow = init_field_flow(body, field, initialized, concluded);
+                let body_flow = init_field_flow(body, field, initialized, reach);
                 valid &= body_flow.valid;
                 let normal_flow = body_flow.normal.map(|state| match orelse {
-                    Some(orelse) => init_field_flow(orelse, field, state, concluded),
+                    Some(orelse) => init_field_flow(orelse, field, state, reach),
                     None => InitFieldFlow {
                         normal: Some(state),
                         valid: true,
@@ -542,7 +545,7 @@ fn init_field_flow(
                 });
                 let exceptional_flow = except
                     .as_ref()
-                    .map(|(_, handler)| init_field_flow(handler, field, initialized, concluded));
+                    .map(|(_, handler)| init_field_flow(handler, field, initialized, reach));
                 valid &= normal_flow.is_none_or(|flow| flow.valid)
                     && exceptional_flow.is_none_or(|flow| flow.valid);
 
@@ -562,7 +565,7 @@ fn init_field_flow(
                     };
                     let final_flows: Vec<_> = starts
                         .into_iter()
-                        .map(|state| init_field_flow(finalbody, field, state, concluded))
+                        .map(|state| init_field_flow(finalbody, field, state, reach))
                         .collect();
                     valid &= final_flows.iter().all(|flow| flow.valid);
                     exits = final_flows.iter().filter_map(|flow| flow.normal).collect();
@@ -1566,7 +1569,7 @@ impl Checker {
             return Ok(());
         }
         for (field, _) in &info.fields {
-            if !definitely_initializes_self_field(body, field, &|stmt| self.match_concluded(stmt)) {
+            if !definitely_initializes_self_field(body, field, &|stmt| self.match_reach(stmt)) {
                 return Err(TypeError::UninitializedField {
                     struct_name: sname.to_string(),
                     method: method.to_string(),
@@ -1873,10 +1876,10 @@ impl Checker {
         self.self_mutable = saved;
         self.self_initializing = saved_initializing;
         result?;
-        let concluded = |stmt: &Stmt| self.match_concluded(stmt);
+        let reach = |stmt: &Stmt| self.match_reach(stmt);
         let completes = match named_result {
-            Some(result) => definitely_initializes_named_result(body, result.name, &concluded),
-            None => *ret_ty == TyKind::None || definitely_returns(body, &concluded),
+            Some(result) => definitely_initializes_named_result(body, result.name, &reach),
+            None => *ret_ty == TyKind::None || definitely_returns(body, &reach),
         };
         if !completes {
             return Err(TypeError::MissingReturn(name.to_string()));

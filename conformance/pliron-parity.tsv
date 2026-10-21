@@ -379,6 +379,8 @@ assets/ok/local_comptime_float.mojo	main	exe-differential	sanitized
 assets/ok/loop_binding_consuming_copy.mojo	main	exe-differential	sanitized
 assets/ok/mapping_key_iteration_reads.mojo	main	exe-differential	sanitized
 assets/ok/match_case_layouts.mojo	main	exe-differential	sanitized
+assets/ok/match_coverage_enum_like_conformers.mojo	main	exe-differential	sanitized
+assets/ok/match_coverage_enums_and_products.mojo	main	exe-differential	sanitized
 assets/ok/match_coverage_warnings.mojo	main	exe-differential	sanitized
 assets/ok/match_enum_cases_custom.mojo	main	exe-differential	sanitized
 assets/ok/match_enum_cases_optional.mojo	main	exe-differential	sanitized

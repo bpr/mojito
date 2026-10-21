@@ -379,6 +379,8 @@ assets/ok/local_comptime_float.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/loop_binding_consuming_copy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mapping_key_iteration_reads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/match_case_layouts.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/match_coverage_enum_like_conformers.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/match_coverage_enums_and_products.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/match_coverage_warnings.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/match_enum_cases_custom.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/match_enum_cases_optional.mojo	-	ineligible	no-scalar-entry-shape

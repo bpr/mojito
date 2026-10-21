@@ -4709,3 +4709,70 @@ fn compiler_reports_match_coverage_warnings_without_stderr() {
     let execution = compiler.execute(&program).expect("execute");
     assert_eq!(execution.output, "t\nother\n");
 }
+
+/// The coverage warnings of the enum, product, and conformer fixtures, in
+/// the pin's order and wording: per statement in source order, a match's
+/// unreachable cases in case order before its own missing-case warning.
+#[test]
+fn compiler_reports_enum_and_product_coverage_warnings_in_pin_order() {
+    let warnings = |fixture: &str| {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("assets/ok")
+            .join(fixture);
+        let source = std::fs::read_to_string(&path).expect("read the fixture");
+        let program = Compiler::default()
+            .compile_path(&path)
+            .expect("the fixture compiles");
+        program
+            .warnings()
+            .iter()
+            .map(|warning| {
+                let line = source[..warning.span.span.0].matches('\n').count() + 1;
+                (line, warning.message.clone())
+            })
+            .collect::<Vec<_>>()
+    };
+    let unreachable = "case is unreachable; previous cases cover every value of the match subject";
+    let covered = |value: &str| {
+        format!("case is unreachable; '{value}' is already covered by a previous case")
+    };
+    let missing = |values: &str| format!("'match' is not exhaustive; missing {values}");
+    assert_eq!(
+        warnings("match_coverage_enums_and_products.mojo"),
+        [
+            (39, missing("case for 'Some'")),
+            (50, covered("Some")),
+            (64, unreachable.to_string()),
+            (72, covered("Some")),
+            (69, missing("case for 'None'")),
+            (77, missing("case for 'Some, False'")),
+            (87, missing("case for 'False, True'")),
+            (
+                105,
+                missing("cases for 'False, False', 'False, True', and 'True, False'")
+            ),
+            (
+                111,
+                missing(
+                    "cases for 'False, False, False, False', 'False, False, False, True', \
+                     'False, False, True, False', 'False, False, True, True', \
+                     'False, True, False, False', 'False, True, False, True', \
+                     'False, True, True, False', 'False, True, True, True', and 7 more"
+                )
+            ),
+            (
+                119,
+                "'match' is too complex to check for exhaustivity; add a '_' case".to_string()
+            ),
+            (144, covered("4")),
+            (156, covered("0.5")),
+            (168, covered("\"a\"")),
+            (180, unreachable.to_string()),
+            (188, covered("Some")),
+        ]
+    );
+    assert_eq!(
+        warnings("match_coverage_enum_like_conformers.mojo"),
+        [(67, missing("case for 'Leaf'")), (89, covered("A"))]
+    );
+}

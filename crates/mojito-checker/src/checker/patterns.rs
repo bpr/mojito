@@ -32,12 +32,16 @@
 //! like an element (lazily, once per case, immutably under a temporary
 //! subject); a bare `.Case` tests the tag alone. Over any other subject a
 //! bare head is an equality test, as upstream's.
+//!
+//! Each command's shape is recorded at its path for `coverage.rs`, whose
+//! verdict concludes the match and seals the cases earlier ones cover.
 
+use super::coverage::{CoverCase, CoverCommand};
 use super::desugar::Synth;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::{BindingMode, MatchCase, MatchPattern, MatchPatternKind, SequencePattern};
-use mojito_checked::checked::{MatchPlan, PlannedCommand, Warning};
+use mojito_checked::checked::{MatchPlan, PlannedCommand};
 
 impl Checker {
     /// Check `match subject:` with its `cases`: anchor the subject, compile
@@ -92,8 +96,9 @@ impl Checker {
                 self.check_block(body, ret, in_loop)?;
                 self.record_at(pattern.source_span()).match_plan = Some(MatchPlan {
                     anchor,
-                    cases: vec![commands.into_program()],
+                    cases: vec![commands.into_parts().0],
                     concluded: false,
+                    unreachable: Vec::new(),
                 });
                 Ok(())
             });
@@ -164,12 +169,19 @@ impl Checker {
         }
     }
 
-    /// Whether the check proved the `match` statement `stmt` covers every
-    /// value of its subject, so that nothing falls through it.
-    pub(super) fn match_concluded(&self, stmt: &Stmt) -> bool {
-        self.has_fact(&stmt.source_span(), |facts| {
-            facts.match_plan.as_ref().is_some_and(|plan| plan.concluded)
-        })
+    /// What the check proved of the `match` statement `stmt`: whether its
+    /// cases cover every value of its subject, so that nothing falls
+    /// through it, and which cases earlier ones already cover.
+    pub(super) fn match_reach(&self, stmt: &Stmt) -> MatchReach {
+        self.node_facts
+            .borrow()
+            .get(&stmt.source_span())
+            .and_then(|facts| facts.match_plan.as_ref())
+            .map(|plan| MatchReach {
+                concluded: plan.concluded,
+                unreachable: plan.unreachable.clone(),
+            })
+            .unwrap_or_default()
     }
 
     /// Require `ty` to declare `Sized`, the gate upstream's list patterns
@@ -189,6 +201,31 @@ impl Checker {
         ))
     }
 
+    /// The elements of the `EnumLike` value member `member` of `ty`, read
+    /// at its application: `None` when `ty` is no struct or the list does
+    /// not fold to known elements.
+    pub(super) fn enum_like_list(
+        &self,
+        ty: &Ty,
+        member: &str,
+    ) -> Result<Option<Vec<mojito_types::param_expr::ParamExpr>>, TypeError> {
+        let TyKind::Struct(name, arguments) = ty.kind() else {
+            return Ok(None);
+        };
+        let Some(info) = self.structs.get(name) else {
+            return Ok(None);
+        };
+        let Some(list) = self
+            .struct_value_member(info, arguments, member)
+            .transpose()?
+        else {
+            return Ok(None);
+        };
+        self.param_context
+            .list_elements(&list)
+            .map_err(super::param_error)
+    }
+
     fn check_match_cases(
         &mut self,
         stmt: &Stmt,
@@ -200,62 +237,58 @@ impl Checker {
     ) -> Result<(), TypeError> {
         let before = self.uninitialized.borrow().clone();
         let mut exits = Vec::new();
-        let mut plan = MatchPlan {
-            anchor,
-            cases: Vec::new(),
-            concluded: false,
-        };
-        let mut coverage = Coverage::new(&subject.ty);
-        let mut warnings = Vec::new();
+        let mut programs = Vec::new();
+        let mut covers = Vec::new();
         for case in cases {
             (*self.uninitialized.borrow_mut()).clone_from(&before);
             self.push_scope();
-            let commands = self.check_case(case, subject, ret, in_loop);
+            let checked = self.check_case(case, subject, ret, in_loop);
             self.pop_scope();
-            plan.cases.push(commands?);
-            // Once the cases cover every value, nothing falls through past
-            // them (later cases are unreachable).
-            if !plan.concluded {
-                exits.push(self.uninitialized.borrow().clone());
-            }
-            if let Some(message) = coverage.add(case) {
-                warnings.push(Warning {
-                    message,
-                    span: case.pattern.source_span(),
+            let (program, commands) = checked?;
+            programs.push(program);
+            covers.push(CoverCase {
+                commands,
+                guarded: case.guard.is_some(),
+                span: case.pattern.source_span(),
+            });
+            exits.push(self.uninitialized.borrow().clone());
+        }
+        let verdict = self.match_coverage(&subject.ty, &covers, &stmt.source_span())?;
+        // The proof made the concluding case's tests pass whenever it is
+        // reached: it runs without them, so no path falls through. (A `|`
+        // that binds keeps its tests, and the fall-through.)
+        let concluded = verdict.concluding.filter(|&index| {
+            let concluding = &mut programs[index];
+            let droppable = concluding.iter().all(droppable_test);
+            if droppable {
+                concluding.retain(|command| {
+                    matches!(
+                        command,
+                        PlannedCommand::Bind(_) | PlannedCommand::PathValue(_)
+                    )
                 });
             }
-            if !plan.concluded && coverage.complete() {
-                plan.concluded = true;
-                // The proof made the closing case's tests pass whenever it
-                // is reached: it runs without them, so no path falls
-                // through. (A `|` that binds keeps its tests, and the
-                // fall-through.)
-                let closing = plan.cases.last_mut().expect("the case was pushed");
-                if closing.iter().all(droppable_test) {
-                    closing.retain(|command| {
-                        matches!(
-                            command,
-                            PlannedCommand::Bind(_) | PlannedCommand::PathValue(_)
-                        )
-                    });
-                } else {
-                    plan.concluded = false;
-                }
-            }
-        }
-        if !plan.concluded {
-            exits.push(before);
-            if let Some(message) = coverage.missing() {
-                warnings.push(Warning {
-                    message,
-                    span: stmt.source_span(),
-                });
-            }
-        }
-        *self.uninitialized.borrow_mut() = exits.into_iter().flatten().collect::<HashSet<_>>();
+            droppable
+        });
+        // Nothing falls through a concluded match, and no case earlier ones
+        // cover is reached.
+        let reached = exits
+            .into_iter()
+            .zip(&verdict.unreachable)
+            .filter_map(|(exit, unreachable)| (!unreachable).then_some(exit));
+        let fall_through = concluded.is_none().then_some(before);
+        *self.uninitialized.borrow_mut() = reached
+            .chain(fall_through)
+            .flatten()
+            .collect::<HashSet<_>>();
         let mut facts = self.record_at(stmt.source_span());
-        facts.match_plan = Some(plan);
-        facts.match_warnings = (!warnings.is_empty()).then_some(warnings);
+        facts.match_plan = Some(MatchPlan {
+            anchor,
+            cases: programs,
+            concluded: concluded.is_some(),
+            unreachable: verdict.unreachable,
+        });
+        facts.match_warnings = (!verdict.warnings.is_empty()).then_some(verdict.warnings);
         Ok(())
     }
 
@@ -266,7 +299,7 @@ impl Checker {
         subject: &MatchSubject,
         ret: Option<&Ty>,
         in_loop: bool,
-    ) -> Result<Vec<PlannedCommand>, TypeError> {
+    ) -> Result<(Vec<PlannedCommand>, Vec<CoverCommand>), TypeError> {
         let mut commands = Commands::default();
         self.compile_pattern(&case.pattern, subject, Join::None, &mut commands)?;
         if let Some(guard) = &case.guard {
@@ -274,7 +307,7 @@ impl Checker {
             self.expect_bool(guard, "case guard")?;
         }
         self.check_block(&case.body, ret, in_loop)?;
-        Ok(commands.into_program())
+        Ok(commands.into_parts())
     }
 
     /// The commands `pattern` compiles to over `subject`: a literal or
@@ -315,8 +348,22 @@ impl Checker {
                     commands,
                 )
             }
-            MatchPatternKind::Literal(value) | MatchPatternKind::Equal(value) => {
-                self.equality_test(value, subject, commands)
+            // `None` parses as a literal but is no literal pattern, as
+            // upstream's `SimpleLiteralNode` builds no command for it.
+            MatchPatternKind::Literal {
+                value:
+                    Expr {
+                        kind: ExprKind::None,
+                        ..
+                    },
+                ..
+            } => Err(TypeError::MatchPattern(
+                "expression is not a valid match pattern; use '==' to compare against its value"
+                    .into(),
+            )),
+            MatchPatternKind::Literal { value, spelling }
+            | MatchPatternKind::Equal { value, spelling } => {
+                self.equality_test(value, spelling.as_deref(), subject, commands)
             }
             MatchPatternKind::Tuple(items) => {
                 self.compile_tuple_pattern(items, subject, join, commands)
@@ -335,10 +382,15 @@ impl Checker {
             }
             MatchPatternKind::Head(head) if self.is_enum_like(subject) => {
                 let case = self.enum_case(head, subject)?.0;
-                let subject = &self.materialize(subject, commands)?;
-                self.enum_tag_test(case, subject, commands)
+                let tested = self.materialize(subject, commands)?;
+                self.enum_tag_test(case, &tested, commands)?;
+                commands.cover.push(CoverCommand::EnumTag {
+                    path: subject.path.clone(),
+                    case,
+                });
+                Ok(())
             }
-            MatchPatternKind::Head(head) => self.equality_test(head, subject, commands),
+            MatchPatternKind::Head(head) => self.equality_test(head, None, subject, commands),
             MatchPatternKind::Sequence(items) => {
                 self.compile_sequence_pattern(items, subject, join, commands)
             }
@@ -358,6 +410,7 @@ impl Checker {
     ) -> Result<(), TypeError> {
         let mut first: Option<Vec<String>> = None;
         let mut programs = Vec::new();
+        let mut covers = Vec::new();
         for alternative in alternatives {
             // An alternative re-reads an element the commands before the
             // `|` did not.
@@ -386,12 +439,15 @@ impl Checker {
             } else {
                 first = Some(bound);
             }
-            programs.push(program.into_program());
+            let (program, cover) = program.into_parts();
+            programs.push(program);
+            covers.push(cover);
         }
         if let Some(names) = first {
             join.record(names);
         }
         commands.tests.push(PlannedCommand::Alternatives(programs));
+        commands.cover.push(CoverCommand::Or(covers));
         Ok(())
     }
 
@@ -485,6 +541,9 @@ impl Checker {
         });
         self.expect_bool(&test, "case pattern")?;
         commands.tests.push(PlannedCommand::ListLength(test));
+        commands.cover.push(CoverCommand::ListLength {
+            path: subject.path.clone(),
+        });
         for (index, item) in items.iter().enumerate() {
             let step = match star {
                 Some(star) if index == star => Step::SequenceSlice {
@@ -694,6 +753,10 @@ impl Checker {
         };
         let tested = self.materialize(subject, commands)?;
         self.enum_tag_test(case, &tested, commands)?;
+        commands.cover.push(CoverCommand::EnumTag {
+            path: subject.path.clone(),
+            case,
+        });
         let child = subject.read(
             Step::EnumPayload(case),
             payload,
@@ -759,31 +822,6 @@ impl Checker {
         !subject.untyped() && self.conforms_to(&subject.ty, &enum_like_trait())
     }
 
-    /// The elements of the `EnumLike` value member `member` of `ty`, read
-    /// at its application: `None` when `ty` is no struct or the list does
-    /// not fold to known elements.
-    fn enum_like_list(
-        &self,
-        ty: &Ty,
-        member: &str,
-    ) -> Result<Option<Vec<mojito_types::param_expr::ParamExpr>>, TypeError> {
-        let TyKind::Struct(name, arguments) = ty.kind() else {
-            return Ok(None);
-        };
-        let Some(info) = self.structs.get(name) else {
-            return Ok(None);
-        };
-        let Some(list) = self
-            .struct_value_member(info, arguments, member)
-            .transpose()?
-        else {
-            return Ok(None);
-        };
-        self.param_context
-            .list_elements(&list)
-            .map_err(super::param_error)
-    }
-
     /// The index of the case `name` in `ty`'s `_enum_case_names`, the first
     /// of a repeated name, as upstream reads it.
     fn enum_case_index(&self, ty: &Ty, name: &str) -> Result<usize, TypeError> {
@@ -838,13 +876,19 @@ impl Checker {
         Ok(())
     }
 
-    /// Push the test `subject == value` through the selected `__eq__`.
+    /// Push the test `subject == value` through the selected `__eq__`,
+    /// the literal operand's `spelling` keying its coverage.
     fn equality_test(
         &mut self,
         value: &Expr,
+        spelling: Option<&str>,
         subject: &MatchSubject,
         commands: &mut Commands,
     ) -> Result<(), TypeError> {
+        commands.cover.push(CoverCommand::Equal {
+            path: subject.path.clone(),
+            spelling: spelling.map(str::to_string),
+        });
         let subject = &self.materialize(subject, commands)?;
         let test = subject.synth.expr(ExprKind::Infix(
             InfixOp::Eq,
@@ -907,6 +951,9 @@ impl Checker {
         join: Join<'_>,
         commands: &mut Commands,
     ) -> Result<(), TypeError> {
+        commands.cover.push(CoverCommand::Bind {
+            path: subject.path.clone(),
+        });
         let subject = &self.materialize(subject, commands)?;
         match join {
             Join::None => {}
@@ -1002,11 +1049,49 @@ pub fn irrefutable(pattern: &MatchPattern) -> bool {
                 && kwargs.iter().all(|(_, pattern)| irrefutable(pattern))
         }
         MatchPatternKind::Fields(fields) => fields.iter().all(|(_, pattern)| irrefutable(pattern)),
-        MatchPatternKind::Literal(_)
-        | MatchPatternKind::Equal(_)
+        MatchPatternKind::Literal { .. }
+        | MatchPatternKind::Equal { .. }
         | MatchPatternKind::Sequence(_)
         | MatchPatternKind::Head(_) => false,
     }
+}
+
+/// A `match` statement's coverage facts, as the return and initialization
+/// analyses read them: whether nothing falls through it, and, per case,
+/// whether earlier cases already cover every value it matches (none when
+/// the check recorded no plan).
+#[derive(Default)]
+pub(super) struct MatchReach {
+    pub(super) concluded: bool,
+    pub(super) unreachable: Vec<bool>,
+}
+
+impl MatchReach {
+    /// The cases of `cases` a value reaches.
+    pub(super) fn reachable<'c>(
+        &self,
+        cases: &'c [MatchCase],
+    ) -> impl Iterator<Item = &'c MatchCase> + use<'c, '_> {
+        cases
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !self.unreachable.get(*index).copied().unwrap_or(false))
+            .map(|(_, case)| case)
+    }
+}
+
+/// One projection of a subject: a tuple element, a struct field, one of
+/// upstream's sequence paths — an element by index, an element counted
+/// from the end, or the slice between a fixed prefix and suffix — or an
+/// enum case's payload.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(super) enum Step {
+    Element(usize),
+    Field(String),
+    SequenceElement(usize),
+    SequenceFromEnd(usize),
+    SequenceSlice { start: usize, end_offset: usize },
+    EnumPayload(usize),
 }
 
 /// The subject a pattern applies to: the hidden `$match<id>` reference the
@@ -1112,17 +1197,24 @@ impl<'a> MatchSubject<'a> {
 /// A case's commands as they are collected: its tests and element reads,
 /// then its bindings, as upstream runs every test of a pattern before any
 /// binding materializes (a failed alternative copies nothing), with the
-/// element reads made so far, by path, as upstream's per-path values.
+/// element reads made so far, by path, as upstream's per-path values, and
+/// each command's shape at its path, in pattern order, as coverage reads
+/// upstream's command list.
 #[derive(Default)]
 struct Commands {
     tests: Vec<PlannedCommand>,
     binds: Vec<PlannedCommand>,
     reads: HashMap<Vec<Step>, Read>,
+    cover: Vec<CoverCommand>,
 }
 
 impl Commands {
-    fn into_program(self) -> Vec<PlannedCommand> {
-        self.tests.into_iter().chain(self.binds).collect()
+    /// The program the case runs, and the shapes coverage reads.
+    fn into_parts(self) -> (Vec<PlannedCommand>, Vec<CoverCommand>) {
+        (
+            self.tests.into_iter().chain(self.binds).collect(),
+            self.cover,
+        )
     }
 }
 
@@ -1191,20 +1283,6 @@ struct Read {
     name: String,
     ty: Ty,
     owned: bool,
-}
-
-/// One projection of a subject: a tuple element, a struct field, one of
-/// upstream's sequence paths — an element by index, an element counted
-/// from the end, or the slice between a fixed prefix and suffix — or an
-/// enum case's payload.
-#[derive(Clone, PartialEq, Eq, Hash)]
-enum Step {
-    Element(usize),
-    Field(String),
-    SequenceElement(usize),
-    SequenceFromEnd(usize),
-    SequenceSlice { start: usize, end_offset: usize },
-    EnumPayload(usize),
 }
 
 /// What an unread sequence element's type is spelled as in a rejection.
@@ -1311,8 +1389,8 @@ fn binds_by_reference(pattern: &MatchPattern) -> bool {
             items.iter().any(|item| binds_by_reference(item.pattern()))
         }
         MatchPatternKind::Wildcard
-        | MatchPatternKind::Literal(_)
-        | MatchPatternKind::Equal(_)
+        | MatchPatternKind::Literal { .. }
+        | MatchPatternKind::Equal { .. }
         | MatchPatternKind::Head(_) => false,
     }
 }
@@ -1345,234 +1423,4 @@ fn droppable_test(command: &PlannedCommand) -> bool {
             .flatten()
             .all(|command| !matches!(command, PlannedCommand::Bind(_)) && droppable_test(command)),
     }
-}
-
-/// The cases' coverage of a subject's value space: the cells of a finite
-/// space (`Bool`, a tuple of finite spaces up to 1024 cells) the unguarded
-/// cases so far cover, and, over an open space, the root literal spellings
-/// they already compared, which a later case repeats unreachably.
-struct Coverage {
-    space: Space,
-    /// Per cell of a finite space, whether a case covers it; empty over an
-    /// open space.
-    covered: Vec<bool>,
-    /// Whether an unguarded case the subject cannot miss has closed the
-    /// space, finite or open.
-    closed: bool,
-    spellings: HashSet<String>,
-}
-
-impl Coverage {
-    fn new(ty: &Ty) -> Self {
-        let space = Space::of(ty);
-        let covered = vec![false; space.cells().unwrap_or(0)];
-        Self {
-            space,
-            covered,
-            closed: false,
-            spellings: HashSet::new(),
-        }
-    }
-
-    /// Account for `case`, in order: the warning it earns when earlier cases
-    /// already cover everything it can match. A guarded case adds nothing.
-    fn add(&mut self, case: &MatchCase) -> Option<String> {
-        let spelling = root_literal_spelling(&case.pattern);
-        let cells = self.space.cover(&case.pattern);
-        let warning = if self.complete() {
-            Some(
-                "case is unreachable; previous cases cover every value of the match subject"
-                    .to_string(),
-            )
-        } else if let Some(spelling) = &spelling
-            && self.spellings.contains(spelling)
-        {
-            Some(format!(
-                "case is unreachable; '{spelling}' is already covered by a previous case"
-            ))
-        } else if !cells.is_empty()
-            && cells.iter().any(|cell| *cell)
-            && cells
-                .iter()
-                .zip(&self.covered)
-                .all(|(cell, covered)| !cell || *covered)
-        {
-            Some(match &spelling {
-                Some(spelling) => format!(
-                    "case is unreachable; '{spelling}' is already covered by a previous case"
-                ),
-                None => {
-                    "case is unreachable; previous cases cover every value of the match subject"
-                        .to_string()
-                }
-            })
-        } else {
-            None
-        };
-        if case.guard.is_none() {
-            for (covered, cell) in self.covered.iter_mut().zip(&cells) {
-                *covered |= *cell;
-            }
-            self.closed |= irrefutable(&case.pattern);
-            if let Some(spelling) = spelling {
-                self.spellings.insert(spelling);
-            }
-        }
-        warning
-    }
-
-    /// Whether the unguarded cases so far cover every value.
-    fn complete(&self) -> bool {
-        self.closed || (!self.covered.is_empty() && self.covered.iter().all(|covered| *covered))
-    }
-
-    /// The warning for a finite space the cases leave values of: each
-    /// uncovered cell, spelled.
-    fn missing(&self) -> Option<String> {
-        if self.covered.is_empty() {
-            return None;
-        }
-        let missing: Vec<String> = self
-            .covered
-            .iter()
-            .enumerate()
-            .filter(|(_, covered)| !**covered)
-            .map(|(cell, _)| format!("'{}'", self.space.spell(cell)))
-            .collect();
-        match missing.as_slice() {
-            [] => None,
-            [one] => Some(format!("'match' is not exhaustive; missing case for {one}")),
-            [init @ .., last] => Some(format!(
-                "'match' is not exhaustive; missing cases for {} and {last}",
-                init.join(", ")
-            )),
-        }
-    }
-}
-
-/// A subject's value space as the coverage analysis sees it: `Bool`'s two
-/// values, a tuple's product of its elements' spaces, or open (no finite
-/// set of literals covers it).
-enum Space {
-    Bool,
-    Product(Vec<Self>),
-    Open,
-}
-
-impl Space {
-    /// The largest finite product the analysis enumerates.
-    const MAX_CELLS: usize = 1024;
-
-    fn of(ty: &Ty) -> Self {
-        if matches!(ty.kind(), TyKind::Bool) {
-            return Self::Bool;
-        }
-        tuple_elements(ty).map_or(Self::Open, |items| {
-            Self::Product(items.into_iter().map(Self::of).collect())
-        })
-    }
-
-    /// How many cells the space has, when it is finite and enumerable.
-    fn cells(&self) -> Option<usize> {
-        match self {
-            Self::Bool => Some(2),
-            Self::Open => None,
-            Self::Product(items) => items.iter().try_fold(1usize, |cells, item| {
-                cells
-                    .checked_mul(item.cells()?)
-                    .filter(|cells| *cells <= Self::MAX_CELLS)
-            }),
-        }
-    }
-
-    /// The cells `pattern` covers: a wildcard or binding every one, a `Bool`
-    /// literal its value, a tuple the product of its elements' cells, `|`
-    /// the union, anything else none. Empty over an open space.
-    fn cover(&self, pattern: &MatchPattern) -> Vec<bool> {
-        let Some(cells) = self.cells() else {
-            return Vec::new();
-        };
-        match &pattern.kind {
-            MatchPatternKind::Wildcard | MatchPatternKind::Bind { .. } => vec![true; cells],
-            MatchPatternKind::As { pattern, .. } => self.cover(pattern),
-            MatchPatternKind::Or(alternatives) => {
-                let mut union = vec![false; cells];
-                for alternative in alternatives {
-                    for (cell, covered) in union.iter_mut().zip(self.cover(alternative)) {
-                        *cell |= covered;
-                    }
-                }
-                union
-            }
-            MatchPatternKind::Literal(Expr {
-                kind: ExprKind::Bool(value),
-                ..
-            }) if matches!(self, Self::Bool) => vec![!*value, *value],
-            MatchPatternKind::Tuple(items) => match self {
-                Self::Product(spaces) if spaces.len() == items.len() => {
-                    let elements: Vec<Vec<bool>> = spaces
-                        .iter()
-                        .zip(items)
-                        .map(|(space, item)| space.cover(item))
-                        .collect();
-                    (0..cells)
-                        .map(|cell| {
-                            self.decompose(cell)
-                                .iter()
-                                .zip(&elements)
-                                .all(|(index, element)| element[*index])
-                        })
-                        .collect()
-                }
-                _ => vec![false; cells],
-            },
-            _ => vec![false; cells],
-        }
-    }
-
-    /// A product cell as its elements' cells, first element first.
-    fn decompose(&self, mut cell: usize) -> Vec<usize> {
-        let Self::Product(spaces) = self else {
-            return vec![cell];
-        };
-        let mut indexes = vec![0; spaces.len()];
-        for (index, space) in spaces.iter().enumerate().rev() {
-            let radix = space.cells().unwrap_or(1);
-            indexes[index] = cell % radix;
-            cell /= radix;
-        }
-        indexes
-    }
-
-    /// The value a cell stands for, as the pin spells it (`False`, `True`,
-    /// a product as `False, True`).
-    fn spell(&self, cell: usize) -> String {
-        match self {
-            Self::Bool => if cell == 0 { "False" } else { "True" }.to_string(),
-            Self::Product(spaces) => self
-                .decompose(cell)
-                .iter()
-                .zip(spaces)
-                .map(|(index, space)| space.spell(*index))
-                .collect::<Vec<_>>()
-                .join(", "),
-            Self::Open => String::new(),
-        }
-    }
-}
-
-/// The spelling of a root literal pattern, as a duplicate of an earlier
-/// case's is reported.
-fn root_literal_spelling(pattern: &MatchPattern) -> Option<String> {
-    let MatchPatternKind::Literal(value) = &pattern.kind else {
-        return None;
-    };
-    Some(match &value.kind {
-        ExprKind::Int(value) => value.to_string(),
-        ExprKind::Float(value) => value.to_string(),
-        ExprKind::Str(value) => format!("\"{value}\""),
-        ExprKind::Bool(value) => if *value { "True" } else { "False" }.to_string(),
-        ExprKind::None => "None".to_string(),
-        _ => return None,
-    })
 }

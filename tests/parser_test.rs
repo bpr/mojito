@@ -2523,7 +2523,10 @@ fn bind(name: &str) -> MatchPattern {
 }
 
 fn lit(n: i64) -> MatchPattern {
-    pat(MatchPatternKind::Literal(int_expr(n)))
+    pat(MatchPatternKind::Literal {
+        value: int_expr(n),
+        spelling: Some(n.to_string()),
+    })
 }
 
 fn match_cases(source: &str) -> Vec<mojito::ast::MatchCase> {
@@ -2579,6 +2582,37 @@ fn match_subject_and_patterns_form_tuples_on_commas() {
     );
 }
 
+/// A literal pattern, and an `==` operand that is one literal token, keep
+/// the token's source spelling, as upstream's literal nodes do; a
+/// parenthesized or signed operand has none.
+#[test]
+fn literal_patterns_keep_their_spelling() {
+    let cases = match_cases(
+        "def f(x: Int):\n    match x:\n    case 0x4:\n        pass\n    case 0.50:\n        pass\n    case 'a':\n        pass\n    case True:\n        pass\n    case == 4:\n        pass\n    case == (4):\n        pass\n    case == -3:\n        pass\n    case \"a\" \"b\":\n        pass\n",
+    );
+    let spellings: Vec<Option<&str>> = cases
+        .iter()
+        .map(|case| match &case.pattern.kind {
+            MatchPatternKind::Literal { spelling, .. }
+            | MatchPatternKind::Equal { spelling, .. } => spelling.as_deref(),
+            other => panic!("expected a literal or '==' pattern, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        spellings,
+        vec![
+            Some("0x4"),
+            Some("0.50"),
+            Some("'a'"),
+            Some("True"),
+            Some("4"),
+            None,
+            None,
+            None
+        ]
+    );
+}
+
 #[test]
 fn parses_pattern_forms_and_precedence() {
     // `|` binds tighter than `as`, which binds per comma element; a guard
@@ -2597,17 +2631,20 @@ fn parses_pattern_forms_and_precedence() {
     assert!(cases[0].guard.is_some());
     assert_eq!(
         cases[1].pattern,
-        pat(MatchPatternKind::Equal(Expr::from(ExprKind::Prefix(
-            PrefixOp::Neg,
-            int(3)
-        ))))
+        pat(MatchPatternKind::Equal {
+            value: Expr::from(ExprKind::Prefix(PrefixOp::Neg, int(3))),
+            spelling: None,
+        })
     );
     assert!(matches!(
         &cases[2].pattern.kind,
-        MatchPatternKind::Equal(Expr {
-            kind: ExprKind::Call { .. },
-            ..
-        })
+        MatchPatternKind::Equal {
+            value: Expr {
+                kind: ExprKind::Call { .. },
+                ..
+            },
+            spelling: None,
+        }
     ));
     assert_eq!(
         cases[3].pattern,

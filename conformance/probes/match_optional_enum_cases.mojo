@@ -9,10 +9,9 @@
 #   short hi!
 #
 # Observed 2026-10-17 against `Mojo 1.2.0.dev2026101705 (46f49943)`.
-# Mojito: runs the enum case patterns (R1133), but rejects `String("some ", x)`
-# ("'String' expects 1 argument(s), got 2", R429) and then `describe` and
-# `describe2` ("does not return a value on every path") until R1134 proves
-# enum coverage.
+# Mojito: runs the enum case patterns (R1133) and proves their coverage, but
+# rejects `String("some ", x)` ("'String' expects 1 argument(s), got 2",
+# R429); with those calls respelled as concatenations it prints the above.
 # When Mojito runs it, promote this file to `assets/ok/` with its manifest rows.
 #
 # Run:    mojo run match_optional_enum_cases.mojo

@@ -3135,17 +3135,17 @@ impl Checker {
         }
         // A function with a non-`None` return type must return on every
         // path (falling off the end would yield `None`).
-        let concluded = |stmt: &Stmt| self.match_concluded(stmt);
+        let reach = |stmt: &Stmt| self.match_reach(stmt);
         if result.is_ok()
             && named_result.is_none()
             && ret_ty != TyKind::None
-            && !definitely_returns(body, &concluded)
+            && !definitely_returns(body, &reach)
         {
             result = Err(TypeError::MissingReturn(name.clone()));
         }
         if result.is_ok()
             && let Some(named_result) = named_result
-            && !definitely_initializes_named_result(body, &named_result.name, &concluded)
+            && !definitely_initializes_named_result(body, &named_result.name, &reach)
         {
             result = Err(TypeError::MissingReturn(name.clone()));
         }
