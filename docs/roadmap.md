@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1236**.
+Next free ID: **R1241**.
 
 ## Ordered Work
 
@@ -1915,7 +1915,27 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     borrows `xs` as the hidden `$seq<id>` while its leaves write `xs`; the
     pin runs it and prints `1 1`, and Mojito's rejection names the hidden
     binding. Add it to `access_beside_live_ref_binding.mojo` when fixing.
+  - Probe: an `as` binding beside a binding of one of its parts, `case
+    (v, _) as whole: print(v, whole[1])` and `case .Some(v) as whole:
+    print(v, whole.value())`; the pin prints both.
   - Found while landing R1037 (2026-10-16).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1240 A getter on a field of a read-only `match` anchor conflicts
+  with the anchor**
+
+  Problem: `match w: case W(l=[a, b])` and `case W(o=.Some(x))` over a
+  place `w` fail with "access to 'w.l' conflicts with live reference
+  '$match<id>'", where the pin runs both.
+  - No case binds by `ref` or `as`, so the anchor `ref $match<id> = w` is
+    made immutable after its check (`make_reference_immutable`,
+    `checker/patterns.rs`); a `ref self` getter on `$match<id>.l` is then
+    an access to `w.l` that the anchor's loan forbids.
+  - With a `ref` binding in any case the anchor stays mutable and the same
+    reads run, and a getter on the anchor itself (`$match<id>[0]`) runs.
+  - Probe: `conformance/probes/match_field_getter_read_anchor.mojo`.
+  - Found while landing R1133 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2814,43 +2834,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1133 Enum case patterns select by discriminant and payload**
-
-  Problem: `case .Some(x)`, `case Optional.None`, and `case .Some(ref s)`
-  are rejected ("enum case patterns"), where the pin tests the
-  discriminant and binds the payload through the selected getter.
-  - Read a concrete conformer's cases by its declared conformance, never
-    by the spelling `.Some`: names from `_enum_case_names`, payload types
-    from `_enum_case_types`, and `_enum_is_exhaustive`. As at the pin the
-    reading is lazy: a repeated name resolves to the first, and only a
-    payload pattern past the types list fails ("'_enum_case_types' must be
-    a parameter list covering every case").
-  - A `MatchPatternKind::Call` with a leading-dot or qualified head, and a
-    bare `.None`, compile in `checker/patterns.rs` to an equality test of
-    `_get_enum_discriminant()` against the case's index, then the
-    argument pattern over the sub-subject `_unsafe_get_enum_payload[id]()`
-    (a new `Step`), a nullary case touching no payload.
-  - A qualified unbound family (`Optional.Some`) denotes the subject's own
-    `Optional[Int]` where the pin permits it. `Other.Some` over an
-    `Optional` subject rejects and is never a downcast.
-  - A payload `ref` binding keeps the subject's capability: a write through
-    `.Some(ref s)` over a mutable place lands in the place.
-  - Fixtures: `Optional` `Some`/`None`, a custom type with other case
-    names, a payload getter that records its access, a generic `Optional`
-    instance, and a refined payload failure (`.Some(0)`) followed by a
-    whole-constructor case.
-  - Rejections with the pin's texts: an unknown case, `.None(x)`,
-    `.Some()`, a wrong qualified owner, a subject that is not `EnumLike`.
-  - Pin texts recorded while planning R1132: "'Z' is not a case of 'Bad'",
-    "enum case 'A' has no associated value", and "cannot match on a
-    parametric enum type" for a `T: EnumLike` subject.
-  - Find the conformance by the trait's resolved identity, never by the
-    spelling `"EnumLike"`: the bundled trait has no bare identity, so
-    diagnostics print `__module$std$builtin$enum$like$EnumLike` (R607).
-  - Probe: `conformance/probes/match_optional_enum_cases.mojo`.
-  - Depends on R1132.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1134 Coverage spans enums, products, and payload refinement**
 
   Problem: the coverage model (`Coverage`/`Space` in
@@ -2879,8 +2862,49 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     cells, correlated wildcards finish coverage, and an open enum keeps
     its catch-all path. Warning order is stable across packaging.
   - Named analysis tests pin the cap and the overflow check.
+  - Probe: `conformance/probes/match_optional_enum_cases.mojo`, whose
+    `describe` returns from a `.Some(x)` and a `.None` case with no
+    catch-all and is rejected ("does not return a value on every path").
+  - Probe: a duplicate `.Some(y)` after `.Some(x)` and a `_` after both
+    `Optional` cases each warn unreachable at the pin, and a conformer
+    naming `Leaf` twice warns "missing case for 'Leaf'" over its first.
   - Depends on R1133.
   - Model: Fable, Not Planned.
+
+- [ ] **R1237 Consecutive enum cases read the discriminant once per case**
+
+  Problem: three `.Node` cases in a row call `_get_enum_discriminant()`
+  three times in Mojito, where the pin calls it once and branches on the
+  index.
+  - Upstream clusters consecutive cases whose first command is an
+    `EnumTag` (or a literal `Equal`) on the same path
+    (`findClusterSize`/`emitCaseCluster`, `ParserStmts.cpp`); a `|` is not
+    clustered, so `.Leaf | .Node(_)` reads it twice on both.
+  - Mojito plans each case alone (`check_match_cases`,
+    `checker/patterns.rs`), and HIR lowers each case's `EnumTag` as its own
+    test.
+  - Only a discriminant getter with effects shows the difference; literal
+    clusters are not observable.
+  - Probe: `conformance/probes/match_enum_case_cluster.mojo`.
+  - Found while landing R1133 (2026-10-20).
+  - Depends on R1134.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1238 A leading-dot operand of `==` has no contextual type**
+
+  Problem: `d == .int64` over a `DType`, and `case .int64:` over one, fail
+  with "no contextual type is available here", where the pin prints
+  `True` and runs the case.
+  - Upstream types the operand from the selected `__eq__`'s parameter; a
+    leading-dot case head over a subject that is not `EnumLike` is the
+    same `==` test.
+  - Mojito resolves a leading dot only against an annotation or an
+    expected parameter type (`with_contextual_root`), never an operator's
+    other operand.
+  - Probe: `conformance/probes/leading_dot_equality_operand.mojo`.
+  - Found while landing R1133 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1222 `== literal` in a case pattern does not warn that `==` is
   redundant**
@@ -4935,6 +4959,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     elaborator serves per instance (`docs/notes/ctfe-request-path.md`).
   - The member is the generator's, evaluated under the instance's bindings,
     so it can denote the same application.
+  - Probe: `comptime X = K(1)` in `struct K`, matched as `case K.X:`
+    (an equality test over a subject that is not `EnumLike`), fails the
+    same way; the pin prints `x`. `case .X:` also needs R1238
+    (`conformance/probes/leading_dot_equality_operand.mojo`).
   - Found while planning R7 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5260,6 +5288,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `trait Tr` with `comptime K: Int`, `struct S(Tr)` with `comptime
     K: Int = 3`, `struct Box[n: Int]`, and the `make` above returning `4`.
   - Found while landing R1201 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1236 An enum payload over a generic `Optional[T]` loses `T`'s
+  bounds**
+
+  Problem: `case .Some(x): print("some", x)` over `o: Optional[T]` in `def
+  h[T: Copyable & Writable]` fails with "an element of 'values' with type
+  'T' does not conform to trait 'Writable'", where the pin prints `some 1`.
+  - `Optional[T]._enum_case_types` folds to a tabulation over the
+    substituted `TypeList`, and its element resolves to
+    `Dependent(Parameter(T))`, a parameter with no bounds, rather than
+    `h`'s `T` (`ParamContext::list_elements`, `DependentType::resolve`).
+  - The payload getter's result type, `TypeList[Trait=AnyType,
+    Self._enum_case_types]()[id]`, loses `T` the same way
+    (`IndexedProjection` over `SourceType::Value`,
+    `checker/type_resolution.rs`).
+  - Probe: `conformance/probes/match_enum_case_generic_payload.mojo`.
+  - Found while landing R1133 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7057,6 +7104,23 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `match_temporary_subject_survives_failed_var_case.mojo` keep the traces;
     `assets/ok/match_guards_and_var_bindings.mojo` reads the subject after
     every match to stay clear of it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1239 A `ref` binding of a temporary subject's element is
+  mutable**
+
+  Problem: `match (String("a"), 1): case (ref s, _): s += "!"` prints `a!`
+  in Mojito, where the pin rejects the write ("expression must be mutable
+  for in-place operator destination").
+  - The pin reads a tuple or sequence element through `__getitem__` on the
+    rvalue subject, so its `ref` result is immutable; a root `as` binding
+    and a field projection stay mutable on both.
+  - R1133 already reads an enum payload of a temporary immutably
+    (`MatchSubject::rvalue`, `checker/patterns.rs`); tuple and sequence
+    element reads need the same rule.
+  - Ledger name: `conformance/probes/match_temporary_element_mutable.mojo`.
+  - Found while landing R1133 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10905,6 +10969,9 @@ residue found inside a task moves to the task that owns its fix.
   Problem: `Error("Index ", 3, " not in *args")` builds the joined message
   at the pin, while Mojito reports "'Error' expects 1 argument(s), got 3".
   - Upstream declares `Error.__init__[*Ts: Writable](out self, *args: *Ts)`.
+  - Probe: `String("some ", x)` has the same gap ("'String' expects 1
+    argument(s), got 2"); the pin prints `some 3`
+    (`conformance/probes/match_optional_enum_cases.mojo`).
   - Found while landing R421 (2026-10-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.

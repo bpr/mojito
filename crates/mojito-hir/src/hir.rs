@@ -1187,8 +1187,8 @@ impl Lower {
         });
     }
 
-    /// A case's commands in order: a test (a comparison or a sequence
-    /// length test) is a branch whose failure advances, an element read or
+    /// A case's commands in order: a test (a comparison, a sequence
+    /// length test, or an enum case's tag test) is a branch whose failure advances, an element read or
     /// a binding a statement of the case's scope. A `|` pattern's alternatives are an
     /// inner `hlcf.match` in the case's own scope: each alternative a case
     /// region whose failed test advances to the next alternative and whose
@@ -1198,7 +1198,9 @@ impl Lower {
     fn case_commands(&mut self, commands: &[CheckedCommand]) {
         for command in commands {
             match command {
-                CheckedCommand::Equal { test } | CheckedCommand::ListLength { test } => {
+                CheckedCommand::Equal { test }
+                | CheckedCommand::ListLength { test }
+                | CheckedCommand::EnumTag { test, .. } => {
                     self.case_test(*test);
                 }
                 CheckedCommand::Bind { declaration }

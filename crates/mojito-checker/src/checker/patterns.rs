@@ -24,6 +24,14 @@
 //! at `$match<id>[$match<id>.__len__() - k]`, and runs its pattern `q` over
 //! the slice `$match<id>[1:$match<id>.__len__() - k]`, read like an element,
 //! so `*_` slices nothing.
+//!
+//! An enum case `.Case(p)` or `Owner.Case(p)` over a subject that declares
+//! the bundled `EnumLike` tests the case's index, looked up by name in the
+//! subject's `_enum_case_names`, against `_get_enum_discriminant()`, then
+//! compiles `p` over the payload `_unsafe_get_enum_payload[case]()`, read
+//! like an element (lazily, once per case, immutably under a temporary
+//! subject); a bare `.Case` tests the tag alone. Over any other subject a
+//! bare head is an equality test, as upstream's.
 
 use super::desugar::Synth;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
@@ -308,19 +316,13 @@ impl Checker {
                 )
             }
             MatchPatternKind::Literal(value) | MatchPatternKind::Equal(value) => {
-                let subject = &self.materialize(subject, commands)?;
-                let test = subject.synth.expr(ExprKind::Infix(
-                    InfixOp::Eq,
-                    Box::new(subject.value()),
-                    Box::new(value.clone()),
-                ));
-                self.register_named_bindings(&test)?;
-                self.expect_bool(&test, "case pattern")?;
-                commands.tests.push(PlannedCommand::Equal(test));
-                Ok(())
+                self.equality_test(value, subject, commands)
             }
             MatchPatternKind::Tuple(items) => {
                 self.compile_tuple_pattern(items, subject, join, commands)
+            }
+            MatchPatternKind::Call { head, args, kwargs } if self.is_enum_like(subject) => {
+                self.compile_enum_case(head, args, kwargs, subject, join, commands)
             }
             MatchPatternKind::Call { head, args, kwargs } => {
                 self.compile_struct_pattern(head, args, kwargs, subject, join, commands)
@@ -331,7 +333,12 @@ impl Checker {
             MatchPatternKind::Or(alternatives) => {
                 self.compile_or_pattern(alternatives, subject, join, commands)
             }
-            MatchPatternKind::Head(_) => Err(TypeError::Unsupported("enum case patterns".into())),
+            MatchPatternKind::Head(head) if self.is_enum_like(subject) => {
+                let case = self.enum_case(head, subject)?.0;
+                let subject = &self.materialize(subject, commands)?;
+                self.enum_tag_test(case, subject, commands)
+            }
+            MatchPatternKind::Head(head) => self.equality_test(head, subject, commands),
             MatchPatternKind::Sequence(items) => {
                 self.compile_sequence_pattern(items, subject, join, commands)
             }
@@ -397,7 +404,7 @@ impl Checker {
         mut join: Join<'_>,
         commands: &mut Commands,
     ) -> Result<(), TypeError> {
-        if subject.element.is_some() {
+        if subject.untyped() {
             return Err(TypeError::MatchPattern(format!(
                 "expected a tuple type to match against, got {UNTYPED_ELEMENT}"
             )));
@@ -440,7 +447,7 @@ impl Checker {
         mut join: Join<'_>,
         commands: &mut Commands,
     ) -> Result<(), TypeError> {
-        if subject.element.is_some() {
+        if subject.untyped() {
             return Err(TypeError::MatchPattern(format!(
                 "{UNTYPED_ELEMENT} does not conform to 'Sized'"
             )));
@@ -488,8 +495,9 @@ impl Checker {
                 _ => Step::SequenceElement(index),
             };
             let pattern = item.pattern();
-            let child = subject.sequence_element(
+            let child = subject.read(
                 step,
+                Ty::error(),
                 ElementRead {
                     by_reference: binds_by_reference(pattern),
                     moves: root_bindings(pattern) <= 1,
@@ -500,72 +508,99 @@ impl Checker {
         Ok(())
     }
 
-    /// The subject a test or binding reads: `subject` itself, or, for a
-    /// sequence element, the hidden `$elem<id>` holding its read — made by
-    /// this case's (or `|` alternative's) first command that needs it, as
-    /// `ref $elem<id> = parent[i]` over a reference result (to read unless
-    /// the element binds by reference) and `var $elem<id> = parent[i]` over
-    /// an owned one, and reused by every later command.
+    /// The subject a test or binding reads: `subject` itself, or, below a
+    /// sequence element or an enum payload, the hidden `$elem<id>` holding
+    /// its read under the path's remaining steps. Each read along the path
+    /// is made by this case's (or `|` alternative's) first command that
+    /// needs it, as `ref $elem<id> = parent[i]` over a reference result (to
+    /// read unless the element binds by reference) and `var $elem<id> =
+    /// parent[i]` over an owned one, and reused by every later command.
     fn materialize<'s>(
         &mut self,
         subject: &MatchSubject<'s>,
         commands: &mut Commands,
     ) -> Result<MatchSubject<'s>, TypeError> {
-        let Some(element) = subject.element else {
+        let mut base = (subject.name.clone(), 0);
+        let mut last = None;
+        for &(depth, element) in &subject.reads {
+            let key = subject.path[..depth].to_vec();
+            let read = if let Some(read) = commands.reads.get(&key) {
+                read.clone()
+            } else {
+                let value = spell(subject.synth, &base.0, &subject.path[base.1..depth]);
+                let read = self.read_path(subject.synth, value, element)?;
+                commands
+                    .tests
+                    .push(PlannedCommand::PathValue(Box::new(read.1)));
+                commands.reads.insert(key, read.0.clone());
+                read.0
+            };
+            base = (read.name.clone(), depth);
+            last = Some((read, element));
+        }
+        let Some((read, element)) = last else {
             return Ok(subject.clone());
         };
-        let read = if let Some(read) = commands.reads.get(&subject.path) {
-            read.clone()
-        } else {
-            let value = subject.value();
-            let value_span = value.source_span();
-            let name = format!("$elem{}", value.syntax_id.0);
-            self.infer(&value)?;
-            let reference = self.infer_reference_value(&value).is_some();
-            let declaration = subject.synth.stmt(if reference {
-                StmtKind::RefDecl {
-                    name: name.clone(),
-                    value,
-                }
-            } else {
-                StmtKind::VarDecl {
-                    name: name.clone(),
-                    ty: None,
-                    value,
-                }
-            });
-            self.check_stmt(&declaration, None, false)?;
-            if reference && !element.by_reference {
-                self.make_reference_immutable(&name, &declaration, value_span);
-            }
-            let ty = self.lookup(&name).cloned().ok_or_else(|| {
-                TypeError::InvariantViolation("a sequence element read was not declared".into())
-            })?;
-            commands
-                .tests
-                .push(PlannedCommand::PathValue(Box::new(declaration)));
-            let read = Read {
-                name,
-                ty: dereferenced(ty),
-                owned: !reference,
-            };
-            commands.reads.insert(subject.path.clone(), read.clone());
-            read
-        };
+        let path = subject.path[base.1..].to_vec();
+        let whole = path.is_empty();
         Ok(MatchSubject {
             synth: subject.synth,
             name: read.name,
-            ty: read.ty,
+            ty: if whole { read.ty } else { subject.ty.clone() },
             temporary: false,
-            owned: read.owned.then_some(element.moves),
-            element: None,
-            path: Vec::new(),
+            rvalue: subject.rvalue,
+            root: false,
+            owned: (whole && read.owned).then_some(element.moves),
+            reads: Vec::new(),
+            path,
         })
+    }
+
+    /// Declare the hidden `$elem<id>` over the path read `value`: a
+    /// reference over a reference result, to read unless `element` binds
+    /// by reference, and an owned value otherwise. The read and its
+    /// declaration.
+    fn read_path(
+        &mut self,
+        synth: &Synth,
+        value: Expr,
+        element: ElementRead,
+    ) -> Result<(Read, Stmt), TypeError> {
+        let value_span = value.source_span();
+        let name = format!("$elem{}", value.syntax_id.0);
+        self.infer(&value)?;
+        let reference = self.infer_reference_value(&value).is_some();
+        let declaration = synth.stmt(if reference {
+            StmtKind::RefDecl {
+                name: name.clone(),
+                value,
+            }
+        } else {
+            StmtKind::VarDecl {
+                name: name.clone(),
+                ty: None,
+                value,
+            }
+        });
+        self.check_stmt(&declaration, None, false)?;
+        if reference && !element.by_reference {
+            self.make_reference_immutable(&name, &declaration, value_span);
+        }
+        let ty = self.lookup(&name).cloned().ok_or_else(|| {
+            TypeError::InvariantViolation("a pattern path read was not declared".into())
+        })?;
+        let read = Read {
+            name,
+            ty: dereferenced(ty),
+            owned: !reference,
+        };
+        Ok((read, declaration))
     }
 
     /// `Name(field=p, ...)` over a subject of the nominal type `Name`: no
     /// positional argument, then the field patterns. The head names the
-    /// type; it runs no constructor.
+    /// type; it runs no constructor. A member head names no type here: the
+    /// subject is no enum to select its case.
     fn compile_struct_pattern(
         &mut self,
         head: &Expr,
@@ -576,9 +611,20 @@ impl Checker {
         commands: &mut Commands,
     ) -> Result<(), TypeError> {
         let (ExprKind::Identifier(name) | ExprKind::TypeApply { name, .. }) = &head.kind else {
-            return Err(TypeError::Unsupported("enum case patterns".into()));
+            return Err(TypeError::MatchPattern(match &head.kind {
+                ExprKind::Member { object, .. } if is_contextual(object) => {
+                    "cannot resolve inferred member without a contextual type".to_string()
+                }
+                ExprKind::Member { object, field } => {
+                    format!(
+                        "'{}' value has no attribute '{field}'",
+                        head_spelling(object)
+                    )
+                }
+                _ => "a pattern head must name a struct type or an enum case".to_string(),
+            }));
         };
-        if subject.element.is_some() {
+        if subject.untyped() {
             return Err(TypeError::MatchPattern(format!(
                 "cannot match {UNTYPED_ELEMENT} against pattern type '{name}'"
             )));
@@ -603,6 +649,214 @@ impl Checker {
         self.compile_field_patterns(kwargs, subject, join, commands)
     }
 
+    /// `.Case(p)` or `Owner.Case(p)` over an `EnumLike` subject, checked in
+    /// upstream's order: the head's shape and owner, the case, its payload
+    /// type, then the one positional payload pattern. The tag test, then
+    /// `p` over the payload `subject._unsafe_get_enum_payload[case]()`.
+    fn compile_enum_case(
+        &mut self,
+        head: &Expr,
+        args: &[MatchPattern],
+        kwargs: &[(String, MatchPattern)],
+        subject: &MatchSubject,
+        join: Join<'_>,
+        commands: &mut Commands,
+    ) -> Result<(), TypeError> {
+        if !matches!(head.kind, ExprKind::Member { .. }) {
+            return Err(TypeError::MatchPattern(
+                "enum case pattern must be written as 'Type.Case(...)' or '.Case(...)'".into(),
+            ));
+        }
+        let (case, name) = self.enum_case(head, subject)?;
+        let payload = self.enum_case_payload(&subject.ty, case)?;
+        if matches!(payload.kind(), TyKind::None) {
+            return Err(TypeError::MatchPattern(format!(
+                "enum case '{name}' has no associated value"
+            )));
+        }
+        let pattern = match (args, kwargs) {
+            ([], []) => {
+                return Err(TypeError::MatchPattern(format!(
+                    "enum case '{name}' requires a payload pattern inside the parentheses"
+                )));
+            }
+            (_, [_, ..]) => {
+                return Err(TypeError::MatchPattern(
+                    "enum case patterns do not support keyword arguments".into(),
+                ));
+            }
+            ([pattern], []) => pattern,
+            _ => {
+                return Err(TypeError::MatchPattern(
+                    "enum case patterns currently support at most one payload subpattern".into(),
+                ));
+            }
+        };
+        let tested = self.materialize(subject, commands)?;
+        self.enum_tag_test(case, &tested, commands)?;
+        let child = subject.read(
+            Step::EnumPayload(case),
+            payload,
+            ElementRead {
+                by_reference: binds_by_reference(pattern) && !subject.rvalue,
+                moves: root_bindings(pattern) <= 1,
+            },
+        );
+        self.compile_pattern(pattern, &child, join, commands)
+    }
+
+    /// The case an enum head `.Case` or `Owner.Case` selects over the
+    /// `EnumLike` subject, and its name. A qualified head at the root
+    /// names the subject's own type, its parameters aside, as upstream
+    /// checks it; nested, the owner goes unchecked, as upstream's.
+    fn enum_case(&self, head: &Expr, subject: &MatchSubject) -> Result<(usize, String), TypeError> {
+        let ExprKind::Member { object, field } = &head.kind else {
+            return Err(TypeError::MatchPattern(
+                "enum case pattern must be written as 'Type.Case(...)' or '.Case(...)'".into(),
+            ));
+        };
+        if subject.root && !is_contextual(object) {
+            self.check_enum_owner(object, &subject.ty)?;
+        }
+        Ok((self.enum_case_index(&subject.ty, field)?, field.clone()))
+    }
+
+    /// Require the qualified owner `owner` of an enum case to name the
+    /// subject type's nominal family, parameters ignored.
+    fn check_enum_owner(&self, owner: &Expr, subject: &Ty) -> Result<(), TypeError> {
+        let family = |ty: &Ty| match ty.kind() {
+            TyKind::Struct(name, _) => Some(name.clone()),
+            _ => None,
+        };
+        let owner_family = match &owner.kind {
+            ExprKind::Identifier(name) => {
+                self.structs.get(name).map(|_| name.clone()).or_else(|| {
+                    self.comptime_type_operand(owner)
+                        .ok()
+                        .flatten()
+                        .and_then(|ty| family(&ty))
+                })
+            }
+            _ => self
+                .comptime_type_operand(owner)
+                .ok()
+                .flatten()
+                .or_else(|| self.member_type_operand(owner))
+                .and_then(|ty| family(&ty)),
+        };
+        if owner_family.is_some() && owner_family == family(subject) {
+            return Ok(());
+        }
+        Err(TypeError::MatchPattern(format!(
+            "cannot match value of type '{subject}' against enum case of type '{}'",
+            head_spelling(owner)
+        )))
+    }
+
+    /// Whether `subject` is a typed value whose type declares the bundled
+    /// `EnumLike`, which makes its patterns enum cases.
+    fn is_enum_like(&self, subject: &MatchSubject) -> bool {
+        !subject.untyped() && self.conforms_to(&subject.ty, &enum_like_trait())
+    }
+
+    /// The elements of the `EnumLike` value member `member` of `ty`, read
+    /// at its application: `None` when `ty` is no struct or the list does
+    /// not fold to known elements.
+    fn enum_like_list(
+        &self,
+        ty: &Ty,
+        member: &str,
+    ) -> Result<Option<Vec<mojito_types::param_expr::ParamExpr>>, TypeError> {
+        let TyKind::Struct(name, arguments) = ty.kind() else {
+            return Ok(None);
+        };
+        let Some(info) = self.structs.get(name) else {
+            return Ok(None);
+        };
+        let Some(list) = self
+            .struct_value_member(info, arguments, member)
+            .transpose()?
+        else {
+            return Ok(None);
+        };
+        self.param_context
+            .list_elements(&list)
+            .map_err(super::param_error)
+    }
+
+    /// The index of the case `name` in `ty`'s `_enum_case_names`, the first
+    /// of a repeated name, as upstream reads it.
+    fn enum_case_index(&self, ty: &Ty, name: &str) -> Result<usize, TypeError> {
+        let Some(names) = self.enum_like_list(ty, "_enum_case_names")? else {
+            return Err(TypeError::MatchPattern(
+                "cannot match on a parametric enum type".into(),
+            ));
+        };
+        names
+            .iter()
+            .position(|case| {
+                matches!(case.as_constant(),
+                    Some(CtValue::KgenString(case) | CtValue::Str(case)) if case == name)
+            })
+            .ok_or_else(|| TypeError::MatchPattern(format!("'{name}' is not a case of '{ty}'")))
+    }
+
+    /// The payload type of case `index` in `ty`'s `_enum_case_types`, read
+    /// lazily: only a payload pattern needs the list to reach its case.
+    fn enum_case_payload(&self, ty: &Ty, index: usize) -> Result<Ty, TypeError> {
+        self.enum_like_list(ty, "_enum_case_types")?
+            .and_then(|types| types.into_iter().nth(index))
+            .map(mojito_types::types::DependentType::resolve)
+            .ok_or_else(|| {
+                TypeError::MatchPattern(
+                    "'_enum_case_types' must be a parameter list covering every case".into(),
+                )
+            })
+    }
+
+    /// Push the tag test `subject._get_enum_discriminant() == case`.
+    fn enum_tag_test(
+        &self,
+        case: usize,
+        subject: &MatchSubject,
+        commands: &mut Commands,
+    ) -> Result<(), TypeError> {
+        let synth = subject.synth;
+        let discriminant = synth.expr(ExprKind::MethodCall {
+            object: Box::new(subject.value()),
+            method: "_get_enum_discriminant".to_string(),
+            args: Vec::new(),
+            kwargs: Vec::new(),
+        });
+        let test = synth.expr(ExprKind::Infix(
+            InfixOp::Eq,
+            Box::new(discriminant),
+            Box::new(synth.int(case)),
+        ));
+        self.expect_bool(&test, "case pattern")?;
+        commands.tests.push(PlannedCommand::EnumTag { test, case });
+        Ok(())
+    }
+
+    /// Push the test `subject == value` through the selected `__eq__`.
+    fn equality_test(
+        &mut self,
+        value: &Expr,
+        subject: &MatchSubject,
+        commands: &mut Commands,
+    ) -> Result<(), TypeError> {
+        let subject = &self.materialize(subject, commands)?;
+        let test = subject.synth.expr(ExprKind::Infix(
+            InfixOp::Eq,
+            Box::new(subject.value()),
+            Box::new(value.clone()),
+        ));
+        self.register_named_bindings(&test)?;
+        self.expect_bool(&test, "case pattern")?;
+        commands.tests.push(PlannedCommand::Equal(test));
+        Ok(())
+    }
+
     /// `{field=p, ...}` over a struct subject: each named field's pattern
     /// over `subject.field`, a field named once; a field the pattern omits
     /// matches anything.
@@ -613,7 +867,7 @@ impl Checker {
         mut join: Join<'_>,
         commands: &mut Commands,
     ) -> Result<(), TypeError> {
-        if subject.element.is_some() {
+        if subject.untyped() {
             return Err(TypeError::MatchPattern(format!(
                 "cannot match field patterns against {UNTYPED_ELEMENT}"
             )));
@@ -732,14 +986,20 @@ impl Checker {
 /// Whether `pattern` matches every value of its subject's type: a wildcard
 /// or a binding, at every position of a tuple or `as`, in some `|`
 /// alternative, or at every named field of a struct pattern.
+///
+/// An enum case (a member head) tests its tag, so it is refutable.
 pub fn irrefutable(pattern: &MatchPattern) -> bool {
     match &pattern.kind {
         MatchPatternKind::Wildcard | MatchPatternKind::Bind { .. } => true,
         MatchPatternKind::Tuple(items) => items.iter().all(irrefutable),
         MatchPatternKind::As { pattern, .. } => irrefutable(pattern),
         MatchPatternKind::Or(items) => items.iter().any(irrefutable),
-        MatchPatternKind::Call { args, kwargs, .. } => {
-            args.iter().all(irrefutable) && kwargs.iter().all(|(_, pattern)| irrefutable(pattern))
+        MatchPatternKind::Call { head, args, kwargs } => {
+            matches!(
+                head.kind,
+                ExprKind::Identifier(_) | ExprKind::TypeApply { .. }
+            ) && args.iter().all(irrefutable)
+                && kwargs.iter().all(|(_, pattern)| irrefutable(pattern))
         }
         MatchPatternKind::Fields(fields) => fields.iter().all(|(_, pattern)| irrefutable(pattern)),
         MatchPatternKind::Literal(_)
@@ -750,8 +1010,8 @@ pub fn irrefutable(pattern: &MatchPattern) -> bool {
 }
 
 /// The subject a pattern applies to: the hidden `$match<id>` reference the
-/// anchor declared (or the hidden `$elem<id>` a sequence element was read
-/// into), projected by `path` to the element or field the pattern's
+/// anchor declared (or the hidden `$elem<id>` a path was read into),
+/// projected by `path` to the element, field, or payload the pattern's
 /// position names, with the node factory that spells it.
 #[derive(Clone)]
 struct MatchSubject<'a> {
@@ -764,12 +1024,19 @@ struct MatchSubject<'a> {
     /// Whether the whole subject is a temporary the anchor materializes
     /// rather than a place it borrows; a projection never is.
     temporary: bool,
-    /// For an owned sequence element read, an rvalue: whether a `var`
-    /// binding takes it by transfer, being the only binding of it.
+    /// Whether the whole subject is a temporary, which every projection
+    /// inherits: an enum payload read from it is immutable, as a `ref
+    /// self` getter's result over an rvalue is.
+    rvalue: bool,
+    /// Whether this is the whole subject, where a qualified enum case's
+    /// owner is checked.
+    root: bool,
+    /// For an owned path read, an rvalue: whether a `var` binding takes it
+    /// by transfer, being the only binding of it.
     owned: Option<bool>,
-    /// For an unread sequence element (the path's last step), how its
-    /// read is made.
-    element: Option<ElementRead>,
+    /// The path's reads (sequence elements and enum payloads), each the
+    /// length of the path prefix it reads and how it is read.
+    reads: Vec<(usize, ElementRead)>,
     path: Vec<Step>,
 }
 
@@ -781,16 +1048,27 @@ impl<'a> MatchSubject<'a> {
             name: name.to_string(),
             ty,
             temporary,
+            rvalue: temporary,
+            root: true,
             owned: None,
-            element: None,
+            reads: Vec::new(),
             path: Vec::new(),
         }
     }
 
     /// The expression reading this subject: `$match<id>` under the path's
-    /// subscripts and field selections.
+    /// subscripts, field selections, and payload reads.
     fn value(&self) -> Expr {
-        self.value_at(self.path.len())
+        spell(self.synth, &self.name, &self.path)
+    }
+
+    /// Whether this is an unread sequence element, whose type is unknown,
+    /// as upstream's list element path is untyped.
+    fn untyped(&self) -> bool {
+        matches!(
+            self.path.last(),
+            Some(Step::SequenceElement(_) | Step::SequenceFromEnd(_) | Step::SequenceSlice { .. })
+        )
     }
 
     /// The value a `var` binding or a later `|` alternative's assignment
@@ -814,69 +1092,20 @@ impl<'a> MatchSubject<'a> {
             name: self.name.clone(),
             ty,
             temporary: false,
+            rvalue: self.rvalue,
+            root: false,
             owned: None,
-            element: None,
+            reads: self.reads.clone(),
             path,
         }
     }
 
-    /// The unread element or slice `step` of this sequence subject, read
-    /// as `element` says.
-    fn sequence_element(&self, step: Step, element: ElementRead) -> Self {
-        MatchSubject {
-            element: Some(element),
-            ..self.project(step, Ty::error())
-        }
-    }
-
-    /// The expression reading the subject `path[..depth]` names, each
-    /// sequence step spelled as upstream's path values are: an element
-    /// from the end and a slice's end read the parent's `__len__` afresh.
-    fn value_at(&self, depth: usize) -> Expr {
-        let synth = self.synth;
-        let mut value = synth.identifier(&self.name);
-        for (at, step) in self.path[..depth].iter().enumerate() {
-            let object = Box::new(value);
-            value = match step {
-                Step::Element(index) | Step::SequenceElement(index) => {
-                    synth.expr(ExprKind::Index {
-                        object,
-                        index: Box::new(synth.int(*index)),
-                    })
-                }
-                Step::SequenceFromEnd(offset) => synth.expr(ExprKind::Index {
-                    object,
-                    index: Box::new(self.length_minus(at, *offset)),
-                }),
-                Step::SequenceSlice { start, end_offset } => synth.expr(ExprKind::Slice {
-                    object,
-                    lower: Some(Box::new(synth.int(*start))),
-                    upper: (*end_offset != 0).then(|| Box::new(self.length_minus(at, *end_offset))),
-                    step: None,
-                }),
-                Step::Field(field) => synth.expr(ExprKind::Member {
-                    object,
-                    field: field.clone(),
-                }),
-            };
-        }
-        value
-    }
-
-    /// `parent.__len__() - offset`, the parent being the subject
-    /// `path[..depth]` names, read afresh.
-    fn length_minus(&self, depth: usize, offset: usize) -> Expr {
-        let length = self.synth.expr(ExprKind::MethodCall {
-            object: Box::new(self.value_at(depth)),
-            method: "__len__".to_string(),
-            args: Vec::new(),
-            kwargs: Vec::new(),
-        });
-        self.synth.expr(ExprKind::Infix(
-            InfixOp::Sub,
-            Box::new(length),
-            Box::new(self.synth.int(offset)),
-        ))
+    /// The unread element, slice, or payload `step` of this subject, of
+    /// type `ty`, read as `element` says.
+    fn read(&self, step: Step, ty: Ty, element: ElementRead) -> Self {
+        let mut child = self.project(step, ty);
+        child.reads.push((child.path.len(), element));
+        child
     }
 }
 
@@ -946,16 +1175,16 @@ impl Join<'_> {
     }
 }
 
-/// How an unread sequence element is read: by a reference with the
-/// subject's capability when its pattern binds by reference, and, when
-/// owned, moved into a `var` binding when its pattern binds it once.
+/// How an unread sequence element or enum payload is read: by a reference
+/// with the subject's capability when its pattern binds by reference, and,
+/// when owned, moved into a `var` binding when its pattern binds it once.
 #[derive(Clone, Copy)]
 struct ElementRead {
     by_reference: bool,
     moves: bool,
 }
 
-/// One element read a case made: the hidden name holding it, its type,
+/// One path read a case made: the hidden name holding it, its type,
 /// and whether it is an owned value rather than a reference.
 #[derive(Clone)]
 struct Read {
@@ -964,9 +1193,10 @@ struct Read {
     owned: bool,
 }
 
-/// One projection of a subject: a tuple element, a struct field, or one of
+/// One projection of a subject: a tuple element, a struct field, one of
 /// upstream's sequence paths — an element by index, an element counted
-/// from the end, or the slice between a fixed prefix and suffix.
+/// from the end, or the slice between a fixed prefix and suffix — or an
+/// enum case's payload.
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum Step {
     Element(usize),
@@ -974,10 +1204,82 @@ enum Step {
     SequenceElement(usize),
     SequenceFromEnd(usize),
     SequenceSlice { start: usize, end_offset: usize },
+    EnumPayload(usize),
 }
 
 /// What an unread sequence element's type is spelled as in a rejection.
 const UNTYPED_ELEMENT: &str = "an untyped sequence element";
+
+/// The expression reading `name` under `steps`, each sequence step
+/// spelled as upstream's path values are: an element from the end and a
+/// slice's end read the parent's `__len__` afresh, and a payload is the
+/// getter `parent._unsafe_get_enum_payload[case]()`.
+fn spell(synth: &Synth, name: &str, steps: &[Step]) -> Expr {
+    // `parent.__len__() - offset`, the parent being `steps[..depth]`, read
+    // afresh.
+    let length_minus = |depth: usize, offset: usize| {
+        let length = synth.expr(ExprKind::MethodCall {
+            object: Box::new(spell(synth, name, &steps[..depth])),
+            method: "__len__".to_string(),
+            args: Vec::new(),
+            kwargs: Vec::new(),
+        });
+        synth.expr(ExprKind::Infix(
+            InfixOp::Sub,
+            Box::new(length),
+            Box::new(synth.int(offset)),
+        ))
+    };
+    let mut value = synth.identifier(name);
+    for (at, step) in steps.iter().enumerate() {
+        let object = Box::new(value);
+        value = match step {
+            Step::Element(index) | Step::SequenceElement(index) => synth.expr(ExprKind::Index {
+                object,
+                index: Box::new(synth.int(*index)),
+            }),
+            Step::SequenceFromEnd(offset) => synth.expr(ExprKind::Index {
+                object,
+                index: Box::new(length_minus(at, *offset)),
+            }),
+            Step::SequenceSlice { start, end_offset } => synth.expr(ExprKind::Slice {
+                object,
+                lower: Some(Box::new(synth.int(*start))),
+                upper: (*end_offset != 0).then(|| Box::new(length_minus(at, *end_offset))),
+                step: None,
+            }),
+            Step::Field(field) => synth.expr(ExprKind::Member {
+                object,
+                field: field.clone(),
+            }),
+            Step::EnumPayload(case) => synth.expr(ExprKind::Invoke {
+                callee: Box::new(synth.expr(ExprKind::Member {
+                    object,
+                    field: "_unsafe_get_enum_payload".to_string(),
+                })),
+                param_args: vec![mojito_ast::ast::ParamArg::Value(synth.int(*case))],
+                args: Vec::new(),
+                kwargs: Vec::new(),
+            }),
+        };
+    }
+    value
+}
+
+/// Whether `object` is the leading-dot head's contextual sentinel.
+fn is_contextual(object: &Expr) -> bool {
+    matches!(&object.kind, ExprKind::Identifier(name) if name == mojito_ast::ast::CONTEXTUAL_SENTINEL)
+}
+
+/// A pattern head's owner as a diagnostic spells it: its names joined by
+/// dots, an application by its name.
+fn head_spelling(owner: &Expr) -> String {
+    match &owner.kind {
+        ExprKind::Identifier(name) | ExprKind::TypeApply { name, .. } => name.clone(),
+        ExprKind::Member { object, field } => format!("{}.{field}", head_spelling(object)),
+        _ => "pattern head".to_string(),
+    }
+}
 
 /// `ty` with a reference stripped to its referent.
 fn dereferenced(ty: Ty) -> Ty {
@@ -1035,6 +1337,7 @@ fn droppable_test(command: &PlannedCommand) -> bool {
     match command {
         PlannedCommand::Equal(_)
         | PlannedCommand::ListLength(_)
+        | PlannedCommand::EnumTag { .. }
         | PlannedCommand::Bind(_)
         | PlannedCommand::PathValue(_) => true,
         PlannedCommand::Alternatives(alternatives) => alternatives

@@ -2690,6 +2690,38 @@ fn parses_structural_patterns() {
 }
 
 #[test]
+fn parses_parameterized_pattern_heads() {
+    let cases = match_cases(
+        "def f(x: Int):\n    match x:\n    case P[Int](a=z):\n        pass\n    case Optional[Int].Some(z):\n        pass\n    case Optional[String].None:\n        pass\n",
+    );
+    assert!(matches!(
+        &cases[0].pattern.kind,
+        MatchPatternKind::Call { head: Expr { kind: ExprKind::TypeApply { name, args }, .. }, kwargs, .. }
+            if name == "P" && args.len() == 1 && kwargs.len() == 1
+    ));
+    let member_over_apply = |kind: &MatchPatternKind, case: &str| match kind {
+        MatchPatternKind::Call { head, .. } | MatchPatternKind::Head(head) => matches!(
+            &head.kind,
+            ExprKind::Member { object, field }
+                if field == case
+                    && matches!(&object.kind, ExprKind::TypeApply { name, .. } if name == "Optional")
+        ),
+        _ => false,
+    };
+    assert!(member_over_apply(&cases[1].pattern.kind, "Some"));
+    assert!(
+        matches!(&cases[1].pattern.kind, MatchPatternKind::Call { args, .. } if args.len() == 1)
+    );
+    assert!(member_over_apply(&cases[2].pattern.kind, "None"));
+    assert!(matches!(&cases[2].pattern.kind, MatchPatternKind::Head(_)));
+    // A struct-pattern head needs its parentheses.
+    let mut parser = Parser::new(Lexer::new(
+        "def f(x: Int):\n    match x:\n    case P[Int]:\n        pass\n",
+    ));
+    assert!(parser.parse_program().is_err());
+}
+
+#[test]
 fn match_pattern_bindings_are_listed_in_source_order() {
     let cases = match_cases(
         "def f(x: Int):\n    match x:\n    case (var a, [b, *c]) | (ref a, _) as d:\n        pass\n",

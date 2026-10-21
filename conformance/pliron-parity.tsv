@@ -380,6 +380,8 @@ assets/ok/loop_binding_consuming_copy.mojo	main	exe-differential	sanitized
 assets/ok/mapping_key_iteration_reads.mojo	main	exe-differential	sanitized
 assets/ok/match_case_layouts.mojo	main	exe-differential	sanitized
 assets/ok/match_coverage_warnings.mojo	main	exe-differential	sanitized
+assets/ok/match_enum_cases_custom.mojo	main	exe-differential	sanitized
+assets/ok/match_enum_cases_optional.mojo	main	exe-differential	sanitized
 assets/ok/match_equality_effects.mojo	main	exe-differential	sanitized
 assets/ok/match_equality_effects_and_bindings.mojo	main	exe-differential	sanitized
 assets/ok/match_exits_and_return_analysis.mojo	main	exe-differential	sanitized

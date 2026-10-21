@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	712
+# swept-count	724
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -436,6 +436,18 @@ assets/type_error/mapping_key_ref_write.mojo	runs	subset	the pin runs it;Mojito 
 assets/type_error/match_bare_binding_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/match_binding_scope.mojo	compile-reject	agree	error: use of unknown declaration 'a'
 assets/type_error/match_binding_after_case.mojo	compile-reject	agree	error: use of unknown declaration 'x'
+assets/type_error/match_enum_case_call_head.mojo	compile-reject	agree	error: enum case pattern must be written as 'Type.Case(...)' or '.Case(...)'
+assets/type_error/match_enum_case_keyword.mojo	compile-reject	agree	error: enum case patterns do not support keyword arguments
+assets/type_error/match_enum_case_missing_payload.mojo	compile-reject	agree	error: enum case 'Some' requires a payload pattern inside the parentheses
+assets/type_error/match_enum_case_none_payload.mojo	compile-reject	agree	error: enum case 'None' has no associated value
+assets/type_error/match_enum_case_not_enum_like.mojo	compile-reject	agree	error: cannot resolve inferred member without a contextual type
+assets/type_error/match_enum_case_parametric.mojo	compile-reject	agree	error: cannot match on a parametric enum type
+assets/type_error/match_enum_case_payload_immutable.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
+assets/type_error/match_enum_case_temporary_payload_immutable.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
+assets/type_error/match_enum_case_two_payloads.mojo	compile-reject	agree	error: enum case patterns currently support at most one payload subpattern
+assets/type_error/match_enum_case_types_short.mojo	compile-reject	agree	error: '_enum_case_types' must be a parameter list covering every case
+assets/type_error/match_enum_case_unknown.mojo	compile-reject	agree	error: 'Z' is not a case of 'Optional[Int]'
+assets/type_error/match_enum_case_wrong_owner.mojo	compile-reject	agree	error: cannot match value of type 'Optional[Int]' against enum case of type 'Rec'
 assets/type_error/match_literal_type_mismatch.mojo	compile-reject	agree	error: no matching method in call to '__eq__'
 assets/type_error/match_or_missing_name.mojo	compile-reject	agree	error: or-pattern alternatives must bind the same names; 'a' is bound in one alternative but not the other
 assets/type_error/match_or_type_mismatch.mojo	compile-reject	agree	error: or-pattern binding 'n' has incompatible types across alternatives

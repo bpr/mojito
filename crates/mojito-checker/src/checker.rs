@@ -408,6 +408,13 @@ pub(crate) fn builtin_stub(name: &str) -> String {
 /// The module holding the functions the compiler calls by module path.
 pub(crate) const STUBS_MODULE: &str = "std.builtin._stubs";
 
+/// The linked name of the bundled `EnumLike` trait, which pattern matching
+/// reads a subject's cases through: the compiler names it by module path,
+/// as upstream's `getBuiltinTrait` does, never by its spelling.
+pub(crate) fn enum_like_trait() -> String {
+    mojito_module::module::linked_item_name("std.builtin.enum_like", "EnumLike")
+}
+
 /// A static type checker over the parsed AST.
 ///
 /// Top-level struct and trait declarations register order-independently

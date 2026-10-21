@@ -1958,7 +1958,7 @@ impl Checker {
     /// The value `field` names on the struct application `arguments`: a
     /// value member at the arguments, else the argument a value parameter
     /// of that name holds (`S[7].n`). `None` when `field` names neither.
-    fn struct_value_member(
+    pub(super) fn struct_value_member(
         &self,
         info: &StructInfo,
         arguments: &[TyArg],

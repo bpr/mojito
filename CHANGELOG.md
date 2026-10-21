@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Enum case patterns run as on the pin: over a subject whose type declares
+  `EnumLike`, `case .Some(x)`, `case Optional.None`, and a bare tag test
+  `case .Some` find the case by name in `_enum_case_names`, test
+  `_get_enum_discriminant()` against its index, and match the one payload
+  pattern over `_unsafe_get_enum_payload[case]()`, read once per case at the
+  first command that needs it. Tuple, nested-enum, literal, and `as`
+  payloads run, `ref` writes through a place subject while a temporary's
+  payload stays immutable, a qualified owner is checked nominally at the
+  root, and a bare qualified head over any other subject is an equality
+  test (`case DType.float32`). Parameterized pattern heads now parse
+  (`case P[Int](a=z)`, `case Optional[Int].Some(z)`), and an enum case no
+  longer counts as irrefutable. Rejections carry the pin's texts
+  (`assets/ok/match_enum_cases_*.mojo`,
+  `assets/type_error/match_enum_case_*`). This closes R1133.
 - `EnumLike` is upstream's library trait, ported whole into the bundled
   `stdlib/std/builtin/enum_like.mojo` and exported by the prelude, and
   `Optional` and `OptionalReg` conform with upstream's members: the case

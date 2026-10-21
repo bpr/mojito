@@ -2798,11 +2798,16 @@ pub enum CheckedCommand {
     /// selects; `False` advances to the next case before any element is
     /// read.
     ListLength { test: CheckedNodeId },
-    /// Read one element of a sequence pattern's subject, once, at the first
-    /// command that needs it: the declaration the check synthesized
-    /// (`ref $elem<id> = parent[i]` over a reference result, `var $elem<id>
-    /// = parent[i]` over an owned one), which the element's later commands
-    /// name, as upstream's per-path value.
+    /// Test an enum-like subject's case: the node of the comparison the
+    /// check synthesized (`$match<id>._get_enum_discriminant() == case`),
+    /// whose `Bool` selects, as upstream's `EnumTag` on the path.
+    EnumTag { test: CheckedNodeId, case: usize },
+    /// Read one element of a sequence pattern's subject, or an enum case's
+    /// payload, once, at the first command that needs it: the declaration
+    /// the check synthesized (`ref $elem<id> = parent[i]` or `ref $elem<id>
+    /// = parent._unsafe_get_enum_payload[case]()` over a reference result,
+    /// `var $elem<id> = parent[i]` over an owned one), which the path's
+    /// later commands name, as upstream's per-path value.
     PathValue { declaration: CheckedStmtId },
     /// Bind a name to the subject: the declaration the check synthesized
     /// for it (`ref name = $match<id>`, `var name = $match<id>`), or the
@@ -2819,7 +2824,9 @@ impl CheckedCommand {
     /// included.
     pub fn expressions(&self) -> Vec<CheckedNodeId> {
         match self {
-            Self::Equal { test } | Self::ListLength { test } => vec![*test],
+            Self::Equal { test } | Self::ListLength { test } | Self::EnumTag { test, .. } => {
+                vec![*test]
+            }
             Self::Bind { .. } | Self::PathValue { .. } => Vec::new(),
             Self::Alternatives(alternatives) => alternatives
                 .iter()
@@ -2836,7 +2843,7 @@ impl CheckedCommand {
             Self::Bind { declaration } | Self::PathValue { declaration } => {
                 vec![std::slice::from_ref(declaration)]
             }
-            Self::Equal { .. } | Self::ListLength { .. } => Vec::new(),
+            Self::Equal { .. } | Self::ListLength { .. } | Self::EnumTag { .. } => Vec::new(),
             Self::Alternatives(alternatives) => alternatives
                 .iter()
                 .flatten()
@@ -2852,6 +2859,10 @@ impl CheckedCommand {
             },
             Self::ListLength { test } => Self::ListLength {
                 test: map.expression(*test),
+            },
+            Self::EnumTag { test, case } => Self::EnumTag {
+                test: map.expression(*test),
+                case: *case,
             },
             Self::Bind { declaration } => Self::Bind {
                 declaration: map.statement(*declaration),
@@ -2903,8 +2914,10 @@ pub enum PlannedCommand {
     Equal(Expr),
     /// The length test `list_length_matches($match<id>, arity, True)`.
     ListLength(Expr),
-    /// The element read `ref $elem<id> = parent[i]` or `var $elem<id> =
-    /// parent[i]`.
+    /// The case test `$match<id>._get_enum_discriminant() == case`.
+    EnumTag { test: Expr, case: usize },
+    /// The path read `ref $elem<id> = parent[i]`, `var $elem<id> =
+    /// parent[i]`, or `ref $elem<id> = parent._unsafe_get_enum_payload[case]()`.
     PathValue(Box<Stmt>),
     /// The declaration `ref name = $match<id>` or `var name = $match<id>`,
     /// or a later `|` alternative's assignment to the first's binding.
@@ -5414,6 +5427,10 @@ impl<'a> ArenaBuilder<'a> {
             },
             PlannedCommand::ListLength(test) => CheckedCommand::ListLength {
                 test: self.expr(test),
+            },
+            PlannedCommand::EnumTag { test, case } => CheckedCommand::EnumTag {
+                test: self.expr(test),
+                case: *case,
             },
             PlannedCommand::Bind(declaration) => CheckedCommand::Bind {
                 declaration: self.stmt(declaration),

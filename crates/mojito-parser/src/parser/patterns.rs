@@ -633,7 +633,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
     /// The rest of a member/call-shaped pattern after its first head
     /// segment: `.name` segments, an optional parameter list on a bare
-    /// name, then an optional `(args)` of subpatterns.
+    /// name and the `.name` segments after it, then an optional `(args)` of
+    /// subpatterns.
     fn parse_head_pattern(
         &mut self,
         mut head: Expr,
@@ -658,13 +659,19 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 ));
             };
             let name = name.clone();
-            self.next_token()?;
             let args = self.parse_param_args()?;
-            self.expect(
-                &Token::RBracket,
-                "Expected ']' after pattern head parameters",
-            )?;
             head = self.node(ExprKind::TypeApply { name, args }, start);
+            while matches!(self.peek_token()?, Some(Token::Dot)) {
+                self.next_token()?;
+                let field = self.expect_case_name("Expected a member name after '.'")?;
+                head = self.node(
+                    ExprKind::Member {
+                        object: Box::new(head),
+                        field,
+                    },
+                    start,
+                );
+            }
         }
         if !matches!(self.peek_token()?, Some(Token::LParen)) {
             if matches!(

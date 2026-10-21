@@ -156,14 +156,25 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `std.builtin._stubs.list_length_matches`, named by `builtin_stub`), and
   compiles each element's pattern over an unread element subject — a
   `Step::SequenceElement`, `SequenceFromEnd`, or the star's
-  `SequenceSlice`, spelled by `MatchSubject::value_at` — which
+  `SequenceSlice`, spelled by `spell` — which
   `materialize` reads at the first command that needs it into a hidden
   `$elem<id>` (`PlannedCommand::PathValue`: `ref` over a reference
   result, `var` over an owned one, moved into a lone `var` binding),
   remembered per path in `Commands::reads` (an alternative starts from a
   clone, so it re-reads what the commands before the `|` did not); an
   unread element rejects typed patterns, as upstream's untyped list
-  element path does; a `|` pattern (`compile_or_pattern`) compiles each
+  element path does; over a subject declaring the bundled `EnumLike`
+  (`is_enum_like`, by `checker::enum_like_trait`'s linked identity) an
+  enum case (`compile_enum_case`, or a bare `MatchPatternKind::Head`)
+  resolves its case (`enum_case`, with the root-only nominal
+  `check_enum_owner`) through `enum_case_index` / `enum_case_payload`
+  over the conformer's folded `_enum_case_names` / `_enum_case_types`
+  (`enum_like_list`, through `constraints.rs`'s `struct_value_member`),
+  pushes a `PlannedCommand::EnumTag` (`enum_tag_test`, checked as
+  `CheckedCommand::EnumTag`), and compiles its payload pattern over a
+  `Step::EnumPayload` read, which `materialize` reads along the path like
+  an element; over any other subject a bare head is an `equality_test`;
+  a `|` pattern (`compile_or_pattern`) compiles each
   alternative as a program of its own under a `Join` (the first alternative
   declares its `var` bindings, the later ones assign them, names and types
   compared) — orders every test before every binding (`Commands`), checks
@@ -171,8 +182,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   statement, per-case `PlannedCommand`s, `Alternatives` nested) at the
   statement's facts; `MatchSubject` is the projected subject (the hidden
   name, a path of `Step`s, the projection's type, whether the whole
-  subject is a temporary, whether it is an owned element read, and how an
-  unread element is read) and `value()` spells it; `Binding` is a name's
+  subject is a temporary and whether its projections are of one, whether
+  it is the root, whether it is an owned path read, and the path's
+  pending reads) and `value()` spells it; `Binding` is a name's
   mode, `as` included; `irrefutable` (re-exported as `irrefutable_pattern`)
   decides whether a pattern is irrefutable; `Coverage` over a `Space`
   (`Bool`, a tuple product, or open) accounts for each case, yields the

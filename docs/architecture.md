@@ -2616,8 +2616,11 @@ to `std.builtin._stubs.list_length_matches`, among them), the element
 reads (`PathValue`, each a hidden `$elem<id>` declaration placed at the
 first command that needs it), its bindings, its guard, and its body, ended
 by `Terminator::MatchComplete`, then an else region ended by `Yield` for
-the fall-through when no case matched (enum-case patterns land by roadmap
-entry, R1132–R1140). A starred sequence pattern adds no command kind: its
+the fall-through when no case matched. An enum case's tag test is an
+`EnumTag` command (`$match<id>._get_enum_discriminant() == case`, kept
+distinct from `Equal` as upstream's is), and its payload is a `PathValue`
+read of `parent._unsafe_get_enum_payload[case]()`, which nested patterns
+project below. A starred sequence pattern adds no command kind: its
 from-end elements and its slice are `PathValue` reads of ordinary
 subscripts (`$match<id>[$match<id>.__len__() - k]`,
 `$match<id>[i:$match<id>.__len__() - k]`).
