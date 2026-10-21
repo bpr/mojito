@@ -590,9 +590,9 @@ impl Compiler {
             }
         }
         let checked = checked.map_err(CompilerError::Type)?;
-        let mir = {
+        let mut mir = {
             let _lower = timing::span("mir.lower");
-            crate::mir::lower_checked_program_importing(
+            crate::mir::lower_checked_program_structured_importing(
                 &checked,
                 package.as_deref().map(|package| &package.declarations),
             )
@@ -622,7 +622,7 @@ impl Compiler {
         }
         {
             let _ownership = timing::span("ownership");
-            crate::analysis::check_ownership_program(&mir).map_err(CompilerError::Ownership)?;
+            crate::analysis::check_ownership_program(&mut mir).map_err(CompilerError::Ownership)?;
         }
         Ok(CompiledProgram {
             checked,

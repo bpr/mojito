@@ -3284,13 +3284,17 @@ Structured control flow is checked in both modes: each region terminator
 sits in the region of the op it ends, with the op's result arity and types;
 a `break`/`continue` names an enclosing loop; a `comptime.for.break` or
 `continue` has a `comptime for` as its nearest loop (`verify/structure.rs`).
-The slot-ends check runs on a body's `lower-control-flow` lowering. A third
+The slot-ends check runs on a body's `lower-control-flow` lowering, and a
+structured body that ends no slot (no `drop.var`, `var.consume`, or
+cleanup list), as every pre-drop body is but for explicit destroys, has no
+finding without one. A third
 mode, `verify_structured_function_in`, adds upstream's structured form for
 a body: every region, the body included, one block, and no CFG terminator
 (`Jump`, `Branch`, `ComptimeBranch`, the `ComptimeFor` terminator,
 `EscapeJump`); its shape half, `verify_structured_shape`, runs in
-production on every body `lower_cfg_nested` builds, before
-`lower-control-flow`, each finding a MIR invariant error. `verify_concrete`
+production on every body `lower_cfg_nested` builds, each finding a MIR
+invariant error, and pre-drop `verify` checks those bodies structured,
+before the ownership check lowers them. `verify_concrete`
 rejects every structured op and region
 terminator, which the transitional lowering removes first.
 `native::mono` verifies its output in the concrete mode, and asks
@@ -3409,7 +3413,10 @@ argument conventions/place requirements, result ABI, effects, generic
 arguments, and any result adapter) and verified as the abstract declaration of
 record. Concrete targets are additionally checked against `MirDeclarations`. The
 pipeline composes it with
-`analysis::check_ownership_program`, which owns the ownership dataflow; the
+`analysis::check_ownership_program`, which owns the ownership dataflow:
+per function, the move and initialization scan walks the structured body as
+upstream's `CheckLifetimes` walks `hlcf`, then `lower-control-flow` lowers
+it and the interior-origin and loan checks read the blocks; the
 compiler rejects findings as `CompilerError::Verify`, and the VM re-verifies
 the drop-elaborated program it actually executes. The loan analysis reads
 each call's retained argument places against the callee's declaration
@@ -4021,8 +4028,9 @@ chains, and comprehensions as `If`/`Loop`, each region one block (a
 conditional expression whose condition the checker found a parameter value,
 `SemanticAdjustment::ComptimeConditional`, is a `ComptimeIf` with results,
 as upstream's `IfElseOpNode` emits `hlcf.comptime.if`), and
-`lower_cfg_nested` ends every body with `mir::lower_control_flow` (upstream's
-`LowerControlFlow`) lowers them to blocks and the CFG terminators: a
+`mir::lower_control_flow` (upstream's `LowerControlFlow`), which
+`analysis::check_ownership_program` runs on each body after its move scan,
+lowers them to blocks and the CFG terminators: a
 region's blocks are appended to its list, the rest of the block moves to a
 join, an op's results go through one slot each, stored at a `yield` and
 forwarded at the join, a `break`/`continue` leaving a `try` part to a
@@ -4030,8 +4038,18 @@ function-level loop is an `EscapeJump`, a `match` case's `match.next` and
 `match.complete` jump to the next case's entry and to the join through a
 frame like a loop's (`tests/mir_passes/lower-control-flow/match_cases.mir`),
 and `Unreachable` is `Return(None)`.
-Every analysis below lowering, the elaborator, the VM, and the Pliron
-backend sees only lowered MIR.
+Register typing (`close_register_types`, which types an `If`'s or
+`ComptimeIf`'s results from the first arm yielding them typed), named-result
+materialization, and pre-drop verification read the structured body, and
+the move scan walks its regions (`analysis/moves.rs`, upstream's
+`UninitializedValueScan`): an `if` joins its arms, a `match` case starts
+from its predecessors' `match.next` states, a loop iterates its body until
+its continue set stops changing, its break set being the live-out, and a
+`break`/`continue` joins its state into the loop it names, through any
+`finally` it crosses. Every analysis after the move scan, the elaborator,
+the VM, and the Pliron backend sees only lowered MIR; `lower_checked_program`
+and its importing and per-unit forms return the lowered program for phase
+tests, and `lower_checked_program_structured` the structured one.
 
 ### Spans
 
@@ -4659,9 +4677,10 @@ normalized in place leaves it partial. A `for` loop binds what
 empty on every path to it is erased, since nothing dies there. Every other
 named drop stays a `drop.var`, whose runtime partial-aggregate rule,
 Pliron's drop and leaf flags, and an owned pack's reverse order carry
-the states upstream's lifetime checker makes definite; once the
-move and initialization checks walk regions (R875) the lowering reads
-their state instead of its own.
+the states upstream's lifetime checker makes definite; the move and
+initialization scan walks regions, but its state is pre-drop and
+per-template, so the lowering reads it only once drops are placed in
+regions (R877).
 A cleanup list's entries name their destructor as a `DropVar` does
 (`CleanupDrop`), named by the same `name_destructors` and respelled by the
 same `name_lifecycle_calls`, so the VM's `run_cleanup` and Pliron's

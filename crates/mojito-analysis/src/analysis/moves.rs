@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_mir::mir::{LoopLabel, MirBlockId};
 
 /// A place's move/init state. A three-point lattice ordered by how "moved" a
 /// place might be; the merge of disagreeing paths is `MaybeMoved`.
@@ -656,42 +657,21 @@ pub(super) fn join_states(a: &[Node], b: &[Node]) -> Vec<Node> {
     a.iter().zip(b).map(|(x, y)| join_node(x, y)).collect()
 }
 
-/// A region's move states per exit channel: the normal fall-off, every
-/// potentially-raising point, and `return`/escape exits. `None` marks an
-/// unreachable channel.
-struct MoveFlow {
-    normal: Option<Vec<Node>>,
-    raises: Option<Vec<Node>>,
-    exits: Option<Vec<Node>>,
-}
-
-impl MoveFlow {
-    const fn unreachable() -> Self {
-        Self {
-            normal: None,
-            raises: None,
-            exits: None,
-        }
-    }
-}
-
-/// Join a channel state into `target` (unreachable contributes nothing).
-#[allow(clippy::ref_option, reason = "TODO: take Option<&T>")]
-fn add_state(target: &mut Option<Vec<Node>>, source: &Option<Vec<Node>>) {
-    match (target.as_mut(), source) {
-        (_, None) => {}
-        (None, Some(source)) => *target = Some(source.clone()),
-        (Some(target), Some(source)) => *target = join_states(target, source),
-    }
-}
-
 /// Analyze one function body for move violations, field-sensitively (partial
 /// moves): a value transferred with `^` — whole (`x^`) or a field (`p.a^`) — may
 /// not be read again on that path, but a disjoint sibling (`p.b`) stays usable.
-/// `try` regions are walked with the precise raise-point rule: an `except` arm
-/// starts from the join of the states at every potentially-raising
-/// instruction of the body, so a value consumed before a raising call is
-/// uninitialized there while one consumed after the last raise is not.
+///
+/// A structured body is walked as upstream's `UninitializedValueScan` walks
+/// it: an `if` joins its arms, a `match` case starts from the states its
+/// predecessors' `match.next` left, and a loop iterates its body until the
+/// state its `continue`s carry back stops changing, the states at its
+/// `break`s being its live-out. A `break`/`continue` reaches the loop it
+/// names through any `finally` it crosses. `try` regions are walked with
+/// the precise raise-point rule: an `except` arm starts from the join of
+/// the states at every potentially-raising instruction of the body, so a
+/// value consumed before a raising call is uninitialized there while one
+/// consumed after the last raise is not.
+///
 /// A field moved out of a value must be written back before any other part
 /// of the value is used, before the variable is redefined, and before the
 /// function exits; a `deinit` parameter's direct fields are exempt because
@@ -709,7 +689,14 @@ pub(super) fn analyze_moves(f: &MirFunction) -> Result<(), OwnershipError> {
         }
         Ok(())
     };
-    let flow = walk_region(Some(entry), &f.blocks, f, &context, Some(&mut check))?;
+    let flow = walk_region(
+        Some(entry),
+        &f.blocks,
+        f,
+        &context,
+        Some(&mut check),
+        &mut Vec::new(),
+    )?;
     // A reference parameter is the caller's storage, so it holds a whole
     // value again on each channel that leaves the function.
     for (state, raising) in [
@@ -753,23 +740,115 @@ pub(super) fn observe_move_states(
         f,
         &move_context(f),
         Some(&mut observe),
+        &mut Vec::new(),
     )
     .map(|_| ())
 }
 
-/// The observer type of a replay that observes nothing (a fixpoint pass).
-type NoObserver = fn(&[Node], &MirInstr) -> Result<(), OwnershipError>;
+/// A region's move states per exit channel: the normal fall-off, every
+/// potentially-raising point, and `return` exits. `None` marks an
+/// unreachable channel. The states a `break`, `continue`, `match.next`, or
+/// `match.complete` carries go to their [`MoveFrame`] instead; in a lowered
+/// body, the state an escape from a `try` part carries is kept with the
+/// function block it enters, which the function's fixpoint joins it into.
+struct MoveFlow {
+    normal: Option<Vec<Node>>,
+    raises: Option<Vec<Node>>,
+    exits: Option<Vec<Node>>,
+    escapes: Vec<(MirBlockId, Vec<Node>)>,
+}
 
-/// Walk one region's mini-CFG (a function body or a `try` region) from its
-/// entry state: reach the per-block fixpoint, then replay each reachable
-/// block, handing every instruction and the state reaching it to `observer`
-/// when one is given. Nested `try`s recurse through [`walk_try`].
+impl MoveFlow {
+    const fn unreachable() -> Self {
+        Self {
+            normal: None,
+            raises: None,
+            exits: None,
+            escapes: Vec::new(),
+        }
+    }
+
+    /// A flow that falls off with `state` and leaves no other way.
+    const fn falls_off(state: Vec<Node>) -> Self {
+        Self {
+            normal: Some(state),
+            raises: None,
+            exits: None,
+            escapes: Vec::new(),
+        }
+    }
+
+    /// Join every channel of `other` into this flow's.
+    fn absorb(&mut self, other: &Self) {
+        add_state(&mut self.normal, &other.normal);
+        self.absorb_abnormal(other);
+    }
+
+    /// Join the raising, exiting, and escaping channels of `other` into
+    /// this flow's.
+    fn absorb_abnormal(&mut self, other: &Self) {
+        add_state(&mut self.raises, &other.raises);
+        add_state(&mut self.exits, &other.exits);
+        self.escapes.extend(other.escapes.iter().cloned());
+    }
+}
+
+/// An op a region terminator inside it leaves to, upstream's break and
+/// continue sets of a loop and the next and complete sets of a `match`
+/// entry: the states joined at each of its two exits.
+struct MoveFrame {
+    kind: FrameKind,
+    /// A loop's break set; a `match` case's complete set.
+    leave: Option<Vec<Node>>,
+    /// A loop's continue set; a `match` case's next set.
+    resume: Option<Vec<Node>>,
+}
+
+impl MoveFrame {
+    const fn new(kind: FrameKind) -> Self {
+        Self {
+            kind,
+            leave: None,
+            resume: None,
+        }
+    }
+}
+
+/// Which region terminators a [`MoveFrame`] resolves, by the rules
+/// `lower-control-flow` resolves them by: a `break`/`continue` names the
+/// nearest loop carrying its label (any loop when it has none),
+/// `comptime.for.break`/`continue` the nearest `comptime for`, and
+/// `match.next`/`match.complete` the nearest `match` case.
+#[derive(Clone, Copy)]
+enum FrameKind {
+    Loop(Option<LoopLabel>),
+    ComptimeFor,
+    MatchCase,
+}
+
+/// Join a channel state into `target` (unreachable contributes nothing).
+#[allow(clippy::ref_option, reason = "TODO: take Option<&T>")]
+fn add_state(target: &mut Option<Vec<Node>>, source: &Option<Vec<Node>>) {
+    match (target.as_mut(), source) {
+        (_, None) => {}
+        (None, Some(source)) => *target = Some(source.clone()),
+        (Some(target), Some(source)) => *target = join_states(target, source),
+    }
+}
+
+/// Walk one region from its entry state, handing every instruction and the
+/// state reaching it to `observer` when one is given. A structured region is
+/// one block, replayed from `entry`; a lowered block list (a function body
+/// or a `try` part below `lower-control-flow`) first reaches its per-block
+/// fixpoint. Region ops recurse through [`walk_op`], and a region
+/// terminator hands its state to the frame it names.
 fn walk_region<O>(
     entry: Option<Vec<Node>>,
     blocks: &[MirBlock],
     f: &MirFunction,
     context: &MoveContext,
     mut observer: Option<&mut O>,
+    frames: &mut Vec<MoveFrame>,
 ) -> Result<MoveFlow, OwnershipError>
 where
     O: FnMut(&[Node], &MirInstr) -> Result<(), OwnershipError>,
@@ -778,13 +857,12 @@ where
         return Ok(MoveFlow::unreachable());
     };
     if blocks.is_empty() {
-        return Ok(MoveFlow {
-            normal: Some(entry),
-            raises: None,
-            exits: None,
-        });
+        return Ok(MoveFlow::falls_off(entry));
     }
-    let in_states = region_in_states(&entry, blocks, f, context);
+    let in_states = match blocks {
+        [block] if terminator_targets(&block.term).is_empty() => vec![Some(entry)],
+        _ => region_in_states(&entry, blocks, f, context, frames),
+    };
     let mut flow = MoveFlow::unreachable();
     for (b, block) in blocks.iter().enumerate() {
         let Some(mut state) = in_states[b].clone() else {
@@ -792,16 +870,16 @@ where
         };
         let mut reachable = true;
         for (i, instr) in block.instrs.iter().enumerate() {
-            if let MirInstr::Try { .. } = instr {
-                let nested = walk_try(
+            if holds_regions(instr) {
+                let nested = walk_op(
                     std::mem::take(&mut state),
                     instr,
                     f,
                     context,
                     observer.as_deref_mut(),
+                    frames,
                 )?;
-                add_state(&mut flow.raises, &nested.raises);
-                add_state(&mut flow.exits, &nested.exits);
+                flow.absorb_abnormal(&nested);
                 if let Some(normal) = nested.normal {
                     state = normal;
                 } else {
@@ -829,27 +907,148 @@ where
             continue;
         }
         match block.term {
-            MirTerm::TryYield => add_state(&mut flow.normal, &Some(state)),
-            MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. } | MirTerm::EscapeJump { .. } => {
+            MirTerm::TryYield
+            | MirTerm::Yield(_)
+            | MirTerm::ComptimeYield(_)
+            | MirTerm::ElifCond(_) => add_state(&mut flow.normal, &Some(state)),
+            MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. } => {
                 add_state(&mut flow.exits, &Some(state));
             }
+            MirTerm::EscapeJump { target, .. } => flow.escapes.push((target, state)),
+            MirTerm::Break { label } => {
+                leave_to(frames, |kind| names_loop(kind, label), false, state);
+            }
+            MirTerm::Continue { label } => {
+                leave_to(frames, |kind| names_loop(kind, label), true, state);
+            }
+            MirTerm::ComptimeBreak => leave_to(frames, is_comptime_for, false, state),
+            MirTerm::ComptimeContinue => leave_to(frames, is_comptime_for, true, state),
+            MirTerm::MatchComplete => leave_to(frames, is_match_case, false, state),
+            MirTerm::MatchNext => leave_to(frames, is_match_case, true, state),
+            // `hlcf.unreachable` checks nothing: no value reaches past it.
             MirTerm::Jump(_)
             | MirTerm::Branch { .. }
             | MirTerm::ComptimeBranch { .. }
             | MirTerm::ComptimeFor { .. }
-            | MirTerm::Yield(_)
-            | MirTerm::ElifCond(_)
-            | MirTerm::Break { .. }
-            | MirTerm::Continue { .. }
-            | MirTerm::ComptimeYield(_)
-            | MirTerm::ComptimeBreak
-            | MirTerm::ComptimeContinue
-            | MirTerm::MatchNext
-            | MirTerm::MatchComplete
             | MirTerm::Unreachable => {}
         }
     }
     Ok(flow)
+}
+
+/// Whether `instr` is a region op, which [`walk_op`] walks.
+const fn holds_regions(instr: &MirInstr) -> bool {
+    matches!(
+        instr,
+        MirInstr::Try { .. }
+            | MirInstr::If { .. }
+            | MirInstr::Loop { .. }
+            | MirInstr::ComptimeIf { .. }
+            | MirInstr::ComptimeFor { .. }
+            | MirInstr::Match { .. }
+    )
+}
+
+/// Walk one region op from `entry`, as `scanBlock` dispatches it.
+fn walk_op<O>(
+    entry: Vec<Node>,
+    instr: &MirInstr,
+    f: &MirFunction,
+    context: &MoveContext,
+    observer: Option<&mut O>,
+    frames: &mut Vec<MoveFrame>,
+) -> Result<MoveFlow, OwnershipError>
+where
+    O: FnMut(&[Node], &MirInstr) -> Result<(), OwnershipError>,
+{
+    match instr {
+        MirInstr::Try { .. } => walk_try(entry, instr, f, context, observer, frames),
+        MirInstr::If { .. } => walk_if(entry, instr, f, context, observer, frames),
+        MirInstr::ComptimeIf { arms, orelse, .. } => walk_arms(
+            &entry,
+            arms.iter().chain(std::iter::once(orelse)),
+            f,
+            context,
+            observer,
+            frames,
+        ),
+        MirInstr::Loop { label, body } => walk_loop(
+            entry,
+            FrameKind::Loop(*label),
+            body,
+            f,
+            context,
+            observer,
+            frames,
+        ),
+        // The else region is `unreachable` once `LowerSemanticCF` has run.
+        MirInstr::ComptimeFor { body, .. } => walk_loop(
+            entry,
+            FrameKind::ComptimeFor,
+            body,
+            f,
+            context,
+            observer,
+            frames,
+        ),
+        MirInstr::Match { cases, orelse } => {
+            walk_match(entry, cases, orelse, f, context, observer, frames)
+        }
+        _ => Ok(MoveFlow::falls_off(entry)),
+    }
+}
+
+/// Join `state` into the innermost frame `names` accepts: into its resume
+/// set when `resume`, else into its leave set.
+fn leave_to(
+    frames: &mut [MoveFrame],
+    names: impl Fn(FrameKind) -> bool,
+    resume: bool,
+    state: Vec<Node>,
+) {
+    if let Some(frame) = frames.iter_mut().rev().find(|frame| names(frame.kind)) {
+        let set = if resume {
+            &mut frame.resume
+        } else {
+            &mut frame.leave
+        };
+        add_state(set, &Some(state));
+    }
+}
+
+const fn is_comptime_for(kind: FrameKind) -> bool {
+    matches!(kind, FrameKind::ComptimeFor)
+}
+
+const fn is_match_case(kind: FrameKind) -> bool {
+    matches!(kind, FrameKind::MatchCase)
+}
+
+fn names_loop(kind: FrameKind, label: Option<LoopLabel>) -> bool {
+    match kind {
+        FrameKind::Loop(found) => label.is_none() || found == label,
+        FrameKind::ComptimeFor | FrameKind::MatchCase => false,
+    }
+}
+
+/// Walk `blocks` from `entry` under a fresh frame of `kind`, returning the
+/// region's flow and the frame its terminators filled.
+fn walk_framed<O>(
+    entry: Vec<Node>,
+    kind: FrameKind,
+    blocks: &[MirBlock],
+    f: &MirFunction,
+    context: &MoveContext,
+    observer: Option<&mut O>,
+    frames: &mut Vec<MoveFrame>,
+) -> Result<(MoveFlow, MoveFrame), OwnershipError>
+where
+    O: FnMut(&[Node], &MirInstr) -> Result<(), OwnershipError>,
+{
+    let depth = frames.len();
+    frames.push(MoveFrame::new(kind));
+    let flow = walk_region(Some(entry), blocks, f, context, observer, frames)?;
+    Ok((flow, frames.remove(depth)))
 }
 
 /// The state a raise at this instruction hands its observer. A named
@@ -863,16 +1062,196 @@ fn raise_seed(state: &[Node], next: Option<&MirInstr>) -> Vec<Node> {
     seed
 }
 
+/// Walk an `if`, as `checkIfOp`: the then arm from `entry`, each elif's
+/// condition from the state the previous condition left and its arm from
+/// the state after it, and the else arm from the state the last condition
+/// left. Without elifs this is `checkIfLikeOp`. The live-out is the join of
+/// every arm's.
+fn walk_if<O>(
+    entry: Vec<Node>,
+    instr: &MirInstr,
+    f: &MirFunction,
+    context: &MoveContext,
+    mut observer: Option<&mut O>,
+    frames: &mut Vec<MoveFrame>,
+) -> Result<MoveFlow, OwnershipError>
+where
+    O: FnMut(&[Node], &MirInstr) -> Result<(), OwnershipError>,
+{
+    let MirInstr::If {
+        then,
+        elifs,
+        orelse,
+        ..
+    } = instr
+    else {
+        return Ok(MoveFlow::falls_off(entry));
+    };
+    let mut flow = walk_region(
+        Some(entry.clone()),
+        then,
+        f,
+        context,
+        observer.as_deref_mut(),
+        frames,
+    )?;
+    let mut rest = Some(entry);
+    for elif in elifs {
+        let cond = walk_region(
+            rest,
+            &elif.cond,
+            f,
+            context,
+            observer.as_deref_mut(),
+            frames,
+        )?;
+        flow.absorb_abnormal(&cond);
+        let arm = walk_region(
+            cond.normal.clone(),
+            &elif.then,
+            f,
+            context,
+            observer.as_deref_mut(),
+            frames,
+        )?;
+        flow.absorb(&arm);
+        rest = cond.normal;
+    }
+    let arm = walk_region(rest, orelse, f, context, observer, frames)?;
+    flow.absorb(&arm);
+    Ok(flow)
+}
+
+/// Walk each of `regions` from `entry`, as `checkIfLikeOp` walks a
+/// `comptime if`'s arms: the live-out is the join of every arm's.
+fn walk_arms<'r, O>(
+    entry: &[Node],
+    regions: impl Iterator<Item = &'r Vec<MirBlock>>,
+    f: &MirFunction,
+    context: &MoveContext,
+    mut observer: Option<&mut O>,
+    frames: &mut Vec<MoveFrame>,
+) -> Result<MoveFlow, OwnershipError>
+where
+    O: FnMut(&[Node], &MirInstr) -> Result<(), OwnershipError>,
+{
+    let mut flow = MoveFlow::unreachable();
+    for region in regions {
+        let arm = walk_region(
+            Some(entry.to_vec()),
+            region,
+            f,
+            context,
+            observer.as_deref_mut(),
+            frames,
+        )?;
+        flow.absorb(&arm);
+    }
+    Ok(flow)
+}
+
+/// Walk a loop (or a `comptime for`) as `checkLoopOp`: its continue set
+/// starts as `entry`, and the body is walked from it until the states its
+/// `continue`s join in stop changing; the break set is the live-out. Only
+/// the walk from the converged continue set is observed.
+fn walk_loop<O>(
+    entry: Vec<Node>,
+    kind: FrameKind,
+    body: &[MirBlock],
+    f: &MirFunction,
+    context: &MoveContext,
+    observer: Option<&mut O>,
+    frames: &mut Vec<MoveFrame>,
+) -> Result<MoveFlow, OwnershipError>
+where
+    O: FnMut(&[Node], &MirInstr) -> Result<(), OwnershipError>,
+{
+    let mut resume = entry;
+    let (mut flow, mut frame) = loop {
+        let (flow, frame) = walk_framed(
+            resume.clone(),
+            kind,
+            body,
+            f,
+            context,
+            None::<&mut O>,
+            frames,
+        )?;
+        let mut next = Some(resume.clone());
+        add_state(&mut next, &frame.resume);
+        match next {
+            Some(next) if next != resume => resume = next,
+            _ => break (flow, frame),
+        }
+    };
+    if observer.is_some() {
+        (flow, frame) = walk_framed(resume, kind, body, f, context, observer, frames)?;
+    }
+    Ok(MoveFlow {
+        normal: frame.leave,
+        ..flow
+    })
+}
+
+/// Walk a `match` as `checkMatchOp`: each case from the states the previous
+/// case's `match.next`s joined (the first from `entry`), and the else
+/// region from the last case's, outside this match's frame so a
+/// `match.next`/`match.complete` there resolves to an enclosing one. The
+/// live-out is the join of every `match.complete` state and the else
+/// region's.
+fn walk_match<O>(
+    entry: Vec<Node>,
+    cases: &[Vec<MirBlock>],
+    orelse: &[MirBlock],
+    f: &MirFunction,
+    context: &MoveContext,
+    mut observer: Option<&mut O>,
+    frames: &mut Vec<MoveFrame>,
+) -> Result<MoveFlow, OwnershipError>
+where
+    O: FnMut(&[Node], &MirInstr) -> Result<(), OwnershipError>,
+{
+    let mut flow = MoveFlow::unreachable();
+    let mut next = Some(entry);
+    for case in cases {
+        let Some(entry) = next else {
+            break;
+        };
+        let (case_flow, frame) = walk_framed(
+            entry,
+            FrameKind::MatchCase,
+            case,
+            f,
+            context,
+            observer.as_deref_mut(),
+            frames,
+        )?;
+        flow.absorb_abnormal(&case_flow);
+        add_state(&mut flow.normal, &frame.leave);
+        next = frame.resume;
+    }
+    let else_flow = walk_region(next, orelse, f, context, observer, frames)?;
+    flow.absorb(&else_flow);
+    Ok(flow)
+}
+
 /// Walk the four regions of one `try`: the body from `entry`, `else` from the
 /// body's normal completion, the handler from the body's raise points, and
 /// `finally` from every channel (checked once from their join; its own
 /// channels compose per entering channel, as the runtime runs it).
+///
+/// A `try` is transparent to `break`, `continue`, and `match` exits, but one
+/// with a `finally` runs it before them, as upstream's `lowerTryFinally`
+/// copies it before each terminator leaving the `try`: the states the parts
+/// hand the enclosing frames are held back and walked through `finally`
+/// before they reach their frames.
 fn walk_try<O>(
     entry: Vec<Node>,
     instr: &MirInstr,
     f: &MirFunction,
     context: &MoveContext,
     mut observer: Option<&mut O>,
+    frames: &mut Vec<MoveFrame>,
 ) -> Result<MoveFlow, OwnershipError>
 where
     O: FnMut(&[Node], &MirInstr) -> Result<(), OwnershipError>,
@@ -885,16 +1264,28 @@ where
         ..
     } = instr
     else {
-        return Ok(MoveFlow {
-            normal: Some(entry),
-            raises: None,
-            exits: None,
-        });
+        return Ok(MoveFlow::falls_off(entry));
     };
-    let body_flow = walk_region(Some(entry), body, f, context, observer.as_deref_mut())?;
+    let held: Vec<_> = if finalbody.is_some() {
+        frames
+            .iter_mut()
+            .map(|frame| (frame.leave.take(), frame.resume.take()))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let body_flow = walk_region(
+        Some(entry),
+        body,
+        f,
+        context,
+        observer.as_deref_mut(),
+        frames,
+    )?;
     let mut normal = None;
     let mut raises = None;
     let mut exits = body_flow.exits.clone();
+    let mut escapes = body_flow.escapes.clone();
     if let Some(orelse) = orelse {
         let else_flow = walk_region(
             body_flow.normal.clone(),
@@ -902,10 +1293,12 @@ where
             f,
             context,
             observer.as_deref_mut(),
+            frames,
         )?;
         add_state(&mut normal, &else_flow.normal);
         add_state(&mut raises, &else_flow.raises);
         add_state(&mut exits, &else_flow.exits);
+        escapes.extend(else_flow.escapes);
     } else {
         add_state(&mut normal, &body_flow.normal);
     }
@@ -916,10 +1309,12 @@ where
             f,
             context,
             observer.as_deref_mut(),
+            frames,
         )?;
         add_state(&mut normal, &handler_flow.normal);
         add_state(&mut raises, &handler_flow.raises);
         add_state(&mut exits, &handler_flow.exits);
+        escapes.extend(handler_flow.escapes);
     } else {
         add_state(&mut raises, &body_flow.raises);
     }
@@ -928,17 +1323,39 @@ where
             normal,
             raises,
             exits,
+            escapes,
         });
     };
+    let leaving: Vec<_> = frames
+        .iter_mut()
+        .zip(held)
+        .map(|(frame, (leave, resume))| {
+            (
+                std::mem::replace(&mut frame.leave, leave),
+                std::mem::replace(&mut frame.resume, resume),
+            )
+        })
+        .collect();
     if let Some(observer) = observer {
         let mut all = normal.clone();
         add_state(&mut all, &raises);
         add_state(&mut all, &exits);
-        walk_region(all, finalbody, f, context, Some(observer))?;
+        for (leave, resume) in &leaving {
+            add_state(&mut all, leave);
+            add_state(&mut all, resume);
+        }
+        for (_, state) in &escapes {
+            add_state(&mut all, &Some(state.clone()));
+        }
+        let mut scratch: Vec<MoveFrame> = frames
+            .iter()
+            .map(|frame| MoveFrame::new(frame.kind))
+            .collect();
+        walk_region(all, finalbody, f, context, Some(observer), &mut scratch)?;
     }
-    let normal_final = walk_region(normal, finalbody, f, context, None::<&mut O>)?;
-    let raising_final = walk_region(raises, finalbody, f, context, None::<&mut O>)?;
-    let exiting_final = walk_region(exits, finalbody, f, context, None::<&mut O>)?;
+    let normal_final = walk_region(normal, finalbody, f, context, None::<&mut O>, frames)?;
+    let raising_final = walk_region(raises, finalbody, f, context, None::<&mut O>, frames)?;
+    let exiting_final = walk_region(exits, finalbody, f, context, None::<&mut O>, frames)?;
     let mut raises = raising_final.normal;
     add_state(&mut raises, &normal_final.raises);
     add_state(&mut raises, &raising_final.raises);
@@ -947,36 +1364,80 @@ where
     add_state(&mut exits, &normal_final.exits);
     add_state(&mut exits, &raising_final.exits);
     add_state(&mut exits, &exiting_final.exits);
-    Ok(MoveFlow {
+    let mut through = MoveFlow {
         normal: normal_final.normal,
         raises,
         exits,
-    })
+        escapes: [
+            normal_final.escapes,
+            raising_final.escapes,
+            exiting_final.escapes,
+        ]
+        .concat(),
+    };
+    for (target, state) in escapes {
+        let finished = walk_region(Some(state), finalbody, f, context, None::<&mut O>, frames)?;
+        through.absorb_abnormal(&finished);
+        through
+            .escapes
+            .extend(finished.normal.map(|state| (target, state)));
+    }
+    for (index, (leave, resume)) in leaving.into_iter().enumerate() {
+        for (state, resumes) in [(leave, false), (resume, true)] {
+            let finished = walk_region(state, finalbody, f, context, None::<&mut O>, frames)?;
+            through.absorb_abnormal(&finished);
+            let frame = &mut frames[index];
+            let set = if resumes {
+                &mut frame.resume
+            } else {
+                &mut frame.leave
+            };
+            add_state(set, &finished.normal);
+        }
+    }
+    Ok(through)
 }
 
-/// Per-block in-states of a region at the dataflow fixpoint:
+/// Per-block in-states of a lowered block list at the dataflow fixpoint:
 /// `in[b] = ⨆ out[pred]`, `out[b] = transfer(in[b])`. `Owned` is a real
 /// program state, not the lattice bottom, so unvisited blocks stay absent
 /// (a loop header must not join a definite preheader move with a seeded
-/// backedge and report `MaybeMoved` forever).
+/// backedge and report `MaybeMoved` forever). A block an escape from a
+/// `try` part enters also joins the escape's state. The region terminators
+/// of the fixpoint's walks fill frames of their own, which the replay
+/// refills.
 fn region_in_states(
     entry: &[Node],
     blocks: &[MirBlock],
     f: &MirFunction,
     context: &MoveContext,
+    frames: &[MoveFrame],
 ) -> Vec<Option<Vec<Node>>> {
     let nb = blocks.len();
     let preds = block_predecessors(blocks);
     let mut in_states: Vec<Option<Vec<Node>>> = vec![None; nb];
     let mut out_states: Vec<Option<Vec<Node>>> = vec![None; nb];
+    let mut escape_out: Vec<Vec<(MirBlockId, Vec<Node>)>> = vec![Vec::new(); nb];
+    let mut escape_sources: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); nb];
+    let mut scratch: Vec<MoveFrame> = frames
+        .iter()
+        .map(|frame| MoveFrame::new(frame.kind))
+        .collect();
     let mut worklist = Worklist::forward(blocks);
     while let Some(b) = worklist.pop() {
-        let new_in = if b == 0 || preds[b].is_empty() {
+        let new_in = if b == 0 || (preds[b].is_empty() && escape_sources[b].is_empty()) {
             entry.to_vec()
         } else {
+            let escaped = escape_sources[b].iter().flat_map(|source| {
+                escape_out[*source]
+                    .iter()
+                    .filter(|(target, _)| *target == b)
+                    .map(|(_, state)| state)
+            });
             let mut predecessors = preds[b]
                 .iter()
-                .filter_map(|predecessor| out_states[*predecessor].as_ref());
+                .filter_map(|predecessor| out_states[*predecessor].as_ref())
+                .chain(escaped);
             let Some(first) = predecessors.next() else {
                 continue;
             };
@@ -989,8 +1450,27 @@ fn region_in_states(
         if in_states[b].as_ref() == Some(&new_in) {
             continue;
         }
-        let new_out = transfer_block(new_in.clone(), &blocks[b].instrs, f, context);
+        let mut escapes = Vec::new();
+        let new_out = transfer_block(
+            new_in.clone(),
+            &blocks[b].instrs,
+            f,
+            context,
+            &mut scratch,
+            &mut escapes,
+        );
         in_states[b] = Some(new_in);
+        if escape_out[b] != escapes {
+            for (target, _) in escape_out[b].iter().chain(&escapes) {
+                worklist.push(*target);
+            }
+            for (target, _) in &escapes {
+                if let Some(sources) = escape_sources.get_mut(*target) {
+                    sources.insert(b);
+                }
+            }
+            escape_out[b] = escapes;
+        }
         if out_states[b] != new_out {
             out_states[b] = new_out;
             worklist.push_successors(&blocks[b].term);
@@ -999,19 +1479,22 @@ fn region_in_states(
     in_states
 }
 
-/// Apply a block's instructions to a state without reporting; a nested `try`
-/// continues from its normal completion, and an always-raising or
-/// always-exiting one, like a `raise`, leaves the rest of the block
-/// unreachable.
+/// Apply a block's instructions to a state without reporting; a nested
+/// region op continues from its normal completion, its escapes collected in
+/// `escapes`, and an always-raising or always-exiting one, like a `raise`,
+/// leaves the rest of the block unreachable.
 fn transfer_block(
     mut state: Vec<Node>,
     instrs: &[MirInstr],
     f: &MirFunction,
     context: &MoveContext,
+    frames: &mut Vec<MoveFrame>,
+    escapes: &mut Vec<(MirBlockId, Vec<Node>)>,
 ) -> Option<Vec<Node>> {
     for instr in instrs {
-        if let MirInstr::Try { .. } = instr {
-            let nested = walk_try(state, instr, f, context, None::<&mut NoObserver>).ok()?;
+        if holds_regions(instr) {
+            let nested = walk_op(state, instr, f, context, None::<&mut NoObserver>, frames).ok()?;
+            escapes.extend(nested.escapes);
             state = nested.normal?;
         } else {
             apply_effects(&mut state, instr, context);
@@ -1022,6 +1505,9 @@ fn transfer_block(
     }
     Some(state)
 }
+
+/// The observer type of a replay that observes nothing (a fixpoint pass).
+type NoObserver = fn(&[Node], &MirInstr) -> Result<(), OwnershipError>;
 
 /// Check one instruction's place uses against the current state, returning
 /// the first violation: a read or write through a moved place, then a use of

@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_mir::mir::{instruction_regions, instruction_regions_mut};
 
 /// The variables a MIR instruction reads, each paired with a nearby result
 /// register (for a diagnostic span). Covers direct reads (`UseVar`), place roots
@@ -402,29 +403,14 @@ pub(super) fn raises_to_handler(instr: &MirInstr) -> bool {
     matches!(instr, MirInstr::Try { .. }) || instr.is_raise_point()
 }
 
-/// Visit every instruction under `blocks`, recursing into `try` sub-regions.
+/// Visit every instruction under `blocks`, recursing into every region op's
+/// regions.
 pub(super) fn for_each_instr_deep(blocks: &[MirBlock], visit: &mut impl FnMut(&MirInstr)) {
     for block in blocks {
         for instr in &block.instrs {
             visit(instr);
-            if let MirInstr::Try {
-                body,
-                handler,
-                orelse,
-                finalbody,
-                ..
-            } = instr
-            {
-                for_each_instr_deep(body, visit);
-                if let Some((_, h)) = handler {
-                    for_each_instr_deep(h, visit);
-                }
-                if let Some(e) = orelse {
-                    for_each_instr_deep(e, visit);
-                }
-                if let Some(fb) = finalbody {
-                    for_each_instr_deep(fb, visit);
-                }
+            for region in instruction_regions(instr) {
+                for_each_instr_deep(region, visit);
             }
         }
     }
@@ -438,24 +424,8 @@ pub(super) fn for_each_instr_deep_mut(
     for block in blocks {
         for instr in &mut block.instrs {
             visit(instr);
-            if let MirInstr::Try {
-                body,
-                handler,
-                orelse,
-                finalbody,
-                ..
-            } = instr
-            {
-                for_each_instr_deep_mut(body, visit);
-                if let Some((_, h)) = handler {
-                    for_each_instr_deep_mut(h, visit);
-                }
-                if let Some(e) = orelse {
-                    for_each_instr_deep_mut(e, visit);
-                }
-                if let Some(fb) = finalbody {
-                    for_each_instr_deep_mut(fb, visit);
-                }
+            for region in instruction_regions_mut(instr) {
+                for_each_instr_deep_mut(region, visit);
             }
         }
     }

@@ -487,6 +487,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- The move and initialization check walks each body's structured regions
+  as upstream's `CheckLifetimes` does, before `lower-control-flow` lowers
+  the body for the borrow checks: an `if` joins its arms, a `match` case
+  starts from the states its predecessors' `match.next` left, a loop
+  re-walks its body until its `continue` states settle, and a `break` or
+  `continue` carries its state to the loop it names, through any `finally`
+  it crosses. A value moved before a `break`/`continue` out of a `try` is
+  now rejected when it is read after the loop or in the next iteration,
+  where Mojito accepted it and trapped at run time
+  (`assets/ownership_error/try_break_move_then_use_after_loop.mojo`,
+  `try_continue_move_reentered.mojo`), and a field or `mut` parameter
+  refilled after such a loop runs on both backends, where Mojito rejected
+  it (`assets/ownership_ok/try_break_partial_move_refilled_after_loop.mojo`,
+  `try_break_mut_parameter_refilled_after_loop.mojo`). This closes R875.
 - Compile-time conditions follow the pin: the elaborator decides `and` and
   `or` left to right and an `elif` only when no earlier arm was taken, so a
   payload read guarded by its tag never runs over the other variant; a

@@ -780,25 +780,39 @@ fn lower_nested_node(
 
 /// Return the named `out` result at every exit that returns nothing else:
 /// the result is transferred to the caller, so no destructor runs on it
-/// here.
+/// here. The exits are the function's own blocks' and those of the region
+/// ops among them, never a `try` part's.
 fn materialize_named_result_return(function: &mut MirFunction, result: &str) {
     let slot = function
         .var_names
         .iter()
         .position(|name| name == result)
-        .expect("named result was seeded into the function variables");
-    for block in &mut function.blocks {
+        .expect("named result was seeded into the function variables") as VarId;
+    let mut blocks = std::mem::take(&mut function.blocks);
+    materialize_named_result_exits(&mut blocks, slot, &mut function.n_regs);
+    function.blocks = blocks;
+}
+
+fn materialize_named_result_exits(blocks: &mut [MirBlock], slot: VarId, n_regs: &mut u32) {
+    for block in blocks {
+        for instruction in &mut block.instrs {
+            if !matches!(instruction, MirInstr::Try { .. }) {
+                for region in instruction_regions_mut(instruction) {
+                    materialize_named_result_exits(region, slot, n_regs);
+                }
+            }
+        }
         if matches!(
             block.term,
             MirTerm::Return(None)
                 | MirTerm::ReturnWithCleanup { value: None, .. }
                 | MirTerm::TryYield
         ) {
-            let register = Reg(function.n_regs);
-            function.n_regs += 1;
+            let register = Reg(*n_regs);
+            *n_regs += 1;
             block.instrs.push(MirInstr::UseVar {
                 dest: register,
-                var: slot as VarId,
+                var: slot,
                 mode: UseMode::Move,
                 constructor: None,
             });

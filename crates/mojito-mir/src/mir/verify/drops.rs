@@ -61,9 +61,13 @@ pub fn cut_try_cleanups(function: &mut MirFunction) {
 
 /// Report every `drop.var` or `var.consume` in `function` whose slot every
 /// path reaching it has already ended. A structured body is checked through
-/// its `lower-control-flow` lowering, so a finding names a lowered block.
+/// its `lower-control-flow` lowering, so a finding names a lowered block;
+/// one that ends no slot has none.
 pub(super) fn verify_slot_ends(name: &str, function: &MirFunction, errors: &mut Vec<String>) {
     if crate::mir::has_structured_control_flow(function) {
+        if !ends_slots(&function.blocks) {
+            return;
+        }
         let mut lowered = function.clone();
         crate::mir::lower_control_flow(&mut lowered);
         verify_slot_ends(name, &lowered, errors);
@@ -457,6 +461,21 @@ fn set(state: &mut Ended, slot: VarId, ended: bool) {
 
 /// Whether `instructions` hold a `try` with a raise-edge cleanup, at any
 /// depth.
+/// Whether some block of `blocks`, at any depth, ends a slot: a `drop.var`,
+/// a `var.consume`, or a cleanup list naming one.
+fn ends_slots(blocks: &[MirBlock]) -> bool {
+    blocks.iter().any(|block| {
+        matches!(&block.term, MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } if !cleanup.is_empty())
+            || block.instrs.iter().any(|instruction| {
+                matches!(instruction, MirInstr::DropVar { .. } | MirInstr::ConsumeVar { .. })
+                    || matches!(instruction, MirInstr::Try { cleanup, .. } if !cleanup.is_empty())
+                    || crate::mir::instruction_regions(instruction)
+                        .into_iter()
+                        .any(|region| ends_slots(region))
+            })
+    })
+}
+
 fn holds_cleanup(instructions: &[MirInstr]) -> bool {
     instructions.iter().any(|instruction| {
         matches!(instruction, MirInstr::Try { cleanup, .. } if !cleanup.is_empty())

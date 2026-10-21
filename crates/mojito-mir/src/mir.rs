@@ -75,7 +75,9 @@ pub use drop_calls::lower_whole_drops;
 mod facts;
 pub mod link;
 mod lower_control_flow;
-pub use lower_control_flow::{has_structured_control_flow, lower_control_flow};
+pub use lower_control_flow::{
+    has_structured_control_flow, lower_control_flow, lower_control_flow_program,
+};
 mod lower_expr;
 mod lower_stmt;
 mod node;
@@ -679,12 +681,39 @@ pub fn materialized_parameter_slots(
         .collect()
 }
 
+/// Lower `checked` to MIR whose bodies are blocks: the structured lowering
+/// ([`lower_checked_program_structured`]) followed by `lower-control-flow`.
+///
 /// # Panics
 ///
 /// Panics if a checked declaration names a parameter absent from its own
 /// signature, which `CheckedProgram` construction rules out.
 pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
     lower_checked_program_importing(checked, None)
+}
+
+/// Lower `checked` to MIR whose bodies keep their structured control flow,
+/// upstream's `hlcf` form, typed and verified: the form the ownership check
+/// (`analysis::check_ownership_program`) reads.
+///
+/// # Panics
+///
+/// As [`lower_checked_program`].
+pub fn lower_checked_program_structured(checked: &CheckedProgram) -> MirProgram {
+    lower_checked_program_structured_importing(checked, None)
+}
+
+/// [`lower_checked_program_structured`] for a program that imports a
+/// compiled package, as [`lower_checked_program_importing`].
+///
+/// # Panics
+///
+/// As [`lower_checked_program`].
+pub fn lower_checked_program_structured_importing(
+    checked: &CheckedProgram,
+    package: Option<&std::sync::Arc<text::package::PackageDeclarations>>,
+) -> MirProgram {
+    lower_program(checked, package).0
 }
 
 /// [`lower_checked_program`] for a program that imports a compiled package.
@@ -701,7 +730,9 @@ pub fn lower_checked_program_importing(
     checked: &CheckedProgram,
     package: Option<&std::sync::Arc<text::package::PackageDeclarations>>,
 ) -> MirProgram {
-    lower_program(checked, package).0
+    let mut program = lower_checked_program_structured_importing(checked, package);
+    lower_control_flow_program(&mut program);
+    program
 }
 
 /// [`lower_checked_program`], with the functions each lowering unit
@@ -714,7 +745,9 @@ pub fn lower_checked_program_importing(
 pub fn lower_checked_program_units(
     checked: &CheckedProgram,
 ) -> (MirProgram, Vec<std::ops::Range<usize>>) {
-    lower_program(checked, None)
+    let (mut program, ranges) = lower_program(checked, None);
+    lower_control_flow_program(&mut program);
+    (program, ranges)
 }
 
 /// Lower one lowering `unit` of `checked`, pushing the functions it lowers
@@ -842,8 +875,9 @@ pub fn lower_unit(
 /// first reaches one of the unit's functions.
 ///
 /// It gives each function the unit lowers to, its register types closed
-/// against the package's own `declarations`, its locations naming source
-/// provenance only.
+/// against the package's own `declarations`, its control flow lowered to
+/// blocks as the library's ownership check lowers it, its locations naming
+/// source provenance only.
 ///
 /// # Errors
 ///
@@ -869,6 +903,7 @@ pub fn lower_package_unit(
         close_register_types(name, function, declarations, &mut invariant_errors);
         name_constructors(function, declarations);
         name_teardown_destructors(function, declarations);
+        lower_control_flow(function);
         let registers = function.n_regs;
         function.spans.0.retain(|reg, _| *reg < registers);
         for (span, _) in function.spans.0.values_mut() {
@@ -4099,10 +4134,10 @@ struct NestedInfo {
 /// prepended), and a first-class use of it makes its closure. `declared` types the slots the
 /// frame's declaration binds before its body runs (parameters, value
 /// parameters, a named result); every other slot is typed by the op that
-/// declares it as the body lowers. Lowering ends with `lower-control-flow`,
-/// so the body's expression region ops are blocks before its registers are
-/// typed; the structured body's shape is verified first, a finding recorded
-/// in `invariant_errors` under the function's `name`.
+/// declares it as the body lowers. The body stays structured, as upstream's
+/// generators hold it in `hlcf` until `CheckLifetimes` has run: its shape is
+/// verified, a finding recorded in `invariant_errors` under the function's
+/// `name`, and the ownership check lowers it to blocks after its move scan.
 #[allow(clippy::too_many_arguments)]
 fn lower_cfg_nested(
     name: &str,
@@ -4119,7 +4154,7 @@ fn lower_cfg_nested(
     enclosing_binders: &EnclosingBinders,
     comptime_thunks: &mut ComptimeThunks,
 ) -> MirFunction {
-    let mut mir = lower_cfg_body(
+    let mir = lower_cfg_body(
         cfg,
         declared,
         nested,
@@ -4133,7 +4168,6 @@ fn lower_cfg_nested(
         comptime_thunks,
     );
     invariant_errors.extend(verify::verify_structured_shape(name, &mir));
-    lower_control_flow(&mut mir);
     mir
 }
 
@@ -4426,16 +4460,35 @@ fn close_register_types(
             .find(|(candidate, _)| candidate == field)
             .map(|(_, ty)| ty.clone())
     }
+    /// The type of an `if`'s or `comptime if`'s `index`th result: its
+    /// yielded register's in the first arm that yields one typed, the arms
+    /// taken in order and an elif's condition never among them.
+    fn yielded_type<'a>(
+        mut arms: impl Iterator<Item = &'a Vec<MirBlock>>,
+        index: usize,
+        reg_types: &HashMap<u32, Ty>,
+    ) -> Option<Ty> {
+        arms.find_map(|arm| {
+            arm.iter().find_map(|block| match &block.term {
+                MirTerm::Yield(values) | MirTerm::ComptimeYield(values) => values
+                    .get(index)
+                    .and_then(|value| reg_types.get(&value.0))
+                    .cloned(),
+                _ => None,
+            })
+        })
+    }
+    /// `const_ints` holds the compile-time integer registers seen so far,
+    /// so a tuple index through a constant register can copy the selected
+    /// element type.
     fn close_blocks(
         blocks: &[MirBlock],
         reg_types: &mut HashMap<u32, Ty>,
         var_tys: &mut HashMap<VarId, Ty>,
         declarations: &MirDeclarations,
+        const_ints: &mut HashMap<u32, i64>,
     ) -> bool {
         let mut changed = false;
-        // Compile-time integer registers within this region, so a tuple index
-        // through a constant register can copy the selected element type.
-        let mut const_ints: HashMap<u32, i64> = HashMap::new();
         let record = |reg_types: &mut HashMap<u32, Ty>, reg: &Reg, ty: Option<Ty>| {
             if let Some(ty) = ty
                 && !reg_types.contains_key(&reg.0)
@@ -4721,26 +4774,48 @@ fn close_register_types(
                     MirInstr::EstablishLoans { marker, .. }
                     | MirInstr::InvalidateInteriors { marker, .. }
                     | MirInstr::ConsumePlace { marker, .. } => Some((marker, Some(Ty::none()))),
-                    MirInstr::Try {
-                        body,
-                        handler,
-                        orelse,
-                        finalbody,
-                        ..
-                    } => {
-                        for region in std::iter::once(body)
-                            .chain(handler.iter().map(|(_, blocks)| blocks))
-                            .chain(orelse.iter())
-                            .chain(finalbody.iter())
-                        {
-                            changed |= close_blocks(region, reg_types, var_tys, declarations);
-                        }
-                        None
-                    }
                     _ => None,
                 };
                 if let Some((dest, ty)) = derived {
                     changed |= record(reg_types, dest, ty);
+                }
+                for region in instruction_regions(instr) {
+                    changed |= close_blocks(region, reg_types, var_tys, declarations, const_ints);
+                }
+                let results = match instr {
+                    MirInstr::If {
+                        results,
+                        then,
+                        elifs,
+                        orelse,
+                        ..
+                    } => results
+                        .iter()
+                        .enumerate()
+                        .map(|(index, result)| {
+                            let arms = std::iter::once(then)
+                                .chain(elifs.iter().map(|elif| &elif.then))
+                                .chain(std::iter::once(orelse));
+                            (result, yielded_type(arms, index, reg_types))
+                        })
+                        .collect(),
+                    MirInstr::ComptimeIf {
+                        results,
+                        arms,
+                        orelse,
+                        ..
+                    } => results
+                        .iter()
+                        .enumerate()
+                        .map(|(index, result)| {
+                            let arms = arms.iter().chain(std::iter::once(orelse));
+                            (result, yielded_type(arms, index, reg_types))
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                for (result, ty) in results {
+                    changed |= record(reg_types, result, ty);
                 }
             }
         }
@@ -4757,23 +4832,10 @@ fn close_register_types(
                     *out = Some(debug.chars().take(80).collect());
                     return;
                 }
-                if let MirInstr::Try {
-                    body,
-                    handler,
-                    orelse,
-                    finalbody,
-                    ..
-                } = instr
-                {
-                    for region in std::iter::once(body)
-                        .chain(handler.iter().map(|(_, blocks)| blocks))
-                        .chain(orelse.iter())
-                        .chain(finalbody.iter())
-                    {
-                        describe_defining_instr(region, reg, out);
-                        if out.is_some() {
-                            return;
-                        }
+                for region in instruction_regions(instr) {
+                    describe_defining_instr(region, reg, out);
+                    if out.is_some() {
+                        return;
                     }
                 }
             }
@@ -4784,8 +4846,15 @@ fn close_register_types(
     let mut var_tys = std::mem::take(&mut f.var_tys);
     // Chains (a handle read of a fresh handle, a call through a just-typed
     // callable) settle in a few passes; the bound keeps lowering total.
+    let mut const_ints = HashMap::new();
     for _ in 0..4 {
-        if !close_blocks(&f.blocks, &mut reg_types, &mut var_tys, declarations) {
+        if !close_blocks(
+            &f.blocks,
+            &mut reg_types,
+            &mut var_tys,
+            declarations,
+            &mut const_ints,
+        ) {
             break;
         }
     }

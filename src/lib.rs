@@ -43,9 +43,9 @@ pub use mojito_analysis::analysis;
 /// Run the ownership analysis over a whole program (parse-level convenience:
 /// checks, lowers, then analyzes). Root-owned because it needs the checker.
 pub fn check_ownership(program: &[ast::Stmt]) -> Result<(), error::OwnershipError> {
-    let prog = mir::lower_program(program)
+    let checked = checker::check_program(program)
         .map_err(|error| error::OwnershipError::InvalidInput(error.to_string()))?;
-    check_ownership_program(&prog)
+    check_ownership_program(&mut mir::lower_checked_program_structured(&checked))
 }
 pub use artifact::{ArtifactRunError, run_artifact};
 pub use ast::{

@@ -2,8 +2,9 @@
 
 **Status:** plan recorded 2026-10-14 (R859); stages 1 (R870), 2 (R871),
 3 (R872), 4 (R873), and 5 (R874) landed 2026-10-14, and the `comptime for`
-body's `has_next` test (R885) with them. The scheduled tasks are on
-[`docs/roadmap.md`](roadmap.md) track `mojo-shape`, one entry per stage below.
+body's `has_next` test (R885) with them; stage 6 (R875) landed 2026-10-21.
+The scheduled tasks are on [`docs/roadmap.md`](roadmap.md) track `pmir`,
+one entry per stage below.
 This document is their design record and is updated as stages land. It is
 the structured-control part of
 [`docs/parametric-mir-plan.md`](parametric-mir-plan.md).
@@ -95,15 +96,17 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
     (`lit.try.yield`) and leaves to a loop by a labelled `Break`/`Continue`,
     which `lower-control-flow` turns into `EscapeJump`.
   - `lower_expr/ctrl.rs` builds `short_circuit`, `ternary`, `compare_chain`,
-    and `comprehension_clauses` as `If`/`Loop` region ops (stage 2), MIR
+    and `comprehension_clauses` as `If`/`Loop` region ops (stage 2), and MIR
     lowering builds HIR's region ops as the same ops (stage 3,
-    `Flatten::hir_region`), and it ends each body with
-    `lower-control-flow`, so every phase below it still sees blocks.
-    Before that pass, `verify_structured_shape` checks the body, a finding
-    being a MIR invariant error (stage 5).
-- **The analyses work on edges.** Ownership, borrow, and initialization
-  checks are dataflow over blocks; `analysis/drops.rs` puts drops on edges
-  and splits critical edges.
+    `Flatten::hir_region`). `verify_structured_shape` checks each body, a
+    finding being a MIR invariant error (stage 5); register typing and
+    pre-drop verification read the structured body, and the ownership
+    check runs `lower-control-flow` on each body after its move scan, so
+    every phase after that scan still sees blocks (stage 6).
+- **The move scan walks regions; the other analyses work on edges.** The
+  move and initialization scan walks the structure as `CheckLifetimes`
+  does (stage 6). The borrow checks are dataflow over blocks;
+  `analysis/drops.rs` puts drops on edges and splits critical edges.
 - **`canonicalize`** (`analysis/canonicalize.rs`, R836) threads
   pass-through blocks, folds identical-successor branches, and merges
   single-predecessor blocks: MLIR `cf` patterns standing in for structure
@@ -263,9 +266,32 @@ last producer. Every stage keeps program output unchanged; the
    `Break`/`Continue` (stage 3). The single-block rule runs in production:
    `lower_cfg_nested` records `verify_structured_shape`'s findings as
    invariant errors before `lower-control-flow`.
-6. **Move and initialization checks on regions**, as `CheckLifetimes`:
-   an `If` joins its arms, a `Loop` iterates to a fixpoint, and the state at
-   a `Break`/`Continue` flows to its labelled loop.
+6. **Move and initialization checks on regions**, as `CheckLifetimes`.
+   *Landed (R875).* `analysis/moves.rs` walks a structured body as
+   `UninitializedValueScan` does: an `If` joins its arms (`checkIfOp`, an
+   elif's condition region starting from the state the previous one left),
+   a `ComptimeIf` joins arms that each start from the entry state
+   (`checkIfLikeOp`), a `Match` case starts from the join of the previous
+   case's `MatchNext` states and its live-out joins every `MatchComplete`
+   and the else region (`checkMatchOp`), and a `Loop` or `ComptimeFor`
+   re-walks its body until its continue set stops changing, its break set
+   being its live-out (`checkLoopOp`).
+   - A frame stack (`MoveFrame`) resolves each `Break`/`Continue`,
+     `ComptimeBreak`/`ComptimeContinue`, and `MatchNext`/`MatchComplete` by
+     `lower-control-flow`'s rules, so the state at a `break` out of a `try`
+     reaches its loop, where it reached the function's exit before.
+   - A `try` with a `finally` holds back the states its parts hand a frame
+     and walks each through the `finally` first, as `lowerTryFinally`'s
+     copy before each exiting terminator would. `Unreachable` checks
+     nothing (`checkTerminatorOp` on `hlcf.unreachable`).
+   - `lower_cfg_nested` no longer lowers: `analysis::check_ownership_program`
+     runs `lower-control-flow` on each body between its move scan and the
+     borrow checks, and `lower_checked_program` lowers every body for
+     phase tests. Register typing types an `If`'s results from its arms'
+     yields, and named-result materialization reaches the region ops' exits.
+   - The CFG walker that `observe_move_states` (store drops) still runs on
+     lowered bodies joins an `EscapeJump`'s state into its target block, so
+     a store after the loop sees the state a `break` out of a `try` left.
 7. **Borrow checks on regions** (loans, register loans, interior). The
    lowering point moves below the checks.
 8. **Drop elaboration on regions**, as `DestructorInsertion`: a drop goes

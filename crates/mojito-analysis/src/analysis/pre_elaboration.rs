@@ -196,9 +196,9 @@ pub const ELABORATE_DROPS: BodyPass = BodyPass {
 
 /// Structured control flow lowered to blocks: upstream's `LowerControlFlow`.
 ///
-/// Upstream lowers `hlcf` as it reaches LLVM. MIR lowering ends each body
-/// with this pass, so the pipeline does not list it: no lowered body holds a
-/// region op.
+/// Upstream lowers `hlcf` as it reaches LLVM. The ownership check runs
+/// this pass on each body after its move scan, so the pipeline does not
+/// list it: no body it reaches holds a region op.
 pub const LOWER_CONTROL_FLOW: BodyPass = BodyPass {
     name: "lower-control-flow",
     run: |_, function, _| {

@@ -31,6 +31,13 @@ pub fn lower_control_flow(function: &mut MirFunction) {
     function.blocks = lowered;
 }
 
+/// [`lower_control_flow`] over every function of `program`.
+pub fn lower_control_flow_program(program: &mut MirProgram) {
+    for (_, function) in &mut program.functions {
+        lower_control_flow(function);
+    }
+}
+
 /// Whether some block of `function`, at any depth, holds a region op other
 /// than `try`.
 pub fn has_structured_control_flow(function: &MirFunction) -> bool {

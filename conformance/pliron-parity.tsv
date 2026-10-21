@@ -1168,6 +1168,8 @@ assets/ownership_ok/move_then_reinit.mojo	main	exe-differential	sanitized
 assets/ownership_ok/move_without_later_use.mojo	main	exe-differential	sanitized
 assets/ownership_ok/partial_move_reinit.mojo	main	exe-differential	sanitized
 assets/ownership_ok/shared_iterations_coexist.mojo	main	exe-differential	sanitized
+assets/ownership_ok/try_break_mut_parameter_refilled_after_loop.mojo	main	exe-differential	sanitized
+assets/ownership_ok/try_break_partial_move_refilled_after_loop.mojo	main	exe-differential	sanitized
 assets/ownership_ok/view_live_across_reading_loop.mojo	main	exe-differential	sanitized
 assets/extensions/ok/comprehension_borrowed_named_source.mojo	main	exe-differential	sanitized
 assets/extensions/ok/container_owning_family_apis.mojo	main	exe-differential	sanitized

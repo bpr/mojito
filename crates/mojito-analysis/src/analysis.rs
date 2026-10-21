@@ -2,9 +2,10 @@
 //!
 //! Mojo's move semantics: transferring a value with `^` (`y = x^`, `take(x^)`)
 //! leaves the source **uninitialized**, so using it again is an error. This pass
-//! is a forward dataflow over each `MirFunction`'s basic blocks that tracks, per
-//! variable, whether it is `Owned`, `Moved`, or — where control-flow paths
-//! disagree — `MaybeMoved`. A use of a `Moved` variable is a **use-after-move**; a
+//! walks each `MirFunction`'s structured regions, as upstream's
+//! `CheckLifetimes` walks `hlcf`, tracking per variable whether it is
+//! `Owned`, `Moved`, or — where control-flow paths disagree — `MaybeMoved`;
+//! the borrow checks after it read the body lowered to blocks. A use of a `Moved` variable is a **use-after-move**; a
 //! use of a `MaybeMoved` one is a **conditional move** (transferred on some paths
 //! but not others). Diagnostics carry the source [`Span`](mojito_mir::mir::Span) of the
 //! offending use, recovered from the MIR `SpanTable`.
@@ -68,26 +69,41 @@ pub use unused_params::{REMOVE_UNUSED_PARAMS, remove_unused_params};
 pub fn check_ownership_checked(
     program: &mojito_checked::checked::CheckedProgram,
 ) -> Result<(), OwnershipError> {
-    let prog = mojito_mir::mir::lower_checked_program(program);
-    check_ownership_program(&prog)
+    let mut prog = mojito_mir::mir::lower_checked_program_structured(program);
+    check_ownership_program(&mut prog)
 }
 
-/// Run the ownership analysis over an already-lowered program — the
-/// standalone-MIR core the pipeline composes with `mir::verify` so production
-/// MIR is fully verified before execution.
+/// Run the ownership analysis over a lowered program, lowering each body's
+/// control flow to blocks on the way.
+///
+/// This is the standalone-MIR core the pipeline composes with `mir::verify`
+/// so production MIR is fully verified before execution; it runs on `hlcf`
+/// regions as upstream's `CheckLifetimes` does, before `LowerControlFlow`.
+///
+/// Per function, the move and initialization scan walks the structured
+/// body, then `lower-control-flow` lowers it, and the interior-origin and
+/// loan checks read the blocks. A body already lowered (MIR text) is
+/// scanned as blocks.
 ///
 /// An imported package's bodies were analyzed when it was built; a call
 /// into one reads its reference-parameter mask from the package's function
 /// table.
-pub fn check_ownership_program(prog: &MirProgram) -> Result<(), OwnershipError> {
+pub fn check_ownership_program(prog: &mut MirProgram) -> Result<(), OwnershipError> {
+    let MirProgram {
+        functions,
+        declarations,
+        ..
+    } = prog;
+    let masks: Vec<(String, Vec<bool>)> = functions
+        .iter()
+        .map(|(name, function)| (name.clone(), function.ref_params.clone()))
+        .collect();
     let callees = CalleeRefParams {
-        ref_params: prog
-            .functions
+        ref_params: masks
             .iter()
-            .map(|(name, function)| (name.as_str(), function.ref_params.as_slice()))
+            .map(|(name, mask)| (name.as_str(), mask.as_slice()))
             .collect(),
-        param_writes: prog
-            .declarations
+        param_writes: declarations
             .functions
             .iter()
             .map(|declaration| {
@@ -97,20 +113,20 @@ pub fn check_ownership_program(prog: &MirProgram) -> Result<(), OwnershipError> 
                 )
             })
             .collect(),
-        structs: prog
-            .declarations
+        structs: declarations
             .structs
             .iter()
             .map(|declaration| declaration.name.as_str())
             .collect(),
-        imported: prog.declarations.imported.as_ref(),
+        imported: declarations.imported.as_ref(),
     };
-    timing::count("functions", prog.functions.len() as u64);
-    for (_name, f) in &prog.functions {
+    timing::count("functions", functions.len() as u64);
+    for (_name, f) in functions.iter_mut() {
         {
             let _moves = timing::span("moves");
             analyze_moves(f)?;
         }
+        mojito_mir::mir::lower_control_flow(f);
         {
             let _origins = timing::span("interior_origins");
             analyze_interior_origins(f)?;
@@ -751,6 +767,213 @@ mod interior_origin_tests {
             &sibling,
             &element_origin(),
             true,
+        ));
+    }
+}
+
+#[cfg(test)]
+mod structured_move_tests {
+    use super::*;
+    use mojito_mir::mir::{LoopLabel, UseMode};
+    use mojito_types::types::Ty;
+
+    const X: VarId = 0;
+    const S: VarId = 1;
+
+    fn block(instrs: Vec<MirInstr>, term: MirTerm) -> Vec<MirBlock> {
+        vec![MirBlock { instrs, term }]
+    }
+
+    fn function(instrs: Vec<MirInstr>, term: MirTerm) -> MirFunction {
+        MirFunction {
+            blocks: block(instrs, term),
+            n_regs: 64,
+            n_vars: 2,
+            var_names: vec!["x".into(), "s".into()],
+            n_params: 1,
+            ref_params: vec![false],
+            ret_ty: Some(Ty::none()),
+            ..MirFunction::default()
+        }
+    }
+
+    fn use_var(var: VarId, dest: u32, mode: UseMode) -> MirInstr {
+        MirInstr::UseVar {
+            dest: Reg(dest),
+            var,
+            mode,
+            constructor: None,
+        }
+    }
+
+    fn take(var: VarId, dest: u32) -> MirInstr {
+        use_var(var, dest, UseMode::Move)
+    }
+
+    fn read(var: VarId, dest: u32) -> MirInstr {
+        use_var(var, dest, UseMode::BorrowShared)
+    }
+
+    fn refill(var: VarId, src: u32) -> MirInstr {
+        MirInstr::DefVar {
+            var,
+            src: Reg(src),
+            binding_ty: None,
+            in_place: false,
+        }
+    }
+
+    fn field_a() -> MirPlace {
+        let mut place = MirPlace::root(X, None);
+        place.proj.push(Proj::Field("a".into()));
+        place
+    }
+
+    fn if_else(then: Vec<MirBlock>, orelse: Vec<MirBlock>) -> MirInstr {
+        MirInstr::If {
+            results: Vec::new(),
+            cond: Reg(60),
+            then,
+            elifs: Vec::new(),
+            orelse,
+        }
+    }
+
+    fn yields(instrs: Vec<MirInstr>) -> Vec<MirBlock> {
+        block(instrs, MirTerm::Yield(Vec::new()))
+    }
+
+    fn labelled(body: Vec<MirBlock>) -> MirInstr {
+        MirInstr::Loop {
+            label: Some(LoopLabel(0)),
+            body,
+        }
+    }
+
+    fn try_part(body: Vec<MirBlock>, finalbody: Option<Vec<MirBlock>>) -> MirInstr {
+        MirInstr::Try {
+            body,
+            handler: None,
+            orelse: None,
+            finalbody,
+            cleanup: Vec::new(),
+        }
+    }
+
+    const BREAK: MirTerm = MirTerm::Break {
+        label: Some(LoopLabel(0)),
+    };
+    const CONTINUE: MirTerm = MirTerm::Continue {
+        label: Some(LoopLabel(0)),
+    };
+
+    #[test]
+    fn structured_if_joins_its_arms() {
+        let f = function(
+            vec![
+                if_else(yields(vec![take(X, 1)]), yields(Vec::new())),
+                read(X, 2),
+            ],
+            MirTerm::Return(None),
+        );
+        assert!(matches!(
+            analyze_moves(&f),
+            Err(OwnershipError::ConditionallyMoved { .. })
+        ));
+    }
+
+    #[test]
+    fn structured_loop_carries_its_continue_state_back() {
+        let exit = if_else(yields(Vec::new()), block(Vec::new(), BREAK));
+        let f = function(
+            vec![labelled(block(
+                vec![exit, read(X, 1), take(X, 2)],
+                CONTINUE,
+            ))],
+            MirTerm::Return(None),
+        );
+        assert!(matches!(
+            analyze_moves(&f),
+            Err(OwnershipError::ConditionallyMoved { .. })
+        ));
+    }
+
+    #[test]
+    fn structured_break_from_a_try_reaches_its_loop() {
+        let body = try_part(block(vec![take(X, 1)], BREAK), None);
+        let f = function(
+            vec![labelled(block(vec![body], CONTINUE)), read(X, 2)],
+            MirTerm::Return(None),
+        );
+        assert!(matches!(
+            analyze_moves(&f),
+            Err(OwnershipError::UseAfterMove { .. })
+        ));
+    }
+
+    #[test]
+    fn structured_break_from_a_try_refilled_after_the_loop_is_accepted() {
+        let moved = MirInstr::MovePlace {
+            dest: Reg(1),
+            place: field_a(),
+        };
+        let body = try_part(block(vec![moved], BREAK), None);
+        let store = MirInstr::Store {
+            place: field_a(),
+            src: Reg(2),
+        };
+        let f = function(
+            vec![labelled(block(vec![body], CONTINUE)), store, read(X, 3)],
+            MirTerm::Return(None),
+        );
+        assert!(analyze_moves(&f).is_ok());
+    }
+
+    #[test]
+    fn structured_break_runs_the_finally_it_crosses() {
+        let body = try_part(
+            block(vec![take(X, 1)], BREAK),
+            Some(block(vec![refill(X, 2)], MirTerm::TryYield)),
+        );
+        let f = function(
+            vec![labelled(block(vec![body], CONTINUE)), read(X, 3)],
+            MirTerm::Return(None),
+        );
+        assert!(analyze_moves(&f).is_ok());
+    }
+
+    #[test]
+    fn structured_match_next_carries_its_state_to_the_next_case() {
+        let test = if_else(
+            yields(Vec::new()),
+            block(vec![take(X, 1)], MirTerm::MatchNext),
+        );
+        let f = function(
+            vec![MirInstr::Match {
+                cases: vec![
+                    block(vec![test], MirTerm::MatchComplete),
+                    block(vec![read(X, 2)], MirTerm::MatchComplete),
+                ],
+                orelse: yields(Vec::new()),
+            }],
+            MirTerm::Return(None),
+        );
+        assert!(matches!(
+            analyze_moves(&f),
+            Err(OwnershipError::UseAfterMove { .. })
+        ));
+    }
+
+    #[test]
+    fn structured_unreachable_checks_no_exit() {
+        let mut f = function(vec![take(S, 1)], MirTerm::Unreachable);
+        f.ref_params = vec![false, true];
+        f.n_params = 2;
+        assert!(analyze_moves(&f).is_ok());
+        f.blocks[0].term = MirTerm::Return(None);
+        assert!(matches!(
+            analyze_moves(&f),
+            Err(OwnershipError::ReferenceParameterLeftUninitialized { .. })
         ));
     }
 }

@@ -56,25 +56,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R875 The move and initialization checks read a lowered CFG where
-  `CheckLifetimes` walks structured regions**
-
-  `CheckLifetimes` joins an `if`'s arms and iterates a loop to a fixpoint
-  (`checkIfOp`, `checkLoopOp`), and Mojito's checks run block dataflow over
-  the CFG the transitional pass builds.
-  - Stage 6 of `docs/structured-control-flow-plan.md`.
-  - The lever is the move/initialization scan in `crates/mojito-analysis`.
-  - The state at a `Break`/`Continue` flows to its labelled loop.
-  - After it lands, `lower-control-flow` still runs before the borrow
-    checks.
-  - `mir::lower_whole_drops` keeps a definite-initialization fold of its
-    own (whole, missing parts, empty) that follows `try` regions; once
-    this lands it reads this state instead.
-  - The entry's planning session may split it by analysis if one session
-    cannot land it, filing the rest as chained entries.
-  - Depends on R873, R874.
-  - Model: Fable, Planned.
-
 - [ ] **R876 The borrow checks read a lowered CFG where `CheckLifetimes`
   walks structured regions**
 
@@ -99,6 +80,10 @@ which names the upstream pass each one follows. Each is measured by the
   - A drop goes before a region terminator, at a region's entry, or after
     the op.
   - Critical-edge splitting is deleted.
+  - Once drops are placed in regions, `mir::lower_whole_drops`' own
+    definite-initialization fold (whole, missing parts, empty), which
+    follows `try` regions, reads the move scan's state instead, as
+    `DestructorInsertion` consumes `UninitializedValueScan`'s.
   - After it lands, `lower-control-flow` runs after drop elaboration,
     before field drops, store drops, and copy elision.
   - The entry's planning session may split it if one session cannot land
@@ -2889,6 +2874,14 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `conformance/probes/match_cluster_unspelled_members.mojo` warns
     at its third case's body, the second residual of a group whose first
     always matches.
+  - The same missing pass leaves a dead region live for the move scan:
+    `lowerLITLoop` follows a loop whose body never breaks with
+    `hlcf.unreachable`, and `while True` never breaks once its condition's
+    else arm is marked dead, so the loop's exit is unreachable.
+  - Probe: `conformance/probes/loop_never_breaks_mut_parameter.mojo`, a
+    `mut` parameter moved before `while True: pass`, is rejected as
+    uninitialized at return, where the pin prints `x` (found while landing
+    R875, 2026-10-21).
   - Found while landing R1134 (2026-10-20).
   - Depends on R1241.
   - Model: Opus, Not Planned.
@@ -3481,6 +3474,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     verdict to the unrolled clone for the same reason: `Bag.get` in
     `assets/ok/pack_element_rebind.mojo` ends in `abort(...)`. That deferral
     can tighten once this is fixed.
+  - A `mut` parameter moved before `abort("no")` is rejected as
+    uninitialized at return, the ownership face of the same missing fact:
+    `conformance/probes/abort_after_mut_parameter_move.mojo`.
   - The lever is a checked fact that a callee never returns, read where the
     call resolves, not a name test.
   - The plan must say where the fact lives and what MIR emits after such a call.
