@@ -3130,6 +3130,15 @@ pub struct MirElif {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct LoopLabel(pub u32);
 
+impl LoopLabel {
+    /// Upstream's `inlined_cf_scope`: the label of the loop
+    /// `inline-parametric` wraps every inlined body in, whose returns
+    /// become breaks of it. No source loop carries it, so such a break
+    /// leaves every loop of the callee's own; wrappers nested by inlining
+    /// share it, as upstream's do, each break leaving the nearest.
+    pub const INLINED_CF_SCOPE: Self = Self(u32::MAX);
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MirBlock {
     pub instrs: Vec<MirInstr>,

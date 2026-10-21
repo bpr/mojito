@@ -1,0 +1,104 @@
+mojito-mir 1.81
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("region_return_in_comptime_for.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: "$comptime$find$0", param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "find", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: find, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "find", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [], inline: nodebug },
+    decl { lowered_name: region_return_in_comptime_for, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: "$comptime$find$0",
+        registers: 3,
+        vars: 2,
+        var_names: [n, "$tmp_recv_r1"],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] } }],
+        return_type: present(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] } }, reg_type { reg: %r2, type: struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 87, end: 88, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 81, end: 89, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 81, end: 89, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              drop.var { var: $v0 },
+              call { dest: %r1, func: "range$ov$Int", raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              var.store { var: $v1, src: %r1, binding_type: present(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), in_place: false },
+              call.method { dest: %r2, recv: %r1, method: __iter__, resolved: present("__module$std$range$_ZeroStartingRange.__iter__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v1, root_type: present(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), projections: [], type: present(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), through: absent }), recv_writes: false, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              drop.var { var: $v1 }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      },
+      fn {
+        name: find,
+        registers: 7,
+        vars: 1,
+        var_names: [x],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Bool }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: IntLiteral }, reg_type { reg: %r5, type: IntLiteral }, reg_type { reg: %r6, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 102, end: 103, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 107, end: 108, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 102, end: 108, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 129, end: 130, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 143, end: 144, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 142, end: 144, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 142, end: 144, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              comptime.for { binder: binder { owner: "$comptime_for@region_return_in_comptime_for.mojo:81..89", slot: 0, name: "$iter" }, initial: param_apply { function: "$comptime$find$0", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), args: [param_decl_ref { owner: "find", slot: 0, name: n, type: meta_value(Int) }] }, has_next: param_apply { function: "__module$std$builtin$$stubs$paramfor_has_next", type: meta_value(Bool), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@region_return_in_comptime_for.mojo:81..89", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }, next_iter: param_apply { function: "__module$std$builtin$$stubs$paramfor_next_iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@region_return_in_comptime_for.mojo:81..89", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }, next_value: param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@region_return_in_comptime_for.mojo:81..89", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }, body: [bb0 { instructions: [comptime.if { results: [], conditions: [eq { left: operand_expr(param_apply { function: "__module$std$builtin$$stubs$paramfor_has_next", type: meta_value(Bool), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@region_return_in_comptime_for.mojo:81..89", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }), right: operand_value(ct_bool(true)) }], arms: [[bb0 { instructions: [const { dest: %r0, value: param(param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@region_return_in_comptime_for.mojo:81..89", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }) }, var.use { dest: %r1, var: $v0, mode: copy }, binary { op: eq, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent }, if { results: [], condition: %r2, then: [bb0 { instructions: [const { dest: %r3, value: param(param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@region_return_in_comptime_for.mojo:81..89", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }) }], terminator: return { value: present(%r3) } }], elifs: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }], terminator: comptime.for.continue {} }]], else: [bb0 { instructions: [], terminator: comptime.for.break {} }] }], terminator: unreachable {} }], else: [bb0 { instructions: [], terminator: unreachable {} }] },
+              const { dest: %r4, value: int_literal(1) },
+              unary { op: neg, dest: %r5, a: %r4, raises: absent },
+              literal.materialize { dest: %r6, value: %r5, target: Int }
+            ],
+            terminator: return { value: present(%r6) }
+          }
+        ]
+      },
+      fn {
+        name: region_return_in_comptime_for,
+        registers: 2,
+        vars: 1,
+        var_names: [x],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 216, end: 217, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 208, end: 218, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              call { dest: %r1, func: find, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [value_arg(ct_int(3))], spread: absent }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      }
+  ]
+}

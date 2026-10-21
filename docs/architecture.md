@@ -5488,14 +5488,26 @@ point where a slot declared in a loop is uninitialized again.
   (32), the pin's count of the operations its first round leaves,
   calibrated on probe bodies: a slot's reads, stores, and declarations, a
   copy or drop running no constructor or destructor, and a repeated
-  constant are free, a `branch` costs one as the `hlcf.if` it came from, a
-  loop's back edge four beyond its test and body, `iter.init` the whole
+  constant are free, an `if` costs one plus one per `elif` (a lowered
+  body's `branch` one each), each reached `continue` four beyond its
+  loop's test and body (a lowered body's back edge alike: the private
+  `structured_back_edges` and `back_edges` count them, so a body prices
+  the same before and after `lower-control-flow`), `iter.init` the whole
   bound as the pin's `range` protocol does, and `print` the 28 its call
-  site costs there; each other instruction costs one. The callee's blocks are
-  appended to the block list holding the call, the function's or a `try`
-  part's, with its registers and slots moved past the caller's
-  (`mir::renumber_block_slots`); its slot names gain `$inline{n}`, so no
-  binder name or `self` matches them. The call's block binds each owned
+  site costs there; each other instruction costs one, a `try` with its
+  parts free. When the caller or the callee holds structured control flow
+  (`mir::has_structured_control_flow`), the body is placed as upstream's
+  `inlineGeneratorCall` places every one (the private `splice_region`): in
+  a `loop` labelled `LoopLabel::INLINED_CF_SCOPE`, upstream's
+  `inlined_cf_scope`, which no source loop carries, appended to the call's
+  block, so a structured callee's one block goes into a structured list's
+  one block (a call mixing the shapes stays a call). A lowered callee
+  called from a lowered caller, every production body until the seams stop
+  lowering control flow (R1254), has its blocks appended to the block list
+  holding the call instead (the private `splice_blocks`). Either way the
+  body's registers and slots move past the caller's
+  (`mir::renumber_block_slots`), regions included, and its slot names gain
+  `$inline{n}`, so no binder name or `self` matches them. The call's block binds each owned
   parameter, each `read` parameter of a scalar type
   (`mir::has_no_destructor`), and each `read` parameter passed a trivial
   copy of a closed-type slot (a `var.use copy` naming no constructor), with
@@ -5512,11 +5524,19 @@ point where a slot declared in a loop is uninitialized again.
   as it names any copy; an `iter.init` over one iterates the caller's
   slot, and a loan's interior of one is an interior of that slot; a
   parameter bound so that the callee names it otherwise as a slot keeps
-  the call (R1099). The callee's one returned register becomes
-  the call's; several returns store to a `$inline{n}$result` slot the
-  call's register moves from, and a `None` result is a constant. What
-  followed the call moves to a new block every return jumps to, and an
-  `in_place` binding of the call's result drops the flag. Every inlined
+  the call (R1099). In a wrapped body every return, at any depth, is a
+  `break` of the wrapper that first stores a returned value to a
+  `$inline{n}$result` slot the call's register moves from after the loop,
+  where upstream's `hlcf.break` carries the value as the loop's result
+  (R886). A spliced body's one returned register becomes the call's,
+  several returns store to that slot, and every return jumps to a new
+  block holding what followed the call. A `None` result is a constant, and
+  an `in_place` binding of the call's result drops the flag. The
+  caller-side reads that bind an argument (`loaded_place`,
+  `forwarded_slot`, `trivially_copied`, a register's defining constant,
+  and the forward a `deinit` slot binding removes) look back only over the
+  straight-line run lowering leaves the call in (the private
+  `run_start`), so a structured caller binds as its lowered form would. Every inlined
   register takes the call's location with no origin slot, which is what
   `nodebug` asks for and keeps the native debug attach's per-function call
   correlation in the caller's file. A callee with its own compile-time
@@ -5600,8 +5620,8 @@ point where a slot declared in a loop is uninitialized again.
   `**kwargs` (the dictionary the call builds, R1070) and, unless through
   a closure, no capture accesses, capture
   nothing by copy or move, return a value rather than a reference, and
-  hold plain control flow with no `try`, region op, or closure; any other
-  call stays a call. The call's positional and keyword arguments bind to the
+  hold no `try`, closure, or compile-time assertion at any depth; any
+  other call stays a call. The call's positional and keyword arguments bind to the
   callee's regular parameters and collectors through
   `mojito_ast::call::match_call_slots`, the matcher the VM's `bind_args`
   applies, the bindings laid out by `FunctionDeclaration::slot_parameter`

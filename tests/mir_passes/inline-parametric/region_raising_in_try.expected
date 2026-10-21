@@ -1,0 +1,64 @@
+  functions: [
+      fn {
+        name: held,
+        registers: 12,
+        vars: 2,
+        var_names: [s, x],
+        params: 2,
+        param_types: [struct_type { name: "__module$std$string$String", arguments: [] }, Int],
+        owned_params: [true, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: "__module$std$string$String", arguments: [] } }, var_type { var: $v1, type: Int }],
+        return_type: present(Int),
+        raises: true,
+        error_type: present(Error),
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Bool }, reg_type { reg: %r4, type: StringLiteral }, reg_type { reg: %r5, type: Error }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: struct_type { name: "__module$std$string$String", arguments: [] } }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r10, type: struct_type { name: "__module$std$string$String", arguments: [] } }, reg_type { reg: %r11, type: None }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 80, end: 81, origin: present($v1) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 84, end: 85, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 84, end: 85, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 80, end: 85, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 107, end: 117, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 101, end: 118, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 130, end: 131, origin: present($v1) }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 134, end: 135, origin: present($v0) }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 134, end: 149, origin: absent }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 130, end: 149, origin: absent }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 134, end: 135, origin: absent }) }, reg_loc { reg: %r11, location: present(loc { file: file0, start: 134, end: 135, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r1, value: int_literal(0) },
+              literal.materialize { dest: %r2, value: %r1, target: Int },
+              var.use { dest: %r0, var: $v1, mode: copy },
+              binary { op: lt, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent },
+              if { results: [], condition: %r3, then: [bb0 { instructions: [const { dest: %r4, value: string("negative") }, call { dest: %r5, func: Error, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, raise { src: %r5 }], terminator: yield { values: [] } }], elifs: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
+              place.load { dest: %r7, place: place { root: $v0, root_type: present(struct_type { name: "__module$std$string$String", arguments: [] }), projections: [], type: present(struct_type { name: "__module$std$string$String", arguments: [] }), through: absent } },
+              call.method { dest: %r8, recv: %r7, method: byte_length, resolved: present("__module$std$string$String.byte_length"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v0, root_type: present(struct_type { name: "__module$std$string$String", arguments: [] }), projections: [], type: present(struct_type { name: "__module$std$string$String", arguments: [] }), through: absent }), recv_writes: false, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              var.use { dest: %r10, var: $v0, mode: forward },
+              call.method { dest: %r11, recv: %r10, method: __deinit__, resolved: present("__module$std$string$String.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              var.use { dest: %r6, var: $v1, mode: copy },
+              binary { op: add, dest: %r9, a: %r6, b: %r8, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r9) }
+          }
+        ]
+      },
+      fn {
+        name: main,
+        registers: 21,
+        vars: 5,
+        var_names: [e, "$fwd_arg_r1", "s$inline2", "x$inline2", "$inline2$result"],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Error }, var_type { var: $v1, type: struct_type { name: "__module$std$string$String", arguments: [] } }, var_type { var: $v2, type: struct_type { name: "__module$std$string$String", arguments: [] } }, var_type { var: $v3, type: Int }, var_type { var: $v4, type: Int }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: StringLiteral }, reg_type { reg: %r1, type: struct_type { name: "__module$std$string$String", arguments: [] } }, reg_type { reg: %r2, type: struct_type { name: "__module$std$string$String", arguments: [] } }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: None }, reg_type { reg: %r7, type: Error }, reg_type { reg: %r8, type: None }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r10, type: IntLiteral }, reg_type { reg: %r11, type: Int }, reg_type { reg: %r12, type: Bool }, reg_type { reg: %r13, type: StringLiteral }, reg_type { reg: %r14, type: Error }, reg_type { reg: %r15, type: Int }, reg_type { reg: %r16, type: struct_type { name: "__module$std$string$String", arguments: [] } }, reg_type { reg: %r17, type: Int }, reg_type { reg: %r18, type: Int }, reg_type { reg: %r19, type: struct_type { name: "__module$std$string$String", arguments: [] } }, reg_type { reg: %r20, type: None }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 199, end: 202, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 192, end: 203, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 192, end: 203, origin: present($v1) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 205, end: 206, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 205, end: 206, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 187, end: 207, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 181, end: 208, origin: absent }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 237, end: 238, origin: present($v0) }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 231, end: 239, origin: absent }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 187, end: 207, origin: absent }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 187, end: 207, origin: absent }) }, reg_loc { reg: %r11, location: present(loc { file: file0, start: 187, end: 207, origin: absent }) }, reg_loc { reg: %r12, location: present(loc { file: file0, start: 187, end: 207, origin: absent }) }, reg_loc { reg: %r13, location: present(loc { file: file0, start: 187, end: 207, origin: absent }) }, reg_loc { reg: %r14, location: present(loc { file: file0, start: 187, end: 207, origin: absent }) }, reg_loc { reg: %r15, location: present(loc { file: file0, start: 187, end: 207, origin: absent }) }, reg_loc { reg: %r16, location: present(loc { file: file0, start: 187, end: 207, origin: absent }) }, reg_loc { reg: %r17, location: present(loc { file: file0, start: 187, end: 207, origin: absent }) }, reg_loc { reg: %r18, location: present(loc { file: file0, start: 187, end: 207, origin: absent }) }, reg_loc { reg: %r19, location: present(loc { file: file0, start: 187, end: 207, origin: absent }) }, reg_loc { reg: %r20, location: present(loc { file: file0, start: 187, end: 207, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              try { body: [bb0 { instructions: [const { dest: %r0, value: string("s") }, call { dest: %r1, func: "__module$std$string$String.__init__$ov$StringLiteral", raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, var.store { var: $v1, src: %r1, binding_type: present(struct_type { name: "__module$std$string$String", arguments: [] }), in_place: true }, const { dest: %r3, value: int_literal(1) }, literal.materialize { dest: %r4, value: %r3, target: Int }, var.use { dest: %r2, var: $v1, mode: forward }, var.store { var: $v2, src: %r2, binding_type: present(struct_type { name: "__module$std$string$String", arguments: [] }), in_place: false }, var.store { var: $v3, src: %r4, binding_type: present(Int), in_place: false }, loop { label: present(loop4294967295), body: [bb0 { instructions: [const { dest: %r10, value: int_literal(0) }, literal.materialize { dest: %r11, value: %r10, target: Int }, var.use { dest: %r9, var: $v3, mode: copy }, binary { op: lt, dest: %r12, a: %r9, b: %r11, resolved: absent, raises: absent }, if { results: [], condition: %r12, then: [bb0 { instructions: [const { dest: %r13, value: string("negative") }, call { dest: %r14, func: Error, raises: absent, args: [%r13], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, raise { src: %r14 }], terminator: yield { values: [] } }], elifs: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }, place.load { dest: %r16, place: place { root: $v2, root_type: present(struct_type { name: "__module$std$string$String", arguments: [] }), projections: [], type: present(struct_type { name: "__module$std$string$String", arguments: [] }), through: absent } }, call.method { dest: %r17, recv: %r16, method: byte_length, resolved: present("__module$std$string$String.byte_length"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v2, root_type: present(struct_type { name: "__module$std$string$String", arguments: [] }), projections: [], type: present(struct_type { name: "__module$std$string$String", arguments: [] }), through: absent }), recv_writes: false, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }, var.use { dest: %r19, var: $v2, mode: forward }, call.method { dest: %r20, recv: %r19, method: __deinit__, resolved: present("__module$std$string$String.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }, var.use { dest: %r15, var: $v3, mode: copy }, binary { op: add, dest: %r18, a: %r15, b: %r17, resolved: absent, raises: absent }, var.store { var: $v4, src: %r18, binding_type: present(Int), in_place: false }], terminator: break { label: present(loop4294967295) } }] }, var.use { dest: %r5, var: $v4, mode: move }, call { dest: %r6, func: print, raises: absent, args: [%r5], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: try.yield {} }], handler: present(handler { error_var: present($v0), blocks: [bb0 { instructions: [var.use { dest: %r7, var: $v0, mode: copy }, drop.var { var: $v0 }, call { dest: %r8, func: print, raises: absent, args: [%r7], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: try.yield {} }] }), orelse: absent, finalbody: absent, cleanup: [drop { var: $v2 }] }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      }
+  ]

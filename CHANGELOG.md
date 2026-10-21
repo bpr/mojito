@@ -616,6 +616,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `inline-parametric` inlines a callee whose body holds an `if`, a loop,
+  a `comptime if`, a `comptime for`, or a `match`, as upstream's
+  `inlineGeneratorCall` does: on a structured body each inlined body goes
+  in a loop labelled `inlined_cf_scope`, its returns breaks of that loop
+  storing the call's result slot, and its size is priced exactly as its
+  lowered form is. A returned reference stored to that slot takes the
+  call's reference type, as a spliced body's lone returned register does.
+  Both seams still lower control flow first, so production bodies keep the
+  block splice and no program's output or MIR changes until R1254; a
+  scratch build that keeps bodies structured ran every `always_inline` and
+  control-flow fixture unchanged. This closes R1253.
 - The pre-elaboration passes read structured bodies as upstream's
   generator passes read `hlcf`: `sccp` enters only the arm an `if` on a
   constant takes and meets the `if`'s results from its arms' yields;

@@ -393,8 +393,9 @@ last producer. Every stage keeps program output unchanged; the
       `RemoveDeadLoop`, and `ComptimeIfOp::canonicalize` with
       `checkTrivialBlocks`; `mem-2-reg` promotes by structured dominance.
       R836's CFG rewrites stay for lowered bodies until stage 12.
-    - **10b (R1253).** `inline-parametric` inlines structured callees,
-      wrapping a multi-exit one in a labelled loop.
+    - **10b (R1253, landed).** `inline-parametric` inlines structured
+      callees, wrapping every inlined body in one loop labelled
+      `inlined_cf_scope`.
     - **10c (R1254).** The seams stop lowering, and the elaborator lowers
       each template where it first fetches it (`Bodies::get`).
 11. **Elaborator.** Instantiation, substitution, and `ComptimeIf`/

@@ -112,28 +112,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1253 `inline-parametric` refuses every callee with structured
-  control flow and splices blocks, where `InlineParametric` wraps the body
-  in an `inlined_cf_scope` loop**
-
-  `is_closed` refuses a callee holding an `if`, loop, `comptime if`,
-  `comptime for`, or `match`, and `splice` splits the caller's block, so
-  the pass can only inline lowered bodies.
-  - Upstream wraps every inlined body in a labelled `hlcf.loop` and turns
-    each `hlcf.return` into a labelled `hlcf.break`
-    (`InlineParametric.cpp:129-348`).
-  - Slice S4 of `R879-the-pre-elaboration-pipeline-and-the-plan.md`: a
-    structured splice beside the CFG one, a single-exit callee spliced
-    flat, a multi-exit one wrapped in a fresh-labelled `Loop` whose
-    `break`s store the result slot (`Break` carries no value, R886).
-  - `inlined_blocks`, `result_of`, `raise_held`, `inline_cost`, and
-    `back_edges` read every region; the price must not move.
-  - Its pass cases are structured twins of `multi_return`,
-    `generic_comptime_branch`, `comptime_for_callee`, `in_try_region`, and
-    `raising_in_try`.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R1254 The seams lower control flow before the pre-elaboration
   pipeline, where upstream keeps `hlcf` until LLVM**
 
@@ -146,6 +124,10 @@ which names the upstream pass each one follows. Each is measured by the
     lowering, and `mono/bodies.rs` `Bodies::get` lowers each template
     once (an arena outside the `Specializer`, `PackageBodies::template`).
   - The inliner's CFG splice and its CFG-shaped pass inputs go.
+  - `inline-parametric`'s `splice_region` then runs for every call, so a
+    straight-line callee is wrapped in its `inlined_cf_scope` loop too,
+    and `Inliner::wraps` stops keeping a call that mixes a lowered body
+    with a structured one.
   - No package holds MIR, so `PACKAGE_FORMAT` does not change.
   - Probe: `@no_inline def f[n: Int]() -> Int` whose body is
     `comptime if False: comptime k = n * 2; return k` then `return 3`
@@ -157,6 +139,9 @@ which names the upstream pass each one follows. Each is measured by the
   - The scratch build matched every `if`/loop/`try`/`match` fixture's
     output; its structured `mem-2-reg` promoted 369 slots where the CFG
     path promotes 384, before R1253.
+  - With R1253's structured inlining live, the same scratch build matched
+    all 153 `always_inline` and control-flow fixtures' output, and its
+    `mem-2-reg` promoted 544 slots there, as the CFG path does.
   - Updates `docs/architecture.md` §Pre-Elaboration Pipeline and
     `docs/features.md`'s pipeline row.
   - Depends on R1253.
@@ -785,6 +770,10 @@ which names the upstream pass each one follows. Each is measured by the
     loop body's boundary) goes once the elaborator clones regions.
   - About two thirds of the promotable-type slot mentions in the
     pre-elaboration bodies of `collections_many` are merged ones.
+  - An inlined body's `$inline{n}$result` slot is stored inside its
+    `inlined_cf_scope` loop and read after it, so it stays a slot even for
+    a single-exit callee: probe
+    `tests/mir_passes/inline-parametric/region_return_in_loop.expected`.
   - Depends on R1254 (structured bodies at the seam), R886 (region values),
     R880 (regions cloned).
   - Model: Fable, Planned.
@@ -10115,6 +10104,10 @@ follow-ups the landed producer stages filed come last.
     `ComptimeYield`; `lower-control-flow` stores them in slots.
   - Register promotion is the lever: values the producers keep in slots
     become operands once a promoted register can cross a region.
+  - An inlined body's `inlined_cf_scope` loop returns its value through a
+    `$inline{n}$result` slot each `break` stores, where upstream's
+    `hlcf.break` carries it as the loop's result: probe
+    `tests/mir_passes/inline-parametric/region_multi_return.expected`.
   - Depends on R787, R872.
   - Model: Fable, Not Planned.
 
