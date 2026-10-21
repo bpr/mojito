@@ -13,8 +13,8 @@ use std::collections::HashMap;
 use crate::ast::{
     ComprehensionClause, Condition, Decorator, DestructureTarget, DestructureTargetKind, Expr,
     ExprKind, FnParam, FunctionTypeParam, MatchCase, MatchPattern, MatchPatternKind, Method, Param,
-    ParamArg, SequencePattern, SequenceTarget, Stmt, StmtKind, StructComptime, SubscriptArg,
-    TStringPart, TraitComptime, TraitMethod, Type, TypeParam,
+    ParamArg, SequenceTarget, Stmt, StmtKind, StructComptime, SubscriptArg, TStringPart,
+    TraitComptime, TraitMethod, Type, TypeParam,
 };
 
 /// Callbacks for a read-only walk. Every method has a no-op default.
@@ -297,9 +297,7 @@ pub fn walk_pattern<V: Visitor>(visitor: &mut V, pattern: &MatchPattern) {
         }
         MatchPatternKind::Sequence(items) => {
             for item in items {
-                if let SequencePattern::Element(pattern) = item {
-                    walk_pattern(visitor, pattern);
-                }
+                walk_pattern(visitor, item.pattern());
             }
         }
         MatchPatternKind::Call { head, args, kwargs } => {
@@ -1106,9 +1104,7 @@ pub fn walk_pattern_mut<V: MutVisitor>(visitor: &mut V, pattern: &mut MatchPatte
         }
         MatchPatternKind::Sequence(items) => {
             for item in items {
-                if let SequencePattern::Element(pattern) = item {
-                    walk_pattern_mut(visitor, pattern);
-                }
+                walk_pattern_mut(visitor, item.pattern_mut());
             }
         }
         MatchPatternKind::Call { head, args, kwargs } => {

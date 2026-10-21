@@ -141,7 +141,7 @@ destructure_assignment:
     | target_item (',' target_item)+ ','? '=' expression   # a nested or declaring element
 display_target: '(' [target_item (',' target_item)* ','?] ')' | '[' [seq_target (',' seq_target)* ','?] ']'
 target_item: 'var' (NAME | display_target) | 'ref' (NAME | display_target) | display_target | target | '_'
-seq_target: target_item | '*' (NAME | '_' | place)        # at most one star
+seq_target: target_item | '*' target_item                 # at most one star
 declared_display: display_target                           # leaves are NAME | '_' | nested displays
 declared_item: NAME | '_' | declared_display
 augmented_assignment: assign_target aug_op expression
@@ -202,11 +202,12 @@ t`, the `unpack_assignment` spelling) is the same statement with a flat
 tuple target. A statement-initial `(` or `[` opens a target only when `=`
 follows and no leaf declares: `(a + 1).foo()`, `(a, b)`, and
 `[1, 2].append(3)` remain expressions, while `(var a, b)` without `=` is an
-error. Tuple targets and fixed-length sequence targets run
+error. The star of a sequence target takes any target item (`*_`,
+`*rest`, `*var rest`, `*xs[0]`, `*[g, *h]`), and a second star is an error.
+Tuple targets and sequence targets, starred ones included, run
 (`docs/features.md`, Bindings); a nominal subscript leaf of a tuple target
-(`xs[i]`), a starred sequence target, and a sequence target nested in a
-tuple target are parsed and rejected by the checker until their slices
-land.
+(`xs[i]`) and a sequence target nested in a tuple target are parsed and
+rejected by the checker until their roadmap entries land.
 
 **Augmented assignment** `target OP= e` means `target = target OP e` for the seven
 arithmetic and integer bitwise/shift operators. The target obeys the same place
@@ -734,7 +735,7 @@ closed_pattern:
     | '{' [NAME '=' pattern (',' NAME '=' pattern)* ','?] '}'          # contextual struct fields
     | head                                              # `.None`, `Optional.None`
     | head '(' [pattern_arg (',' pattern_arg)* ','?] ')'               # `Point(x=0)`, `.Some(x)`
-seq_pattern: pattern | '*' (NAME | '_')
+seq_pattern: pattern | '*' closed_pattern
 head: '.' NAME | NAME ('.' NAME)* | NAME '[' param_args ']' ('.' NAME)*
 pattern_arg: pattern | NAME '=' pattern                 # keyword fields (struct) or one payload (enum)
 ```
@@ -751,7 +752,9 @@ whose operand is parsed at unary precedence (`== a | b` is `(== a) | b`).
 checker decides whether a call-shaped head is a struct pattern (keyword
 fields, `Point(x=0, y=yv)`) or an enum case with one positional payload
 (`.Some(x)`, `Optional.Some(0)`); a `*`/`**` argument there is a syntax
-error. `comptime match` has the same shape over a parameter subject. Every
+error. A sequence pattern's star takes a closed pattern (`*_`, `*rest`,
+`*var rest`, `*[a, b]`), never an `as` pattern or a `|`, and a second star
+is an error. `comptime match` has the same shape over a parameter subject. Every
 pattern form is parsed; which ones the checker accepts is
 `docs/features.md`'s Control flow row.
 

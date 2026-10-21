@@ -119,7 +119,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `checker/destructure.rs` owns destructuring assignment (`check_destructure`).
   A sequence target is `check_sequence_destructure`'s desugar (anchor,
   raising `check_list_length`, per-element `__getitem__(i)` reads stored by
-  `store_sequence_element`, a subscript leaf gated by
+  `store_sequence_element`; a star's slice subscript and a suffix read at
+  `$suffix<id> + k`, its start read once; a subscript leaf gated by
   `require_mutable_subscript`), recorded in `statement_desugars`. A tuple
   target is the recursive walk of a `DestructureTarget` against the value's tuple type,
   declaring `var`/`ref` leaves (their binding and storage type recorded at
@@ -146,7 +147,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   gates the subject on its declared `Sized` conformance, pushes one
   `PlannedCommand::ListLength` test (the call to
   `std.builtin._stubs.list_length_matches`, named by `builtin_stub`), and
-  compiles each element's pattern over an unread element subject, which
+  compiles each element's pattern over an unread element subject — a
+  `Step::SequenceElement`, `SequenceFromEnd`, or the star's
+  `SequenceSlice`, spelled by `MatchSubject::value_at` — which
   `materialize` reads at the first command that needs it into a hidden
   `$elem<id>` (`PlannedCommand::PathValue`: `ref` over a reference
   result, `var` over an owned one, moved into a lone `var` binding),

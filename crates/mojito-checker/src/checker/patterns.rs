@@ -19,13 +19,17 @@
 //! (and per `|` alternative), at the first command that needs it, into a
 //! hidden `$elem<id>`: `ref` over a reference result, `var` over an owned
 //! one, which a `var` binding then takes by transfer. `_` reads nothing.
+//! A star `[p, *q, r]` makes the test a minimum
+//! (`list_length_matches($match<id>, 2, False)`), reads an element after it
+//! at `$match<id>[$match<id>.__len__() - k]`, and runs its pattern `q` over
+//! the slice `$match<id>[1:$match<id>.__len__() - k]`, read like an element,
+//! so `*_` slices nothing.
 
 use super::desugar::Synth;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::{BindingMode, MatchCase, MatchPattern, MatchPatternKind, SequencePattern};
 use mojito_checked::checked::{MatchPlan, PlannedCommand, Warning};
-use mojito_common::literal::IntLiteral;
 
 impl Checker {
     /// Check `match subject:` with its `cases`: anchor the subject, compile
@@ -421,11 +425,14 @@ impl Checker {
     }
 
     /// `[p0, p1, ...]` over a `Sized` subject: one length test, upstream's
-    /// `list_length_matches` against the pattern's arity, then each
-    /// element's pattern over `subject[i]`, in element order, each element
-    /// read at the first command that needs it. The subject's declared
-    /// conformance decides, not its methods; the getter is the subscript's
-    /// own selection.
+    /// `list_length_matches` against the pattern's arity (a minimum when a
+    /// star is present), then each element's pattern over its path, in
+    /// element order, each path read at the first command that needs it:
+    /// `subject[i]` before the star, `subject[subject.__len__() - k]` after
+    /// it, and the star's own pattern over the slice
+    /// `subject[i:subject.__len__() - k]`. The subject's declared
+    /// conformance decides, not its methods; the getters are the
+    /// subscripts' own selections.
     fn compile_sequence_pattern(
         &mut self,
         items: &[SequencePattern],
@@ -433,15 +440,6 @@ impl Checker {
         mut join: Join<'_>,
         commands: &mut Commands,
     ) -> Result<(), TypeError> {
-        let items = items
-            .iter()
-            .map(|item| match item {
-                SequencePattern::Element(pattern) => Ok(pattern),
-                SequencePattern::Star { .. } => {
-                    Err(TypeError::Unsupported("starred sequence patterns".into()))
-                }
-            })
-            .collect::<Result<Vec<_>, _>>()?;
         if subject.element.is_some() {
             return Err(TypeError::MatchPattern(format!(
                 "{UNTYPED_ELEMENT} does not conform to 'Sized'"
@@ -464,26 +462,40 @@ impl Checker {
             )));
         }
         let synth = subject.synth;
-        let arity = synth.expr(ExprKind::Int(IntLiteral::from(
-            u64::try_from(items.len()).unwrap_or(u64::MAX),
-        )));
+        let count = items.len();
+        let star = items
+            .iter()
+            .position(|item| matches!(item, SequencePattern::Star(_)));
         let test = synth.expr(ExprKind::Call {
             name: length_matches,
             param_args: Vec::new(),
-            args: vec![subject.value(), arity, synth.expr(ExprKind::Bool(true))],
+            args: vec![
+                subject.value(),
+                synth.int(count - usize::from(star.is_some())),
+                synth.expr(ExprKind::Bool(star.is_none())),
+            ],
             kwargs: Vec::new(),
         });
         self.expect_bool(&test, "case pattern")?;
         commands.tests.push(PlannedCommand::ListLength(test));
-        for (index, item) in items.into_iter().enumerate() {
+        for (index, item) in items.iter().enumerate() {
+            let step = match star {
+                Some(star) if index == star => Step::SequenceSlice {
+                    start: index,
+                    end_offset: count - index - 1,
+                },
+                Some(star) if index > star => Step::SequenceFromEnd(count - index),
+                _ => Step::SequenceElement(index),
+            };
+            let pattern = item.pattern();
             let child = subject.sequence_element(
-                index,
+                step,
                 ElementRead {
-                    by_reference: binds_by_reference(item),
-                    moves: root_bindings(item) <= 1,
+                    by_reference: binds_by_reference(pattern),
+                    moves: root_bindings(pattern) <= 1,
                 },
             );
-            self.compile_pattern(item, &child, join.reborrow(), commands)?;
+            self.compile_pattern(pattern, &child, join.reborrow(), commands)?;
         }
         Ok(())
     }
@@ -778,25 +790,7 @@ impl<'a> MatchSubject<'a> {
     /// The expression reading this subject: `$match<id>` under the path's
     /// subscripts and field selections.
     fn value(&self) -> Expr {
-        let mut value = self.synth.identifier(&self.name);
-        for step in &self.path {
-            value = match step {
-                Step::Element(index) | Step::SequenceElement(index) => {
-                    let index = self.synth.expr(ExprKind::Int(IntLiteral::from(
-                        u64::try_from(*index).unwrap_or(u64::MAX),
-                    )));
-                    self.synth.expr(ExprKind::Index {
-                        object: Box::new(value),
-                        index: Box::new(index),
-                    })
-                }
-                Step::Field(field) => self.synth.expr(ExprKind::Member {
-                    object: Box::new(value),
-                    field: field.clone(),
-                }),
-            };
-        }
-        value
+        self.value_at(self.path.len())
     }
 
     /// The value a `var` binding or a later `|` alternative's assignment
@@ -826,13 +820,63 @@ impl<'a> MatchSubject<'a> {
         }
     }
 
-    /// The unread element `index` of this sequence subject, read as
-    /// `element` says.
-    fn sequence_element(&self, index: usize, element: ElementRead) -> Self {
+    /// The unread element or slice `step` of this sequence subject, read
+    /// as `element` says.
+    fn sequence_element(&self, step: Step, element: ElementRead) -> Self {
         MatchSubject {
             element: Some(element),
-            ..self.project(Step::SequenceElement(index), Ty::error())
+            ..self.project(step, Ty::error())
         }
+    }
+
+    /// The expression reading the subject `path[..depth]` names, each
+    /// sequence step spelled as upstream's path values are: an element
+    /// from the end and a slice's end read the parent's `__len__` afresh.
+    fn value_at(&self, depth: usize) -> Expr {
+        let synth = self.synth;
+        let mut value = synth.identifier(&self.name);
+        for (at, step) in self.path[..depth].iter().enumerate() {
+            let object = Box::new(value);
+            value = match step {
+                Step::Element(index) | Step::SequenceElement(index) => {
+                    synth.expr(ExprKind::Index {
+                        object,
+                        index: Box::new(synth.int(*index)),
+                    })
+                }
+                Step::SequenceFromEnd(offset) => synth.expr(ExprKind::Index {
+                    object,
+                    index: Box::new(self.length_minus(at, *offset)),
+                }),
+                Step::SequenceSlice { start, end_offset } => synth.expr(ExprKind::Slice {
+                    object,
+                    lower: Some(Box::new(synth.int(*start))),
+                    upper: (*end_offset != 0).then(|| Box::new(self.length_minus(at, *end_offset))),
+                    step: None,
+                }),
+                Step::Field(field) => synth.expr(ExprKind::Member {
+                    object,
+                    field: field.clone(),
+                }),
+            };
+        }
+        value
+    }
+
+    /// `parent.__len__() - offset`, the parent being the subject
+    /// `path[..depth]` names, read afresh.
+    fn length_minus(&self, depth: usize, offset: usize) -> Expr {
+        let length = self.synth.expr(ExprKind::MethodCall {
+            object: Box::new(self.value_at(depth)),
+            method: "__len__".to_string(),
+            args: Vec::new(),
+            kwargs: Vec::new(),
+        });
+        self.synth.expr(ExprKind::Infix(
+            InfixOp::Sub,
+            Box::new(length),
+            Box::new(self.synth.int(offset)),
+        ))
     }
 }
 
@@ -920,13 +964,16 @@ struct Read {
     owned: bool,
 }
 
-/// One projection of a subject: a tuple element, a struct field, or a
-/// sequence element.
+/// One projection of a subject: a tuple element, a struct field, or one of
+/// upstream's sequence paths — an element by index, an element counted
+/// from the end, or the slice between a fixed prefix and suffix.
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum Step {
     Element(usize),
     Field(String),
     SequenceElement(usize),
+    SequenceFromEnd(usize),
+    SequenceSlice { start: usize, end_offset: usize },
 }
 
 /// What an unread sequence element's type is spelled as in a rejection.
@@ -958,10 +1005,9 @@ fn binds_by_reference(pattern: &MatchPattern) -> bool {
         MatchPatternKind::Fields(fields) => fields
             .iter()
             .any(|(_, pattern)| binds_by_reference(pattern)),
-        MatchPatternKind::Sequence(items) => items.iter().any(|item| match item {
-            SequencePattern::Element(pattern) => binds_by_reference(pattern),
-            SequencePattern::Star { .. } => false,
-        }),
+        MatchPatternKind::Sequence(items) => {
+            items.iter().any(|item| binds_by_reference(item.pattern()))
+        }
         MatchPatternKind::Wildcard
         | MatchPatternKind::Literal(_)
         | MatchPatternKind::Equal(_)

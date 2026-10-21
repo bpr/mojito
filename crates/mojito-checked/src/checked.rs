@@ -2922,9 +2922,7 @@ impl CheckedPattern {
             }
             CheckedPatternKind::Sequence(items) => {
                 for item in items {
-                    if let CheckedSequencePattern::Element(pattern) = item {
-                        pattern.collect_expressions(out);
-                    }
+                    item.pattern().collect_expressions(out);
                 }
             }
             CheckedPatternKind::Call { head, args, kwargs } => {
@@ -2970,8 +2968,8 @@ impl CheckedPattern {
                         CheckedSequencePattern::Element(pattern) => {
                             CheckedSequencePattern::Element(pattern.map_operands(map))
                         }
-                        CheckedSequencePattern::Star { name } => {
-                            CheckedSequencePattern::Star { name: name.clone() }
+                        CheckedSequencePattern::Star(pattern) => {
+                            CheckedSequencePattern::Star(pattern.map_operands(map))
                         }
                     })
                     .collect(),
@@ -3034,7 +3032,15 @@ pub enum CheckedPatternKind {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum CheckedSequencePattern {
     Element(CheckedPattern),
-    Star { name: Option<String> },
+    Star(CheckedPattern),
+}
+
+impl CheckedSequencePattern {
+    pub const fn pattern(&self) -> &CheckedPattern {
+        match self {
+            Self::Element(pattern) | Self::Star(pattern) => pattern,
+        }
+    }
 }
 
 /// A checked destructuring target: the source target
@@ -4900,8 +4906,8 @@ impl<'a> ArenaBuilder<'a> {
                         SequencePattern::Element(pattern) => {
                             CheckedSequencePattern::Element(self.pattern(pattern))
                         }
-                        SequencePattern::Star { name, .. } => {
-                            CheckedSequencePattern::Star { name: name.clone() }
+                        SequencePattern::Star(pattern) => {
+                            CheckedSequencePattern::Star(self.pattern(pattern))
                         }
                     })
                     .collect(),

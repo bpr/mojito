@@ -16,13 +16,19 @@
 //! that read. `_` still reads its element, an owned element moves into a
 //! `var` leaf, and a nested tuple or sequence target destructures the
 //! element read into a hidden `$elem<id>`.
+//!
+//! A star `[t0, *ts, t2, t3]` makes the check a minimum
+//! (`check_list_length($seq<id>, 3, False)`). A suffix after it starts at
+//! `var $suffix<id> = $seq<id>.__len__() - 2`, read once; the star's target
+//! takes the subscript `$seq<id>[1:$suffix<id>]` (`$seq<id>[1:]` when the
+//! star is last), `_` included, and the suffix's elements are read at
+//! `$suffix<id>` and `$suffix<id> + k`.
 
 use super::desugar::{StatementDesugar, Synth};
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::{BindingMode, DestructureTarget, DestructureTargetKind, SequenceTarget};
 use mojito_checked::checked::CheckedTupleUnpackElement;
-use mojito_common::literal::IntLiteral;
 use mojito_types::origin::{Mutability, Origin, OriginPlace, RefTy};
 use mojito_types::types::TyKind;
 
@@ -105,15 +111,10 @@ impl Checker {
         ret: Option<&Ty>,
         in_loop: bool,
     ) -> Result<(), TypeError> {
-        let items = items
+        let count = items.len();
+        let star = items
             .iter()
-            .map(|item| match item {
-                SequenceTarget::Element(target) => Ok(target),
-                SequenceTarget::Star(_) => Err(TypeError::Unsupported(
-                    "starred sequence destructuring targets".into(),
-                )),
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+            .position(|item| matches!(item, SequenceTarget::Star(_)));
         let synth = Synth::for_statement(stmt, value.source.clone());
         let anchor_name = format!("$seq{}", synth.parent().0);
         let (anchor, ty, _) =
@@ -143,21 +144,70 @@ impl Checker {
             param_args: Vec::new(),
             args: vec![
                 synth.identifier(&anchor_name),
-                int_literal(&synth, items.len()),
-                synth.expr(ExprKind::Bool(true)),
+                synth.int(count - usize::from(star.is_some())),
+                synth.expr(ExprKind::Bool(star.is_none())),
             ],
             kwargs: Vec::new(),
         })));
         self.check_stmt(&length_check, ret, in_loop)?;
         let mut statements = vec![anchor, length_check];
-        for (index, item) in items.into_iter().enumerate() {
-            let read = synth.expr(ExprKind::MethodCall {
-                object: Box::new(synth.identifier(&anchor_name)),
-                method: "__getitem__".to_string(),
-                args: vec![int_literal(&synth, index)],
-                kwargs: Vec::new(),
-            });
-            self.store_sequence_element(&synth, item, read, &mut statements, ret, in_loop)?;
+        // A star before a suffix reads the length once more, for the
+        // suffix's start: `var $suffix<id> = $seq<id>.__len__() - k`.
+        let suffix = match star {
+            Some(star) if star + 1 != count => {
+                let name = format!("$suffix{}", synth.parent().0);
+                let length = synth.expr(ExprKind::MethodCall {
+                    object: Box::new(synth.identifier(&anchor_name)),
+                    method: "__len__".to_string(),
+                    args: Vec::new(),
+                    kwargs: Vec::new(),
+                });
+                let declaration = synth.stmt(StmtKind::VarDecl {
+                    name: name.clone(),
+                    ty: None,
+                    value: synth.expr(ExprKind::Infix(
+                        InfixOp::Sub,
+                        Box::new(length),
+                        Box::new(synth.int(count - star - 1)),
+                    )),
+                });
+                self.check_stmt(&declaration, ret, in_loop)?;
+                statements.push(declaration);
+                Some((star + 1, name))
+            }
+            _ => None,
+        };
+        for (index, item) in items.iter().enumerate() {
+            let anchor = Box::new(synth.identifier(&anchor_name));
+            let (read, target) = match (item, &suffix) {
+                (SequenceTarget::Star(target), _) => (
+                    synth.expr(ExprKind::Slice {
+                        object: anchor,
+                        lower: Some(Box::new(synth.int(index))),
+                        upper: suffix
+                            .as_ref()
+                            .map(|(_, name)| Box::new(synth.identifier(name))),
+                        step: None,
+                    }),
+                    target,
+                ),
+                (SequenceTarget::Element(target), Some((first, name))) if index >= *first => {
+                    let start = synth.identifier(name);
+                    let position = match index - first {
+                        0 => start,
+                        offset => synth.expr(ExprKind::Infix(
+                            InfixOp::Add,
+                            Box::new(start),
+                            Box::new(synth.int(offset)),
+                        )),
+                    };
+                    (getitem(&synth, anchor, position), target)
+                }
+                (SequenceTarget::Element(target), _) => {
+                    (getitem(&synth, anchor, synth.int(index)), target)
+                }
+            };
+            self.store_sequence_element(&synth, target, read, &mut statements, ret, in_loop)?;
         }
         self.statement_desugars
             .borrow_mut()
@@ -540,9 +590,13 @@ impl Checker {
     }
 }
 
-/// The integer literal `value`, made by `synth`.
-fn int_literal(synth: &Synth, value: usize) -> Expr {
-    synth.expr(ExprKind::Int(IntLiteral::from(
-        u64::try_from(value).unwrap_or(u64::MAX),
-    )))
+/// `object.__getitem__(index)`, the attribute call upstream's store makes
+/// for an element, made by `synth`.
+fn getitem(synth: &Synth, object: Box<Expr>, index: Expr) -> Expr {
+    synth.expr(ExprKind::MethodCall {
+        object,
+        method: "__getitem__".to_string(),
+        args: vec![index],
+        kwargs: Vec::new(),
+    })
 }

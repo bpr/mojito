@@ -206,6 +206,7 @@ assets/ok/delegated_ref_return_projection.mojo	main	exe-differential	sanitized
 assets/ok/destructure_list_wrong_length_raises.mojo	main	exe-differential	sanitized
 assets/ok/destructure_nested_targets.mojo	main	exe-differential	sanitized
 assets/ok/destructure_sequence_targets.mojo	main	exe-differential	sanitized
+assets/ok/destructure_starred_slice.mojo	main	exe-differential	sanitized
 assets/ok/destructure_swap_and_places.mojo	main	exe-differential	sanitized
 assets/ok/dict_display_literal_constructor.mojo	main	exe-differential	sanitized
 assets/ok/dict_hasher_forwarding.mojo	main	exe-differential	sanitized
@@ -385,6 +386,7 @@ assets/ok/match_or_alternatives_bind.mojo	main	exe-differential	sanitized
 assets/ok/match_or_failed_alternative_copies.mojo	main	exe-differential	sanitized
 assets/ok/match_raises_and_finally.mojo	main	exe-differential	sanitized
 assets/ok/match_ref_and_as_bindings.mojo	main	exe-differential	sanitized
+assets/ok/match_sequence_custom_sized.mojo	main	exe-differential	sanitized
 assets/ok/match_sequence_fixed_length.mojo	main	exe-differential	sanitized
 assets/ok/match_struct_and_initializer_patterns.mojo	main	exe-differential	sanitized
 assets/ok/match_tuple_patterns.mojo	main	exe-differential	sanitized
@@ -742,6 +744,9 @@ assets/ok/scalar_range_zero_starting.mojo	main	exe-differential	sanitized
 assets/ok/scalar_runtime_conversions.mojo	main	exe-differential	sanitized
 assets/ok/self_hosted_dict.mojo	main	exe-differential	sanitized
 assets/ok/self_hosted_vec.mojo	main	exe-differential	sanitized
+assets/ok/sequence_starred_evaluation_order.mojo	main	exe-differential	sanitized
+assets/ok/sequence_starred_forms.mojo	main	exe-differential	sanitized
+assets/ok/sequence_starred_temporary_lifetime.mojo	main	exe-differential	sanitized
 assets/ok/set_methods_growth.mojo	main	exe-differential	sanitized
 assets/ok/set_variadic_constructor.mojo	main	exe-differential	sanitized
 assets/ok/shadowed_local_callable_call.mojo	main	exe-differential	sanitized

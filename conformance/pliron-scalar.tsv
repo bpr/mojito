@@ -206,6 +206,7 @@ assets/ok/delegated_ref_return_projection.mojo	-	ineligible	no-scalar-entry-shap
 assets/ok/destructure_list_wrong_length_raises.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/destructure_nested_targets.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/destructure_sequence_targets.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/destructure_starred_slice.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/destructure_swap_and_places.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_display_literal_constructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_hasher_forwarding.mojo	-	ineligible	no-scalar-entry-shape
@@ -385,6 +386,7 @@ assets/ok/match_or_alternatives_bind.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/match_or_failed_alternative_copies.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/match_raises_and_finally.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/match_ref_and_as_bindings.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/match_sequence_custom_sized.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/match_sequence_fixed_length.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/match_struct_and_initializer_patterns.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/match_tuple_patterns.mojo	-	ineligible	no-scalar-entry-shape
@@ -742,6 +744,9 @@ assets/ok/scalar_range_zero_starting.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_runtime_conversions.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/self_hosted_dict.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/self_hosted_vec.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/sequence_starred_evaluation_order.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/sequence_starred_forms.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/sequence_starred_temporary_lifetime.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/set_methods_growth.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/set_variadic_constructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/shadowed_local_callable_call.mojo	-	ineligible	no-scalar-entry-shape

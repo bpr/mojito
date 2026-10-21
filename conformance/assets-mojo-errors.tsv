@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	692
+# swept-count	700
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -56,6 +56,8 @@ assets/ownership_error/comptime_if_untaken_arm_uses_moved.mojo	compile-reject	ag
 assets/ownership_error/comptime_if_untaken_unused_declaration_moves.mojo	compile-reject	agree	error: use of uninitialized value 'a'
 assets/ownership_error/conditional_move.mojo	compile-reject	agree	error: use of uninitialized value 'a'
 assets/ownership_error/deinit_receiver_raising_in_try.mojo	compile-reject	agree	error: use of uninitialized value 'o'
+assets/ownership_error/destructure_starred_source_moved.mojo	compile-reject	agree	error: use of uninitialized value 'values'
+assets/ownership_error/destructure_starred_source_mutated.mojo	compile-reject	agree	error: use of invalidated interior reference 'values["element"]'
 assets/ownership_error/dict_comprehension_source_mutation.mojo	compile-reject	agree	error: aliasing values passed mutably to 'd' argument and passed immutably to 'key' argument in 'grow' call
 assets/ownership_error/dict_setitem_during_iteration.mojo	runs	subset	the pin runs it; Mojito rejects: invalidated interior reference
 assets/ownership_error/display_argument_element_read_after_invalidation.mojo	compile-reject	agree	error: use of invalidated interior reference 'lst["element"]'
@@ -72,6 +74,7 @@ assets/ownership_error/list_element_view_stale_after_inplace_update.mojo	compile
 assets/ownership_error/list_element_view_stale_after_store.mojo	compile-reject	agree	error: use of invalidated interior reference 'ys["element"]["bytes"]'
 assets/ownership_error/list_extend_consumes.mojo	compile-reject	agree	error: use of uninitialized value 'b'
 assets/ownership_error/list_slice_used_after_clear.mojo	compile-reject	agree	error: use of invalidated interior reference 'xs["element"]'
+assets/ownership_error/match_sequence_star_source_mutated.mojo	compile-reject	agree	error: use of invalidated interior reference 'values["element"]'
 assets/ownership_error/method_on_moved.mojo	compile-reject	agree	error: use of uninitialized value 'p'
 assets/ownership_error/move_in_loop.mojo	compile-reject	agree	error: use of uninitialized value 'a'
 assets/ownership_error/mut_parameter_read_after_transfer.mojo	compile-reject	agree	error: use of uninitialized value 'x'
@@ -286,6 +289,8 @@ assets/type_error/destructure_sequence_setitem_target.mojo	compile-reject	agree	
 assets/type_error/destructure_sequence_tuple_value.mojo	compile-reject	agree	error: 'Tuple[Int, Int]' value has no attribute '__getitem__'
 assets/type_error/destructure_sequence_undeclared_sized.mojo	compile-reject	agree	error: value of type 'S' does not conform to 'Sized'
 assets/type_error/destructure_sequence_undeclared_target.mojo	compile-reject	agree	error: implicit declaration of 'p' is not allowed; add 'var' to declare a new name
+assets/type_error/destructure_starred_discard_slices.mojo	compile-reject	agree	error: invalid call to '__getitem__': value passed to 'i' cannot be converted from slice literal to 'Int'
+assets/type_error/destructure_starred_tuple_target.mojo	compile-reject	agree	error: cannot unpack value of type 'Span[Int, origin_of(values["element"])]' into 2 values
 assets/type_error/destructure_undeclared_target.mojo	compile-reject	agree	error: use of unknown declaration 'a'
 assets/type_error/dict_display_requires_copyable_value.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/dict_requires_hashable_key.mojo	compile-reject	agree	error: 'Dict' parameter 'K' has 'KeyElement' type, but value has type 'AnyStruct[Key]'
@@ -433,6 +438,9 @@ assets/type_error/match_sequence_generic_not_subscriptable.mojo	compile-reject	a
 assets/type_error/match_sequence_generic_unproven_sized.mojo	compile-reject	agree	error: cannot prove that value of type 'T' conforms to 'Sized'
 assets/type_error/match_sequence_not_subscriptable.mojo	compile-reject	agree	error: 'S' is not subscriptable, it does not implement the `__getitem__`/`__setitem__` methods
 assets/type_error/match_sequence_raising_getter.mojo	compile-reject	agree	error: cannot call function that may raise in a context that cannot raise
+assets/type_error/match_sequence_star_needs_slice_getitem.mojo	compile-reject	agree	error: invalid call to '__getitem__': value passed to 'i' cannot be converted from slice literal to 'Int'
+assets/type_error/match_sequence_star_sequence_pattern.mojo	compile-reject	agree	error: value of type <<NULL TYPE>> does not conform to 'Sized'
+assets/type_error/match_sequence_star_tuple_pattern.mojo	compile-reject	agree	error: expected a tuple type to match against, got <<NULL TYPE>>
 assets/type_error/match_sequence_subject_not_sized.mojo	compile-reject	agree	error: value of type 'String' does not conform to 'Sized'
 assets/type_error/match_sequence_undeclared_sized.mojo	compile-reject	agree	error: value of type 'S' does not conform to 'Sized'
 assets/type_error/match_struct_positional_args.mojo	compile-reject	agree	error: struct patterns do not support positional or unpacked arguments

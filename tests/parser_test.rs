@@ -2355,6 +2355,22 @@ fn parses_sequence_destructuring_targets() {
             value: Expr::from(ExprKind::Identifier("values".into())),
         })
     );
+    // The star's operand is any target, a nested display included.
+    assert_eq!(
+        parse("var [f, *[g, *h]] = values\n")[0],
+        Stmt::from(StmtKind::Destructure {
+            target: DestructureTarget::from(DestructureTargetKind::Sequence(vec![
+                SequenceTarget::Element(declare("f", BindingMode::Var)),
+                SequenceTarget::Star(DestructureTarget::from(DestructureTargetKind::Sequence(
+                    vec![
+                        SequenceTarget::Element(declare("g", BindingMode::Var)),
+                        SequenceTarget::Star(declare("h", BindingMode::Var)),
+                    ]
+                ))),
+            ])),
+            value: Expr::from(ExprKind::Identifier("values".into())),
+        })
+    );
     let mut parser = Parser::new(Lexer::new("[a, *b, *c] = values\n"));
     assert!(parser.parse_program().is_err());
 }
@@ -2512,7 +2528,7 @@ fn parses_pattern_forms_and_precedence() {
 #[test]
 fn parses_structural_patterns() {
     let cases = match_cases(
-        "def f(x: Int):\n    match x:\n    case (a, (b, _)):\n        pass\n    case [first, *rest, 0]:\n        pass\n    case Point(x=0, y=yv):\n        pass\n    case .Some(ref s):\n        pass\n    case Optional.None:\n        pass\n    case {v=1} as whole:\n        pass\n    case ():\n        pass\n    case (n,):\n        pass\n",
+        "def f(x: Int):\n    match x:\n    case (a, (b, _)):\n        pass\n    case [first, *rest, 0]:\n        pass\n    case Point(x=0, y=yv):\n        pass\n    case .Some(ref s):\n        pass\n    case Optional.None:\n        pass\n    case {v=1} as whole:\n        pass\n    case ():\n        pass\n    case (n,):\n        pass\n    case [*var vs]:\n        pass\n    case [*_]:\n        pass\n",
     );
     assert_eq!(
         cases[0].pattern,
@@ -2528,7 +2544,7 @@ fn parses_structural_patterns() {
         &cases[1].pattern.kind,
         MatchPatternKind::Sequence(items)
             if items.len() == 3
-                && matches!(&items[1], SequencePattern::Star { name: Some(name), .. } if name == "rest")
+                && matches!(&items[1], SequencePattern::Star(rest) if **rest == bind("rest"))
                 && matches!(&items[2], SequencePattern::Element(last) if **last == lit(0))
     ));
     assert!(matches!(
@@ -2554,6 +2570,22 @@ fn parses_structural_patterns() {
     assert_eq!(
         cases[7].pattern,
         pat(MatchPatternKind::Tuple(vec![bind("n")]))
+    );
+    // The star's operand is a closed pattern.
+    assert_eq!(
+        cases[8].pattern,
+        pat(MatchPatternKind::Sequence(vec![SequencePattern::Star(
+            Box::new(pat(MatchPatternKind::Bind {
+                name: "vs".into(),
+                mode: BindingMode::Var,
+            }))
+        )]))
+    );
+    assert_eq!(
+        cases[9].pattern,
+        pat(MatchPatternKind::Sequence(vec![SequencePattern::Star(
+            Box::new(pat(MatchPatternKind::Wildcard))
+        )]))
     );
 }
 

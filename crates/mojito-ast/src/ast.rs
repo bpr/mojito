@@ -1172,9 +1172,7 @@ impl MatchPattern {
             }
             MatchPatternKind::Sequence(items) => {
                 for item in items {
-                    if let SequencePattern::Element(pattern) = item {
-                        pattern.collect_expressions(out);
-                    }
+                    item.pattern().collect_expressions(out);
                 }
             }
             MatchPatternKind::Call { head, args, kwargs } => {
@@ -1208,9 +1206,7 @@ impl MatchPattern {
             }
             MatchPatternKind::Sequence(items) => {
                 for item in items {
-                    if let SequencePattern::Element(pattern) = item {
-                        pattern.collect_expressions_mut(out);
-                    }
+                    item.pattern_mut().collect_expressions_mut(out);
                 }
             }
             MatchPatternKind::Call { head, args, kwargs } => {
@@ -1245,15 +1241,7 @@ impl MatchPattern {
             }
             MatchPatternKind::Sequence(items) => {
                 for item in items {
-                    match item {
-                        SequencePattern::Element(pattern) => pattern.collect_bindings(out),
-                        SequencePattern::Star {
-                            name: Some(name), ..
-                        } => {
-                            out.push((name, BindingMode::Immutable));
-                        }
-                        SequencePattern::Star { name: None, .. } => {}
-                    }
+                    item.pattern().collect_bindings(out);
                 }
             }
             MatchPatternKind::Call { args, kwargs, .. } => {
@@ -1337,11 +1325,23 @@ pub enum MatchPatternKind {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SequencePattern {
     Element(Box<MatchPattern>),
-    /// `*name` or `*_`: the elements between the fixed prefix and suffix.
-    Star {
-        name: Option<String>,
-        span: Span,
-    },
+    /// `*p`: the closed pattern `p` matched against the slice between the
+    /// fixed prefix and suffix.
+    Star(Box<MatchPattern>),
+}
+
+impl SequencePattern {
+    pub fn pattern(&self) -> &MatchPattern {
+        match self {
+            Self::Element(pattern) | Self::Star(pattern) => pattern,
+        }
+    }
+
+    pub fn pattern_mut(&mut self) -> &mut MatchPattern {
+        match self {
+            Self::Element(pattern) | Self::Star(pattern) => pattern,
+        }
+    }
 }
 
 /// One `case pattern [if guard]: body` arm of a `match`.
@@ -2537,9 +2537,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                 }
                 MatchPatternKind::Sequence(items) => {
                     for item in items {
-                        if let SequencePattern::Element(pattern) = item {
-                            self.pattern(pattern);
-                        }
+                        self.pattern(item.pattern_mut());
                     }
                 }
                 MatchPatternKind::Call { head, args, kwargs } => {

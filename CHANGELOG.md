@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Starred sequence patterns and targets (`case [first, *rest]`,
+  `case [*_, 5]`, `var [a, *middle, b] = values`, `[a, *_, b] = values`)
+  now run as on the pin. A pattern tests a minimum length, reads an element
+  after the star at `subject[subject.__len__() - k]`, and matches the
+  star's closed pattern (`*rest`, `*var rest`, `*_`, which reads nothing)
+  against the subject's own slice `subject[i:subject.__len__() - k]`. A
+  target checks a minimum length, reads `__len__` once more for the suffix
+  start, and stores the slice (`*_` included) into any target, a nested
+  `*[g, *h]` among them. Over a `List` the remainder is a `Span` borrowing
+  it, and a temporary lives until the remainder's last use.
 - Fixed-length sequence destructuring (`var [a, b] = values`,
   `[p, q] = mk`, `[xs[i], xs[j]] = make()`, `[var m, ref r, s] = ys`, and
   nested `var [(c, d), [e, _]] = rows`) now runs as on the pin: the value

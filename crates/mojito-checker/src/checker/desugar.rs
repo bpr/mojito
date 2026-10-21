@@ -7,6 +7,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_common::literal::IntLiteral;
 use mojito_common::token::SyntaxId;
 
 /// A checked statement's desugar: the statements that replace it.
@@ -104,6 +105,12 @@ impl Synth {
 
     pub(super) fn identifier(&self, name: &str) -> Expr {
         self.expr(ExprKind::Identifier(name.to_string()))
+    }
+
+    pub(super) fn int(&self, value: usize) -> Expr {
+        self.expr(ExprKind::Int(IntLiteral::from(
+            u64::try_from(value).unwrap_or(u64::MAX),
+        )))
     }
 
     fn identity(&self) -> SyntaxId {

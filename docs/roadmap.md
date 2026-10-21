@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1226**.
+Next free ID: **R1227**.
 
 ## Ordered Work
 
@@ -1294,6 +1294,12 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - The same holds for `var r = q; _ = r` over a value parameter `q`.
   - Mojito copies `x` into the discard and destroys both, where the pin
     moves the last use.
+  - Probe: a discard of a reference result copies its referent too.
+    Over `xs: List[D]` (`D` only `Copyable`, printing in `__del__`),
+    `_ = xs.__getitem__(0)` copies the element and destroys the copy at
+    once, and `_ = xs[0]` is rejected ("cannot be implicitly copied …
+    (discard assignment)"); the pin neither copies nor destroys in either
+    form. Found while planning R1137.
   - Found while landing R467 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -1900,6 +1906,12 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     run, so the gap is a whole-value read of a nominal element through the
     view.
   - Pinned by `conformance/probes/span_string_element_copy.mojo`.
+  - Probe: `var rest = xs[1:]; print(rest[0].v, len(rest))` over a
+    `List[D]` of a `Copyable` struct is rejected ("access to 'xs'
+    conflicts with live reference 'rest'"), where the pin prints `2 1`;
+    swapping the two arguments runs. A starred remainder (`var [*rest] =
+    xs`) read the same way hits it too, where the pin prints `1 2`. Found
+    while planning R1137.
   - Found while deriving an annotated view binding; not root-caused.
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -2713,30 +2725,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     stored, and a non-raising context rejects.
   - Found while planning R1136 (2026-10-20).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
-
-- [ ] **R1137 Starred sequence patterns and targets slice the remainder**
-
-  Problem: `case [first, *rest]` and `var [a, *middle, b] = values` are
-  rejected, where the pin tests a minimum length, binds the prefix and
-  suffix elements, and gives `*name` the checked slice of the rest.
-  - The length test becomes `len(subject) >= prefix + suffix`. Prefix
-    elements read by index, suffix elements by `len - k`, and `*name` is
-    the ordinary checked slice expression over the subject, with that
-    operation's result type and origin: a `Span` borrowing a `List`.
-  - `*_` performs no slice. A second star rejects.
-  - Stop: leading, trailing, middle, and empty remainders run, a too-short
-    subject fails the match and raises in assignment, mutating or moving
-    the source while a remainder borrows it follows the pin, and a
-    remainder cannot escape a dead temporary.
-  - The target side extends R1136's desugar (`check_sequence_destructure`
-    in `checker/destructure.rs`), whose starred element rejects today:
-    upstream calls `check_list_length(value, prefix + suffix, False)`.
-  - Probe: `conformance/probes/destructure_starred_slice.mojo` (its last
-    block, the too-short starred target's raise, moved from R1136's
-    probe), and the starred `[_, *_, 12]` half of
-    `conformance/probes/match_sequence_custom_sized.mojo`.
-  - Depends on R1136.
   - Model: Fable, Not Planned.
 
 - [ ] **R1138 `for` and comprehension targets destructure each element**
@@ -10123,7 +10111,32 @@ residue found inside a task moves to the task that owns its fix.
   array reference.
   - The bundled `Array` has element subscripts only; `List` already slices
     into a `Span` through `ContiguousSlice`.
+  - Probe: a list display's natural type is `Array`, so a starred target
+    over one (`var [y1, *mid, y2] = [7, 8]`) is rejected ("invalid call to
+    '__getitem__'"), where the pin prints `7 8 0` for `print(y1, y2,
+    len(mid))`. So is `var xs = [7, 8]; var s = xs[1:]`. Found while
+    landing R1137.
   - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1226 `Span` does not declare `TrivialRegisterPassable`**
+
+  Problem: `ref r = values[1:]` over a `List[Int]` runs, where the pin
+  rejects it with "value of type 'Span[...]' doesn't have a memory origin
+  in 'ref' binding", because upstream's `Span` is
+  `TrivialRegisterPassable` (`Mojo/stdlib/std/collections/span.mojo`).
+  - The bundled `Span` (`stdlib/std/span.mojo`) declares only
+    `ImplicitlyCopyable` and `Movable`, so the checker's register-passable
+    `ref` rejection never fires for it.
+  - Declaring it changes how a `Span` passes natively, so the native ABI
+    rows in `docs/native-abi.md` must follow.
+  - Probe: `conformance/probes/span_ref_binding_register_passable.mojo`,
+    which also holds the starred `case [f, *ref rr]` the pin rejects the
+    same way.
+  - Watch R862: Mojito's `TrivialRegisterPassable` is not yet a checked
+    conformance.
+  - Found while planning R1137 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

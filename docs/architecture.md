@@ -2616,8 +2616,11 @@ to `std.builtin._stubs.list_length_matches`, among them), the element
 reads (`PathValue`, each a hidden `$elem<id>` declaration placed at the
 first command that needs it), its bindings, its guard, and its body, ended
 by `Terminator::MatchComplete`, then an else region ended by `Yield` for
-the fall-through when no case matched (enum-case and starred sequence
-patterns land by roadmap entry, R1132–R1140).
+the fall-through when no case matched (enum-case patterns land by roadmap
+entry, R1132–R1140). A starred sequence pattern adds no command kind: its
+from-end elements and its slice are `PathValue` reads of ordinary
+subscripts (`$match<id>[$match<id>.__len__() - k]`,
+`$match<id>[i:$match<id>.__len__() - k]`).
 No HIR terminator jumps between blocks, so `Cfg::g` holds no edge. HIR
 lowers only a body's live statements (`CheckedTables::live_statements`):
 the statements after a `return`, `break`, `continue`, or `raise` are erased
@@ -6439,7 +6442,11 @@ raising `std.builtin._stubs.check_list_length` before any store, then reads
 each element through `$seq<id>.__getitem__(i)` and stores it into its leaf,
 the leaf's own subexpressions evaluating after the read; a nested target
 destructures a hidden `$elem<id>` the read was bound to, and its own desugar
-is spliced in turn.
+is spliced in turn. A star makes the length check a minimum; a suffix after
+it starts at a hidden `var $suffix<id> = $seq<id>.__len__() - k`, read once,
+the star's target takes the slice subscript `$seq<id>[i:$suffix<id>]`
+(`$seq<id>[i:]` when the star is last), `*_` included, and the suffix's
+elements are read at `$suffix<id>` and `$suffix<id> + k`.
 
 A call through a trait bound that leaves out a requirement's default runs
 the requirement's default, as in current Mojo, even though an instance clone

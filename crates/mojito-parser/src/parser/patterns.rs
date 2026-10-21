@@ -115,19 +115,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                         "multiple starred expressions in list pattern".to_string(),
                     ));
                 }
-                let leaf = self.parse_target_item(declare)?;
-                let leaf = item_to_target(leaf)?;
-                if !matches!(
-                    leaf.kind,
-                    DestructureTargetKind::Discard
-                        | DestructureTargetKind::Declare { .. }
-                        | DestructureTargetKind::Place(_)
-                ) {
-                    return Err(ParseError::UnexpectedToken(
-                        Token::Star,
-                        "a starred target must be a name, a place, or '_'".to_string(),
-                    ));
-                }
+                let leaf = item_to_target(self.parse_target_item(declare)?)?;
                 starred = Some(items.len());
                 items.push(TargetItem::Target(DestructureTarget::new(
                     leaf.kind,
@@ -566,7 +554,6 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         let mut starred = false;
         while !matches!(self.peek_token()?, Some(Token::RBracket)) {
             if matches!(self.peek_token()?, Some(Token::Star)) {
-                let span_start = self.peek_start();
                 self.next_token()?;
                 if starred {
                     return Err(ParseError::UnexpectedToken(
@@ -575,11 +562,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     ));
                 }
                 starred = true;
-                let name = self.expect_identifier("expected a name or '_' after '*'")?;
-                items.push(SequencePattern::Star {
-                    name: (name != "_").then_some(name),
-                    span: (span_start, self.last_significant_end),
-                });
+                items.push(SequencePattern::Star(Box::new(
+                    self.parse_closed_pattern()?,
+                )));
             } else {
                 items.push(SequencePattern::Element(Box::new(self.parse_pattern()?)));
             }
