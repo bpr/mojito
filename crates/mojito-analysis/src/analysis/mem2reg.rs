@@ -37,11 +37,13 @@
 //! is a CFG whose blocks take no arguments: a read is promoted when its one
 //! reaching store lies on every path to it and the stored register's one
 //! definition lies before the store in its block, and every mention of the
-//! slot sits in one block list.
+//! slot sits in one block list. A list holding a lowered `comptime for`
+//! promotes nothing: upstream's `Mem2Reg` meets every `comptime for` as its
+//! op, and the elaborator unrolls none of a lowered body's.
 //!
-//! The elaborator copies a `comptime for` body once per iteration with
-//! every register renumbered, so in a generator no promoted read may sit on
-//! the other side of a loop body's boundary from its store.
+//! In a structured body no promoted read sits on the other side of a
+//! `comptime for` body's boundary from its store, though the elaborator
+//! renumbers only the registers each clone of the body defines.
 
 use super::canonicalize::definition_counts;
 use super::pre_elaboration::BodyPass;
@@ -50,8 +52,8 @@ use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
-    ComptimeForBodies, MirBlock, MirBlockId, MirDeclarations, MirFunction, MirInstr, MirTerm, Reg,
-    UseMode, block_successors, cleanup_slots, count_register_reads, has_structured_control_flow,
+    MirBlock, MirBlockId, MirDeclarations, MirFunction, MirInstr, MirTerm, Reg, UseMode,
+    block_successors, cleanup_slots, count_register_reads, has_structured_control_flow,
     instruction_regions, instruction_regions_mut, instruction_slots, region_escape_targets,
     renumber_block_slots, retire_slots, terminator_targets,
 };
@@ -741,8 +743,8 @@ enum Event {
 }
 
 /// Solve the reaching stores of `flow`'s candidates from the `entry`
-/// states, and add each candidate whose every read sees one store, on its
-/// own side of each `comptime for` body's boundary, to `promotion`.
+/// states, and add each candidate whose every read sees one store to
+/// `promotion`; none when the list holds a lowered `comptime for`.
 fn solve(flow: &ListFlow<'_>, entry: Vec<Reaching>, promotion: &mut Promotion) {
     let &ListFlow {
         list,
@@ -751,6 +753,12 @@ fn solve(flow: &ListFlow<'_>, entry: Vec<Reaching>, promotion: &mut Promotion) {
         slots,
         census,
     } = flow;
+    if blocks
+        .iter()
+        .any(|block| matches!(block.term, MirTerm::ComptimeFor { .. }))
+    {
+        return;
+    }
     // Store sites, by number: the block and the stored register.
     let mut stores: Vec<(MirBlockId, Reg)> = Vec::new();
     let mut events: Vec<Vec<(usize, Event)>> = (0..blocks.len()).map(|_| Vec::new()).collect();
@@ -846,31 +854,6 @@ fn solve(flow: &ListFlow<'_>, entry: Vec<Reaching>, promotion: &mut Promotion) {
                 },
                 Event::Escape(_) => {}
             }
-        }
-    }
-    let mut loops = None;
-    let bodies: Vec<HashSet<MirBlockId>> = blocks
-        .iter()
-        .enumerate()
-        .filter_map(|(header, block)| match &block.term {
-            MirTerm::ComptimeFor { body, exit, .. } => Some(
-                loops
-                    .get_or_insert_with(|| ComptimeForBodies::new(blocks, function_level))
-                    .body(header, *body, *exit)
-                    .into_iter()
-                    .collect(),
-            ),
-            _ => None,
-        })
-        .collect();
-    let block_of = |store: usize| stores.get(store).map_or(0, |(block, _)| *block);
-    for &(slot, (_, read_block, _), store) in &reached {
-        let store_block = block_of(store);
-        if bodies
-            .iter()
-            .any(|body| body.contains(&read_block) != body.contains(&store_block))
-        {
-            promoted[slot] = false;
         }
     }
     for (slot, var) in slots.iter().enumerate() {

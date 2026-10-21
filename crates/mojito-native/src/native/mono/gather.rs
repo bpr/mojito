@@ -8,7 +8,6 @@
 //! pin's `comptime assert`s run at instantiation. A violated constraint
 //! fails the instance.
 
-use super::rebind::reachable;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::LaneMask;
@@ -31,28 +30,11 @@ impl Specializer<'_> {
 }
 
 /// Close the masks of one block list and the regions below it; the first
-/// constraint a reached gather breaks is returned. An unreached gather (an
-/// untaken `comptime if` arm's) is never judged.
+/// constraint a gather breaks is returned.
 fn close_blocks(blocks: &mut [MirBlock], reg_types: &HashMap<u32, Ty>) -> Result<(), String> {
-    let reached = reachable(blocks);
-    for (block, reached) in blocks.iter_mut().zip(reached) {
+    for block in blocks {
         for instruction in &mut block.instrs {
             match instruction {
-                MirInstr::Try {
-                    body,
-                    handler,
-                    orelse,
-                    finalbody,
-                    ..
-                } => {
-                    let regions = std::iter::once(body)
-                        .chain(handler.iter_mut().map(|(_, blocks)| blocks))
-                        .chain(orelse.iter_mut())
-                        .chain(finalbody.iter_mut());
-                    for region in regions {
-                        close_blocks(region, reg_types)?;
-                    }
-                }
                 MirInstr::SimdShuffle { value, mask, .. } if mask.is_symbolic() => {
                     let Some(TyKind::Simd { width, .. }) = reg_types.get(&value.0).map(Ty::kind)
                     else {
@@ -60,11 +42,15 @@ fn close_blocks(blocks: &mut [MirBlock], reg_types: &HashMap<u32, Ty>) -> Result
                     };
                     match width.known().and_then(|width| mask.resolve(width)) {
                         Some(Ok(lanes)) => *mask = LaneMask::Known(lanes),
-                        Some(Err(constraint)) if reached => return Err(constraint),
+                        Some(Err(constraint)) => return Err(constraint),
                         _ => {}
                     }
                 }
-                _ => {}
+                instruction => {
+                    for region in mojito_mir::mir::instruction_regions_mut(instruction) {
+                        close_blocks(region, reg_types)?;
+                    }
+                }
             }
         }
     }

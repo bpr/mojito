@@ -887,9 +887,11 @@ atoms below, and each conjunct of the residual proposition the condition
 states, which proves a callee's `where` clause). The elaborator decides a
 condition lazily, as upstream folds a `ParamOperatorAttr` (`Specializer::
 decide_comptime_condition`): `and` and `or` stop once their left side
-decides them, and only a block reached under the decisions already made is
-decided (`select_comptime_branches_in`), so an `elif` past a taken arm, or
-an enum payload read guarded by its tag, never runs.
+decides them, and each `comptime if` is decided in order on its region op,
+its taken arm spliced where the op stood before the walk goes on
+(`select_comptime_ifs`, as `processComptimeIfOp` elaborates only that arm),
+so an `elif` past a taken arm, or an enum payload read guarded by its tag,
+never runs.
 A `comptime match` is that same conditional chain, as upstream emits its
 cases as one `hlcf.comptime.if` (`emitComptimeCases`): the elaborator above
 the check keeps it with each case body elaborated over its pattern's
@@ -1072,14 +1074,16 @@ sequence, as upstream's `hlcf.comptime.for` iterates a compile-time sequence —
 the ownership analysis and drop
 elaboration decide it as the loop of the same shape with its trip count
 unknown, and `native::mono` unrolls it under the instance's bindings before
-substitution (`unroll_comptime_loops`): the body — the blocks its entry
-dominates, from one dominator tree per step (`mir::ComptimeForBodies`, by
-`mir::immediate_dominators` below a virtual root over the entry and every
-block no block enters, as each copy's header is mid-unroll) — is copied once per element with fresh registers, the binder's
-reads folded and its types substituted, the loops nested in the copy
-unrolled under its binding first and the `comptime if`s over it decided, the
-copies chained where the loop stood, and the original body left unreachable
-for the pruning. An alias of a local display binding (`comptime A = L`) is
+substitution (`unroll_comptime_loops`), on its region op as upstream's
+`processComptimeForOp` does: the body's one block is cloned once per
+iterator, the exhausted one included, each clone's own registers fresh
+and its arguments the previous iteration's results, the binder's reads
+folded and its types substituted, the loops nested in the clone unrolled
+under its binding first and the `comptime if`s over it decided. Each clone
+sits in an unlabelled loop that its `comptime.for.continue` breaks, inside a
+loop labelled `param_for_outer` that its `comptime.for.break` breaks, and
+`simplifyParamForLoop`'s folds splice the loops a clone leaves trivial
+(`simplify_param_for_loop`). An alias of a local display binding (`comptime A = L`) is
 another name of it: the check binds the alias to the display's owner and
 sequence, so a loop over it is the display's loop. Every other `comptime
 for` — over a display with an element that applies a function, and every
@@ -3424,8 +3428,8 @@ per function, the move and initialization scan, carrying interior origins
 as upstream's `TrackedAndInteriorLiveness`, walks the structured body as
 upstream's `CheckLifetimes` walks `hlcf`, and the loan check walks it backward
 for reference liveness and forward for loan generations. The body stays
-structured for drop elaboration and every pass after it; the elaborator
-lowers it (`lower-control-flow`) where it first fetches it as a template. A `try`
+structured for drop elaboration and every pass after it, the elaborator
+included, which lowers each instance (`lower-control-flow`) at its end. A `try`
 is one instruction to the loan
 check: it uses every variable its parts read, and no access or loan inside
 it is checked (upstream has no persistent-loan check, so the exemption
@@ -4071,15 +4075,15 @@ conditional expression whose condition the checker found a parameter value,
 `SemanticAdjustment::ComptimeConditional`, is a `ComptimeIf` with results,
 as upstream's `IfElseOpNode` emits `hlcf.comptime.if`), and
 `mir::lower_control_flow` (upstream's `LowerControlFlow`), which the
-elaborator runs once on each template where it first fetches it
-(`mono/bodies.rs`'s `Bodies::get`: a program body's lowered copy in a
-`Templates` arena, a package body's in `PackageBodies::template`), after
-the pre-elaboration pipeline has read the structured body, lowers them to blocks and the CFG terminators: a
+elaborator runs on each instance at the end of elaboration
+(`Specializer::run`, before `ConcreteMir::verified`) and on each clone a
+CTFE fragment collects (`verified_fragment`), after it has unrolled and
+decided the instance's compile-time control flow on its regions, lowers
+them to blocks and the CFG terminators: a
 region's blocks are appended to its list, the rest of the block moves to a
 join, an op's results go through one slot each, stored at a `yield` or
 `break` and forwarded at the join, except that a loop left by one `break`
-in its own list (no `try` part or `comptime for` body between them, the
-first escaping and the second copied per iteration by the elaborator) has
+in its own list (no `try` part between them, since a break there escapes) has
 each result replaced by the value that break carries, as a block argument
 with one predecessor is its operand once upstream's `LowerControlFlow` has
 run (`tests/mir_passes/lower-control-flow/loop_result_*.mir`), a loop's
@@ -4099,11 +4103,12 @@ that a `match` whose join one such edge in its own list reaches has each
 result replaced by the value that edge carries
 (`match_results.mir`, `match_result_one_complete.mir`), a `comptime for`'s
 arguments go through one slot each as a loop's do, or are replaced by its
-operands when no `comptime.for.continue` resumes it, and its results
-always go through one slot each, stored at every `comptime.for.break`,
-because every break sits in the body the elaborator copies per iteration
-and no break's register is readable after the loop
-(`comptime_for_values.mir`), a
+operands when no `comptime.for.continue` resumes it, and its results go
+through one slot each, stored at every `comptime.for.break`, except that
+one `comptime.for.break` in the body's own list has each result replaced
+by the value it carries (`comptime_for_values.mir`; only a phase's
+lowering meets a `comptime for`, since the elaborator unrolls each on its
+region), a
 `break`/`continue` leaving a `try` part to a
 function-level loop is an `EscapeJump`, a `match` case's `match.next` and
 `match.complete` jump to the next case's entry and to the join through a
@@ -5801,12 +5806,12 @@ point where a slot declared in a loop is uninitialized again.
   share its block with its register's definition, and a read is promoted
   when its one reaching store lies before it in its own block or in a
   block enclosing it, so the stored register is visible there; a store in
-  an arm or a loop body read after the op keeps its slot (R927). The elaborator copies a `comptime for` body once per
-  iteration with every register renumbered (`mono/unroll.rs`
-  `renumber_block`), so a read and its store must lie on the same side of
-  every loop body's boundary (`mir::comptime_for_body`); the guard goes when
-  the elaborator clones regions (R880); in a structured body, no read and
-  its store may sit on two sides of a `comptime for` region's boundary.
+  an arm or a loop body read after the op keeps its slot (R927). In a
+  structured body no read and its store may sit on two sides of a
+  `comptime for` region's boundary, though the elaborator renumbers only
+  the registers each clone of the body defines (R927 drops the guard). A
+  lowered list holding a `comptime for` terminator, which only a phase
+  test's lowering makes, promotes nothing.
   Its `--timings` counters are `promoted_slots` and
   `erased_slot_instructions`.
 - **`sccp` runs between the two `canonicalize` runs** (`analysis::SCCP`,

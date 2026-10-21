@@ -4,46 +4,15 @@
 //! upstream's symbol table finds a callee's overload set.
 //!
 //! Every body arrives with its structured control flow, as upstream's
-//! generators keep `hlcf`; each is fetched as a template with that control
-//! flow lowered to blocks (`lower-control-flow`), lowered once: the
-//! program's own in a [`Templates`] arena that outlives the elaboration,
-//! a package's by the package ([`PackageBodies::template`]).
+//! generators keep `hlcf`, and the elaborator instantiates it as it is: an
+//! instance keeps its runtime regions until the elaboration's end lowers
+//! them (`lower-control-flow`).
 
 use mojito_mir::mir::text::package::PackageBodies;
-use mojito_mir::mir::{MirFunction, MirProgram, has_structured_control_flow, lower_control_flow};
+use mojito_mir::mir::{MirFunction, MirProgram};
 use mojito_symbol::symbol::{CallableCandidate, CallableLookup, OV_SEP};
-use std::cell::OnceCell;
 use std::collections::BTreeMap;
 use std::ops::Bound;
-
-/// The program's own bodies with their control flow lowered, each lowered
-/// the first time the elaboration fetches it, by the body's position in
-/// the program.
-pub(super) struct Templates {
-    lowered: Vec<OnceCell<MirFunction>>,
-}
-
-impl Templates {
-    /// An empty arena for the bodies of `program`.
-    pub(super) fn of(program: &MirProgram) -> Self {
-        Self {
-            lowered: program.functions.iter().map(|_| OnceCell::new()).collect(),
-        }
-    }
-
-    /// The template of `function`, the program's body at `index`: itself
-    /// when it holds no structured control flow, else its lowered copy.
-    fn template<'a>(&'a self, index: usize, function: &'a MirFunction) -> &'a MirFunction {
-        if !has_structured_control_flow(function) {
-            return function;
-        }
-        self.lowered[index].get_or_init(|| {
-            let mut template = function.clone();
-            lower_control_flow(&mut template);
-            template
-        })
-    }
-}
 
 /// Every function body an elaboration may instantiate, by name: the
 /// program's own, each with its position in the program, shadowing the
@@ -51,12 +20,11 @@ impl Templates {
 pub(super) struct Bodies<'a> {
     resident: BTreeMap<&'a str, (usize, &'a MirFunction)>,
     package: Option<&'a PackageBodies>,
-    templates: &'a Templates,
 }
 
 impl<'a> Bodies<'a> {
-    /// The bodies of `program`, whose templates `templates` holds.
-    pub(super) fn new(program: &'a MirProgram, templates: &'a Templates) -> Self {
+    /// The bodies of `program`.
+    pub(super) fn new(program: &'a MirProgram) -> Self {
         Self {
             resident: program
                 .functions
@@ -65,7 +33,6 @@ impl<'a> Bodies<'a> {
                 .map(|(index, (name, function))| (name.as_str(), (index, function)))
                 .collect(),
             package: None,
-            templates,
         }
     }
 
@@ -76,12 +43,12 @@ impl<'a> Bodies<'a> {
         self
     }
 
-    /// The template of `name`: its body with its control flow lowered.
+    /// The template of `name`: its body, with its structured control flow.
     pub(super) fn get(&self, name: &str) -> Option<&'a MirFunction> {
         self.resident
             .get(name)
-            .map(|&(index, function)| self.templates.template(index, function))
-            .or_else(|| self.package?.template(name))
+            .map(|&(_, function)| function)
+            .or_else(|| self.package?.get(name))
     }
 
     /// What made the package body of `name` unusable when its importer

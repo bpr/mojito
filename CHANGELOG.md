@@ -616,6 +616,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The elaborator instantiates each body with its structured control flow,
+  as upstream's elaborator receives `hlcf`: a `comptime if` is decided on
+  its region op, its taken arm spliced where it stood, and a `comptime
+  for` becomes what `processComptimeForOp` makes, a loop labelled
+  `param_for_outer` holding one unlabelled loop per iterator, each a clone
+  of the body that renumbers only the registers it defines, with
+  `simplifyParamForLoop`'s folds. `lower-control-flow` runs on each
+  instance at the end of elaboration and on each clone a compile-time
+  application's fragment runs, so the dominator-based body recovery
+  (`mir::ComptimeForBodies`, `DominatorRoots`) is gone, a `comptime for`
+  result one break carries folds, and the concrete check accepts runtime
+  regions in an instance but not in a backend's program. Program output
+  is unchanged; `tuple_reverse_concat` elaborates in a quarter of the
+  time and memory, and `lower_whole_drops` computes each region op's flow
+  once per walk instead of once per enclosing loop pass. This closes R880.
 - A `match` has results, which each `match.complete` and its else
   region's `yield` carry, and a `comptime for` has operands, body
   arguments, and results, which its `comptime.for.continue`s and

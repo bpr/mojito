@@ -30,8 +30,8 @@ use super::pre_elaboration::BodyPass;
 use mojito_common::timing;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
-    DominatorRoots, MirBlock, MirBlockId, MirDeclarations, MirFunction, MirInstr, Reg,
-    has_structured_control_flow, immediate_dominators, instruction_regions, instruction_regs_mut,
+    MirBlock, MirBlockId, MirDeclarations, MirFunction, MirInstr, Reg, has_structured_control_flow,
+    immediate_dominators, instruction_regions, instruction_regs_mut,
 };
 use mojito_types::types::{Ty, TyKind, copy_is_identity};
 use std::collections::{HashMap, HashSet};
@@ -236,7 +236,7 @@ enum Visit {
 /// entry; a block the entry does not reach is no one's child
 /// ([`immediate_dominators`]).
 fn dominator_children(blocks: &[MirBlock], function_level: bool) -> Vec<Vec<MirBlockId>> {
-    let idom = immediate_dominators(blocks, function_level, DominatorRoots::Entry);
+    let idom = immediate_dominators(blocks, function_level);
     let mut children = vec![Vec::new(); blocks.len()];
     for (block, dominator) in idom.iter().enumerate().skip(1) {
         if let Some(dominator) = dominator {

@@ -590,7 +590,7 @@ impl Specializer<'_> {
         Ok(())
     }
 
-    /// Walk `blocks` (recursing into `try` regions) folding every `GetIter`
+    /// Walk `blocks` (recursing into every region) folding every `GetIter`
     /// before the main call rewrite reads iterator slot types.
     pub(super) fn rewrite_iterator_inits(
         &mut self,
@@ -601,24 +601,6 @@ impl Specializer<'_> {
         for block in blocks {
             for instruction in &mut block.instrs {
                 match instruction {
-                    MirInstr::Try {
-                        body,
-                        handler,
-                        orelse,
-                        finalbody,
-                        ..
-                    } => {
-                        self.rewrite_iterator_inits(owner, function, body)?;
-                        if let Some((_, blocks)) = handler {
-                            self.rewrite_iterator_inits(owner, function, blocks)?;
-                        }
-                        if let Some(blocks) = orelse {
-                            self.rewrite_iterator_inits(owner, function, blocks)?;
-                        }
-                        if let Some(blocks) = finalbody {
-                            self.rewrite_iterator_inits(owner, function, blocks)?;
-                        }
-                    }
                     MirInstr::GetIter {
                         source,
                         dest,
@@ -628,7 +610,11 @@ impl Specializer<'_> {
                         let (source, dest) = (*source, *dest);
                         self.rewrite_get_iter(owner, function, source, dest, prepare)?;
                     }
-                    _ => {}
+                    instruction => {
+                        for region in mojito_mir::mir::instruction_regions_mut(instruction) {
+                            self.rewrite_iterator_inits(owner, function, region)?;
+                        }
+                    }
                 }
             }
         }

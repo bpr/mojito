@@ -3,7 +3,8 @@
 **Status:** plan recorded 2026-10-14 (R859); stages 1 (R870), 2 (R871),
 3 (R872), 4 (R873), and 5 (R874) landed 2026-10-14, and the `comptime for`
 body's `has_next` test (R885) with them; stages 6 (R875), 7 (R876),
-8 (R877), and 9 (R878) landed 2026-10-21.
+8 (R877), 9 (R878), 10 (R879, R1253, R1254), and 11 (R880) landed
+2026-10-21.
 The scheduled tasks are on [`docs/roadmap.md`](roadmap.md) track `pmir`,
 one entry per stage below.
 This document is their design record and is updated as stages land. It is
@@ -56,10 +57,16 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
   resolved through its enclosing op. `DestructorInsertion` works the same
   way.
 - **The elaborator works on regions** (`lib/Elaborator/Elaborator.cpp`).
-  `processComptimeIfOp` keeps the arm taken. `processComptimeForOp` makes
-  one labelled `hlcf.loop` per iterator, N+1 of them, since the final,
-  exhausted iterator runs the body's stop arm, and `simplifyParamForLoop`
-  folds the trivial ones away.
+  `processComptimeIfOp` elaborates only the arm taken and splices it where
+  the op stood. `processComptimeForOp` makes one outer `hlcf.loop`
+  labelled `param_for_outer` holding one unlabelled `hlcf.loop` per
+  iterator, N+1 of them, since the final, exhausted iterator runs the
+  body's stop arm. Each holds a clone of the body (`cloneInto` through an
+  `IRMapping`, so only what the region defines is renumbered), whose
+  arguments take the previous loop's results (`replaceArgs`); a
+  `comptime.for.continue` breaks its iteration loop and a
+  `comptime.for.break` the outer one. `simplifyParamForLoop` then folds
+  the loops a clone leaves trivial.
 - **Canonicalization is structural**
   (`lib/HLCFDialect/HLCFOpsCanonicalizers.cpp`).
   - On `IfOp`: `HoistYieldResults`, `RemoveStaticCondition`,
@@ -103,9 +110,10 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
     finding being a MIR invariant error (stage 5); register typing,
     pre-drop verification, the ownership checks, drop elaboration, and
     every pass after it, the pre-elaboration pipeline included, read the
-    structured body (stages 6–10); the elaborator runs
-    `lower-control-flow` on each template where it first fetches it
-    (`Bodies::get`), so it and every phase after it still see blocks.
+    structured body (stages 6–10), and so does the elaborator, which
+    lowers each instance at its end, and each CTFE fragment's clones
+    before they run (stage 11), so every phase after it still sees
+    blocks.
 - **The ownership checks and drop elaboration walk regions.** The move and
   initialization scan, carrying interior origins, walks the structure as
   `CheckLifetimes` does (stages 6–7), and so does the loan check. Drop
@@ -120,9 +128,11 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
   `inlined_cf_scope` loop (stage 10). `canonicalize`'s R836 CFG rewrites
   (pass-through threading, identical-successor folds, single-predecessor
   merges) run only on the post-elaboration pipeline's lowered bodies.
-- **The elaborator recovers structure.** `mono/unroll.rs`'s `loop_body`
-  finds a `comptime for` body as the blocks its `body` target dominates, and
-  `outermost_loop` finds the enclosing loop. A region op would hold both.
+- **The elaborator works on regions** (stage 11). `mono/select.rs`
+  decides a `comptime if` and splices its taken arm, and `mono/unroll.rs`
+  makes `processComptimeForOp`'s loops (`LoopLabel::PARAM_FOR_OUTER`
+  outside, one unlabelled loop per iterator) and folds them by
+  `simplifyParamForLoop`'s two cases.
 - **Versions.** MIR text `1.54`, `PACKAGE_FORMAT` `"mojito-package 55"`
   since stage 1. A package holds checked units, never MIR, so moving the
   lowering point changes neither.
@@ -184,11 +194,12 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
   trivial-loop removal joins the post-elaboration pipeline, where upstream
   runs it.
 - **The elaborator works on regions.** A `ComptimeIf` is replaced by its
-  taken arm. A `ComptimeFor` unrolls into one labelled `Loop` per
-  iterator, N+1 of them, each deciding its leading `has_next` test before
-  its arms, with `ComptimeBreak`/`ComptimeContinue` retargeted to that
-  loop, and the trivial wrappers are folded away. `loop_body` and
-  `outermost_loop` are deleted.
+  taken arm. A `ComptimeFor` unrolls into an outer `Loop` labelled
+  `param_for_outer` holding one unlabelled `Loop` per iterator, N+1 of
+  them, each deciding its leading `has_next` test before its arms, with
+  `ComptimeContinue` breaking its iteration loop and `ComptimeBreak` the
+  outer one, and the trivial loops are folded away. The dominator
+  recovery (`outermost_loop`, `mir::ComptimeForBodies`) is deleted.
 
 ## Stages
 
@@ -263,9 +274,9 @@ last producer. Every stage keeps program output unchanged; the
    no edge. `comptime for` landed with stage 3. Its body opens with the
    `ComptimeIf` on `has_next` (R885), and the elaborator already makes
    upstream's N+1 copies, each deciding that test first and keeping its
-   taken arm alone (`mono/unroll.rs`). The CFG `ComptimeFor` terminator
-   keeps its `exit` edge, which no executed path now takes, until stages
-   11 and 14 delete the terminator.
+   taken arm alone (`mono/unroll.rs`). Since stage 11 only a phase test's
+   or `mojito opt`'s lowering makes the CFG `ComptimeFor` terminator,
+   which stage 14 deletes.
 5. **`try`.** *Landed (R874).* HIR lowers a `try`'s parts as regions of
    the function's own walk (`Lower::try_statement`, `HirExcept`), as the
    parser builds `lit.try`, where each part was a separately built HIR CFG;
@@ -404,10 +415,32 @@ last producer. Every stage keeps program output unchanged; the
       inlined result is forwarded, so no move initializer runs, and the
       elaborator's `comptime for` body recovery reads one dominator tree
       per step (`mir::ComptimeForBodies`).
-11. **Elaborator.** Instantiation, substitution, and `ComptimeIf`/
-    `ComptimeFor` work on regions; the dominator code is deleted; a CTFE
-    fragment is lowered before `call_concrete`. The lowering point moves to
-    the end of elaboration.
+11. **Elaborator.** *Landed (R880).* Templates are fetched structured
+    (`Bodies::get`; `Templates` and `PackageBodies::template` are gone),
+    and every elaborator walk enters every region op.
+    - `select_comptime_ifs` (`mono/select.rs`) decides each `comptime
+      if` in order and splices its taken arm, the op's results read as
+      the arm's `comptime.yield` values; an arm that leaves ends the
+      block, so nothing after it is elaborated.
+    - `unroll_op` (`mono/unroll.rs`) is `processComptimeForOp`: each
+      clone renumbers only the registers it defines (and the operands a
+      call keeps for a removed argument, which nothing defines), takes
+      the previous iteration loop's results as its arguments, and
+      decides its `has_next` test before anything else.
+      `simplify_param_for_loop` folds a loop its one break ends and a
+      breakless iteration loop, counting breaks by `loop_breaks_mut`.
+    - The lowering point is the end of elaboration
+      (`lower_control_flow_program` before `ConcreteMir::verified`), and
+      `verified_fragment` lowers each clone it collects. The concrete
+      check splits: `concrete_function_findings` accepts runtime region
+      ops in an instance, and a backend's program refuses them.
+    - `mir::ComptimeForBodies` and `DominatorRoots` are gone, and so is
+      `BreakSite::in_comptime_for`: `lower-control-flow` folds a result
+      a break in a `comptime for` body carries, and `mem-2-reg` promotes
+      nothing in a list holding a lowered `comptime for`.
+    - `lower_whole_drops` memoizes each region op's flow within one
+      list's walk, since a structured instance's loops nest as deep as
+      its inlined bodies.
 12. **Post-elaboration pipeline.** `sccp`/`canonicalize` on regions, plus
     `SimplifyCF`'s trivial-loop removal. The lowering point moves to the
     backend boundary (`src/compiler.rs`, `src/artifact.rs`, the Pliron

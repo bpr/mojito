@@ -37,7 +37,7 @@ which is, in order:
 | 4 | R878 | field drops, copy elision, and the lifecycle-call namings |
 | 5 | R879 | the pre-elaboration pipeline and the package hold structured bodies |
 | 6 | R886 (loop results and valued breaks landed), R1258 (loop arguments and valued continues landed), R1259 (elif and `match` region arguments landed), R1260 (`match` and `comptime for` values landed) | region ops carry values across a region boundary (`mojo-shape`) |
-| 7 | R880 | the elaborator unrolls `comptime for` by cloning the region |
+| 7 | R880 (landed 2026-10-21) | the elaborator unrolls `comptime for` by cloning the region |
 | 8 | R927 | `Mem2Reg` through region values |
 
 Six of the eight are `Fable, Planned`, so each gets a plan session first.

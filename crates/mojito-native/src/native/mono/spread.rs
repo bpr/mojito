@@ -92,19 +92,9 @@ fn expand_in_block(
 ) -> Result<(), MonoError> {
     let mut index = 0;
     while index < blocks[at].instrs.len() {
-        if let MirInstr::Try {
-            body,
-            handler,
-            orelse,
-            finalbody,
-            ..
-        } = &mut blocks[at].instrs[index]
-        {
-            for region in std::iter::once(body)
-                .chain(handler.iter_mut().map(|(_, blocks)| blocks))
-                .chain(orelse.iter_mut())
-                .chain(finalbody.iter_mut())
-            {
+        let regions = mojito_mir::mir::instruction_regions_mut(&mut blocks[at].instrs[index]);
+        if !regions.is_empty() {
+            for region in regions {
                 expand_in_blocks(region, tables)?;
             }
             index += 1;
@@ -269,23 +259,12 @@ fn retire_in_blocks(blocks: &mut [MirBlock], forwarded: &HashSet<u32>, retired: 
                 retired.insert(dest.0);
                 false
             }
-            MirInstr::Try {
-                body,
-                handler,
-                orelse,
-                finalbody,
-                ..
-            } => {
-                let regions = std::iter::once(body)
-                    .chain(handler.iter_mut().map(|(_, blocks)| blocks))
-                    .chain(orelse.iter_mut())
-                    .chain(finalbody.iter_mut());
-                for region in regions {
+            instruction => {
+                for region in mojito_mir::mir::instruction_regions_mut(instruction) {
                     retire_in_blocks(region, forwarded, retired);
                 }
                 true
             }
-            _ => true,
         });
     }
 }

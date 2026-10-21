@@ -11,9 +11,8 @@
 //! ternary. A loop left by one `break` in its own list is the exception: the
 //! join is reached from that break alone, so each result is the value the
 //! break carries, as a block argument with one predecessor is its operand
-//! once upstream's `LowerControlFlow` has run. A break in a `try` part or a
-//! `comptime for` body is not in that list: the first escapes, and the
-//! elaborator copies the second per iteration. A loop's arguments travel
+//! once upstream's `LowerControlFlow` has run. A break in a `try` part is
+//! not in that list, since it escapes. A loop's arguments travel
 //! the same way, through one fresh slot each: its operands are stored
 //! before the entering jump and each `continue`'s values before its jump to
 //! the header, and the body's entry forwards them, as the entry and each
@@ -31,10 +30,10 @@
 //! those edges, in the case's own list, reaches the join. A `comptime
 //! for`'s arguments travel like a loop's, stored before the jump to its
 //! header and at each `comptime.for.continue`, and fold to its operands
-//! when nothing continues it; its results always take slots, stored at each
-//! `comptime.for.break`, because every break sits in the body the
-//! elaborator copies per iteration, so no break's register is readable
-//! after the loop.
+//! when nothing continues it; its results travel like a loop's, stored at
+//! each `comptime.for.break`, and fold to the values of the one break in
+//! its own list. The elaborator unrolls every `comptime for` on its region,
+//! so only a phase's lowering meets one.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -245,7 +244,7 @@ impl Lowering<'_> {
                 mut body,
                 orelse: _,
             } => {
-                let slots = self.value_slots(&results, "yield");
+                let slots = self.comptime_result_slots(&results, &mut body);
                 let arg_slots = self.comptime_argument_slots(&operands, &args, &mut body);
                 instrs.extend(stores(&operands, &arg_slots));
                 let header = self.reserve(1);
@@ -536,6 +535,20 @@ impl Lowering<'_> {
             _ => None,
         }));
         self.edge_slots(results, &edges, "yield")
+    }
+
+    /// The slots a `comptime for`'s results travel through: none when one
+    /// `comptime.for.break` in the body's own list leaves it, as
+    /// [`Self::loop_slots`] folds a loop's.
+    fn comptime_result_slots(&mut self, results: &[Reg], body: &mut [MirBlock]) -> Vec<VarId> {
+        if results.is_empty() {
+            return Vec::new();
+        }
+        let mut breaks = Vec::new();
+        comptime_for_breaks_mut(body, &mut |values, site| {
+            breaks.push((values.clone(), site));
+        });
+        self.edge_slots(results, &breaks, "yield")
     }
 
     /// The slots a `comptime for`'s arguments travel through: none when no
@@ -1191,37 +1204,20 @@ mod tests {
     }
 
     #[test]
-    fn a_break_in_a_comptime_for_keeps_its_result_slot() {
+    fn a_break_in_a_comptime_for_folds_its_result() {
         let function = lowered(function_with(one(
             vec![loop_left_from_a_comptime_for()],
             MirTerm::Return(None),
         )));
-        assert_eq!(function.var_names, ["$yield0"]);
-        let stores = function
-            .blocks
-            .iter()
-            .flat_map(|block| &block.instrs)
-            .filter(|instruction| {
-                matches!(
-                    instruction,
-                    MirInstr::DefVar {
-                        var: 0,
-                        src: Reg(2),
-                        ..
-                    }
-                )
-            })
-            .count();
-        assert_eq!(stores, 1);
-        assert!(matches!(
-            function.blocks[1].instrs.as_slice(),
-            [MirInstr::UseVar {
-                dest: Reg(1),
-                var: 0,
-                mode: UseMode::Forward,
-                ..
-            }]
-        ));
+        assert!(function.var_names.is_empty());
+        assert!(!function.reg_types.contains_key(&1));
+        assert!(
+            function
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instrs)
+                .all(|instruction| !matches!(instruction, MirInstr::DefVar { .. }))
+        );
     }
 
     /// [`function_with`] over `bodies` with one `Int` slot `x` and the
@@ -1525,10 +1521,10 @@ mod tests {
     }
 
     #[test]
-    fn a_comptime_for_carries_its_arguments_and_results_through_slots() {
+    fn a_comptime_for_carries_its_arguments_through_slots() {
         let body = carrying_comptime_for(MirTerm::ComptimeContinue(vec![Reg(2)]));
         let function = lowered(function_over(body, 2));
-        assert_eq!(function.var_names, ["x", "$yield1", "$arg2"]);
+        assert_eq!(function.var_names, ["x", "$arg1"]);
         let block_storing = |var: VarId, value: Reg| {
             function.blocks.iter().find(|block| {
                 matches!(
@@ -1544,7 +1540,7 @@ mod tests {
         assert!(matches!(
             function.blocks[0].instrs.last(),
             Some(MirInstr::DefVar {
-                var: 2,
+                var: 1,
                 src: Reg(1),
                 ..
             })
@@ -1562,26 +1558,18 @@ mod tests {
             function.blocks[entry].instrs.first(),
             Some(MirInstr::UseVar {
                 dest: Reg(3),
-                var: 2,
-                mode: UseMode::Forward,
-                ..
-            })
-        ));
-        // The continue stores its value and goes back to the header; the
-        // stop arm's break stores the result and leaves to the join.
-        let continued = block_storing(2, Reg(2)).expect("the continue's store");
-        assert_eq!(jump_target(&continued.term), Some(header));
-        let broke = block_storing(1, Reg(3)).expect("the break's store");
-        assert_eq!(jump_target(&broke.term), Some(1));
-        assert!(matches!(
-            function.blocks[1].instrs.first(),
-            Some(MirInstr::UseVar {
-                dest: Reg(4),
                 var: 1,
                 mode: UseMode::Forward,
                 ..
             })
         ));
+        // The continue stores its value and goes back to the header; the
+        // stop arm's break, the one that leaves, carries the result, which
+        // the join reads as its value.
+        let continued = block_storing(1, Reg(2)).expect("the continue's store");
+        assert_eq!(jump_target(&continued.term), Some(header));
+        assert!(!function.reg_types.contains_key(&4));
+        assert_eq!(stored(&function), [Reg(3)]);
     }
 
     #[test]

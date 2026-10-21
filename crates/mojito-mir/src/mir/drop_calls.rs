@@ -100,9 +100,13 @@ fn lower_list(
     slots.dedup();
     // A lowered drop leaves every slot's state as the drop did, so the
     // sites and the regions' entries are decided over the list as it is.
+    let mut memo = Memo::new();
     let flows: HashMap<VarId, Flow> = slots
         .iter()
-        .map(|&var| (var, flow(blocks, entry(var), var, &mut Vec::new())))
+        .map(|&var| {
+            let flow = flow(blocks, entry(var), var, &mut Vec::new(), &mut memo);
+            (var, flow)
+        })
         .collect();
     let held_before = |block: usize, index: usize, var: VarId| -> State {
         flows
@@ -164,11 +168,12 @@ fn lower_list(
             }
             let mut entries = vec![HashMap::new(); regions];
             for var in named_drop_slots(instruction) {
-                let states = region_flow(
+                let states = memoized_region_flow(
                     instruction,
                     held_before(block, index, var),
                     var,
                     &mut Vec::new(),
+                    &mut memo,
                 )
                 .entries;
                 for (entry, state) in entries.iter_mut().zip(states) {
@@ -266,7 +271,7 @@ type State = Option<Held>;
 
 /// The definite initialization state of one slot, upstream's per-slot
 /// lifetime state: whole, whole but for some owned parts, or anything else.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Held {
     Whole,
     /// A whole value but for the owned parts at these paths, each moved out
@@ -280,7 +285,7 @@ enum Held {
 
 /// One step of the path to an owned part of a slot: a field, or an
 /// element of compiler-private tuple storage.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Part {
     Field(String),
     Element(usize),
@@ -313,6 +318,7 @@ struct Flow {
 /// The states a region op leaves a slot in: on entry to each of its
 /// regions, in the order [`instruction_regions`] lists them, after the op,
 /// at the points it raises from, and joined over every point inside it.
+#[derive(Clone)]
 struct RegionFlow {
     entries: Vec<State>,
     after: State,
@@ -411,7 +417,13 @@ fn death_span(function: &MirFunction, var: VarId) -> Option<SourceSpan> {
 /// `entry`, under the enclosing `frames`: a block ending in a region
 /// terminator joins its end state into the frame it names. An escape into
 /// `list` from one of its regions is taken to hold no whole value.
-fn flow(list: &[MirBlock], entry: State, var: VarId, frames: &mut Vec<Frame>) -> Flow {
+fn flow(
+    list: &[MirBlock],
+    entry: State,
+    var: VarId,
+    frames: &mut [Frame],
+    memo: &mut Memo,
+) -> Flow {
     let mut inputs: Vec<State> = vec![None; list.len()];
     let Some(first) = inputs.first_mut() else {
         return Flow {
@@ -430,7 +442,13 @@ fn flow(list: &[MirBlock], entry: State, var: VarId, frames: &mut Vec<Frame>) ->
         if inputs[current].is_none() {
             continue;
         }
-        let (states, ..) = through(&list[current], inputs[current].clone(), var, &mut scratch);
+        let (states, ..) = through(
+            &list[current],
+            inputs[current].clone(),
+            var,
+            &mut scratch,
+            memo,
+        );
         let out = states.last().cloned().flatten();
         let escapes = list[current]
             .instrs
@@ -455,7 +473,7 @@ fn flow(list: &[MirBlock], entry: State, var: VarId, frames: &mut Vec<Frame>) ->
     let mut raised = None;
     let mut anywhere = None;
     for (block, input) in list.iter().zip(inputs) {
-        let (states, raising, inside) = through(block, input, var, frames);
+        let (states, raising, inside) = through(block, input, var, frames, memo);
         raised = join(raised, raising);
         let end = states.last().cloned().flatten();
         if let Some((target, resume)) = region_exit(&block.term) {
@@ -504,7 +522,8 @@ fn through(
     block: &MirBlock,
     input: State,
     var: VarId,
-    frames: &mut Vec<Frame>,
+    frames: &mut [Frame],
+    memo: &mut Memo,
 ) -> (Vec<State>, State, State) {
     let mut anywhere = input.clone();
     let mut raised = None;
@@ -514,7 +533,7 @@ fn through(
         let (after, inside) = match state {
             None => (None, None),
             Some(_) if !instruction_regions(instruction).is_empty() => {
-                let region = region_flow(instruction, state, var, frames);
+                let region = memoized_region_flow(instruction, state, var, frames, memo);
                 if !matches!(instruction, MirInstr::Try { .. }) {
                     raised = join(raised, region.raised);
                 } else if raises_inside(instruction) {
@@ -541,6 +560,44 @@ fn raises_inside(instruction: &MirInstr) -> bool {
         .flatten()
         .flat_map(|block| &block.instrs)
         .any(|instruction| instruction.is_raise_point() || raises_inside(instruction))
+}
+
+/// The region flows one block list's walk computed, by op (its address in
+/// the list, which the walk does not change), slot, entry state, and the
+/// depth of the frames around it, each beside what it left in those frames.
+type Memo = HashMap<(*const MirInstr, VarId, State, usize), (RegionFlow, Vec<(State, State)>)>;
+
+/// [`region_flow`], computed once per op, slot, and entry state of one
+/// list's walk: a loop's fixpoint walks its body again, and each walk
+/// reaches the regions nested in it, so without it the walks multiply with
+/// each loop of the nest. What the op leaves in the enclosing frames is
+/// joined into them on each visit, which is what walking it again would
+/// join.
+fn memoized_region_flow(
+    instruction: &MirInstr,
+    state: State,
+    var: VarId,
+    frames: &mut [Frame],
+    memo: &mut Memo,
+) -> RegionFlow {
+    let key = (std::ptr::from_ref(instruction), var, state, frames.len());
+    let (region, left) = if let Some(known) = memo.get(&key) {
+        known.clone()
+    } else {
+        let mut own: Vec<Frame> = frames.iter().map(|frame| Frame::new(frame.kind)).collect();
+        let region = region_flow(instruction, key.2.clone(), var, &mut own, memo);
+        let left: Vec<(State, State)> = own
+            .into_iter()
+            .map(|frame| (frame.leave, frame.resume))
+            .collect();
+        memo.insert(key, (region.clone(), left.clone()));
+        (region, left)
+    };
+    for (frame, (leave, resume)) in frames.iter_mut().zip(left) {
+        frame.leave = join(frame.leave.take(), leave);
+        frame.resume = join(frame.resume.take(), resume);
+    }
+    region
 }
 
 /// The state of the slot `var` through the region op `instruction`,
@@ -572,14 +629,15 @@ fn region_flow(
     state: State,
     var: VarId,
     frames: &mut Vec<Frame>,
+    memo: &mut Memo,
 ) -> RegionFlow {
     let mut entries = Vec::new();
     let mut after = None;
     let mut raised = None;
     let mut anywhere = None;
-    let mut enter = |list: &[MirBlock], entry: State, frames: &mut Vec<Frame>| {
+    let mut enter = |list: &[MirBlock], entry: State, frames: &mut Vec<Frame>, memo: &mut Memo| {
         entries.push(entry.clone());
-        let flow = flow(list, entry, var, frames);
+        let flow = flow(list, entry, var, frames, memo);
         raised = join(raised.take(), flow.raised.clone());
         anywhere = join(anywhere.take(), flow.anywhere.clone());
         flow
@@ -591,19 +649,19 @@ fn region_flow(
             orelse,
             ..
         } => {
-            after = enter(then, state.clone(), frames).yielded;
+            after = enter(then, state.clone(), frames, memo).yielded;
             let mut rest = state;
             for elif in elifs {
-                let cond = enter(&elif.cond, rest, frames).yielded;
-                let arm = enter(&elif.then, cond.clone(), frames);
+                let cond = enter(&elif.cond, rest, frames, memo).yielded;
+                let arm = enter(&elif.then, cond.clone(), frames, memo);
                 after = join(after, arm.yielded);
                 rest = cond;
             }
-            after = join(after, enter(orelse, rest, frames).yielded);
+            after = join(after, enter(orelse, rest, frames, memo).yielded);
         }
         MirInstr::ComptimeIf { arms, orelse, .. } => {
             for arm in arms.iter().chain(std::iter::once(orelse)) {
-                after = join(after, enter(arm, state.clone(), frames).yielded);
+                after = join(after, enter(arm, state.clone(), frames, memo).yielded);
             }
         }
         MirInstr::Loop { body, .. } | MirInstr::ComptimeFor { body, .. } => {
@@ -614,7 +672,7 @@ fn region_flow(
             let mut resume = state;
             let leave = loop {
                 frames.push(Frame::new(frame));
-                flow(body, resume.clone(), var, frames);
+                flow(body, resume.clone(), var, frames, memo);
                 let looped = frames.pop().unwrap_or_else(|| Frame::new(frame));
                 let next = join(resume.clone(), looped.resume);
                 if next == resume {
@@ -623,7 +681,7 @@ fn region_flow(
                 resume = next;
             };
             frames.push(Frame::new(frame));
-            enter(body, resume, frames);
+            enter(body, resume, frames, memo);
             frames.pop();
             after = leave;
             if matches!(instruction, MirInstr::ComptimeFor { .. }) {
@@ -634,16 +692,16 @@ fn region_flow(
             let mut next = state;
             for case in cases {
                 frames.push(Frame::new(RegionFrame::MatchCase));
-                enter(&case.body, next, frames);
+                enter(&case.body, next, frames, memo);
                 let case = frames
                     .pop()
                     .unwrap_or_else(|| Frame::new(RegionFrame::MatchCase));
                 after = join(after, case.leave);
                 next = case.resume;
             }
-            after = join(after, enter(orelse, next, frames).yielded);
+            after = join(after, enter(orelse, next, frames, memo).yielded);
         }
-        MirInstr::Try { .. } => return try_flow(instruction, state, var, frames),
+        MirInstr::Try { .. } => return try_flow(instruction, state, var, frames, memo),
         _ => after = state,
     }
     RegionFlow {
@@ -659,7 +717,8 @@ fn try_flow(
     instruction: &MirInstr,
     state: State,
     var: VarId,
-    frames: &mut Vec<Frame>,
+    frames: &mut [Frame],
+    memo: &mut Memo,
 ) -> RegionFlow {
     let MirInstr::Try {
         body,
@@ -680,7 +739,7 @@ fn try_flow(
         .iter_mut()
         .map(|frame| (frame.leave.take(), frame.resume.take()))
         .collect();
-    let body = flow(body, state.clone(), var, frames);
+    let body = flow(body, state.clone(), var, frames, memo);
     let raised = if cleanup_drops(cleanup, var) {
         body.raised.as_ref().map(|_| Held::Partial)
     } else {
@@ -695,14 +754,14 @@ fn try_flow(
             raised
         };
         entries.push(caught.clone());
-        let handler = flow(blocks, caught, var, frames);
+        let handler = flow(blocks, caught, var, frames, memo);
         anywhere = join(anywhere.clone(), handler.anywhere);
         handler.yielded
     });
     let completed = match orelse {
         Some(blocks) => {
             entries.push(body.yielded.clone());
-            let orelse = flow(blocks, body.yielded, var, frames);
+            let orelse = flow(blocks, body.yielded, var, frames, memo);
             anywhere = join(anywhere.clone(), orelse.anywhere);
             orelse.yielded
         }
@@ -713,8 +772,8 @@ fn try_flow(
         Some(blocks) => {
             let entered = join(normal.clone(), anywhere.clone());
             entries.push(entered.clone());
-            anywhere = join(anywhere, flow(blocks, entered, var, frames).anywhere);
-            flow(blocks, normal, var, frames).yielded
+            anywhere = join(anywhere, flow(blocks, entered, var, frames, memo).anywhere);
+            flow(blocks, normal, var, frames, memo).yielded
         }
         None => normal,
     };

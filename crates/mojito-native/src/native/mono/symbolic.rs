@@ -234,23 +234,10 @@ pub(super) fn erase_specialized_generic_callable_storage(function: &mut MirFunct
     ) {
         for block in blocks {
             block.instrs.retain_mut(|instruction| {
-                if let MirInstr::Try {
-                    body,
-                    handler,
-                    orelse,
-                    finalbody,
-                    ..
-                } = instruction
-                {
-                    erase(body, generic_regs, generic_vars);
-                    if let Some((_, blocks)) = handler {
-                        erase(blocks, generic_regs, generic_vars);
-                    }
-                    if let Some(blocks) = orelse {
-                        erase(blocks, generic_regs, generic_vars);
-                    }
-                    if let Some(blocks) = finalbody {
-                        erase(blocks, generic_regs, generic_vars);
+                let regions = mojito_mir::mir::instruction_regions_mut(instruction);
+                if !regions.is_empty() {
+                    for region in regions {
+                        erase(region, generic_regs, generic_vars);
                     }
                     return true;
                 }
@@ -306,30 +293,12 @@ pub(super) fn erase_generic_callable_parameters(types: &mut [Ty]) {
 }
 
 /// Collect already-substituted types named only by instructions, recursing
-/// into `try` regions. These types need layouts or lifecycle declarations even
+/// into every region. These types need layouts or lifecycle declarations even
 /// when no register or variable carries them.
 pub(super) fn push_instruction_types(blocks: &[MirBlock], out: &mut Vec<Ty>) {
     for block in blocks {
         for instruction in &block.instrs {
             match instruction {
-                MirInstr::Try {
-                    body,
-                    handler,
-                    orelse,
-                    finalbody,
-                    ..
-                } => {
-                    push_instruction_types(body, out);
-                    if let Some((_, blocks)) = handler {
-                        push_instruction_types(blocks, out);
-                    }
-                    if let Some(blocks) = orelse {
-                        push_instruction_types(blocks, out);
-                    }
-                    if let Some(blocks) = finalbody {
-                        push_instruction_types(blocks, out);
-                    }
-                }
                 MirInstr::SizeOf { ty, .. }
                 | MirInstr::TypeName { ty, .. }
                 | MirInstr::ConstructType { ty, .. } => out.push(ty.clone()),
@@ -337,11 +306,16 @@ pub(super) fn push_instruction_types(blocks: &[MirBlock], out: &mut Vec<Ty>) {
                 | MirInstr::PointerStorageDestroy { element, .. }
                 | MirInstr::UninitStorageTake { element, .. }
                 | MirInstr::UninitStorageDestroy { element, .. } => out.push(element.clone()),
-                _ => {}
+                instruction => {
+                    for region in mojito_mir::mir::instruction_regions(instruction) {
+                        push_instruction_types(region, out);
+                    }
+                }
             }
         }
     }
 }
+
 /// Reject an instance the verifier's concrete mode refuses, naming the
 /// template it came from. Materialization asks per instance, ahead of the
 /// whole-program verification, so the failure names its instance.

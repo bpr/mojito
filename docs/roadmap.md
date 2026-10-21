@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1263**.
+Next free ID: **R1264**.
 
 ## Ordered Work
 
@@ -111,36 +111,6 @@ which names the upstream pass each one follows. Each is measured by the
     against its `.expected`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R880 The elaborator unrolls `comptime for` by recovering its body
-  through dominators where upstream clones the op's region**
-
-  `processComptimeForOp` makes one labelled `hlcf.loop` per iteration from
-  the op's region, and `mono/unroll.rs` finds the body as the blocks its
-  `body` target dominates.
-  - Stage 11 of `docs/structured-control-flow-plan.md`.
-  - Instantiation, substitution, `ComptimeIf` (keep the taken arm), and
-    `ComptimeFor` work on regions, with `simplifyParamForLoop`'s folding.
-  - `unroll.rs`'s `loop_body` and `outermost_loop` are deleted.
-  - `mir::ComptimeForBodies`, and `mir::immediate_dominators`' virtual
-    root over unreferenced blocks (`DominatorRoots::Unreferenced`), go
-    with that recovery.
-  - A CTFE fragment is lowered before `call_concrete`.
-  - After it lands, `lower-control-flow` runs at the end of elaboration.
-  - A loop whose one `break` sits in a `comptime for` body it holds keeps
-    its result in a `$yield` slot, since the elaborator copies that body
-    per iteration after lowering; once each iteration is its own region
-    the break is in the loop's own list and the result folds to its value:
-    probe `lower_control_flow`'s unit test
-    `a_break_in_a_comptime_for_keeps_its_result_slot`.
-  - A `comptime for`'s arguments and results go through `$arg`/`$yield`
-    slots because the elaborator copies the lowered body; upstream's
-    `processComptimeForOp` feeds each iteration loop's results to the next
-    clone's arguments (`replaceArgs`, `nextOperands`) and breaks
-    `param_for_outer` with the last: probe
-    `tests/mir_passes/lower-control-flow/comptime_for_values.mir`.
-  - Depends on R1254.
-  - Model: Fable, Planned.
 
 - [ ] **R881 The post-elaboration pipeline runs on a CFG and has no
   counterpart of `SimplifyCF`'s trivial-loop removal**
@@ -758,16 +728,19 @@ which names the upstream pass each one follows. Each is measured by the
     which the pass would produce.
   - The ownership walks (`region_walk.rs`, `moves.rs`) and
     `close_register_types` track and type no value carried through them,
-    so the producer must; an owned value through a `comptime for`'s shared
-    `$arg` slot across unrolled copies is unprobed.
+    so the producer must; an owned value the elaborator carries from one
+    `comptime for` iteration loop's results to the next clone's arguments
+    (`unroll_op`) is unprobed.
   - `region_loop_read.mir`'s `y` is stored in the body and read only
     after the loop, so upstream carries it as a loop argument and a loop
     result whose initial operand is `currValueOrUndef`'s undef: MIR has no
     undef value to spell that operand with.
   - The fix rewrites the pass as `processRegion`'s scoped walk over
     structured bodies with region values.
-  - The pass's `comptime for` guard (a read and its store on one side of a
-    loop body's boundary) goes once the elaborator clones regions.
+  - The pass's structured `comptime for` guard (`encloses`'
+    `Boundary::ComptimeFor`, a read and its store on one side of a loop
+    body's boundary) can go: the elaborator renumbers only the registers
+    each clone of the body defines (R880).
   - About two thirds of the promotable-type slot mentions in the
     pre-elaboration bodies of `collections_many` are merged ones.
   - Depends on R880 (regions cloned).
@@ -4897,8 +4870,17 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   by zero", where the pin skips the arm and runs.
   - `native::mono` unrolls every loop header of an instance before it
     selects a branch (`unroll_comptime_loops`, then
-    `select_comptime_branches`, `mono/specializer.rs`), so the header's
-    thunk runs in an arm the instance never takes.
+    `select_comptime_branches`, `mono/unroll.rs` and `mono/select.rs`), so
+    the header's thunk runs in an arm the instance never takes.
+  - Both walk regions since R880, so the fix makes `unroll_in` and
+    `select_comptime_ifs` one in-order walk, as upstream's one work list:
+    a `comptime if` is decided and its arm spliced before any `comptime
+    for` in it is unrolled. Selection then moves before
+    `substitute_function`, into `materialize_body`'s `answer_pending`
+    loop.
+  - Probe: `comptime if n > 0:` holding `comptime for i in range(10 //
+    n):` in `def total[n: Int]() -> Int`; the pin prints `0` for
+    `total[0]()`.
   - A nested `comptime if` whose condition applies a function fails the
     same way.
   - A local `comptime` display binding read in such an arm does too.
@@ -10232,6 +10214,29 @@ follow-ups the landed producer stages filed come last.
     and every `param_arg` and `instantiated_args` naming the function,
     which needs the whole program at once, as R907 does.
   - Depends on R907.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1263 A call keeps the operand of an argument its callee removed,
+  which no instruction defines, where `RemoveUnusedParams` rewrites the
+  call**
+
+  The pre-elaboration view (`mir::with_removed_argument_forwards_erased`)
+  erases what computed such an operand but keeps its register in the call,
+  so the elaborator binds the call against the callee's full declaration
+  before `drop_removed_arguments` drops it per instance.
+  - A body's walk that maps registers must count such a register as the
+    body's own: the unroller renumbers it per clone
+    (`FrameTables::dangling`, `mono/unroll.rs`), and `materialize_body`
+    sheds its type (`shed_dropped_operand_types`). Upstream's `IRMapping`
+    clone needs no such case.
+  - Probes: `assets/ok/comptime_for_nested_unused_argument_instances.mojo`
+    and `value_parameter_inferred_from_argument_type.mojo` run only with
+    the unroller's `dangling` set.
+  - The fix rewrites each direct call of a reduced generator to name it
+    and pass no operand for the removed argument, as upstream's pass
+    rewrites the caller.
+  - Found while landing R880 (2026-10-21).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R937 `**` on integers and scalar displays call bundled bodies

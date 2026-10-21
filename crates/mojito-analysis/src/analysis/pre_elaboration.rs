@@ -199,9 +199,10 @@ pub const ELABORATE_DROPS: BodyPass = BodyPass {
 /// Structured control flow lowered to blocks: upstream's `LowerControlFlow`.
 ///
 /// Upstream lowers `hlcf` as it reaches LLVM. No seam runs it: every
-/// [`PIPELINE`] pass reads structured bodies, and the elaborator lowers each
-/// template where it first fetches it. It is registered for a pass test or
-/// `opt` to run on request.
+/// [`PIPELINE`] pass reads structured bodies, and the elaborator lowers
+/// each instance at its end, once it has unrolled and decided their
+/// compile-time control flow. It is registered for a pass test or `opt` to
+/// run on request.
 pub const LOWER_CONTROL_FLOW: BodyPass = BodyPass {
     name: "lower-control-flow",
     run: |_, function, _| {
@@ -319,8 +320,8 @@ pub fn pre_elaborate_program(
 /// The package seam's finishing hook: [`elaborate_drops_function`], then
 /// [`lower_lit`], then [`run_pipeline`].
 ///
-/// The body keeps its structured control flow, which the elaborator lowers
-/// as it fetches the body ([`PackageBodies::template`]).
+/// The body keeps its structured control flow, which the elaborator
+/// instantiates as it is.
 pub fn finish_package_body(
     name: &str,
     function: MirFunction,

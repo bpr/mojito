@@ -32,7 +32,7 @@ use mojito_checked::checked::CheckedConst;
 use mojito_mir::mir::text::package::PackageBodies;
 use mojito_mir::mir::{
     ConcreteMir, Const, MirBlock, MirCaptureMode, MirClosureCapture, MirDeclarations, MirFunction,
-    MirFunctionDeclaration, MirInstr, MirPlace, MirProgram, MirStructDeclaration, MirTerm, Reg,
+    MirFunctionDeclaration, MirInstr, MirPlace, MirProgram, MirStructDeclaration, Reg,
 };
 use mojito_native_core::layout::StructFieldIndex;
 use mojito_native_core::target::NativeTarget;
@@ -315,8 +315,7 @@ pub fn specialize_importing(
     // the elaborator runs on a stack deep enough to reach the instance
     // budget rather than overflow on the way.
     let elaborate = || {
-        let templates = bodies::Templates::of(program);
-        Specializer::new(program, target, &templates)
+        Specializer::new(program, target)
             .importing(package)
             .run(entries)
     };
@@ -705,6 +704,7 @@ mod infer;
 mod instances;
 mod promote;
 mod rebind;
+mod select;
 mod specializer;
 mod spread;
 mod substitute;

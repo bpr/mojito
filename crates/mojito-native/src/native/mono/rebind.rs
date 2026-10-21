@@ -11,10 +11,10 @@
 use super::*;
 use mojito_mir::mir::Proj;
 use mojito_mir::mir::verify::{instruction_places_mut, place_base_ty, types_agree};
-use mojito_mir::mir::{instruction_regs_mut, terminator_regs_mut, terminator_targets};
+use mojito_mir::mir::{instruction_regions_mut, instruction_regs_mut, terminator_regs_mut};
 
 impl Specializer<'_> {
-    /// Judge every rebind reachable in the instance `function` of
+    /// Judge every rebind of the instance `function` of
     /// `template`: a value rebind's `dest` register becomes its operand's,
     /// and a rebound place loses its step, whose type now names the
     /// storage's own.
@@ -43,59 +43,29 @@ impl Specializer<'_> {
     }
 }
 
-/// The blocks of `blocks` its entry reaches: a decided `comptime if` leaves
-/// its untaken arm behind in a `try` region, which no pruning renumbers.
-pub(super) fn reachable(blocks: &[MirBlock]) -> Vec<bool> {
-    let mut reached = vec![false; blocks.len()];
-    let mut pending = vec![0usize];
-    while let Some(block) = pending.pop() {
-        if block >= blocks.len() || std::mem::replace(&mut reached[block], true) {
-            continue;
-        }
-        pending.extend(terminator_targets(&blocks[block].term));
-    }
-    reached
-}
-
 /// A judged rebind's operand and target types where they disagree.
 type Mismatch = Box<(Ty, Ty)>;
 
-/// Judge the rebinds of the reached blocks of one block list and the regions
-/// below it, recording each value rebind's `dest → value` and removing the
-/// instruction or place step, an unreached one's unjudged; the first
-/// mismatch is returned as its `(input, result)` types.
+/// Judge the rebinds of one block list and the regions below it, recording
+/// each value rebind's `dest → value` and removing the instruction or place
+/// step; the first mismatch is returned as its `(input, result)` types.
 fn judge_blocks(
     blocks: &mut [MirBlock],
     reg_types: &HashMap<u32, Ty>,
     aliases: &mut HashMap<u32, Reg>,
 ) -> Result<(), Mismatch> {
-    let reached = reachable(blocks);
-    for (block, reached) in blocks.iter_mut().zip(reached) {
+    for block in blocks {
         let mut judged = Vec::with_capacity(block.instrs.len());
         for mut instruction in std::mem::take(&mut block.instrs) {
-            if let MirInstr::Try {
-                body,
-                handler,
-                orelse,
-                finalbody,
-                ..
-            } = &mut instruction
-            {
-                let regions = std::iter::once(body)
-                    .chain(handler.iter_mut().map(|(_, blocks)| blocks))
-                    .chain(orelse.iter_mut())
-                    .chain(finalbody.iter_mut());
-                for region in regions {
-                    judge_blocks(region, reg_types, aliases)?;
-                }
+            for region in instruction_regions_mut(&mut instruction) {
+                judge_blocks(region, reg_types, aliases)?;
             }
             for place in instruction_places_mut(&mut instruction) {
-                discharge_place(place, reached)?;
+                discharge_place(place)?;
             }
             if let MirInstr::Rebind { dest, value } = instruction {
-                if reached
-                    && let (Some(input), Some(result)) =
-                        (reg_types.get(&value.0), reg_types.get(&dest.0))
+                if let (Some(input), Some(result)) =
+                    (reg_types.get(&value.0), reg_types.get(&dest.0))
                     && !types_agree(input, result)
                 {
                     return Err(Box::new((input.clone(), result.clone())));
@@ -111,22 +81,19 @@ fn judge_blocks(
 }
 
 /// Erase a place's rebind steps, judging each against the type it applies
-/// to where `judge`: the storage's own type must agree with the one the
-/// rebind names.
-fn discharge_place(place: &mut MirPlace, judge: bool) -> Result<(), Mismatch> {
+/// to: the storage's own type must agree with the one the rebind names.
+fn discharge_place(place: &mut MirPlace) -> Result<(), Mismatch> {
     if !place.proj.iter().any(|step| matches!(step, Proj::Rebind)) {
         return Ok(());
     }
-    if judge {
-        let mut applied = place_base_ty(place);
-        for (step, ty) in place.proj.iter().zip(&place.projection_tys) {
-            if let (Proj::Rebind, Some(input)) = (step, applied)
-                && !types_agree(input, ty)
-            {
-                return Err(Box::new((input.clone(), ty.clone())));
-            }
-            applied = Some(ty);
+    let mut applied = place_base_ty(place);
+    for (step, ty) in place.proj.iter().zip(&place.projection_tys) {
+        if let (Proj::Rebind, Some(input)) = (step, applied)
+            && !types_agree(input, ty)
+        {
+            return Err(Box::new((input.clone(), ty.clone())));
         }
+        applied = Some(ty);
     }
     *place = place.storage().into_owned();
     Ok(())
@@ -141,21 +108,8 @@ fn rename_blocks(blocks: &mut [MirBlock], aliases: &HashMap<u32, Reg>) {
     };
     for block in blocks {
         for instruction in &mut block.instrs {
-            if let MirInstr::Try {
-                body,
-                handler,
-                orelse,
-                finalbody,
-                ..
-            } = instruction
-            {
-                let regions = std::iter::once(body)
-                    .chain(handler.iter_mut().map(|(_, blocks)| blocks))
-                    .chain(orelse.iter_mut())
-                    .chain(finalbody.iter_mut());
-                for region in regions {
-                    rename_blocks(region, aliases);
-                }
+            for region in instruction_regions_mut(instruction) {
+                rename_blocks(region, aliases);
             }
             instruction_regs_mut(instruction)
                 .into_iter()

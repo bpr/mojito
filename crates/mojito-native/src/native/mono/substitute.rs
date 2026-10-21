@@ -68,23 +68,12 @@ pub(super) fn default_construct_parameters(
                     .ok()
                     .filter(|ty| !mojito_types::types::is_symbolic(ty))
                     .map(|ty| (*dest, ty)),
-                MirInstr::Try {
-                    body,
-                    handler,
-                    orelse,
-                    finalbody,
-                    ..
-                } => {
-                    for region in std::iter::once(body)
-                        .chain(handler.iter_mut().map(|(_, blocks)| blocks))
-                        .chain(orelse.iter_mut())
-                        .chain(finalbody.iter_mut())
-                    {
+                instruction => {
+                    for region in mojito_mir::mir::instruction_regions_mut(instruction) {
                         default_construct_parameters(region, n_regs, reg_types, bindings)?;
                     }
                     None
                 }
-                _ => None,
             };
             let Some((dest, ty)) = constructed else {
                 index += 1;
@@ -169,22 +158,11 @@ pub(super) fn copy_builtin_receivers(blocks: &mut [MirBlock], reg_types: &HashMa
                 MirInstr::DefVar { src, in_place, .. } if copied.contains(&src.0) => {
                     *in_place = false;
                 }
-                MirInstr::Try {
-                    body,
-                    handler,
-                    orelse,
-                    finalbody,
-                    ..
-                } => {
-                    for region in std::iter::once(body)
-                        .chain(handler.iter_mut().map(|(_, blocks)| blocks))
-                        .chain(orelse.iter_mut())
-                        .chain(finalbody.iter_mut())
-                    {
+                instruction => {
+                    for region in mojito_mir::mir::instruction_regions_mut(instruction) {
                         copy_builtin_receivers(region, reg_types);
                     }
                 }
-                _ => {}
             }
         }
     }
@@ -237,28 +215,10 @@ pub(super) fn substitute_value_parameter_reads(
                     dest: *dest,
                     k: constant,
                 };
-            } else if let MirInstr::Try {
-                body,
-                handler,
-                orelse,
-                finalbody,
-                ..
-            } = instruction
-            {
-                substitute_value_parameter_reads(body, var_names, var_tys, locals, callables)?;
-                if let Some((_, blocks)) = handler {
+            } else {
+                for region in mojito_mir::mir::instruction_regions_mut(instruction) {
                     substitute_value_parameter_reads(
-                        blocks, var_names, var_tys, locals, callables,
-                    )?;
-                }
-                if let Some(blocks) = orelse {
-                    substitute_value_parameter_reads(
-                        blocks, var_names, var_tys, locals, callables,
-                    )?;
-                }
-                if let Some(blocks) = finalbody {
-                    substitute_value_parameter_reads(
-                        blocks, var_names, var_tys, locals, callables,
+                        region, var_names, var_tys, locals, callables,
                     )?;
                 }
             }
@@ -278,19 +238,9 @@ pub(super) fn reject_parameter_storage_reads(
     value: &CtValue,
 ) -> Result<(), MonoError> {
     for instruction in blocks.iter().flat_map(|block| &block.instrs) {
-        if let MirInstr::Try {
-            body,
-            handler,
-            orelse,
-            finalbody,
-            ..
-        } = instruction
-        {
-            for region in std::iter::once(body)
-                .chain(handler.iter().map(|(_, blocks)| blocks))
-                .chain(orelse)
-                .chain(finalbody)
-            {
+        let regions = mojito_mir::mir::instruction_regions(instruction);
+        if !regions.is_empty() {
+            for region in regions {
                 reject_parameter_storage_reads(region, slot, value)?;
             }
         } else if matches!(
@@ -926,24 +876,11 @@ fn collect_captured_vars(blocks: &[MirBlock], captured: &mut HashSet<u32>) {
             MirInstr::MakeClosure { captures, .. } => {
                 captured.extend(captures.iter().map(|capture| capture.place.root));
             }
-            MirInstr::Try {
-                body,
-                handler,
-                orelse,
-                finalbody,
-                ..
-            } => {
-                collect_captured_vars(body, captured);
-                for blocks in handler
-                    .iter()
-                    .map(|(_, blocks)| blocks)
-                    .chain(orelse)
-                    .chain(finalbody)
-                {
-                    collect_captured_vars(blocks, captured);
+            instruction => {
+                for region in mojito_mir::mir::instruction_regions(instruction) {
+                    collect_captured_vars(region, captured);
                 }
             }
-            _ => {}
         }
     }
 }
@@ -1536,22 +1473,11 @@ fn check_reinterpretation_widths(
                         });
                     }
                 }
-                MirInstr::Try {
-                    body,
-                    handler,
-                    orelse,
-                    finalbody,
-                    ..
-                } => {
-                    let regions = std::iter::once(body)
-                        .chain(handler.iter().map(|(_, blocks)| blocks))
-                        .chain(orelse.iter())
-                        .chain(finalbody.iter());
-                    for region in regions {
+                instruction => {
+                    for region in mojito_mir::mir::instruction_regions(instruction) {
                         check_reinterpretation_widths(region, reg_types)?;
                     }
                 }
-                _ => {}
             }
         }
     }

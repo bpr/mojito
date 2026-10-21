@@ -1,35 +1,38 @@
-//! Unrolling a `comptime for`: each instance replaces the loop the template
-//! keeps with one copy of its body per iterator the protocol steps to, the
-//! exhausted one included, each copy keeping the arm of the body's
-//! `has_next` test its iterator takes.
+//! Unrolling a `comptime for`, as upstream's `processComptimeForOp` does:
+//! the op becomes a loop labelled `param_for_outer` holding one unlabelled
+//! loop per iterator the protocol steps to, the exhausted one included, each
+//! holding a clone of the body that keeps the arm of the body's `has_next`
+//! test its iterator takes; `simplifyParamForLoop` then folds the loops the
+//! clones leave trivial.
 
+use super::select::{Decided, defined_registers, splice_comptime_arm};
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_checked::checked::ComptimeSequence;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
-    ComptimeForBodies, MirBlockId, SpanTable, comptime_for_body, instruction_regs_mut,
-    renumber_block_slots, terminator_regs_mut, terminator_targets, terminator_targets_mut,
+    LoopLabel, MirTerm, SpanTable, instruction_regions_mut, instruction_regs_mut, loop_breaks_mut,
+    renumber_block_slots, replace_register_reads, resolve_replacements, terminator_regs_mut,
 };
 
 impl Specializer<'_> {
     /// Unroll every `comptime for` of the instance under its bindings, as
     /// the elaborator does for upstream's `ComptimeForOp`: the iterators are
-    /// stepped, and the body is copied N+1 times, once per iterator
-    /// `has_next` accepts and once over the exhausted one, each with fresh
-    /// registers and the binder bound to its iterator. Each copy decides
-    /// the body's leading `has_next` test first and keeps the taken arm
-    /// alone; the suite's copy then has its reads folded, its types
-    /// substituted, the `comptime if`s over the binder decided, and the
-    /// loops nested in it unrolled in turn, while the exhausted copy keeps
-    /// only the stop arm, which leaves for the exit. The copies are chained
-    /// where the loop stood, a `continue` reaching the next copy and a
-    /// `break` the exit. A slot whose type names the binder is a fresh slot
-    /// in each copy that addresses it, as each clone of the region
-    /// allocates its own `var`, and the template's slot leaves the
-    /// function. The drops the analysis placed in the body come with each
-    /// copy; no last use is recomputed. An empty range makes the one copy
-    /// that takes the stop arm.
+    /// stepped, and the body is cloned N+1 times, once per iterator
+    /// `has_next` accepts and once over the exhausted one, each clone with
+    /// fresh registers for what it defines and the binder bound to its
+    /// iterator. Each clone decides the body's leading `has_next` test
+    /// first and keeps the taken arm alone; the suite's clone then has its
+    /// reads folded, its types substituted, the `comptime if`s over the
+    /// binder decided, and the loops nested in it unrolled in turn, while
+    /// the exhausted clone keeps only the stop arm, which leaves the loop.
+    /// Each clone sits in a loop of its own, which its `comptime.for.continue`
+    /// leaves, inside the loop its `comptime.for.break` leaves, and the
+    /// loops a clone leaves trivial fold away. A slot whose type names the
+    /// binder is a fresh slot in each clone that addresses it, as each clone
+    /// of the region allocates its own `var`, and the template's slot leaves
+    /// the function. The drops the analysis placed in the body come with
+    /// each clone; no last use is recomputed.
     pub(super) fn unroll_comptime_loops(
         &mut self,
         template: &str,
@@ -37,6 +40,13 @@ impl Specializer<'_> {
         scope: &[ParamDecl],
         bindings: &Bindings,
     ) -> Result<(), MonoError> {
+        if !mojito_mir::mir::nested_instructions(&function.blocks)
+            .iter()
+            .any(|instruction| matches!(instruction, MirInstr::ComptimeFor { .. }))
+        {
+            return Ok(());
+        }
+        let dangling = dangling_registers(function);
         let MirFunction {
             blocks,
             n_regs,
@@ -56,20 +66,14 @@ impl Specializer<'_> {
             var_names,
             var_tys,
             retired: &mut retired,
+            dangling,
         };
-        let frame = LoopFrame {
-            template,
-            scope,
-            function_level: true,
-        };
-        let unrolled = self.unroll_in(blocks, 0, &frame, bindings, &mut tables)?;
-        if unrolled {
-            mojito_mir::mir::prune_unreachable_blocks(function);
-        }
+        let frame = LoopFrame { template, scope };
+        self.unroll_in(blocks, &frame, bindings, &mut tables)?;
         if retired.is_empty() {
             return Ok(());
         }
-        // The index is in scope in the body alone, so once the copies stand
+        // The index is in scope in the body alone, so once the clones stand
         // nothing addresses a slot typed over it.
         if let Some(&slot) = addressed_slots(&function.blocks)
             .intersection(&retired)
@@ -88,232 +92,288 @@ impl Specializer<'_> {
         Ok(())
     }
 
-    /// Unroll the loops headed in `blocks[from..]` as they stand on entry,
-    /// outermost first, then those of the `try` regions the surviving blocks
-    /// hold; whether any loop was unrolled. A copy a loop appends is
-    /// finished under its own bindings before the scan resumes.
+    /// Unroll every `comptime for` of `blocks` and the regions below them, in
+    /// order: a loop's clones are finished, the loops nested in them
+    /// unrolled, before the walk resumes after its replacement. The results
+    /// a folded loop leaves are read as the values its break carried, which
+    /// only `blocks` read.
     fn unroll_in(
         &mut self,
-        blocks: &mut Vec<MirBlock>,
-        from: usize,
-        frame: &LoopFrame<'_>,
-        bindings: &Bindings,
-        tables: &mut FrameTables<'_>,
-    ) -> Result<bool, MonoError> {
-        let end = blocks.len();
-        let mut unrolled = false;
-        while let Some(header) = outermost_loop(&blocks[..end], from, frame.function_level) {
-            self.unroll_loop(blocks, header, frame, bindings, tables)?;
-            unrolled = true;
-        }
-        let regions = LoopFrame {
-            function_level: false,
-            ..*frame
-        };
-        for block in &mut blocks[from..end] {
-            for instruction in &mut block.instrs {
-                if let MirInstr::Try {
-                    body,
-                    handler,
-                    orelse,
-                    finalbody,
-                    ..
-                } = instruction
-                {
-                    for region in std::iter::once(body)
-                        .chain(handler.iter_mut().map(|(_, blocks)| blocks))
-                        .chain(orelse.iter_mut())
-                        .chain(finalbody.iter_mut())
-                    {
-                        unrolled |= self.unroll_in(region, 0, &regions, bindings, tables)?;
-                    }
-                }
-            }
-        }
-        Ok(unrolled)
-    }
-
-    /// Unroll the loop headed at `header`: the body blocks each iterator's
-    /// copy keeps are copied at the end of `blocks`, the originals left
-    /// unreachable for the final pruning.
-    fn unroll_loop(
-        &mut self,
-        blocks: &mut Vec<MirBlock>,
-        header: MirBlockId,
+        blocks: &mut [MirBlock],
         frame: &LoopFrame<'_>,
         bindings: &Bindings,
         tables: &mut FrameTables<'_>,
     ) -> Result<(), MonoError> {
-        let MirTerm::ComptimeFor {
-            binder,
-            source,
-            body,
-            exit,
-        } = blocks[header].term.clone()
-        else {
-            return Ok(());
-        };
-        let iterators = self.trip_elements(frame.template, &binder, &source, bindings)?;
-        let members = comptime_for_body(blocks, header, body, exit, frame.function_level);
-        let test = self.stop_test(frame.template, blocks, body, &members, &source)?;
-        let mut indexed: BTreeSet<VarId> =
-            addressed_slots(members.iter().map(|&member| &blocks[member]))
-                .into_iter()
-                .filter(|slot| {
-                    tables
-                        .var_tys
-                        .get(slot)
-                        .is_some_and(|ty| mojito_types::types::names_binder(ty, &binder))
-                })
-                .collect();
-        indexed.extend(self.region_generator_slots(
-            frame.template,
-            members.iter().map(|&member| &blocks[member]),
-            &binder,
-        ));
-        tables.retired.extend(indexed.iter().copied());
-        // Each copy's blocks come first in what its iteration appends; the
-        // loops nested in it follow.
-        let mut copies: Vec<(MirBlockId, MirBlockId)> = Vec::new();
-        for iterator in iterators {
-            let mut iteration = bindings.clone();
-            iteration.values.insert(binder.clone(), iterator);
-            let suite = self.decide_comptime_condition(frame.template, &test.cond, &iteration)?;
-            let taken = if suite { test.then_b } else { test.else_b };
-            let kept = kept_blocks(blocks, body, &members, (test.block, taken), frame);
-            let first = blocks.len();
-            let entry = first + kept.iter().position(|&member| member == body).unwrap_or(0);
-            copies.push((first, entry));
-            self.copy_body(
-                blocks,
-                (&kept, entry, test.block, taken),
-                frame,
-                tables,
-                (&iteration, bindings, suite.then_some(&source.next_value)),
-                &indexed,
-            )?;
-        }
-        // Chain the copies: a back edge to the header reaches the next copy,
-        // and the exhausted one's stop arm leaves for the exit. The back
-        // edges are those of everything a copy appended: a nested loop's
-        // stop arm threaded past its exit reaches this header directly.
-        let ends: Vec<MirBlockId> = copies
-            .iter()
-            .skip(1)
-            .map(|&(first, _)| first)
-            .chain(std::iter::once(blocks.len()))
-            .collect();
-        for (k, (&(first, _), &end)) in copies.iter().zip(&ends).enumerate() {
-            let next = copies.get(k + 1).map_or(exit, |&(_, entry)| entry);
-            for block in &mut blocks[first..end] {
-                retarget(block, header, next, frame.function_level);
+        let mut folded = HashMap::new();
+        for block in blocks.iter_mut() {
+            let mut index = 0;
+            while index < block.instrs.len() {
+                let Some(op) = ComptimeForOp::take(&mut block.instrs, index) else {
+                    for region in instruction_regions_mut(&mut block.instrs[index]) {
+                        self.unroll_in(region, frame, bindings, tables)?;
+                    }
+                    index += 1;
+                    continue;
+                };
+                let replacement = self.unroll_op(op, frame, bindings, tables, &mut folded)?;
+                let count = replacement.len();
+                block.instrs.splice(index..index, replacement);
+                index += count;
             }
         }
-        blocks[header].term = MirTerm::Jump(copies.first().map_or(exit, |&(_, entry)| entry));
-        for &member in &members {
-            let dead = std::mem::replace(
-                &mut blocks[member],
-                MirBlock {
-                    instrs: Vec::new(),
-                    term: MirTerm::Return(None),
-                },
-            );
-            forget_registers(dead, tables);
+        if !folded.is_empty() {
+            replace_register_reads(blocks, &resolve_replacements(&folded));
+            for reg in folded.keys() {
+                tables.reg_types.remove(reg);
+                tables.spans.0.remove(reg);
+            }
         }
         Ok(())
     }
 
-    /// Append one copy of the loop body's `kept` blocks for `iteration`,
-    /// which binds the loop's binder, finished under it: the stop test at
-    /// `test` a jump to its `taken` arm, the element answered when the arm
-    /// is the suite, registers fresh, each of the `indexed` slots the copy
-    /// addresses fresh at its type for the iteration, reads of the binder
-    /// folded, types substituted, nested loops unrolled, and the
-    /// compile-time branches over the binder that the copy's `entry`
-    /// reaches decided.
-    fn copy_body(
+    /// The instructions that replace the `comptime for` `op`: its
+    /// `param_for_outer` loop of iteration loops, folded where trivial
+    /// ([`simplify_param_for_loop`]), each fold of a loop's results recorded
+    /// in `folded`.
+    fn unroll_op(
         &mut self,
-        blocks: &mut Vec<MirBlock>,
-        (kept, entry, test, taken): (&[MirBlockId], MirBlockId, MirBlockId, MirBlockId),
+        op: ComptimeForOp,
         frame: &LoopFrame<'_>,
+        bindings: &Bindings,
         tables: &mut FrameTables<'_>,
-        (iteration, bindings, element): (&Bindings, &Bindings, Option<&ParamExpr>),
-        indexed: &BTreeSet<VarId>,
-    ) -> Result<(), MonoError> {
-        let first = blocks.len();
-        if let Some(element) = element {
-            self.answer_element(frame.template, element, iteration)?;
-        }
-        let mapping: HashMap<MirBlockId, MirBlockId> = kept
-            .iter()
-            .enumerate()
-            .map(|(k, &member)| (member, first + k))
+        folded: &mut HashMap<u32, Reg>,
+    ) -> Result<Vec<MirInstr>, MonoError> {
+        let iterators = self.trip_elements(frame.template, &op.binder, &op.source, bindings)?;
+        let [mut body] = <[MirBlock; 1]>::try_from(op.body).map_err(|_| {
+            self.error(
+                Some(frame.template),
+                "comptime for body is not one block".to_string(),
+            )
+        })?;
+        let mut indexed: BTreeSet<VarId> = addressed_slots(std::slice::from_ref(&body))
+            .into_iter()
+            .filter(|slot| {
+                tables
+                    .var_tys
+                    .get(slot)
+                    .is_some_and(|ty| mojito_types::types::names_binder(ty, &op.binder))
+            })
             .collect();
-        let mut registers = HashMap::new();
-        for &member in kept {
-            let mut block = blocks[member].clone();
-            if member == test {
-                block.term = MirTerm::Jump(taken);
+        indexed.extend(self.region_generator_slots(
+            frame.template,
+            std::iter::once(&body),
+            &op.binder,
+        ));
+        tables.retired.extend(indexed.iter().copied());
+        let stop = op.source.stop_test();
+        let mut operands = op.operands;
+        let mut iterations = Vec::new();
+        for iterator in iterators {
+            let mut iteration = bindings.clone();
+            iteration.values.insert(op.binder.clone(), iterator);
+            let looped = LoopBody {
+                body: &body,
+                stop: &stop,
+                element: &op.source.next_value,
+                args: &op.args,
+                indexed: &indexed,
+            };
+            let clone =
+                self.clone_body(&looped, frame, tables, (&iteration, bindings), &operands)?;
+            let results: Vec<Reg> = op
+                .results
+                .iter()
+                .map(|&result| tables.fresh_register(result, bindings))
+                .collect();
+            iterations.push(MirInstr::Loop {
+                label: None,
+                operands: Vec::new(),
+                args: Vec::new(),
+                results: results.clone(),
+                body: vec![clone],
+            });
+            operands = results;
+        }
+        let mut dead = op.args;
+        defined_registers(std::slice::from_ref(&body), &mut dead);
+        for_each_register(std::slice::from_mut(&mut body), &mut |reg| {
+            if tables.dangling.contains(&reg.0) {
+                dead.push(*reg);
             }
-            for target in terminator_targets_mut(&mut block.term) {
-                if let Some(&to) = mapping.get(target) {
-                    *target = to;
+        });
+        defined_registers(&op.orelse, &mut dead);
+        tables.forget(&dead);
+        // `simplifyParamForLoop` on each iteration loop in order, until one
+        // ends the outer body, then on the outer loop.
+        let mut outer = MirBlock {
+            instrs: Vec::new(),
+            term: MirTerm::Break {
+                label: Some(LoopLabel::PARAM_FOR_OUTER),
+                values: operands,
+            },
+        };
+        let mut iterations = iterations.into_iter();
+        for iteration in iterations.by_ref() {
+            match simplify_param_for_loop(iteration, folded) {
+                Simplified::Kept(iteration) => outer.instrs.push(iteration),
+                Simplified::Spliced(instrs) => outer.instrs.extend(instrs),
+                Simplified::Breakless { body, results } => {
+                    tables.forget(&results);
+                    outer.instrs.extend(body.instrs);
+                    outer.term = body.term;
+                    break;
                 }
             }
-            if frame.function_level {
-                remap_escapes(&mut block, &mapping);
-            }
-            renumber_block(&mut block, &mut registers, tables, iteration)?;
-            blocks.push(block);
         }
-        let addressed: BTreeSet<VarId> = addressed_slots(&blocks[first..])
+        for erased in iterations {
+            let mut dead = Vec::new();
+            defined_registers(
+                &[MirBlock {
+                    instrs: vec![erased],
+                    term: MirTerm::Unreachable,
+                }],
+                &mut dead,
+            );
+            tables.forget(&dead);
+        }
+        let outer = MirInstr::Loop {
+            label: Some(LoopLabel::PARAM_FOR_OUTER),
+            operands: Vec::new(),
+            args: Vec::new(),
+            results: op.results,
+            body: vec![outer],
+        };
+        Ok(match simplify_param_for_loop(outer, folded) {
+            Simplified::Kept(outer) => vec![outer],
+            Simplified::Spliced(instrs) => instrs,
+            // A loop no break leaves stays, as upstream keeps it.
+            Simplified::Breakless { body, results } => vec![MirInstr::Loop {
+                label: Some(LoopLabel::PARAM_FOR_OUTER),
+                operands: Vec::new(),
+                args: Vec::new(),
+                results,
+                body: vec![body],
+            }],
+        })
+    }
+
+    /// One clone of the loop's body for `iteration`, which binds the loop's
+    /// binder: its leading `has_next` test decided, keeping the suite
+    /// (whose element application is answered first) or the stop arm; each
+    /// register it defines, or reads with no definition, fresh and typed
+    /// under the iteration, and each read of a body argument its value in
+    /// `operands`, as upstream's `IRMapping` and `replaceArgs` remap a clone;
+    /// its `comptime.for.continue`s and `comptime.for.break`s breaks of its
+    /// iteration loop and of the outer loop; each slot typed over the binder
+    /// it addresses fresh at its type for the iteration; then the loops nested
+    /// in it unrolled, reads of the binder folded, types substituted, and
+    /// its compile-time branches decided.
+    fn clone_body(
+        &mut self,
+        looped: &LoopBody<'_>,
+        frame: &LoopFrame<'_>,
+        tables: &mut FrameTables<'_>,
+        (iteration, bindings): (&Bindings, &Bindings),
+        operands: &[Reg],
+    ) -> Result<MirBlock, MonoError> {
+        let LoopBody {
+            body,
+            stop,
+            element,
+            args,
+            indexed,
+        } = *looped;
+        let template = frame.template;
+        let mut clone = body.clone();
+        let suite = self.decide_comptime_condition(template, stop, iteration)?;
+        if suite {
+            self.answer_element(template, element, iteration)?;
+        }
+        let opens_with_test = matches!(
+            clone.instrs.first(),
+            Some(MirInstr::ComptimeIf { conds, .. }) if conds.as_slice() == std::slice::from_ref(stop)
+        );
+        if !opens_with_test {
+            return Err(self.error(
+                Some(template),
+                "comptime for body does not open with its has_next test".to_string(),
+            ));
+        }
+        // The untaken arm is the template's, whose tables go with the body's.
+        splice_comptime_arm(&mut clone, 0, suite.then_some(0), &mut Decided::default())
+            .map_err(|construct| self.error(Some(template), construct))?;
+        let mut local = Vec::new();
+        defined_registers(std::slice::from_ref(&clone), &mut local);
+        for_each_register(std::slice::from_mut(&mut clone), &mut |reg| {
+            if tables.dangling.contains(&reg.0) {
+                local.push(*reg);
+            }
+        });
+        let mut registers: HashMap<u32, Reg> = args
+            .iter()
+            .map(|arg| arg.0)
+            .zip(operands.iter().copied())
+            .collect();
+        let mut fresh = Vec::with_capacity(local.len());
+        for reg in local {
+            if registers.contains_key(&reg.0) {
+                continue;
+            }
+            let new = tables.fresh_register(reg, iteration);
+            if tables.dangling.contains(&reg.0) {
+                tables.dangling.insert(new.0);
+            }
+            registers.insert(reg.0, new);
+            fresh.push(new);
+        }
+        for_each_register(std::slice::from_mut(&mut clone), &mut |reg| {
+            if let Some(&to) = registers.get(&reg.0) {
+                *reg = to;
+            }
+        });
+        retarget_comptime_exits(std::slice::from_mut(&mut clone));
+        let addressed: BTreeSet<VarId> = addressed_slots(std::slice::from_ref(&clone))
             .intersection(indexed)
             .copied()
             .collect();
         let slots = fresh_slots(&addressed, tables, iteration);
         if !slots.is_empty() {
             let renumber = |var: VarId| slots.get(&var).copied().unwrap_or(var);
-            renumber_block_slots(&mut blocks[first..], &renumber);
-            for register in registers.values() {
-                if let Some((_, Some(origin))) = tables.spans.0.get_mut(register) {
+            renumber_block_slots(std::slice::from_mut(&mut clone), &renumber);
+            for register in &fresh {
+                if let Some((_, Some(origin))) = tables.spans.0.get_mut(&register.0) {
                     *origin = renumber(*origin);
                 }
             }
         }
-        // The loops nested in the copy first: their bounds and their bodies
+        let blocks = std::slice::from_mut(&mut clone);
+        // The loops nested in the clone first: their bounds and their bodies
         // are over this iteration's binding and their own, which nothing
-        // else of the copy may be substituted without.
-        self.unroll_in(blocks, first, frame, iteration, tables)?;
+        // else of the clone may be substituted without.
+        self.unroll_in(blocks, frame, iteration, tables)?;
         let locals = bound_parameter_locals(frame.scope, bindings);
         substitute_value_parameter_reads(
-            &mut blocks[first..],
+            blocks,
             tables.var_names,
             tables.var_tys,
             &locals,
             &bindings.callables,
         )?;
-        default_construct_parameters(
-            &mut blocks[first..],
-            tables.n_regs,
-            tables.reg_types,
-            iteration,
-        )?;
-        substitute_blocks_metadata(&mut blocks[first..], iteration)?;
+        default_construct_parameters(blocks, tables.n_regs, tables.reg_types, iteration)?;
+        substitute_blocks_metadata(blocks, iteration)?;
         self.answer_param_constants(
-            frame.template,
-            &mut blocks[first..],
+            template,
+            blocks,
             iteration,
             tables.n_regs,
             tables.reg_types,
             false,
         )?;
-        self.select_comptime_branches_in(
-            frame.template,
-            &mut blocks[first..],
-            (first, entry),
-            iteration,
-        )?;
-        self.instantiate_region_references(frame.template, &mut blocks[first..], iteration)
+        let mut decided = Decided::default();
+        self.select_comptime_ifs(template, blocks, iteration, &mut decided)?;
+        decided.apply(blocks, tables.reg_types, tables.spans);
+        self.instantiate_region_references(template, blocks, iteration)?;
+        Ok(clone)
     }
 
     /// Point each direct call, closure, and function value of a region copy
@@ -352,23 +412,12 @@ impl Specializer<'_> {
                     kwarg_places,
                     ..
                 } => (target, Some((args, arg_places, kwargs, kwarg_places))),
-                MirInstr::Try {
-                    body,
-                    handler,
-                    orelse,
-                    finalbody,
-                    ..
-                } => {
-                    for blocks in std::iter::once(body)
-                        .chain(handler.iter_mut().map(|(_, blocks)| blocks))
-                        .chain(orelse.iter_mut())
-                        .chain(finalbody.iter_mut())
-                    {
+                instruction => {
+                    for blocks in instruction_regions_mut(instruction) {
                         self.instantiate_region_references(template, blocks, iteration)?;
                     }
                     continue;
                 }
-                _ => continue,
             };
             let Some(generic) = self
                 .region_binders_up_to(target, template)
@@ -540,44 +589,6 @@ impl Specializer<'_> {
             })
     }
 
-    /// The body's `has_next` test: the block among `members` the body
-    /// enters by jumps alone — drop elaboration may split the header's edge
-    /// to it — whose `comptime if` decides the stop test of `source`.
-    fn stop_test(
-        &self,
-        template: &str,
-        blocks: &[MirBlock],
-        body: MirBlockId,
-        members: &[MirBlockId],
-        source: &ComptimeSequence,
-    ) -> Result<StopTest, MonoError> {
-        let stop = source.stop_test();
-        let mut block = body;
-        let mut seen = HashSet::new();
-        while members.contains(&block) && seen.insert(block) {
-            match &blocks[block].term {
-                MirTerm::Jump(next) => block = *next,
-                MirTerm::ComptimeBranch {
-                    cond,
-                    then_b,
-                    else_b,
-                } if **cond == stop => {
-                    return Ok(StopTest {
-                        block,
-                        then_b: *then_b,
-                        else_b: *else_b,
-                        cond: stop,
-                    });
-                }
-                _ => break,
-            }
-        }
-        Err(self.error(
-            Some(template),
-            "comptime for body does not open with its has_next test".to_string(),
-        ))
-    }
-
     /// Spend one unit of compile-time fuel on one unrolled iteration.
     fn spend_unroll_fuel(&mut self, template: &str) -> Result<(), MonoError> {
         self.fuel = self.fuel.checked_sub(1).ok_or_else(|| {
@@ -590,25 +601,65 @@ impl Specializer<'_> {
     }
 }
 
-/// A `comptime for` body's leading `has_next` test: the block that
-/// branches on it, its suite and stop arms, and its condition.
-struct StopTest {
-    block: MirBlockId,
-    then_b: MirBlockId,
-    else_b: MirBlockId,
-    cond: GenericConstraint,
+/// A `comptime for` taken out of its block.
+struct ComptimeForOp {
+    binder: ParamRef,
+    source: ComptimeSequence,
+    operands: Vec<Reg>,
+    args: Vec<Reg>,
+    results: Vec<Reg>,
+    body: Vec<MirBlock>,
+    orelse: Vec<MirBlock>,
 }
 
-/// What one body copy needs of the function it is copied into.
+impl ComptimeForOp {
+    /// The op at `index` of `instrs`, removed from them; `None`, leaving
+    /// them alone, when the instruction there is another.
+    fn take(instrs: &mut Vec<MirInstr>, index: usize) -> Option<Self> {
+        let MirInstr::ComptimeFor {
+            binder,
+            source,
+            operands,
+            args,
+            results,
+            body,
+            orelse,
+        } = instrs.get_mut(index)?
+        else {
+            return None;
+        };
+        let op = Self {
+            binder: binder.clone(),
+            source: source.clone(),
+            operands: std::mem::take(operands),
+            args: std::mem::take(args),
+            results: std::mem::take(results),
+            body: std::mem::take(body),
+            orelse: std::mem::take(orelse),
+        };
+        instrs.remove(index);
+        Some(op)
+    }
+}
+
+/// What each clone of a `comptime for` body is cloned from: the template's
+/// body, its leading `has_next` test `stop`, the iteration's `element`
+/// application, the body's arguments, and the slots typed over the binder.
+struct LoopBody<'b> {
+    body: &'b MirBlock,
+    stop: &'b GenericConstraint,
+    element: &'b ParamExpr,
+    args: &'b [Reg],
+    indexed: &'b BTreeSet<VarId>,
+}
+
+/// What one clone needs of the function it is cloned into.
 struct LoopFrame<'a> {
     template: &'a str,
     scope: &'a [ParamDecl],
-    /// Whether the block list is the function's own, where a `try` region's
-    /// escape targets name blocks of this list.
-    function_level: bool,
 }
 
-/// The function-wide register and slot tables a copy extends.
+/// The function-wide register and slot tables a clone extends.
 struct FrameTables<'a> {
     n_regs: &'a mut u32,
     reg_types: &'a mut HashMap<u32, Ty>,
@@ -616,187 +667,167 @@ struct FrameTables<'a> {
     n_vars: &'a mut usize,
     var_names: &'a mut Vec<String>,
     var_tys: &'a mut HashMap<VarId, Ty>,
-    /// The template slots a copy replaced, removed once every loop is
+    /// The template slots a clone replaced, removed once every loop is
     /// unrolled.
     retired: &'a mut BTreeSet<VarId>,
+    /// The registers a call keeps as the operand of an argument its callee
+    /// removed, which no instruction defines
+    /// ([`mojito_mir::mir::with_removed_argument_forwards_erased`]): one a
+    /// body reads is the body's own, renumbered and retyped in each clone.
+    dangling: HashSet<u32>,
 }
 
-/// The header of a loop no other loop of `blocks[from..]` encloses, lowest
-/// first; `None` once every loop is unrolled.
-fn outermost_loop(blocks: &[MirBlock], from: usize, function_level: bool) -> Option<MirBlockId> {
-    if !blocks[from..]
-        .iter()
-        .any(|block| matches!(block.term, MirTerm::ComptimeFor { .. }))
-    {
-        return None;
+impl FrameTables<'_> {
+    /// A fresh register standing for `reg` in a clone, typed as it is under
+    /// `bindings` and spanned as it is. A type over a nested loop's index
+    /// keeps its spelling until that loop's own clones retype it.
+    fn fresh_register(&mut self, reg: Reg, bindings: &Bindings) -> Reg {
+        let new = Reg(*self.n_regs);
+        *self.n_regs += 1;
+        if let Some(ty) = self.reg_types.get(&reg.0) {
+            let ty = substitute_ty(ty, bindings).unwrap_or_else(|_| ty.clone());
+            self.reg_types.insert(new.0, ty);
+        }
+        if let Some(span) = self.spans.0.get(&reg.0).cloned() {
+            self.spans.0.insert(new.0, span);
+        }
+        new
     }
-    let bodies = ComptimeForBodies::new(blocks, function_level);
-    let headers: Vec<(MirBlockId, Vec<MirBlockId>)> = blocks
-        .iter()
-        .enumerate()
-        .skip(from)
-        .filter_map(|(id, block)| match &block.term {
-            MirTerm::ComptimeFor { body, exit, .. } => Some((id, bodies.body(id, *body, *exit))),
-            _ => None,
-        })
-        .collect();
-    headers
-        .iter()
-        .find(|(header, _)| {
-            !headers
-                .iter()
-                .any(|(other, members)| other != header && members.contains(header))
-        })
-        .map(|(header, _)| *header)
-}
 
-/// The blocks of `members` one copy keeps, in index order: those reached
-/// from `body` once the stop test's block `test` leaves for the arm `taken`
-/// alone.
-fn kept_blocks(
-    blocks: &[MirBlock],
-    body: MirBlockId,
-    members: &[MirBlockId],
-    (test, taken): (MirBlockId, MirBlockId),
-    frame: &LoopFrame<'_>,
-) -> Vec<MirBlockId> {
-    let mut reached = BTreeSet::from([body]);
-    let mut stack = vec![body];
-    while let Some(block) = stack.pop() {
-        let successors = if block == test {
-            vec![taken]
-        } else if frame.function_level {
-            mojito_mir::mir::block_successors(&blocks[block])
-        } else {
-            terminator_targets(&blocks[block].term)
-        };
-        for successor in successors {
-            if members.contains(&successor) && reached.insert(successor) {
-                stack.push(successor);
-            }
+    /// Drop the tables of registers no instruction defines any more, so a
+    /// type over a loop's index never reaches the function's substitution.
+    fn forget(&mut self, dead: &[Reg]) {
+        for reg in dead {
+            self.reg_types.remove(&reg.0);
+            self.spans.0.remove(&reg.0);
         }
     }
-    reached.into_iter().collect()
 }
 
-/// Point every edge of a copied block that returned to the loop header at
-/// `next`: its own terminator, and at function level the escapes of the
-/// regions it holds.
-fn retarget(block: &mut MirBlock, header: MirBlockId, next: MirBlockId, function_level: bool) {
-    for target in terminator_targets_mut(&mut block.term) {
-        if *target == header {
-            *target = next;
-        }
-    }
-    if function_level {
-        let mut mapping = HashMap::new();
-        mapping.insert(header, next);
-        remap_escapes(block, &mapping);
-    }
+/// What `simplifyParamForLoop` makes of a loop.
+enum Simplified {
+    /// The loop stays.
+    Kept(MirInstr),
+    /// One break leaves the loop, and it ends the loop's body: the body
+    /// without it stands where the loop stood, the loop's results read as
+    /// the break's values.
+    Spliced(Vec<MirInstr>),
+    /// No break leaves the loop: its body, with its terminator, may stand
+    /// for the loop and all that follows it, and its `results` are defined
+    /// by nothing.
+    Breakless { body: MirBlock, results: Vec<Reg> },
 }
 
-/// Rewrite the escape targets of every region below `block` through
-/// `mapping`.
-fn remap_escapes(block: &mut MirBlock, mapping: &HashMap<MirBlockId, MirBlockId>) {
-    fn in_blocks(blocks: &mut [MirBlock], mapping: &HashMap<MirBlockId, MirBlockId>) {
-        for block in blocks {
-            if let MirTerm::EscapeJump { target, .. } = &mut block.term
-                && let Some(&to) = mapping.get(target)
-            {
-                *target = to;
-            }
-            remap_escapes(block, mapping);
+/// Upstream's `simplifyParamForLoop` on the loop `instruction`, counting the
+/// breaks that leave it as [`loop_breaks_mut`] resolves them: a loop whose
+/// one break ends its body is spliced, recording each result's value in
+/// `folded`, and one no break leaves is breakless; any other stays.
+fn simplify_param_for_loop(instruction: MirInstr, folded: &mut HashMap<u32, Reg>) -> Simplified {
+    let MirInstr::Loop {
+        label,
+        operands,
+        args,
+        results,
+        mut body,
+    } = instruction
+    else {
+        return Simplified::Kept(instruction);
+    };
+    let mut breaks = 0;
+    loop_breaks_mut(&mut body, label, &mut |_, _| breaks += 1);
+    match <[MirBlock; 1]>::try_from(body) {
+        Ok([body]) if args.is_empty() && breaks == 0 => Simplified::Breakless { body, results },
+        Ok(
+            [
+                MirBlock {
+                    instrs,
+                    term:
+                        MirTerm::Break {
+                            label: named,
+                            values,
+                        },
+                },
+            ],
+        ) if args.is_empty() && breaks == 1 && (named.is_none() || named == label) => {
+            folded.extend(results.iter().map(|reg| reg.0).zip(values));
+            Simplified::Spliced(instrs)
         }
-    }
-    for instruction in &mut block.instrs {
-        if let MirInstr::Try {
+        Ok(body) => Simplified::Kept(MirInstr::Loop {
+            label,
+            operands,
+            args,
+            results,
+            body: body.into(),
+        }),
+        Err(body) => Simplified::Kept(MirInstr::Loop {
+            label,
+            operands,
+            args,
+            results,
             body,
-            handler,
-            orelse,
-            finalbody,
-            ..
-        } = instruction
-        {
-            for region in std::iter::once(body)
-                .chain(handler.iter_mut().map(|(_, blocks)| blocks))
-                .chain(orelse.iter_mut())
-                .chain(finalbody.iter_mut())
-            {
-                in_blocks(region, mapping);
-            }
-        }
+        }),
     }
 }
 
-/// Give every register of a copied block — the regions it holds included —
-/// a fresh number, typed as the original under the iteration's bindings. A
-/// type over a nested loop's index keeps its spelling until that loop's
-/// own copies retype it.
-fn renumber_block(
-    block: &mut MirBlock,
-    registers: &mut HashMap<u32, u32>,
-    tables: &mut FrameTables<'_>,
-    iteration: &Bindings,
-) -> Result<(), MonoError> {
-    for instruction in &mut block.instrs {
-        for reg in instruction_regs_mut(instruction) {
-            fresh_register(reg, registers, tables, iteration);
+/// Visit every register `blocks` define or read, at any depth.
+fn for_each_register(blocks: &mut [MirBlock], visit: &mut impl FnMut(&mut Reg)) {
+    for block in blocks {
+        for instruction in &mut block.instrs {
+            instruction_regs_mut(instruction)
+                .into_iter()
+                .for_each(&mut *visit);
+            for region in instruction_regions_mut(instruction) {
+                for_each_register(region, visit);
+            }
         }
-        if let MirInstr::Try {
-            body,
-            handler,
-            orelse,
-            finalbody,
-            ..
-        } = instruction
-        {
-            for region in std::iter::once(body)
-                .chain(handler.iter_mut().map(|(_, blocks)| blocks))
-                .chain(orelse.iter_mut())
-                .chain(finalbody.iter_mut())
-            {
-                for inner in region.iter_mut() {
-                    renumber_block(inner, registers, tables, iteration)?;
+        terminator_regs_mut(&mut block.term)
+            .into_iter()
+            .for_each(&mut *visit);
+    }
+}
+
+/// The registers `function` reads that no instruction of it defines.
+fn dangling_registers(function: &mut MirFunction) -> HashSet<u32> {
+    let mut defined = Vec::new();
+    defined_registers(&function.blocks, &mut defined);
+    let defined: HashSet<u32> = defined.into_iter().map(|reg| reg.0).collect();
+    let mut dangling = HashSet::new();
+    for_each_register(&mut function.blocks, &mut |reg| {
+        if !defined.contains(&reg.0) {
+            dangling.insert(reg.0);
+        }
+    });
+    dangling
+}
+
+/// Turn a clone's `comptime.for.continue`s into breaks of its iteration loop
+/// and its `comptime.for.break`s into breaks of the outer loop, as
+/// `makeCompletion` does, skipping the `comptime for`s nested in it, whose
+/// own they are.
+fn retarget_comptime_exits(blocks: &mut [MirBlock]) {
+    for block in blocks {
+        for instruction in &mut block.instrs {
+            if !matches!(instruction, MirInstr::ComptimeFor { .. }) {
+                for region in instruction_regions_mut(instruction) {
+                    retarget_comptime_exits(region);
                 }
             }
         }
+        let (label, values) = match &mut block.term {
+            MirTerm::ComptimeContinue(values) => (None, std::mem::take(values)),
+            MirTerm::ComptimeBreak(values) => {
+                (Some(LoopLabel::PARAM_FOR_OUTER), std::mem::take(values))
+            }
+            _ => continue,
+        };
+        block.term = MirTerm::Break { label, values };
     }
-    for reg in terminator_regs_mut(&mut block.term) {
-        fresh_register(reg, registers, tables, iteration);
-    }
-    Ok(())
 }
 
-/// Renumber one register through `registers`, minting its fresh number and
-/// tables on first sight.
-fn fresh_register(
-    reg: &mut Reg,
-    registers: &mut HashMap<u32, u32>,
-    tables: &mut FrameTables<'_>,
-    iteration: &Bindings,
-) {
-    let old = reg.0;
-    if let Some(&new) = registers.get(&old) {
-        reg.0 = new;
-        return;
-    }
-    let new = *tables.n_regs;
-    *tables.n_regs += 1;
-    registers.insert(old, new);
-    if let Some(ty) = tables.reg_types.get(&old) {
-        let ty = substitute_ty(ty, iteration).unwrap_or_else(|_| ty.clone());
-        tables.reg_types.insert(new, ty);
-    }
-    if let Some(span) = tables.spans.0.get(&old).cloned() {
-        tables.spans.0.insert(new, span);
-    }
-    reg.0 = new;
-}
-
-/// Mint one copy's slot for each of the `indexed` slots, typed under the
-/// iteration's bindings: the map from the template's slot to the copy's. A
+/// Mint one clone's slot for each of the `indexed` slots, typed under the
+/// iteration's bindings: the map from the template's slot to the clone's. A
 /// type over a nested loop's index keeps its spelling until that loop's own
-/// copies give it a slot of their own.
+/// clones give it a slot of their own.
 fn fresh_slots(
     indexed: &BTreeSet<VarId>,
     tables: &mut FrameTables<'_>,
@@ -821,35 +852,184 @@ fn fresh_slots(
         .collect()
 }
 
-/// Drop the register tables of a block left unreachable, so a type over
-/// the loop's index never reaches the function's substitution.
-fn forget_registers(mut block: MirBlock, tables: &mut FrameTables<'_>) {
-    for instruction in &mut block.instrs {
-        for reg in instruction_regs_mut(instruction) {
-            tables.reg_types.remove(&reg.0);
-            tables.spans.0.remove(&reg.0);
-        }
-        if let MirInstr::Try {
-            body,
-            handler,
-            orelse,
-            finalbody,
-            ..
-        } = instruction
-        {
-            for region in std::iter::once(body)
-                .chain(handler.iter_mut().map(|(_, blocks)| blocks))
-                .chain(orelse.iter_mut())
-                .chain(finalbody.iter_mut())
-            {
-                for inner in std::mem::take(region) {
-                    forget_registers(inner, tables);
-                }
-            }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn constant(dest: u32) -> MirInstr {
+        MirInstr::Const {
+            dest: Reg(dest),
+            k: Const::Int(1),
         }
     }
-    for reg in terminator_regs_mut(&mut block.term) {
-        tables.reg_types.remove(&reg.0);
-        tables.spans.0.remove(&reg.0);
+
+    fn breaking(label: Option<LoopLabel>, values: Vec<Reg>) -> MirTerm {
+        MirTerm::Break { label, values }
+    }
+
+    fn looped(label: Option<LoopLabel>, results: Vec<Reg>, body: MirBlock) -> MirInstr {
+        MirInstr::Loop {
+            label,
+            operands: Vec::new(),
+            args: Vec::new(),
+            results,
+            body: vec![body],
+        }
+    }
+
+    #[test]
+    fn a_loop_its_one_break_ends_is_spliced() {
+        let body = MirBlock {
+            instrs: vec![constant(2)],
+            term: breaking(None, vec![Reg(2)]),
+        };
+        let mut folded = HashMap::new();
+        let Simplified::Spliced(instrs) =
+            simplify_param_for_loop(looped(None, vec![Reg(1)], body), &mut folded)
+        else {
+            panic!("the loop is spliced");
+        };
+        assert!(matches!(
+            instrs.as_slice(),
+            [MirInstr::Const { dest: Reg(2), .. }]
+        ));
+        assert_eq!(folded, HashMap::from([(1, Reg(2))]));
+    }
+
+    #[test]
+    fn a_loop_no_break_leaves_is_breakless() {
+        // The exhausted iteration's stop arm leaves the outer loop, not its
+        // own: its body, terminator and all, stands for what follows.
+        let outer = Some(LoopLabel::PARAM_FOR_OUTER);
+        let body = MirBlock {
+            instrs: vec![constant(2)],
+            term: breaking(outer, Vec::new()),
+        };
+        let mut folded = HashMap::new();
+        let Simplified::Breakless { body, results } =
+            simplify_param_for_loop(looped(None, vec![Reg(1)], body), &mut folded)
+        else {
+            panic!("no break leaves the loop");
+        };
+        assert_eq!(results, [Reg(1)]);
+        assert!(matches!(body.term, MirTerm::Break { label, .. } if label == outer));
+        assert!(folded.is_empty());
+    }
+
+    #[test]
+    fn a_loop_broken_inside_a_runtime_if_stays() {
+        let arm = |term| {
+            vec![MirBlock {
+                instrs: Vec::new(),
+                term,
+            }]
+        };
+        let guarded = MirInstr::If {
+            results: Vec::new(),
+            cond: Reg(0),
+            then: arm(breaking(None, Vec::new())),
+            elifs: Vec::new(),
+            else_args: Vec::new(),
+            orelse: arm(MirTerm::Yield(Vec::new())),
+        };
+        let body = MirBlock {
+            instrs: vec![guarded],
+            term: breaking(None, Vec::new()),
+        };
+        let mut folded = HashMap::new();
+        assert!(matches!(
+            simplify_param_for_loop(looped(None, Vec::new(), body), &mut folded),
+            Simplified::Kept(MirInstr::Loop { .. })
+        ));
+    }
+
+    #[test]
+    fn a_nested_loops_break_does_not_leave_the_outer() {
+        // The inner iteration loop's unlabelled break is its own, so the
+        // outer loop's one break is its terminator's.
+        let outer = Some(LoopLabel::PARAM_FOR_OUTER);
+        let inner = looped(
+            None,
+            Vec::new(),
+            MirBlock {
+                instrs: Vec::new(),
+                term: breaking(None, Vec::new()),
+            },
+        );
+        let body = MirBlock {
+            instrs: vec![inner],
+            term: breaking(outer, Vec::new()),
+        };
+        let mut folded = HashMap::new();
+        let Simplified::Spliced(instrs) =
+            simplify_param_for_loop(looped(outer, Vec::new(), body), &mut folded)
+        else {
+            panic!("the outer loop is spliced");
+        };
+        assert!(matches!(
+            instrs.as_slice(),
+            [MirInstr::Loop { label: None, .. }]
+        ));
+    }
+
+    #[test]
+    fn retargeting_leaves_a_nested_comptime_for_its_own_exits() {
+        let nested = MirInstr::ComptimeFor {
+            binder: ParamRef {
+                id: mojito_types::param_expr::ParamId::new("$comptime_for@f:0..1", 0),
+                name: "j".into(),
+            },
+            source: ComptimeSequence {
+                initial: ParamContext::detached()
+                    .constant(CtValue::Int(0))
+                    .expect("a constant"),
+                has_next: ParamContext::detached()
+                    .constant(CtValue::Bool(false))
+                    .expect("a constant"),
+                next_iter: ParamContext::detached()
+                    .constant(CtValue::Int(1))
+                    .expect("a constant"),
+                next_value: ParamContext::detached()
+                    .constant(CtValue::Int(0))
+                    .expect("a constant"),
+            },
+            operands: Vec::new(),
+            args: Vec::new(),
+            results: Vec::new(),
+            body: vec![MirBlock {
+                instrs: Vec::new(),
+                term: MirTerm::ComptimeContinue(Vec::new()),
+            }],
+            orelse: vec![MirBlock {
+                instrs: Vec::new(),
+                term: MirTerm::Unreachable,
+            }],
+        };
+        let mut blocks = vec![MirBlock {
+            instrs: vec![nested],
+            term: MirTerm::ComptimeBreak(vec![Reg(3)]),
+        }];
+        retarget_comptime_exits(&mut blocks);
+        assert!(matches!(
+            &blocks[0].term,
+            MirTerm::Break { label: Some(LoopLabel::PARAM_FOR_OUTER), values } if values == &[Reg(3)]
+        ));
+        let MirInstr::ComptimeFor { body, .. } = &blocks[0].instrs[0] else {
+            panic!("the nested op stays");
+        };
+        assert!(matches!(body[0].term, MirTerm::ComptimeContinue(_)));
+    }
+
+    #[test]
+    fn a_continue_breaks_its_iteration_loop() {
+        let mut blocks = vec![MirBlock {
+            instrs: Vec::new(),
+            term: MirTerm::ComptimeContinue(vec![Reg(1)]),
+        }];
+        retarget_comptime_exits(&mut blocks);
+        assert!(matches!(
+            &blocks[0].term,
+            MirTerm::Break { label: None, values } if values == &[Reg(1)]
+        ));
     }
 }

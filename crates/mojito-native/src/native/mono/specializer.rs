@@ -8,16 +8,12 @@ use mojito_types::types::TyKind;
 use std::collections::BTreeMap;
 
 impl<'a> Specializer<'a> {
-    /// The elaborator of `source`, whose templates `templates` holds.
-    pub(super) fn new(
-        source: &'a MirProgram,
-        target: Option<&'a NativeTarget>,
-        templates: &'a bodies::Templates,
-    ) -> Self {
+    /// The elaborator of `source`.
+    pub(super) fn new(source: &'a MirProgram, target: Option<&'a NativeTarget>) -> Self {
         Self {
             source,
             target,
-            functions: bodies::Bodies::new(source, templates),
+            functions: bodies::Bodies::new(source),
             declarations: Catalog::new(
                 source
                     .declarations
@@ -133,7 +129,7 @@ impl<'a> Specializer<'a> {
                 .unwrap_or(decl.lowered_name.as_str());
             self.functions.position(template).unwrap_or(usize::MAX)
         });
-        let program = MirProgram {
+        let mut program = MirProgram {
             functions: self.output_functions,
             declarations: MirDeclarations {
                 structs: self.output_structs,
@@ -143,6 +139,9 @@ impl<'a> Specializer<'a> {
             },
             invariant_errors: self.source.invariant_errors.clone(),
         };
+        // Each instance keeps its runtime structured control flow, as
+        // upstream's elaborator emits `hlcf`; the backends read blocks.
+        mojito_mir::mir::lower_control_flow_program(&mut program);
         let program = ConcreteMir::verified(program).map_err(|findings| MonoError {
             kind: MonoErrorKind::Unsupported,
             function: None,
@@ -1059,10 +1058,9 @@ impl<'a> Specializer<'a> {
         // Take the blocks out so call rewriting can read the function's
         // substituted register-type table without aliasing its body.
         let mut blocks = std::mem::take(&mut function.blocks);
-        // Iterator normalization first: block order does not put every
-        // `GetIter` before the `HasNext`/`Next`/`TryNext` that reads its
-        // destination (comprehension loops interleave), and the advance
-        // rewrites need the iterator slot types this pass records.
+        // Iterator normalization first: the advance rewrites of each
+        // `HasNext`/`Next`/`TryNext` need the iterator slot types this pass
+        // records.
         self.rewrite_iterator_inits(&key.template, &mut function, &mut blocks)?;
         let arguments = parameter_argument_regs(&mut blocks);
         self.rewrite_blocks(&key.template, &mut function, &mut blocks)?;
@@ -1620,7 +1618,13 @@ impl<'a> Specializer<'a> {
             functions: closure
                 .iter()
                 .filter_map(|&member| self.output_positions.get(&self.instances[member].1))
-                .map(|&position| self.output_functions[position].clone())
+                .map(|&position| {
+                    // The VM runs blocks: each clone is lowered, never the
+                    // instance the output keeps.
+                    let (name, mut function) = self.output_functions[position].clone();
+                    mojito_mir::mir::lower_control_flow(&mut function);
+                    (name, function)
+                })
                 .collect(),
             declarations: MirDeclarations {
                 // A member table names only the instances the fragment
@@ -1750,26 +1754,6 @@ impl<'a> Specializer<'a> {
         self.folded_slots = frame.folded_slots;
     }
 
-    /// Decide every `comptime if` of the instance under its bindings and keep
-    /// the taken arm: the branch becomes a jump, and the untaken arm's blocks
-    /// go with the destroys drop elaboration placed at their entry, before
-    /// any call in them is enqueued or any type in them verified. The taken
-    /// arm keeps its own entry destroys; no last use is recomputed. Every
-    /// `comptime assert` is decided with them: one that holds goes, and one
-    /// that fails stays, its condition folded to `False`, for
-    /// [`failure::discharge_comptime_asserts`] to report if it is reached.
-    fn select_comptime_branches(
-        &mut self,
-        template: &str,
-        function: &mut MirFunction,
-        bindings: &Bindings,
-    ) -> Result<(), MonoError> {
-        if self.select_comptime_branches_in(template, &mut function.blocks, (0, 0), bindings)? {
-            mojito_mir::mir::prune_unreachable_blocks(function);
-        }
-        Ok(())
-    }
-
     /// Whether the `comptime if` condition `cond` holds under the bindings.
     /// `and` and `or` decide left to right and stop once the left side
     /// decides them, as upstream's `ParamOperatorAttr` folds them, so a
@@ -1808,89 +1792,6 @@ impl<'a> Specializer<'a> {
             })
     }
 
-    /// [`Self::select_comptime_branches`] over the blocks `blocks` holds,
-    /// the first numbered `base`, and the regions below them; whether any
-    /// branch was decided. Only a block reached from `entry` under the
-    /// decisions already made is decided, as upstream folds the taken arm of
-    /// one `hlcf.comptime.if` before it reaches the next: an `elif` past a
-    /// taken arm never runs its condition's applications. A block never
-    /// reached keeps its branch for pruning to remove.
-    pub(super) fn select_comptime_branches_in(
-        &mut self,
-        template: &str,
-        blocks: &mut [MirBlock],
-        (base, entry): (mojito_mir::mir::MirBlockId, mojito_mir::mir::MirBlockId),
-        bindings: &Bindings,
-    ) -> Result<bool, MonoError> {
-        let mut decided = false;
-        let mut reached = vec![false; blocks.len()];
-        let mut pending = vec![entry];
-        while let Some(id) = pending.pop() {
-            let Some(index) = id.checked_sub(base).filter(|&index| index < blocks.len()) else {
-                continue;
-            };
-            if std::mem::replace(&mut reached[index], true) {
-                continue;
-            }
-            let block = &mut blocks[index];
-            if let MirTerm::ComptimeBranch {
-                cond,
-                then_b,
-                else_b,
-            } = &block.term
-            {
-                let (then_b, else_b) = (*then_b, *else_b);
-                let taken = if self.decide_comptime_condition(template, cond, bindings)? {
-                    then_b
-                } else {
-                    else_b
-                };
-                block.term = MirTerm::Jump(taken);
-                decided = true;
-            }
-            let mut asserts = Vec::new();
-            for (index, instruction) in block.instrs.iter().enumerate() {
-                if let MirInstr::ComptimeAssert { cond } = instruction {
-                    asserts.push((
-                        index,
-                        self.decide_comptime_condition(template, cond, bindings)?,
-                    ));
-                }
-            }
-            for (index, holds) in asserts.into_iter().rev() {
-                if holds {
-                    block.instrs.remove(index);
-                } else if let MirInstr::ComptimeAssert { cond } = &mut block.instrs[index] {
-                    **cond = folded_false(cond);
-                }
-            }
-            for instruction in &mut block.instrs {
-                if let MirInstr::Try {
-                    body,
-                    handler,
-                    orelse,
-                    finalbody,
-                    ..
-                } = instruction
-                {
-                    let regions = std::iter::once(body)
-                        .chain(handler.iter_mut().map(|(_, blocks)| blocks))
-                        .chain(orelse.iter_mut())
-                        .chain(finalbody.iter_mut());
-                    for region in regions {
-                        decided |=
-                            self.select_comptime_branches_in(template, region, (0, 0), bindings)?;
-                    }
-                }
-            }
-            pending.extend(mojito_mir::mir::block_successors(block));
-        }
-        Ok(decided
-            || blocks.iter().zip(&reached).any(|(block, reached)| {
-                !reached && matches!(block.term, MirTerm::ComptimeBranch { .. })
-            }))
-    }
-
     /// Fold every parameter constant of the instance, and every bracket
     /// argument's expression, to the value its
     /// expression denotes under the bindings: a pack's length by
@@ -1919,18 +1820,8 @@ impl<'a> Specializer<'a> {
         for block in blocks {
             let mut instrs = Vec::with_capacity(block.instrs.len());
             for mut instruction in std::mem::take(&mut block.instrs) {
-                if let MirInstr::Try {
-                    body,
-                    handler,
-                    orelse,
-                    finalbody,
-                    ..
-                } = &mut instruction
-                {
-                    let regions = std::iter::once(body)
-                        .chain(handler.iter_mut().map(|(_, blocks)| blocks))
-                        .chain(orelse.iter_mut())
-                        .chain(finalbody.iter_mut());
+                let regions = mojito_mir::mir::instruction_regions_mut(&mut instruction);
+                if !regions.is_empty() {
                     for region in regions {
                         self.answer_param_constants(
                             template, region, bindings, n_regs, reg_types, reached,
@@ -2093,27 +1984,12 @@ impl<'a> Specializer<'a> {
             let mut found = Vec::new();
             for block in blocks {
                 for instruction in &mut block.instrs {
-                    match instruction {
-                        MirInstr::Try {
-                            body,
-                            handler,
-                            orelse,
-                            finalbody,
-                            ..
-                        } => {
-                            found.extend(queries(body));
-                            if let Some((_, blocks)) = handler {
-                                found.extend(queries(blocks));
-                            }
-                            if let Some(blocks) = orelse {
-                                found.extend(queries(blocks));
-                            }
-                            if let Some(blocks) = finalbody {
-                                found.extend(queries(blocks));
-                            }
+                    if matches!(instruction, MirInstr::SizeOf { .. }) {
+                        found.push(instruction);
+                    } else {
+                        for region in mojito_mir::mir::instruction_regions_mut(instruction) {
+                            found.extend(queries(region));
                         }
-                        MirInstr::SizeOf { .. } => found.push(instruction),
-                        _ => {}
                     }
                 }
             }
@@ -2267,24 +2143,11 @@ impl<'a> Specializer<'a> {
                         self.nested_bindings(target, &self.enclosing, false)?;
                     *target = self.enqueue(target, bindings, arguments)?;
                 }
-                MirInstr::Try {
-                    body,
-                    handler,
-                    orelse,
-                    finalbody,
-                    ..
-                } => {
-                    self.instantiate_nested_bodies(owner, body)?;
-                    for blocks in handler
-                        .iter_mut()
-                        .map(|(_, blocks)| blocks)
-                        .chain(orelse)
-                        .chain(finalbody)
-                    {
-                        self.instantiate_nested_bodies(owner, blocks)?;
+                instruction => {
+                    for region in mojito_mir::mir::instruction_regions_mut(instruction) {
+                        self.instantiate_nested_bodies(owner, region)?;
                     }
                 }
-                _ => {}
             }
         }
         Ok(())
@@ -2412,23 +2275,10 @@ impl<'a> Specializer<'a> {
             // declared, spliced in after the operator the same way.
             let mut conversions: Vec<(usize, MirInstr)> = Vec::new();
             for (index, instruction) in block.instrs.iter_mut().enumerate() {
-                if let MirInstr::Try {
-                    body,
-                    handler,
-                    orelse,
-                    finalbody,
-                    ..
-                } = instruction
-                {
-                    self.rewrite_blocks(owner, function, body)?;
-                    if let Some((_, blocks)) = handler {
-                        self.rewrite_blocks(owner, function, blocks)?;
-                    }
-                    if let Some(blocks) = orelse {
-                        self.rewrite_blocks(owner, function, blocks)?;
-                    }
-                    if let Some(blocks) = finalbody {
-                        self.rewrite_blocks(owner, function, blocks)?;
+                let regions = mojito_mir::mir::instruction_regions_mut(instruction);
+                if !regions.is_empty() {
+                    for region in regions {
+                        self.rewrite_blocks(owner, function, region)?;
                     }
                     continue;
                 }
@@ -4366,7 +4216,7 @@ fn effectful_callee(program: &MirProgram, entry: &str) -> Option<String> {
 
 /// The functions `instructions` name: a call's callee, a method call's or a
 /// subscript's resolved target, a callable struct's `__call__`, a closure's
-/// lifted body, and those of a `try`'s regions.
+/// lifted body, and those of the regions they hold.
 fn collect_referenced_functions(instructions: &[MirInstr], referenced: &mut Vec<String>) {
     for instruction in instructions {
         match instruction {
@@ -4381,24 +4231,14 @@ fn collect_referenced_functions(instructions: &[MirInstr], referenced: &mut Vec<
                 referenced.extend(call.iter().map(|call| call.target.clone()));
             }
             MirInstr::MultiSet { call, .. } => referenced.push(call.target.clone()),
-            MirInstr::Try {
-                body,
-                handler,
-                orelse,
-                finalbody,
-                ..
-            } => {
-                let regions = std::iter::once(body)
-                    .chain(handler.iter().map(|(_, blocks)| blocks))
-                    .chain(orelse.iter())
-                    .chain(finalbody.iter());
-                for region in regions {
-                    for block in region {
-                        collect_referenced_functions(&block.instrs, referenced);
-                    }
+            instruction => {
+                for block in mojito_mir::mir::instruction_regions(instruction)
+                    .into_iter()
+                    .flatten()
+                {
+                    collect_referenced_functions(&block.instrs, referenced);
                 }
             }
-            _ => {}
         }
     }
 }
@@ -4658,15 +4498,4 @@ fn for_each_lifecycle_site_mut(
         }
     }
     Ok(())
-}
-
-/// A failed assertion's decided condition: `False`, keeping its message.
-fn folded_false(cond: &GenericConstraint) -> GenericConstraint {
-    match cond {
-        GenericConstraint::WithMessage(_, message) => GenericConstraint::WithMessage(
-            Box::new(GenericConstraint::Bool(false)),
-            message.clone(),
-        ),
-        _ => GenericConstraint::Bool(false),
-    }
 }

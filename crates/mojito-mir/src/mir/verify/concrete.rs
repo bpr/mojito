@@ -15,8 +15,12 @@ use mojito_types::types::TyKind;
 ///
 /// A finding is a symbolic type in its signature, slots, registers, places,
 /// or instructions, a compile-time parameter an instruction still declares,
-/// a compile-time argument slot a call still carries, or a reference slot
-/// read as its handle.
+/// a compile-time argument slot a call still carries, a reference slot read
+/// as its handle, or compile-time control flow: a `comptime if`, a `comptime
+/// for`, or a terminator of their regions. Runtime structured control flow
+/// is concrete, as an elaborated instance keeps it until
+/// [`super::super::lower_control_flow`] lowers it; [`lowered_function_findings`]
+/// refuses it where a backend reads the body.
 pub fn concrete_function_findings(name: &str, function: &MirFunction) -> Vec<String> {
     let mut errors = Vec::new();
     let head = format!("MIR function '{name}'");
@@ -43,6 +47,15 @@ pub fn concrete_function_findings(name: &str, function: &MirFunction) -> Vec<Str
     errors
 }
 
+/// The findings of a concrete body a backend reads: structured control flow
+/// other than `try`, and the terminators of its regions, which
+/// [`super::super::lower_control_flow`] lowers to blocks first.
+pub(super) fn lowered_function_findings(name: &str, function: &MirFunction) -> Vec<String> {
+    let mut errors = Vec::new();
+    lowered_blocks(name, &function.blocks, &mut errors);
+    errors
+}
+
 /// The program-wide concreteness findings: every function body, and every
 /// declaration the bodies are checked against. A declaration's availability
 /// clauses and conformance conditions are decided when it is instantiated,
@@ -51,6 +64,7 @@ pub fn concrete_function_findings(name: &str, function: &MirFunction) -> Vec<Str
 pub(super) fn verify_concrete_program(program: &MirProgram, errors: &mut Vec<String>) {
     for (name, function) in &program.functions {
         errors.extend(concrete_function_findings(name, function));
+        errors.extend(lowered_function_findings(name, function));
     }
     for declaration in &program.declarations.functions {
         let head = format!("MIR function '{}' declaration", declaration.lowered_name);
@@ -199,11 +213,14 @@ fn concrete_blocks(
         for instruction in &block.instrs {
             let regions = crate::mir::instruction_regions(instruction);
             if !regions.is_empty() {
-                if !matches!(instruction, MirInstr::Try { .. }) {
-                    errors.push(format!(
-                        "{head} keeps structured control flow `{}` in elaborated MIR",
-                        crate::mir::text::instruction_mnemonic(instruction)
-                    ));
+                match instruction {
+                    MirInstr::ComptimeIf { conds, .. } => errors.push(format!(
+                        "{head} keeps a compile-time branch on `{conds:?}` in elaborated MIR"
+                    )),
+                    MirInstr::ComptimeFor { binder, .. } => errors.push(format!(
+                        "{head} keeps a compile-time loop over `{binder}` in elaborated MIR"
+                    )),
+                    _ => {}
                 }
                 for region in regions {
                     concrete_blocks(name, function, region, errors);
@@ -220,20 +237,51 @@ fn concrete_blocks(
             MirTerm::ComptimeFor { binder, .. } => errors.push(format!(
                 "{head} keeps a compile-time loop over `{binder}` in elaborated MIR"
             )),
-            MirTerm::Yield(_)
-            | MirTerm::ElifCond { .. }
-            | MirTerm::Break { .. }
-            | MirTerm::Continue { .. }
-            | MirTerm::ComptimeYield(_)
+            MirTerm::ComptimeYield(_)
             | MirTerm::ComptimeBreak(_)
-            | MirTerm::ComptimeContinue(_)
-            | MirTerm::MatchNext(_)
-            | MirTerm::MatchComplete(_)
-            | MirTerm::Unreachable => errors.push(format!(
+            | MirTerm::ComptimeContinue(_) => {
+                errors.push(format!(
+                    "{head} keeps the region terminator `{}` in elaborated MIR",
+                    crate::mir::text::terminator_mnemonic(&block.term)
+                ));
+            }
+            _ => {}
+        }
+    }
+}
+
+fn lowered_blocks(name: &str, blocks: &[MirBlock], errors: &mut Vec<String>) {
+    for (index, block) in blocks.iter().enumerate() {
+        let head = format!("MIR function '{name}' block {index}");
+        for instruction in &block.instrs {
+            let regions = crate::mir::instruction_regions(instruction);
+            if regions.is_empty() {
+                continue;
+            }
+            if !matches!(instruction, MirInstr::Try { .. }) {
+                errors.push(format!(
+                    "{head} keeps structured control flow `{}` in elaborated MIR",
+                    instruction_mnemonic(instruction)
+                ));
+            }
+            for region in regions {
+                lowered_blocks(name, region, errors);
+            }
+        }
+        if matches!(
+            block.term,
+            MirTerm::Yield(_)
+                | MirTerm::ElifCond { .. }
+                | MirTerm::Break { .. }
+                | MirTerm::Continue { .. }
+                | MirTerm::MatchNext(_)
+                | MirTerm::MatchComplete(_)
+                | MirTerm::Unreachable
+        ) {
+            errors.push(format!(
                 "{head} keeps the region terminator `{}` in elaborated MIR",
                 crate::mir::text::terminator_mnemonic(&block.term)
-            )),
-            _ => {}
+            ));
         }
     }
 }
@@ -584,5 +632,31 @@ mod tests {
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert!(findings[0].contains("copies reference slot $0 by `UseVar`"));
         assert!(use_var(UseMode::Move).is_empty());
+    }
+
+    #[test]
+    fn runtime_structure_is_concrete_but_not_lowered() {
+        let arm = |term| {
+            vec![MirBlock {
+                instrs: Vec::new(),
+                term,
+            }]
+        };
+        let function = function_with(
+            MirInstr::If {
+                results: Vec::new(),
+                cond: Reg(0),
+                then: arm(MirTerm::Yield(Vec::new())),
+                elifs: Vec::new(),
+                else_args: Vec::new(),
+                orelse: arm(MirTerm::Yield(Vec::new())),
+            },
+            Ty::bool(),
+        );
+        assert!(concrete_function_findings("f", &function).is_empty());
+        let findings = lowered_function_findings("f", &function);
+        assert_eq!(findings.len(), 3, "{findings:?}");
+        assert!(findings[0].contains("keeps structured control flow `if`"));
+        assert!(findings[1].contains("keeps the region terminator `yield`"));
     }
 }

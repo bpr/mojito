@@ -1,5 +1,6 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_mir::mir::MirTerm;
 use mojito_types::types::TyKind;
 
 fn host_target() -> Option<NativeTarget> {
@@ -879,8 +880,7 @@ fn demanded_member_its_instance_disproves_is_an_error() {
         .compile_source(CONDITIONAL_MEMBERS, std::path::Path::new("mono_test.mojo"))
         .expect("compile conditional members");
     let program = compiled.drop_elaborated_mir();
-    let templates = bodies::Templates::of(program);
-    let mut specializer = Specializer::new(program, None, &templates);
+    let mut specializer = Specializer::new(program, None);
     let available = slot_bindings(&specializer, Ty::int());
     specializer
         .enqueue(&nullary_slot_init(), available, Vec::new())
@@ -902,8 +902,7 @@ fn available_member_that_does_not_materialize_is_an_error() {
         .compile_source(CONDITIONAL_MEMBERS, std::path::Path::new("mono_test.mojo"))
         .expect("compile conditional members");
     let program = compiled.drop_elaborated_mir();
-    let templates = bodies::Templates::of(program);
-    let mut specializer = Specializer::new(program, None, &templates);
+    let mut specializer = Specializer::new(program, None);
     // The empty tuple is `Defaultable`, and `T()` has no construction for it.
     let bindings = slot_bindings(&specializer, TyKind::Tuple(Vec::new()).into());
     specializer
@@ -962,8 +961,7 @@ fn trivial_value_and_pack_clauses_are_decided() {
         )
         .expect("compile trivial and value members");
     let program = compiled.drop_elaborated_mir();
-    let templates = bodies::Templates::of(program);
-    let specializer = Specializer::new(program, None, &templates);
+    let specializer = Specializer::new(program, None);
     let cell = |argument: &str, n: i64| {
         let template = &specializer.structs["Cell"];
         let mut bindings = specializer.base_bindings();
@@ -1082,8 +1080,7 @@ fn a_struct_conformance_is_decided_from_its_declaration_when_asked() {
         .expect("compile conformance program");
     assert!(compiled.imported_package().is_some());
     let program = compiled.drop_elaborated_mir();
-    let templates = bodies::Templates::of(program);
-    let specializer = Specializer::new(program, None, &templates);
+    let specializer = Specializer::new(program, None);
     let list = Ty::new(TyKind::Struct("List".into(), vec![TyArg::Ty(Ty::int())]));
     let book = Ty::new(TyKind::Struct("Book".into(), Vec::new()));
     let conforms =
@@ -1114,9 +1111,9 @@ fn a_struct_conformance_is_decided_from_its_declaration_when_asked() {
 
 #[test]
 fn comptime_for_unrolls_one_copy_per_iteration() {
-    // The template carries the loop as a `comptime_for` header; each instance
+    // The template carries the loop as a `comptime.for` op; each instance
     // replaces it with one copy of the body per index value, the reads of the
-    // index folded, and keeps no header.
+    // index folded, and keeps no loop over the index.
     let source = "def total[n: Int]() -> Int:\n\
          \x20   var sum = 0\n\
          \x20   comptime for i in range(n):\n\
@@ -1129,17 +1126,19 @@ fn comptime_for_unrolls_one_copy_per_iteration() {
         .compile_source(source, std::path::Path::new("mono_test.mojo"))
         .expect("compile the loop");
     let comptime_fors = |function: &MirFunction| {
-        function
-            .blocks
-            .iter()
-            .filter(|block| matches!(block.term, MirTerm::ComptimeFor { .. }))
+        nested_instructions(&function.blocks)
+            .into_iter()
+            .filter(|instruction| matches!(instruction, MirInstr::ComptimeFor { .. }))
             .count()
+            + function
+                .blocks
+                .iter()
+                .filter(|block| matches!(block.term, MirTerm::ComptimeFor { .. }))
+                .count()
     };
     let additions = |function: &MirFunction| {
-        function
-            .blocks
-            .iter()
-            .flat_map(|block| &block.instrs)
+        nested_instructions(&function.blocks)
+            .into_iter()
             .filter(|instruction| matches!(instruction, MirInstr::BinOp { .. }))
             .count()
     };
@@ -1149,7 +1148,7 @@ fn comptime_for_unrolls_one_copy_per_iteration() {
         .iter()
         .find(|(name, _)| name == "total")
         .map(|(_, function)| function)
-        .expect("the template is lowered");
+        .expect("the template is emitted");
     assert_eq!(comptime_fors(template), 1);
     assert_eq!(additions(template), 1);
     let specialized = specialize(
@@ -1178,9 +1177,9 @@ fn comptime_for_unrolls_one_copy_per_iteration() {
 
 #[test]
 fn comptime_for_steps_an_iterator_one_copy_per_element() {
-    // A loop over a user iterator keeps an iterator header in the template;
-    // each instance steps the iterator through the `paramfor_*` stubs and
-    // copies the body once per element.
+    // A loop over a user iterator keeps its `comptime.for` op in the
+    // template; each instance steps the iterator through the `paramfor_*`
+    // stubs and copies the body once per element.
     let source = "@fieldwise_init\n\
          struct Count(Iterator, Copyable):\n\
          \x20   comptime Element = Int\n\
@@ -1203,18 +1202,15 @@ fn comptime_for_steps_an_iterator_one_copy_per_element() {
     let compiled = compiler
         .compile_source(source, std::path::Path::new("mono_test.mojo"))
         .expect("compile the loop");
-    let iterator_headers = |function: &MirFunction| {
-        function
-            .blocks
-            .iter()
-            .filter(|block| matches!(block.term, MirTerm::ComptimeFor { .. }))
+    let iterator_loops = |function: &MirFunction| {
+        nested_instructions(&function.blocks)
+            .into_iter()
+            .filter(|instruction| matches!(instruction, MirInstr::ComptimeFor { .. }))
             .count()
     };
     let additions = |function: &MirFunction| {
-        function
-            .blocks
-            .iter()
-            .flat_map(|block| &block.instrs)
+        nested_instructions(&function.blocks)
+            .into_iter()
             .filter(|instruction| matches!(instruction, MirInstr::BinOp { .. }))
             .count()
     };
@@ -1224,8 +1220,8 @@ fn comptime_for_steps_an_iterator_one_copy_per_element() {
         .iter()
         .find(|(name, _)| name == "total")
         .map(|(_, function)| function)
-        .expect("the template is lowered");
-    assert_eq!(iterator_headers(template), 1);
+        .expect("the template is emitted");
+    assert_eq!(iterator_loops(template), 1);
     let specialized = specialize(
         compiled.drop_elaborated_mir(),
         &["main".to_string()],
@@ -1239,6 +1235,7 @@ fn comptime_for_steps_an_iterator_one_copy_per_element() {
         .find(|(name, _)| name.starts_with("total$"))
         .map(|(_, function)| function)
         .expect("the instance is emitted");
+    assert_eq!(iterator_loops(instance), 0);
     assert!(
         instance
             .blocks
@@ -1272,12 +1269,11 @@ fn comptime_for_index_typed_local_takes_a_slot_per_copy() {
         .iter()
         .find(|(name, _)| name == "total")
         .map(|(_, function)| function)
-        .expect("the template is lowered");
-    let index = template
-        .blocks
-        .iter()
-        .find_map(|block| match &block.term {
-            MirTerm::ComptimeFor { binder, .. } => Some(binder.clone()),
+        .expect("the template is emitted");
+    let index = nested_instructions(&template.blocks)
+        .into_iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::ComptimeFor { binder, .. } => Some(binder.clone()),
             _ => None,
         })
         .expect("the template keeps the loop");
@@ -1334,9 +1330,9 @@ fn comptime_for_index_typed_local_takes_a_slot_per_copy() {
 
 #[test]
 fn comptime_branch_selection_keeps_the_taken_arm() {
-    // The template carries the region as a `comptime_branch`; each instance
-    // keeps the taken arm alone, with the destroy drop elaboration placed at
-    // its entry, and the untaken arm's blocks are gone.
+    // The template carries the region as a `comptime.if` op; each instance
+    // keeps the taken arm alone, with the destroy drop elaboration placed in
+    // it, and the untaken arm is gone.
     let source = "struct Thing(Movable):\n\
          \x20   var s: String\n\
          \x20   def __init__(out self, var s: String):\n\
@@ -1365,15 +1361,25 @@ fn comptime_branch_selection_keeps_the_taken_arm() {
         .iter()
         .find(|(name, _)| name == "f")
         .map(|(_, function)| function)
-        .expect("the template is lowered");
+        .expect("the template is emitted");
     let comptime_branches = |function: &MirFunction| {
-        function
-            .blocks
-            .iter()
-            .filter(|block| matches!(block.term, MirTerm::ComptimeBranch { .. }))
+        nested_instructions(&function.blocks)
+            .into_iter()
+            .filter(|instruction| matches!(instruction, MirInstr::ComptimeIf { .. }))
             .count()
+            + function
+                .blocks
+                .iter()
+                .filter(|block| matches!(block.term, MirTerm::ComptimeBranch { .. }))
+                .count()
+    };
+    let prints_else = |function: &MirFunction| {
+        nested_instructions(&function.blocks)
+            .into_iter()
+            .any(|instruction| matches!(instruction, MirInstr::Const { k: mojito_mir::mir::Const::Str(text), .. } if text == "else"))
     };
     assert_eq!(comptime_branches(template), 1);
+    assert!(prints_else(template));
     let specialized = specialize(
         compiled.drop_elaborated_mir(),
         &["main".to_string()],
@@ -1388,7 +1394,7 @@ fn comptime_branch_selection_keeps_the_taken_arm() {
         .map(|(_, function)| function)
         .expect("the instance is emitted");
     assert_eq!(comptime_branches(instance), 0);
-    assert!(instance.blocks.len() < template.blocks.len());
+    assert!(!prints_else(instance), "the untaken arm is gone");
     assert_eq!(
         instance
             .blocks
