@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	700
+# swept-count	709
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -65,6 +65,7 @@ assets/ownership_error/display_element_read_after_invalidation.mojo	compile-reje
 assets/ownership_error/double_move.mojo	compile-reject	agree	error: use of uninitialized value 'a'
 assets/ownership_error/double_move_in_try.mojo	compile-reject	agree	error: use of uninitialized value 's'
 assets/ownership_error/element_call_after_container_move.mojo	compile-reject	agree	error: use of uninitialized value 'objs'
+assets/ownership_error/for_target_source_moved.mojo	compile-reject	agree	error: use of uninitialized value 'pairs'
 assets/ownership_error/interior_pointer_offset_stale.mojo	compile-reject	agree	error: use of a never-initialized interior reference 'self_is_origin["items"]'
 assets/ownership_error/interior_pointer_stale_after_mutation.mojo	compile-reject	agree	error: use of a never-initialized interior reference 'self_is_origin["items"]'
 assets/ownership_error/interior_view_consume_after_mutation.mojo	compile-reject	agree	error: no matching function in initialization
@@ -123,6 +124,7 @@ assets/parse_error/comptime_assert_struct_body.mojo	compile-reject	agree	error: 
 assets/parse_error/comptime_if_module_level.mojo	compile-reject	agree	error: 'comptime if' must be contained in a function
 assets/parse_error/destructure_literal_target.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/parse_error/destructure_sequence_literal_target.mojo	compile-reject	agree	error: expression must be mutable in collection literal
+assets/parse_error/for_target_trailing_comma.mojo	compile-reject	agree	error: unexpected token in expression
 assets/parse_error/lambda_missing_colon.mojo	compile-reject	agree	error: unknown function effect 'x', expected 'raises', 'capturing', or 'thin'
 assets/parse_error/lambda_unparenthesized_args.mojo	compile-reject	agree	error: unparenthesized lambda arguments are not supported; write them in parentheses, with types, e.g. `lambda (x: Int, y: Int) -> Int: x + y`
 assets/parse_error/missing_colon.mojo	compile-reject	agree	error: expected ':' in function definition
@@ -333,6 +335,13 @@ assets/type_error/external_call_string_argument.mojo	compile-reject	agree	error:
 assets/type_error/external_call_unknown_callee.mojo	runs	subset	the pin runs it; Mojito rejects: is not in Mojito's libc allowlist
 assets/type_error/fieldwise_anytype_field.mojo	compile-reject	agree	error: field 'a' has non-'Deinitable' type 'T'
 assets/type_error/fieldwise_unknown_keyword.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/for_discard_target_read.mojo	compile-reject	agree	error: cannot read from discard pattern '_'
+assets/type_error/for_sequence_target_not_raising.mojo	compile-reject	agree	error: cannot call function that may raise in a context that cannot raise
+assets/type_error/for_target_arity_mismatch.mojo	compile-reject	agree	error: cannot declare 'a' without a contextual type from its initializer
+assets/type_error/for_target_bind_leaf_immutable.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/type_error/for_target_not_tuple.mojo	compile-reject	agree	error: cannot unpack value of type '_ListIter[Int, origin_of(xs)].Element' into 2 values
+assets/type_error/for_target_ref_tuple_immutable.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/type_error/for_target_var_leaf_not_copyable.mojo	compile-reject	agree	error: value of type 'C' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/function_type.mojo	compile-reject	agree	error: cannot implicitly convert 'def wrong(value: String) thin -> Int' value to 'def(Int) thin -> Int' in 'var' initializer
 assets/type_error/function_type_where_call_violates.mojo	compile-reject	agree	error: violated constraint
 assets/type_error/function_type_where_missing_on_contract.mojo	compile-reject	agree	error: invalid call to 'apply': 'apply' parameter 'F' has 'def[w: Int](Int) thin -> None' type, but value has type 'def kernel[w: Int](x: Int) thin -> None where (w > Int(0))'

@@ -23,6 +23,16 @@
 //! takes the subscript `$seq<id>[1:$suffix<id>]` (`$seq<id>[1:]` when the
 //! star is last), `_` included, and the suffix's elements are read at
 //! `$suffix<id>` and `$suffix<id> + k`.
+//!
+//! A `for` statement's or comprehension clause's destructuring target is
+//! upstream's `Bind` pattern: the loop binds each element to a hidden,
+//! immutable `$for<id>` (a reference to a yielded reference, never a copy)
+//! and destructures it first thing in each iteration, through the
+//! statement `target = $for<id>` (`p.x = $for<id>` for a place). A bare
+//! name in the target is an immutable leaf: a reference to its piece when
+//! the piece is read through one, else an immutable owned binding. A
+//! comprehension clause lowers in MIR as an expression, so it takes only a
+//! tuple target, whose extraction plan MIR lowers itself.
 
 use super::desugar::{StatementDesugar, Synth};
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
@@ -96,6 +106,65 @@ impl Checker {
             }
         }
         self.record_at(value.source_span()).tuple_unpack_plan = Some(plan);
+        Ok(())
+    }
+
+    /// Check the destructuring loop target `target` of a `for` statement or
+    /// (`comprehension`) a comprehension clause, whose loop has declared
+    /// the hidden `binder` in the current scope, and record its desugar:
+    /// the statements that store the binder into the target.
+    pub(super) fn check_loop_target(
+        &mut self,
+        target: &DestructureTarget,
+        binder: &str,
+        ret: Option<&Ty>,
+        comprehension: bool,
+    ) -> Result<(), TypeError> {
+        let synth = Synth::for_target(target, target.source.clone());
+        let value = synth.identifier(binder);
+        let statement = match &target.kind {
+            DestructureTargetKind::Discard => None,
+            DestructureTargetKind::Tuple(_) => Some(StmtKind::Destructure {
+                target: target.clone(),
+                value,
+            }),
+            DestructureTargetKind::Sequence(_) | DestructureTargetKind::Place(_)
+                if comprehension =>
+            {
+                return Err(TypeError::Unsupported(
+                    "a sequence or place target in a comprehension clause".into(),
+                ));
+            }
+            DestructureTargetKind::Sequence(_) => Some(StmtKind::Destructure {
+                target: target.clone(),
+                value,
+            }),
+            DestructureTargetKind::Place(place) => Some(StmtKind::SetPlace {
+                place: place.clone(),
+                value,
+            }),
+            DestructureTargetKind::Declare { .. } => {
+                return Err(TypeError::InvariantViolation(
+                    "a one-leaf loop target binds without a desugar".into(),
+                ));
+            }
+        };
+        let statements = statement
+            .map(|kind| {
+                let statement = synth.stmt(kind);
+                self.check_stmt(&statement, ret, !comprehension)
+                    .map(|()| statement)
+            })
+            .transpose()?
+            .into_iter()
+            .collect();
+        self.statement_desugars.borrow_mut().insert(
+            target.source_span(),
+            StatementDesugar {
+                statements,
+                binder: Some(binder.to_string()),
+            },
+        );
         Ok(())
     }
 
@@ -209,9 +278,13 @@ impl Checker {
             };
             self.store_sequence_element(&synth, target, read, &mut statements, ret, in_loop)?;
         }
-        self.statement_desugars
-            .borrow_mut()
-            .insert(stmt.source_span(), StatementDesugar { statements });
+        self.statement_desugars.borrow_mut().insert(
+            stmt.source_span(),
+            StatementDesugar {
+                statements,
+                binder: None,
+            },
+        );
         Ok(())
     }
 
@@ -261,9 +334,10 @@ impl Checker {
                 name,
                 mode: BindingMode::Immutable,
             } => {
-                return Err(TypeError::InvariantViolation(format!(
-                    "destructuring leaf '{name}' declares without a convention"
-                )));
+                if self.bind_read(synth, name, read, statements, ret, in_loop)? {
+                    self.set_binding_mutable(name, false);
+                }
+                return Ok(());
             }
             DestructureTargetKind::Place(place) => {
                 if let ExprKind::Identifier(name) = &place.kind {
@@ -330,10 +404,8 @@ impl Checker {
         ))
     }
 
-    /// Read `read` into a hidden `$elem<id>`, appending its checked
-    /// declaration to `statements`: `ref` (to read) over a reference
-    /// result, `var` over an owned one. The hidden name and whether the
-    /// read is owned.
+    /// Read `read` into a hidden `$elem<id>` (see [`Self::bind_read`]).
+    /// The hidden name and whether the read is owned.
     fn read_into_hidden(
         &mut self,
         synth: &Synth,
@@ -342,28 +414,44 @@ impl Checker {
         ret: Option<&Ty>,
         in_loop: bool,
     ) -> Result<(Expr, bool), TypeError> {
-        let read_span = read.source_span();
         let name = format!("$elem{}", read.syntax_id.0);
+        let owned = self.bind_read(synth, &name, read, statements, ret, in_loop)?;
+        Ok((synth.identifier(&name), owned))
+    }
+
+    /// Bind `name` to `read`, appending its checked declaration to
+    /// `statements`: `ref` (to read) over a reference result, `var` over an
+    /// owned one. Whether the read is owned.
+    fn bind_read(
+        &mut self,
+        synth: &Synth,
+        name: &str,
+        read: Expr,
+        statements: &mut Vec<Stmt>,
+        ret: Option<&Ty>,
+        in_loop: bool,
+    ) -> Result<bool, TypeError> {
+        let read_span = read.source_span();
         self.infer(&read)?;
         let reference = self.infer_reference_value(&read).is_some();
         let declaration = synth.stmt(if reference {
             StmtKind::RefDecl {
-                name: name.clone(),
+                name: name.to_string(),
                 value: read,
             }
         } else {
             StmtKind::VarDecl {
-                name: name.clone(),
+                name: name.to_string(),
                 ty: None,
                 value: read,
             }
         });
         self.check_stmt(&declaration, ret, in_loop)?;
         if reference {
-            self.make_reference_immutable(&name, &declaration, read_span);
+            self.make_reference_immutable(name, &declaration, read_span);
         }
         statements.push(declaration);
-        Ok((synth.identifier(&name), !reference))
+        Ok(!reference)
     }
 
     /// The plan for the elements of a tuple-typed value `vt`, read through
@@ -424,28 +512,25 @@ impl Checker {
                     self.declare(name, declared)?;
                     self.record_declared_leaf(item, name);
                 }
+                // A `ref` leaf, or a loop target's bare name, which binds an
+                // immutable reference to its piece.
                 DestructureTargetKind::Declare {
                     name,
-                    mode: BindingMode::Ref,
+                    mode: mode @ (BindingMode::Ref | BindingMode::Immutable),
                 } => {
-                    let Some(reference) = element.reference.clone() else {
+                    let Some(mut reference) = element.reference.clone() else {
                         return Err(TypeError::Unsupported(format!(
                             "a 'ref' destructuring target ('{name}') over a value without \
                              tuple storage"
                         )));
                     };
+                    if *mode == BindingMode::Immutable {
+                        reference.mutability = Mutability::Immutable;
+                    }
                     let mutable = reference.mutability == Mutability::Mutable;
                     let binding_ty = Ty::new(TyKind::Ref(reference));
                     self.declare_with_mutability(name, binding_ty, mutable)?;
                     self.record_declared_leaf(item, name);
-                }
-                DestructureTargetKind::Declare {
-                    name,
-                    mode: BindingMode::Immutable,
-                } => {
-                    return Err(TypeError::InvariantViolation(format!(
-                        "destructuring leaf '{name}' declares without a convention"
-                    )));
                 }
                 DestructureTargetKind::Place(place) => {
                     self.destructure_into_place(place, element, elem, element_value)?;

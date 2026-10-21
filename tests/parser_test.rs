@@ -56,6 +56,14 @@ fn parse_expr(source: &str) -> Expr {
     }
 }
 
+/// A target declaring `name` with `mode`.
+fn declared(name: &str, mode: BindingMode) -> DestructureTarget {
+    DestructureTarget::from(DestructureTargetKind::Declare {
+        name: name.into(),
+        mode,
+    })
+}
+
 fn int(n: i64) -> Box<Expr> {
     bx(ExprKind::Int(n.into()))
 }
@@ -453,8 +461,7 @@ fn parses_for_over_range() {
     assert_eq!(
         stmts[0],
         Stmt::from(StmtKind::For {
-            var: "i".into(),
-            binding: BindingMode::Immutable,
+            target: declared("i", BindingMode::Immutable),
             iter: Expr::from(ExprKind::Call {
                 name: "range".into(),
                 param_args: vec![],
@@ -473,14 +480,13 @@ fn parses_var_loop_binding_and_collection_comprehensions() {
     assert!(matches!(
         &loop_statement[0].kind,
         StmtKind::For {
-            var,
-            binding: BindingMode::Var,
+            target,
             iter: Expr {
                 kind: ExprKind::Transfer(_),
                 ..
             },
             ..
-        } if var == "item"
+        } if target.loop_binding() == Some(("item", BindingMode::Var))
     ));
 
     let statement =
@@ -498,18 +504,14 @@ fn parses_var_loop_binding_and_collection_comprehensions() {
     assert!(key.is_some());
     assert_eq!(clauses.len(), 3);
     assert!(matches!(
-        clauses[0],
-        ComprehensionClause::For {
-            binding: BindingMode::Immutable,
-            ..
-        }
+        &clauses[0],
+        ComprehensionClause::For { target, .. }
+            if target.loop_binding() == Some(("x", BindingMode::Immutable))
     ));
     assert!(matches!(
-        clauses[1],
-        ComprehensionClause::For {
-            binding: BindingMode::Immutable,
-            ..
-        }
+        &clauses[1],
+        ComprehensionClause::For { target, .. }
+            if target.loop_binding() == Some(("y", BindingMode::Immutable))
     ));
     assert!(matches!(clauses[2], ComprehensionClause::If(_)));
 }
@@ -519,11 +521,8 @@ fn parses_explicit_reference_loop_bindings() {
     let loop_statement = parse("for ref item in values:\n    pass\n");
     assert!(matches!(
         &loop_statement[0].kind,
-        StmtKind::For {
-            var,
-            binding: BindingMode::Ref,
-            ..
-        } if var == "item"
+        StmtKind::For { target, .. }
+            if target.loop_binding() == Some(("item", BindingMode::Ref))
     ));
 
     let statement = parse("var result = [item for ref item in values]\n");
@@ -535,12 +534,94 @@ fn parses_explicit_reference_loop_bindings() {
     };
     assert!(matches!(
         &clauses[0],
-        ComprehensionClause::For {
-            var,
-            binding: BindingMode::Ref,
-            ..
-        } if var == "item"
+        ComprehensionClause::For { target, .. }
+            if target.loop_binding() == Some(("item", BindingMode::Ref))
     ));
+}
+
+#[test]
+fn parses_destructuring_loop_targets() {
+    use DestructureTargetKind::{Discard, Place, Sequence, Tuple};
+    let target_of = |source: &str| {
+        let statements = parse(source);
+        let StmtKind::For { target, .. } = &statements[0].kind else {
+            panic!("expected a for statement in {source:?}");
+        };
+        target.clone()
+    };
+    let bind = |name: &str| declared(name, BindingMode::Immutable);
+    let tuple = |items: Vec<DestructureTarget>| DestructureTarget::from(Tuple(items));
+    let place = |source: &str| DestructureTarget::from(Place(parse_expr(&format!("{source}\n"))));
+
+    assert_eq!(
+        target_of("for a, b in xs:\n    pass\n"),
+        tuple(vec![bind("a"), bind("b")])
+    );
+    assert_eq!(
+        target_of("for (var a, _) in xs:\n    pass\n"),
+        tuple(vec![
+            declared("a", BindingMode::Var),
+            DestructureTarget::from(Discard)
+        ])
+    );
+    assert_eq!(
+        target_of("for ref (a, b) in xs:\n    pass\n"),
+        tuple(vec![
+            declared("a", BindingMode::Ref),
+            declared("b", BindingMode::Ref)
+        ])
+    );
+    assert_eq!(
+        target_of("for i, (var x, ref y) in xs:\n    pass\n"),
+        tuple(vec![
+            bind("i"),
+            tuple(vec![
+                declared("x", BindingMode::Var),
+                declared("y", BindingMode::Ref)
+            ])
+        ])
+    );
+    assert_eq!(
+        target_of("for [f, *rest] in xs:\n    pass\n"),
+        DestructureTarget::from(Sequence(vec![
+            SequenceTarget::Element(bind("f")),
+            SequenceTarget::Star(bind("rest")),
+        ]))
+    );
+    assert_eq!(
+        target_of("for p.x, p.y in xs:\n    pass\n"),
+        tuple(vec![place("p.x"), place("p.y")])
+    );
+    assert_eq!(target_of("for q[0] in xs:\n    pass\n"), place("q[0]"));
+    assert_eq!(target_of("for (a) in xs:\n    pass\n"), bind("a"));
+
+    let statement = parse("var r = [a for a, b in xs if b]\n");
+    let StmtKind::VarDecl { value, .. } = &statement[0].kind else {
+        panic!("expected variable declaration");
+    };
+    let ExprKind::Comprehension { clauses, .. } = &value.kind else {
+        panic!("expected comprehension");
+    };
+    assert!(matches!(
+        &clauses[0],
+        ComprehensionClause::For { target, iter, unpack: None }
+            if **target == tuple(vec![bind("a"), bind("b")])
+                && iter.kind == ExprKind::Identifier("xs".into())
+    ));
+    assert!(matches!(clauses[1], ComprehensionClause::If(_)));
+}
+
+#[test]
+fn rejects_malformed_loop_targets() {
+    for source in [
+        "for a, in xs:\n    pass\n",
+        "for a, *b in xs:\n    pass\n",
+        "for [a, *b, *c] in xs:\n    pass\n",
+        "comptime for a, b in xs:\n    pass\n",
+    ] {
+        let mut parser = Parser::new(Lexer::new(source));
+        assert!(parser.parse_program().is_err(), "{source:?} parsed");
+    }
 }
 
 #[test]

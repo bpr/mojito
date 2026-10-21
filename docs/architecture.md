@@ -6448,6 +6448,25 @@ the star's target takes the slice subscript `$seq<id>[i:$suffix<id>]`
 (`$seq<id>[i:]` when the star is last), `*_` included, and the suffix's
 elements are read at `$suffix<id>` and `$suffix<id> + k`.
 
+A destructuring `for` target (`for a, b in pairs`, `for [f, *rest] in
+rows`, `for p.x, p.y in pairs`) is the third desugar, upstream's `Bind`
+pattern: the loop binds each element to a hidden immutable `$for<id>`
+through the ordinary iteration protocol, so a yielded reference is never
+copied, and the target's store (`target = $for<id>`, `place = $for<id>`)
+is checked as the first statement of the body, its bare names declaring
+immutable leaves. The desugar is recorded by the target and names its
+binder; the splice rewrites the target to that one leaf and prepends the
+store to the body, whose own sequence desugar is then spliced in turn. A
+comprehension clause binds the same hidden binder, but lowers in MIR as an
+expression, so the splice keeps its tuple target's `Destructure` as the
+clause's `unpack` (`CheckedComprehensionUnpack`) and MIR's
+`comprehension_clauses` lowers it right after the binder, through
+`lower_destructure`. The splice is a `MutVisitor` that reaches every block
+before the walk descends into it, lambda bodies included. HIR declares no
+leaf an opaque statement or a comprehension binds, so a read of a binding it
+did not declare, whose spelling resolves to another binding's slot in
+scope, records no `Cfg::slots` entry and MIR resolves it by its binding.
+
 A call through a trait bound that leaves out a requirement's default runs
 the requirement's default, as in current Mojo, even though an instance clone
 reaches the witness nominally. The check records each such call's omitted

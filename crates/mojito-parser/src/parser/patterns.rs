@@ -115,14 +115,14 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                         "multiple starred expressions in list pattern".to_string(),
                     ));
                 }
-                let leaf = item_to_target(self.parse_target_item(declare)?)?;
+                let leaf = item_to_target(self.parse_target_item(declare, Precedence::Lowest)?)?;
                 starred = Some(items.len());
                 items.push(TargetItem::Target(DestructureTarget::new(
                     leaf.kind,
                     (star_start, self.last_significant_end),
                 )));
             } else {
-                let item = self.parse_target_item(declare)?;
+                let item = self.parse_target_item(declare, Precedence::Lowest)?;
                 // A comprehension keeps the whole display an expression.
                 if items.is_empty() && matches!(self.peek_token()?, Some(Token::For)) {
                     let TargetItem::Expr(value) = item else {
@@ -224,10 +224,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// One element of a destructuring display or comma list: a `var`/`ref`
     /// leaf, a nested display, or an expression (a name, a place, or any
     /// expression that is then only valid without `=`). Under a declaring
-    /// prefix every bare name declares with that convention.
+    /// prefix every bare name declares with that convention. A bare item
+    /// (and the continuation after a display) parses above `min`, so a loop
+    /// target stops before `in`.
     pub(super) fn parse_target_item(
         &mut self,
         declare: Option<BindingMode>,
+        min: Precedence,
     ) -> Result<TargetItem, ParseError> {
         let start = self.peek_start();
         match self.peek_token()? {
@@ -242,20 +245,53 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             Some(Token::LParen | Token::LBracket) => {
                 let item = self.parse_target_display(declare)?;
                 match item {
-                    TargetItem::Expr(value) => Ok(TargetItem::Expr(
-                        self.parse_expression_from(value, Precedence::Lowest)?,
-                    )),
+                    TargetItem::Expr(value) => {
+                        Ok(TargetItem::Expr(self.parse_expression_from(value, min)?))
+                    }
                     target @ TargetItem::Target(_) => Ok(target),
                 }
             }
             _ => {
-                let value = self.parse_expression(Precedence::Lowest)?;
+                let value = self.parse_expression(min)?;
                 match declare {
                     None => Ok(TargetItem::Expr(value)),
                     Some(mode) => Ok(TargetItem::Target(declared_leaf(value, mode)?)),
                 }
             }
         }
+    }
+
+    /// A `for` statement's or comprehension clause's target, up to `in`:
+    /// upstream's `parseTargetListExpr`. A comma list forms a tuple, a star
+    /// is valid only inside a `[...]` display, and a bare name declares an
+    /// immutable binding (upstream's `Bind` pattern) rather than assigning.
+    pub(super) fn parse_loop_target(&mut self) -> Result<DestructureTarget, ParseError> {
+        let start = self.peek_start();
+        let mut targets = Vec::new();
+        loop {
+            let item = self.parse_target_item(None, Precedence::Comparison)?;
+            targets.push(item_to_target(item)?);
+            if !matches!(self.peek_token()?, Some(Token::Comma)) {
+                break;
+            }
+            self.next_token()?;
+            if matches!(self.peek_token()?, Some(Token::In)) {
+                return Err(ParseError::UnexpectedToken(
+                    Token::In,
+                    "unexpected token in expression".to_string(),
+                ));
+            }
+        }
+        let mut target = if targets.len() == 1 {
+            targets.pop().expect("one target")
+        } else {
+            DestructureTarget::new(
+                DestructureTargetKind::Tuple(targets),
+                (start, self.last_significant_end),
+            )
+        };
+        bind_bare_names(&mut target);
+        Ok(target)
     }
 
     /// The target after a consumed `var`/`ref`: a name, or a display whose
@@ -318,7 +354,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             if matches!(self.peek_token()?, Some(Token::Assign)) {
                 break;
             }
-            let item = self.parse_target_item(declare)?;
+            let item = self.parse_target_item(declare, Precedence::Lowest)?;
             targets.push(item_to_target(item)?);
         }
         let target = if tuple {
@@ -694,6 +730,35 @@ pub(super) fn item_to_target(item: TargetItem) -> Result<DestructureTarget, Pars
     match item {
         TargetItem::Target(target) => Ok(target),
         TargetItem::Expr(value) => expr_to_target(value),
+    }
+}
+
+/// A loop target's bare names: each written name becomes an immutable
+/// declaration, through tuple and sequence items alike.
+fn bind_bare_names(target: &mut DestructureTarget) {
+    match &mut target.kind {
+        DestructureTargetKind::Place(Expr {
+            kind: ExprKind::Identifier(name),
+            ..
+        }) => {
+            target.kind = DestructureTargetKind::Declare {
+                name: std::mem::take(name),
+                mode: BindingMode::Immutable,
+            };
+        }
+        DestructureTargetKind::Tuple(items) => items.iter_mut().for_each(bind_bare_names),
+        DestructureTargetKind::Sequence(items) => {
+            for item in items {
+                match item {
+                    SequenceTarget::Element(target) | SequenceTarget::Star(target) => {
+                        bind_bare_names(target);
+                    }
+                }
+            }
+        }
+        DestructureTargetKind::Place(_)
+        | DestructureTargetKind::Discard
+        | DestructureTargetKind::Declare { .. } => {}
     }
 }
 

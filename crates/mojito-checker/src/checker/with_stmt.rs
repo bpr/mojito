@@ -93,7 +93,10 @@ impl Checker {
         for statement in &statements[1..] {
             self.check_stmt(statement, ret, in_loop)?;
         }
-        Ok(StatementDesugar { statements })
+        Ok(StatementDesugar {
+            statements,
+            binder: None,
+        })
     }
 
     /// The desugar form a manager's protocol selects, from its declared

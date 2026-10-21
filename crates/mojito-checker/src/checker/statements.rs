@@ -1993,12 +1993,24 @@ impl Checker {
             }
 
             StmtKind::For {
-                var,
-                binding,
+                target,
                 iter,
                 body,
                 orelse,
             } => {
+                // A destructuring target binds the element to a hidden
+                // immutable binder (upstream's `Bind` pattern) and starts the
+                // body by destructuring it.
+                let hidden = format!("$for{}", target.syntax_id.0);
+                let (var, binding, unpack) = match target.loop_binding() {
+                    Some((name, mode)) => (name, mode, false),
+                    None => (
+                        hidden.as_str(),
+                        mojito_ast::ast::BindingMode::Immutable,
+                        true,
+                    ),
+                };
+                let binding = &binding;
                 self.register_named_bindings(iter)?;
                 // The loop variable's type comes from the iterable: `Int` for a
                 // `range`, the element type for a `List`, or — for a user struct —
@@ -2072,6 +2084,9 @@ impl Checker {
                 let result = (|| {
                     self.declare_with_mutability(var, binding_ty, binding_plan.mutable)?;
                     self.record_statement_binding(stmt, var);
+                    if unpack {
+                        self.check_loop_target(target, var, ret, false)?;
+                    }
                     self.check_block(body, ret, true)
                 })();
                 self.pop_scope();

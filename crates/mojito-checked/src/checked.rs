@@ -1437,10 +1437,18 @@ impl CheckedOp {
                 clauses,
                 ..
             } => {
-                operands.extend(clauses.iter().map(|clause| match clause {
-                    CheckedComprehensionClause::For { iter, .. } => *iter,
-                    CheckedComprehensionClause::If(condition) => *condition,
-                }));
+                for clause in clauses {
+                    match clause {
+                        CheckedComprehensionClause::For { iter, unpack, .. } => {
+                            operands.push(*iter);
+                            if let Some(unpack) = unpack {
+                                operands.extend(unpack.target.expressions());
+                                operands.push(unpack.value);
+                            }
+                        }
+                        CheckedComprehensionClause::If(condition) => operands.push(*condition),
+                    }
+                }
                 operands.extend(key);
                 operands.push(*value);
             }
@@ -1636,13 +1644,20 @@ impl CheckedOp {
                 let clauses = clauses
                     .iter()
                     .map(|clause| match clause {
-                        CheckedComprehensionClause::For { var, binding, iter } => {
-                            CheckedComprehensionClause::For {
-                                var: var.clone(),
-                                binding: *binding,
-                                iter: map.expression(*iter),
-                            }
-                        }
+                        CheckedComprehensionClause::For {
+                            var,
+                            binding,
+                            iter,
+                            unpack,
+                        } => CheckedComprehensionClause::For {
+                            var: var.clone(),
+                            binding: *binding,
+                            iter: map.expression(*iter),
+                            unpack: unpack.as_ref().map(|unpack| CheckedComprehensionUnpack {
+                                target: unpack.target.map_operands(map),
+                                value: map.expression(unpack.value),
+                            }),
+                        },
                         CheckedComprehensionClause::If(condition) => {
                             CheckedComprehensionClause::If(map.expression(*condition))
                         }
@@ -1824,12 +1839,23 @@ pub enum CheckedSubscriptArg {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum CheckedComprehensionClause {
+    /// `for var in iter`; a destructuring target binds the hidden `var`
+    /// and `unpack` distributes it to the target's leaves.
     For {
         var: String,
         binding: BindingMode,
         iter: CheckedNodeId,
+        unpack: Option<CheckedComprehensionUnpack>,
     },
     If(CheckedNodeId),
+}
+
+/// A comprehension clause's destructuring of its hidden binder: the
+/// `Destructure` the checker synthesized for the clause's target.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CheckedComprehensionUnpack {
+    pub target: CheckedTarget,
+    pub value: CheckedNodeId,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -5174,11 +5200,27 @@ impl<'a> ArenaBuilder<'a> {
                 let clauses = clauses
                     .iter()
                     .map(|clause| match clause {
-                        ComprehensionClause::For { var, binding, iter } => {
+                        ComprehensionClause::For {
+                            target,
+                            iter,
+                            unpack,
+                        } => {
+                            let (var, binding) = spliced_loop_binding(target);
+                            let iter = self.expr(iter);
+                            let unpack = unpack.as_deref().and_then(|unpack| match &unpack.kind {
+                                mojito_ast::ast::StmtKind::Destructure { target, value } => {
+                                    Some(CheckedComprehensionUnpack {
+                                        target: self.target(target),
+                                        value: self.expr(value),
+                                    })
+                                }
+                                _ => None,
+                            });
                             CheckedComprehensionClause::For {
-                                var: var.clone(),
-                                binding: *binding,
-                                iter: self.expr(iter),
+                                var,
+                                binding,
+                                iter,
+                                unpack,
                             }
                         }
                         ComprehensionClause::If(condition) => {
@@ -5715,18 +5757,20 @@ impl<'a> ArenaBuilder<'a> {
                 cases: cases(self, arms, None),
             },
             StmtKind::For {
-                var,
-                binding,
+                target,
                 iter,
                 body,
                 orelse,
-            } => CheckedStmtOp::For {
-                var: var.clone(),
-                binding: *binding,
-                iter: self.expr(iter),
-                body: self.block(body),
-                orelse: optional_block(self, orelse),
-            },
+            } => {
+                let (var, binding) = spliced_loop_binding(target);
+                CheckedStmtOp::For {
+                    var,
+                    binding,
+                    iter: self.expr(iter),
+                    body: self.block(body),
+                    orelse: optional_block(self, orelse),
+                }
+            }
             StmtKind::Return(value) => CheckedStmtOp::Return(self.optional(value.as_ref())),
             StmtKind::With { items, body } => CheckedStmtOp::With {
                 items: items
@@ -6250,6 +6294,15 @@ node_facts! {
         register_passable_result,
         comptime_conditional,
     }
+}
+
+/// A checked loop target's binder: the checker's splice left every `for`
+/// and comprehension target one `Declare` leaf.
+fn spliced_loop_binding(target: &mojito_ast::ast::DestructureTarget) -> (String, BindingMode) {
+    let (name, mode) = target
+        .loop_binding()
+        .expect("the checker's splice leaves every loop target one declared leaf");
+    (name.to_string(), mode)
 }
 
 #[cfg(test)]

@@ -675,7 +675,9 @@ condition: expression | 'case' case_patterns '=' expression_list
 
 while_stmt: 'while' condition ':' block ['else' ':' block]
 
-for_stmt: 'for' [('ref' | 'var')] NAME 'in' expression ':' block ['else' ':' block]
+for_stmt: 'for' loop_target 'in' expression ':' block ['else' ':' block]
+loop_target: target_item (',' target_item)*     # a comma forms a tuple; no trailing comma
+# Each top-level item parses above `in`; a bare NAME declares (never assigns).
 
 match_stmt: 'match' expression_list ':' NEWLINE case_block+
     | 'match' expression_list ':' NEWLINE INDENT case_block+ DEDENT
@@ -695,7 +697,18 @@ iteration and runs its `else` on the first failure. The pin accepts
 `comptime if case`; Mojito parses it as an error (write `comptime match`).
 `case` conditions are parsed and rejected by the checker until the pattern
 plan lands. `while` / `for`
-support loop `else`; `break` bypasses it. A `for` target is a single `NAME`, optionally
+support loop `else`; `break` bypasses it. A `for` target is upstream's
+`parseTargetListExpr`: the destructuring `target_item` grammar of an
+assignment, where a comma list forms a tuple and a star is valid only inside a
+`[...]` display. Unlike an assignment, a bare `NAME` in a loop target always
+declares, binding its piece immutably (upstream's `Bind` pattern: a reference
+to the piece, never a copy), so `for x, y in pairs` shadows an outer `x`.
+`var`/`ref` leaves (`for (var a, _) in pairs`, `for ref (a, b) in pairs`),
+nested and sequence targets (`for i, (x, y) in nested`, `for [f, *rest] in
+rows`), and places (`for p.x, p.y in pairs`, `for q[0] in xs`) follow the
+assignment's rules; the loop binds each element to a hidden immutable binder
+and destructures it at the top of each iteration, so a `ref` leaf of `for
+ref (a, b)` is immutable. A simple target is a single `NAME`, optionally
 introduced with `ref` for mutable list-element iteration; its
 iterable is any `expression` whose nominal type supplies the checked iteration
 protocol. The implicit prelude provides this for `Range`, `List`, `Set`, and
@@ -901,7 +914,7 @@ brace_literal:
     | '{' ','.(expression ':' expression)+ [','] '}' # Dict display
     | '{' expression comprehension_clauses '}'       # Set comprehension
     | '{' expression ':' expression comprehension_clauses '}' # Dict comprehension
-comprehension_clauses: ('for' [('ref' | 'var')] NAME 'in' expression | 'if' expression)+
+comprehension_clauses: ('for' loop_target 'in' expression | 'if' expression)+
 # A parenthesized form is a Tuple when it has a comma (or is empty), else grouping.
 tuple_or_group:
     | '(' ')'                                       # empty tuple ()
@@ -1047,6 +1060,9 @@ Notes:
 - **Collection displays and comprehensions** are homogeneous. Set/dictionary
   elements must be Hashable, dictionary keys evaluate before values, and
   generator/filter clauses evaluate left to right with normal nested-loop scope.
+  A `for` clause takes a loop target as the `for` statement does; the checker
+  accepts a tuple target (nested, with `var`/`ref` leaves) and rejects a
+  sequence or place target in a clause.
 
 ## Types
 
@@ -1189,6 +1205,7 @@ like any list, over closed lists and over packs still open alike.
 ```
 comptime_if_stmt:  'comptime' if_stmt      # 'comptime' 'if' … 'elif' … 'else' …
 comptime_for_stmt: 'comptime' for_stmt     # 'comptime' 'for' NAME 'in' expression ':' block
+                                           # a destructuring target is a parse error
 comptime_assert_stmt: 'comptime' 'assert' expression [',' expression]
 ```
 

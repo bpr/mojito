@@ -144,8 +144,14 @@ impl Elab<'_> {
                 self.cross_opt_block(orelse, env, shadowed)
             }
             StmtKind::For {
-                iter, body, orelse, ..
+                target,
+                iter,
+                body,
+                orelse,
             } => {
+                for place in target.places_mut() {
+                    self.cross_expr(place, env, shadowed)?;
+                }
                 self.cross_expr(iter, env, shadowed)?;
                 self.cross_block(body, env, shadowed)?;
                 self.cross_opt_block(orelse, env, shadowed)
@@ -466,8 +472,8 @@ impl Elab<'_> {
                 // A generator binder shadows within the comprehension.
                 let mut shadowed = shadowed.clone();
                 for clause in clauses.iter() {
-                    if let ComprehensionClause::For { var, .. } = clause {
-                        shadowed.insert(var.clone());
+                    if let ComprehensionClause::For { target, .. } = clause {
+                        shadowed.extend(target.declared_names().into_iter().map(str::to_string));
                     }
                 }
                 for clause in clauses {
@@ -709,9 +715,12 @@ fn collect_runtime_locals(stmts: &[Stmt], out: &mut HashSet<String>) {
                 }
             }
             StmtKind::For {
-                var, body, orelse, ..
+                target,
+                body,
+                orelse,
+                ..
             } => {
-                out.insert(var.clone());
+                out.extend(target.declared_names().into_iter().map(str::to_string));
                 collect_runtime_locals(body, out);
                 if let Some(orelse) = orelse {
                     collect_runtime_locals(orelse, out);

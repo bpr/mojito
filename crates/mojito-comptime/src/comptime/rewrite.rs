@@ -951,6 +951,12 @@ fn retype_condition(condition: &mut mojito_ast::ast::Condition, subs: TypeSubs) 
     retype_expr(condition.value_mut(), subs);
 }
 
+fn retype_target(target: &mut mojito_ast::ast::DestructureTarget, subs: TypeSubs) {
+    for place in target.places_mut() {
+        retype_expr(place, subs);
+    }
+}
+
 /// A case's bindings shadow a constant of their name in the guard and body;
 /// its pattern's expressions read the enclosing names.
 fn rewrite_cases(cases: &mut [mojito_ast::ast::MatchCase], subs: Subs, into_defs: bool) {
@@ -1090,19 +1096,29 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
             }
         }
         StmtKind::For {
-            var,
+            target,
             iter,
             body,
             orelse,
-            ..
         } => {
+            for place in target.places_mut() {
+                rewrite_expr(place, subs);
+            }
             rewrite_expr(iter, subs);
             if into_defs {
-                // The loop variable rebinds its name inside the loop (and
+                // The loop target rebinds its names inside the loop (and
                 // the for-else, which still reads the loop binding).
-                let loop_var = var.clone();
+                let loop_names = target
+                    .declared_names()
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect::<Vec<_>>();
                 let inner: Subs = &|name| {
-                    if name == loop_var { None } else { subs(name) }
+                    if loop_names.iter().any(|bound| bound == name) {
+                        None
+                    } else {
+                        subs(name)
+                    }
                 };
                 rewrite_block(body, inner, into_defs);
                 if let Some(body) = orelse {
@@ -1465,9 +1481,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
             retype_expr(value, subs);
         }
         StmtKind::Destructure { target, value } => {
-            for place in target.places_mut() {
-                retype_expr(place, subs);
-            }
+            retype_target(target, subs);
             retype_expr(value, subs);
         }
         StmtKind::Match { subject, cases } | StmtKind::ComptimeMatch { subject, cases } => {
@@ -1505,8 +1519,12 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
             }
         }
         StmtKind::For {
-            iter, body, orelse, ..
+            target,
+            iter,
+            body,
+            orelse,
         } => {
+            retype_target(target, subs);
             retype_expr(iter, subs);
             substitute_type_bindings_in_block(body, subs);
             if let Some(body) = orelse {
@@ -1813,7 +1831,8 @@ fn retype_expr(e: &mut Expr, subs: TypeSubs) {
             retype_expr(value, subs);
             for clause in clauses {
                 match clause {
-                    mojito_ast::ast::ComprehensionClause::For { iter, .. } => {
+                    mojito_ast::ast::ComprehensionClause::For { target, iter, .. } => {
+                        retype_target(target, subs);
                         retype_expr(iter, subs);
                     }
                     mojito_ast::ast::ComprehensionClause::If(condition) => {

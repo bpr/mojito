@@ -1460,6 +1460,15 @@ impl DestructureTarget {
         !self.declared_names().is_empty()
     }
 
+    /// The name and mode of a target that is one `Declare` leaf, as a
+    /// simple loop target (`for x in`, `for ref x in`) is.
+    pub fn loop_binding(&self) -> Option<(&str, BindingMode)> {
+        match &self.kind {
+            DestructureTargetKind::Declare { name, mode } => Some((name, *mode)),
+            _ => None,
+        }
+    }
+
     /// The place expressions the target writes, in source order.
     pub fn places(&self) -> Vec<&Expr> {
         let mut out = Vec::new();
@@ -1534,7 +1543,9 @@ pub enum DestructureTargetKind {
     /// `_` — the piece is discarded (not read).
     Discard,
     /// `var name` or `ref name` — a new binding; a `var`/`ref` before a
-    /// tuple or sequence target distributes to every leaf name in it.
+    /// tuple or sequence target distributes to every leaf name in it. A
+    /// bare name in a loop target is `Immutable`: an immutable binding to
+    /// its piece (upstream's `Bind` pattern).
     Declare { name: String, mode: BindingMode },
     /// An existing name or a place expression (`a`, `p.x`, `xs[i]`), written.
     Place(Expr),
@@ -1725,10 +1736,12 @@ pub enum StmtKind {
         subject: Expr,
         cases: Vec<MatchCase>,
     },
-    /// `for [ref | var] name in iter: <body>`.
+    /// `for target in iter: <body>` — `target` is a recursive
+    /// [`DestructureTarget`] whose bare names bind immutably; after the check
+    /// it is one `Declare` leaf, the user's name or the hidden binder whose
+    /// destructuring the body starts with.
     For {
-        var: String,
-        binding: BindingMode,
+        target: DestructureTarget,
         iter: Expr,
         body: Vec<Stmt>,
         orelse: Option<Vec<Stmt>>,
@@ -2056,10 +2069,13 @@ pub enum CollectionKind {
 /// One left-to-right generator/filter clause in a collection comprehension.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ComprehensionClause {
+    /// `for target in iter`, with `target` as in [`StmtKind::For`].
+    /// `unpack` is the checker's desugar of a destructuring target, a
+    /// `Destructure` of the hidden binder; the parser leaves it `None`.
     For {
-        var: String,
-        binding: BindingMode,
+        target: Box<DestructureTarget>,
         iter: Box<Expr>,
+        unpack: Option<Box<Stmt>>,
     },
     If(Box<Expr>),
 }
@@ -2304,7 +2320,12 @@ pub fn lambdas_in_expr<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
         } => {
             for clause in clauses {
                 match clause {
-                    ComprehensionClause::For { iter, .. } => lambdas_in_expr(iter, out),
+                    ComprehensionClause::For { target, iter, .. } => {
+                        for place in target.places() {
+                            lambdas_in_expr(place, out);
+                        }
+                        lambdas_in_expr(iter, out);
+                    }
                     ComprehensionClause::If(cond) => lambdas_in_expr(cond, out),
                 }
             }
@@ -2416,9 +2437,13 @@ pub fn lambdas_in_stmt<'a>(stmt: &'a Stmt, out: &mut Vec<&'a Expr>) {
                 lambdas_in_expr(message, out);
             }
         }
-        StmtKind::For { iter, .. } | StmtKind::ComptimeFor { iter, .. } => {
+        StmtKind::For { target, iter, .. } => {
+            for place in target.places() {
+                lambdas_in_expr(place, out);
+            }
             lambdas_in_expr(iter, out);
         }
+        StmtKind::ComptimeFor { iter, .. } => lambdas_in_expr(iter, out),
         StmtKind::Match { subject, cases } | StmtKind::ComptimeMatch { subject, cases } => {
             lambdas_in_expr(subject, out);
             for case in cases {
@@ -2664,7 +2689,17 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                     self.expr(value);
                     for clause in clauses {
                         match clause {
-                            ComprehensionClause::For { iter, .. } => self.expr(iter),
+                            ComprehensionClause::For {
+                                target,
+                                iter,
+                                unpack,
+                            } => {
+                                self.target(target);
+                                self.expr(iter);
+                                if let Some(unpack) = unpack {
+                                    self.block(std::slice::from_mut(unpack));
+                                }
+                            }
                             ComprehensionClause::If(condition) => self.expr(condition),
                         }
                     }
@@ -2939,8 +2974,12 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                     }
                 }
                 StmtKind::For {
-                    iter, body, orelse, ..
+                    target,
+                    iter,
+                    body,
+                    orelse,
                 } => {
+                    self.target(target);
                     self.expr(iter);
                     self.block(body);
                     if let Some(body) = orelse {

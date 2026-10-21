@@ -156,7 +156,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 ) {
                     break;
                 }
-                items.push(self.parse_target_item(None)?);
+                items.push(self.parse_target_item(None, Precedence::Lowest)?);
             }
             if !matches!(self.peek_token()?, Some(Token::Assign)) {
                 let elements = items
@@ -394,13 +394,27 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 Ok(StmtKind::Expr(call))
             }
             Some(Token::For) => {
-                let (var, binding, iter, body) = self.parse_for_rest()?;
-                if binding != BindingMode::Immutable {
-                    return Err(ParseError::UnexpectedToken(
-                        Token::For,
-                        "comptime for cannot use an explicit ref/var binding".to_string(),
-                    ));
-                }
+                let (target, iter) = self.parse_for_head()?;
+                let var = match target.kind {
+                    DestructureTargetKind::Declare {
+                        name,
+                        mode: BindingMode::Immutable,
+                    } => name,
+                    DestructureTargetKind::Discard => "_".to_string(),
+                    DestructureTargetKind::Declare { .. } => {
+                        return Err(ParseError::UnexpectedToken(
+                            Token::For,
+                            "comptime for cannot use an explicit ref/var binding".to_string(),
+                        ));
+                    }
+                    _ => {
+                        return Err(ParseError::UnexpectedToken(
+                            Token::For,
+                            "a destructuring 'comptime for' target is not supported".to_string(),
+                        ));
+                    }
+                };
+                let body = self.parse_suite()?;
                 Ok(StmtKind::ComptimeFor { var, iter, body })
             }
             _ => {
@@ -929,13 +943,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         Ok(StmtKind::While { cond, body, orelse })
     }
 
-    /// `for [ref | var] name in iter: <block>`
+    /// `for target in iter: <block>`
     pub(super) fn parse_for(&mut self) -> Result<StmtKind, ParseError> {
-        let (var, binding, iter, body) = self.parse_for_rest()?;
+        let (target, iter) = self.parse_for_head()?;
+        let body = self.parse_suite()?;
         let orelse = self.parse_loop_else()?;
         Ok(StmtKind::For {
-            var,
-            binding,
+            target,
             iter,
             body,
             orelse,
@@ -951,33 +965,16 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         Ok(Some(self.parse_suite()?))
     }
 
-    pub(super) fn parse_loop_binding_mode(&mut self) -> Result<BindingMode, ParseError> {
-        match self.peek_token()? {
-            Some(Token::Identifier(word)) if word == "ref" => {
-                self.next_token()?;
-                Ok(BindingMode::Ref)
-            }
-            Some(Token::Var) => {
-                self.next_token()?;
-                Ok(BindingMode::Var)
-            }
-            _ => Ok(BindingMode::Immutable),
-        }
-    }
-
-    /// Parses a `for [ref | var] name in iter: <block>` — the current token
-    /// must be `for`. Shared by runtime and compile-time loops.
-    pub(super) fn parse_for_rest(
-        &mut self,
-    ) -> Result<(String, BindingMode, Expr, Vec<Stmt>), ParseError> {
+    /// Parses a `for target in iter:` head — the current token must be
+    /// `for`. Shared by runtime and compile-time loops, which then parse
+    /// the body.
+    pub(super) fn parse_for_head(&mut self) -> Result<(DestructureTarget, Expr), ParseError> {
         self.expect(&Token::For, "Expected 'for'")?;
-        let binding = self.parse_loop_binding_mode()?;
-        let var = self.expect_identifier("Expected a loop variable name after 'for'")?;
-        self.expect(&Token::In, "Expected 'in' after the loop variable")?;
+        let target = self.parse_loop_target()?;
+        self.expect(&Token::In, "Expected 'in' after the loop target")?;
         let iter = self.parse_expression(Precedence::Lowest)?;
         self.expect(&Token::Colon, "Expected ':' after the for-loop iterable")?;
-        let body = self.parse_suite()?;
-        Ok((var, binding, iter, body))
+        Ok((target, iter))
     }
 
     /// `return` or `return expr`

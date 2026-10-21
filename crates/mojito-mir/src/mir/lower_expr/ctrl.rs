@@ -469,7 +469,9 @@ impl<'a> Flatten<'a> {
                     }],
                 });
             }
-            CheckedComprehensionClause::For { var, iter, .. } => {
+            CheckedComprehensionClause::For {
+                var, iter, unpack, ..
+            } => {
                 let iter = plan.operand(*iter);
                 let iterator_name = format!("$compiter{}", self.vars.len());
                 let iterator = self.var(&iterator_name);
@@ -610,6 +612,20 @@ impl<'a> Flatten<'a> {
                         iterator_object,
                         binding.owner,
                     );
+                    // A destructuring target distributes the binder to its
+                    // leaves, as the statement `target = binder` would.
+                    if let Some(unpack) = unpack {
+                        let places = unpack
+                            .target
+                            .expressions()
+                            .into_iter()
+                            .map(|id| plan.operand(id))
+                            .collect::<Vec<_>>();
+                        let value = plan.operand(unpack.value);
+                        this.with_statement_loans(|this| {
+                            this.lower_destructure(&unpack.target, &places, value);
+                        });
+                    }
                     this.comprehension_clauses(plan, index + 1);
                     MirTerm::Continue { label }
                 });

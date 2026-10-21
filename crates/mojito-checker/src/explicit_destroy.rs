@@ -1249,12 +1249,16 @@ fn check_stmt(
             }
         }
         StmtKind::For {
-            var,
+            target,
             iter,
             body,
             orelse,
-            ..
         } => {
+            let Some((var, _)) = target.loop_binding() else {
+                return Err(TypeError::InvariantViolation(
+                    "a loop target reached explicit destruction unspliced".to_string(),
+                ));
+            };
             check_expr(iter, &mut env, node_facts, types)?;
             finish_statement(&mut env, types)?;
             let explicit = if deletability.bindings.contains(&stmt.source_span()) {
@@ -1421,7 +1425,7 @@ fn check_comprehension_expr(
     let result = (|| {
         for clause in clauses {
             match clause {
-                mojito_ast::ast::ComprehensionClause::For { iter, .. } => {
+                mojito_ast::ast::ComprehensionClause::For { iter, unpack, .. } => {
                     check_expr(iter, env, node_facts, types)?;
                     let binding = bindings.get(binding_index).ok_or_else(|| {
                         TypeError::InvariantViolation(
@@ -1440,6 +1444,13 @@ fn check_comprehension_expr(
                         .map(|info| info.message.clone());
                     env.push();
                     env.declare(&binding.name, explicit.clone(), message, explicit.is_some());
+                    if let Some(unpack) = unpack
+                        && let StmtKind::Destructure { target, .. } = &unpack.kind
+                    {
+                        for place in target.places() {
+                            check_expr(place, env, node_facts, types)?;
+                        }
+                    }
                 }
                 mojito_ast::ast::ComprehensionClause::If(condition) => {
                     check_expr(condition, env, node_facts, types)?;

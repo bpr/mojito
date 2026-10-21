@@ -186,14 +186,14 @@ pub fn walk_stmt<V: Visitor>(visitor: &mut V, statement: &Stmt) {
         }
         StmtKind::Scope(body) => walk_block(visitor, body),
         StmtKind::For {
-            var,
+            target,
             iter,
             body,
             orelse,
-            ..
         } => {
             walk_expr(visitor, iter);
-            if visitor.enter_scope(&[var.as_str()]) {
+            walk_target(visitor, target);
+            if visitor.enter_scope(&target.declared_names()) {
                 walk_block(visitor, body);
             }
             walk_optional_block(visitor, orelse.as_deref());
@@ -410,10 +410,24 @@ pub fn walk_expr<V: Visitor>(visitor: &mut V, expression: &Expr) {
         } => {
             for clause in clauses {
                 match clause {
-                    ComprehensionClause::For { var, iter, .. } => {
+                    ComprehensionClause::For {
+                        target,
+                        iter,
+                        unpack,
+                    } => {
                         walk_expr(visitor, iter);
-                        if !visitor.enter_scope(&[var.as_str()]) {
+                        walk_target(visitor, target);
+                        let mut names = target.declared_names();
+                        if let Some(unpack) = unpack
+                            && let StmtKind::Destructure { target, .. } = &unpack.kind
+                        {
+                            names.extend(target.declared_names());
+                        }
+                        if !visitor.enter_scope(&names) {
                             return;
+                        }
+                        if let Some(unpack) = unpack {
+                            walk_stmt(visitor, unpack);
                         }
                     }
                     ComprehensionClause::If(condition) => walk_expr(visitor, condition),
@@ -923,7 +937,14 @@ pub fn walk_stmt_mut<V: MutVisitor>(visitor: &mut V, statement: &mut Stmt) {
             }
         }
         StmtKind::Scope(body) => walk_block_mut(visitor, body),
-        StmtKind::For { iter, body, .. } | StmtKind::ComptimeFor { iter, body, .. } => {
+        StmtKind::For {
+            target, iter, body, ..
+        } => {
+            walk_expr_mut(visitor, iter);
+            walk_target_mut(visitor, target);
+            walk_block_mut(visitor, body);
+        }
+        StmtKind::ComptimeFor { iter, body, .. } => {
             walk_expr_mut(visitor, iter);
             walk_block_mut(visitor, body);
         }
@@ -1233,7 +1254,17 @@ pub fn walk_expr_mut<V: MutVisitor>(visitor: &mut V, expr: &mut Expr) {
             walk_expr_mut(visitor, value);
             for clause in clauses {
                 match clause {
-                    ComprehensionClause::For { iter, .. } => walk_expr_mut(visitor, iter),
+                    ComprehensionClause::For {
+                        target,
+                        iter,
+                        unpack,
+                    } => {
+                        walk_expr_mut(visitor, iter);
+                        walk_target_mut(visitor, target);
+                        if let Some(unpack) = unpack {
+                            walk_stmt_mut(visitor, unpack);
+                        }
+                    }
                     ComprehensionClause::If(condition) => walk_expr_mut(visitor, condition),
                 }
             }

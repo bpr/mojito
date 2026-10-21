@@ -815,12 +815,25 @@ impl Lower {
         if let Some(name) = name
             && self.scopes.iter().any(|scope| scope.contains_key(name))
         {
-            let slot = match node.binding.and_then(|binding| self.bindings.get(&binding)) {
-                Some(slot) => *slot,
-                None => self.var(&self.resolved(name)),
-            };
-            let recorded = *self.slots.entry(id).or_insert(slot);
-            debug_assert_eq!(recorded, slot, "a node resolves to one slot per frame");
+            // A binding an opaque construct declared (a destructured leaf, a
+            // comprehension binder) may shadow the spelling's slot in scope;
+            // MIR resolves it by its binding.
+            let slot = node
+                .binding
+                .and_then(|binding| self.bindings.get(&binding).copied())
+                .or_else(|| {
+                    let slot = self.var(&self.resolved(name));
+                    let shadowed = node.binding.is_some_and(|binding| {
+                        self.bindings
+                            .iter()
+                            .any(|(owner, declared)| *declared == slot && *owner != binding)
+                    });
+                    (!shadowed).then_some(slot)
+                });
+            if let Some(slot) = slot {
+                let recorded = *self.slots.entry(id).or_insert(slot);
+                debug_assert_eq!(recorded, slot, "a node resolves to one slot per frame");
+            }
         }
         for operand in named_operands(&node.op) {
             self.resolve_names(operand);

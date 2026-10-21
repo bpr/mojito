@@ -525,7 +525,11 @@ fn collect_bound_names<'a>(body: &'a [Stmt], names: &mut HashSet<&'a str>) {
             | StmtKind::Comptime { name, .. } => {
                 names.insert(name);
             }
-            StmtKind::For { var, body, .. } | StmtKind::ComptimeFor { var, body, .. } => {
+            StmtKind::For { target, body, .. } => {
+                names.extend(target.declared_names());
+                collect_bound_names(body, names);
+            }
+            StmtKind::ComptimeFor { var, body, .. } => {
                 names.insert(var);
                 collect_bound_names(body, names);
             }
@@ -593,7 +597,13 @@ fn remove_bound_names(body: &[Stmt], names: &mut HashMap<String, String>) {
             | StmtKind::Trait { name, .. } => {
                 names.remove(name);
             }
-            StmtKind::For { var, body, .. } | StmtKind::ComptimeFor { var, body, .. } => {
+            StmtKind::For { target, body, .. } => {
+                for name in target.declared_names() {
+                    names.remove(name);
+                }
+                remove_bound_names(body, names);
+            }
+            StmtKind::ComptimeFor { var, body, .. } => {
                 names.remove(var);
                 remove_bound_names(body, names);
             }
@@ -2172,7 +2182,16 @@ fn rewrite_stmt(
                 rewrite_program(&mut case.body, names, namespaces);
             }
         }
-        StmtKind::For { iter, body, .. } | StmtKind::ComptimeFor { iter, body, .. } => {
+        StmtKind::For {
+            target, iter, body, ..
+        } => {
+            for place in target.places_mut() {
+                rewrite_expr(place, names, namespaces);
+            }
+            rewrite_expr(iter, names, namespaces);
+            rewrite_program(body, names, namespaces);
+        }
+        StmtKind::ComptimeFor { iter, body, .. } => {
             rewrite_expr(iter, names, namespaces);
             rewrite_program(body, names, namespaces);
         }

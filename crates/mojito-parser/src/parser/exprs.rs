@@ -55,15 +55,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             match self.peek_token()? {
                 Some(Token::For) => {
                     self.next_token()?;
-                    let binding = self.parse_loop_binding_mode()?;
-                    let var =
-                        self.expect_identifier("Expected a comprehension variable after 'for'")?;
+                    let target = self.parse_loop_target()?;
                     self.expect(&Token::In, "Expected 'in' in comprehension")?;
                     let iter = self.parse_expression(Precedence::Conditional)?;
                     clauses.push(ComprehensionClause::For {
-                        var,
-                        binding,
+                        target: Box::new(target),
                         iter: Box::new(iter),
+                        unpack: None,
                     });
                 }
                 Some(Token::If) => {

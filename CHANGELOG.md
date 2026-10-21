@@ -8,6 +8,24 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `for` and comprehension targets destructure each element, as on the pin:
+  `for a, b in pairs`, `for (var a, _) in pairs`, `for ref (a, b) in
+  pairs`, `for i, (var x, ref y) in nested`, `for [first, *rest] in rows`,
+  `for p.x, p.y in pairs`, and `[a * 2 for a, _ in pairs]` run. A bare name
+  declares an immutable binding to its piece (upstream's `Bind` pattern),
+  shadowing an outer name; the loop binds each element to a hidden
+  immutable binder, never copying a yielded reference, and the checker
+  desugars the target into the body's first statements, so `for ref (a, b)`
+  leaves `a` read-only, a sequence target needs a raising context, and an
+  owned tuple yield is destroyed after its leaves' last use. A comprehension
+  clause takes a tuple target, which MIR lowers after the binder; a sequence
+  or place target in a clause is rejected (R1227), and `for _ in` no longer
+  declares a readable `_`
+  (`assets/ok/for_destructuring_targets.mojo`,
+  `for_destructuring_lifetimes.mojo`,
+  `for_destructuring_closure_capture.mojo`,
+  `comprehension_destructuring_targets.mojo`; `for_target_*` in the error
+  folders). This closes R1138.
 - Starred sequence patterns and targets (`case [first, *rest]`,
   `case [*_, 5]`, `var [a, *middle, b] = values`, `[a, *_, b] = values`)
   now run as on the pin. A pattern tests a minimum length, reads an element
@@ -391,6 +409,12 @@ to evolve under the `0.x` compatibility rules.
   the package format is 70.
 
 ### Fixed
+
+- A destructured leaf or comprehension binder that shadows an outer name
+  (`[x * 2 for x in xs]` beside a local `x`, `(ref x, ref y) = t` in a loop
+  body) no longer stops MIR lowering on "HIR's slot for a name is its
+  binding's": HIR records no slot for a read of a binding it did not
+  declare whose spelling names another binding's slot.
 
 - A pointer dereferences its address, never its origin's place, as on the
   pin: after `var p = Pointer(to=b).unsafe_origin_cast[origin_of(a)]()`,

@@ -2854,7 +2854,12 @@ impl<'a> Flatten<'a> {
     /// target's place leaves, in order) are evaluated first, as the pin
     /// evaluates destinations before the right-hand side, then `value` once,
     /// then each leaf is bound, written, or discarded from its element.
-    fn lower_destructure(&mut self, target: &CheckedTarget, places: &[Node<'a>], value: Node<'a>) {
+    pub(in crate::mir) fn lower_destructure(
+        &mut self,
+        target: &CheckedTarget,
+        places: &[Node<'a>],
+        value: Node<'a>,
+    ) {
         let plan = value
             .tuple_unpack_plan()
             .expect("a checked destructuring value carries an extraction plan");
@@ -3025,9 +3030,12 @@ impl<'a> Flatten<'a> {
                     );
                     continue;
                 }
+                // A `ref` leaf, or a loop target's bare name, binds the
+                // element's reference.
                 CheckedTargetKind::Declare {
                     name,
-                    mode: mojito_ast::ast::BindingMode::Ref,
+                    mode:
+                        mojito_ast::ast::BindingMode::Ref | mojito_ast::ast::BindingMode::Immutable,
                     binding,
                     binding_ty,
                 } => {

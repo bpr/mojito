@@ -35,7 +35,17 @@ impl Checker {
         let result = (|| {
             for clause in clauses {
                 match clause {
-                    mojito_ast::ast::ComprehensionClause::For { var, binding, iter } => {
+                    mojito_ast::ast::ComprehensionClause::For { target, iter, .. } => {
+                        let hidden = format!("$for{}", target.syntax_id.0);
+                        let (var, binding, unpack) = match target.loop_binding() {
+                            Some((name, mode)) => (name, mode, false),
+                            None => (
+                                hidden.as_str(),
+                                mojito_ast::ast::BindingMode::Immutable,
+                                true,
+                            ),
+                        };
+                        let binding = &binding;
                         self.register_named_bindings(iter)?;
                         let iter_ty = self.convert_literal_iterable(iter, self.infer(iter)?);
                         let (source, source_mutable) = self.iteration_source(iter);
@@ -77,7 +87,7 @@ impl Checker {
                         })?;
                         iterables.push(iter.source_span());
                         bindings.push(mojito_checked::checked::CheckedComprehensionBinding {
-                            name: var.clone(),
+                            name: var.to_string(),
                             owner,
                             ty: self.lookup(var).cloned().ok_or_else(|| {
                                 TypeError::InvariantViolation(format!(
@@ -87,6 +97,9 @@ impl Checker {
                             plan: binding_plan,
                             deinitable,
                         });
+                        if unpack {
+                            self.check_loop_target(target, var, None, true)?;
+                        }
                     }
                     mojito_ast::ast::ComprehensionClause::If(condition) => {
                         self.register_named_bindings(condition)?;

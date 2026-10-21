@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1227**.
+Next free ID: **R1233**.
 
 ## Ordered Work
 
@@ -1840,6 +1840,43 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1230 A by-value capture of a reference binding keeps the
+  reference's type**
+
+  Problem: a nested `def f() {imm a}` or `def h() {var a}`, or a
+  `lambda {var a}`, over a reference binding `a` (`for a in xs`, a bare
+  loop-target leaf, `ref a = xs[0]`) captures the `ref` type itself, where
+  the pin copies the referent into the closure.
+  - The capture's declared parameter is `ref Int` with mode `copy`
+    (`closure.make` in `mojito emit-mir`), so the `{var a}` def fails MIR
+    ("copied value has type Int, destination has type ref Int"), the
+    `{imm a}` def fails elaboration ("loads the handle of reference slot
+    ... instead of its referent"), and the `{var a}` lambda runs on the VM
+    but crashes natively.
+  - Lever: a copying capture of a reference binding reads through it, as
+    a `var c = a` initializer does, and the closure's parameter takes the
+    referent's type.
+  - Probe: `conformance/probes/reference_binding_value_capture.mojo`
+    (the pin prints `331`).
+  - Found while landing R1138 (2026-10-20).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1232 A sequence store's nested tuple element followed by a `try`
+  that redeclares its leaves fails MIR verification**
+
+  Problem: `[(ref a, ref b), _] = t` inside an `if`, then
+  `try: [ref a, ref b] = s`, fails with "drop.var of slot ...
+  ('$elem...') that every path has already ended", where the pin prints
+  `1 2` and `5 6`.
+  - The nested tuple element is read into a hidden `$elem<id>`
+    (`read_into_hidden` in `checker/destructure.rs`) whose drop is
+    elaborated on a path the `try` region's cleanup already ended.
+  - Probe: `conformance/probes/sequence_nested_ref_redeclared_in_try.mojo`.
+  - Found while planning R1138 (2026-10-20).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 - [ ] **R1160 An element store while a contiguous `List` slice is live is
   rejected**
 
@@ -2727,26 +2764,20 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1138 `for` and comprehension targets destructure each element**
+- [ ] **R1231 A lambda called in an augmented assignment's value is a
+  compiler invariant violation**
 
-  Problem: `for a, b in pairs`, `for (var a, _) in pairs`, and
-  `[a * b for a, b in pairs]` are parse errors, where the pin binds each
-  element through a recursive target with immutable default bindings.
-  - `StmtKind::For` and `ComprehensionClause` take a `DestructureTarget`
-    (`docs/grammar.md` first). The checker binds the yielded value to a
-    hidden per-iteration name and destructures it with
-    `check_destructure`, reusing the iterator-result adaptation and the
-    tuple accessor contract.
-  - A yielded reference is not copied to unpack it. Each iteration's
-    bindings keep their own identities, so a closure captures that
-    iteration's values.
-  - `for ref (a, b)` leaves `a` immutable, as at the pin.
-  - Sequence targets (`for [a, *rest] in rows`) use R1137's decomposition.
-  - Stop: tuple-yielding iteration, nested mixed targets, a comprehension,
-    `continue`/`break` cleanup, and closure capture run. A missing tuple
-    structure and a reference escaping its iterator's owner reject.
-  - Depends on R1137 (the sequence target decomposition).
-  - Model: Fable, Not Planned.
+  Problem: `total += (lambda -> Int: 1)()` stops with "compiler invariant
+  violated: lambda reached inference before scoped checking", where the
+  pin prints `1`.
+  - The same lambda in a plain assignment (`total = total + (lambda ...)()`)
+    runs, so the augmented assignment's check infers its value before the
+    statement-root registration that checks a lambda's hidden `def`
+    (`Checker::check_lambda`) has run over it.
+  - Probe: `conformance/probes/augmented_lambda_value.mojo`.
+  - Found while planning R1138 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1132 `EnumLike` is not declared, so `Optional` has no enum cases**
 
@@ -6514,9 +6545,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   Else", where the pin runs it once the loop ends without a `break`.
   - Upstream's `ParamForOp` has an `else` region, reached when
     `paramfor_has_next` is false.
-  - Tuple targets (`comptime for a, b in …`) are unverified too.
+  - Tuple targets (`comptime for a, b in …`) are R1228.
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R1228 A `comptime for` target does not destructure each element**
+
+  Problem: `comptime for a, b in [(1, 2)]:` is a parse error ("a
+  destructuring 'comptime for' target is not supported"), where the pin
+  prints `1 2`.
+  - Upstream's `parseComptimeFor` stores each element through
+    `emitDestructuringPValue(nextValue, targetExpr)`
+    (`ParserStmts.cpp:3020`); `StmtKind::ComptimeFor` binds one name, so
+    the parser rejects any other target `parse_loop_target` reads.
+  - Lever: `ComptimeFor` takes the loop target, and each unrolled step
+    binds its leaves to the element's compile-time pieces.
+  - Probe: `conformance/probes/comptime_for_destructuring_target.mojo`.
+  - Found while landing R1138 (2026-10-20).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1179 A struct header's `where` clause over the struct's own type
   pack stops the pre-check elaborator**
@@ -7040,6 +7087,10 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Probe: `var (ref a, b) = pair; print(a, b)` is rejected only by the
     R1082 loan ("access to 'pair' conflicts with live reference 'a'"),
     since `a` exists.
+  - Probe: `for var (var a, b) in pairs: print(a, b)` runs, where the pin
+    warns "nested 'var' or 'ref' patterns are redundant" and rejects the
+    read with "use of unknown declaration 'a'"; the loop target shares the
+    parser's distribution.
   - Found while planning R1136 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9886,6 +9937,27 @@ follow-ups the landed producer stages filed come last.
   - Depends on R874.
   - Model: Opus, Not Planned.
 
+- [ ] **R1227 A comprehension lowers in MIR as an expression, so its
+  clause cannot run a sequence or place target**
+
+  Problem: `[f for [f, *_] in rows]` and `[q[0] for q[0] in xs]` are
+  rejected ("a sequence or place target in a comprehension clause"),
+  where the pin prints `2 1 4` and `2 7 8 8`.
+  - Upstream's `emitComprehensionsAnd` (`ParserStmts.cpp:5466`) emits
+    each clause as `emitForStmt`, the rest of the clauses as its body, so
+    a clause target is a `for` target.
+  - Mojito lowers the comprehension whole in MIR
+    (`comprehension_clauses` in `lower_expr/ctrl.rs`), so a clause runs
+    only a tuple target's extraction plan (`CheckedComprehensionUnpack`),
+    never the statements R1136/R1137's sequence desugar and a place store
+    are.
+  - Lever: lower a comprehension as a nest of `for` statements through
+    HIR, so a clause target is the `for` statement's desugar.
+  - Probe: `conformance/probes/comprehension_sequence_target.mojo`.
+  - Found while landing R1138 (2026-10-20).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 - [ ] **R892 HIR's block arena is a `petgraph` `StableGraph` that holds no
   edge**
 
@@ -10254,6 +10326,20 @@ residue found inside a task moves to the task that owns its fix.
     checks since R665 (`assets/ok/generic_iterable_explicit_iter.mojo`).
   - Add both to `stdlib/std/iter.mojo` beside `next`.
   - Found while landing R665 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1229 `enumerate` and `zip` are missing**
+
+  Problem: `for i, x in enumerate(xs)` and `for x, y in zip(xs, ys)` stop
+  with "Undefined variable 'enumerate'", where the pin's `std.iter`
+  (`Mojo/stdlib/std/iter/__init__.mojo`) yields tuples a loop target
+  destructures.
+  - They are the commonest tuple-yielding iteration.
+  - Port upstream's `_Enumerate` and `_Zip2` iterators and the free
+    functions over the bundled `Iterator`/`Iterable` traits.
+  - Probe: `conformance/probes/enumerate_zip_iteration.mojo`.
+  - Found while planning R1138 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

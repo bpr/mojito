@@ -333,8 +333,7 @@ impl Elab<'_> {
                 ));
             }
             StmtKind::For {
-                var,
-                binding,
+                target,
                 iter,
                 body,
                 orelse,
@@ -344,8 +343,7 @@ impl Elab<'_> {
                 out.push(rebuilt(
                     stmt,
                     StmtKind::For {
-                        var: var.clone(),
-                        binding: *binding,
+                        target: target.clone(),
                         iter: iter.clone(),
                         body,
                         orelse,

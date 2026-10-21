@@ -70,6 +70,7 @@ assets/ok/collection_display_default.mojo	main	exe-differential	sanitized
 assets/ok/collection_truthiness.mojo	main	exe-differential	sanitized
 assets/ok/collector_runtime_index.mojo	main	exe-differential	sanitized
 assets/ok/comparable_ordered_algorithms.mojo	main	exe-differential	sanitized
+assets/ok/comprehension_destructuring_targets.mojo	main	exe-differential	sanitized
 assets/ok/comprehension_temporary_source_drop.mojo	main	exe-differential	sanitized
 assets/ok/comptime_alias_generic.mojo	main	exe-differential	sanitized
 assets/ok/comptime_alias_value_body.mojo	main	exe-differential	sanitized
@@ -263,6 +264,9 @@ assets/ok/file_descriptor_stdout_order.mojo	main	exe-differential	sanitized
 assets/ok/file_handle_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/float16_display.mojo	main	exe-differential	sanitized
 assets/ok/float16_semantics.mojo	main	exe-differential	sanitized
+assets/ok/for_destructuring_closure_capture.mojo	main	exe-differential	sanitized
+assets/ok/for_destructuring_lifetimes.mojo	main	exe-differential	sanitized
+assets/ok/for_destructuring_targets.mojo	main	exe-differential	sanitized
 assets/ok/forward_struct_reference_iterator.mojo	main	exe-differential	sanitized
 assets/ok/forwarded_argument_instances.mojo	main	exe-differential	sanitized
 assets/ok/forwarded_parameter_instances.mojo	main	exe-differential	sanitized
