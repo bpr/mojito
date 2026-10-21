@@ -5,13 +5,19 @@
 //! Each register takes a lattice value: unknown, one constant, or
 //! overdefined. Blocks become executable from the entry, a `branch` making
 //! only its taken arm executable while its condition is one constant. A
-//! structured body is walked region by region, as `SCCP` walks `hlcf`: an
-//! `if` without elifs enters only the arm a constant condition takes, its
-//! results meeting the values its executable arms yield, a loop's
-//! arguments meet its operands and the values its executable `continue`s
-//! carry, and its results meet the values its executable `break`s carry,
-//! while a loop's body, every region of an `if` with elifs, a `comptime if`, a `match`,
-//! and a `try` are executable, the other ops' results overdefined. The
+//! structured body is walked region by region, as `SCCP` walks `hlcf`
+//! through `getEntryTargets` and `getBranchTargets`: an `if` enters only the
+//! arm a constant condition takes, or the first elif's condition region
+//! when it is false, and an `if.elifcond.yield` enters its arm, the next
+//! region, or both alike, the arguments of each region it enters meeting
+//! the values it carries; the `if`'s results meet the values its executable
+//! arms yield. A `match` enters its first case, and each executable
+//! `match.next` the next case (the else region after the last), its values
+//! meeting that region's arguments. A loop's arguments meet its operands
+//! and the values its executable `continue`s carry, and its results meet
+//! the values its executable `break`s carry, while a loop's body, a
+//! `comptime if`, and a `try` are executable, the other ops' results
+//! overdefined. The
 //! instructions of executable blocks are evaluated until nothing
 //! changes: a scalar or SIMD `const` ([`Const::is_folded`], a `UInt` or
 //! SIMD `Const::Value` included) is its constant, an instruction
@@ -39,8 +45,8 @@ use super::pre_elaboration::BodyPass;
 use mojito_common::timing;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
-    Const, LoopLabel, MirBlock, MirBlockId, MirDeclarations, MirFunction, MirInstr, MirTerm, Reg,
-    RegionFrame, instruction_regions,
+    Const, LoopLabel, MirBlock, MirBlockId, MirCase, MirDeclarations, MirElif, MirFunction,
+    MirInstr, MirTerm, Reg, RegionFrame, instruction_regions,
 };
 use mojito_types::types::Ty;
 use std::collections::HashMap;
@@ -60,6 +66,7 @@ pub fn sccp(_name: &str, function: &mut MirFunction, declarations: &MirDeclarati
         declarations,
         changed: true,
         loops: Vec::new(),
+        cases: Vec::new(),
     };
     while std::mem::take(&mut solver.changed) {
         let mut escapes = Vec::new();
@@ -97,13 +104,15 @@ enum Lattice {
 }
 
 /// The fixpoint's state: the lattice, whether a walk raised it, and the
-/// loops enclosing the block being walked, innermost last.
+/// loops and `match` cases enclosing the block being walked, innermost
+/// last.
 struct Solver<'a> {
     lattice: Vec<Lattice>,
     reg_types: &'a HashMap<u32, Ty>,
     declarations: &'a MirDeclarations,
     changed: bool,
     loops: Vec<LoopFrame>,
+    cases: Vec<CaseFrame>,
 }
 
 /// A loop enclosing the block being walked: what its `break`s and
@@ -112,6 +121,13 @@ struct LoopFrame {
     label: Option<LoopLabel>,
     args: Vec<Reg>,
     results: Vec<Reg>,
+}
+
+/// A `match` case enclosing the block being walked: the arguments of the
+/// region its `match.next`s enter, and whether an executable one does.
+struct CaseFrame {
+    next_args: Vec<Reg>,
+    next: bool,
 }
 
 impl Solver<'_> {
@@ -126,11 +142,20 @@ impl Solver<'_> {
                 cond,
                 then,
                 elifs,
+                else_args,
                 orelse,
             } = instruction
-                && elifs.is_empty()
             {
-                self.visit_if(results, *cond, [then, orelse], escapes);
+                self.visit_if(results, *cond, then, elifs, (else_args, orelse), escapes);
+                continue;
+            }
+            if let MirInstr::Match {
+                cases,
+                else_args,
+                orelse,
+            } = instruction
+            {
+                self.visit_match(cases, (else_args, orelse), escapes);
                 continue;
             }
             if let MirInstr::Loop {
@@ -165,6 +190,14 @@ impl Solver<'_> {
                 self.resolve_exit(*label, values, true);
                 Vec::new()
             }
+            MirTerm::MatchNext(values) => {
+                if let Some(frame) = self.cases.last_mut() {
+                    frame.next = true;
+                    let next_args = frame.next_args.clone();
+                    self.meet_values(&next_args, values);
+                }
+                Vec::new()
+            }
             MirTerm::Jump(target) => vec![*target],
             MirTerm::Branch {
                 cond,
@@ -186,38 +219,110 @@ impl Solver<'_> {
             | MirTerm::ReturnWithCleanup { .. }
             | MirTerm::TryYield
             | MirTerm::Yield(_)
-            | MirTerm::ElifCond(_)
+            | MirTerm::ElifCond { .. }
             | MirTerm::ComptimeYield(_)
             | MirTerm::ComptimeBreak
             | MirTerm::ComptimeContinue
-            | MirTerm::MatchNext
             | MirTerm::MatchComplete
             | MirTerm::Unreachable => Vec::new(),
         }
     }
 
-    /// Evaluate an `if` without elifs, as `IfOp::getEntryTargets` enters
-    /// it: a constant condition makes only its arm executable, an unknown
-    /// one neither yet, and any other both. Each result meets the values
-    /// the executable arms yield to it.
+    /// Evaluate an `if`, as `IfOp::getEntryTargets` enters it and
+    /// `IfElifCondYieldOp::getBranchTargets` goes on: the op and each
+    /// executable `if.elifcond.yield` take the arm their condition selects,
+    /// the next region (an elif's condition, or the else region), or both
+    /// ([`Self::targets`]), each `if.elifcond.yield` meeting the arguments
+    /// of every region it enters with its values. Each result meets the
+    /// values the executable arms yield to it.
     fn visit_if(
         &mut self,
         results: &[Reg],
         cond: Reg,
-        [then, orelse]: [&[MirBlock]; 2],
+        then: &[MirBlock],
+        elifs: &[MirElif],
+        (else_args, orelse): (&[Reg], &[MirBlock]),
         escapes: &mut Vec<MirBlockId>,
     ) {
-        let arms = match self.lattice.get(cond.0 as usize) {
-            Some(Lattice::Constant(Const::Bool(true))) => vec![then],
-            Some(Lattice::Constant(Const::Bool(false))) => vec![orelse],
-            Some(Lattice::Unknown) => Vec::new(),
-            _ => vec![then, orelse],
-        };
-        for arm in arms {
-            for values in self.visit_region(arm, escapes) {
-                self.meet_values(results, &values);
+        let (taken, mut next) = self.targets(cond);
+        if taken {
+            self.visit_arm(results, then, escapes);
+        }
+        for (index, elif) in elifs.iter().enumerate() {
+            if !next {
+                return;
+            }
+            let next_args = elifs
+                .get(index + 1)
+                .map_or(else_args, |rest| &rest.cond_args);
+            next = false;
+            let mut taken = false;
+            for term in self.visit_region(&elif.cond, escapes) {
+                if let MirTerm::ElifCond { cond, values } = term {
+                    let (then, on) = self.targets(*cond);
+                    if then {
+                        self.meet_values(&elif.then_args, values);
+                    }
+                    if on {
+                        self.meet_values(next_args, values);
+                    }
+                    taken |= then;
+                    next |= on;
+                }
+            }
+            if taken {
+                self.visit_arm(results, &elif.then, escapes);
             }
         }
+        if next {
+            self.visit_arm(results, orelse, escapes);
+        }
+    }
+
+    /// Evaluate an `if` arm, meeting each of `results` with the values its
+    /// executable blocks yield.
+    fn visit_arm(&mut self, results: &[Reg], arm: &[MirBlock], escapes: &mut Vec<MirBlockId>) {
+        for term in self.visit_region(arm, escapes) {
+            if let MirTerm::Yield(values) = term {
+                self.meet_values(results, values);
+            }
+        }
+    }
+
+    /// The regions a `Bool` condition `cond` enters, as the arm it selects
+    /// and the region after: a constant one only its own, an unknown one
+    /// neither yet, and any other both.
+    fn targets(&self, cond: Reg) -> (bool, bool) {
+        match self.lattice.get(cond.0 as usize) {
+            Some(Lattice::Constant(Const::Bool(true))) => (true, false),
+            Some(Lattice::Constant(Const::Bool(false))) => (false, true),
+            Some(Lattice::Unknown) => (false, false),
+            _ => (true, true),
+        }
+    }
+
+    /// Evaluate a `match`, as `MatchOp::getEntryTargets` enters its first
+    /// case and `MatchNextOp::getBranchTargets` the next: a case, or the
+    /// else region after the last, is executable once an executable
+    /// `match.next` of the case before it enters it.
+    fn visit_match(
+        &mut self,
+        cases: &[MirCase],
+        (else_args, orelse): (&[Reg], &[MirBlock]),
+        escapes: &mut Vec<MirBlockId>,
+    ) {
+        for (index, case) in cases.iter().enumerate() {
+            let next_args = cases.get(index + 1).map_or(else_args, |next| &next.args);
+            self.cases.push(CaseFrame {
+                next_args: next_args.to_vec(),
+                next: false,
+            });
+            self.visit_region(&case.body, escapes);
+            if !self.cases.pop().is_some_and(|frame| frame.next) {
+                return;
+            }
+        }
+        self.visit_region(orelse, escapes);
     }
 
     /// Meet each register an executable `break` or `continue` labelled
@@ -256,25 +361,30 @@ impl Solver<'_> {
     }
 
     /// Evaluate a region's executable blocks, from its entry, and return
-    /// the values each of them yields to the op holding the region.
-    fn visit_region(
+    /// their terminators that end the region for the op holding it: each
+    /// `yield`, `comptime.yield`, and `if.elifcond.yield`.
+    fn visit_region<'b>(
         &mut self,
-        blocks: &[MirBlock],
+        blocks: &'b [MirBlock],
         escapes: &mut Vec<MirBlockId>,
-    ) -> Vec<Vec<Reg>> {
+    ) -> Vec<&'b MirTerm> {
         let mut executable = vec![false; blocks.len()];
         let mut pending = vec![0];
-        let mut yields = Vec::new();
+        let mut ends = Vec::new();
         while let Some(block) = pending.pop() {
             if block >= blocks.len() || std::mem::replace(&mut executable[block], true) {
                 continue;
             }
             pending.extend(self.visit(&blocks[block], escapes));
-            if let MirTerm::Yield(values) | MirTerm::ComptimeYield(values) = &blocks[block].term {
-                yields.push(values.clone());
+            let term = &blocks[block].term;
+            if matches!(
+                term,
+                MirTerm::Yield(_) | MirTerm::ComptimeYield(_) | MirTerm::ElifCond { .. }
+            ) {
+                ends.push(term);
             }
         }
-        yields
+        ends
     }
 
     /// Meet each result of `instruction` with the value it computes.

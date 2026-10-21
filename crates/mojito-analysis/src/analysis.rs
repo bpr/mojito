@@ -469,6 +469,7 @@ mod interior_origin_tests {
             results: Vec::new(),
             cond: Reg(99),
             then,
+            else_args: Vec::new(),
             elifs: Vec::new(),
             orelse,
         }
@@ -956,6 +957,7 @@ mod structured_move_tests {
             results: Vec::new(),
             cond: Reg(60),
             then,
+            else_args: Vec::new(),
             elifs: Vec::new(),
             orelse,
         }
@@ -1073,13 +1075,20 @@ mod structured_move_tests {
     fn structured_match_next_carries_its_state_to_the_next_case() {
         let test = if_else(
             yields(Vec::new()),
-            block(vec![take(X, 1)], MirTerm::MatchNext),
+            block(vec![take(X, 1)], MirTerm::MatchNext(Vec::new())),
         );
         let f = function(
             vec![MirInstr::Match {
+                else_args: Vec::new(),
                 cases: vec![
-                    block(vec![test], MirTerm::MatchComplete),
-                    block(vec![read(X, 2)], MirTerm::MatchComplete),
+                    mojito_mir::mir::MirCase {
+                        args: Vec::new(),
+                        body: block(vec![test], MirTerm::MatchComplete),
+                    },
+                    mojito_mir::mir::MirCase {
+                        args: Vec::new(),
+                        body: block(vec![read(X, 2)], MirTerm::MatchComplete),
+                    },
                 ],
                 orelse: yields(Vec::new()),
             }],

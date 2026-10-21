@@ -86,7 +86,11 @@ pub fn instruction_regions(instruction: &MirInstr) -> Vec<&Vec<MirBlock>> {
             arms.iter().chain(std::iter::once(orelse)).collect()
         }
         MirInstr::ComptimeFor { body, orelse, .. } => vec![body, orelse],
-        MirInstr::Match { cases, orelse } => cases.iter().chain(std::iter::once(orelse)).collect(),
+        MirInstr::Match { cases, orelse, .. } => cases
+            .iter()
+            .map(|case| &case.body)
+            .chain(std::iter::once(orelse))
+            .collect(),
         MirInstr::Try {
             body,
             handler,
@@ -123,9 +127,11 @@ pub fn instruction_regions_mut(instruction: &mut MirInstr) -> Vec<&mut Vec<MirBl
             arms.iter_mut().chain(std::iter::once(orelse)).collect()
         }
         MirInstr::ComptimeFor { body, orelse, .. } => vec![body, orelse],
-        MirInstr::Match { cases, orelse } => {
-            cases.iter_mut().chain(std::iter::once(orelse)).collect()
-        }
+        MirInstr::Match { cases, orelse, .. } => cases
+            .iter_mut()
+            .map(|case| &mut case.body)
+            .chain(std::iter::once(orelse))
+            .collect(),
         MirInstr::Try {
             body,
             handler,
@@ -144,13 +150,15 @@ pub fn instruction_regions_mut(instruction: &mut MirInstr) -> Vec<&mut Vec<MirBl
 /// Every register a terminator reads, mutably.
 pub fn terminator_regs_mut(term: &mut MirTerm) -> Vec<&mut Reg> {
     match term {
-        MirTerm::Branch { cond, .. } | MirTerm::ElifCond(cond) => vec![cond],
+        MirTerm::Branch { cond, .. } => vec![cond],
+        MirTerm::ElifCond { cond, values } => std::iter::once(cond).chain(values).collect(),
         MirTerm::Return(Some(reg))
         | MirTerm::ReturnWithCleanup {
             value: Some(reg), ..
         } => vec![reg],
         MirTerm::Yield(values)
         | MirTerm::ComptimeYield(values)
+        | MirTerm::MatchNext(values)
         | MirTerm::Break { values, .. }
         | MirTerm::Continue { values, .. } => values.iter_mut().collect(),
         MirTerm::Jump(_)
@@ -162,7 +170,6 @@ pub fn terminator_regs_mut(term: &mut MirTerm) -> Vec<&mut Reg> {
         | MirTerm::EscapeJump { .. }
         | MirTerm::ComptimeBreak
         | MirTerm::ComptimeContinue
-        | MirTerm::MatchNext
         | MirTerm::MatchComplete
         | MirTerm::Unreachable => Vec::new(),
     }
@@ -171,13 +178,17 @@ pub fn terminator_regs_mut(term: &mut MirTerm) -> Vec<&mut Reg> {
 /// Every register a terminator reads.
 pub fn terminator_regs(term: &MirTerm) -> Vec<Reg> {
     match term {
-        MirTerm::Branch { cond, .. } | MirTerm::ElifCond(cond) => vec![*cond],
+        MirTerm::Branch { cond, .. } => vec![*cond],
+        MirTerm::ElifCond { cond, values } => std::iter::once(*cond)
+            .chain(values.iter().copied())
+            .collect(),
         MirTerm::Return(Some(reg))
         | MirTerm::ReturnWithCleanup {
             value: Some(reg), ..
         } => vec![*reg],
         MirTerm::Yield(values)
         | MirTerm::ComptimeYield(values)
+        | MirTerm::MatchNext(values)
         | MirTerm::Break { values, .. }
         | MirTerm::Continue { values, .. } => values.clone(),
         MirTerm::Jump(_)
@@ -189,7 +200,6 @@ pub fn terminator_regs(term: &MirTerm) -> Vec<Reg> {
         | MirTerm::EscapeJump { .. }
         | MirTerm::ComptimeBreak
         | MirTerm::ComptimeContinue
-        | MirTerm::MatchNext
         | MirTerm::MatchComplete
         | MirTerm::Unreachable => Vec::new(),
     }
@@ -229,18 +239,18 @@ pub const fn region_exit(term: &MirTerm) -> Option<(RegionFrame, bool)> {
         MirTerm::ComptimeBreak => Some((RegionFrame::ComptimeFor, false)),
         MirTerm::ComptimeContinue => Some((RegionFrame::ComptimeFor, true)),
         MirTerm::MatchComplete => Some((RegionFrame::MatchCase, false)),
-        MirTerm::MatchNext => Some((RegionFrame::MatchCase, true)),
+        MirTerm::MatchNext(_) => Some((RegionFrame::MatchCase, true)),
         _ => None,
     }
 }
 
-/// What lies between a [`MirInstr::Loop`] and a `break` that leaves it or
-/// a `continue` that resumes it.
+/// What lies between a region op and a `break`, `continue`, or
+/// `match.next` that leaves it or resumes it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BreakSite {
-    /// The exit sits in a `try` part the loop holds.
+    /// The exit sits in a `try` part the op holds.
     pub in_try_part: bool,
-    /// The exit sits in a `comptime for` body the loop holds.
+    /// The exit sits in a `comptime for` body the op holds.
     pub in_comptime_for: bool,
 }
 
@@ -283,6 +293,16 @@ pub fn loop_continues_mut(
         BreakSite::default(),
         visit,
     );
+}
+
+/// Visit the `values` of every `match.next` that leaves the `match` case
+/// whose body is `case`, with what lies between them.
+///
+/// A `match.next` resolves as `MatchOp::getCaseRegionIndexContaining`
+/// resolves it: it names the nearest `match` whose case region holds it, so
+/// a nested match's cases capture their own and its `else` region does not.
+pub fn match_nexts_mut(case: &mut [MirBlock], visit: &mut impl FnMut(&mut Vec<Reg>, BreakSite)) {
+    nexts_in(case, BreakSite::default(), visit);
 }
 
 /// Resolve each replaced register through chains of replacements.
@@ -353,13 +373,13 @@ pub fn terminator_targets(term: &MirTerm) -> Vec<MirBlockId> {
         | MirTerm::TryYield
         | MirTerm::EscapeJump { .. }
         | MirTerm::Yield(_)
-        | MirTerm::ElifCond(_)
+        | MirTerm::ElifCond { .. }
         | MirTerm::Break { .. }
         | MirTerm::Continue { .. }
         | MirTerm::ComptimeYield(_)
         | MirTerm::ComptimeBreak
         | MirTerm::ComptimeContinue
-        | MirTerm::MatchNext
+        | MirTerm::MatchNext(_)
         | MirTerm::MatchComplete
         | MirTerm::Unreachable => Vec::new(),
     }
@@ -381,13 +401,13 @@ pub fn terminator_targets_mut(term: &mut MirTerm) -> Vec<&mut MirBlockId> {
         | MirTerm::TryYield
         | MirTerm::EscapeJump { .. }
         | MirTerm::Yield(_)
-        | MirTerm::ElifCond(_)
+        | MirTerm::ElifCond { .. }
         | MirTerm::Break { .. }
         | MirTerm::Continue { .. }
         | MirTerm::ComptimeYield(_)
         | MirTerm::ComptimeBreak
         | MirTerm::ComptimeContinue
-        | MirTerm::MatchNext
+        | MirTerm::MatchNext(_)
         | MirTerm::MatchComplete
         | MirTerm::Unreachable => Vec::new(),
     }
@@ -580,9 +600,8 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         | MirInstr::Unsupported(_)
         | MirInstr::Try { .. }
         | MirInstr::ComptimeFor { .. }
-        | MirInstr::ComptimeAssert { .. }
-        | MirInstr::Match { .. } => {}
-        MirInstr::If { results, cond, .. } => out.extend(results.iter_mut().chain([cond])),
+        | MirInstr::ComptimeAssert { .. } => {}
+        MirInstr::If { .. } | MirInstr::Match { .. } => out.extend(branch_op_regs_mut(instruction)),
         MirInstr::ComptimeIf { results, .. } => out.extend(results.iter_mut()),
         MirInstr::Loop {
             operands,
@@ -977,13 +996,13 @@ pub fn renumber_block_slots(blocks: &mut [MirBlock], renumber: &dyn Fn(VarId) ->
             | MirTerm::Return(_)
             | MirTerm::TryYield
             | MirTerm::Yield(_)
-            | MirTerm::ElifCond(_)
+            | MirTerm::ElifCond { .. }
             | MirTerm::Break { .. }
             | MirTerm::Continue { .. }
             | MirTerm::ComptimeYield(_)
             | MirTerm::ComptimeBreak
             | MirTerm::ComptimeContinue
-            | MirTerm::MatchNext
+            | MirTerm::MatchNext(_)
             | MirTerm::MatchComplete
             | MirTerm::Unreachable => {}
         }
@@ -1326,13 +1345,13 @@ fn collect_block_slots(block: &MirBlock, addressed: &mut BTreeSet<VarId>) {
         | MirTerm::Return(_)
         | MirTerm::TryYield
         | MirTerm::Yield(_)
-        | MirTerm::ElifCond(_)
+        | MirTerm::ElifCond { .. }
         | MirTerm::Break { .. }
         | MirTerm::Continue { .. }
         | MirTerm::ComptimeYield(_)
         | MirTerm::ComptimeBreak
         | MirTerm::ComptimeContinue
-        | MirTerm::MatchNext
+        | MirTerm::MatchNext(_)
         | MirTerm::MatchComplete
         | MirTerm::Unreachable => {}
     }
@@ -2647,15 +2666,19 @@ pub enum MirInstr {
     /// arm in order, running its `cond` region (ended by
     /// [`MirTerm::ElifCond`]) and its `then` when that holds; otherwise run
     /// `orelse`. An arm that completes ends in [`MirTerm::Yield`], whose
-    /// values define `results`. Regions share the function's registers and
-    /// slots, with local block ids like a [`MirInstr::Try`] part's; the
-    /// structured form holds each as one block. Concrete MIR carries none:
-    /// [`super::lower_control_flow`] lowers it first.
+    /// values define `results`. `else_args` are `orelse`'s arguments, which
+    /// the last elif's [`MirTerm::ElifCond`] defines; the op enters `then`,
+    /// the first elif's condition, and an `orelse` without elifs with no
+    /// values, so their arguments are empty. Regions share the function's
+    /// registers and slots, with local block ids like a [`MirInstr::Try`]
+    /// part's; the structured form holds each as one block. Concrete MIR
+    /// carries none: [`super::lower_control_flow`] lowers it first.
     If {
         results: Vec<Reg>,
         cond: Reg,
         then: Vec<MirBlock>,
         elifs: Vec<MirElif>,
+        else_args: Vec<Reg>,
         orelse: Vec<MirBlock>,
     },
     /// `hlcf.loop`: run `body` until a [`MirTerm::Break`] leaves it, its
@@ -2713,14 +2736,17 @@ pub enum MirInstr {
     /// `hlcf.match`: run `cases` in order until one completes. A case
     /// region tests its pattern, binds, and runs its body: a failed test or
     /// guard ends in [`MirTerm::MatchNext`], which enters the next case
-    /// region, or `orelse` after the last; a body that runs to its end ends
-    /// in [`MirTerm::MatchComplete`], which leaves the op. `orelse` runs
-    /// when no case completed and ends in [`MirTerm::Yield`] with no
+    /// region, or `orelse` after the last, its values defining that
+    /// region's arguments (a [`MirCase`]'s `args`, or `else_args`); the op
+    /// enters the first case with no values. A body that runs to its end
+    /// ends in [`MirTerm::MatchComplete`], which leaves the op. `orelse`
+    /// runs when no case completed and ends in [`MirTerm::Yield`] with no
     /// values. A `break`/`continue` in a case names the enclosing loop, as
     /// in any region. Concrete MIR carries none: [`super::lower_control_flow`]
     /// lowers it first.
     Match {
-        cases: Vec<Vec<MirBlock>>,
+        cases: Vec<MirCase>,
+        else_args: Vec<Reg>,
         orelse: Vec<MirBlock>,
     },
     /// An ASAP destructor on a register (reserved for the future Op/assembler VM).
@@ -3308,8 +3334,13 @@ pub enum MirTerm {
     /// op's results.
     Yield(Vec<Reg>),
     /// `hlcf.if.elifcond.yield`: end an elif condition region with the
-    /// `Bool` that selects its arm.
-    ElifCond(Reg),
+    /// `Bool` that selects its arm. `values` define the arguments of the
+    /// region it enters: the elif's `then`, or the next elif's condition
+    /// (the `orelse` after the last elif).
+    ElifCond {
+        cond: Reg,
+        values: Vec<Reg>,
+    },
     /// `hlcf.break`: leave the nearest enclosing [`MirInstr::Loop`], or
     /// the nearest one carrying `label`, its `values` defining that loop's
     /// results.
@@ -3335,8 +3366,8 @@ pub enum MirTerm {
     ComptimeContinue,
     /// `hlcf.match.next`: the nearest enclosing [`MirInstr::Match`] case
     /// did not match; try the next case, or the op's `orelse` after the
-    /// last.
-    MatchNext,
+    /// last, its values defining that region's arguments.
+    MatchNext(Vec<Reg>),
     /// `hlcf.match.complete`: the nearest enclosing [`MirInstr::Match`]
     /// case ran; leave the op.
     MatchComplete,
@@ -3382,10 +3413,26 @@ pub fn cleanup_drops(cleanup: &[CleanupDrop], var: VarId) -> bool {
 
 /// One `elif` arm of a [`MirInstr::If`]: the region computing its
 /// condition, ended by [`MirTerm::ElifCond`], and the arm it selects.
+///
+/// `cond_args` are the condition region's arguments, which the previous
+/// elif's [`MirTerm::ElifCond`] defines (the first elif's are empty), and
+/// `then_args` the arm's, which this elif's defines.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MirElif {
+    pub cond_args: Vec<Reg>,
     pub cond: Vec<MirBlock>,
+    pub then_args: Vec<Reg>,
     pub then: Vec<MirBlock>,
+}
+
+/// One case region of a [`MirInstr::Match`].
+///
+/// `args` are the region's arguments, which every [`MirTerm::MatchNext`]
+/// leaving the previous case defines (the first case's are empty).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MirCase {
+    pub args: Vec<Reg>,
+    pub body: Vec<MirBlock>,
 }
 
 /// The label of a [`MirInstr::Loop`]: upstream's string attribute, spelled
@@ -3636,6 +3683,65 @@ fn exits_in(
                 Some(_) => !nested.contains(named) && *named == label,
             }
         {
+            visit(values, site);
+        }
+    }
+}
+
+/// The registers of an `if` or a `match` [`instruction_regs_mut`] lists:
+/// an `if`'s results, every region argument, and an `if`'s condition.
+fn branch_op_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
+    match instruction {
+        MirInstr::If {
+            results,
+            cond,
+            elifs,
+            else_args,
+            ..
+        } => results
+            .iter_mut()
+            .chain(
+                elifs
+                    .iter_mut()
+                    .flat_map(|elif| elif.cond_args.iter_mut().chain(&mut elif.then_args)),
+            )
+            .chain(else_args)
+            .chain([cond])
+            .collect(),
+        MirInstr::Match {
+            cases, else_args, ..
+        } => cases
+            .iter_mut()
+            .flat_map(|case| &mut case.args)
+            .chain(else_args)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// [`match_nexts_mut`] over `blocks`, which sit at `site` in the case.
+fn nexts_in(
+    blocks: &mut [MirBlock],
+    site: BreakSite,
+    visit: &mut impl FnMut(&mut Vec<Reg>, BreakSite),
+) {
+    for block in blocks {
+        for instruction in &mut block.instrs {
+            let site = BreakSite {
+                in_try_part: site.in_try_part || matches!(instruction, MirInstr::Try { .. }),
+                in_comptime_for: site.in_comptime_for
+                    || matches!(instruction, MirInstr::ComptimeFor { .. }),
+            };
+            match instruction {
+                MirInstr::Match { orelse, .. } => nexts_in(orelse, site, visit),
+                _ => {
+                    for region in instruction_regions_mut(instruction) {
+                        nexts_in(region, site, visit);
+                    }
+                }
+            }
+        }
+        if let MirTerm::MatchNext(values) = &mut block.term {
             visit(values, site);
         }
     }
@@ -3941,6 +4047,7 @@ mod tests {
                         results: Vec::new(),
                         cond: Reg(0),
                         then: arm.clone(),
+                        else_args: Vec::new(),
                         elifs: Vec::new(),
                         orelse: arm,
                     },

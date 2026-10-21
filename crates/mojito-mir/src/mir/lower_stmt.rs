@@ -119,7 +119,9 @@ impl<'a> Flatten<'a> {
                 let elifs = elifs
                     .iter()
                     .map(|elif| MirElif {
+                        cond_args: Vec::new(),
                         cond: self.hir_region(&elif.cond),
+                        then_args: Vec::new(),
                         then: self.hir_region(&elif.then),
                     })
                     .collect();
@@ -129,6 +131,7 @@ impl<'a> Flatten<'a> {
                     cond,
                     then,
                     elifs,
+                    else_args: Vec::new(),
                     orelse,
                 });
             }
@@ -170,9 +173,19 @@ impl<'a> Flatten<'a> {
                 });
             }
             HirInstr::Match { cases, orelse } => {
-                let cases = cases.iter().map(|case| self.hir_region(case)).collect();
+                let cases = cases
+                    .iter()
+                    .map(|case| MirCase {
+                        args: Vec::new(),
+                        body: self.hir_region(case),
+                    })
+                    .collect();
                 let orelse = self.hir_region(orelse);
-                self.emit(MirInstr::Match { cases, orelse });
+                self.emit(MirInstr::Match {
+                    cases,
+                    else_args: Vec::new(),
+                    orelse,
+                });
             }
             HirInstr::ComptimeFor {
                 iter,
@@ -3738,7 +3751,10 @@ impl<'a> Flatten<'a> {
             Terminator::ElifCond(cond) => {
                 let cond = self.condition_hir(cond);
                 self.flush_argument_anchors();
-                MirTerm::ElifCond(cond)
+                MirTerm::ElifCond {
+                    cond,
+                    values: Vec::new(),
+                }
             }
             Terminator::Break(label) => MirTerm::Break {
                 label: Some(LoopLabel(*label)),
@@ -3750,7 +3766,7 @@ impl<'a> Flatten<'a> {
             },
             Terminator::ComptimeBreak => MirTerm::ComptimeBreak,
             Terminator::ComptimeContinue => MirTerm::ComptimeContinue,
-            Terminator::MatchNext => MirTerm::MatchNext,
+            Terminator::MatchNext => MirTerm::MatchNext(Vec::new()),
             Terminator::MatchComplete => MirTerm::MatchComplete,
             Terminator::Unreachable => MirTerm::Unreachable,
         }

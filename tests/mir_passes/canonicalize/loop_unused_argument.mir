@@ -31,7 +31,7 @@ artifact {
           bb0 {
             instructions: [
               const { dest: %r1, value: int(0) },
-              loop { results: [%r6], label: absent, operands: [%r1, %r1], arguments: [%r2, %r3], body: [bb0 { instructions: [var.use { dest: %r0, var: $v0, mode: copy }, const { dest: %r4, value: int(1) }, binary { op: add, dest: %r5, a: %r2, b: %r4, resolved: absent, raises: absent }, if { results: [], condition: %r0, then: [bb0 { instructions: [], terminator: continue { label: absent, values: [%r5, %r5] } }], elifs: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }], terminator: break { label: absent, values: [%r5] } }] }
+              loop { results: [%r6], label: absent, operands: [%r1, %r1], arguments: [%r2, %r3], body: [bb0 { instructions: [var.use { dest: %r0, var: $v0, mode: copy }, const { dest: %r4, value: int(1) }, binary { op: add, dest: %r5, a: %r2, b: %r4, resolved: absent, raises: absent }, if { results: [], condition: %r0, then: [bb0 { instructions: [], terminator: continue { label: absent, values: [%r5, %r5] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }], terminator: break { label: absent, values: [%r5] } }] }
             ],
             terminator: return { value: present(%r6) }
           }

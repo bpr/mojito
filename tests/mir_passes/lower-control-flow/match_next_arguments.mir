@@ -1,0 +1,43 @@
+mojito-mir 1.84
+artifact {
+  features: [],
+  files: [
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: match_next_arguments, param_names: [c], param_types: [Bool], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: match_next_arguments,
+        registers: 6,
+        vars: 1,
+        var_names: [c],
+        params: 1,
+        param_types: [Bool],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Bool }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Bool }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              const { dest: %r1, value: int(1) },
+              const { dest: %r2, value: int(2) },
+              match { cases: [case { arguments: [], body: [bb0 { instructions: [if { results: [], condition: %r0, then: [bb0 { instructions: [], terminator: yield { values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: match.next { values: [%r1] } }] }], terminator: match.next { values: [%r2] } }] }, case { arguments: [%r3], body: [bb0 { instructions: [binary { op: add, dest: %r4, a: %r3, b: %r1, resolved: absent, raises: absent }], terminator: match.next { values: [%r4] } }] }], else_arguments: [%r5], else: [bb0 { instructions: [], terminator: return { value: present(%r5) } }] }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      }
+  ]
+}

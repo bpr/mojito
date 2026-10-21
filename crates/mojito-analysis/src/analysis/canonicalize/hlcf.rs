@@ -239,7 +239,8 @@ impl Walk<'_> {
     /// trivial and constant false, takes the first trivial and constant
     /// true one or the else, and makes the first other elif the `if`'s
     /// condition, which needs a trivial condition region: the pattern fails
-    /// without one.
+    /// without one. An elif whose condition carries values is never trivial,
+    /// so every region the pattern splices or promotes takes no arguments.
     fn remove_static_condition(&mut self, block: &mut MirBlock, index: usize) -> bool {
         let MirInstr::If {
             cond,
@@ -275,6 +276,7 @@ impl Walk<'_> {
             results,
             then,
             elifs,
+            else_args,
             orelse,
         }) = take_if(block, index)
         else {
@@ -282,24 +284,25 @@ impl Walk<'_> {
         };
         if taken {
             for elif in elifs {
-                self.erase_region(elif.cond);
-                self.erase_region(elif.then);
+                self.erase_elif(elif);
             }
+            self.erased.extend(else_args.iter().map(|arg| arg.0));
             self.erase_region(orelse);
             return self.replace_with_region(block, index, &results, then);
         }
         self.erase_region(then);
         let mut elifs = elifs.into_iter().enumerate();
-        while let Some((at, elif)) = elifs.next() {
+        while let Some((at, mut elif)) = elifs.next() {
             match (decided[at], promote) {
                 (Some(true), _) => {
-                    self.erase_region(elif.cond);
+                    let then = std::mem::take(&mut elif.then);
+                    self.erase_elif(elif);
                     for (_, rest) in elifs {
-                        self.erase_region(rest.cond);
-                        self.erase_region(rest.then);
+                        self.erase_elif(rest);
                     }
+                    self.erased.extend(else_args.iter().map(|arg| arg.0));
                     self.erase_region(orelse);
-                    return self.replace_with_region(block, index, &results, elif.then);
+                    return self.replace_with_region(block, index, &results, then);
                 }
                 (_, Some((promoted, cond))) if promoted == at => {
                     let hoisted = elif.cond.into_iter().flat_map(|block| block.instrs);
@@ -308,16 +311,14 @@ impl Walk<'_> {
                         cond,
                         then: elif.then,
                         elifs: elifs.map(|(_, rest)| rest).collect(),
+                        else_args,
                         orelse,
                     };
                     block.instrs.splice(index..index, hoisted.chain([promoted]));
                     self.counts.static_conditions += 1;
                     return true;
                 }
-                _ => {
-                    self.erase_region(elif.cond);
-                    self.erase_region(elif.then);
-                }
+                _ => self.erase_elif(elif),
             }
         }
         self.replace_with_region(block, index, &results, orelse)
@@ -624,6 +625,7 @@ impl Walk<'_> {
             then,
             elifs,
             orelse,
+            ..
         } = &block.instrs[index]
         else {
             return false;
@@ -1006,6 +1008,15 @@ impl Walk<'_> {
             self.erase_ops(&block.instrs);
         }
     }
+
+    /// [`Self::erase_region`] over a dropped elif's regions, and its
+    /// arguments with them.
+    fn erase_elif(&mut self, elif: MirElif) {
+        let args = elif.cond_args.iter().chain(&elif.then_args);
+        self.erased.extend(args.map(|arg| arg.0));
+        self.erase_region(elif.cond);
+        self.erase_region(elif.then);
+    }
 }
 
 /// `checkTrivialBlocks`: the `comptime if` at `index` has no results,
@@ -1098,18 +1109,20 @@ fn body_regions_mut<'a>(
 }
 
 /// The condition an elif condition region yields when the region is
-/// trivial: one block of `const`s ending in its condition, the shape MLIR's
-/// folder leaves once it materializes the constants outside the region.
+/// trivial: one block of `const`s ending in its condition and carrying no
+/// values, the shape MLIR's folder leaves once it materializes the
+/// constants outside the region.
 fn trivial_condition(region: &[MirBlock]) -> Option<Reg> {
     match region {
         [
             MirBlock {
                 instrs,
-                term: MirTerm::ElifCond(cond),
+                term: MirTerm::ElifCond { cond, values },
             },
-        ] if instrs
-            .iter()
-            .all(|instruction| matches!(instruction, MirInstr::Const { .. })) =>
+        ] if values.is_empty()
+            && instrs
+                .iter()
+                .all(|instruction| matches!(instruction, MirInstr::Const { .. })) =>
         {
             Some(*cond)
         }
@@ -1122,6 +1135,7 @@ struct IfParts {
     results: Vec<Reg>,
     then: Vec<MirBlock>,
     elifs: Vec<MirElif>,
+    else_args: Vec<Reg>,
     orelse: Vec<MirBlock>,
 }
 
@@ -1133,12 +1147,14 @@ fn take_if(block: &mut MirBlock, index: usize) -> Option<IfParts> {
             results,
             then,
             elifs,
+            else_args,
             orelse,
             ..
         } => Some(IfParts {
             results,
             then,
             elifs,
+            else_args,
             orelse,
         }),
         other => {

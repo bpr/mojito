@@ -2928,9 +2928,18 @@ fn structured_region_ops_and_terminators_reprint() {
             results: vec![Reg(1)],
             cond: Reg(0),
             then: one(Vec::new(), MirTerm::Yield(vec![Reg(2)])),
+            else_args: vec![Reg(4)],
             elifs: vec![MirElif {
-                cond: one(Vec::new(), MirTerm::ElifCond(Reg(0))),
-                then: one(Vec::new(), MirTerm::Yield(vec![Reg(2)])),
+                cond_args: Vec::new(),
+                then_args: vec![Reg(3)],
+                cond: one(
+                    Vec::new(),
+                    MirTerm::ElifCond {
+                        cond: Reg(0),
+                        values: vec![Reg(2)],
+                    },
+                ),
+                then: one(Vec::new(), MirTerm::Yield(vec![Reg(3)])),
             }],
             orelse: one(Vec::new(), MirTerm::Unreachable),
         },
@@ -2980,9 +2989,16 @@ fn structured_region_ops_and_terminators_reprint() {
             )),
         },
         MirInstr::Match {
+            else_args: Vec::new(),
             cases: vec![
-                one(Vec::new(), MirTerm::MatchNext),
-                one(Vec::new(), MirTerm::MatchComplete),
+                crate::mir::MirCase {
+                    args: Vec::new(),
+                    body: one(Vec::new(), MirTerm::MatchNext(vec![Reg(2)])),
+                },
+                crate::mir::MirCase {
+                    args: vec![Reg(5)],
+                    body: one(Vec::new(), MirTerm::MatchComplete),
+                },
             ],
             orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
         },
@@ -3010,7 +3026,15 @@ fn structured_region_ops_and_terminators_reprint() {
         ],
         orelse: one(Vec::new(), MirTerm::Unreachable),
     });
-    let mut function = function_with(vec![Ty::bool(), Ty::int(), Ty::int()], instrs);
+    let types = vec![
+        Ty::bool(),
+        Ty::int(),
+        Ty::int(),
+        Ty::int(),
+        Ty::int(),
+        Ty::int(),
+    ];
+    let mut function = function_with(types, instrs);
     function.n_vars = 1;
     function.var_names = vec!["i".to_string()];
     function.blocks[0].term = MirTerm::Return(None);
@@ -3019,7 +3043,10 @@ fn structured_region_ops_and_terminators_reprint() {
     let text = write::program(&program);
     for mnemonic in [
         "if {",
-        "if.elifcond.yield {",
+        "elif { condition_arguments: [], condition: [",
+        "then_arguments: [%r3], then: [",
+        "else_arguments: [%r4], else: [",
+        "if.elifcond.yield { condition: %r0, values: [%r2] }",
         "yield {",
         "loop { results: [%r2], label: present(loop3), operands: [%r2], arguments: [%r1]",
         "break { label: present(loop3), values: [%r1] }",
@@ -3030,8 +3057,10 @@ fn structured_region_ops_and_terminators_reprint() {
         "comptime.for.break {}",
         "comptime.for.continue {}",
         "comptime.assert {",
-        "match {",
-        "match.next {}",
+        "match { cases: [case { arguments: [], body: [",
+        "case { arguments: [%r5], body: [",
+        "else_arguments: [], else: [",
+        "match.next { values: [%r2] }",
         "match.complete {}",
         "unreachable {}",
     ] {
@@ -3067,6 +3096,65 @@ fn a_loop_and_break_without_values_read_as_carrying_none() {
         .replace("loop { results: [], ", "loop { ")
         .replace("label: absent, values: [] }", "label: absent }");
     assert_ne!(old, text);
+    let parsed = artifact(old.as_bytes(), "old.mir".to_string()).expect("parse artifact");
+    assert_eq!(write::program(&parsed.program), text);
+}
+
+/// An `if` and a `match` written before schema 1.84 carry no argument
+/// lists, their elifcond and `match.next` no `values`, and a case is a bare
+/// region: the reader takes every region as taking no arguments and every
+/// terminator as carrying none.
+#[test]
+fn an_if_and_match_without_arguments_read_as_carrying_none() {
+    use crate::mir::{MirCase, MirElif};
+    let one = |instrs: Vec<MirInstr>, term: MirTerm| vec![MirBlock { instrs, term }];
+    let mut function = function_with(
+        vec![Ty::bool()],
+        vec![
+            MirInstr::If {
+                results: Vec::new(),
+                cond: Reg(0),
+                then: one(Vec::new(), MirTerm::Yield(Vec::new())),
+                elifs: vec![MirElif {
+                    cond_args: Vec::new(),
+                    cond: one(
+                        Vec::new(),
+                        MirTerm::ElifCond {
+                            cond: Reg(0),
+                            values: Vec::new(),
+                        },
+                    ),
+                    then_args: Vec::new(),
+                    then: one(Vec::new(), MirTerm::Yield(Vec::new())),
+                }],
+                else_args: Vec::new(),
+                orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            },
+            MirInstr::Match {
+                cases: vec![MirCase {
+                    args: Vec::new(),
+                    body: one(Vec::new(), MirTerm::MatchNext(Vec::new())),
+                }],
+                else_args: Vec::new(),
+                orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            },
+        ],
+    );
+    function.blocks[0].term = MirTerm::Return(None);
+    let program = program_with(vec![("old".into(), function)]);
+    let text = write::program(&program);
+    let (before, after) = text.split_at(text.find("match {").expect("a match record"));
+    let after = after
+        .replacen("case { arguments: [], body: ", "", 1)
+        .replacen("}] }], else_arguments", "}]], else_arguments", 1);
+    let old = format!("{before}{after}")
+        .replace("condition_arguments: [], ", "")
+        .replace("then_arguments: [], ", "")
+        .replace("else_arguments: [], ", "")
+        .replace(", values: [] }", " }")
+        .replace("match.next { values: [] }", "match.next {}");
+    assert_ne!(old, text);
+    assert!(!old.contains("case {"), "{old}");
     let parsed = artifact(old.as_bytes(), "old.mir".to_string()).expect("parse artifact");
     assert_eq!(write::program(&parsed.program), text);
 }

@@ -249,7 +249,10 @@ impl Decoder {
     }
     /// A register list a later schema added to a region op or terminator:
     /// 1.82 a loop's `results` and a break's `values`, 1.83 a loop's
-    /// `operands` and `arguments` and a continue's `values`. An older
+    /// `operands` and `arguments` and a continue's `values`, 1.84 an
+    /// `if`'s and a `match`'s `else_arguments`, an elif's
+    /// `condition_arguments` and `then_arguments`, a case's `arguments`, and
+    /// an elifcond's and a `match.next`'s `values`. An older
     /// artifact's op carried none, so its absence reads exactly as empty.
     pub(super) fn added_regs(&mut self, fields: &[Field], name: &str) -> Vec<Reg> {
         self.field(fields, name)

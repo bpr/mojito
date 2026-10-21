@@ -616,6 +616,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An elif's condition region and arm, an `if`'s and a `match`'s else
+  region, and each `match` case after the first take arguments, which the
+  `if.elifcond.yield` or `match.next`s entering them carry, as upstream's
+  `hlcf.if.elifcond.yield` passes its values to its arm and the next
+  region and `hlcf.match.next` its operands to the next case (MIR text
+  1.84, whose reader takes an older region as taking none and a bare case
+  region as a case). The verifier checks every edge, the op's own entry
+  included; `canonicalize` decides or promotes an elif only when its
+  condition carries no values; `sccp` now follows a constant elif
+  condition to the one region it selects and enters a `match` case only
+  from an executable `match.next`, as upstream's `SCCP` does, meeting
+  each argument with the values carried in; `lower-control-flow` replaces
+  each argument of a region one terminator enters by its value and stores
+  the others in slots. Nothing produces an argument until `mem-2-reg`
+  promotes into them (R927), so programs run unchanged. This closes R1259.
 - A structured `loop` has arguments, which its operands define on entry
   and each `continue` that resumes it for the next iteration, as
   upstream's `hlcf.loop` passes its operands to its body block's

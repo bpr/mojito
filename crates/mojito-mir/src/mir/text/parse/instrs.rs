@@ -3,7 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use crate::mir::{CleanupDrop, LoopLabel, MirElif, MirResultAdapter};
+use crate::mir::{CleanupDrop, LoopLabel, MirCase, MirElif, MirResultAdapter};
 use mojito_hir::hir::VarId;
 use mojito_types::types::TyKind;
 
@@ -830,6 +830,7 @@ impl Decoder {
                 cond: self.req(value, fields, "condition", Self::reg)?,
                 then: self.req(value, fields, "then", |d, v| Some(d.region_blocks(v)))?,
                 elifs: self.req(value, fields, "elifs", |d, v| Some(d.elifs(v)))?,
+                else_args: self.added_regs(fields, "else_arguments"),
                 orelse: self.req(value, fields, "else", |d, v| Some(d.region_blocks(v)))?,
             }),
             "loop" => Some(MirInstr::Loop {
@@ -858,10 +859,8 @@ impl Decoder {
                 cond: Box::new(self.req(value, fields, "condition", Self::constraint)?),
             }),
             "match" => Some(MirInstr::Match {
-                cases: self.req(value, fields, "cases", |d, v| {
-                    let cases = d.list(v).ok()?;
-                    Some(cases.iter().map(|case| d.region_blocks(case)).collect())
-                })?,
+                cases: self.req(value, fields, "cases", |d, v| Some(d.cases(v)))?,
+                else_args: self.added_regs(fields, "else_arguments"),
                 orelse: self.req(value, fields, "else", |d, v| Some(d.region_blocks(v)))?,
             }),
             "drop.reg" => Some(MirInstr::Drop {
@@ -972,12 +971,10 @@ impl Decoder {
                 "values",
                 |d, v| Some(d.regs(v)),
             )?)),
-            "if.elifcond.yield" => Some(MirTerm::ElifCond(self.req(
-                value,
-                fields,
-                "condition",
-                Self::reg,
-            )?)),
+            "if.elifcond.yield" => Some(MirTerm::ElifCond {
+                cond: self.req(value, fields, "condition", Self::reg)?,
+                values: self.added_regs(fields, "values"),
+            }),
             "break" => Some(MirTerm::Break {
                 label: self.req(value, fields, "label", |d, v| Some(d.option_loop_label(v)))?,
                 values: self.added_regs(fields, "values"),
@@ -994,7 +991,7 @@ impl Decoder {
             )?)),
             "comptime.for.break" => Some(MirTerm::ComptimeBreak),
             "comptime.for.continue" => Some(MirTerm::ComptimeContinue),
-            "match.next" => Some(MirTerm::MatchNext),
+            "match.next" => Some(MirTerm::MatchNext(self.added_regs(fields, "values"))),
             "match.complete" => Some(MirTerm::MatchComplete),
             "unreachable" => Some(MirTerm::Unreachable),
             other => {
@@ -1051,7 +1048,7 @@ impl Decoder {
     }
 
     /// The `elif` arms of an `if`: each a condition region and the arm it
-    /// selects.
+    /// selects, with their arguments.
     fn elifs(&mut self, value: &Value) -> Vec<MirElif> {
         let Ok(values) = self.list(value) else {
             return Vec::new();
@@ -1060,10 +1057,44 @@ impl Decoder {
             .iter()
             .filter_map(|value| {
                 let fields = self.record(value, "elif").ok()?;
+                let cond_args = self.added_regs(fields, "condition_arguments");
                 let cond = self.req(value, fields, "condition", |d, v| Some(d.region_blocks(v)))?;
+                let then_args = self.added_regs(fields, "then_arguments");
                 let then = self.req(value, fields, "then", |d, v| Some(d.region_blocks(v)))?;
-                self.unknown(fields, &["condition", "then"]);
-                Some(MirElif { cond, then })
+                self.unknown(
+                    fields,
+                    &["condition_arguments", "condition", "then_arguments", "then"],
+                );
+                Some(MirElif {
+                    cond_args,
+                    cond,
+                    then_args,
+                    then,
+                })
+            })
+            .collect()
+    }
+
+    /// The case regions of a `match`: each a `case` record with its
+    /// arguments, or a bare region carrying none before 1.84.
+    fn cases(&mut self, value: &Value) -> Vec<MirCase> {
+        let Ok(values) = self.list(value) else {
+            return Vec::new();
+        };
+        values
+            .iter()
+            .filter_map(|value| {
+                if matches!(value.kind, ValueKind::List(_)) {
+                    return Some(MirCase {
+                        args: Vec::new(),
+                        body: self.region_blocks(value),
+                    });
+                }
+                let fields = self.record(value, "case").ok()?;
+                let args = self.added_regs(fields, "arguments");
+                let body = self.req(value, fields, "body", |d, v| Some(d.region_blocks(v)))?;
+                self.unknown(fields, &["arguments", "body"]);
+                Some(MirCase { args, body })
             })
             .collect()
     }

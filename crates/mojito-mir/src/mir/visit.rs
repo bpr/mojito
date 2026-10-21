@@ -426,13 +426,13 @@ pub fn walk_terminator_mut<V: MutTypeVisitor + ?Sized>(
         | MirTerm::TryYield
         | MirTerm::EscapeJump { .. }
         | MirTerm::Yield(_)
-        | MirTerm::ElifCond(_)
+        | MirTerm::ElifCond { .. }
         | MirTerm::Break { .. }
         | MirTerm::Continue { .. }
         | MirTerm::ComptimeYield(_)
         | MirTerm::ComptimeBreak
         | MirTerm::ComptimeContinue
-        | MirTerm::MatchNext
+        | MirTerm::MatchNext(_)
         | MirTerm::MatchComplete
         | MirTerm::Unreachable => Ok(()),
     }

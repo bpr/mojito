@@ -63,13 +63,13 @@ impl FnLowering<'_> {
             }
             // Concrete MIR carries none: `lower-control-flow` runs first.
             MirTerm::Yield(_)
-            | MirTerm::ElifCond(_)
+            | MirTerm::ElifCond { .. }
             | MirTerm::Break { .. }
             | MirTerm::Continue { .. }
             | MirTerm::ComptimeYield(_)
             | MirTerm::ComptimeBreak
             | MirTerm::ComptimeContinue
-            | MirTerm::MatchNext
+            | MirTerm::MatchNext(_)
             | MirTerm::MatchComplete
             | MirTerm::Unreachable => Err(self.unsupported(
                 format!(

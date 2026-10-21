@@ -1,0 +1,42 @@
+mojito-mir 1.84
+artifact {
+  features: [],
+  files: [
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: static_condition_elif_carrying_values_kept, param_names: [c], param_types: [Bool], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: static_condition_elif_carrying_values_kept,
+        registers: 6,
+        vars: 1,
+        var_names: [c],
+        params: 1,
+        param_types: [Bool],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Bool }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Bool }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Bool }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: bool(false) },
+              const { dest: %r1, value: int(1) },
+              if { results: [%r5], condition: %r0, then: [bb0 { instructions: [], terminator: yield { values: [%r1] } }], elifs: [elif { condition_arguments: [], condition: [bb0 { instructions: [const { dest: %r2, value: bool(true) }], terminator: if.elifcond.yield { condition: %r2, values: [%r1] } }], then_arguments: [%r3], then: [bb0 { instructions: [], terminator: yield { values: [%r3] } }] }], else_arguments: [%r4], else: [bb0 { instructions: [], terminator: yield { values: [%r4] } }] }
+            ],
+            terminator: return { value: present(%r5) }
+          }
+        ]
+      }
+  ]
+}

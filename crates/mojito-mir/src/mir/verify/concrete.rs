@@ -221,13 +221,13 @@ fn concrete_blocks(
                 "{head} keeps a compile-time loop over `{binder}` in elaborated MIR"
             )),
             MirTerm::Yield(_)
-            | MirTerm::ElifCond(_)
+            | MirTerm::ElifCond { .. }
             | MirTerm::Break { .. }
             | MirTerm::Continue { .. }
             | MirTerm::ComptimeYield(_)
             | MirTerm::ComptimeBreak
             | MirTerm::ComptimeContinue
-            | MirTerm::MatchNext
+            | MirTerm::MatchNext(_)
             | MirTerm::MatchComplete
             | MirTerm::Unreachable => errors.push(format!(
                 "{head} keeps the region terminator `{}` in elaborated MIR",

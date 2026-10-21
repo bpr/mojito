@@ -476,7 +476,7 @@ fn flow(list: &[MirBlock], entry: State, var: VarId, frames: &mut Vec<Frame>) ->
             MirTerm::TryYield
                 | MirTerm::Yield(_)
                 | MirTerm::ComptimeYield(_)
-                | MirTerm::ElifCond(_)
+                | MirTerm::ElifCond { .. }
         ) {
             yielded = join(yielded, end);
         }
@@ -630,11 +630,11 @@ fn region_flow(
                 entries.push(None);
             }
         }
-        MirInstr::Match { cases, orelse } => {
+        MirInstr::Match { cases, orelse, .. } => {
             let mut next = state;
             for case in cases {
                 frames.push(Frame::new(RegionFrame::MatchCase));
-                enter(case, next, frames);
+                enter(&case.body, next, frames);
                 let case = frames
                     .pop()
                     .unwrap_or_else(|| Frame::new(RegionFrame::MatchCase));

@@ -19,7 +19,14 @@
 //! the header, and the body's entry forwards them, as the entry and each
 //! `continue` branch to the body block with its arguments upstream. A loop
 //! no `continue` resumes enters its body from the entry alone, so each
-//! argument is its operand.
+//! argument is its operand. An `if` and a `match` enter their first region
+//! with no values, and every later region's arguments travel the same way:
+//! an `if.elifcond.yield` stores its values into its arm's slots and the
+//! next region's, and each `match.next` into the next case's (the else
+//! region's after the last case), and the region's entry forwards them. A
+//! region entered from one `if.elifcond.yield` or one `match.next` in the
+//! case's own list folds each argument to the value that terminator
+//! carries.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -78,14 +85,16 @@ struct Lowering<'f> {
     frames: Vec<Frame>,
     /// Each result of a loop left by one `break` in its own list, and the
     /// value that break carries; each argument of a loop no `continue`
-    /// resumes, and its operand.
+    /// resumes, and its operand; each argument of an `if` or `match` region
+    /// entered from one terminator, and the value it carries.
     folded: HashMap<u32, Reg>,
 }
 
 /// A loop a `break`/`continue` may name, or a `match` case a `match.next`/
 /// `match.complete` leaves: where it continues (a loop's header, the next
 /// case's entry), where it exits, the list its blocks are in, and the slots
-/// a loop's `break` and `continue` store their values into.
+/// a loop's `break` and `continue`, or a case's `match.next`, store their
+/// values into.
 struct Frame {
     kind: RegionFrame,
     header: MirBlockId,
@@ -103,8 +112,15 @@ enum RegionEnd {
     /// An `if` or `comptime if` arm: `yield` stores into the result slots
     /// and joins.
     Arm { join: MirBlockId, slots: Vec<VarId> },
-    /// An elif condition: `if.elifcond.yield` branches to its arm or on.
-    ElifCond { then: MirBlockId, next: MirBlockId },
+    /// An elif condition: `if.elifcond.yield` stores its values into the
+    /// slots of its arm's arguments and the next region's, and branches to
+    /// its arm or on.
+    ElifCond {
+        then: MirBlockId,
+        next: MirBlockId,
+        then_slots: Vec<VarId>,
+        next_slots: Vec<VarId>,
+    },
     /// A loop body, or a `comptime for` body: its frame is on the stack.
     Body,
 }
@@ -184,8 +200,9 @@ impl Lowering<'_> {
                 cond,
                 then,
                 elifs,
+                else_args,
                 orelse,
-            } => self.lower_if(&results, cond, then, elifs, orelse, join),
+            } => self.lower_if(&results, cond, then, elifs, (else_args, orelse), join),
             MirInstr::Loop {
                 label,
                 operands,
@@ -226,8 +243,12 @@ impl Lowering<'_> {
                 };
                 (MirTerm::Jump(header), Vec::new())
             }
-            MirInstr::Match { cases, orelse } => {
-                let entry = self.lower_match(cases, orelse, join);
+            MirInstr::Match {
+                cases,
+                else_args,
+                orelse,
+            } => {
+                let entry = self.lower_match(cases, (else_args, orelse), join);
                 (MirTerm::Jump(entry), Vec::new())
             }
             other => (MirTerm::Jump(join), vec![other]),
@@ -235,34 +256,49 @@ impl Lowering<'_> {
     }
 
     /// Lower a `match`: each case region under a frame whose `header` is
-    /// the next case's entry (the else region's after the last) and whose
-    /// `exit` is the join, so `match.next` and `match.complete` resolve to
-    /// jumps; the else region yields to the join. Returns the first case's
-    /// entry.
+    /// the next case's entry (the else region's after the last), whose
+    /// `exit` is the join, and whose argument slots are the next region's,
+    /// so `match.next` and `match.complete` resolve to jumps; the else
+    /// region yields to the join. Returns the first case's entry.
     fn lower_match(
         &mut self,
-        cases: Vec<Vec<MirBlock>>,
-        orelse: Vec<MirBlock>,
+        mut cases: Vec<MirCase>,
+        (else_args, orelse): (Vec<Reg>, Vec<MirBlock>),
         join: MirBlockId,
     ) -> MirBlockId {
+        let mut entering = Vec::new();
+        for index in 0..cases.len() {
+            let mut nexts = Vec::new();
+            match_nexts_mut(&mut cases[index].body, &mut |values, site| {
+                nexts.push((values.clone(), site));
+            });
+            let args = cases.get(index + 1).map_or(&else_args, |next| &next.args);
+            let args = args.clone();
+            entering.push(self.entry_slots(&args, &nexts));
+        }
         let arm = RegionEnd::Arm {
             join,
             slots: Vec::new(),
         };
         let mut next = self.region(orelse, &arm);
-        for blocks in cases.into_iter().rev() {
-            let entry = self.reserve(blocks.len());
+        let mut args = else_args;
+        for (case, arg_slots) in cases.into_iter().zip(entering).rev() {
+            self.out[next]
+                .instrs
+                .splice(0..0, forwards(&args, &arg_slots));
+            let entry = self.reserve(case.body.len());
             self.frames.push(Frame {
                 kind: RegionFrame::MatchCase,
                 header: next,
                 exit: join,
                 depth: self.depth,
                 slots: Vec::new(),
-                arg_slots: Vec::new(),
+                arg_slots,
             });
-            self.fill(blocks, entry, &RegionEnd::Body);
+            self.fill(case.body, entry, &RegionEnd::Body);
             self.frames.pop();
             next = entry;
+            args = case.args;
         }
         next
     }
@@ -273,7 +309,7 @@ impl Lowering<'_> {
         cond: Reg,
         then: Vec<MirBlock>,
         elifs: Vec<MirElif>,
-        orelse: Vec<MirBlock>,
+        (else_args, orelse): (Vec<Reg>, Vec<MirBlock>),
         join: MirBlockId,
     ) -> (MirTerm, Vec<MirInstr>) {
         let slots = self.value_slots(results, "yield");
@@ -282,18 +318,51 @@ impl Lowering<'_> {
             slots: slots.clone(),
         };
         let then_b = self.region(then, &arm);
-        let mut next_tests = Vec::new();
-        let mut arms = Vec::new();
-        for elif in elifs {
-            let test = self.reserve(elif.cond.len());
-            next_tests.push((test, elif.cond));
-            arms.push(self.region(elif.then, &arm));
+        let mut tests = Vec::new();
+        for (index, elif) in elifs.iter().enumerate() {
+            let yields: Vec<_> = elif
+                .cond
+                .iter()
+                .filter_map(|block| match &block.term {
+                    MirTerm::ElifCond { values, .. } => {
+                        Some((values.clone(), BreakSite::default()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            let next_args = elifs
+                .get(index + 1)
+                .map_or(&else_args, |next| &next.cond_args);
+            let then_slots = self.entry_slots(&elif.then_args, &yields);
+            let next_slots = self.entry_slots(next_args, &yields);
+            tests.push((then_slots, next_slots));
         }
-        let else_b = self.region(orelse, &arm);
-        let mut next = else_b;
-        for ((test, blocks), then) in next_tests.into_iter().zip(arms).rev() {
-            self.fill(blocks, test, &RegionEnd::ElifCond { then, next });
+        let mut arms = Vec::new();
+        for (elif, (then_slots, _)) in elifs.into_iter().zip(&tests) {
+            let test = self.reserve(elif.cond.len());
+            let then = self.region(elif.then, &arm);
+            self.out[then]
+                .instrs
+                .splice(0..0, forwards(&elif.then_args, then_slots));
+            arms.push((test, elif.cond_args, elif.cond, then));
+        }
+        let mut next = self.region(orelse, &arm);
+        let mut args = else_args;
+        for ((test, cond_args, blocks, then), (then_slots, next_slots)) in
+            arms.into_iter().zip(tests).rev()
+        {
+            self.out[next]
+                .instrs
+                .splice(0..0, forwards(&args, &next_slots));
+            let end = RegionEnd::ElifCond {
+                then,
+                next,
+                then_slots,
+                next_slots,
+            };
+            self.fill(blocks, test, &end);
             next = test;
+            args = cond_args;
         }
         let entry = MirTerm::Branch {
             cond,
@@ -420,6 +489,24 @@ impl Lowering<'_> {
         Vec::new()
     }
 
+    /// The slots the arguments `args` of an `if` or `match` region travel
+    /// through, entered by terminators carrying `entries`: none when one
+    /// terminator in the op's own list enters it, whose values the arguments
+    /// fold to.
+    fn entry_slots(&mut self, args: &[Reg], entries: &[(Vec<Reg>, BreakSite)]) -> Vec<VarId> {
+        if args.is_empty() {
+            return Vec::new();
+        }
+        match entries {
+            [(values, site)] if *site == BreakSite::default() => {
+                self.folded
+                    .extend(args.iter().zip(values).map(|(arg, value)| (arg.0, *value)));
+                Vec::new()
+            }
+            _ => self.value_slots(args, "arg"),
+        }
+    }
+
     /// One fresh slot per register of `regs`, typed by it and named
     /// `${prefix}{slot}`.
     fn value_slots(&mut self, regs: &[Reg], prefix: &str) -> Vec<VarId> {
@@ -469,18 +556,30 @@ impl Lowering<'_> {
                 instrs.extend(stores(&values, slots));
                 MirTerm::Jump(*join)
             }
-            (MirTerm::ElifCond(cond), RegionEnd::ElifCond { then, next }) => MirTerm::Branch {
-                cond,
-                then_b: *then,
-                else_b: *next,
-            },
+            (
+                MirTerm::ElifCond { cond, values },
+                RegionEnd::ElifCond {
+                    then,
+                    next,
+                    then_slots,
+                    next_slots,
+                },
+            ) => {
+                instrs.extend(stores(&values, then_slots));
+                instrs.extend(stores(&values, next_slots));
+                MirTerm::Branch {
+                    cond,
+                    then_b: *then,
+                    else_b: *next,
+                }
+            }
             (MirTerm::Unreachable, _) => MirTerm::Return(None),
             (term, _) => match region_exit(&term) {
                 Some((target, resume)) => {
                     let values = match &term {
-                        MirTerm::Break { values, .. } | MirTerm::Continue { values, .. } => {
-                            values.as_slice()
-                        }
+                        MirTerm::Break { values, .. }
+                        | MirTerm::Continue { values, .. }
+                        | MirTerm::MatchNext(values) => values.as_slice(),
                         _ => &[],
                     };
                     self.leave(instrs, target, resume, values).unwrap_or(term)
@@ -495,7 +594,8 @@ impl Lowering<'_> {
     /// jump within its list, an escape to the function's list
     /// from a `try` part, and the unsupported boundary from a `try` part
     /// nested in another. A `break`'s `values` are stored into the frame's
-    /// result slots first, a `continue`'s into its argument slots. `None`
+    /// result slots first, a `continue`'s or `match.next`'s into its
+    /// argument slots. `None`
     /// when no frame encloses it, which the verifier rejects.
     fn leave(
         &self,
@@ -532,8 +632,9 @@ impl Lowering<'_> {
     }
 }
 
-/// The stores of the values a `yield`, `break`, or `continue` carries, or
-/// of a loop's operands, each into the slot of what it defines.
+/// The stores of the values a `yield`, `break`, `continue`,
+/// `if.elifcond.yield`, or `match.next` carries, or of a loop's operands,
+/// each into the slot of what it defines.
 fn stores(values: &[Reg], slots: &[VarId]) -> Vec<MirInstr> {
     values
         .iter()
@@ -547,7 +648,7 @@ fn stores(values: &[Reg], slots: &[VarId]) -> Vec<MirInstr> {
         .collect()
 }
 
-/// The join's reads of an op's results, or a loop body's reads of its
+/// The join's reads of an op's results, or a region's reads of its
 /// arguments, each forwarded out of its slot.
 fn forwards(results: &[Reg], slots: &[VarId]) -> Vec<MirInstr> {
     results
@@ -620,8 +721,17 @@ mod tests {
                 results: vec![Reg(1)],
                 cond: Reg(0),
                 then: one(Vec::new(), MirTerm::Yield(vec![Reg(2)])),
+                else_args: Vec::new(),
                 elifs: vec![MirElif {
-                    cond: one(Vec::new(), MirTerm::ElifCond(Reg(0))),
+                    cond_args: Vec::new(),
+                    then_args: Vec::new(),
+                    cond: one(
+                        Vec::new(),
+                        MirTerm::ElifCond {
+                            cond: Reg(0),
+                            values: Vec::new(),
+                        },
+                    ),
                     then: one(Vec::new(), MirTerm::Yield(vec![Reg(2)])),
                 }],
                 orelse: one(Vec::new(), MirTerm::Unreachable),
@@ -697,13 +807,21 @@ mod tests {
             results: Vec::new(),
             cond: Reg(0),
             then: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            else_args: Vec::new(),
             elifs: Vec::new(),
-            orelse: one(Vec::new(), MirTerm::MatchNext),
+            orelse: one(Vec::new(), MirTerm::MatchNext(Vec::new())),
         };
         MirInstr::Match {
+            else_args: Vec::new(),
             cases: vec![
-                one(vec![test], MirTerm::MatchComplete),
-                one(Vec::new(), MirTerm::MatchComplete),
+                MirCase {
+                    args: Vec::new(),
+                    body: one(vec![test], MirTerm::MatchComplete),
+                },
+                MirCase {
+                    args: Vec::new(),
+                    body: one(Vec::new(), MirTerm::MatchComplete),
+                },
             ],
             orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
         }
@@ -776,14 +894,19 @@ mod tests {
                         values: Vec::new(),
                     },
                 ),
+                else_args: Vec::new(),
                 elifs: Vec::new(),
-                orelse: one(Vec::new(), MirTerm::MatchNext),
+                orelse: one(Vec::new(), MirTerm::MatchNext(Vec::new())),
             }],
             MirTerm::MatchComplete,
         );
         let body = one(
             vec![MirInstr::Match {
-                cases: vec![case],
+                else_args: Vec::new(),
+                cases: vec![MirCase {
+                    args: Vec::new(),
+                    body: case,
+                }],
                 orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
             }],
             MirTerm::Continue {
@@ -832,6 +955,7 @@ mod tests {
                         values: Vec::new(),
                     },
                 ),
+                else_args: Vec::new(),
                 elifs: Vec::new(),
                 orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
             }],
@@ -1002,6 +1126,205 @@ mod tests {
                 ..
             }]
         ));
+    }
+
+    /// [`function_with`] over `bodies` with one `Int` slot `x` and the
+    /// `Int` registers `r3` to `r{2 + extra}`.
+    fn function_over(bodies: Vec<MirBlock>, extra: u32) -> MirFunction {
+        let mut function = function_with(bodies);
+        function.n_regs = 3 + extra;
+        function
+            .reg_types
+            .extend((3..3 + extra).map(|reg| (reg, Ty::int())));
+        function.n_vars = 1;
+        function.var_names = vec!["x".into()];
+        function.var_tys = HashMap::from([(0, Ty::int())]);
+        function
+    }
+
+    /// A region storing `reg` into the slot `x`, ended by `term`.
+    fn storing(reg: Reg, term: MirTerm) -> Vec<MirBlock> {
+        let store = MirInstr::DefVar {
+            var: 0,
+            src: reg,
+            binding_ty: None,
+            in_place: false,
+        };
+        one(vec![store], term)
+    }
+
+    /// The registers every store into the slot `x` reads, in block order.
+    fn stored(function: &MirFunction) -> Vec<Reg> {
+        function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instrs)
+            .filter_map(|instruction| match instruction {
+                MirInstr::DefVar { var: 0, src, .. } => Some(*src),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// An `if` on `r0` whose one elif's condition region `cond` enters an
+    /// arm taking `r3` and an else region taking `r4`, each storing its
+    /// argument.
+    fn carrying_elif(cond: Vec<MirBlock>) -> MirInstr {
+        MirInstr::If {
+            results: Vec::new(),
+            cond: Reg(0),
+            then: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            elifs: vec![MirElif {
+                cond_args: Vec::new(),
+                cond,
+                then_args: vec![Reg(3)],
+                then: storing(Reg(3), MirTerm::Yield(Vec::new())),
+            }],
+            else_args: vec![Reg(4)],
+            orelse: storing(Reg(4), MirTerm::Yield(Vec::new())),
+        }
+    }
+
+    #[test]
+    fn an_elif_carrying_values_folds_its_arguments() {
+        let cond = one(
+            Vec::new(),
+            MirTerm::ElifCond {
+                cond: Reg(0),
+                values: vec![Reg(2)],
+            },
+        );
+        let body = one(vec![carrying_elif(cond)], MirTerm::Return(None));
+        let function = lowered(function_over(body, 2));
+        assert_eq!(function.n_vars, 1, "no slot is made for an argument");
+        assert_eq!(stored(&function), [Reg(2), Reg(2)]);
+        assert!(!function.reg_types.contains_key(&3));
+        assert!(!function.reg_types.contains_key(&4));
+    }
+
+    #[test]
+    fn an_elif_condition_of_two_blocks_carries_values_through_slots() {
+        let ends = |value| MirBlock {
+            instrs: Vec::new(),
+            term: MirTerm::ElifCond {
+                cond: Reg(0),
+                values: vec![value],
+            },
+        };
+        let cond = vec![
+            MirBlock {
+                instrs: Vec::new(),
+                term: MirTerm::Branch {
+                    cond: Reg(0),
+                    then_b: 1,
+                    else_b: 2,
+                },
+            },
+            ends(Reg(1)),
+            ends(Reg(2)),
+        ];
+        let body = one(vec![carrying_elif(cond)], MirTerm::Return(None));
+        let function = lowered(function_over(body, 2));
+        assert_eq!(function.var_names, ["x", "$arg1", "$arg2"]);
+        // Each `if.elifcond.yield` stores its value into both regions'
+        // slots before it branches.
+        for value in [Reg(1), Reg(2)] {
+            let carries = function.blocks.iter().any(|block| {
+                matches!(
+                    block.instrs.as_slice(),
+                    [
+                        MirInstr::DefVar { var: 1, src: a, .. },
+                        MirInstr::DefVar { var: 2, src: b, .. },
+                    ] if *a == value && *b == value
+                ) && matches!(block.term, MirTerm::Branch { .. })
+            });
+            assert!(carries, "{:?}", function.blocks);
+        }
+        // The arm and the else region forward their argument first.
+        for (dest, var) in [(Reg(3), 1), (Reg(4), 2)] {
+            let forwarded = function.blocks.iter().any(|block| {
+                matches!(
+                    block.instrs.first(),
+                    Some(MirInstr::UseVar { dest: d, var: v, mode: UseMode::Forward, .. })
+                        if *d == dest && *v == var
+                )
+            });
+            assert!(forwarded, "{:?}", function.blocks);
+        }
+    }
+
+    /// A `match` whose first case leaves through `first` and whose second
+    /// takes `r3`, stores it, and leaves with it to an else region taking
+    /// `r4`, which stores that.
+    fn carrying_match(first: Vec<MirBlock>) -> MirInstr {
+        MirInstr::Match {
+            cases: vec![
+                MirCase {
+                    args: Vec::new(),
+                    body: first,
+                },
+                MirCase {
+                    args: vec![Reg(3)],
+                    body: storing(Reg(3), MirTerm::MatchNext(vec![Reg(3)])),
+                },
+            ],
+            else_args: vec![Reg(4)],
+            orelse: storing(Reg(4), MirTerm::Yield(Vec::new())),
+        }
+    }
+
+    #[test]
+    fn a_case_entered_by_two_match_nexts_takes_its_arguments_through_slots() {
+        let guard = MirInstr::If {
+            results: Vec::new(),
+            cond: Reg(0),
+            then: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            elifs: Vec::new(),
+            else_args: Vec::new(),
+            orelse: one(Vec::new(), MirTerm::MatchNext(vec![Reg(1)])),
+        };
+        let first = one(vec![guard], MirTerm::MatchNext(vec![Reg(2)]));
+        let body = one(vec![carrying_match(first)], MirTerm::Return(None));
+        let function = lowered(function_over(body, 2));
+        // The second case's argument takes a slot; the else region, entered
+        // from the second case's one `match.next`, folds to `r3`.
+        assert_eq!(function.var_names, ["x", "$arg1"]);
+        let stores: Vec<Reg> = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instrs)
+            .filter_map(|instruction| match instruction {
+                MirInstr::DefVar { var: 1, src, .. } => Some(*src),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(stores.len(), 2);
+        assert!(stores.contains(&Reg(1)) && stores.contains(&Reg(2)));
+        let entry = function.blocks.iter().find(|block| {
+            matches!(
+                block.instrs.first(),
+                Some(MirInstr::UseVar {
+                    dest: Reg(3),
+                    var: 1,
+                    mode: UseMode::Forward,
+                    ..
+                })
+            )
+        });
+        assert!(entry.is_some(), "{:?}", function.blocks);
+        assert_eq!(stored(&function), [Reg(3), Reg(3)]);
+        assert!(!function.reg_types.contains_key(&4));
+    }
+
+    #[test]
+    fn a_case_entered_by_one_match_next_folds_its_arguments() {
+        let first = one(Vec::new(), MirTerm::MatchNext(vec![Reg(2)]));
+        let body = one(vec![carrying_match(first)], MirTerm::Return(None));
+        let function = lowered(function_over(body, 2));
+        assert_eq!(function.n_vars, 1, "no slot is made for an argument");
+        assert_eq!(stored(&function), [Reg(2), Reg(2)]);
+        assert!(!function.reg_types.contains_key(&3));
+        assert!(!function.reg_types.contains_key(&4));
     }
 
     #[test]

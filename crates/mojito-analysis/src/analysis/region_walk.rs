@@ -15,7 +15,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_mir::mir::{MirBlockId, RegionFrame, region_exit};
+use mojito_mir::mir::{MirBlockId, MirCase, RegionFrame, region_exit};
 
 /// A forward analysis the walk carries through regions.
 pub(super) trait ForwardScan {
@@ -305,7 +305,7 @@ where
             MirTerm::TryYield
             | MirTerm::Yield(_)
             | MirTerm::ComptimeYield(_)
-            | MirTerm::ElifCond(_) => add_state(scan, &mut flow.normal, Some(&state)),
+            | MirTerm::ElifCond { .. } => add_state(scan, &mut flow.normal, Some(&state)),
             MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. } => {
                 add_state(scan, &mut flow.exits, Some(&state));
             }
@@ -315,7 +315,7 @@ where
             | MirTerm::ComptimeBreak
             | MirTerm::ComptimeContinue
             | MirTerm::MatchComplete
-            | MirTerm::MatchNext => {
+            | MirTerm::MatchNext(_) => {
                 if let Some((target, resume)) = region_exit(&block.term) {
                     leave_to(scan, frames, target, resume, &state);
                 }
@@ -419,7 +419,7 @@ where
             observer,
             frames,
         ),
-        MirInstr::Match { cases, orelse } => {
+        MirInstr::Match { cases, orelse, .. } => {
             walk_match(scan, entry, cases, orelse, observer, frames)
         }
         _ => Ok(Flow::falls_off(entry)),
@@ -591,7 +591,7 @@ where
 fn walk_match<S, O>(
     scan: &S,
     entry: S::State,
-    cases: &[Vec<MirBlock>],
+    cases: &[MirCase],
     orelse: &[MirBlock],
     mut observer: Option<&mut O>,
     frames: &mut Vec<Frame<S::State>>,
@@ -610,7 +610,7 @@ where
             scan,
             entry,
             RegionFrame::MatchCase,
-            case,
+            &case.body,
             observer.as_deref_mut(),
             frames,
         )?;
@@ -987,7 +987,7 @@ impl<S: BackwardScan> BackWalk<'_, S> {
             MirTerm::TryYield
             | MirTerm::Yield(_)
             | MirTerm::ComptimeYield(_)
-            | MirTerm::ElifCond(_) => exit.clone(),
+            | MirTerm::ElifCond { .. } => exit.clone(),
             MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. } => self.exit.clone(),
             MirTerm::EscapeJump { .. } | MirTerm::Unreachable => S::State::default(),
             MirTerm::Break { .. }
@@ -995,7 +995,7 @@ impl<S: BackwardScan> BackWalk<'_, S> {
             | MirTerm::ComptimeBreak
             | MirTerm::ComptimeContinue
             | MirTerm::MatchComplete
-            | MirTerm::MatchNext => {
+            | MirTerm::MatchNext(_) => {
                 let Some((target, resume)) = region_exit(term) else {
                     return S::State::default();
                 };
@@ -1075,7 +1075,7 @@ impl<S: BackwardScan> BackWalk<'_, S> {
             MirInstr::ComptimeFor { body, .. } => {
                 self.looped(RegionFrame::ComptimeFor, body, exit, recorder)
             }
-            MirInstr::Match { cases, orelse } => {
+            MirInstr::Match { cases, orelse, .. } => {
                 let mut next = self.region(orelse, exit, recorder.as_deref_mut());
                 for case in cases.iter().rev() {
                     self.frames.push(BackFrame {
@@ -1083,7 +1083,7 @@ impl<S: BackwardScan> BackWalk<'_, S> {
                         leave: exit.clone(),
                         resume: next,
                     });
-                    next = self.region(case, &S::State::default(), recorder.as_deref_mut());
+                    next = self.region(&case.body, &S::State::default(), recorder.as_deref_mut());
                     self.frames.pop();
                 }
                 next

@@ -51,13 +51,24 @@ pub(super) fn verify_regions(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
             cond,
             then,
             elifs,
+            else_args,
             orelse,
         } => {
             require_bool(cx.prefix, cx.function, "if", *cond, errors);
+            let entered = elifs.first().map_or(else_args, |elif| &elif.cond_args);
+            let target = YieldTarget::Arguments;
+            yielded_values(cx.prefix, cx.function, "if", &[], entered, target, errors);
             let arm = || RegionKind::IfArm(results.clone());
             verify_region(cx, arm(), protected, then, errors);
-            for elif in elifs {
-                verify_region(cx, RegionKind::ElifCond, protected, &elif.cond, errors);
+            for (index, elif) in elifs.iter().enumerate() {
+                let next_args = elifs
+                    .get(index + 1)
+                    .map_or(else_args, |next| &next.cond_args);
+                let kind = RegionKind::ElifCond {
+                    then_args: elif.then_args.clone(),
+                    next_args: next_args.clone(),
+                };
+                verify_region(cx, kind, protected, &elif.cond, errors);
                 verify_region(cx, arm(), protected, &elif.then, errors);
             }
             verify_region(cx, arm(), protected, orelse, errors);
@@ -144,12 +155,25 @@ pub(super) fn verify_regions(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
             verify_region(cx, RegionKind::ComptimeForBody, protected, body, errors);
             verify_region(cx, RegionKind::ComptimeForElse, protected, orelse, errors);
         }
-        MirInstr::Match { cases, orelse } => {
-            if cases.is_empty() {
-                errors.push(format!("{}: match holds no case", cx.prefix));
+        MirInstr::Match {
+            cases,
+            else_args,
+            orelse,
+        } => {
+            match cases.first() {
+                None => errors.push(format!("{}: match holds no case", cx.prefix)),
+                Some(first) => {
+                    let target = YieldTarget::Arguments;
+                    let args = &first.args;
+                    yielded_values(cx.prefix, cx.function, "match", &[], args, target, errors);
+                }
             }
-            for case in cases {
-                verify_region(cx, RegionKind::MatchCase, protected, case, errors);
+            for (index, case) in cases.iter().enumerate() {
+                let next_args = cases.get(index + 1).map_or(else_args, |next| &next.args);
+                let kind = RegionKind::MatchCase {
+                    next_args: next_args.clone(),
+                };
+                verify_region(cx, kind, protected, &case.body, errors);
             }
             verify_region(cx, RegionKind::IfArm(Vec::new()), protected, orelse, errors);
         }
@@ -159,11 +183,15 @@ pub(super) fn verify_regions(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
 
 /// A region terminator sits in the region it ends: `yield` in an `if` arm
 /// and `comptime.yield` in a `comptime if` arm, each with its op's results;
-/// `if.elifcond.yield` in an elif condition, with a `Bool`; `break` and
-/// `continue` inside the loop they name (the nearest, or the nearest
-/// carrying the label); `comptime.for.break`/`continue` where the nearest
-/// enclosing loop is a `comptime for`; `match.next`/`match.complete` inside
-/// a `match` case. `unreachable` ends any region.
+/// `if.elifcond.yield` in an elif condition, with a `Bool` and values for
+/// its arm's arguments and the next region's; `break` and `continue` inside
+/// the loop they name (the nearest, or the nearest carrying the label);
+/// `comptime.for.break`/`continue` where the nearest enclosing loop is a
+/// `comptime for`; `match.next`/`match.complete` inside a `match` case, a
+/// `match.next` with values for the next region's arguments. `unreachable`
+/// ends any region. Values are checked against each region they enter, as
+/// upstream's `verifyTerminator` checks each target, stopping at the first
+/// finding.
 pub(super) fn verify_region_terminator(
     prefix: &str,
     function: &MirFunction,
@@ -178,10 +206,26 @@ pub(super) fn verify_region_terminator(
             let target = YieldTarget::Results;
             yielded_values(prefix, function, mnemonic, values, results, target, errors);
         }
-        (MirTerm::ElifCond(cond), RegionKind::ElifCond) => {
+        (
+            MirTerm::ElifCond { cond, values },
+            RegionKind::ElifCond {
+                then_args,
+                next_args,
+            },
+        ) => {
             require_bool(prefix, function, mnemonic, *cond, errors);
+            let target = YieldTarget::Arguments;
+            let found = errors.len();
+            yielded_values(
+                prefix, function, mnemonic, values, then_args, target, errors,
+            );
+            if errors.len() == found {
+                yielded_values(
+                    prefix, function, mnemonic, values, next_args, target, errors,
+                );
+            }
         }
-        (MirTerm::Yield(_) | MirTerm::ComptimeYield(_) | MirTerm::ElifCond(_), _) => {
+        (MirTerm::Yield(_) | MirTerm::ComptimeYield(_) | MirTerm::ElifCond { .. }, _) => {
             errors.push(format!("{prefix}: `{mnemonic}` outside the region it ends"));
         }
         (MirTerm::Break { label, values } | MirTerm::Continue { label, values }, _) => {
@@ -216,12 +260,16 @@ pub(super) fn verify_region_terminator(
                 ));
             }
         }
-        (MirTerm::MatchNext | MirTerm::MatchComplete, _)
-            if !context
-                .regions
-                .iter()
-                .any(|kind| matches!(kind, RegionKind::MatchCase)) =>
-        {
+        (MirTerm::MatchNext(values), _) => match enclosing_case(context) {
+            None => errors.push(format!("{prefix}: `{mnemonic}` is not inside a match case")),
+            Some(next_args) => {
+                let target = YieldTarget::Arguments;
+                yielded_values(
+                    prefix, function, mnemonic, values, next_args, target, errors,
+                );
+            }
+        },
+        (MirTerm::MatchComplete, _) if enclosing_case(context).is_none() => {
             errors.push(format!("{prefix}: `{mnemonic}` is not inside a match case"));
         }
         _ => {}
@@ -312,6 +360,15 @@ fn yielded_values(
             ));
         }
     }
+}
+
+/// The arguments of the region a `match.next` enters: the nearest
+/// enclosing `match` case's `next_args`; `None` outside every case.
+fn enclosing_case(context: &RegionContext) -> Option<&[Reg]> {
+    context.regions.iter().rev().find_map(|kind| match kind {
+        RegionKind::MatchCase { next_args } => Some(next_args.as_slice()),
+        _ => None,
+    })
 }
 
 /// The arguments and results of the loop a `break`/`continue` with `label`
@@ -439,8 +496,17 @@ mod tests {
             results: vec![Reg(1)],
             cond: Reg(0),
             then: one(Vec::new(), MirTerm::Yield(vec![Reg(2)])),
+            else_args: Vec::new(),
             elifs: vec![crate::mir::MirElif {
-                cond: one(Vec::new(), MirTerm::ElifCond(Reg(0))),
+                cond_args: Vec::new(),
+                then_args: Vec::new(),
+                cond: one(
+                    Vec::new(),
+                    MirTerm::ElifCond {
+                        cond: Reg(0),
+                        values: Vec::new(),
+                    },
+                ),
                 then: one(Vec::new(), MirTerm::Yield(vec![Reg(2)])),
             }],
             orelse: one(Vec::new(), MirTerm::Unreachable),
@@ -461,7 +527,14 @@ mod tests {
         let elif = function_with(vec![MirInstr::If {
             results: Vec::new(),
             cond: Reg(0),
-            then: one(Vec::new(), MirTerm::ElifCond(Reg(0))),
+            then: one(
+                Vec::new(),
+                MirTerm::ElifCond {
+                    cond: Reg(0),
+                    values: Vec::new(),
+                },
+            ),
+            else_args: Vec::new(),
             elifs: Vec::new(),
             orelse: one(Vec::new(), MirTerm::ComptimeYield(Vec::new())),
         }]);
@@ -472,6 +545,7 @@ mod tests {
             results: vec![Reg(1)],
             cond: Reg(0),
             then: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            else_args: Vec::new(),
             elifs: Vec::new(),
             orelse: one(Vec::new(), MirTerm::Yield(vec![Reg(0)])),
         }]);
@@ -504,6 +578,7 @@ mod tests {
                             values,
                         },
                     ),
+                    else_args: Vec::new(),
                     elifs: Vec::new(),
                     orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
                 }],
@@ -646,13 +721,21 @@ mod tests {
             results: Vec::new(),
             cond: Reg(0),
             then: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            else_args: Vec::new(),
             elifs: Vec::new(),
-            orelse: one(Vec::new(), MirTerm::MatchNext),
+            orelse: one(Vec::new(), MirTerm::MatchNext(Vec::new())),
         };
         MirInstr::Match {
+            else_args: Vec::new(),
             cases: vec![
-                one(vec![test], MirTerm::MatchComplete),
-                one(Vec::new(), MirTerm::MatchComplete),
+                crate::mir::MirCase {
+                    args: Vec::new(),
+                    body: one(vec![test], MirTerm::MatchComplete),
+                },
+                crate::mir::MirCase {
+                    args: Vec::new(),
+                    body: one(Vec::new(), MirTerm::MatchComplete),
+                },
             ],
             orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
         }
@@ -665,34 +748,39 @@ mod tests {
         // A case may be left from a loop nested in it, and a loop in a case
         // keeps its own `break`.
         let nested = function_with(vec![MirInstr::Match {
-            cases: vec![one(
-                vec![MirInstr::Loop {
-                    label: None,
-                    operands: Vec::new(),
-                    args: Vec::new(),
-                    results: Vec::new(),
-                    body: one(
-                        vec![MirInstr::If {
-                            results: Vec::new(),
-                            cond: Reg(0),
-                            then: one(Vec::new(), MirTerm::MatchComplete),
-                            elifs: Vec::new(),
-                            orelse: one(
-                                Vec::new(),
-                                MirTerm::Break {
-                                    label: None,
-                                    values: Vec::new(),
-                                },
-                            ),
-                        }],
-                        MirTerm::Continue {
-                            label: None,
-                            values: Vec::new(),
-                        },
-                    ),
-                }],
-                MirTerm::MatchNext,
-            )],
+            else_args: Vec::new(),
+            cases: vec![crate::mir::MirCase {
+                args: Vec::new(),
+                body: one(
+                    vec![MirInstr::Loop {
+                        label: None,
+                        operands: Vec::new(),
+                        args: Vec::new(),
+                        results: Vec::new(),
+                        body: one(
+                            vec![MirInstr::If {
+                                results: Vec::new(),
+                                cond: Reg(0),
+                                then: one(Vec::new(), MirTerm::MatchComplete),
+                                else_args: Vec::new(),
+                                elifs: Vec::new(),
+                                orelse: one(
+                                    Vec::new(),
+                                    MirTerm::Break {
+                                        label: None,
+                                        values: Vec::new(),
+                                    },
+                                ),
+                            }],
+                            MirTerm::Continue {
+                                label: None,
+                                values: Vec::new(),
+                            },
+                        ),
+                    }],
+                    MirTerm::MatchNext(Vec::new()),
+                ),
+            }],
             orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
         }]);
         assert_eq!(findings(&nested), Vec::<String>::new());
@@ -703,7 +791,8 @@ mod tests {
         let next = function_with(vec![MirInstr::If {
             results: Vec::new(),
             cond: Reg(0),
-            then: one(Vec::new(), MirTerm::MatchNext),
+            then: one(Vec::new(), MirTerm::MatchNext(Vec::new())),
+            else_args: Vec::new(),
             elifs: Vec::new(),
             orelse: one(Vec::new(), MirTerm::MatchComplete),
         }]);
@@ -712,18 +801,211 @@ mod tests {
         assert_finding(&found, "`match.complete` is not inside a match case");
         // The else region is an arm, not a case.
         let orelse = function_with(vec![MirInstr::Match {
-            cases: vec![one(Vec::new(), MirTerm::MatchComplete)],
-            orelse: one(Vec::new(), MirTerm::MatchNext),
+            else_args: Vec::new(),
+            cases: vec![crate::mir::MirCase {
+                args: Vec::new(),
+                body: one(Vec::new(), MirTerm::MatchComplete),
+            }],
+            orelse: one(Vec::new(), MirTerm::MatchNext(Vec::new())),
         }]);
         assert_finding(
             &findings(&orelse),
             "`match.next` is not inside a match case",
         );
         let empty = function_with(vec![MirInstr::Match {
+            else_args: Vec::new(),
             cases: Vec::new(),
             orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
         }]);
         assert_finding(&findings(&empty), "match holds no case");
+    }
+
+    /// [`function_with`] over `extra` more registers of the given types,
+    /// numbered from 3.
+    fn function_over(instrs: Vec<MirInstr>, extra: &[Ty]) -> MirFunction {
+        let mut function = function_with(instrs);
+        for (at, ty) in extra.iter().enumerate() {
+            function.reg_types.insert(3 + at as u32, ty.clone());
+        }
+        function.n_regs = 3 + extra.len() as u32;
+        function
+    }
+
+    /// An `if` on `%r0` with one elif per `(cond_args, values, then_args)`
+    /// whose condition yields `%r0` and `values`, every arm yielding
+    /// nothing.
+    fn elif_chain(elifs: Vec<(Vec<Reg>, Vec<Reg>, Vec<Reg>)>, else_args: Vec<Reg>) -> MirInstr {
+        let arm = || one(Vec::new(), MirTerm::Yield(Vec::new()));
+        MirInstr::If {
+            results: Vec::new(),
+            cond: Reg(0),
+            then: arm(),
+            elifs: elifs
+                .into_iter()
+                .map(|(cond_args, values, then_args)| crate::mir::MirElif {
+                    cond_args,
+                    cond: one(
+                        Vec::new(),
+                        MirTerm::ElifCond {
+                            cond: Reg(0),
+                            values,
+                        },
+                    ),
+                    then_args,
+                    then: arm(),
+                })
+                .collect(),
+            else_args,
+            orelse: arm(),
+        }
+    }
+
+    #[test]
+    fn an_elif_carrying_values_verifies() {
+        let chain = elif_chain(
+            vec![
+                (Vec::new(), vec![Reg(1)], vec![Reg(3)]),
+                (vec![Reg(4)], vec![Reg(4)], vec![Reg(5)]),
+            ],
+            vec![Reg(6)],
+        );
+        let function = function_over(vec![chain], &[Ty::int(), Ty::int(), Ty::int(), Ty::int()]);
+        assert_eq!(findings(&function), Vec::<String>::new());
+    }
+
+    #[test]
+    fn an_elif_carrying_the_wrong_values_is_a_finding() {
+        let arity = elif_chain(vec![(Vec::new(), Vec::new(), vec![Reg(3)])], Vec::new());
+        let arity = function_over(vec![arity], &[Ty::int()]);
+        assert_finding(
+            &findings(&arity),
+            "`if.elifcond.yield` yields 0 values for 1 arguments",
+        );
+        // The arm's arguments agree; the else region's do not.
+        let typed = elif_chain(vec![(Vec::new(), vec![Reg(1)], vec![Reg(3)])], vec![Reg(4)]);
+        let typed = function_over(vec![typed], &[Ty::int(), Ty::bool()]);
+        let found = findings(&typed);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_finding(
+            &found,
+            "`if.elifcond.yield` yields Int for an argument of type Bool",
+        );
+    }
+
+    #[test]
+    fn an_if_entering_a_region_with_arguments_is_a_finding() {
+        let first = elif_chain(vec![(vec![Reg(3)], Vec::new(), Vec::new())], Vec::new());
+        let first = function_over(vec![first], &[Ty::int()]);
+        assert_finding(&findings(&first), "`if` yields 0 values for 1 arguments");
+        let orelse = function_over(vec![elif_chain(Vec::new(), vec![Reg(3)])], &[Ty::int()]);
+        assert_finding(&findings(&orelse), "`if` yields 0 values for 1 arguments");
+    }
+
+    /// A `match` whose first case leaves through `first`'s `match.next`
+    /// values, from an `if` arm (its guard), and whose second case takes
+    /// `args` and leaves with `second`'s.
+    fn carrying_match(first: Vec<Reg>, args: Vec<Reg>, second: Vec<Reg>) -> MirInstr {
+        let guard = MirInstr::If {
+            results: Vec::new(),
+            cond: Reg(0),
+            then: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            elifs: Vec::new(),
+            else_args: Vec::new(),
+            orelse: one(Vec::new(), MirTerm::MatchNext(first.clone())),
+        };
+        MirInstr::Match {
+            cases: vec![
+                crate::mir::MirCase {
+                    args: Vec::new(),
+                    body: one(vec![guard], MirTerm::MatchNext(first)),
+                },
+                crate::mir::MirCase {
+                    args,
+                    body: one(Vec::new(), MirTerm::MatchNext(second)),
+                },
+            ],
+            else_args: vec![Reg(4)],
+            orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+        }
+    }
+
+    #[test]
+    fn a_match_next_carrying_values_verifies() {
+        let carried = carrying_match(vec![Reg(1)], vec![Reg(3)], vec![Reg(3)]);
+        let function = function_over(vec![carried], &[Ty::int(), Ty::int()]);
+        assert_eq!(findings(&function), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_match_next_carrying_the_wrong_values_is_a_finding() {
+        let arity = carrying_match(Vec::new(), vec![Reg(3)], vec![Reg(3)]);
+        let arity = function_over(vec![arity], &[Ty::int(), Ty::int()]);
+        assert_finding(
+            &findings(&arity),
+            "`match.next` yields 0 values for 1 arguments",
+        );
+        let typed = carrying_match(vec![Reg(1)], vec![Reg(3)], vec![Reg(0)]);
+        let typed = function_over(vec![typed], &[Ty::int(), Ty::int()]);
+        let found = findings(&typed);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_finding(
+            &found,
+            "`match.next` yields Bool for an argument of type Int",
+        );
+    }
+
+    #[test]
+    fn a_match_whose_first_case_takes_arguments_is_a_finding() {
+        let function = function_over(
+            vec![MirInstr::Match {
+                cases: vec![crate::mir::MirCase {
+                    args: vec![Reg(3)],
+                    body: one(Vec::new(), MirTerm::MatchComplete),
+                }],
+                else_args: Vec::new(),
+                orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            }],
+            &[Ty::int()],
+        );
+        assert_finding(
+            &findings(&function),
+            "`match` yields 0 values for 1 arguments",
+        );
+    }
+
+    #[test]
+    fn a_match_next_in_an_else_names_the_enclosing_case() {
+        let outer = |args: Vec<Reg>| {
+            let inner = MirInstr::Match {
+                cases: vec![crate::mir::MirCase {
+                    args: Vec::new(),
+                    body: one(Vec::new(), MirTerm::MatchComplete),
+                }],
+                else_args: Vec::new(),
+                orelse: one(Vec::new(), MirTerm::MatchNext(vec![Reg(1)])),
+            };
+            MirInstr::Match {
+                cases: vec![
+                    crate::mir::MirCase {
+                        args: Vec::new(),
+                        body: one(vec![inner], MirTerm::MatchComplete),
+                    },
+                    crate::mir::MirCase {
+                        args,
+                        body: one(Vec::new(), MirTerm::MatchComplete),
+                    },
+                ],
+                else_args: Vec::new(),
+                orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            }
+        };
+        let carried = function_over(vec![outer(vec![Reg(3)])], &[Ty::int()]);
+        assert_eq!(findings(&carried), Vec::<String>::new());
+        let dropped = function_with(vec![outer(Vec::new())]);
+        assert_finding(
+            &findings(&dropped),
+            "`match.next` yields 1 values for 0 arguments",
+        );
     }
 
     #[test]
@@ -738,6 +1020,7 @@ mod tests {
                     values: Vec::new(),
                 },
             ),
+            else_args: Vec::new(),
             elifs: Vec::new(),
             orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
         }]);
@@ -857,6 +1140,7 @@ mod tests {
             results: Vec::new(),
             cond: Reg(0),
             then: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            else_args: Vec::new(),
             elifs: Vec::new(),
             orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
         }]);

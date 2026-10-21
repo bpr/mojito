@@ -104,13 +104,13 @@ pub(super) fn verify_terminator(
             }
         }
         MirTerm::Yield(_)
-        | MirTerm::ElifCond(_)
+        | MirTerm::ElifCond { .. }
         | MirTerm::Break { .. }
         | MirTerm::Continue { .. }
         | MirTerm::ComptimeYield(_)
         | MirTerm::ComptimeBreak
         | MirTerm::ComptimeContinue
-        | MirTerm::MatchNext
+        | MirTerm::MatchNext(_)
         | MirTerm::MatchComplete
         | MirTerm::Unreachable => {
             verify_region_terminator(&prefix, function, terminator, context, errors);

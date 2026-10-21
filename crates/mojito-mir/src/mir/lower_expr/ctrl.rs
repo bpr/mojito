@@ -110,6 +110,7 @@ impl<'a> Flatten<'a> {
             cond: ra,
             then,
             elifs: Vec::new(),
+            else_args: Vec::new(),
             orelse,
         });
         d
@@ -463,6 +464,7 @@ impl<'a> Flatten<'a> {
                     cond: condition,
                     then,
                     elifs: Vec::new(),
+                    else_args: Vec::new(),
                     orelse: vec![MirBlock {
                         instrs: Vec::new(),
                         term: MirTerm::Yield(Vec::new()),
@@ -584,6 +586,7 @@ impl<'a> Flatten<'a> {
                             term: MirTerm::Yield(Vec::new()),
                         }],
                         elifs: Vec::new(),
+                        else_args: Vec::new(),
                         orelse: vec![MirBlock {
                             instrs: Vec::new(),
                             term: MirTerm::Break {
@@ -827,6 +830,7 @@ impl<'a> Flatten<'a> {
             cond: cmp,
             then,
             elifs: Vec::new(),
+            else_args: Vec::new(),
             orelse,
         });
         d
@@ -857,6 +861,7 @@ impl ArmTest {
                 cond,
                 then,
                 elifs: Vec::new(),
+                else_args: Vec::new(),
                 orelse,
             },
             Self::Comptime(cond) => MirInstr::ComptimeIf {

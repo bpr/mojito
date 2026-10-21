@@ -1513,6 +1513,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
             cond,
             then,
             elifs,
+            else_args,
             orelse,
         } => record(
             tag,
@@ -1526,12 +1527,15 @@ fn instruction_value(instruction: &MirInstr) -> String {
                         record(
                             "elif",
                             &[
+                                ("condition_arguments", regs(&elif.cond_args)),
                                 ("condition", blocks_value(&elif.cond)),
+                                ("then_arguments", regs(&elif.then_args)),
                                 ("then", blocks_value(&elif.then)),
                             ],
                         )
                     })),
                 ),
+                ("else_arguments", regs(else_args)),
                 ("else", blocks_value(orelse)),
             ],
         ),
@@ -1577,10 +1581,26 @@ fn instruction_value(instruction: &MirInstr) -> String {
             record(tag, &fields)
         }
         MirInstr::ComptimeAssert { cond } => record(tag, &[("condition", constraint(cond))]),
-        MirInstr::Match { cases, orelse } => record(
+        MirInstr::Match {
+            cases,
+            else_args,
+            orelse,
+        } => record(
             tag,
             &[
-                ("cases", list(cases.iter().map(|case| blocks_value(case)))),
+                (
+                    "cases",
+                    list(cases.iter().map(|case| {
+                        record(
+                            "case",
+                            &[
+                                ("arguments", regs(&case.args)),
+                                ("body", blocks_value(&case.body)),
+                            ],
+                        )
+                    })),
+                ),
+                ("else_arguments", regs(else_args)),
                 ("else", blocks_value(orelse)),
             ],
         ),
@@ -1714,14 +1734,18 @@ fn term_value(term: &MirTerm) -> String {
         MirTerm::TryYield
         | MirTerm::ComptimeBreak
         | MirTerm::ComptimeContinue
-        | MirTerm::MatchNext
         | MirTerm::MatchComplete
         | MirTerm::Unreachable => record(tag, &[]),
-        MirTerm::Yield(values) | MirTerm::ComptimeYield(values) => record(
+        MirTerm::Yield(values) | MirTerm::ComptimeYield(values) | MirTerm::MatchNext(values) => {
+            record(
+                tag,
+                &[("values", list(values.iter().map(|v| reg_value(*v))))],
+            )
+        }
+        MirTerm::ElifCond { cond, values } => record(
             tag,
-            &[("values", list(values.iter().map(|v| reg_value(*v))))],
+            &[("condition", reg_value(*cond)), ("values", regs(values))],
         ),
-        MirTerm::ElifCond(cond) => record(tag, &[("condition", reg_value(*cond))]),
         MirTerm::Break { label, values } | MirTerm::Continue { label, values } => record(
             tag,
             &[

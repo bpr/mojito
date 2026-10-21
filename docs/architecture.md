@@ -4013,16 +4013,28 @@ The structure mirrors source-level exception semantics:
 
 `Try` is one of six region ops. The other five are upstream's `hlcf` ops
 (`docs/structured-control-flow-plan.md`): `If { results, cond, then, elifs,
-orelse }` (`hlcf.if`, each `MirElif` a condition region and an arm), `Loop {
+else_args, orelse }` (`hlcf.if`, each `MirElif` a condition region and an
+arm with their arguments, `cond_args` and `then_args`), `Loop {
 label, operands, args, results, body }` (`hlcf.loop`, its `args` the body
 block's arguments, which its `operands` define on entry), `ComptimeIf { results, conds, arms, orelse }`
 (`hlcf.comptime.if`), `ComptimeFor { binder, source, body, orelse }`
 (`hlcf.comptime.for`, its `orelse` one `Unreachable` block), and `Match {
-cases, orelse }` (`hlcf.match`: each case a region that tests its pattern
-and runs its body, left by `MatchNext` for the next case — the `orelse`
-after the last — or by `MatchComplete` for the op's end; `orelse` ends in
-`Yield` with no values). Their regions are block lists like a `try` part's,
-and end in the region terminators `Yield`, `ElifCond`, `Break`/`Continue`
+cases, else_args, orelse }` (`hlcf.match`: each `MirCase` a region with its
+`args` that tests its pattern and runs its body, left by `MatchNext` for
+the next case — the `orelse` after the last — or by `MatchComplete` for
+the op's end; `orelse` ends in `Yield` with no values). An `if` and a
+`match` enter their first region with no values, as upstream's
+`getEntryTargets` do; every later region's arguments are defined by the
+terminators entering it: an `ElifCond { cond, values }`'s values by its
+arm's `then_args` and the next region's (the next elif's `cond_args`, or
+`else_args`), as `IfElifCondYieldOp::getBranchTargets` passes its carried
+values to both targets, and a `MatchNext`'s values by the next case's
+`args` (`else_args` after the last), every `match.next` leaving a case
+being visited by `mir::match_nexts_mut`, which resolves one as
+`MatchOp::getCaseRegionIndexContaining` does (a nested match's cases
+capture their own, its `else` region does not). Their regions are block
+lists like a `try` part's, and end in the region terminators `Yield`,
+`ElifCond`, `Break`/`Continue`
 (an optional `LoopLabel` naming the nearest enclosing loop carrying it, a
 `match` case between them being no loop; a `Break`'s `values` define that
 loop's `results` and a `Continue`'s `values` its `args` for the next
@@ -4062,7 +4074,13 @@ arguments go through one slot each, its operands stored before the
 entering jump and each `continue`'s values before its jump to the header,
 forwarded at the body's entry, except that a loop no `continue` resumes
 has each argument replaced by its operand
-(`tests/mir_passes/lower-control-flow/loop_argument*.mir`), a
+(`tests/mir_passes/lower-control-flow/loop_argument*.mir`), an elif's or a
+`match` region's arguments go through one slot each, stored at every
+`if.elifcond.yield` or `match.next` entering the region and forwarded at
+its entry, except that a region entered from one such terminator in the
+op's own list has each argument replaced by the value it carries
+(`tests/mir_passes/lower-control-flow/elif_arguments.mir`,
+`match_next_arguments.mir`), a
 `break`/`continue` leaving a `try` part to a
 function-level loop is an `EscapeJump`, a `match` case's `match.next` and
 `match.complete` jump to the next case's entry and to the join through a
@@ -5398,8 +5416,13 @@ point where a slot declared in a loop is uninitialized again.
   alternating with the folding until no pattern applies, as the greedy
   driver's worklist does: `RemoveStaticCondition` splices the arm an `if`
   on a constant takes (an elif whose condition region is trivial, one
-  block of `const`s, is decided or promoted to the `if`'s condition, and
-  a non-trivial one fails the pattern), `ConditionPropagation` reads the
+  block of `const`s whose `if.elifcond.yield` carries no values, is decided
+  or promoted to the `if`'s condition, and a non-trivial one fails the
+  pattern, as upstream's `matchTrivialConstantElifCond` and
+  `promoteElifArmToIf` fail on carried values; so no region it splices
+  takes arguments, and a dropped elif's arguments are erased with it,
+  `tests/mir_passes/canonicalize/static_condition_elif_carrying_values_kept.mir`),
+  `ConditionPropagation` reads the
   condition inside an arm of an `if` without elifs as a constant defined
   before the `if`, `HoistUnconditionalReturn` hoists one `return`,
   `break`, or `continue` every arm ends in after a new `if` the arms yield
@@ -5745,9 +5768,9 @@ point where a slot declared in a loop is uninitialized again.
   mentions go, and the slot leaves the function (`mir::retire_slots`). The
   `canonicalize` after it forwards the copies. A slot whose reads merge two
   stores keeps its slot (R927): upstream carries such an allocation through
-  `hlcf` region arguments and results, which MIR's loops now take but
-  `mem-2-reg` does not yet produce, and its elif and `match` regions do
-  not (R1259). A structured body is walked region by region instead
+  `hlcf` region arguments and results, which MIR's loops and elif and
+  `match` regions now take but `mem-2-reg` does not yet produce. A
+  structured body is walked region by region instead
   (`region_walk::walk_forward` with a reaching-store `ForwardScan`): its
   mentions may sit in several regions of one `try` part (a mention inside
   a `try` part with another outside keeps the slot, as upstream's
@@ -5770,15 +5793,23 @@ point where a slot declared in a loop is uninitialized again.
   `branch` makes only its taken arm executable while its condition is one
   constant, a `comptime if` or `comptime for` both of its targets, and a
   `try` its regions, whose escapes make their function-level targets
-  executable. On a structured body an `if` without elifs makes only the
-  arm a constant condition takes executable, none while the condition is
-  unknown, and both otherwise, as `IfOp::getEntryTargets` does, its results
-  meeting the values its executable arms yield; a loop's arguments meet
+  executable. On a structured body an `if` makes only the arm a constant
+  condition takes executable, or the first elif's condition region when it
+  is false, none while the condition is unknown, and both otherwise, as
+  `IfOp::getEntryTargets` does, and each executable `if.elifcond.yield`
+  enters its arm or the next region the same way, as
+  `IfElifCondYieldOp::getBranchTargets` does, the arguments of each region
+  it enters meeting the values it carries; the `if`'s results meet the
+  values its executable arms yield. A `match` makes its first case
+  executable, and each executable `match.next` the next case (the else
+  region after the last), its values meeting that region's arguments
+  (`tests/mir_passes/sccp/elif_argument_constant.mir`,
+  `match_next_argument_*.mir`). A loop's arguments meet
   its operands and the values its executable `continue`s carry, as
   `processControlFlowTerminator` does, and its results the values its
   executable `break`s carry, as `SCCP`'s `resolveBreak` does;
-  a loop's body, every region of an `if` with elifs, a `comptime if`, a
-  `match`, and a `try` are executable, the other ops' results overdefined. A scalar `const` (`Int`, `Float64`, `Bool`, `IntLiteral`,
+  a loop's body, a `comptime if`, and a `try` are executable, the other
+  ops' results overdefined. A scalar `const` (`Int`, `Float64`, `Bool`, `IntLiteral`,
   `FloatLiteral`, or a `UInt` or SIMD `Const::Value`, `Const::is_folded`)
   is its constant; a parameter read
   (`Const::Param`) and an aggregate `Const::Value` are overdefined, the

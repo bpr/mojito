@@ -2578,7 +2578,7 @@ impl ContinueWalk {
         }
         matches!(
             block.term,
-            MirTerm::Yield(_) | MirTerm::ComptimeYield(_) | MirTerm::ElifCond(_)
+            MirTerm::Yield(_) | MirTerm::ComptimeYield(_) | MirTerm::ElifCond { .. }
         )
     }
 
@@ -2609,10 +2609,10 @@ impl ContinueWalk {
                 .fold(false, |completes, arm| self.region(arm) | completes),
             MirInstr::Loop { label, body, .. } => self.framed(RegionFrame::Loop(*label), body).0,
             MirInstr::ComptimeFor { body, .. } => self.framed(RegionFrame::ComptimeFor, body).0,
-            MirInstr::Match { cases, orelse } => {
+            MirInstr::Match { cases, orelse, .. } => {
                 let mut completes = false;
                 for case in cases {
-                    let (completed, next) = self.framed(RegionFrame::MatchCase, case);
+                    let (completed, next) = self.framed(RegionFrame::MatchCase, &case.body);
                     completes |= completed;
                     if !next {
                         return completes;
@@ -3638,6 +3638,7 @@ mod tests {
                     values: Vec::new(),
                 },
             ),
+            else_args: Vec::new(),
             elifs: Vec::new(),
             orelse: one(
                 Vec::new(),
@@ -3686,6 +3687,7 @@ mod tests {
                                         values: Vec::new(),
                                     },
                                 ),
+                                else_args: Vec::new(),
                                 elifs: Vec::new(),
                                 orelse: one(
                                     Vec::new(),
@@ -3714,9 +3716,16 @@ mod tests {
                 results: Vec::new(),
                 body: one(
                     vec![MirInstr::Match {
+                        else_args: Vec::new(),
                         cases: vec![
-                            one(Vec::new(), MirTerm::MatchNext),
-                            one(Vec::new(), MirTerm::MatchNext),
+                            mojito_mir::mir::MirCase {
+                                args: Vec::new(),
+                                body: one(Vec::new(), MirTerm::MatchNext(Vec::new())),
+                            },
+                            mojito_mir::mir::MirCase {
+                                args: Vec::new(),
+                                body: one(Vec::new(), MirTerm::MatchNext(Vec::new())),
+                            },
                         ],
                         orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
                     }],

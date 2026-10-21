@@ -218,8 +218,12 @@ enum RegionKind {
     /// An `if`'s then, elif, or else arm, ended by `Yield` with its
     /// op's results.
     IfArm(Vec<Reg>),
-    /// An elif's condition region, ended by `ElifCond`.
-    ElifCond,
+    /// An elif's condition region, ended by `ElifCond`, whose values enter
+    /// its arm's `then_args` and the next region's `next_args`.
+    ElifCond {
+        then_args: Vec<Reg>,
+        next_args: Vec<Reg>,
+    },
     /// A loop's body, entered with its op's operands as its `args` and
     /// resumed by a `Continue` carrying them, left by a `Break` carrying its
     /// op's results.
@@ -232,8 +236,11 @@ enum RegionKind {
     ComptimeIfArm(Vec<Reg>),
     ComptimeForBody,
     ComptimeForElse,
-    /// A `match` case, left by `MatchNext` or `MatchComplete`.
-    MatchCase,
+    /// A `match` case, left by `MatchComplete`, or by `MatchNext` carrying
+    /// the next case's or the else region's arguments, `next_args`.
+    MatchCase {
+        next_args: Vec<Reg>,
+    },
 }
 
 /// One instruction's verification scope: the function it sits in, the

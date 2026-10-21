@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1261**.
+Next free ID: **R1262**.
 
 ## Ordered Work
 
@@ -746,9 +746,10 @@ which names the upstream pass each one follows. Each is measured by the
     only when its store's block encloses it: probe
     `tests/mir_passes/mem-2-reg/region_store_in_arm_kept.mir` and the
     loop-body store in `region_loop_read.mir`.
-  - Loops now take arguments and their `continue`s carry values (R1258),
-    which the pass would produce; elif and `match` regions still take none
-    (R1259), and `if`/`match` results come with R1260.
+  - Loop bodies, elif regions, and `match` case and else regions now take
+    arguments that `continue`, `if.elifcond.yield`, and `match.next` carry
+    (R1258, R1259), which the pass would produce; `match` and `comptime
+    for` results come with R1260.
   - `region_loop_read.mir`'s `y` is stored in the body and read only
     after the loop, so upstream carries it as a loop argument and a loop
     result whose initial operand is `currValueOrUndef`'s undef: MIR has no
@@ -759,7 +760,7 @@ which names the upstream pass each one follows. Each is measured by the
     loop body's boundary) goes once the elaborator clones regions.
   - About two thirds of the promotable-type slot mentions in the
     pre-elaboration bodies of `collections_many` are merged ones.
-  - Depends on R1259, R1260 (region values), R880 (regions cloned).
+  - Depends on R1260 (region values), R880 (regions cloned).
   - Model: Fable, Planned.
 
 - [ ] **R1105 `mem-2-reg` keeps a slot that a body reads through a
@@ -10076,23 +10077,6 @@ follow-ups the landed producer stages filed come last.
   - Depends on R874.
   - Model: Fable, Planned.
 
-- [ ] **R1259 An elif condition and a `match` case pass no values into
-  the region they enter, where upstream's `if.elifcond.yield` and
-  `match.next` pass operands to that region's arguments**
-
-  A value computed in an elif condition region and read in its arm, or one
-  a failed `match` case leaves for the next case, stays in a slot.
-  - Upstream's `if.elifcond.yield` carries its `Bool` plus values passed
-    to the then or else region's arguments, "enabling mem2reg promotion of
-    values stored in the condition block"; `match.next` operands pass on
-    to the next case region.
-  - Mojito's `ElifCond` carries only the condition and `MatchNext`
-    nothing.
-  - The fix extends R1258's region arguments to an elif's `then` and the
-    next condition or else region, and to each `match` case region.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1260 A `match` and a `comptime for` define no results, where
   upstream's `hlcf.match` and `hlcf.comptime.for` have results their
   terminators carry**
@@ -10111,6 +10095,29 @@ follow-ups the landed producer stages filed come last.
     next; before R880 it reads them through `lower-control-flow`'s slots.
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1261 The MIR verifier never checks that a register's definition
+  dominates its reads, where MLIR's verifier rejects an operand that does
+  not dominate its use**
+
+  A structured body can read a register defined in a region it is not
+  inside, and the verifier accepts it.
+  - Upstream's region ops are SSA: a value defined in a region, a region
+    argument included, is visible only in that region and those nested
+    in it, and `mlir::verify` reports "operand does not dominate this use".
+  - Mojito's `mir::verify` checks types and region terminators, but no
+    definition-before-use rule, so the error surfaces at run time.
+  - Probe: a `match.next` carrying a register defined in an earlier `if`'s
+    elif condition region verifies; when the condition region does not
+    run, the VM reads `None` ("operator Add is not defined for None and
+    Int"), found while landing R1259 (2026-10-21).
+  - Probe: a read of an `if`'s, `loop`'s, or `match`'s region argument
+    after the op verifies.
+  - The fix is a scoped walk over each structured body (lowered bodies by
+    `mir::immediate_dominators`), each region seeing the registers defined
+    before it in the regions enclosing it plus its own arguments.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R890 A `for` over a raising iterator tests a `TryNext` flag where
   upstream calls `__next__` in a `try` whose handler breaks to the loop's
