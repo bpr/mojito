@@ -77,8 +77,8 @@ impl DeinitRoot<'_> {
     }
 }
 
-/// Live-out seeds for one region, per exit kind (the field analogue of
-/// [`RegionSeeds`](super::drops::RegionSeeds)).
+/// Live-out seeds for one region of a lowered `try` part, per exit kind:
+/// the fall-off, every raising instruction, and each escape.
 struct FieldSeeds<'a> {
     try_yield: FieldSet,
     raise: FieldSet,
@@ -299,9 +299,9 @@ fn refine_region(
     live_in[0].clone()
 }
 
-/// Elaborate the four regions of one `try` in place, seeded like
-/// [`elaborate_try_interior`](super::drops::elaborate_try_interior):
-/// `finally` first, then handler/`else`, then the body.
+/// Elaborate the four regions of one `try` in place, seeded as drop
+/// elaboration's `try` walk seeds them ([`walk_backward`]): `finally`
+/// first, then handler/`else`, then the body.
 fn refine_try(try_instr: &mut MirInstr, root: &DeinitRoot, after: &FieldSet, seeds: &FieldSeeds) {
     let MirInstr::Try {
         body,
@@ -505,9 +505,9 @@ fn try_entry_liveness(
     region_entry(body, &body_seeds)
 }
 
-/// A region block's live-out per terminator kind (the field analogue of
-/// [`region_block_live_out`](super::drops::region_block_live_out)); a
-/// cleanup list naming the receiver keeps every field alive to the exit.
+/// A region block's live-out per terminator kind: a local successor's
+/// live-in, or the seed of the exit it takes; a cleanup list naming the
+/// receiver keeps every field alive to the exit.
 fn block_field_live_out(
     blocks: &[MirBlock],
     b: usize,
@@ -632,9 +632,8 @@ fn moved_fields(instr: &MirInstr, root: &DeinitRoot) -> FieldSet {
 /// Per-instruction fields kept alive by the registers an instruction reads:
 /// a load or handle of a receiver field carries that field to every consumer
 /// (results of non-call instructions inherit it; a call result is a fresh
-/// value; a scalar load borrows for one hop only), mirroring
-/// the register-loan transfer of
-/// [`register_loan_uses_over`](super::register_loans::register_loan_uses_over).
+/// value; a scalar load borrows for one hop only), mirroring the
+/// register-loan transfer [`DropFacts`] records.
 /// Beside them, per instruction, the fields of the scalars it loads by value,
 /// in load order.
 fn register_field_provenance(
@@ -805,5 +804,47 @@ fn insert_field_drops(
                 destructor: None,
             },
         );
+    }
+}
+
+/// Redirect a terminator's `old` target to `new` (for critical-edge splitting).
+const fn rewire_target(term: &mut MirTerm, old: usize, new: usize) {
+    match term {
+        MirTerm::Jump(t) => {
+            if *t == old {
+                *t = new;
+            }
+        }
+        MirTerm::Branch { then_b, else_b, .. }
+        | MirTerm::ComptimeBranch { then_b, else_b, .. }
+        | MirTerm::ComptimeFor {
+            body: then_b,
+            exit: else_b,
+            ..
+        } => {
+            if *then_b == old {
+                *then_b = new;
+            }
+            if *else_b == old {
+                *else_b = new;
+            }
+        }
+        // `EscapeJump` targets a block in the enclosing function; it never appears
+        // as a *function-body* terminator (only inside a `try` region), and its
+        // target isn't a critical-edge successor here, so leave it untouched.
+        MirTerm::Return(_)
+        | MirTerm::ReturnWithCleanup { .. }
+        | MirTerm::TryYield
+        | MirTerm::EscapeJump { .. }
+        | MirTerm::Yield(_)
+        | MirTerm::ElifCond(_)
+        | MirTerm::Break { .. }
+        | MirTerm::Continue { .. }
+        | MirTerm::ComptimeYield(_)
+        | MirTerm::ComptimeBreak
+        | MirTerm::ComptimeContinue
+        | MirTerm::MatchNext
+        | MirTerm::MatchComplete
+        | MirTerm::Unreachable => {}
     }
 }

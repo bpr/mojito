@@ -66,7 +66,7 @@ impl CompiledProgram {
 
     /// Parametric MIR: the ownership-verified, pre-drop MIR produced by the
     /// authoritative compiler pipeline, whose generic bodies still name their
-    /// parameters. The later phases derive from it. With an imported
+    /// parameters and whose control flow is still structured. The later phases derive from it. With an imported
     /// package it holds the program's own functions and declarations, with
     /// the package's declarations attached, each resolved the first time a
     /// lookup names it; the package's bodies stay in the package.
@@ -590,7 +590,7 @@ impl Compiler {
             }
         }
         let checked = checked.map_err(CompilerError::Type)?;
-        let mut mir = {
+        let mir = {
             let _lower = timing::span("mir.lower");
             crate::mir::lower_checked_program_structured_importing(
                 &checked,
@@ -622,7 +622,7 @@ impl Compiler {
         }
         {
             let _ownership = timing::span("ownership");
-            crate::analysis::check_ownership_program(&mut mir).map_err(CompilerError::Ownership)?;
+            crate::analysis::check_ownership_program(&mir).map_err(CompilerError::Ownership)?;
         }
         Ok(CompiledProgram {
             checked,

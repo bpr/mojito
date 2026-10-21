@@ -29,9 +29,13 @@ below. Labels are `<pass>/<case>.mir`, so the reports hold no machine path.
    already have run (`eliminate-dead-symbols` would have removed what its
    case is about). This form is also past `lower-lit`, so it holds no
    `lifetime.keep_alive` or `interiors.invalidate`. `elaborate-drops` takes
-   pre-drop MIR, which the CLI does not print, so for it either remove the
-   `drop.*` lines (when no copy elision or deinit refinement is in play) or
-   emit with drop elaboration skipped in a scratch build. A `lower-lit`
+   pre-drop MIR in its structured form (every region one block, as
+   `verify_structured_shape` checks; `opt` refuses a lowered body), which
+   the CLI does not print, so for it emit with drop elaboration skipped in a
+   scratch build, or rebuild the printed body's regions by hand (`if`,
+   `loop`, `break`/`continue`/`yield`, as in
+   `lower-control-flow/*.mir`) and remove the `drop.*` lines (when no copy
+   elision or deinit refinement is in play). A `lower-lit`
    case needs the markers, so emit it with a binary from before the pass or
    from pre-drop text, as for `elaborate-drops`.
 2. Trim the artifact by hand to the case's own functions, their `decls`

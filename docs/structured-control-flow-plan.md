@@ -2,8 +2,8 @@
 
 **Status:** plan recorded 2026-10-14 (R859); stages 1 (R870), 2 (R871),
 3 (R872), 4 (R873), and 5 (R874) landed 2026-10-14, and the `comptime for`
-body's `has_next` test (R885) with them; stages 6 (R875) and 7 (R876)
-landed 2026-10-21.
+body's `has_next` test (R885) with them; stages 6 (R875), 7 (R876), and
+8 (R877) landed 2026-10-21.
 The scheduled tasks are on [`docs/roadmap.md`](roadmap.md) track `pmir`,
 one entry per stage below.
 This document is their design record and is updated as stages land. It is
@@ -100,15 +100,17 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
     and `comprehension_clauses` as `If`/`Loop` region ops (stage 2), and MIR
     lowering builds HIR's region ops as the same ops (stage 3,
     `Flatten::hir_region`). `verify_structured_shape` checks each body, a
-    finding being a MIR invariant error (stage 5); register typing and
-    pre-drop verification read the structured body, and the ownership
-    check runs `lower-control-flow` on each body after its last check, so
-    every phase after the ownership check still sees blocks (stages 6–7).
-- **The ownership checks walk regions; drop elaboration works on edges.**
-  The move and initialization scan, carrying interior origins, walks the
-  structure as `CheckLifetimes` does (stages 6–7), and so does the loan
-  check. `analysis/drops.rs` puts drops on edges and splits critical
-  edges.
+    finding being a MIR invariant error (stage 5); register typing,
+    pre-drop verification, the ownership checks, and drop elaboration read
+    the structured body, and drop elaboration runs `lower-control-flow` on
+    each body once its drops are placed, so every phase after drop
+    elaboration still sees blocks (stages 6–8).
+- **The ownership checks and drop elaboration walk regions.** The move and
+  initialization scan, carrying interior origins, walks the structure as
+  `CheckLifetimes` does (stages 6–7), and so does the loan check. Drop
+  elaboration places its drops in the regions as `DestructorInsertion`
+  does (stage 8). Field drops, copy elision, destructor and constructor
+  naming, and the copy/move lowering still read the CFG after it.
 - **`canonicalize`** (`analysis/canonicalize.rs`, R836) threads
   pass-through blocks, folds identical-successor branches, and merges
   single-predecessor blocks: MLIR `cf` patterns standing in for structure
@@ -291,9 +293,9 @@ last producer. Every stage keeps program output unchanged; the
      borrow checks, and `lower_checked_program` lowers every body for
      phase tests. Register typing types an `If`'s results from its arms'
      yields, and named-result materialization reaches the region ops' exits.
-   - The CFG walker that `observe_move_states` (store drops) still runs on
-     lowered bodies joins an `EscapeJump`'s state into its target block, so
-     a store after the loop sees the state a `break` out of a `try` left.
+   - The CFG walker joins an `EscapeJump`'s state into its target block, so
+     a lowered body's store after the loop sees the state a `break` out of
+     a `try` left; store drops read structured bodies since stage 8.
 7. **Borrow checks on regions** (loans, interior). *Landed (R876).* The
    lowering point moved below the checks: `check_ownership_program` runs
    `lower-control-flow` on each body after its loan check.
@@ -314,13 +316,43 @@ last producer. Every stage keeps program output unchanged; the
      read; nothing inside a `try` is loan-checked.
    - Register loans are not a check: they feed drop elaboration, so they
      moved to stage 8.
-8. **Drop elaboration on regions**, as `DestructorInsertion`: a drop goes
-   before a region terminator, at a region's entry, or after the op.
-   Critical-edge splitting is deleted. Register loans
-   (`analysis/register_loans.rs`) move with it, and the backward walk of
-   stage 7 is the one it extends, `checkTryOp` included.
-9. **Field drops, store drops, and copy elision on regions.** The lowering
-   point moves below them.
+8. **Drop elaboration on regions**, as `DestructorInsertion`. *Landed
+   (R877).* `elaborate_drops` reads the structured body and
+   `elaborate_drops_function` runs `lower-control-flow` right after it;
+   store drops, before it, splice into every region.
+   - Two walks give the facts. `DropFacts` (`register_loans.rs`) is one
+     forward walk (`walk_forward`, entering every region op) recording the
+     loan generations reaching each instruction and block and the roots
+     each instruction consumes through its operand registers; the CFG
+     register-loan fixpoint and its register liveness are gone. The
+     backward walk (`walk_backward`, `DropLiveness`) gives variable
+     liveness and reports each block, region op, and `try` to a
+     `BackwardRecorder`.
+   - The backward walk enters `try` as `checkTryOp` walks it, keeping
+     Mojito's `finally`: the `finally` from the `try`'s live-out, then the
+     handler and `else` from its live-in, then the body. A raising
+     instruction keeps the raise channel live (the handler's live-in, or
+     the `finally`'s and the enclosing raise's), a `return` the `finally`
+     walked from the enclosing return set, and a `break`/`continue`
+     leaving a part the `finally` walked from its frame's set, as
+     `lowerTryFinally`'s copy before the exit would. `ReferenceLiveness`
+     still treats a `try` as one instruction (`BackwardScan::enters`).
+   - A splice pass places each drop after its last use, at the entry of an
+     `if` or `comptime if` arm that leaves out a value a sibling keeps
+     (`destroyValuesAtEntryIfNeeded`, unified per elif step as `checkIfOp`
+     does), or before a block's terminator when its yielded values were
+     the last use. No block is added, so critical-edge splitting is gone.
+   - Escape cleanup lists are gone: what dies on a `break` out of a `try`
+     dies before it, in the part. A `try`'s raise-edge list now destroys
+     what a raise in the body holds that the raise's observers do not read,
+     as the entry destructors of upstream's error arm do; `return` cleanup
+     lists are computed as before (R829, R884).
+   - Pass tests feed structured bodies; `analysis::opt` refuses
+     `elaborate-drops` on a lowered one.
+9. **Field drops and copy elision on regions.** Field drops, copy elision,
+   destructor and constructor naming (with `lower_whole_drops`), the
+   copy/move lowering, and `lower-lit` still read the CFG after drop
+   elaboration. The lowering point moves below them.
 10. **Pre-elaboration pipeline and package.** `canonicalize` gains the
     `hlcf` patterns and loses R836's; `sccp` walks regions; package bodies
     are structured (`PACKAGE_FORMAT` bump). The lowering point moves to the

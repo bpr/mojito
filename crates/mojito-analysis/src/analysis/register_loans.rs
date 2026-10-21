@@ -391,111 +391,111 @@ pub(super) fn split_single_hop<T: Ord + Copy>(
     loaded
 }
 
-/// One function body's (or `try` region's) register-loan facts: the roots
-/// each instruction consumes, and the register-loan state entering each
-/// `try`, which seeds its body region.
-pub(super) struct RegisterLoans {
-    /// Per block, per instruction, the roots the instruction consumes.
-    pub(super) uses: Vec<Vec<RegisterUses>>,
-    /// The state entering each `try`, keyed by block and instruction index.
-    pub(super) before_try: HashMap<(usize, usize), RegisterLoanState>,
+/// The forward facts drop elaboration reads, from one walk of the
+/// structured body (`walk_forward`, entering every region op): the loan
+/// generations reaching each instruction and each block's ends, and the
+/// roots each instruction consumes through its operand registers. Keyed by
+/// node address, which is stable while the body is borrowed; an
+/// instruction the walk never reaches has no generations and consumes
+/// nothing.
+pub(super) struct DropFacts {
+    /// The distinct generation states the walk passed through.
+    states: Vec<LoanGenerationState>,
+    /// The state reaching each instruction, region ops included.
+    before: HashMap<*const MirInstr, usize>,
+    uses: HashMap<*const MirInstr, RegisterUses>,
+    blocks: HashMap<*const MirBlock, BlockFacts>,
+    unreached: LoanGenerationState,
+    unused: RegisterUses,
 }
 
-/// Per-instruction transient owner uses over an arbitrary block vector (a
-/// function body or a `try` region mini-CFG) with an explicit entry state.
-///
-/// A forward worklist dataflow in reverse postorder. Each state holds only
-/// the registers some later instruction still reads (deep through `try`
-/// regions), so joins and comparisons stay proportional to the registers
-/// live across an edge rather than to every register the body defines.
-pub(super) fn register_loan_uses_over(
-    blocks: &[MirBlock],
-    generation_entries: &[LoanGenerationState],
-    entry_registers: &RegisterLoanState,
-    loan_roots: &BTreeMap<u32, DropLoanGeneration>,
-    generation_dests: &BTreeMap<u32, Option<MirInteriorOrigin>>,
-    reg_types: &HashMap<u32, mojito_types::types::Ty>,
-    passing: &ArgumentPassing,
-) -> RegisterLoans {
-    let nb = blocks.len();
-    let steps: Vec<Vec<RegisterLoanStep>> = blocks
-        .iter()
-        .zip(generation_entries)
-        .map(|(block, entry)| {
-            let mut generations = entry.clone();
-            block
-                .instrs
-                .iter()
-                .map(|instruction| {
-                    let step =
-                        RegisterLoanStep::new(&generations, instruction, loan_roots, reg_types);
-                    transfer_loan_generation(&mut generations, instruction, generation_dests);
-                    step
-                })
-                .collect()
-        })
-        .collect();
-    let predecessors = block_predecessors(blocks);
-    let liveness = RegisterLiveness::new(blocks, &steps, &predecessors);
-
-    let mut incoming: Vec<Option<RegisterLoanState>> = vec![None; nb];
-    let mut outgoing: Vec<Option<RegisterLoanState>> = vec![None; nb];
-    let mut worklist = Worklist::forward(blocks);
-    while let Some(block) = worklist.pop() {
-        let new_in = if block == 0 || predecessors[block].is_empty() {
-            entry_registers.clone()
-        } else {
-            let mut states = predecessors[block]
-                .iter()
-                .filter_map(|predecessor| outgoing[*predecessor].as_ref());
-            let Some(first) = states.next() else {
-                continue;
-            };
-            states.fold(first.clone(), join_register_loan_states)
+impl DropFacts {
+    /// Walk `f` forward from its entry, where no generation is active and
+    /// no register carries a loan. A raise hands its handler the
+    /// generations and no register: no SSA handle survives into a region
+    /// entered by raise.
+    pub(super) fn new(
+        f: &MirFunction,
+        loan_roots: &BTreeMap<u32, DropLoanGeneration>,
+        generation_dests: &BTreeMap<u32, Option<MirInteriorOrigin>>,
+        passing: &ArgumentPassing,
+    ) -> Self {
+        let scan = DropFactsScan {
+            loan_roots,
+            generation_dests,
+            reg_types: &f.reg_types,
         };
-        let new_in = liveness.entering(block, new_in);
-        if incoming[block].as_ref() == Some(&new_in) {
-            continue;
-        }
-        let mut new_out = new_in.clone();
-        for (index, step) in steps[block].iter().enumerate() {
-            step.transfer(&mut new_out, None);
-            liveness.leaving(block, index, &mut new_out);
-        }
-        incoming[block] = Some(new_in);
-        if outgoing[block].as_ref() != Some(&new_out) {
-            outgoing[block] = Some(new_out);
-            worklist.push_successors(&blocks[block].term);
-        }
+        let mut observer = DropFactsObserver {
+            scan: &scan,
+            passing,
+            facts: Self {
+                states: Vec::new(),
+                before: HashMap::new(),
+                uses: HashMap::new(),
+                blocks: HashMap::new(),
+                unreached: LoanGenerationState::default(),
+                unused: RegisterUses {
+                    retained: Vec::new(),
+                    loaded: Vec::new(),
+                },
+            },
+        };
+        // The observer never refuses an instruction.
+        let _ = walk_forward(&scan, DropFactsState::default(), &f.blocks, &mut observer);
+        observer.facts
     }
 
-    let mut before_try = HashMap::new();
-    let uses = blocks
-        .iter()
-        .zip(incoming)
-        .enumerate()
-        .map(|(block, (body, entry))| {
-            let mut registers = entry.unwrap_or_default();
-            body.instrs
-                .iter()
-                .zip(&steps[block])
-                .enumerate()
-                .map(|(index, (instruction, step))| {
-                    if matches!(instruction, MirInstr::Try { .. }) {
-                        before_try.insert((block, index), registers.clone());
-                    }
-                    let mut single_hop = Vec::new();
-                    let retained = step.transfer(&mut registers, Some(&mut single_hop));
-                    let uses = split_register_uses(retained, single_hop, || {
-                        passing.by_value(instruction, reg_types)
-                    });
-                    liveness.leaving(block, index, &mut registers);
-                    uses
-                })
-                .collect()
-        })
-        .collect();
-    RegisterLoans { uses, before_try }
+    /// The generations reaching `instr`.
+    pub(super) fn before(&self, instr: &MirInstr) -> &LoanGenerationState {
+        self.before
+            .get(&std::ptr::from_ref(instr))
+            .map_or(&self.unreached, |index| &self.states[*index])
+    }
+
+    /// The roots `instr` consumes through its operand registers.
+    pub(super) fn uses(&self, instr: &MirInstr) -> &RegisterUses {
+        self.uses
+            .get(&std::ptr::from_ref(instr))
+            .unwrap_or(&self.unused)
+    }
+
+    /// The generations entering `block`.
+    pub(super) fn entry(&self, block: &MirBlock) -> &LoanGenerationState {
+        self.blocks
+            .get(&std::ptr::from_ref(block))
+            .map_or(&self.unreached, |facts| &self.states[facts.entry])
+    }
+
+    /// The generations entering a region: its first block's.
+    pub(super) fn region_entry(&self, region: &[MirBlock]) -> &LoanGenerationState {
+        region
+            .first()
+            .map_or(&self.unreached, |block| self.entry(block))
+    }
+
+    /// The generations at `block`'s terminator; `None` when the walk never
+    /// reaches it.
+    pub(super) fn end(&self, block: &MirBlock) -> Option<&LoanGenerationState> {
+        self.blocks
+            .get(&std::ptr::from_ref(block))
+            .and_then(|facts| facts.end)
+            .map(|index| &self.states[index])
+    }
+
+    /// The roots `block`'s terminator consumes through the values it
+    /// yields, as an op's result takes each value over.
+    pub(super) fn yielded(&self, block: &MirBlock) -> &RegisterUses {
+        self.blocks
+            .get(&std::ptr::from_ref(block))
+            .map_or(&self.unused, |facts| &facts.yielded)
+    }
+
+    fn intern(&mut self, state: &LoanGenerationState) -> usize {
+        if self.states.last() != Some(state) {
+            self.states.push(state.clone());
+        }
+        self.states.len() - 1
+    }
 }
 
 /// Whether a call result register holds a pointer whose provenance designates
@@ -721,37 +721,46 @@ impl RegisterLoanStep {
         }
     }
 
-    /// Advance `registers` past the instruction. With `single_hop_uses`, also
-    /// return the roots it retains and record, per operand register, the
-    /// roots a scalar read borrows for this one hop; otherwise the returned
-    /// set is meaningless.
-    fn transfer(
+    /// The roots the instruction retains: its own owners and its operands'
+    /// provenance. Each operand's single-hop roots, which a scalar read
+    /// borrows for this one hop, are pushed to `single_hop`.
+    fn retained(
         &self,
-        registers: &mut RegisterLoanState,
-        mut single_hop_uses: Option<&mut Vec<(u32, BTreeSet<VarId>)>>,
+        registers: &RegisterLoanState,
+        single_hop: &mut Vec<(u32, BTreeSet<VarId>)>,
     ) -> BTreeSet<VarId> {
-        let inherits = !self.call_result && !self.results.is_empty();
-        let mut owners = BTreeSet::new();
-        if single_hop_uses.is_some() || inherits {
-            owners.clone_from(&self.owners);
+        let mut owners = self.owners.clone();
+        for operand in &self.operands {
+            if let Some(provenance) = registers.owners.get(&operand.0) {
+                owners.extend(provenance);
+            }
+            if let Some(provenance) = registers.single_hop.get(&operand.0) {
+                single_hop.push((operand.0, provenance.clone()));
+            }
+        }
+        owners
+    }
+
+    /// Advance `registers` past the instruction.
+    fn transfer(&self, registers: &mut RegisterLoanState) {
+        let inherited = if self.call_result || self.results.is_empty() {
+            BTreeSet::new()
+        } else {
+            let mut owners = self.owners.clone();
             for operand in &self.operands {
                 if let Some(provenance) = registers.owners.get(&operand.0) {
                     owners.extend(provenance);
                 }
-                if let Some(uses) = single_hop_uses.as_deref_mut()
-                    && let Some(provenance) = registers.single_hop.get(&operand.0)
-                {
-                    uses.push((operand.0, provenance.clone()));
-                }
             }
-        }
+            owners
+        };
         if let Some((dest, roots)) = &self.single_hop {
             registers.single_hop.insert(*dest, roots.clone());
         }
         let result_owners = if self.call_result {
             &self.seeded
         } else {
-            &owners
+            &inherited
         };
         for result in &self.results {
             if result_owners.is_empty() {
@@ -768,7 +777,6 @@ impl RegisterLoanStep {
                 map.retain(|_, roots| !roots.is_empty());
             }
         }
-        owners
     }
 }
 
@@ -1013,145 +1021,114 @@ fn receiver_by_value(
     }
 }
 
-/// Which registers a later instruction still reads, so a register-loan
-/// state can forget the rest: per block the registers live on entry, and per
-/// instruction the registers it reads or writes that are dead after it.
-struct RegisterLiveness {
-    live_in: Vec<DenseSet>,
-    /// Per block, the dead registers of every instruction in order, and the
-    /// end of each instruction's run of them.
-    dead_after: Vec<(Vec<u32>, Vec<usize>)>,
+/// What [`DropFacts`] keeps per block.
+struct BlockFacts {
+    entry: usize,
+    end: Option<usize>,
+    yielded: RegisterUses,
 }
 
-impl RegisterLiveness {
-    /// A `try` reads every register its regions read, since its body region
-    /// starts from the state entering it.
-    fn new(
-        blocks: &[MirBlock],
-        steps: &[Vec<RegisterLoanStep>],
-        predecessors: &[Vec<usize>],
-    ) -> Self {
-        // Per block, every instruction's reads in order, and the end of each
-        // instruction's run of them.
-        let block_reads: Vec<(Vec<u32>, Vec<usize>)> = blocks
-            .iter()
-            .zip(steps)
-            .map(|(body, steps)| {
-                let mut reads = Vec::new();
-                let mut ends = Vec::with_capacity(steps.len());
-                for (instruction, step) in body.instrs.iter().zip(steps) {
-                    reads.extend(step.operands.iter().map(|reg| reg.0));
-                    region_operand_regs(instruction, &mut reads);
-                    ends.push(reads.len());
-                }
-                (reads, ends)
-            })
-            .collect();
-        let reads = |block: usize, index: usize| {
-            let (reads, ends) = &block_reads[block];
-            let start = index.checked_sub(1).map_or(0, |previous| ends[previous]);
-            &reads[start..ends[index]]
-        };
-        let live_out = |live_in: &[DenseSet], block: usize| {
-            let mut out = DenseSet::default();
-            for successor in terminator_targets(&blocks[block].term) {
-                if let Some(live) = live_in.get(successor) {
-                    out.union(live);
-                }
-            }
-            out
-        };
-        let mut live_in = vec![DenseSet::default(); blocks.len()];
-        let mut worklist = Worklist::backward(blocks);
-        while let Some(block) = worklist.pop() {
-            let mut live = live_out(&live_in, block);
-            for (index, step) in steps[block].iter().enumerate().rev() {
-                for result in &step.results {
-                    live.remove(result.0);
-                }
-                live.extend(reads(block, index).iter().copied());
-            }
-            if live != live_in[block] {
-                live_in[block] = live;
-                for predecessor in &predecessors[block] {
-                    worklist.push(*predecessor);
-                }
-            }
+/// One program point of the drop-facts walk.
+#[derive(Clone, Default, PartialEq)]
+struct DropFactsState {
+    generations: LoanGenerationState,
+    registers: RegisterLoanState,
+}
+
+/// The forward walk [`DropFacts`] records.
+struct DropFactsScan<'a> {
+    loan_roots: &'a BTreeMap<u32, DropLoanGeneration>,
+    generation_dests: &'a BTreeMap<u32, Option<MirInteriorOrigin>>,
+    reg_types: &'a HashMap<u32, Ty>,
+}
+
+impl DropFactsScan<'_> {
+    fn step(&self, state: &DropFactsState, instr: &MirInstr) -> RegisterLoanStep {
+        RegisterLoanStep::new(&state.generations, instr, self.loan_roots, self.reg_types)
+    }
+}
+
+impl ForwardScan for DropFactsScan<'_> {
+    type State = DropFactsState;
+
+    fn join(&self, state: &DropFactsState, other: &DropFactsState) -> DropFactsState {
+        DropFactsState {
+            generations: join_loan_generation_states(state.generations.clone(), &other.generations),
+            registers: join_register_loan_states(state.registers.clone(), &other.registers),
         }
-        let dead_after = (0..blocks.len())
-            .map(|block| {
-                let mut live = live_out(&live_in, block);
-                let mut runs: Vec<Vec<u32>> = vec![Vec::new(); steps[block].len()];
-                for (index, step) in steps[block].iter().enumerate().rev() {
-                    let read = reads(block, index);
-                    let touched = read.iter().copied().chain(step.results.iter().map(|r| r.0));
-                    runs[index].extend(touched.filter(|reg| !live.contains(*reg)));
-                    for result in &step.results {
-                        live.remove(result.0);
+    }
+
+    fn transfer(&self, state: &mut DropFactsState, instr: &MirInstr) {
+        self.step(state, instr).transfer(&mut state.registers);
+        transfer_loan_generation(&mut state.generations, instr, self.generation_dests);
+    }
+
+    fn raise_seed(&self, state: &DropFactsState, _next: Option<&MirInstr>) -> DropFactsState {
+        DropFactsState {
+            generations: state.generations.clone(),
+            registers: RegisterLoanState::default(),
+        }
+    }
+
+    fn enters(&self, _instr: &MirInstr) -> bool {
+        true
+    }
+}
+
+/// The observer filling [`DropFacts`].
+struct DropFactsObserver<'a> {
+    scan: &'a DropFactsScan<'a>,
+    passing: &'a ArgumentPassing<'a>,
+    facts: DropFacts,
+}
+
+impl ForwardObserver<DropFactsState> for DropFactsObserver<'_> {
+    fn instr(&mut self, state: &DropFactsState, instr: &MirInstr) -> Result<(), OwnershipError> {
+        let index = self.facts.intern(&state.generations);
+        self.facts.before.insert(std::ptr::from_ref(instr), index);
+        let mut single_hop = Vec::new();
+        let retained = self
+            .scan
+            .step(state, instr)
+            .retained(&state.registers, &mut single_hop);
+        let uses = split_register_uses(retained, single_hop, || {
+            self.passing.by_value(instr, self.scan.reg_types)
+        });
+        self.facts.uses.insert(std::ptr::from_ref(instr), uses);
+        Ok(())
+    }
+
+    fn op(&mut self, state: &DropFactsState, instr: &MirInstr) {
+        let index = self.facts.intern(&state.generations);
+        self.facts.before.insert(std::ptr::from_ref(instr), index);
+    }
+
+    fn block(&mut self, entry: &DropFactsState, end: Option<&DropFactsState>, block: &MirBlock) {
+        let entry = self.facts.intern(&entry.generations);
+        let mut yielded = RegisterUses {
+            retained: Vec::new(),
+            loaded: Vec::new(),
+        };
+        let end = end.map(|state| {
+            if let MirTerm::Yield(values) | MirTerm::ComptimeYield(values) = &block.term {
+                let mut owners = BTreeSet::new();
+                for value in values {
+                    let provenance = [&state.registers.owners, &state.registers.single_hop];
+                    for map in provenance {
+                        owners.extend(map.get(&value.0).into_iter().flatten());
                     }
-                    live.extend(read.iter().copied());
                 }
-                let mut ends = Vec::with_capacity(runs.len());
-                let mut dead = Vec::new();
-                for run in runs {
-                    dead.extend(run);
-                    ends.push(dead.len());
-                }
-                (dead, ends)
-            })
-            .collect();
-        Self {
-            live_in,
-            dead_after,
-        }
+                yielded.retained = owners.into_iter().collect();
+            }
+            self.facts.intern(&state.generations)
+        });
+        self.facts.blocks.insert(
+            std::ptr::from_ref(block),
+            BlockFacts {
+                entry,
+                end,
+                yielded,
+            },
+        );
     }
-
-    /// `state` restricted to the registers live entering `block`.
-    fn entering(&self, block: usize, mut state: RegisterLoanState) -> RegisterLoanState {
-        let live = &self.live_in[block];
-        state.owners.retain(|register, _| live.contains(*register));
-        state
-            .single_hop
-            .retain(|register, _| live.contains(*register));
-        state
-    }
-
-    /// Forget the registers dead after instruction `index` of `block`.
-    fn leaving(&self, block: usize, index: usize, state: &mut RegisterLoanState) {
-        let (dead, ends) = &self.dead_after[block];
-        let start = index.checked_sub(1).map_or(0, |previous| ends[previous]);
-        for register in &dead[start..ends[index]] {
-            state.owners.remove(register);
-            state.single_hop.remove(register);
-        }
-    }
-}
-
-/// Every register read anywhere in a `try`'s regions.
-fn region_operand_regs(instruction: &MirInstr, out: &mut Vec<u32>) {
-    let MirInstr::Try {
-        body,
-        handler,
-        orelse,
-        finalbody,
-        ..
-    } = instruction
-    else {
-        return;
-    };
-    let mut registers = Vec::new();
-    let mut visit = |instruction: &MirInstr| {
-        mojito_mir::mir::verify::instruction_operand_regs(instruction, &mut registers);
-    };
-    for_each_instr_deep(body, &mut visit);
-    if let Some((_, handler)) = handler {
-        for_each_instr_deep(handler, &mut visit);
-    }
-    if let Some(orelse) = orelse {
-        for_each_instr_deep(orelse, &mut visit);
-    }
-    if let Some(finalbody) = finalbody {
-        for_each_instr_deep(finalbody, &mut visit);
-    }
-    out.extend(registers.into_iter().map(|reg| reg.0));
 }

@@ -15,7 +15,8 @@
 //! This is a distinct compiler stage after MIR lowering. The production
 //! [`Compiler`](crate::compiler::Compiler) always runs it before drop elaboration
 //! and VM execution. Backward liveness then builds on this move/init foundation
-//! to insert ASAP drops and control-flow-edge cleanup.
+//! to insert ASAP drops in the same structured regions, before
+//! `lower-control-flow` lowers them to blocks.
 
 pub use canonicalize::{CANONICALIZE, canonicalize};
 use copy_elision::elide_dying_copies;
@@ -43,7 +44,7 @@ use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
     CleanupDrop, MirBlock, MirCaptureMode, MirDeclarations, MirFunction, MirFunctionDeclaration,
     MirInstr, MirInteriorOrigin, MirIntrinsicSubscript, MirPlace, MirProgram, MirSubscriptArg,
-    MirTerm, Proj, Reg, binder_scope, cleanup_drops, cleanup_slots, lower_copies_and_moves,
+    MirTerm, Proj, Reg, binder_scope, cleanup_drops, lower_copies_and_moves,
     materialized_parameter_slots, terminator_targets,
 };
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
@@ -73,26 +74,24 @@ pub use unused_params::{REMOVE_UNUSED_PARAMS, remove_unused_params};
 pub fn check_ownership_checked(
     program: &mojito_checked::checked::CheckedProgram,
 ) -> Result<(), OwnershipError> {
-    let mut prog = mojito_mir::mir::lower_checked_program_structured(program);
-    check_ownership_program(&mut prog)
+    check_ownership_program(&mojito_mir::mir::lower_checked_program_structured(program))
 }
 
-/// Run the ownership analysis over a lowered program, lowering each body's
-/// control flow to blocks on the way.
+/// Run the ownership analysis over a lowered program.
 ///
 /// This is the standalone-MIR core the pipeline composes with `mir::verify`
 /// so production MIR is fully verified before execution; it runs on `hlcf`
 /// regions as upstream's `CheckLifetimes` does, before `LowerControlFlow`.
 ///
 /// Per function, the lifetime scan (moves and interior origins in one
-/// walk) and the loan check read the structured body; `lower-control-flow`
-/// then lowers it to blocks for drop elaboration. A body already lowered
-/// (MIR text) is scanned as blocks.
+/// walk) and the loan check read the structured body, which stays
+/// structured for drop elaboration. A body already lowered (MIR text) is
+/// scanned as blocks.
 ///
 /// An imported package's bodies were analyzed when it was built; a call
 /// into one reads its reference-parameter mask from the package's function
 /// table.
-pub fn check_ownership_program(prog: &mut MirProgram) -> Result<(), OwnershipError> {
+pub fn check_ownership_program(prog: &MirProgram) -> Result<(), OwnershipError> {
     let MirProgram {
         functions,
         declarations,
@@ -125,7 +124,7 @@ pub fn check_ownership_program(prog: &mut MirProgram) -> Result<(), OwnershipErr
         imported: declarations.imported.as_ref(),
     };
     timing::count("functions", functions.len() as u64);
-    for (_name, f) in functions.iter_mut() {
+    for (_name, f) in functions {
         {
             let _lifetimes = timing::span("lifetimes");
             analyze_lifetimes(f)?;
@@ -134,7 +133,6 @@ pub fn check_ownership_program(prog: &mut MirProgram) -> Result<(), OwnershipErr
             let _loans = timing::span("loans");
             analyze_loans(f, &callees)?;
         }
-        mojito_mir::mir::lower_control_flow(f);
     }
     Ok(())
 }
@@ -209,6 +207,9 @@ impl CalleeRefParams<'_> {
 /// overwrites an initialized droppable field, splice a `DropPlace`; after each
 /// variable's last use, splice a `DropVar`.
 ///
+/// Each body is structured on the way in and lowered to blocks on the way
+/// out (`lower-control-flow`).
+///
 /// Applied by the VM before execution so a struct's `__deinit__` fires at the
 /// value's last use (not at scope end), and a replaced field's at the store.
 pub fn elaborate_drops_program(prog: MirProgram) -> MirProgram {
@@ -223,6 +224,7 @@ pub fn elaborate_drops_program(prog: MirProgram) -> MirProgram {
             let elaborated = if name == "__toplevel__" {
                 let mut f = f;
                 elaborate_store_drops(&mut f, &name, &prog.declarations);
+                mojito_mir::mir::lower_control_flow(&mut f);
                 name_destructors(&mut f, &prog.declarations);
                 lower_copies_and_moves(&name, &mut f, &|name| prog.declarations.function(name));
                 f
@@ -260,6 +262,7 @@ pub fn elaborate_drops_function(
     let scope = binder_scope(name, |name| declarations.function(name));
     let slots = materialized_parameter_slots(&function, &scope);
     let mut elaborated = elaborate_drops(function, &slots, declarations);
+    mojito_mir::mir::lower_control_flow(&mut elaborated);
     elide_dying_copies(&mut elaborated, declarations);
     refine_deinit_fields(&mut elaborated, declarations);
     name_destructors(&mut elaborated, declarations);

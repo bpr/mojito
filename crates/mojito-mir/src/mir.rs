@@ -875,8 +875,8 @@ pub fn lower_unit(
 /// first reaches one of the unit's functions.
 ///
 /// It gives each function the unit lowers to, its register types closed
-/// against the package's own `declarations`, its control flow lowered to
-/// blocks as the library's ownership check lowers it, its locations naming
+/// against the package's own `declarations`, its control flow structured as
+/// the library's ownership-checked MIR holds it, its locations naming
 /// source provenance only.
 ///
 /// # Errors
@@ -903,7 +903,6 @@ pub fn lower_package_unit(
         close_register_types(name, function, declarations, &mut invariant_errors);
         name_constructors(function, declarations);
         name_teardown_destructors(function, declarations);
-        lower_control_flow(function);
         let registers = function.n_regs;
         function.spans.0.retain(|reg, _| *reg < registers);
         for (span, _) in function.spans.0.values_mut() {

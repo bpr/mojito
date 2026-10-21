@@ -142,57 +142,6 @@ pub(super) fn projection_covers_domain(
         })
 }
 
-/// Per-block incoming loan-generation states over an arbitrary block vector (a
-/// function body or a `try` region mini-CFG) with an explicit entry state.
-pub(super) fn loan_generation_entries_over(
-    blocks: &[MirBlock],
-    entry: &LoanGenerationState,
-    generation_dests: &BTreeMap<u32, Option<MirInteriorOrigin>>,
-) -> Vec<LoanGenerationState> {
-    let mut predecessors: Vec<Vec<usize>> = vec![Vec::new(); blocks.len()];
-    for (block, body) in blocks.iter().enumerate() {
-        for successor in terminator_targets(&body.term) {
-            if successor < blocks.len() {
-                predecessors[successor].push(block);
-            }
-        }
-    }
-    let mut incoming: Vec<Option<LoanGenerationState>> = vec![None; blocks.len()];
-    let mut outgoing: Vec<Option<LoanGenerationState>> = vec![None; blocks.len()];
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for block in 0..blocks.len() {
-            let new_in = if block == 0 || predecessors[block].is_empty() {
-                entry.clone()
-            } else {
-                let mut states = predecessors[block]
-                    .iter()
-                    .filter_map(|predecessor| outgoing[*predecessor].as_ref());
-                let Some(first) = states.next() else {
-                    continue;
-                };
-                states.fold(first.clone(), join_loan_generation_states)
-            };
-            let mut new_out = new_in.clone();
-            for instruction in &blocks[block].instrs {
-                transfer_loan_generation(&mut new_out, instruction, generation_dests);
-            }
-            if incoming[block].as_ref() != Some(&new_in)
-                || outgoing[block].as_ref() != Some(&new_out)
-            {
-                incoming[block] = Some(new_in);
-                outgoing[block] = Some(new_out);
-                changed = true;
-            }
-        }
-    }
-    incoming
-        .into_iter()
-        .map(Option::unwrap_or_default)
-        .collect()
-}
-
 pub(super) fn reaching_loans<'a>(
     state: &LoanGenerationState,
     generations: &'a BTreeMap<u32, Vec<Loan>>,
@@ -269,7 +218,10 @@ pub(super) fn analyze_loans(
     // order, so a conflict names the same one on every run; keyed by the
     // instruction's address, which is stable while `f` is borrowed.
     let mut live_references: HashMap<*const MirInstr, Vec<VarId>> = HashMap::new();
-    walk_backward(&ReferenceLiveness, &f.blocks, &mut |instr, live| {
+    walk_backward(&ReferenceLiveness, &f.blocks, &mut |instr: &MirInstr,
+                                                       live: &HashSet<
+        VarId,
+    >| {
         let mut active: Vec<VarId> = live
             .iter()
             .copied()
@@ -835,6 +787,14 @@ impl BackwardScan for ReferenceLiveness {
             live.remove(&def);
         }
         live.extend(var_uses(instr).into_iter().map(|(used, _)| used));
+    }
+
+    fn enters(&self, instr: &MirInstr) -> bool {
+        !matches!(instr, MirInstr::Try { .. })
+    }
+
+    fn define(&self, live: &mut HashSet<VarId>, var: VarId) {
+        live.remove(&var);
     }
 }
 

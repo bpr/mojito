@@ -8,7 +8,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_mir::mir::MirDeclarations;
+use mojito_mir::mir::{MirDeclarations, instruction_regions_mut};
 use mojito_types::types::{Ty, TyKind};
 
 /// Splice a `DropPlace` before every write in function `name` that overwrites
@@ -45,7 +45,7 @@ pub(super) fn elaborate_store_drops(
         }
     });
     if observed.is_ok() && !overwrites.is_empty() {
-        f.blocks = splice_blocks(&f.blocks, &overwrites);
+        splice_blocks(&mut f.blocks, &overwrites);
     }
 }
 
@@ -160,92 +160,45 @@ fn overwrites_through_reference(state: &[Node], place: &MirPlace, f: &MirFunctio
 /// Every `MakeRef` handle's place, keyed by its destination register: a
 /// `WriteRef` names only that register, so the place it writes is recovered
 /// here. A register is defined once per function, so one map covers every
-/// block, `try` regions included.
+/// block, every region included.
 fn make_ref_places(blocks: &[MirBlock]) -> HashMap<u32, MirPlace> {
     let mut handles = HashMap::new();
-    collect_make_refs(blocks, &mut handles);
+    for_each_instr_deep(blocks, &mut |instr| {
+        if let MirInstr::MakeRef { dest, place } = instr {
+            handles.insert(dest.0, place.clone());
+        }
+    });
     handles
 }
 
-fn collect_make_refs(blocks: &[MirBlock], handles: &mut HashMap<u32, MirPlace>) {
+/// Insert each marked write's `DropPlace` before it in `blocks`, recursing
+/// into every region op's regions. A write is looked up while it is still
+/// in place, before its block is rebuilt.
+fn splice_blocks(blocks: &mut [MirBlock], overwrites: &HashMap<*const MirInstr, MirPlace>) {
     for block in blocks {
-        for instr in &block.instrs {
-            match instr {
-                MirInstr::MakeRef { dest, place } => {
-                    handles.insert(dest.0, place.clone());
-                }
-                MirInstr::Try {
-                    body,
-                    handler,
-                    orelse,
-                    finalbody,
-                    ..
-                } => {
-                    collect_make_refs(body, handles);
-                    if let Some((_, blocks)) = handler.as_ref() {
-                        collect_make_refs(blocks, handles);
-                    }
-                    for blocks in orelse.as_deref().into_iter().chain(finalbody.as_deref()) {
-                        collect_make_refs(blocks, handles);
-                    }
-                }
-                _ => {}
+        let places: Vec<Option<MirPlace>> = block
+            .instrs
+            .iter()
+            .map(|instr| overwrites.get(&std::ptr::from_ref(instr)).cloned())
+            .collect();
+        for instr in &mut block.instrs {
+            for region in instruction_regions_mut(instr) {
+                splice_blocks(region, overwrites);
             }
         }
-    }
-}
-
-/// Rebuild `blocks`, inserting each marked write's `DropPlace` before it,
-/// recursing into `try` regions.
-fn splice_blocks(
-    blocks: &[MirBlock],
-    overwrites: &HashMap<*const MirInstr, MirPlace>,
-) -> Vec<MirBlock> {
-    blocks
-        .iter()
-        .map(|block| {
-            let mut instrs = Vec::with_capacity(block.instrs.len());
-            for instr in &block.instrs {
-                if let Some(place) = overwrites.get(&std::ptr::from_ref(instr)) {
-                    instrs.push(MirInstr::DropPlace {
-                        place: place.clone(),
+        let instrs = std::mem::take(&mut block.instrs);
+        block.instrs = instrs
+            .into_iter()
+            .zip(places)
+            .flat_map(|(instr, place)| {
+                place
+                    .map(|place| MirInstr::DropPlace {
+                        place,
                         destructor: None,
-                    });
-                }
-                instrs.push(splice_instruction(instr, overwrites));
-            }
-            MirBlock {
-                instrs,
-                term: block.term.clone(),
-            }
-        })
-        .collect()
-}
-
-fn splice_instruction(
-    instr: &MirInstr,
-    overwrites: &HashMap<*const MirInstr, MirPlace>,
-) -> MirInstr {
-    match instr {
-        MirInstr::Try {
-            body,
-            handler,
-            orelse,
-            finalbody,
-            cleanup,
-        } => MirInstr::Try {
-            body: splice_blocks(body, overwrites),
-            handler: handler
-                .as_ref()
-                .map(|(binding, blocks)| (*binding, splice_blocks(blocks, overwrites))),
-            orelse: orelse
-                .as_deref()
-                .map(|blocks| splice_blocks(blocks, overwrites)),
-            finalbody: finalbody
-                .as_deref()
-                .map(|blocks| splice_blocks(blocks, overwrites)),
-            cleanup: cleanup.clone(),
-        },
-        other => other.clone(),
+                    })
+                    .into_iter()
+                    .chain(std::iter::once(instr))
+            })
+            .collect();
     }
 }

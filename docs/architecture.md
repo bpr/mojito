@@ -2665,8 +2665,9 @@ the statements after a `return`, `break`, `continue`, or `raise` are erased
 before they lower, as `LowerSemanticCF`'s `eraseOpToEndOfBlock` erases the
 ops after a terminator, so they reach no slot, block, or nested function
 (`find_nested_defs` reads the same rule). MIR lowering builds the matching
-MIR region ops (`Flatten::hir_region`), and `lower-control-flow` lowers them
-to blocks at the end of `lower_cfg`.
+MIR region ops (`Flatten::hir_region`); `lower_cfg` lowers them to blocks
+with `lower-control-flow` for phase tests, and the production pipeline only
+once drops are placed.
 
 Each HIR block has:
 
@@ -3416,9 +3417,10 @@ pipeline composes it with
 `analysis::check_ownership_program`, which owns the ownership dataflow:
 per function, the move and initialization scan, carrying interior origins
 as upstream's `TrackedAndInteriorLiveness`, walks the structured body as
-upstream's `CheckLifetimes` walks `hlcf`, the loan check walks it backward
-for reference liveness and forward for loan generations, and only then does
-`lower-control-flow` lower it. A `try` is one instruction to the loan
+upstream's `CheckLifetimes` walks `hlcf`, and the loan check walks it backward
+for reference liveness and forward for loan generations. The body stays
+structured for drop elaboration, which `lower-control-flow` follows. A `try`
+is one instruction to the loan
 check: it uses every variable its parts read, and no access or loan inside
 it is checked (upstream has no persistent-loan check, so the exemption
 stays on the pin's side). The
@@ -4033,9 +4035,9 @@ chains, and comprehensions as `If`/`Loop`, each region one block (a
 conditional expression whose condition the checker found a parameter value,
 `SemanticAdjustment::ComptimeConditional`, is a `ComptimeIf` with results,
 as upstream's `IfElseOpNode` emits `hlcf.comptime.if`), and
-`mir::lower_control_flow` (upstream's `LowerControlFlow`), which
-`analysis::check_ownership_program` runs on each body after its loan check,
-lowers them to blocks and the CFG terminators: a
+`mir::lower_control_flow` (upstream's `LowerControlFlow`), which drop
+elaboration (`analysis::elaborate_drops_function`) runs on each body once its
+drops are placed, lowers them to blocks and the CFG terminators: a
 region's blocks are appended to its list, the rest of the block moves to a
 join, an op's results go through one slot each, stored at a `yield` and
 forwarded at the join, a `break`/`continue` leaving a `try` part to a
@@ -4686,8 +4688,8 @@ named drop stays a `drop.var`, whose runtime partial-aggregate rule,
 Pliron's drop and leaf flags, and an owned pack's reverse order carry
 the states upstream's lifetime checker makes definite; the move and
 initialization scan walks regions, but its state is pre-drop and
-per-template, so the lowering reads it only once drops are placed in
-regions (R877).
+per-template, and upstream decides a drop's shape in the walk that places
+it (R1251).
 A cleanup list's entries name their destructor as a `DropVar` does
 (`CleanupDrop`), named by the same `name_destructors` and respelled by the
 same `name_lifecycle_calls`, so the VM's `run_cleanup` and Pliron's
@@ -5154,124 +5156,104 @@ obligations and moved fields, preventing a partial state from being hidden by a
 join. MIR `ConsumePlace` preserves sibling storage, and the VM drops only
 ordinary residual fields of an incomplete linear aggregate.
 
-### Edge Drops
+### Region Drops
 
-Some values die on control-flow edges rather than immediately after an
-instruction. The liveness pass handles these by inserting drops:
+Drop elaboration (`analysis/drops.rs`) reads the structured body, as
+upstream's `DestructorInsertion` reads `hlcf`, and `lower-control-flow` lowers
+the body right after it. Two walks of `analysis/region_walk.rs` give its
+facts: one forward walk (`DropFacts`, in `register_loans.rs`) records the loan
+generations reaching each instruction and block and the roots each instruction
+consumes through its operand registers (`RegisterUses`), and one backward walk
+(`walk_backward` over `DropLiveness`) gives variable liveness, reporting each
+block's live-in, live-out, and raise channel, each region op's live-in, and
+each `try`'s channels to a `BackwardRecorder`. A splice pass then places each
+drop, nested regions first:
 
-- at the end of the predecessor when there is only one successor
-- at the start of the successor when there is only one predecessor
-- in a fresh split block for critical edges
+- after the instruction that is the value's last use, as in a block;
+- at the entry of an `if` or `comptime if` arm that leaves out a value a
+  sibling arm keeps (`destroyValuesAtEntryIfNeeded`). An `if` with elifs is
+  unified per step, as `checkIfOp` does, each arm against the next condition
+  region (or the else arm), so a condition region can open with drops; a
+  `comptime if` is unified arm by arm against the arms after it, and what a
+  step drops on the way on runs before each later arm's own drops;
+- before a block's terminator, when the values it yields were the last use of
+  an owner their register provenance retains.
 
-This keeps ASAP destruction precise across branches, both in a function's
-top-level CFG and inside each `try` region's mini-CFG. The block-level
-backward liveness, top-level and per region, counts each instruction's
-register-loan uses (`RegisterUses`) as the per-instruction replay does, so a
-register loaded in one block and consumed in another — a read temporary
-loaded before a later conditional argument's branch — keeps its owner live
-across the edge until the consuming call.
+A loop, a `comptime for`, and a `match` unify nothing (`checkLoopOp`,
+`checkMatchOp`): their exits read their frame's sets. No block is added, so no
+edge is split. The block-level liveness counts each instruction's register-loan
+uses as the per-instruction replay does, so a register loaded in one region and
+consumed in another (a read temporary loaded before a later conditional
+argument's branch) keeps its owner live until the consuming call. Loan
+generations are joined where paths meet and added to the liveness per point
+(`loan_extras`), never folded into the walk's sets.
 
 ### Try Region Drops
 
-Region interiors get the same per-instruction and edge drop elaboration as
-top-level blocks: each of a `try`'s four regions is a mini-CFG whose liveness
-is seeded from the enclosing walk at the instruction, per exit kind — the
-normal `TryYield` continuation (`else` entry, then `finally` entry, then the
-code after the block), `EscapeJump` edges (the `finally` still runs after
-them), the return channel (`RegionSeeds::return_live`: what the `finally`
-blocks a return crosses, and those beyond them, still read — the `finally`'s
-entry liveness computed against the enclosing return channel by
-`region_live_in`, empty at the function's top level), and `EscapeJump`
-targets bounded by the enclosing effective live-in. Because a raising operation transfers control to the
-raise edge's observer (the handler, or the `finally` and the enclosing
-handler when there is none), a **raise seed** — that observer's entry
-liveness — is unioned into the live set at every checked raise point
-(`scan::raises_to_handler`: `MirInstr::is_raise_point` — a `raise`, a call
-whose callee is declared `raises`, or an operator whose dunder raises, which
-`UnOp`/`BinOp.raises` records as a call's `raises` — or a nested `try`), as
-upstream's CFG has raise edges only at
-raising operations and as the move analysis reads them. Backward propagation
-therefore places each normal-flow drop after the last raise point preceding
-the death: a handler can never observe a vacated slot, and an outer variable
-rebound in the body runs the overwritten value's destructor between the
-constructing call and the rebind — skipped exactly when that call raises. A
-value live into the `try` that no region path can observe (an unconditional
-silent rebind precedes every potential raise) dies on the entry edge,
-immediately before the `try`. In the enclosing walk a `try` keeps live
-whatever its escape targets read (`escape_live_in`): a `break` out of a
-handler reaches the loop exit without passing a rebind after the `try`, so
-the value that exit reads is live into the `try`, not dead at the loop
-body's entry. The loan machinery participates: generation and
-register-loan fixpoints run over each region with entry states replayed from
-the enclosing walk (regions entered by raise or completion use the union of
-every state the preceding region can reach — pure over-retention), so owner
-retention and retirement behave identically inside regions.
+The backward walk enters a `try` as `checkTryOp` walks it, keeping Mojito's
+`finally` (upstream's `lowerTryFinally` has copied it out by then). The
+`finally` is walked from the `try`'s live-out under the enclosing channels;
+the handler and `else` from the `finally`'s live-in; the body from the
+`else`'s live-in, or the `finally`'s. Each part's live-in is taken as the `try`
+sees it, its loan-generation owners added at the part's entry. Three channels
+stand in for edges the structured `try` does not spell:
 
-The enclosing walk places no death after a `try`. Its regions are seeded with
-the liveness after it as their fall-off, so each region path that reaches the
-fall-off already ends what the `try` uses or holds live for an escape target;
-the entry edge, the cleanup lists, and the `EscapeJump` cleanups cover the
-rest. A `try` region's entry block has no predecessors (the verifier rejects
-a branch to it), so a drop at its head runs once per entry.
+- A **raise channel**: a raising instruction (`scan::raises_to_handler`:
+  `MirInstr::is_raise_point` — a `raise`, a call whose callee is declared
+  `raises`, or an operator whose dunder raises) keeps live what the raise's
+  observer reads — the handler's live-in less its error binding, or with no
+  handler the `finally`'s and the enclosing raise's. Backward propagation
+  therefore places each normal-flow drop after the last raise point preceding
+  the death: a handler never observes a vacated slot, and an outer variable
+  rebound in the body runs the overwritten value's destructor between the
+  constructing call and the rebind, skipped exactly when that call raises.
+- A **return channel**: a `return` in the body, handler, or `else` keeps live
+  the `finally` walked from the enclosing return set, empty at the function's
+  top level.
+- **Frames seen through the `finally`**: a `break`, `continue`, or `match` exit
+  leaving a part keeps live the `finally` walked from its frame's set, as the
+  copy of the `finally` before the exit would. What neither the `finally` nor
+  the target reads dies before the exit, in the part.
 
-Per-instruction drops own all *normal-flow* deaths inside regions, and a
-return's too: a value nothing after the return reads dies in-region before
-it. A cleanup list stays only where MIR has no block to hold the drop, and
-names only what is still held where it runs. A `try`'s list runs on its
-body's raise edge alone and keeps the candidates (below) that some raise
-point in the body holds — the effective liveness entering each raise point,
-and what a nested `try`'s raise carries out past its own list and `finally`
-(`TryInterior::raise_held`). A return crossing a `finally` lists what it holds
-once those `finally` blocks have run: its live-out less what each crossed
-`finally` ends on every path through it (`RegionSeeds::return_ended`); a
-return that crosses none lists nothing and is a plain `return`. An escape's
-list runs at the `break`/`continue`, before the `finally`, and a handler's
-escapes skip the outer values its `try`'s raise edge already ended. One list
-over several raise points may still name a slot one of them already ended
-(R831); the VM's no-op teardown of a vacated (`None`) slot and the native drop
-flag absorb that. The verifier rejects a `drop.var` or `var.consume` of a slot
-every path reaching it already ended, and a cleanup list naming one
-(`mir::verify`'s slot-end rule), so no pass may emit either.
-A `for` loop's yielded slot is in no cleanup list, since the binding always
-consumes it.
+The handler's unread error binding dies at the handler's entry, where the
+caught error arrives. A `try` is no death point in its block: its parts end
+what it uses.
+
+Per-instruction drops own all normal-flow deaths inside parts, and a return's
+too: a value nothing after the return reads dies before it. A cleanup list
+stays only where a structured region has no place for the drop, and names only
+what is still held where it runs. A `return` crossing a `finally` lists what
+it holds once those `finally` blocks have run: its live-out less what each
+crossed `finally` ends on every path through it; a return that crosses none
+lists nothing and is a plain `return`. One raise-edge list over several raise
+points may still name a slot one of them already ended (R831); the VM's no-op
+teardown of a vacated (`None`) slot and the native drop flag absorb that. The
+verifier rejects a `drop.var` or `var.consume` of a slot every path reaching
+it already ended, and a cleanup list naming one (`mir::verify`'s slot-end
+rule), so no pass may emit either. A `for` loop's yielded slot is in no
+cleanup list, since the binding always consumes it.
 
 ### Try Cleanup
 
-Try regions need cleanup for the values only the body can still observe. The
-drop elaboration pass fills `MirInstr::Try.cleanup` so the VM can destroy them
-when a raise leaves the body. Its candidates are the body's *locals* — variables whose every def site
-(`DefVar` or `DeclareVar`) in the function lies within the body region (a
-reassignment is also a `DefVar`, and a `var x: T` declaration is a
-`DeclareVar`, so an outer variable merely rebound or first assigned inside the
-body is not a local and survives the exit) — plus the liveness-guarded outer
-variables the body rebinds or uses that cannot be observed after the body is
-left: dead on the normal continuation, unused by the handler/`else`/`finally`
-regions and by an enclosing region's raise and exit observers, and dead at
-every escape target (`seed_raise_cleanup`, for a top-level `try` and a nested
-one alike); the list keeps those some raise point of the body holds. That
-second set covers the raise edge for outer values whose
-per-instruction death sits on the normal path: a raise landing before a
-rebound value's drop, or before the last use of a value used later in the
-body (an owned call operand the call has not yet consumed), would otherwise
-leak the value, where Mojo destroys it on the raise edge. A variable a
-`UseVar` moves stays listed, since the move empties its slot (the VM's slot
-is `Moved`, the native drop flag clear) and the cleanup skips it; only a
-variable consumed in place (`consumed_in_place`: a `ConsumeVar`, a
-whole-root move capture) is left out. The list is stored in descending `VarId`
-order — reverse declaration order, the order of every shared death point and of
-`EscapeJump` cleanups — and both backends run it front to back, so a raise
-destroys the body's live values newest declaration first, as Mojo does. A slot only
-a `try`'s regions define is scoped to the `try`, so the outer drop liveness
-does not count a `try` as reading the locals of any of its regions: their
-slots are empty whenever the `try` is entered, so a loop's back edge does not
-hold them live, and they die at their last use inside their region, the list
-the raise edge ending them only when a raise leaves before that. The handler's error binding is one of them: it is a
-def site at the handler's entry, where the caught error arrives as the entry
-block's argument, and an unread binding dies there.
+Drop elaboration fills `MirInstr::Try.cleanup` so the VM can destroy what a
+raise leaving the body still holds and its observers do not read, as the entry
+destructors of upstream's error arm do: the slots held at some raise point of
+the body (the effective liveness entering each raise point, and what a nested
+region's raise carries out past its own list and `finally`) less the body's
+raise channel. A raise landing before a rebound value's drop, or before the
+last use of a value used later in the body (an owned call operand the call has
+not yet consumed), would otherwise leak the value. A variable a `UseVar` moves
+stays listed, since the move empties its slot (the VM's slot is `Moved`, the
+native drop flag clear) and the cleanup skips it; only a variable consumed in
+place (`consumed_in_place`: a `ConsumeVar`, a whole-root move capture) is left
+out. The list is stored in descending `VarId` order — reverse declaration
+order, the order of every shared death point — and both backends run it front
+to back, so a raise destroys the body's live values newest declaration first,
+as Mojo does.
 
-`EscapeJump` also carries cleanup for cross-region loop escapes. This makes
-hidden try-region exits explicit enough for the VM to run destructors before
-jumping to the enclosing loop target.
+`lower-control-flow` turns a `break`/`continue` leaving a `try` part into an
+`EscapeJump`, whose `cleanup` stays empty: what dies on the escape died before
+it, in the part.
 
 Iterator-driven loops also place an explicit drop at their common exhaustion or
 `break` exit. A `return` cannot reach that block, so HIR lists its current
@@ -6091,13 +6073,14 @@ point where a slot declared in a loop is uninitialized again.
   registry does: every `PIPELINE` pass, plus `ELABORATE_DROPS`
   (`elaborate-drops`), drop elaboration run on request, and
   `LOWER_CONTROL_FLOW` (`lower-control-flow`), the transitional lowering of
-  structured region ops to blocks, which MIR lowering calls at the end of
+  structured region ops to blocks, which drop elaboration runs at the end of
   each body. `analysis::opt`,
   the `mlir-opt` analogue behind `mojito opt [--pass NAME]… [FILE]`, loads a
   MIR artifact, runs the named passes in order (a program pass over the
   program, a body pass over every body but `__toplevel__`, a call-graph pass
   over the same bodies callees first, with no package), and verifies the
-  whole program after each pass in every build. `tests/mir_pass_test.rs` pins each case under
+  whole program after each pass in every build. It refuses `elaborate-drops`
+  on a body that is not structured (`OptError::Unstructured`). `tests/mir_pass_test.rs` pins each case under
   `tests/mir_passes/<pass>/` by its `functions:` section
   (`mir::text::disassemble_functions`), so a format bump breaks no expected
   file.

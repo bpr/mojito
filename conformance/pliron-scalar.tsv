@@ -1052,6 +1052,8 @@ assets/ok/transferred_carrier_keeps_source_alive.mojo	-	ineligible	no-scalar-ent
 assets/ok/transferred_view_loan_stays_shared.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trivial_register_passable_copy_forwarded.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_break_continue.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/try_finally_break_reads_loop_reference.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/try_handler_exit_raise_edge_drop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_in_loop_temporary_drop_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_raise_edge_drop_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_reassign_outer.mojo	-	ineligible	no-scalar-entry-shape

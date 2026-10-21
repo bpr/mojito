@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1251**.
+Next free ID: **R1252**.
 
 ## Ordered Work
 
@@ -56,41 +56,40 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R877 Drop elaboration places drops on CFG edges where
-  `DestructorInsertion` places them in structured regions**
+- [ ] **R1251 `mir::lower_whole_drops` decides a drop's shape by a forward
+  fold of its own, where `DestructorInsertion` decides it in the backward
+  walk that places the drop**
 
-  `analysis/drops.rs` puts drops on edges and splits critical edges, and
-  upstream's regions have no edges.
-  - Stage 8 of `docs/structured-control-flow-plan.md`.
-  - A drop goes before a region terminator, at a region's entry, or after
-    the op.
-  - Critical-edge splitting is deleted.
-  - The lever includes `register_loans` (`register_loan_uses_over`,
-    `RegisterLoans`, `ArgumentPassing`), which feeds only drop elaboration
-    and field drops.
-  - `analysis/region_walk.rs`'s backward walk (`BackwardScan`, R876's
-    loan liveness) is the `DestructorInsertion` walk to extend; its `try`
-    is one instruction today, and `checkTryOp`'s backward walk is added
-    here.
-  - Once drops are placed in regions, `mir::lower_whole_drops`' own
-    definite-initialization fold (whole, missing parts, empty), which
-    follows `try` regions, reads the move scan's state instead, as
-    `DestructorInsertion` consumes `UninitializedValueScan`'s.
-  - After it lands, `lower-control-flow` runs after drop elaboration,
-    before field drops, store drops, and copy elision.
-  - The entry's planning session may split it if one session cannot land
-    it, filing the rest as chained entries.
-  - Depends on R876.
+  Whether a drop is a whole-value destructor call, a field-by-field
+  teardown, or nothing is decided after drop elaboration, by a separate
+  definite-initialization fold that follows `try` regions.
+  - Upstream's `scheduleNeededDtors` and `DestructorInserter::destroyValueIfNeeded`
+    decide it in the destructor-insertion walk, from that walk's own
+    field-sensitive consumed bits.
+  - The forward move scan hands that walk annotations only
+    (`unusedMarkDestroyName`, `extraOriginUsesAttrName`,
+    `selfPartiallyInitializedAttrName`, `liveValueIdsAfterNoReturnCallAttrName`),
+    not its per-point state.
+  - Lever: `crates/mojito-mir/src/mir/drop_calls.rs`, its caller
+    `name_destructors`, and the elaborator's `name_lifecycle_calls`
+    (`mono/specializer.rs`), which run on the lowered CFG.
+  - The drop walk (`analysis/drops.rs`, `DropLiveness`) is variable-granular
+    today; this entry makes its decision field-sensitive.
+  - Related to R932 (runtime drop flags where upstream decides statically).
+  - Depends on R878, so the fold's callers read regions.
   - Model: Fable, Planned.
 
-- [ ] **R878 Field drops, store drops, and copy elision run on a lowered
-  CFG rather than on regions**
+- [ ] **R878 Field drops, copy elision, and the lifecycle-call namings run
+  on a lowered CFG rather than on regions**
 
   These passes follow drop elaboration and still read the CFG the
-  transitional pass builds.
+  transitional pass builds right after it.
   - Stage 9 of `docs/structured-control-flow-plan.md`.
-  - The lever is `field_drops`, `store_drops`, and `copy_elision` in
-    `crates/mojito-analysis`.
+  - The lever is `field_drops` (`refine_deinit_fields`), `copy_elision`,
+    and `destructor_calls` (`name_destructors` with `mir::lower_whole_drops`)
+    in `crates/mojito-analysis`, `mir::name_constructors`,
+    `mir::lower_copies_and_moves`, and `lower-lit`.
+  - Store drops already read regions: they run before drop elaboration.
   - After it lands, `lower-control-flow` runs at the start of the
     pre-elaboration pipeline.
   - The entry's planning session may split it by pass if one session
@@ -1458,37 +1457,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Found while landing R826 (2026-10-14).
   - Depends on nothing.
   - Model: Fable, Planned.
-
-- [ ] **R830 An escape's cleanup list runs before the `finally` it
-  crosses**
-
-  Problem: a `break` out of a `try` whose `finally` reads `s`, with `t`
-  read only in the body, prints `breaking`, `drop 3`, `finally 2`, where
-  the pin destroys `t` before `breaking`.
-  - Escape lists are filled from the `try`'s entry liveness
-    (`fill_escape_cleanups`), not from the liveness at the escape.
-  - A value the `finally` reads and the target does not survives the
-    escape, and dies only where the target block happens to drop it.
-  - Fix: an escape-channel seed like the return channel's `return_live`,
-    with the list run after the crossed `finally` blocks.
-  - Found while landing R826 (2026-10-14).
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
-- [ ] **R891 A `break` out of a `try`/`finally` in `for x in xs` over a
-  named `List` destroys `xs` before the `finally` reads `x`**
-
-  `for x in xs: try: … break … finally: print(x)` fails in the VM with
-  `ReadRef … invalid reference projection Field("data") on None`.
-  - The escape's cleanup list holds the iterator and `xs` and runs before
-    the `finally`, which reads `x`, a reference into `xs`.
-  - `continue` across the same `finally`, and `break` with an `except`
-    and no `finally`, both run correctly.
-  - It is very likely R830's case: run the list after the crossed
-    `finally`, then add this program as a fixture.
-  - Found while landing R872 (2026-10-14); it fails on `aae331e8` too.
-  - Depends on R830.
-  - Model: Opus, Not Planned.
 
 - [ ] **R831 A `try`'s raise-edge cleanup list serves every raise point of
   its body**
@@ -10036,7 +10004,15 @@ follow-ups the landed producer stages filed come last.
   terminator that leaves the `try`, and Mojito keeps one `finalbody` region
   the VM runs dynamically.
   - Gap kept open by `docs/structured-control-flow-plan.md`.
-  - Related to R829 and R830, without depending on them.
+  - Related to R829, without depending on it.
+  - Probe: a `break` out of a `try` whose `finally` reads `s`, where
+    nothing after the loop reads `s`.
+  - The pin destroys `s` once the `finally` has run, before the loop's
+    exit (`finally 2`, `drop 2`, `after`).
+  - The VM never destroys it, and the native build destroys it at the
+    function's exit.
+  - No instruction on the `break` path can host that death until the
+    `finally` is copied before the `break`.
   - Once `try` parts are single regions, the copy can be made in MIR
     lowering, before the ownership checks.
   - Depends on R874.

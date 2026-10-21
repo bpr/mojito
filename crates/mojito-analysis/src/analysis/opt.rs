@@ -2,9 +2,10 @@
 //! named passes over its bodies in order, and verify the program after
 //! each one, in every build.
 
-use super::pre_elaboration::{Pass, pass_finding, run_call_graph_pass};
+use super::pre_elaboration::{ELABORATE_DROPS, Pass, pass_finding, run_call_graph_pass};
 use mojito_mir::mir::MirProgram;
 use mojito_mir::mir::text::{ArtifactReport, load_artifact};
+use mojito_mir::mir::verify::verify_structured_shape;
 use std::fmt;
 
 /// Why [`opt`] produced no program.
@@ -14,6 +15,13 @@ pub enum OptError {
     Load(ArtifactReport),
     /// The program did not verify after the pass `pass`.
     Verify {
+        pass: &'static str,
+        findings: Vec<String>,
+    },
+    /// A body is not in the form the pass `pass` reads: drop elaboration
+    /// reads structured bodies, as `DestructorInsertion` asserts its
+    /// regions hold one block each.
+    Unstructured {
         pass: &'static str,
         findings: Vec<String>,
     },
@@ -34,6 +42,11 @@ impl fmt::Display for OptError {
                 "MIR does not verify after pass `{pass}`: {}",
                 findings.join("; ")
             ),
+            Self::Unstructured { pass, findings } => write!(
+                formatter,
+                "pass `{pass}` reads structured bodies: {}",
+                findings.join("; ")
+            ),
         }
     }
 }
@@ -46,7 +59,8 @@ impl std::error::Error for OptError {}
 /// As in the pre-elaboration pipeline, a program pass runs over the
 /// program, exporting nothing beyond its entry roots; a body pass over
 /// every body but `__toplevel__`; and a call-graph pass over the same
-/// bodies callees first, with no package to read callees from.
+/// bodies callees first, with no package to read callees from. Drop
+/// elaboration refuses a body that is not structured.
 pub fn opt(
     input: &[u8],
     source_name: &str,
@@ -62,6 +76,20 @@ pub fn opt(
                 run_call_graph_pass(pass, &mut program, None);
             }
             Pass::Body(pass) => {
+                if pass.name == ELABORATE_DROPS.name {
+                    let findings: Vec<String> = program
+                        .functions
+                        .iter()
+                        .filter(|(name, _)| name != "__toplevel__")
+                        .flat_map(|(name, function)| verify_structured_shape(name, function))
+                        .collect();
+                    if !findings.is_empty() {
+                        return Err(OptError::Unstructured {
+                            pass: pass.name,
+                            findings,
+                        });
+                    }
+                }
                 let MirProgram {
                     functions,
                     declarations,

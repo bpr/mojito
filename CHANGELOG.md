@@ -487,6 +487,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Drop elaboration places its drops in the structured body, as upstream's
+  destructor insertion does, and `lower-control-flow` runs right after it:
+  a drop goes after a value's last use or at the entry of an `if` arm that
+  leaves out a value a sibling arm keeps, and no edge is split. A `try` is
+  walked as upstream walks it, so a value a `break` or `continue` out of a
+  `try` leaves behind dies before the exit, where the pin destroys it,
+  when the `finally` does not read it; a `break` whose `finally` reads the
+  loop's reference into a named `List` now runs, where the VM read freed
+  storage (`assets/ok/try_finally_break_reads_loop_reference.mojo`). A
+  `try`'s raise edge destroys what its handler does not read, so a value
+  the handler abandons with a `break` or `return` dies before the handler
+  runs, as on the pin, where Mojito leaked it or destroyed it late
+  (`assets/ok/try_handler_exit_raise_edge_drop.mojo`).
+  Escape cleanup lists are gone. This closes R877 and R891, and the first
+  half of R830 (its second half is R884's probe).
 - The interior-origin check is now part of the move and initialization
   scan, as upstream's `TrackedAndInteriorLiveness`, and the loan check
   reads the same structured regions; `lower-control-flow` runs after both.

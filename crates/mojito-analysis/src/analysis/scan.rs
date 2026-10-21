@@ -208,27 +208,6 @@ pub(super) fn place_loan_uses(place: &MirPlace, reg: Reg) -> Vec<(VarId, Reg)> {
     uses
 }
 
-/// The variables **local** to a `try` region's blocks — those whose every
-/// def site (`DefVar` or `DeclareVar`) in the whole function lies within the
-/// region (at any nesting), excluding those [`consumed_in_place`] — the
-/// body-local candidates of the `try`'s raise-edge cleanup. A local a `UseVar` transfers stays listed: the
-/// transfer empties its slot, which the cleanup then skips. A variable declared outside the region — a
-/// `DeclareVar` or a `DefVar` beyond it — has a def site there and survives
-/// the exit, however many of its stores lie inside; `function_defs` supplies
-/// the function-wide def-site counts to compare against.
-pub(super) fn region_cleanup_vars(
-    blocks: &[MirBlock],
-    function_defs: &HashMap<VarId, usize>,
-) -> Vec<VarId> {
-    let mut counts: HashMap<VarId, usize> = HashMap::new();
-    let mut order: Vec<VarId> = Vec::new();
-    let mut moved: HashSet<VarId> = HashSet::new();
-    collect_region_defs(blocks, &mut counts, &mut order, &mut moved);
-    let consumed = consumed_in_place(blocks);
-    order.retain(|v| !consumed.contains(v) && counts.get(v) == function_defs.get(v));
-    order
-}
-
 /// The variables a region moves out other than by a `UseVar` (which
 /// empties its slot), deep through `try` regions: a `ConsumeVar` or a
 /// whole-root move capture, which a cleanup must not destroy again.
@@ -242,85 +221,11 @@ pub(super) fn consumed_in_place(blocks: &[MirBlock]) -> HashSet<VarId> {
     consumed
 }
 
-/// Count every def site (a `DefVar` write, a `DeclareVar`, or a handler's
-/// error binding) per variable across `blocks`, recursing into nested `try`
-/// sub-regions through [`collect_try_defs`], recording
-/// first-site order and `^`-moved variables. Over a function's top-level
-/// blocks this yields the function-wide def-site counts that region-locality
-/// is judged against.
-pub(super) fn collect_region_defs(
-    blocks: &[MirBlock],
-    counts: &mut HashMap<VarId, usize>,
-    order: &mut Vec<VarId>,
-    moved: &mut HashSet<VarId>,
-) {
-    for b in blocks {
-        for instr in &b.instrs {
-            if let Some(v) = var_def(instr).or_else(|| var_declared(instr)) {
-                if !counts.contains_key(&v) {
-                    order.push(v);
-                }
-                *counts.entry(v).or_insert(0) += 1;
-            }
-            for v in vars_moved(instr) {
-                moved.insert(v);
-            }
-            collect_try_defs(instr, counts, order, moved);
-        }
-    }
-}
-
-/// Count the def sites of a `try`'s four regions as [`collect_region_defs`]
-/// does. The handler's error binding is one def site, at the handler's entry:
-/// the caught error arrives as that block's argument.
-pub(super) fn collect_try_defs(
-    try_instr: &MirInstr,
-    counts: &mut HashMap<VarId, usize>,
-    order: &mut Vec<VarId>,
-    moved: &mut HashSet<VarId>,
-) {
-    let MirInstr::Try {
-        body,
-        handler,
-        orelse,
-        finalbody,
-        ..
-    } = try_instr
-    else {
-        return;
-    };
-    collect_region_defs(body, counts, order, moved);
-    if let Some((binding, h)) = handler {
-        if let Some(v) = binding {
-            if !counts.contains_key(v) {
-                order.push(*v);
-            }
-            *counts.entry(*v).or_insert(0) += 1;
-        }
-        collect_region_defs(h, counts, order, moved);
-    }
-    if let Some(e) = orelse {
-        collect_region_defs(e, counts, order, moved);
-    }
-    if let Some(fb) = finalbody {
-        collect_region_defs(fb, counts, order, moved);
-    }
-}
-
 /// The variable a MIR instruction writes (a `DefVar`, or the iterator a
 /// `GetIter` derives), if any.
 pub(super) const fn var_def(i: &MirInstr) -> Option<VarId> {
     match i {
         MirInstr::DefVar { var, .. } | MirInstr::GetIter { dest: var, .. } => Some(*var),
-        _ => None,
-    }
-}
-
-/// The variable a MIR instruction declares (a `DeclareVar`), if any: a def
-/// site for region locality, but no liveness def.
-const fn var_declared(i: &MirInstr) -> Option<VarId> {
-    match i {
-        MirInstr::DeclareVar { var } => Some(*var),
         _ => None,
     }
 }

@@ -7,8 +7,10 @@
 //! starts from its predecessors' `match.next` states (`checkMatchOp`), and a
 //! `try` walks its four parts with the raise-point rule (`checkTryOp`). The
 //! backward walk is `DestructorInsertion`'s shape: a `break` reads its loop's
-//! break set, a `continue` its continue set, and a loop is dry-run until
-//! stable, then replayed once. A lowered block list (MIR text, or a `try`
+//! break set, a `continue` its continue set, a loop is dry-run until
+//! stable, then replayed once, and a `try` walks its parts from its
+//! `finally` back to its body (`checkTryOp`), a raising instruction keeping
+//! live what its handler reads. A lowered block list (MIR text, or a `try`
 //! part below `lower-control-flow`) reaches its per-block fixpoint first.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
@@ -44,6 +46,29 @@ pub(super) struct Flow<T> {
     escapes: Vec<(MirBlockId, T)>,
 }
 
+/// What a forward walk reports as it replays a body: every instruction it
+/// transfers, every region op it enters, and every block it reaches, each
+/// exactly once. A closure over `(state, instruction)` observes the
+/// instructions alone.
+pub(super) trait ForwardObserver<T> {
+    /// An instruction the walk transfers, with the state reaching it.
+    fn instr(&mut self, state: &T, instr: &MirInstr) -> Result<(), OwnershipError>;
+    /// A region op the walk enters, with the state reaching it.
+    fn op(&mut self, _state: &T, _instr: &MirInstr) {}
+    /// A block the walk reaches, with the state entering it and the state
+    /// at its terminator (`None` when its end is unreachable).
+    fn block(&mut self, _entry: &T, _end: Option<&T>, _block: &MirBlock) {}
+}
+
+impl<T, F> ForwardObserver<T> for F
+where
+    F: FnMut(&T, &MirInstr) -> Result<(), OwnershipError>,
+{
+    fn instr(&mut self, state: &T, instr: &MirInstr) -> Result<(), OwnershipError> {
+        self(state, instr)
+    }
+}
+
 /// Walk a function body forward from `entry`, handing every instruction and
 /// the state reaching it, before its effects, to `observer` exactly once.
 pub(super) fn walk_forward<S, O>(
@@ -54,7 +79,7 @@ pub(super) fn walk_forward<S, O>(
 ) -> Result<Flow<S::State>, OwnershipError>
 where
     S: ForwardScan,
-    O: FnMut(&S::State, &MirInstr) -> Result<(), OwnershipError>,
+    O: ForwardObserver<S::State>,
 {
     walk_region(scan, Some(entry), blocks, Some(observer), &mut Vec::new())
 }
@@ -67,23 +92,94 @@ pub(super) trait BackwardScan {
     fn join(&self, state: &mut Self::State, other: &Self::State);
     /// Undo `instr`: kill what it defines, then add what it uses.
     fn transfer(&self, state: &mut Self::State, instr: &MirInstr);
+    /// Whether the walk enters `instr`'s regions. A region op it does not
+    /// enter is transferred as one instruction.
+    fn enters(&self, instr: &MirInstr) -> bool;
+    /// Kill `var`, which the entry of a region defines: a handler's error
+    /// binding, which the caught error arrives in.
+    fn define(&self, state: &mut Self::State, var: VarId);
+    /// Add to `live`, the state live after `block`'s terminator, what the
+    /// terminator itself reads.
+    fn terminate(&self, _live: &mut Self::State, _block: &MirBlock) {}
+    /// `live`, the live-in of a `try` part, as the `try` sees it at the
+    /// part's entry.
+    fn enter(&self, _live: &mut Self::State, _part: &[MirBlock]) {}
+}
+
+/// What a backward walk reports on its final replay, each event once. A
+/// closure over `(instruction, state)` records the instructions alone.
+pub(super) trait BackwardRecorder<T> {
+    /// An instruction with the state live just before it; a region op is
+    /// reported once its regions are walked.
+    fn instr(&mut self, _instr: &MirInstr, _live: &T) {}
+    /// A block with the states live entering it and after its terminator,
+    /// and the state a raise in it leaves live (`None` outside every `try`).
+    fn block(&mut self, _block: &MirBlock, _live: BlockLiveness<'_, T>) {}
+    /// A `try` with the states its parts were walked from.
+    fn try_op(&mut self, _op: &MirInstr, _channels: &TryChannels<T>) {}
+}
+
+impl<T, F: FnMut(&MirInstr, &T)> BackwardRecorder<T> for F {
+    fn instr(&mut self, instr: &MirInstr, live: &T) {
+        self(instr, live);
+    }
+}
+
+/// The states live around one block, as [`BackwardRecorder::block`]
+/// reports them.
+pub(super) struct BlockLiveness<'a, T> {
+    pub(super) live_in: &'a T,
+    pub(super) live_out: &'a T,
+    pub(super) raise: Option<&'a T>,
+}
+
+/// The states one `try`'s parts were walked from, as `checkTryOp` walks
+/// them with Mojito's `finally` kept: the `finally` from the `try`'s
+/// live-out, the handler and `else` from the `finally`'s live-in, and the
+/// body from the `else`'s (or the `finally`'s).
+#[derive(Clone)]
+pub(super) struct TryChannels<T> {
+    /// Live after the `try`.
+    pub(super) after: T,
+    /// Live entering the `finally` on the normal path; `after` without one.
+    pub(super) fin: T,
+    /// What a `return` in the body, handler, or `else` leaves live: the
+    /// `finally`'s live-in on the return path, or the enclosing return's.
+    pub(super) returns: T,
+    /// The handler's live-in, its error binding included.
+    pub(super) handler: Option<T>,
 }
 
 /// Walk a function body backward from its exits, handing `recorder` each
-/// instruction with the state live just before it, exactly once. The walk
-/// enters `if`, `comptime if`, loops, `comptime for`, and `match`; a `try` is
-/// one instruction to it.
+/// instruction with the state live just before it, each block with the
+/// states around it, and each `try` with its channels, exactly once. The
+/// walk enters every region op `scan` enters: a raising instruction inside
+/// a `try` keeps live what the raise's handler (or `finally`) reads, and a
+/// `return` what the `finally`s it crosses read.
 pub(super) fn walk_backward<S, R>(scan: &S, blocks: &[MirBlock], recorder: &mut R) -> S::State
 where
     S: BackwardScan,
-    R: FnMut(&MirInstr, &S::State),
+    R: BackwardRecorder<S::State>,
 {
-    walk_back_region(
+    let mut walk = BackWalk {
         scan,
-        blocks,
-        &S::State::default(),
-        Some(recorder),
-        &mut Vec::new(),
+        frames: Vec::new(),
+        raise: None,
+        exit: S::State::default(),
+    };
+    walk.region(blocks, &S::State::default(), Some(recorder))
+}
+
+/// Whether `instr` is a region op the walks know.
+pub(super) const fn region_op(instr: &MirInstr) -> bool {
+    matches!(
+        instr,
+        MirInstr::Try { .. }
+            | MirInstr::If { .. }
+            | MirInstr::Loop { .. }
+            | MirInstr::ComptimeIf { .. }
+            | MirInstr::ComptimeFor { .. }
+            | MirInstr::Match { .. }
     )
 }
 
@@ -155,13 +251,6 @@ impl<T> Frame<T> {
     }
 }
 
-/// A frame of the backward walk: the states live where its two exits go.
-struct BackFrame<T> {
-    kind: FrameKind,
-    leave: T,
-    resume: T,
-}
-
 /// A region's flow beside the frame its terminators filled.
 type Framed<T> = (Flow<T>, Frame<T>);
 
@@ -203,15 +292,7 @@ fn names(target: FrameKind, kind: FrameKind) -> bool {
 
 /// Whether `instr` is a region op the forward walk knows, and `scan` enters it.
 fn enters<S: ForwardScan>(scan: &S, instr: &MirInstr) -> bool {
-    matches!(
-        instr,
-        MirInstr::Try { .. }
-            | MirInstr::If { .. }
-            | MirInstr::Loop { .. }
-            | MirInstr::ComptimeIf { .. }
-            | MirInstr::ComptimeFor { .. }
-            | MirInstr::Match { .. }
-    ) && scan.enters(instr)
+    region_op(instr) && scan.enters(instr)
 }
 
 /// Walk one region from its entry state, handing every instruction and the
@@ -228,7 +309,7 @@ fn walk_region<S, O>(
 ) -> Result<Flow<S::State>, OwnershipError>
 where
     S: ForwardScan,
-    O: FnMut(&S::State, &MirInstr) -> Result<(), OwnershipError>,
+    O: ForwardObserver<S::State>,
 {
     let Some(entry) = entry else {
         return Ok(Flow::unreachable());
@@ -292,7 +373,7 @@ where
 /// never falls off).
 fn walk_block<S, O>(
     scan: &S,
-    mut state: S::State,
+    state: S::State,
     block: &MirBlock,
     flow: &mut Flow<S::State>,
     mut observer: Option<&mut O>,
@@ -300,31 +381,39 @@ fn walk_block<S, O>(
 ) -> Result<Option<S::State>, OwnershipError>
 where
     S: ForwardScan,
-    O: FnMut(&S::State, &MirInstr) -> Result<(), OwnershipError>,
+    O: ForwardObserver<S::State>,
 {
+    let entry = observer.is_some().then(|| state.clone());
+    let mut current = Some(state);
     for (i, instr) in block.instrs.iter().enumerate() {
+        let Some(mut state) = current.take() else {
+            break;
+        };
         if enters(scan, instr) {
+            if let Some(observer) = observer.as_deref_mut() {
+                observer.op(&state, instr);
+            }
             let nested = walk_op(scan, state, instr, observer.as_deref_mut(), frames)?;
             flow.absorb_abnormal(scan, &nested);
-            let Some(normal) = nested.normal else {
-                return Ok(None);
-            };
-            state = normal;
+            current = nested.normal;
             continue;
         }
         if let Some(observer) = observer.as_deref_mut() {
-            observer(&state, instr)?;
+            observer.instr(&state, instr)?;
         }
         scan.transfer(&mut state, instr);
         if instr.is_raise_point() {
             let seed = scan.raise_seed(&state, block.instrs.get(i + 1));
             add_state(scan, &mut flow.raises, Some(&seed));
         }
-        if matches!(instr, MirInstr::Raise { .. }) {
-            return Ok(None);
+        if !matches!(instr, MirInstr::Raise { .. }) {
+            current = Some(state);
         }
     }
-    Ok(Some(state))
+    if let (Some(observer), Some(entry)) = (observer, &entry) {
+        observer.block(entry, current.as_ref(), block);
+    }
+    Ok(current)
 }
 
 /// Walk one region op from `entry`, as `scanBlock` dispatches it.
@@ -337,7 +426,7 @@ fn walk_op<S, O>(
 ) -> Result<Flow<S::State>, OwnershipError>
 where
     S: ForwardScan,
-    O: FnMut(&S::State, &MirInstr) -> Result<(), OwnershipError>,
+    O: ForwardObserver<S::State>,
 {
     match instr {
         MirInstr::Try { .. } => walk_try(scan, entry, instr, observer, frames),
@@ -398,7 +487,7 @@ fn walk_framed<S, O>(
 ) -> Result<Framed<S::State>, OwnershipError>
 where
     S: ForwardScan,
-    O: FnMut(&S::State, &MirInstr) -> Result<(), OwnershipError>,
+    O: ForwardObserver<S::State>,
 {
     let depth = frames.len();
     frames.push(Frame::new(kind));
@@ -420,7 +509,7 @@ fn walk_if<S, O>(
 ) -> Result<Flow<S::State>, OwnershipError>
 where
     S: ForwardScan,
-    O: FnMut(&S::State, &MirInstr) -> Result<(), OwnershipError>,
+    O: ForwardObserver<S::State>,
 {
     let MirInstr::If {
         then,
@@ -468,7 +557,7 @@ fn walk_arms<'r, S, O>(
 ) -> Result<Flow<S::State>, OwnershipError>
 where
     S: ForwardScan,
-    O: FnMut(&S::State, &MirInstr) -> Result<(), OwnershipError>,
+    O: ForwardObserver<S::State>,
 {
     let mut flow = Flow::unreachable();
     for region in regions {
@@ -498,7 +587,7 @@ fn walk_loop<S, O>(
 ) -> Result<Flow<S::State>, OwnershipError>
 where
     S: ForwardScan,
-    O: FnMut(&S::State, &MirInstr) -> Result<(), OwnershipError>,
+    O: ForwardObserver<S::State>,
 {
     let mut resume = entry;
     let (mut flow, mut frame) = loop {
@@ -535,7 +624,7 @@ fn walk_match<S, O>(
 ) -> Result<Flow<S::State>, OwnershipError>
 where
     S: ForwardScan,
-    O: FnMut(&S::State, &MirInstr) -> Result<(), OwnershipError>,
+    O: ForwardObserver<S::State>,
 {
     let mut flow = Flow::unreachable();
     let mut next = Some(entry);
@@ -579,7 +668,7 @@ fn walk_try<S, O>(
 ) -> Result<Flow<S::State>, OwnershipError>
 where
     S: ForwardScan,
-    O: FnMut(&S::State, &MirInstr) -> Result<(), OwnershipError>,
+    O: ForwardObserver<S::State>,
 {
     let MirInstr::Try {
         body,
@@ -819,78 +908,124 @@ fn transfer_block<S: ForwardScan>(
     Some(state)
 }
 
-/// Walk one region backward from `exit`, the state its yields continue to,
-/// returning its live-in. A structured region is one block, walked once; a
-/// lowered block list reaches its per-block fixpoint first and is then
-/// replayed for `recorder`.
-fn walk_back_region<S, R>(
-    scan: &S,
-    blocks: &[MirBlock],
-    exit: &S::State,
-    recorder: Option<&mut R>,
-    frames: &mut Vec<BackFrame<S::State>>,
-) -> S::State
-where
-    S: BackwardScan,
-    R: FnMut(&MirInstr, &S::State),
-{
-    match blocks {
-        [] => return exit.clone(),
-        [block] if terminator_targets(&block.term).is_empty() => {
-            let out = back_live_out(scan, &block.term, exit, frames, &[]);
-            return walk_back_block(scan, &block.instrs, out, recorder, frames);
-        }
-        _ => {}
-    }
-    let preds = block_predecessors(blocks);
-    let mut live_in = vec![S::State::default(); blocks.len()];
-    let mut worklist = Worklist::backward(blocks);
-    while let Some(b) = worklist.pop() {
-        let out = back_live_out(scan, &blocks[b].term, exit, frames, &live_in);
-        let incoming = walk_back_block(scan, &blocks[b].instrs, out, None::<&mut R>, frames);
-        if incoming != live_in[b] {
-            live_in[b] = incoming;
-            for predecessor in &preds[b] {
-                worklist.push(*predecessor);
-            }
-        }
-    }
-    if let Some(recorder) = recorder {
-        for block in blocks {
-            let out = back_live_out(scan, &block.term, exit, frames, &live_in);
-            walk_back_block(scan, &block.instrs, out, Some(&mut *recorder), frames);
-        }
-    }
-    live_in.swap_remove(0)
+/// A frame of the backward walk: the states live where its two exits go.
+struct BackFrame<T> {
+    kind: FrameKind,
+    leave: T,
+    resume: T,
 }
 
-/// The state live after a block's terminator: `exit` after a yield, nothing
-/// after a `return`, the named frame's set after a region terminator, and
-/// the join of its successors' live-ins after a lowered branch.
-fn back_live_out<S: BackwardScan>(
-    scan: &S,
-    term: &MirTerm,
-    exit: &S::State,
-    frames: &[BackFrame<S::State>],
-    live_in: &[S::State],
-) -> S::State {
-    match term {
-        MirTerm::TryYield
-        | MirTerm::Yield(_)
-        | MirTerm::ComptimeYield(_)
-        | MirTerm::ElifCond(_) => exit.clone(),
-        MirTerm::Return(_)
-        | MirTerm::ReturnWithCleanup { .. }
-        | MirTerm::EscapeJump { .. }
-        | MirTerm::Unreachable => S::State::default(),
-        MirTerm::Break { .. }
-        | MirTerm::Continue { .. }
-        | MirTerm::ComptimeBreak
-        | MirTerm::ComptimeContinue
-        | MirTerm::MatchComplete
-        | MirTerm::MatchNext => region_exit(term)
-            .and_then(|(target, resume)| {
-                frames
+/// One backward walk: the frames enclosing the region being walked, and
+/// the channels a raise and a `return` there leave through.
+struct BackWalk<'s, S: BackwardScan> {
+    scan: &'s S,
+    frames: Vec<BackFrame<S::State>>,
+    /// What a raising instruction keeps live: the live-in of the handler
+    /// (or the `finally`) a raise there reaches. `None` outside every `try`.
+    raise: Option<S::State>,
+    /// What a `return` leaves live: the live-in of the `finally`s it
+    /// crosses on the return path.
+    exit: S::State,
+}
+
+impl<S: BackwardScan> BackWalk<'_, S> {
+    /// Walk one region backward from `exit`, the state its yields continue
+    /// to, returning its live-in. A structured region is one block, walked
+    /// once; a lowered block list reaches its per-block fixpoint first and
+    /// is then replayed for `recorder`.
+    fn region<R: BackwardRecorder<S::State>>(
+        &mut self,
+        blocks: &[MirBlock],
+        exit: &S::State,
+        recorder: Option<&mut R>,
+    ) -> S::State {
+        match blocks {
+            [] => return exit.clone(),
+            [block] if terminator_targets(&block.term).is_empty() => {
+                return self.block(block, exit, &[], recorder);
+            }
+            _ => {}
+        }
+        let preds = block_predecessors(blocks);
+        let mut live_in = vec![S::State::default(); blocks.len()];
+        let mut worklist = Worklist::backward(blocks);
+        while let Some(b) = worklist.pop() {
+            let incoming = self.block(&blocks[b], exit, &live_in, None::<&mut R>);
+            if incoming != live_in[b] {
+                live_in[b] = incoming;
+                for predecessor in &preds[b] {
+                    worklist.push(*predecessor);
+                }
+            }
+        }
+        if let Some(recorder) = recorder {
+            for block in blocks {
+                self.block(block, exit, &live_in, Some(&mut *recorder));
+            }
+        }
+        live_in.swap_remove(0)
+    }
+
+    /// Walk one block from its terminator back, returning its live-in;
+    /// `live_in` holds its lowered successors' live-ins.
+    fn block<R: BackwardRecorder<S::State>>(
+        &mut self,
+        block: &MirBlock,
+        exit: &S::State,
+        live_in: &[S::State],
+        mut recorder: Option<&mut R>,
+    ) -> S::State {
+        let out = self.live_out(&block.term, exit, live_in);
+        let mut live = out.clone();
+        self.scan.terminate(&mut live, block);
+        for instr in block.instrs.iter().rev() {
+            if region_op(instr) && self.scan.enters(instr) {
+                live = self.op(instr, &live, recorder.as_deref_mut());
+            } else {
+                self.scan.transfer(&mut live, instr);
+                if let Some(raise) = self.raise.as_ref().filter(|_| raises_to_handler(instr)) {
+                    self.scan.join(&mut live, raise);
+                }
+            }
+            if let Some(recorder) = recorder.as_deref_mut() {
+                recorder.instr(instr, &live);
+            }
+        }
+        if let Some(recorder) = recorder {
+            recorder.block(
+                block,
+                BlockLiveness {
+                    live_in: &live,
+                    live_out: &out,
+                    raise: self.raise.as_ref(),
+                },
+            );
+        }
+        live
+    }
+
+    /// The state live after a block's terminator: `exit` after a yield,
+    /// the return channel after a `return`, the named frame's set after a
+    /// region terminator, and the join of its successors' live-ins after a
+    /// lowered branch.
+    fn live_out(&self, term: &MirTerm, exit: &S::State, live_in: &[S::State]) -> S::State {
+        match term {
+            MirTerm::TryYield
+            | MirTerm::Yield(_)
+            | MirTerm::ComptimeYield(_)
+            | MirTerm::ElifCond(_) => exit.clone(),
+            MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. } => self.exit.clone(),
+            MirTerm::EscapeJump { .. } | MirTerm::Unreachable => S::State::default(),
+            MirTerm::Break { .. }
+            | MirTerm::Continue { .. }
+            | MirTerm::ComptimeBreak
+            | MirTerm::ComptimeContinue
+            | MirTerm::MatchComplete
+            | MirTerm::MatchNext => {
+                let Some((target, resume)) = region_exit(term) else {
+                    return S::State::default();
+                };
+                self.frames
                     .iter()
                     .rev()
                     .find(|frame| names(target, frame.kind))
@@ -901,173 +1036,244 @@ fn back_live_out<S: BackwardScan>(
                             frame.leave.clone()
                         }
                     })
-            })
-            .unwrap_or_default(),
-        MirTerm::Jump(_)
-        | MirTerm::Branch { .. }
-        | MirTerm::ComptimeBranch { .. }
-        | MirTerm::ComptimeFor { .. } => {
-            let mut out = S::State::default();
-            for successor in terminator_targets(term) {
-                if let Some(live) = live_in.get(successor) {
-                    scan.join(&mut out, live);
-                }
+                    .unwrap_or_default()
             }
-            out
+            MirTerm::Jump(_)
+            | MirTerm::Branch { .. }
+            | MirTerm::ComptimeBranch { .. }
+            | MirTerm::ComptimeFor { .. } => {
+                let mut out = S::State::default();
+                for successor in terminator_targets(term) {
+                    if let Some(live) = live_in.get(successor) {
+                        self.scan.join(&mut out, live);
+                    }
+                }
+                out
+            }
         }
     }
-}
 
-/// Walk one block's instructions backward from `live`, its live-out.
-fn walk_back_block<S, R>(
-    scan: &S,
-    instrs: &[MirInstr],
-    mut live: S::State,
-    mut recorder: Option<&mut R>,
-    frames: &mut Vec<BackFrame<S::State>>,
-) -> S::State
-where
-    S: BackwardScan,
-    R: FnMut(&MirInstr, &S::State),
-{
-    for instr in instrs.iter().rev() {
-        live = match instr {
-            MirInstr::If { .. }
-            | MirInstr::ComptimeIf { .. }
-            | MirInstr::Loop { .. }
-            | MirInstr::ComptimeFor { .. }
-            | MirInstr::Match { .. } => {
-                walk_back_op(scan, instr, &live, recorder.as_deref_mut(), frames)
+    /// The live-in of one region op whose live-out is `exit`.
+    ///
+    /// - An `if`: the else arm from `exit`, then each elif in reverse, its
+    ///   arm from `exit` and its condition from the join of that arm's
+    ///   live-in and the rest's; the then arm's live-in joins the rest's.
+    /// - A `comptime if`: the join of every arm's live-in.
+    /// - A loop or `comptime for`: see [`Self::looped`].
+    /// - A `match`: the else region from `exit`, outside this match's frame,
+    ///   then each case in reverse under a frame whose next set is the
+    ///   following case's live-in and whose complete set is `exit`.
+    /// - A `try`: see [`Self::tried`].
+    fn op<R: BackwardRecorder<S::State>>(
+        &mut self,
+        instr: &MirInstr,
+        exit: &S::State,
+        mut recorder: Option<&mut R>,
+    ) -> S::State {
+        match instr {
+            MirInstr::If {
+                then,
+                elifs,
+                orelse,
+                ..
+            } => {
+                let mut rest = self.region(orelse, exit, recorder.as_deref_mut());
+                for elif in elifs.iter().rev() {
+                    let arm = self.region(&elif.then, exit, recorder.as_deref_mut());
+                    self.scan.join(&mut rest, &arm);
+                    rest = self.region(&elif.cond, &rest, recorder.as_deref_mut());
+                }
+                let mut live = self.region(then, exit, recorder);
+                self.scan.join(&mut live, &rest);
+                live
             }
-            _ => {
-                scan.transfer(&mut live, instr);
-                if let Some(recorder) = recorder.as_deref_mut() {
-                    recorder(instr, &live);
+            MirInstr::ComptimeIf { arms, orelse, .. } => {
+                let mut live = S::State::default();
+                for arm in arms.iter().chain(std::iter::once(orelse)) {
+                    let arm = self.region(arm, exit, recorder.as_deref_mut());
+                    self.scan.join(&mut live, &arm);
                 }
                 live
             }
-        };
+            MirInstr::Loop { label, body } => {
+                self.looped(FrameKind::Loop(*label), body, exit, recorder)
+            }
+            MirInstr::ComptimeFor { body, .. } => {
+                self.looped(FrameKind::ComptimeFor, body, exit, recorder)
+            }
+            MirInstr::Match { cases, orelse } => {
+                let mut next = self.region(orelse, exit, recorder.as_deref_mut());
+                for case in cases.iter().rev() {
+                    self.frames.push(BackFrame {
+                        kind: FrameKind::MatchCase,
+                        leave: exit.clone(),
+                        resume: next,
+                    });
+                    next = self.region(case, &S::State::default(), recorder.as_deref_mut());
+                    self.frames.pop();
+                }
+                next
+            }
+            MirInstr::Try { .. } => self.tried(instr, exit, recorder),
+            _ => {
+                let mut live = exit.clone();
+                self.scan.transfer(&mut live, instr);
+                live
+            }
+        }
     }
-    live
-}
 
-/// The live-in of one region op whose live-out is `exit`.
-///
-/// - An `if`: the else arm from `exit`, then each elif in reverse, its arm
-///   from `exit` and its condition from the join of that arm's live-in and
-///   the rest's; the then arm's live-in joins the rest's.
-/// - A `comptime if`: the join of every arm's live-in.
-/// - A loop or `comptime for`: see [`walk_back_loop`].
-/// - A `match`: the else region from `exit`, outside this match's frame,
-///   then each case in reverse under a frame whose next set is the
-///   following case's live-in and whose complete set is `exit`.
-fn walk_back_op<S, R>(
-    scan: &S,
-    instr: &MirInstr,
-    exit: &S::State,
-    mut recorder: Option<&mut R>,
-    frames: &mut Vec<BackFrame<S::State>>,
-) -> S::State
-where
-    S: BackwardScan,
-    R: FnMut(&MirInstr, &S::State),
-{
-    match instr {
-        MirInstr::If {
-            then,
-            elifs,
+    /// The live-in of a loop (or a `comptime for`) whose live-out is
+    /// `exit`, as `checkLoopOp` walks it: the body is dry-run under a frame
+    /// whose break set is `exit` and whose continue set starts empty, until
+    /// the continue set (the body's live-in) is stable, then replayed once
+    /// for `recorder`.
+    fn looped<R: BackwardRecorder<S::State>>(
+        &mut self,
+        kind: FrameKind,
+        body: &[MirBlock],
+        exit: &S::State,
+        recorder: Option<&mut R>,
+    ) -> S::State {
+        let mut resume = S::State::default();
+        loop {
+            let mut next = self.framed(kind, body, exit, resume.clone(), None::<&mut R>);
+            self.scan.join(&mut next, &resume);
+            if next == resume {
+                break;
+            }
+            resume = next;
+        }
+        if recorder.is_some() {
+            self.framed(kind, body, exit, resume.clone(), recorder);
+        }
+        resume
+    }
+
+    /// Walk a loop body under a frame of `kind` whose break set is `exit`
+    /// and whose continue set is `resume`.
+    fn framed<R: BackwardRecorder<S::State>>(
+        &mut self,
+        kind: FrameKind,
+        body: &[MirBlock],
+        exit: &S::State,
+        resume: S::State,
+        recorder: Option<&mut R>,
+    ) -> S::State {
+        self.frames.push(BackFrame {
+            kind,
+            leave: exit.clone(),
+            resume,
+        });
+        let live = self.region(body, &S::State::default(), recorder);
+        self.frames.pop();
+        live
+    }
+
+    /// The live-in of a `try` whose live-out is `exit`, as `checkTryOp`
+    /// walks it with Mojito's `finally` kept: the `finally` from `exit`
+    /// under the enclosing channels, then the handler and `else` from the
+    /// `finally`'s live-in, a raise in them reaching the `finally` and the
+    /// enclosing raise's observers, then the body from the `else`'s live-in
+    /// (or the `finally`'s), a raise in it reaching the handler (or what a
+    /// raise from the handler would). Inside the parts, a `return` or an
+    /// exit to an enclosing frame leaves live the `finally`'s live-in when
+    /// walked from where the exit goes, as `lowerTryFinally` copies the
+    /// `finally` before each exiting terminator. Only the `finally`'s
+    /// normal-path walk is recorded.
+    fn tried<R: BackwardRecorder<S::State>>(
+        &mut self,
+        instr: &MirInstr,
+        exit: &S::State,
+        mut recorder: Option<&mut R>,
+    ) -> S::State {
+        let MirInstr::Try {
+            body,
+            handler,
             orelse,
+            finalbody,
             ..
-        } => {
-            let mut rest = walk_back_region(scan, orelse, exit, recorder.as_deref_mut(), frames);
-            for elif in elifs.iter().rev() {
-                let arm = walk_back_region(scan, &elif.then, exit, recorder.as_deref_mut(), frames);
-                scan.join(&mut rest, &arm);
-                rest = walk_back_region(scan, &elif.cond, &rest, recorder.as_deref_mut(), frames);
-            }
-            let mut live = walk_back_region(scan, then, exit, recorder, frames);
-            scan.join(&mut live, &rest);
-            live
-        }
-        MirInstr::ComptimeIf { arms, orelse, .. } => {
-            let mut live = S::State::default();
-            for arm in arms.iter().chain(std::iter::once(orelse)) {
-                let arm = walk_back_region(scan, arm, exit, recorder.as_deref_mut(), frames);
-                scan.join(&mut live, &arm);
-            }
-            live
-        }
-        MirInstr::Loop { label, body } => {
-            walk_back_loop(scan, FrameKind::Loop(*label), body, exit, recorder, frames)
-        }
-        MirInstr::ComptimeFor { body, .. } => {
-            walk_back_loop(scan, FrameKind::ComptimeFor, body, exit, recorder, frames)
-        }
-        MirInstr::Match { cases, orelse } => {
-            let mut next = walk_back_region(scan, orelse, exit, recorder.as_deref_mut(), frames);
-            for case in cases.iter().rev() {
-                frames.push(BackFrame {
-                    kind: FrameKind::MatchCase,
-                    leave: exit.clone(),
-                    resume: next,
-                });
-                next = walk_back_region(
-                    scan,
-                    case,
-                    &S::State::default(),
-                    recorder.as_deref_mut(),
-                    frames,
-                );
-                frames.pop();
-            }
-            next
-        }
-        _ => {
-            let mut live = exit.clone();
-            scan.transfer(&mut live, instr);
-            live
-        }
-    }
-}
-
-/// The live-in of a loop (or a `comptime for`) whose live-out is `exit`, as
-/// `checkLoopOp` walks it: the body is dry-run under a frame whose break set
-/// is `exit` and whose continue set starts empty, until the continue set
-/// (the body's live-in) is stable, then replayed once for `recorder`.
-fn walk_back_loop<S, R>(
-    scan: &S,
-    kind: FrameKind,
-    body: &[MirBlock],
-    exit: &S::State,
-    recorder: Option<&mut R>,
-    frames: &mut Vec<BackFrame<S::State>>,
-) -> S::State
-where
-    S: BackwardScan,
-    R: FnMut(&MirInstr, &S::State),
-{
-    let framed =
-        |resume: S::State, recorder: Option<&mut R>, frames: &mut Vec<BackFrame<S::State>>| {
-            frames.push(BackFrame {
-                kind,
-                leave: exit.clone(),
-                resume,
-            });
-            let live = walk_back_region(scan, body, &S::State::default(), recorder, frames);
-            frames.pop();
-            live
+        } = instr
+        else {
+            return exit.clone();
         };
-    let mut resume = S::State::default();
-    loop {
-        let mut next = framed(resume.clone(), None, frames);
-        scan.join(&mut next, &resume);
-        if next == resume {
-            break;
+        let mut fin = exit.clone();
+        let mut returns = self.exit.clone();
+        let mut enclosing_frames = Vec::new();
+        if let Some(fb) = finalbody {
+            fin = self.through(fb, exit, recorder.as_deref_mut());
+            returns = self.through(fb, &returns, None::<&mut R>);
+            for index in 0..self.frames.len() {
+                let leave = self.frames[index].leave.clone();
+                let resume = self.frames[index].resume.clone();
+                let through_leave = self.through(fb, &leave, None::<&mut R>);
+                let through_resume = self.through(fb, &resume, None::<&mut R>);
+                self.frames[index].leave = through_leave;
+                self.frames[index].resume = through_resume;
+                enclosing_frames.push((leave, resume));
+            }
         }
-        resume = next;
+        let mut outward = fin.clone();
+        if let Some(raise) = &self.raise {
+            self.scan.join(&mut outward, raise);
+        }
+        let enclosing_raise = self.raise.replace(outward);
+        let enclosing_exit = std::mem::replace(&mut self.exit, returns.clone());
+        let mut handler_in = None;
+        if let Some((_, h)) = handler {
+            let mut live = self.region(h, &fin, recorder.as_deref_mut());
+            self.scan.enter(&mut live, h);
+            handler_in = Some(live);
+        }
+        let mut else_in = None;
+        if let Some(e) = orelse {
+            let mut live = self.region(e, &fin, recorder.as_deref_mut());
+            self.scan.enter(&mut live, e);
+            else_in = Some(live);
+        }
+        if let (Some((binding, _)), Some(live)) = (handler, &handler_in) {
+            let mut raise = live.clone();
+            if let Some(binding) = binding {
+                self.scan.define(&mut raise, *binding);
+            }
+            self.raise = Some(raise);
+        }
+        let mut live = self.region(
+            body,
+            else_in.as_ref().unwrap_or(&fin),
+            recorder.as_deref_mut(),
+        );
+        self.scan.enter(&mut live, body);
+        self.raise = enclosing_raise;
+        self.exit = enclosing_exit;
+        for (frame, (leave, resume)) in self.frames.iter_mut().zip(enclosing_frames) {
+            frame.leave = leave;
+            frame.resume = resume;
+        }
+        if let Some(recorder) = recorder {
+            recorder.try_op(
+                instr,
+                &TryChannels {
+                    after: exit.clone(),
+                    fin,
+                    returns,
+                    handler: handler_in,
+                },
+            );
+        }
+        live
     }
-    if recorder.is_some() {
-        framed(resume.clone(), recorder, frames);
+
+    /// The live-in of a `finally` run on the way to where `exit` is live,
+    /// under the enclosing channels, as its `try` sees it.
+    fn through<R: BackwardRecorder<S::State>>(
+        &mut self,
+        finalbody: &[MirBlock],
+        exit: &S::State,
+        recorder: Option<&mut R>,
+    ) -> S::State {
+        let mut live = self.region(finalbody, exit, recorder);
+        self.scan.enter(&mut live, finalbody);
+        live
     }
-    resume
 }

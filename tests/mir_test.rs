@@ -582,12 +582,14 @@ fn checked_program_mir(source: &str) -> mojito::mir::MirProgram {
 }
 
 /// Compile `source` and return the driver's verified MIR, which checks the
-/// program against the imported std package's declarations.
+/// program against the imported std package's declarations, its control
+/// flow lowered to blocks as drop elaboration leaves it.
 fn driver_mir(source: &str) -> mojito::mir::MirProgram {
     let compiled = Compiler::default()
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile");
-    let mir = compiled.mir().clone();
+    let mut mir = compiled.mir().clone();
+    mojito::mir::lower_control_flow_program(&mut mir);
     assert!(
         mir.invariant_errors.is_empty(),
         "{:?}",
