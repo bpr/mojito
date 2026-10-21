@@ -17,7 +17,7 @@ use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
     Const, LoopLabel, MirBlock, MirElif, MirFunction, MirInstr, MirTerm, Reg, count_register_reads,
     fresh_register, instruction_regions, instruction_regions_mut, loop_breaks_mut,
-    replace_register_reads, resolve_replacements,
+    loop_continues_mut, replace_register_reads, resolve_replacements,
 };
 use mojito_types::types::{GenericConstraint, Ty};
 use std::collections::{HashMap, HashSet};
@@ -75,6 +75,7 @@ struct Counts {
     unused_results: usize,
     dead_loops: usize,
     unused_loop_results: usize,
+    unused_loop_args: usize,
     comptime_ifs: usize,
 }
 
@@ -88,6 +89,7 @@ impl Counts {
             + self.unused_results
             + self.dead_loops
             + self.unused_loop_results
+            + self.unused_loop_args
             + self.comptime_ifs
     }
 
@@ -100,6 +102,7 @@ impl Counts {
         self.unused_results += other.unused_results;
         self.dead_loops += other.dead_loops;
         self.unused_loop_results += other.unused_loop_results;
+        self.unused_loop_args += other.unused_loop_args;
         self.comptime_ifs += other.comptime_ifs;
     }
 
@@ -113,6 +116,7 @@ impl Counts {
             ("removed_unused_results", self.unused_results),
             ("removed_dead_loops", self.dead_loops),
             ("removed_unused_loop_results", self.unused_loop_results),
+            ("removed_unused_loop_args", self.unused_loop_args),
             ("folded_comptime_ifs", self.comptime_ifs),
         ] {
             timing::count(name, count as u64);
@@ -207,7 +211,8 @@ impl Walk<'_> {
     /// Apply the first pattern that matches the op at `index` of `block`,
     /// in upstream's order: `RemoveStaticCondition`, `ConditionPropagation`,
     /// the hoists, `HoistYieldResults`, and `RemoveUnusedResults` for an
-    /// `if`; `RemoveDeadLoop` and `RemoveUnusedLoopResults` for a loop;
+    /// `if`; `RemoveDeadLoop`, `RemoveUnusedLoopResults`, and
+    /// `RemoveUnusedLoopArgs` for a loop;
     /// `ComptimeIfOp::canonicalize` for a `comptime if`.
     fn apply(&mut self, block: &mut MirBlock, index: usize, enclosing: &[Enclosing]) -> bool {
         match &block.instrs[index] {
@@ -220,7 +225,9 @@ impl Walk<'_> {
                     || self.remove_unused_results(block, index)
             }
             MirInstr::Loop { .. } => {
-                self.remove_dead_loop(block, index) || self.remove_unused_loop_results(block, index)
+                self.remove_dead_loop(block, index)
+                    || self.remove_unused_loop_results(block, index)
+                    || self.remove_unused_loop_args(block, index)
             }
             MirInstr::ComptimeIf { .. } => self.canonicalize_comptime_if(block, index),
             _ => false,
@@ -464,7 +471,10 @@ impl Walk<'_> {
                 label,
                 values: new_results,
             },
-            ExitKind::Continue => MirTerm::Continue { label },
+            ExitKind::Continue => MirTerm::Continue {
+                label,
+                values: new_results,
+            },
         };
         self.counts.unconditional_returns += 1;
         true
@@ -721,10 +731,15 @@ impl Walk<'_> {
 
     /// `RemoveDeadLoop`: a loop whose body is just a `break` goes. A break
     /// out of it replaces its results by the values it carries; one naming
-    /// an outer loop replaces the loop and the rest of the block.
+    /// an outer loop replaces the loop and the rest of the block. Either
+    /// way the body runs once, entered with the loop's operands, so each
+    /// argument is replaced by its operand, as inlining the body block with
+    /// them does.
     fn remove_dead_loop(&mut self, block: &mut MirBlock, index: usize) -> bool {
         let MirInstr::Loop {
             label,
+            operands,
+            args,
             results,
             body,
         } = &block.instrs[index]
@@ -746,6 +761,9 @@ impl Walk<'_> {
         };
         if !instrs.is_empty() {
             return false;
+        }
+        for (arg, operand) in args.iter().zip(operands) {
+            self.replaced.insert(arg.0, *operand);
         }
         if target.is_none() || target == label {
             for (result, value) in results.iter().zip(values) {
@@ -769,6 +787,7 @@ impl Walk<'_> {
             label,
             results,
             body,
+            ..
         } = &mut block.instrs[index]
         else {
             return false;
@@ -801,6 +820,53 @@ impl Walk<'_> {
             !unused[at - 1]
         });
         self.counts.unused_loop_results += 1;
+        true
+    }
+
+    /// `RemoveUnusedLoopArgs`: a loop argument nothing reads goes, with its
+    /// operand and its value in every `continue` that resumes the loop.
+    fn remove_unused_loop_args(&mut self, block: &mut MirBlock, index: usize) -> bool {
+        let MirInstr::Loop {
+            label,
+            operands,
+            args,
+            body,
+            ..
+        } = &mut block.instrs[index]
+        else {
+            return false;
+        };
+        let unused: Vec<bool> = args
+            .iter()
+            .map(|arg| {
+                self.reads.get(arg.0 as usize) == Some(&0) && !self.replaced.contains_key(&arg.0)
+            })
+            .collect();
+        if !unused.contains(&true) || operands.len() != unused.len() {
+            return false;
+        }
+        let keep = |values: &mut Vec<Reg>| {
+            let mut at = 0;
+            values.retain(|_| {
+                at += 1;
+                !unused[at - 1]
+            });
+        };
+        loop_continues_mut(body, *label, &mut |values, _| {
+            if values.len() == unused.len() {
+                keep(values);
+            }
+        });
+        keep(operands);
+        let mut at = 0;
+        args.retain(|arg| {
+            at += 1;
+            if unused[at - 1] {
+                self.erased.insert(arg.0);
+            }
+            !unused[at - 1]
+        });
+        self.counts.unused_loop_args += 1;
         true
     }
 
@@ -977,7 +1043,7 @@ fn exit_of(term: &MirTerm) -> Option<(ExitKind, Option<LoopLabel>, Vec<Reg>)> {
     match term {
         MirTerm::Return(value) => Some((ExitKind::Return, None, value.iter().copied().collect())),
         MirTerm::Break { label, values } => Some((ExitKind::Break, *label, values.clone())),
-        MirTerm::Continue { label } => Some((ExitKind::Continue, *label, Vec::new())),
+        MirTerm::Continue { label, values } => Some((ExitKind::Continue, *label, values.clone())),
         _ => None,
     }
 }

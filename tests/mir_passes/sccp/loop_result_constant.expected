@@ -19,7 +19,7 @@
         blocks: [
           bb0 {
             instructions: [
-              loop { results: [%r3], label: absent, body: [bb0 { instructions: [var.use { dest: %r0, var: $v0, mode: copy }, if { results: [], condition: %r0, then: [bb0 { instructions: [const { dest: %r1, value: int(1) }], terminator: break { label: absent, values: [%r1] } }], elifs: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }, const { dest: %r2, value: int(1) }], terminator: break { label: absent, values: [%r2] } }] },
+              loop { results: [%r3], label: absent, operands: [], arguments: [], body: [bb0 { instructions: [var.use { dest: %r0, var: $v0, mode: copy }, if { results: [], condition: %r0, then: [bb0 { instructions: [const { dest: %r1, value: int(1) }], terminator: break { label: absent, values: [%r1] } }], elifs: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }, const { dest: %r2, value: int(1) }], terminator: break { label: absent, values: [%r2] } }] },
               const { dest: %r4, value: int(2) }
             ],
             terminator: return { value: present(%r4) }

@@ -59,11 +59,10 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         MirInstr::EstablishLoans { marker, .. }
         | MirInstr::InvalidateInteriors { marker, .. }
         | MirInstr::ConsumePlace { marker, .. } => out.push(*marker),
-        MirInstr::If { results, .. }
-        | MirInstr::ComptimeIf { results, .. }
-        | MirInstr::Loop { results, .. } => {
+        MirInstr::If { results, .. } | MirInstr::ComptimeIf { results, .. } => {
             out.extend(results.iter().copied());
         }
+        MirInstr::Loop { results, args, .. } => out.extend(results.iter().chain(args).copied()),
         _ => {}
     }
 }
@@ -340,6 +339,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         }
         MirInstr::Raise { src } => out.push(*src),
         MirInstr::If { cond, .. } => out.push(*cond),
+        MirInstr::Loop { operands, .. } => out.extend(operands.iter().copied()),
         MirInstr::Drop { reg } => out.push(*reg),
         MirInstr::DefVar { src, .. } => out.push(*src),
         MirInstr::InvalidateInteriors { .. }
@@ -359,7 +359,6 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::TryNext { .. }
         | MirInstr::Unsupported(_)
         | MirInstr::Try { .. }
-        | MirInstr::Loop { .. }
         | MirInstr::ComptimeIf { .. }
         | MirInstr::ComptimeFor { .. }
         | MirInstr::ComptimeAssert { .. }

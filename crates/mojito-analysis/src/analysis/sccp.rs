@@ -7,9 +7,10 @@
 //! only its taken arm executable while its condition is one constant. A
 //! structured body is walked region by region, as `SCCP` walks `hlcf`: an
 //! `if` without elifs enters only the arm a constant condition takes, its
-//! results meeting the values its executable arms yield, and a loop's
-//! results meet the values its executable `break`s carry, while a loop's
-//! body, every region of an `if` with elifs, a `comptime if`, a `match`,
+//! results meeting the values its executable arms yield, a loop's
+//! arguments meet its operands and the values its executable `continue`s
+//! carry, and its results meet the values its executable `break`s carry,
+//! while a loop's body, every region of an `if` with elifs, a `comptime if`, a `match`,
 //! and a `try` are executable, the other ops' results overdefined. The
 //! instructions of executable blocks are evaluated until nothing
 //! changes: a scalar or SIMD `const` ([`Const::is_folded`], a `UInt` or
@@ -96,14 +97,21 @@ enum Lattice {
 }
 
 /// The fixpoint's state: the lattice, whether a walk raised it, and the
-/// loops enclosing the block being walked, innermost last, with their
-/// results.
+/// loops enclosing the block being walked, innermost last.
 struct Solver<'a> {
     lattice: Vec<Lattice>,
     reg_types: &'a HashMap<u32, Ty>,
     declarations: &'a MirDeclarations,
     changed: bool,
-    loops: Vec<(Option<LoopLabel>, Vec<Reg>)>,
+    loops: Vec<LoopFrame>,
+}
+
+/// A loop enclosing the block being walked: what its `break`s and
+/// `continue`s name and the registers their values define.
+struct LoopFrame {
+    label: Option<LoopLabel>,
+    args: Vec<Reg>,
+    results: Vec<Reg>,
 }
 
 impl Solver<'_> {
@@ -127,11 +135,18 @@ impl Solver<'_> {
             }
             if let MirInstr::Loop {
                 label,
+                operands,
+                args,
                 results,
                 body,
             } = instruction
             {
-                self.loops.push((*label, results.clone()));
+                self.meet_values(args, operands);
+                self.loops.push(LoopFrame {
+                    label: *label,
+                    args: args.clone(),
+                    results: results.clone(),
+                });
                 self.visit_region(body, escapes);
                 self.loops.pop();
                 continue;
@@ -143,7 +158,11 @@ impl Solver<'_> {
         }
         match &block.term {
             MirTerm::Break { label, values } => {
-                self.resolve_break(*label, values);
+                self.resolve_exit(*label, values, false);
+                Vec::new()
+            }
+            MirTerm::Continue { label, values } => {
+                self.resolve_exit(*label, values, true);
                 Vec::new()
             }
             MirTerm::Jump(target) => vec![*target],
@@ -168,7 +187,6 @@ impl Solver<'_> {
             | MirTerm::TryYield
             | MirTerm::Yield(_)
             | MirTerm::ElifCond(_)
-            | MirTerm::Continue { .. }
             | MirTerm::ComptimeYield(_)
             | MirTerm::ComptimeBreak
             | MirTerm::ComptimeContinue
@@ -197,36 +215,43 @@ impl Solver<'_> {
         };
         for arm in arms {
             for values in self.visit_region(arm, escapes) {
-                for (result, value) in results.iter().zip(values) {
-                    let value = self
-                        .lattice
-                        .get(value.0 as usize)
-                        .cloned()
-                        .unwrap_or(Lattice::Overdefined);
-                    self.meet(*result, value);
-                }
+                self.meet_values(results, &values);
             }
         }
     }
 
-    /// Meet each result of the loop an executable `break` labelled `label`
-    /// leaves with the value it carries, as `SCCP`'s `resolveBreak` does.
-    fn resolve_break(&mut self, label: Option<LoopLabel>, values: &[Reg]) {
-        let Some((_, results)) = self
+    /// Meet each register an executable `break` or `continue` labelled
+    /// `label` defines with the value it carries: a result of the loop it
+    /// leaves, as `SCCP`'s `resolveBreak` does, or, when it `resume`s, an
+    /// argument of the loop's next iteration, as
+    /// `processControlFlowTerminator` does.
+    fn resolve_exit(&mut self, label: Option<LoopLabel>, values: &[Reg], resume: bool) {
+        let Some(frame) = self
             .loops
             .iter()
             .rev()
-            .find(|(found, _)| RegionFrame::Loop(label).names(RegionFrame::Loop(*found)))
+            .find(|frame| RegionFrame::Loop(label).names(RegionFrame::Loop(frame.label)))
         else {
             return;
         };
-        for (result, value) in results.clone().into_iter().zip(values) {
+        let defined = if resume {
+            frame.args.clone()
+        } else {
+            frame.results.clone()
+        };
+        self.meet_values(&defined, values);
+    }
+
+    /// Meet each of `defined` with the lattice value of the register of
+    /// `values` that defines it.
+    fn meet_values(&mut self, defined: &[Reg], values: &[Reg]) {
+        for (reg, value) in defined.iter().zip(values) {
             let value = self
                 .lattice
                 .get(value.0 as usize)
                 .cloned()
                 .unwrap_or(Lattice::Overdefined);
-            self.meet(result, value);
+            self.meet(*reg, value);
         }
     }
 

@@ -149,9 +149,10 @@ pub fn terminator_regs_mut(term: &mut MirTerm) -> Vec<&mut Reg> {
         | MirTerm::ReturnWithCleanup {
             value: Some(reg), ..
         } => vec![reg],
-        MirTerm::Yield(values) | MirTerm::ComptimeYield(values) | MirTerm::Break { values, .. } => {
-            values.iter_mut().collect()
-        }
+        MirTerm::Yield(values)
+        | MirTerm::ComptimeYield(values)
+        | MirTerm::Break { values, .. }
+        | MirTerm::Continue { values, .. } => values.iter_mut().collect(),
         MirTerm::Jump(_)
         | MirTerm::ComptimeBranch { .. }
         | MirTerm::ComptimeFor { .. }
@@ -159,7 +160,6 @@ pub fn terminator_regs_mut(term: &mut MirTerm) -> Vec<&mut Reg> {
         | MirTerm::ReturnWithCleanup { value: None, .. }
         | MirTerm::TryYield
         | MirTerm::EscapeJump { .. }
-        | MirTerm::Continue { .. }
         | MirTerm::ComptimeBreak
         | MirTerm::ComptimeContinue
         | MirTerm::MatchNext
@@ -176,9 +176,10 @@ pub fn terminator_regs(term: &MirTerm) -> Vec<Reg> {
         | MirTerm::ReturnWithCleanup {
             value: Some(reg), ..
         } => vec![*reg],
-        MirTerm::Yield(values) | MirTerm::ComptimeYield(values) | MirTerm::Break { values, .. } => {
-            values.clone()
-        }
+        MirTerm::Yield(values)
+        | MirTerm::ComptimeYield(values)
+        | MirTerm::Break { values, .. }
+        | MirTerm::Continue { values, .. } => values.clone(),
         MirTerm::Jump(_)
         | MirTerm::ComptimeBranch { .. }
         | MirTerm::ComptimeFor { .. }
@@ -186,7 +187,6 @@ pub fn terminator_regs(term: &MirTerm) -> Vec<Reg> {
         | MirTerm::ReturnWithCleanup { value: None, .. }
         | MirTerm::TryYield
         | MirTerm::EscapeJump { .. }
-        | MirTerm::Continue { .. }
         | MirTerm::ComptimeBreak
         | MirTerm::ComptimeContinue
         | MirTerm::MatchNext
@@ -225,7 +225,7 @@ impl RegionFrame {
 pub const fn region_exit(term: &MirTerm) -> Option<(RegionFrame, bool)> {
     match term {
         MirTerm::Break { label, .. } => Some((RegionFrame::Loop(*label), false)),
-        MirTerm::Continue { label } => Some((RegionFrame::Loop(*label), true)),
+        MirTerm::Continue { label, .. } => Some((RegionFrame::Loop(*label), true)),
         MirTerm::ComptimeBreak => Some((RegionFrame::ComptimeFor, false)),
         MirTerm::ComptimeContinue => Some((RegionFrame::ComptimeFor, true)),
         MirTerm::MatchComplete => Some((RegionFrame::MatchCase, false)),
@@ -234,12 +234,13 @@ pub const fn region_exit(term: &MirTerm) -> Option<(RegionFrame, bool)> {
     }
 }
 
-/// What lies between a [`MirInstr::Loop`] and a `break` that leaves it.
+/// What lies between a [`MirInstr::Loop`] and a `break` that leaves it or
+/// a `continue` that resumes it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BreakSite {
-    /// The `break` sits in a `try` part the loop holds.
+    /// The exit sits in a `try` part the loop holds.
     pub in_try_part: bool,
-    /// The `break` sits in a `comptime for` body the loop holds.
+    /// The exit sits in a `comptime for` body the loop holds.
     pub in_comptime_for: bool,
 }
 
@@ -254,7 +255,34 @@ pub fn loop_breaks_mut(
     label: Option<LoopLabel>,
     visit: &mut impl FnMut(&mut Vec<Reg>, BreakSite),
 ) {
-    breaks_in(body, label, &mut Vec::new(), BreakSite::default(), visit);
+    exits_in(
+        body,
+        label,
+        false,
+        &mut Vec::new(),
+        BreakSite::default(),
+        visit,
+    );
+}
+
+/// Visit the `values` of every `continue` that resumes the loop labelled
+/// `label` whose body is `body`, with what lies between them.
+///
+/// A continue resolves as [`loop_breaks_mut`]'s breaks do, as
+/// `RemoveUnusedLoopArgs`' `getParentLoop` resolves it.
+pub fn loop_continues_mut(
+    body: &mut [MirBlock],
+    label: Option<LoopLabel>,
+    visit: &mut impl FnMut(&mut Vec<Reg>, BreakSite),
+) {
+    exits_in(
+        body,
+        label,
+        true,
+        &mut Vec::new(),
+        BreakSite::default(),
+        visit,
+    );
 }
 
 /// Resolve each replaced register through chains of replacements.
@@ -555,9 +583,13 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         | MirInstr::ComptimeAssert { .. }
         | MirInstr::Match { .. } => {}
         MirInstr::If { results, cond, .. } => out.extend(results.iter_mut().chain([cond])),
-        MirInstr::ComptimeIf { results, .. } | MirInstr::Loop { results, .. } => {
-            out.extend(results.iter_mut());
-        }
+        MirInstr::ComptimeIf { results, .. } => out.extend(results.iter_mut()),
+        MirInstr::Loop {
+            operands,
+            args,
+            results,
+            ..
+        } => out.extend(results.iter_mut().chain(args).chain(operands)),
         MirInstr::ConstructTypeParam {
             dest,
             kwargs,
@@ -2628,10 +2660,15 @@ pub enum MirInstr {
     },
     /// `hlcf.loop`: run `body` until a [`MirTerm::Break`] leaves it, its
     /// values defining `results`; [`MirTerm::Continue`] starts the next
-    /// iteration. `label` names the loop for a labelled `break`/`continue`,
-    /// which targets the nearest enclosing loop carrying it.
+    /// iteration. `args` are the body's arguments, one per operand: the
+    /// first iteration enters with `operands`, and each `continue` defines
+    /// them for the next. `label` names the loop for a labelled
+    /// `break`/`continue`, which targets the nearest enclosing loop carrying
+    /// it.
     Loop {
         label: Option<LoopLabel>,
+        operands: Vec<Reg>,
+        args: Vec<Reg>,
         results: Vec<Reg>,
         body: Vec<MirBlock>,
     },
@@ -3281,9 +3318,11 @@ pub enum MirTerm {
         values: Vec<Reg>,
     },
     /// `hlcf.continue`: start the next iteration of the loop
-    /// [`MirTerm::Break`] would leave.
+    /// [`MirTerm::Break`] would leave, its `values` defining that loop's
+    /// arguments.
     Continue {
         label: Option<LoopLabel>,
+        values: Vec<Reg>,
     },
     /// `hlcf.comptime.yield`: end a [`MirInstr::ComptimeIf`] arm, its
     /// values defining the op's results.
@@ -3550,11 +3589,13 @@ fn ct_const(value: CtValue, ty: &Ty) -> Option<Const> {
     }
 }
 
-/// [`loop_breaks_mut`] over `blocks`, which sit inside the loops labelled
-/// `nested` (innermost last) between them and the loop labelled `label`.
-fn breaks_in(
+/// [`loop_breaks_mut`] (or, when `resume`, [`loop_continues_mut`]) over
+/// `blocks`, which sit inside the loops labelled `nested` (innermost last)
+/// between them and the loop labelled `label`.
+fn exits_in(
     blocks: &mut [MirBlock],
     label: Option<LoopLabel>,
+    resume: bool,
     nested: &mut Vec<Option<LoopLabel>>,
     site: BreakSite,
     visit: &mut impl FnMut(&mut Vec<Reg>, BreakSite),
@@ -3572,16 +3613,24 @@ fn breaks_in(
             };
             nested.extend(inner);
             for region in instruction_regions_mut(instruction) {
-                breaks_in(region, label, nested, site, visit);
+                exits_in(region, label, resume, nested, site, visit);
             }
             if inner.is_some() {
                 nested.pop();
             }
         }
-        if let MirTerm::Break {
-            label: named,
-            values,
-        } = &mut block.term
+        let exit = match &mut block.term {
+            MirTerm::Break {
+                label: named,
+                values,
+            } if !resume => Some((named, values)),
+            MirTerm::Continue {
+                label: named,
+                values,
+            } if resume => Some((named, values)),
+            _ => None,
+        };
+        if let Some((named, values)) = exit
             && match named {
                 None => nested.is_empty(),
                 Some(_) => !nested.contains(named) && *named == label,
@@ -3897,6 +3946,8 @@ mod tests {
                     },
                     MirInstr::Loop {
                         label: None,
+                        operands: Vec::new(),
+                        args: Vec::new(),
                         results: Vec::new(),
                         body,
                     },

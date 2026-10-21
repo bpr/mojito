@@ -80,7 +80,7 @@
               const { dest: %r0, value: function(double) },
               var.use { dest: %r1, var: $v0, mode: copy },
               var.store { var: $v1, src: %r1, binding_type: present(Int), in_place: false },
-              loop { results: [%r2], label: present(loop4294967295), body: [bb0 { instructions: [const { dest: %r3, value: function(double) }, var.use { dest: %r4, var: $v1, mode: copy }, call.indirect { dest: %r5, callee: %r3, resolved: present("__trait_dispatch.__call__$ov$Int"), raises: absent, args: [%r4], kwargs: [], callee_place: absent, arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent }], terminator: break { label: present(loop4294967295), values: [%r5] } }] }
+              loop { results: [%r2], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [const { dest: %r3, value: function(double) }, var.use { dest: %r4, var: $v1, mode: copy }, call.indirect { dest: %r5, callee: %r3, resolved: present("__trait_dispatch.__call__$ov$Int"), raises: absent, args: [%r4], kwargs: [], callee_place: absent, arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent }], terminator: break { label: present(loop4294967295), values: [%r5] } }] }
             ],
             terminator: return { value: present(%r2) }
           }

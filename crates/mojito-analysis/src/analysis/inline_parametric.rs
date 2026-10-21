@@ -159,7 +159,7 @@ use mojito_mir::mir::{
     MirPlace, MirSubscriptCall, MirTerm, Proj, Reg, RegionFrame, UseMode, callable_targets,
     cleanup_slots, count_register_reads, erase_removed_operands, fresh_register, has_no_destructor,
     instruction_regions, instruction_regions_mut, instruction_regs_mut, instruction_slots,
-    loop_breaks_mut, lower_copies_and_moves, name_constructors, region_exit,
+    loop_breaks_mut, loop_continues_mut, lower_copies_and_moves, name_constructors, region_exit,
     removed_argument_operands, renumber_block_slots, terminator_regs_mut,
     with_removed_argument_forwards_erased, without_removed_arguments,
 };
@@ -1655,6 +1655,8 @@ fn splice_region(
     let at = caller.instrs.len();
     caller.instrs.push(MirInstr::Loop {
         label: Some(LoopLabel::INLINED_CF_SCOPE),
+        operands: Vec::new(),
+        args: Vec::new(),
         results: exit.results(),
         body: blocks,
     });
@@ -2108,12 +2110,15 @@ fn references_and_returns<'b>(
 }
 
 /// Add to `returned` each value a `break` of `blocks`, at any depth,
-/// carries for a loop result `returned` holds, outer loops first, so a
-/// nested loop's result an outer break carries brings its own breaks'.
+/// carries for a loop result `returned` holds, then each operand and
+/// `continue` value defining a loop argument it holds, outer loops first,
+/// so a nested loop's result an outer break carries brings its own breaks'.
 fn carried_by_breaks(blocks: &mut [MirBlock], returned: &mut Vec<Reg>) {
     for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
         if let MirInstr::Loop {
             label,
+            operands,
+            args,
             results,
             body,
         } = instruction
@@ -2121,6 +2126,14 @@ fn carried_by_breaks(blocks: &mut [MirBlock], returned: &mut Vec<Reg>) {
             for (at, result) in results.iter().enumerate() {
                 if returned.contains(result) {
                     loop_breaks_mut(body, *label, &mut |values, _| {
+                        returned.extend(values.get(at));
+                    });
+                }
+            }
+            for (at, arg) in args.iter().enumerate() {
+                if returned.contains(arg) {
+                    returned.extend(operands.get(at));
+                    loop_continues_mut(body, *label, &mut |values, _| {
                         returned.extend(values.get(at));
                     });
                 }
@@ -3602,11 +3615,14 @@ mod tests {
         let continue_after_raise = one(
             vec![MirInstr::Loop {
                 label: Some(LoopLabel(0)),
+                operands: Vec::new(),
+                args: Vec::new(),
                 results: Vec::new(),
                 body: one(
                     vec![raise],
                     MirTerm::Continue {
                         label: Some(LoopLabel(0)),
+                        values: Vec::new(),
                     },
                 ),
             }],
@@ -3634,11 +3650,14 @@ mod tests {
         let dead_continue = one(
             vec![MirInstr::Loop {
                 label: Some(LoopLabel(0)),
+                operands: Vec::new(),
+                args: Vec::new(),
                 results: Vec::new(),
                 body: one(
                     vec![breaking_if],
                     MirTerm::Continue {
                         label: Some(LoopLabel(0)),
+                        values: Vec::new(),
                     },
                 ),
             }],
@@ -3647,10 +3666,14 @@ mod tests {
         let outer_continue = one(
             vec![MirInstr::Loop {
                 label: Some(LoopLabel(0)),
+                operands: Vec::new(),
+                args: Vec::new(),
                 results: Vec::new(),
                 body: one(
                     vec![MirInstr::Loop {
                         label: Some(LoopLabel(1)),
+                        operands: Vec::new(),
+                        args: Vec::new(),
                         results: Vec::new(),
                         body: one(
                             vec![MirInstr::If {
@@ -3660,6 +3683,7 @@ mod tests {
                                     Vec::new(),
                                     MirTerm::Continue {
                                         label: Some(LoopLabel(0)),
+                                        values: Vec::new(),
                                     },
                                 ),
                                 elifs: Vec::new(),
@@ -3685,6 +3709,8 @@ mod tests {
         let match_to_orelse = one(
             vec![MirInstr::Loop {
                 label: Some(LoopLabel(0)),
+                operands: Vec::new(),
+                args: Vec::new(),
                 results: Vec::new(),
                 body: one(
                     vec![MirInstr::Match {
@@ -3696,6 +3722,7 @@ mod tests {
                     }],
                     MirTerm::Continue {
                         label: Some(LoopLabel(0)),
+                        values: Vec::new(),
                     },
                 ),
             }],

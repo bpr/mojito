@@ -30,7 +30,7 @@ artifact {
         blocks: [
           bb0 {
             instructions: [
-              loop { results: [], label: absent, body: [bb0 { instructions: [try { body: [bb0 { instructions: [var.use { dest: %r0, var: $v0, mode: copy }], terminator: branch { condition: %r0, then: bb1, else: bb2 } }, bb1 { instructions: [], terminator: break { label: absent, values: [] } }, bb2 { instructions: [], terminator: try.yield {} }], handler: absent, orelse: absent, finalbody: absent, cleanup: [] }], terminator: continue { label: absent } }] }
+              loop { results: [], label: absent, operands: [], arguments: [], body: [bb0 { instructions: [try { body: [bb0 { instructions: [var.use { dest: %r0, var: $v0, mode: copy }], terminator: branch { condition: %r0, then: bb1, else: bb2 } }, bb1 { instructions: [], terminator: break { label: absent, values: [] } }, bb2 { instructions: [], terminator: try.yield {} }], handler: absent, orelse: absent, finalbody: absent, cleanup: [] }], terminator: continue { label: absent, values: [] } }] }
             ],
             terminator: return { value: absent }
           }

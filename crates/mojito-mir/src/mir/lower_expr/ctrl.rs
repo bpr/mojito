@@ -630,10 +630,15 @@ impl<'a> Flatten<'a> {
                         });
                     }
                     this.comprehension_clauses(plan, index + 1);
-                    MirTerm::Continue { label }
+                    MirTerm::Continue {
+                        label,
+                        values: Vec::new(),
+                    }
                 });
                 self.emit(MirInstr::Loop {
                     label,
+                    operands: Vec::new(),
+                    args: Vec::new(),
                     results: Vec::new(),
                     body,
                 });

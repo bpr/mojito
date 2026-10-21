@@ -2936,6 +2936,8 @@ fn structured_region_ops_and_terminators_reprint() {
         },
         MirInstr::Loop {
             label: Some(LoopLabel(3)),
+            operands: vec![Reg(2)],
+            args: vec![Reg(1)],
             results: vec![Reg(2)],
             body: vec![
                 MirBlock {
@@ -2955,7 +2957,10 @@ fn structured_region_ops_and_terminators_reprint() {
                 },
                 MirBlock {
                     instrs: Vec::new(),
-                    term: MirTerm::Continue { label: None },
+                    term: MirTerm::Continue {
+                        label: None,
+                        values: vec![Reg(1)],
+                    },
                 },
             ],
         },
@@ -3016,9 +3021,9 @@ fn structured_region_ops_and_terminators_reprint() {
         "if {",
         "if.elifcond.yield {",
         "yield {",
-        "loop { results: [%r2], label: present(loop3)",
+        "loop { results: [%r2], label: present(loop3), operands: [%r2], arguments: [%r1]",
         "break { label: present(loop3), values: [%r1] }",
-        "continue {",
+        "continue { label: absent, values: [%r1] }",
         "comptime.if {",
         "comptime.yield {",
         "comptime.for {",
@@ -3043,6 +3048,8 @@ fn a_loop_and_break_without_values_read_as_carrying_none() {
         vec![Ty::bool()],
         vec![MirInstr::Loop {
             label: None,
+            operands: Vec::new(),
+            args: Vec::new(),
             results: Vec::new(),
             body: one(
                 Vec::new(),
@@ -3059,6 +3066,40 @@ fn a_loop_and_break_without_values_read_as_carrying_none() {
     let old = text
         .replace("loop { results: [], ", "loop { ")
         .replace("label: absent, values: [] }", "label: absent }");
+    assert_ne!(old, text);
+    let parsed = artifact(old.as_bytes(), "old.mir".to_string()).expect("parse artifact");
+    assert_eq!(write::program(&parsed.program), text);
+}
+
+/// A loop and a continue written before schema 1.83 carry no `operands`,
+/// `arguments`, or `values` field: the reader takes the loop as taking no
+/// arguments and the continue as carrying none.
+#[test]
+fn a_loop_and_continue_without_arguments_read_as_carrying_none() {
+    let one = |instrs: Vec<MirInstr>, term: MirTerm| vec![MirBlock { instrs, term }];
+    let mut function = function_with(
+        vec![Ty::bool()],
+        vec![MirInstr::Loop {
+            label: None,
+            operands: Vec::new(),
+            args: Vec::new(),
+            results: Vec::new(),
+            body: one(
+                Vec::new(),
+                MirTerm::Continue {
+                    label: None,
+                    values: Vec::new(),
+                },
+            ),
+        }],
+    );
+    function.blocks[0].term = MirTerm::Return(None);
+    let program = program_with(vec![("old".into(), function)]);
+    let text = write::program(&program);
+    let old = text.replace(", operands: [], arguments: []", "").replace(
+        "continue { label: absent, values: [] }",
+        "continue { label: absent }",
+    );
     assert_ne!(old, text);
     let parsed = artifact(old.as_bytes(), "old.mir".to_string()).expect("parse artifact");
     assert_eq!(write::program(&parsed.program), text);

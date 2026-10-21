@@ -31,7 +31,7 @@ artifact {
           bb0 {
             instructions: [
               const { dest: %r1, value: int(7) },
-              loop { results: [%r2], label: absent, body: [bb0 { instructions: [], terminator: break { label: absent, values: [%r1] } }] }
+              loop { results: [%r2], label: absent, operands: [], arguments: [], body: [bb0 { instructions: [], terminator: break { label: absent, values: [%r1] } }] }
             ],
             terminator: return { value: present(%r2) }
           }

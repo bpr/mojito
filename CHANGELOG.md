@@ -616,6 +616,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A structured `loop` has arguments, which its operands define on entry
+  and each `continue` that resumes it for the next iteration, as
+  upstream's `hlcf.loop` passes its operands to its body block's
+  arguments and `hlcf.continue` passes the next iteration's (MIR text
+  1.83, whose reader takes an older loop or continue as carrying none).
+  The verifier checks the values along each edge against the arguments,
+  `canonicalize` gains `RemoveUnusedLoopArgs`, `RemoveDeadLoop` replaces
+  each argument by its operand, and a hoisted `continue` carries the
+  values its arms yield; `sccp` meets each argument with its operand and
+  its continues' values; `lower-control-flow` stores them in one slot per
+  argument, read at the body's entry, or replaces each by its operand
+  when no `continue` resumes the loop. Nothing produces an argument until
+  `mem-2-reg` promotes into them (R927), so programs run unchanged. This
+  closes R1258.
 - A structured `loop` has results and a `break` carries the values that
   define them, as upstream's `hlcf.loop` and `hlcf.break` do (MIR text
   1.82, whose reader takes an older loop or break as carrying none). An

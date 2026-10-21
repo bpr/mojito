@@ -4014,7 +4014,8 @@ The structure mirrors source-level exception semantics:
 `Try` is one of six region ops. The other five are upstream's `hlcf` ops
 (`docs/structured-control-flow-plan.md`): `If { results, cond, then, elifs,
 orelse }` (`hlcf.if`, each `MirElif` a condition region and an arm), `Loop {
-label, results, body }` (`hlcf.loop`), `ComptimeIf { results, conds, arms, orelse }`
+label, operands, args, results, body }` (`hlcf.loop`, its `args` the body
+block's arguments, which its `operands` define on entry), `ComptimeIf { results, conds, arms, orelse }`
 (`hlcf.comptime.if`), `ComptimeFor { binder, source, body, orelse }`
 (`hlcf.comptime.for`, its `orelse` one `Unreachable` block), and `Match {
 cases, orelse }` (`hlcf.match`: each case a region that tests its pattern
@@ -4024,9 +4025,12 @@ after the last — or by `MatchComplete` for the op's end; `orelse` ends in
 and end in the region terminators `Yield`, `ElifCond`, `Break`/`Continue`
 (an optional `LoopLabel` naming the nearest enclosing loop carrying it, a
 `match` case between them being no loop; a `Break`'s `values` define that
-loop's `results`, and `mir::loop_breaks_mut` visits every break that leaves
-a given loop, with the `BreakSite` saying whether a `try` part or a
-`comptime for` body lies between them), `ComptimeYield`, `ComptimeBreak`/
+loop's `results` and a `Continue`'s `values` its `args` for the next
+iteration, and `mir::loop_breaks_mut` visits every break that leaves a
+given loop, `mir::loop_continues_mut` every continue that resumes it, with
+the `BreakSite` saying whether a `try` part or a `comptime for` body lies
+between them; the verifier checks the values along each edge against what
+they define, as `ControlFlowVerifier`'s `verifyTypesAlongEdge` does), `ComptimeYield`, `ComptimeBreak`/
 `ComptimeContinue`, `MatchNext`/`MatchComplete`, and `Unreachable`;
 `Return` may end any region.
 `instruction_regions`/`instruction_regions_mut` walk every op's regions in
@@ -4053,7 +4057,12 @@ in its own list (no `try` part or `comptime for` body between them, the
 first escaping and the second copied per iteration by the elaborator) has
 each result replaced by the value that break carries, as a block argument
 with one predecessor is its operand once upstream's `LowerControlFlow` has
-run (`tests/mir_passes/lower-control-flow/loop_result_*.mir`), a
+run (`tests/mir_passes/lower-control-flow/loop_result_*.mir`), a loop's
+arguments go through one slot each, its operands stored before the
+entering jump and each `continue`'s values before its jump to the header,
+forwarded at the body's entry, except that a loop no `continue` resumes
+has each argument replaced by its operand
+(`tests/mir_passes/lower-control-flow/loop_argument*.mir`), a
 `break`/`continue` leaving a `try` part to a
 function-level loop is an `EscapeJump`, a `match` case's `match.next` and
 `match.complete` jump to the next case's entry and to the join through a
@@ -5402,9 +5411,11 @@ point where a slot declared in a loop is uninitialized again.
   unread with its elif condition regions, as upstream does (the pin skips
   a call in such a condition), `RemoveUnusedResults` drops unread results,
   `RemoveDeadLoop` removes a loop whose body only breaks, its results
-  replaced by the values the break carries, `RemoveUnusedLoopResults` drops
-  an unread loop result with its operand of every break that leaves the
-  loop, and
+  replaced by the values the break carries and its arguments by its
+  operands, `RemoveUnusedLoopResults` drops an unread loop result with its
+  operand of every break that leaves the loop, `RemoveUnusedLoopArgs`
+  drops an unread loop argument with its operand and its value in every
+  continue that resumes the loop, and
   `ComptimeIfOp::canonicalize` erases a trivial `comptime if`
   (`checkTrivialBlocks`) and decides one on a constant `Bool`, hoisting
   its live arm's instructions up to a `comptime for` and keeping the op as
@@ -5414,7 +5425,8 @@ point where a slot declared in a loop is uninitialized again.
   `propagated_conditions`, `hoisted_unconditional_exits`,
   `hoisted_conditional_returns`, `hoisted_yield_results`,
   `removed_unused_results`, `removed_dead_loops`,
-  `removed_unused_loop_results`, `folded_comptime_ifs`).
+  `removed_unused_loop_results`, `removed_unused_loop_args`,
+  `folded_comptime_ifs`).
   Every body the pipeline reads is structured, so these patterns are the
   production path; the lowered-body rules below run on the CFG inputs
   `mojito opt` reads, until the post-elaboration pipeline reads regions
@@ -5733,8 +5745,9 @@ point where a slot declared in a loop is uninitialized again.
   mentions go, and the slot leaves the function (`mir::retire_slots`). The
   `canonicalize` after it forwards the copies. A slot whose reads merge two
   stores keeps its slot (R927): upstream carries such an allocation through
-  `hlcf` region arguments and results, and MIR's blocks and regions take
-  none. A structured body is walked region by region instead
+  `hlcf` region arguments and results, which MIR's loops now take but
+  `mem-2-reg` does not yet produce, and its elif and `match` regions do
+  not (R1259). A structured body is walked region by region instead
   (`region_walk::walk_forward` with a reaching-store `ForwardScan`): its
   mentions may sit in several regions of one `try` part (a mention inside
   a `try` part with another outside keeps the slot, as upstream's
@@ -5760,8 +5773,10 @@ point where a slot declared in a loop is uninitialized again.
   executable. On a structured body an `if` without elifs makes only the
   arm a constant condition takes executable, none while the condition is
   unknown, and both otherwise, as `IfOp::getEntryTargets` does, its results
-  meeting the values its executable arms yield; a loop's results meet the
-  values its executable `break`s carry, as `SCCP`'s `resolveBreak` does;
+  meeting the values its executable arms yield; a loop's arguments meet
+  its operands and the values its executable `continue`s carry, as
+  `processControlFlowTerminator` does, and its results the values its
+  executable `break`s carry, as `SCCP`'s `resolveBreak` does;
   a loop's body, every region of an `if` with elifs, a `comptime if`, a
   `match`, and a `try` are executable, the other ops' results overdefined. A scalar `const` (`Int`, `Float64`, `Bool`, `IntLiteral`,
   `FloatLiteral`, or a `UInt` or SIMD `Const::Value`, `Const::is_folded`)

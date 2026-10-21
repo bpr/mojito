@@ -57,7 +57,7 @@
               const { dest: %r9, value: int_literal(0) },
               literal.materialize { dest: %r10, value: %r9, target: Int },
               var.store { var: $v3, src: %r10, binding_type: present(Int), in_place: false },
-              loop { results: [%r1], label: present(loop4294967295), body: [bb0 { instructions: [var.use { dest: %r2, var: $v1, mode: copy }, var.use { dest: %r3, var: $v2, mode: copy }, binary { op: mul, dest: %r4, a: %r2, b: %r3, resolved: absent, raises: absent }, var.use { dest: %r5, var: $v3, mode: copy }, binary { op: add, dest: %r6, a: %r4, b: %r5, resolved: absent, raises: absent }], terminator: break { label: present(loop4294967295), values: [%r6] } }] }
+              loop { results: [%r1], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [var.use { dest: %r2, var: $v1, mode: copy }, var.use { dest: %r3, var: $v2, mode: copy }, binary { op: mul, dest: %r4, a: %r2, b: %r3, resolved: absent, raises: absent }, var.use { dest: %r5, var: $v3, mode: copy }, binary { op: add, dest: %r6, a: %r4, b: %r5, resolved: absent, raises: absent }], terminator: break { label: present(loop4294967295), values: [%r6] } }] }
             ],
             terminator: return { value: present(%r1) }
           }
@@ -117,7 +117,7 @@
               var.store { var: $v0, src: %r6, binding_type: present(Float64), in_place: false },
               const { dest: %r7, value: bool(true) },
               var.store { var: $v1, src: %r7, binding_type: present(Bool), in_place: false },
-              loop { results: [%r0], label: present(loop4294967295), body: [bb0 { instructions: [var.use { dest: %r1, var: $v1, mode: copy }, if { results: [], condition: %r1, then: [bb0 { instructions: [var.use { dest: %r2, var: $v0, mode: copy }], terminator: break { label: present(loop4294967295), values: [%r2] } }], elifs: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }, const { dest: %r3, value: float_literal(0.0) }, literal.materialize { dest: %r4, value: %r3, target: Float64 }], terminator: break { label: present(loop4294967295), values: [%r4] } }] }
+              loop { results: [%r0], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [var.use { dest: %r1, var: $v1, mode: copy }, if { results: [], condition: %r1, then: [bb0 { instructions: [var.use { dest: %r2, var: $v0, mode: copy }], terminator: break { label: present(loop4294967295), values: [%r2] } }], elifs: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }, const { dest: %r3, value: float_literal(0.0) }, literal.materialize { dest: %r4, value: %r3, target: Float64 }], terminator: break { label: present(loop4294967295), values: [%r4] } }] }
             ],
             terminator: return { value: present(%r0) }
           }

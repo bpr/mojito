@@ -1,0 +1,60 @@
+  functions: [
+      fn {
+        name: continue_in_try,
+        registers: 7,
+        vars: 1,
+        var_names: ["$arg0"],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Bool }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int(0) },
+              var.store { var: $v0, src: %r0, binding_type: absent, in_place: false }
+            ],
+            terminator: jump { target: bb2 }
+          },
+          bb1 {
+            instructions: [
+            ],
+            terminator: return { value: present(%r3) }
+          },
+          bb2 {
+            instructions: [
+              var.use { dest: %r1, var: $v0, mode: forward },
+              const { dest: %r2, value: int(1) },
+              binary { op: add, dest: %r3, a: %r1, b: %r2, resolved: absent, raises: absent },
+              const { dest: %r4, value: int(4) },
+              binary { op: lt, dest: %r5, a: %r3, b: %r4, resolved: absent, raises: absent }
+            ],
+            terminator: branch { condition: %r5, then: bb4, else: bb5 }
+          },
+          bb3 {
+            instructions: [
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb4 {
+            instructions: [
+              try { body: [bb0 { instructions: [var.store { var: $v0, src: %r3, binding_type: absent, in_place: false }], terminator: escape { target: bb2, cleanup: [] } }], handler: absent, orelse: absent, finalbody: absent, cleanup: [] }
+            ],
+            terminator: jump { target: bb3 }
+          },
+          bb5 {
+            instructions: [
+            ],
+            terminator: jump { target: bb3 }
+          }
+        ]
+      }
+  ]

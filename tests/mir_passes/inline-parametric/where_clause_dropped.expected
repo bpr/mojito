@@ -46,7 +46,7 @@
         blocks: [
           bb0 {
             instructions: [
-              loop { results: [%r0], label: present(loop4294967295), body: [bb0 { instructions: [const { dest: %r1, value: int(2) }], terminator: break { label: present(loop4294967295), values: [%r1] } }] }
+              loop { results: [%r0], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [const { dest: %r1, value: int(2) }], terminator: break { label: present(loop4294967295), values: [%r1] } }] }
             ],
             terminator: return { value: present(%r0) }
           }

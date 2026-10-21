@@ -1,0 +1,40 @@
+  functions: [
+      fn {
+        name: never_continued,
+        registers: 5,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int(3) }
+            ],
+            terminator: jump { target: bb2 }
+          },
+          bb1 {
+            instructions: [
+            ],
+            terminator: return { value: present(%r3) }
+          },
+          bb2 {
+            instructions: [
+              const { dest: %r2, value: int(1) },
+              binary { op: add, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent }
+            ],
+            terminator: jump { target: bb1 }
+          }
+        ]
+      }
+  ]

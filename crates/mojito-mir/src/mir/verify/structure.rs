@@ -64,11 +64,25 @@ pub(super) fn verify_regions(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
         }
         MirInstr::Loop {
             label,
+            operands,
+            args,
             results,
             body,
         } => {
+            let mnemonic = instruction_mnemonic(instruction);
+            let target = YieldTarget::Arguments;
+            yielded_values(
+                cx.prefix,
+                cx.function,
+                mnemonic,
+                operands,
+                args,
+                target,
+                errors,
+            );
             let kind = RegionKind::LoopBody {
                 label: *label,
+                args: args.clone(),
                 results: results.clone(),
             };
             verify_region(cx, kind, protected, body, errors);
@@ -161,7 +175,8 @@ pub(super) fn verify_region_terminator(
     match (terminator, context.kind()) {
         (MirTerm::Yield(values), RegionKind::IfArm(results))
         | (MirTerm::ComptimeYield(values), RegionKind::ComptimeIfArm(results)) => {
-            yielded_values(prefix, function, mnemonic, values, results, errors);
+            let target = YieldTarget::Results;
+            yielded_values(prefix, function, mnemonic, values, results, target, errors);
         }
         (MirTerm::ElifCond(cond), RegionKind::ElifCond) => {
             require_bool(prefix, function, mnemonic, *cond, errors);
@@ -169,19 +184,23 @@ pub(super) fn verify_region_terminator(
         (MirTerm::Yield(_) | MirTerm::ComptimeYield(_) | MirTerm::ElifCond(_), _) => {
             errors.push(format!("{prefix}: `{mnemonic}` outside the region it ends"));
         }
-        (MirTerm::Break { label, .. } | MirTerm::Continue { label }, _) => {
-            match (enclosing_loop(context, *label), terminator) {
-                (None, _) => {
+        (MirTerm::Break { label, values } | MirTerm::Continue { label, values }, _) => {
+            match enclosing_loop(context, *label) {
+                None => {
                     let named = label
                         .map_or_else(String::new, |label| format!(" labelled loop{}", label.0));
                     errors.push(format!(
                         "{prefix}: `{mnemonic}` has no enclosing loop{named}"
                     ));
                 }
-                (Some(results), MirTerm::Break { values, .. }) => {
-                    yielded_values(prefix, function, mnemonic, values, results, errors);
+                Some((args, results)) => {
+                    let (expected, target) = if matches!(terminator, MirTerm::Continue { .. }) {
+                        (args, YieldTarget::Arguments)
+                    } else {
+                        (results, YieldTarget::Results)
+                    };
+                    yielded_values(prefix, function, mnemonic, values, expected, target, errors);
                 }
-                (Some(_), _) => {}
             }
         }
         (MirTerm::ComptimeBreak | MirTerm::ComptimeContinue, _) => {
@@ -251,44 +270,60 @@ fn require_bool(
     }
 }
 
+/// What the values along a control-flow edge define: a region op's
+/// results, or a loop body's arguments.
+#[derive(Clone, Copy)]
+enum YieldTarget {
+    Results,
+    Arguments,
+}
+
+/// The values along one edge match what they define in number and type,
+/// upstream's `verifyTypesAlongEdge`.
 fn yielded_values(
     prefix: &str,
     function: &MirFunction,
     mnemonic: &str,
     values: &[Reg],
-    results: &[Reg],
+    targets: &[Reg],
+    target: YieldTarget,
     errors: &mut Vec<String>,
 ) {
-    if values.len() != results.len() {
+    let (one, many) = match target {
+        YieldTarget::Results => ("a result", "results"),
+        YieldTarget::Arguments => ("an argument", "arguments"),
+    };
+    if values.len() != targets.len() {
         errors.push(format!(
-            "{prefix}: `{mnemonic}` yields {} values for {} results",
+            "{prefix}: `{mnemonic}` yields {} values for {} {many}",
             values.len(),
-            results.len()
+            targets.len()
         ));
         return;
     }
-    for (value, result) in values.iter().zip(results) {
+    for (value, defined) in values.iter().zip(targets) {
         if let (Some(found), Some(expected)) = (
             function.reg_types.get(&value.0),
-            function.reg_types.get(&result.0),
+            function.reg_types.get(&defined.0),
         ) && !types_compatible(found, expected)
         {
             errors.push(format!(
-                "{prefix}: `{mnemonic}` yields {found} for a result of type {expected}"
+                "{prefix}: `{mnemonic}` yields {found} for {one} of type {expected}"
             ));
         }
     }
 }
 
-/// The results of the loop a `break`/`continue` with `label` names: the
-/// nearest enclosing loop when unlabelled, else the nearest carrying the
-/// label; `None` when no enclosing loop matches.
-fn enclosing_loop(context: &RegionContext, label: Option<LoopLabel>) -> Option<&[Reg]> {
+/// The arguments and results of the loop a `break`/`continue` with `label`
+/// names: the nearest enclosing loop when unlabelled, else the nearest
+/// carrying the label; `None` when no enclosing loop matches.
+fn enclosing_loop(context: &RegionContext, label: Option<LoopLabel>) -> Option<(&[Reg], &[Reg])> {
     context.regions.iter().rev().find_map(|kind| match kind {
         RegionKind::LoopBody {
             label: found,
+            args,
             results,
-        } if label.is_none() || *found == label => Some(results.as_slice()),
+        } if label.is_none() || *found == label => Some((args.as_slice(), results.as_slice())),
         _ => None,
     })
 }
@@ -417,6 +452,8 @@ mod tests {
     fn a_region_terminator_outside_its_region_is_a_finding() {
         let misplaced = function_with(vec![MirInstr::Loop {
             label: None,
+            operands: Vec::new(),
+            args: Vec::new(),
             results: Vec::new(),
             body: one(Vec::new(), MirTerm::Yield(Vec::new())),
         }]);
@@ -453,6 +490,8 @@ mod tests {
     ) -> MirInstr {
         MirInstr::Loop {
             label,
+            operands: Vec::new(),
+            args: Vec::new(),
             results,
             body: one(
                 vec![MirInstr::If {
@@ -468,7 +507,10 @@ mod tests {
                     elifs: Vec::new(),
                     orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
                 }],
-                MirTerm::Continue { label: None },
+                MirTerm::Continue {
+                    label: None,
+                    values: Vec::new(),
+                },
             ),
         }
     }
@@ -493,15 +535,107 @@ mod tests {
         let outer = Some(LoopLabel(7));
         let nested = function_with(vec![MirInstr::Loop {
             label: outer,
+            operands: Vec::new(),
+            args: Vec::new(),
             results: vec![Reg(1)],
             body: one(
                 vec![valued_loop(None, Vec::new(), outer, Vec::new())],
-                MirTerm::Continue { label: None },
+                MirTerm::Continue {
+                    label: None,
+                    values: Vec::new(),
+                },
             ),
         }]);
         let found = findings(&nested);
         assert_eq!(found.len(), 1, "{found:?}");
         assert_finding(&found, "`break` yields 0 values for 1 results");
+    }
+
+    /// A loop labelled `label` entered with `operands` as `args`, whose
+    /// body continues `inner` with `values`.
+    fn carrying_loop(
+        label: Option<LoopLabel>,
+        (operands, args): (Vec<Reg>, Vec<Reg>),
+        inner: Option<LoopLabel>,
+        values: Vec<Reg>,
+    ) -> MirInstr {
+        MirInstr::Loop {
+            label,
+            operands,
+            args,
+            results: Vec::new(),
+            body: one(
+                Vec::new(),
+                MirTerm::Continue {
+                    label: inner,
+                    values,
+                },
+            ),
+        }
+    }
+
+    #[test]
+    fn a_continue_with_values_verifies() {
+        let carried = (vec![Reg(2)], vec![Reg(1)]);
+        let function = function_with(vec![carrying_loop(None, carried, None, vec![Reg(1)])]);
+        assert_eq!(findings(&function), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_continue_carrying_the_wrong_values_is_a_finding() {
+        let carried = || (vec![Reg(2)], vec![Reg(1)]);
+        let arity = function_with(vec![carrying_loop(None, carried(), None, Vec::new())]);
+        assert_finding(
+            &findings(&arity),
+            "`continue` yields 0 values for 1 arguments",
+        );
+        let typed = function_with(vec![carrying_loop(None, carried(), None, vec![Reg(0)])]);
+        assert_finding(
+            &findings(&typed),
+            "`continue` yields Bool for an argument of type Int",
+        );
+        // A labelled continue is checked against the loop it names, not
+        // the nearest one.
+        let outer = Some(LoopLabel(7));
+        let nested = function_with(vec![MirInstr::Loop {
+            label: outer,
+            operands: vec![Reg(2)],
+            args: vec![Reg(1)],
+            results: Vec::new(),
+            body: one(
+                vec![carrying_loop(
+                    None,
+                    (Vec::new(), Vec::new()),
+                    outer,
+                    Vec::new(),
+                )],
+                MirTerm::Unreachable,
+            ),
+        }]);
+        let found = findings(&nested);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_finding(&found, "`continue` yields 0 values for 1 arguments");
+    }
+
+    #[test]
+    fn a_loop_whose_operands_do_not_match_its_arguments_is_a_finding() {
+        let arity = function_with(vec![carrying_loop(
+            None,
+            (Vec::new(), vec![Reg(1)]),
+            None,
+            vec![Reg(1)],
+        )]);
+        assert_finding(&findings(&arity), "`loop` yields 0 values for 1 arguments");
+        let typed = function_with(vec![carrying_loop(
+            None,
+            (vec![Reg(0)], vec![Reg(1)]),
+            None,
+            vec![Reg(1)],
+        )]);
+        assert_finding(
+            &findings(&typed),
+            "`loop` yields Bool for an argument of type Int",
+        );
     }
 
     /// A `match` of two cases over a `Bool` subject: the first tests `r0`
@@ -534,6 +668,8 @@ mod tests {
             cases: vec![one(
                 vec![MirInstr::Loop {
                     label: None,
+                    operands: Vec::new(),
+                    args: Vec::new(),
                     results: Vec::new(),
                     body: one(
                         vec![MirInstr::If {
@@ -549,7 +685,10 @@ mod tests {
                                 },
                             ),
                         }],
-                        MirTerm::Continue { label: None },
+                        MirTerm::Continue {
+                            label: None,
+                            values: Vec::new(),
+                        },
                     ),
                 }],
                 MirTerm::MatchNext,
@@ -605,11 +744,14 @@ mod tests {
         assert_finding(&findings(&unlabelled), "`break` has no enclosing loop");
         let labelled = function_with(vec![MirInstr::Loop {
             label: Some(LoopLabel(1)),
+            operands: Vec::new(),
+            args: Vec::new(),
             results: Vec::new(),
             body: one(
                 Vec::new(),
                 MirTerm::Continue {
                     label: Some(LoopLabel(2)),
+                    values: Vec::new(),
                 },
             ),
         }]);
@@ -619,10 +761,14 @@ mod tests {
         );
         let named = function_with(vec![MirInstr::Loop {
             label: Some(LoopLabel(1)),
+            operands: Vec::new(),
+            args: Vec::new(),
             results: Vec::new(),
             body: one(
                 vec![MirInstr::Loop {
                     label: None,
+                    operands: Vec::new(),
+                    args: Vec::new(),
                     results: Vec::new(),
                     body: one(
                         Vec::new(),
@@ -632,7 +778,10 @@ mod tests {
                         },
                     ),
                 }],
-                MirTerm::Continue { label: None },
+                MirTerm::Continue {
+                    label: None,
+                    values: Vec::new(),
+                },
             ),
         }]);
         assert_eq!(findings(&named), Vec::<String>::new());
@@ -643,6 +792,8 @@ mod tests {
         let through_loop = function_with(vec![comptime_for(one(
             vec![MirInstr::Loop {
                 label: None,
+                operands: Vec::new(),
+                args: Vec::new(),
                 results: Vec::new(),
                 body: one(Vec::new(), MirTerm::ComptimeBreak),
             }],
@@ -677,6 +828,8 @@ mod tests {
     fn a_multi_block_region_is_rejected_only_by_the_structured_mode() {
         let function = function_with(vec![MirInstr::Loop {
             label: None,
+            operands: Vec::new(),
+            args: Vec::new(),
             results: Vec::new(),
             body: vec![
                 MirBlock {

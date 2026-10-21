@@ -80,7 +80,7 @@
               place.load { dest: %r2, place: place { root: $v1, root_type: present(struct_type { name: Box, arguments: [] }), projections: [], type: present(struct_type { name: Box, arguments: [] }), through: absent } },
               value.copy { dest: %r3, value: %r2 },
               var.store { var: $v3, src: %r3, binding_type: present(struct_type { name: Box, arguments: [] }), in_place: false },
-              loop { results: [%r4], label: present(loop4294967295), body: [bb0 { instructions: [place.load { dest: %r8, place: place { root: $v3, root_type: present(struct_type { name: Box, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } }, value.copy { dest: %r9, value: %r8 }, consume.var { var: $v3 }], terminator: break { label: present(loop4294967295), values: [%r9] } }] },
+              loop { results: [%r4], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [place.load { dest: %r8, place: place { root: $v3, root_type: present(struct_type { name: Box, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } }, value.copy { dest: %r9, value: %r8 }, consume.var { var: $v3 }], terminator: break { label: present(loop4294967295), values: [%r9] } }] },
               var.store { var: $v2, src: %r4, binding_type: present(Int), in_place: false },
               var.use { dest: %r5, var: $v2, mode: copy },
               drop.var { var: $v2 },

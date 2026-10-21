@@ -55,7 +55,7 @@
               binary { op: add, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent },
               var.use { dest: %r4, var: $v0, mode: copy },
               var.store { var: $v2, src: %r4, binding_type: present(Int), in_place: false },
-              loop { results: [%r5], label: present(loop4294967295), body: [bb0 { instructions: [var.use { dest: %r6, var: $v2, mode: copy }, const { dest: %r7, value: param(param_expr { op: add, type: meta_value(Int), operands: [param_decl_ref { owner: "generic_symbolic", slot: 0, name: n, type: meta_value(Int) }, param_constant(ct_int(1))] }) }, binary { op: mul, dest: %r8, a: %r6, b: %r7, resolved: absent, raises: absent }], terminator: break { label: present(loop4294967295), values: [%r8] } }] }
+              loop { results: [%r5], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [var.use { dest: %r6, var: $v2, mode: copy }, const { dest: %r7, value: param(param_expr { op: add, type: meta_value(Int), operands: [param_decl_ref { owner: "generic_symbolic", slot: 0, name: n, type: meta_value(Int) }, param_constant(ct_int(1))] }) }, binary { op: mul, dest: %r8, a: %r6, b: %r7, resolved: absent, raises: absent }], terminator: break { label: present(loop4294967295), values: [%r8] } }] }
             ],
             terminator: return { value: present(%r5) }
           }

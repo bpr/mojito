@@ -135,9 +135,10 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
 - **Region ops**, new `MirInstr` variants, one per upstream op:
   - `If { results, cond, then, elifs, orelse }` — `hlcf.if`. Each `elifs`
     entry is a condition region ending in `ElifCond(reg)` and an arm.
-  - `Loop { label, body }` — `hlcf.loop`. Loop-carried values stay in slots
-    until register promotion of merged slots (R927) brings operands and
-    results.
+  - `Loop { label, operands, args, results, body }` — `hlcf.loop`, its
+    body's arguments defined by its operands and each `Continue`'s values,
+    its results by each `Break`'s. Loop-carried values stay in slots until
+    register promotion of merged slots (R927) produces them.
   - `ComptimeIf { results, conds, arms, orelse }` — `hlcf.comptime.if`:
     one arm per condition, then the else region.
   - `ComptimeFor { binder, source, body, orelse }` —
@@ -150,7 +151,7 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
   - `Try` keeps its four parts, each one region — `lit.try`, which upstream
     keeps beside `hlcf`.
 - **Region terminators**, new `MirTerm` variants: `Yield(regs)`,
-  `ElifCond(reg)`, `Break { label }`, `Continue { label }`,
+  `ElifCond(reg)`, `Break { label, values }`, `Continue { label, values }`,
   `ComptimeYield(regs)` (`hlcf.comptime.yield`, which ends a
   `ComptimeIf` arm, where `hlcf.yield` may not), `ComptimeBreak`,
   `ComptimeContinue`, and `Unreachable`. A label is optional and need not

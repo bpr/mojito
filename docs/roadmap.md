@@ -743,17 +743,23 @@ which names the upstream pass each one follows. Each is measured by the
     arguments, so the pass solves reaching stores over blocks instead
     (`analysis/mem2reg.rs`).
   - On a structured body the pass now walks regions, but promotes a read
-    only when its store's block encloses it, since Mojito's regions take
-    no arguments: probe `tests/mir_passes/mem-2-reg/region_store_in_arm_kept.mir`
-    and the loop-body store in `region_loop_read.mir`.
+    only when its store's block encloses it: probe
+    `tests/mir_passes/mem-2-reg/region_store_in_arm_kept.mir` and the
+    loop-body store in `region_loop_read.mir`.
+  - Loops now take arguments and their `continue`s carry values (R1258),
+    which the pass would produce; elif and `match` regions still take none
+    (R1259), and `if`/`match` results come with R1260.
+  - `region_loop_read.mir`'s `y` is stored in the body and read only
+    after the loop, so upstream carries it as a loop argument and a loop
+    result whose initial operand is `currValueOrUndef`'s undef: MIR has no
+    undef value to spell that operand with.
   - The fix rewrites the pass as `processRegion`'s scoped walk over
     structured bodies with region values.
   - The pass's `comptime for` guard (a read and its store on one side of a
     loop body's boundary) goes once the elaborator clones regions.
   - About two thirds of the promotable-type slot mentions in the
     pre-elaboration bodies of `collections_many` are merged ones.
-  - Depends on R1254 (structured bodies at the seam), R1258, R1259, R1260
-    (region values), R880 (regions cloned).
+  - Depends on R1259, R1260 (region values), R880 (regions cloned).
   - Model: Fable, Planned.
 
 - [ ] **R1105 `mem-2-reg` keeps a slot that a body reads through a
@@ -10070,31 +10076,6 @@ follow-ups the landed producer stages filed come last.
   - Depends on R874.
   - Model: Fable, Planned.
 
-- [ ] **R1258 A region takes no arguments, so a loop carries no values
-  from one iteration to the next, where upstream's `hlcf.loop` passes
-  operands to its body's arguments and each `hlcf.continue` the next
-  iteration's**
-
-  Mojito's region ops have no region arguments, so `Loop` has no
-  loop-carried operands and `Continue` carries no values; a value a loop
-  body updates stays in a slot.
-  - Upstream's `hlcf.loop` body block takes one argument per operand, and
-    `hlcf.continue` passes the next iteration's values
-    (`HLCFOps.td`, `RemoveUnusedLoopArgs` in `HLCFOpsCanonicalizers.cpp`).
-  - The fix adds region arguments with `Loop { operands, args, .. }` and
-    `Continue { values }` as their first user, in the MIR text, the
-    verifier, `mir::loop_breaks_mut`'s walk, `canonicalize`
-    (`RemoveUnusedLoopArgs`, `RemoveDeadLoop`'s argument case), and
-    `sccp`.
-  - `lower-control-flow` stores the operands and each `continue`'s values
-    in one slot per argument, read at the body's entry, as it stores loop
-    results with several breaks.
-  - The producer is R927's `mem-2-reg`; until then only pass cases
-    exercise it: probe the loop-body store in
-    `tests/mir_passes/mem-2-reg/region_loop_read.mir`.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1259 An elif condition and a `match` case pass no values into
   the region they enter, where upstream's `if.elifcond.yield` and
   `match.next` pass operands to that region's arguments**
@@ -10109,7 +10090,7 @@ follow-ups the landed producer stages filed come last.
     nothing.
   - The fix extends R1258's region arguments to an elif's `then` and the
     next condition or else region, and to each `match` case region.
-  - Depends on R1258.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R1260 A `match` and a `comptime for` define no results, where
@@ -10128,7 +10109,7 @@ follow-ups the landed producer stages filed come last.
     learn the new values the same way.
   - The elaborator's unroll must pass each iteration's values to the
     next; before R880 it reads them through `lower-control-flow`'s slots.
-  - Depends on R1258.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R890 A `for` over a raising iterator tests a `TryNext` flag where
