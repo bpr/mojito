@@ -768,7 +768,9 @@ fields, `Point(x=0, y=yv)`) or an enum case with one positional payload
 (`.Some(x)`, `Optional.Some(0)`); a `*`/`**` argument there is a syntax
 error. A sequence pattern's star takes a closed pattern (`*_`, `*rest`,
 `*var rest`, `*[a, b]`), never an `as` pattern or a `|`, and a second star
-is an error. `comptime match` has the same shape over a parameter subject. Every
+is an error. `comptime match` has the same shape over a compile-time subject,
+and like `comptime if` it belongs in a function body: at module scope the parser
+reports upstream's "'comptime match' must be contained in a function". Every
 pattern form is parsed; which ones the checker accepts is
 `docs/features.md`'s Control flow row.
 

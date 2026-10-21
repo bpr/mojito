@@ -749,7 +749,9 @@ the elements of `lists` in order. `TypeList.reverse()` is a tabulation and
 `TypeList._concat[...]()` a concatenation. Such a list is the one argument
 of a struct type that spreads it (`Tuple[*Ts.reverse()]`), a
 `dependent_parameter` whose expression has the meta-type
-`meta_param_list(meta_type)`. `param_field` is a field of a struct-typed parameter value
+`meta_param_list(meta_type)`. A trait-valued parameter (`meta_value(any_trait(...))`)
+is the element type of the raw list it bounds (`TypeList`'s `values:
+param_list(dependent_parameter(Trait))`), also a `dependent_parameter`. `param_field` is a field of a struct-typed parameter value
 that is still a parameter (schema 1.27), `param_reflect` a reflection query over a symbolic subject
 (`is_struct()`, `field_count()`, `field_names()`, `field_types()`,
 `field_index["name"]()`, `field["name"].T`), `param_type_member` a

@@ -2187,7 +2187,17 @@ impl Checker {
                 Box::new(self.compile_generic_constraint(right)?),
             ),
             ExprKind::Infix(op, left, right) => {
+                self.reject_type_parameter_comparison(*op, left, right)?;
                 let (left, right) = binary(left, right)?;
+                // A struct value compares through its operator method (a
+                // user `__eq__`), which only running it answers: the
+                // comparison is a value the elaborator evaluates, not a
+                // proposition over the operands.
+                if [&left, &right].into_iter().any(struct_valued_operand) {
+                    return Err(TypeError::Unsupported(
+                        "a comparison of struct values is no generic proposition".to_string(),
+                    ));
+                }
                 // A KGEN string implements no comparison, which the shared
                 // folder reports (`"a".value == "a".value`).
                 if let (ConstraintOperand::Value(a), ConstraintOperand::Value(b)) = (&left, &right)
@@ -3718,6 +3728,44 @@ impl Checker {
             _ => None,
         }
     }
+
+    /// Reject a type compared with a value (`T == 1`, a `case 1` over a
+    /// type subject) as the pin does: the comparison calls the operator's
+    /// method on the type's metatype, which a parameter's bound does not
+    /// implement and a struct's metatype does not convert to.
+    fn reject_type_parameter_comparison(
+        &self,
+        op: InfixOp,
+        left: &Expr,
+        right: &Expr,
+    ) -> Result<(), TypeError> {
+        let method = match op {
+            InfixOp::Eq => "__eq__",
+            InfixOp::Ne => "__ne__",
+            InfixOp::Lt => "__lt__",
+            InfixOp::Le => "__le__",
+            InfixOp::Gt => "__gt__",
+            InfixOp::Ge => "__ge__",
+            _ => return Ok(()),
+        };
+        let operand = |expr: &Expr| self.comptime_type_operand(expr).ok().flatten();
+        let Some(left) = operand(left) else {
+            return Ok(());
+        };
+        if operand(right).is_some() {
+            return Ok(());
+        }
+        Err(TypeError::MatchPattern(match left.kind() {
+            TyKind::Param { bounds, .. } => format!(
+                "'{}' does not implement the '{method}' method",
+                bounds.first().map_or("AnyType", String::as_str)
+            ),
+            _ => format!(
+                "invalid call to '{method}': value passed to 'self' cannot be converted from \
+                 'AnyStruct[{left}]'"
+            ),
+        }))
+    }
 }
 
 /// The conjuncts of a proposition: the operands of a canonical `and`, or the
@@ -4173,4 +4221,17 @@ fn self_reads(member: &StructComptime) -> HashSet<String> {
     let mut reads = Reads(HashSet::new());
     mojito_ast::visit::walk_struct_comptime(&mut reads, member);
     reads.0
+}
+
+/// Whether `operand` is a compile-time value of a struct type, whose
+/// comparison is its operator method's.
+fn struct_valued_operand(operand: &ConstraintOperand) -> bool {
+    match operand {
+        ConstraintOperand::Expr(expression)
+        | ConstraintOperand::Value(CtValue::Expr(expression)) => expression
+            .meta()
+            .as_value()
+            .is_some_and(|ty| matches!(ty.kind(), TyKind::Struct(..))),
+        _ => false,
+    }
 }

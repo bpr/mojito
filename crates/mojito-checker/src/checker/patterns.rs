@@ -35,7 +35,19 @@
 //!
 //! Each command's shape is recorded at its path for `coverage.rs`, whose
 //! verdict concludes the match and seals the cases earlier ones cover.
+//!
+//! A `comptime match` compiles the same commands in compile-time mode, as
+//! upstream emits its cases as one `hlcf.comptime.if`: the subject is a
+//! compile-time name, or `comptime $match<id> = subject`, every path read
+//! is the path's expression over it (no `$elem<id>`), each test is a
+//! compile-time condition, and a bare or `as` binding is `comptime name =
+//! path`, a compile-time value as upstream's `PValue` binding is. A case's
+//! condition is the conjunction of its tests and its guard, in which a
+//! binding reads as the value it denotes; a `|` is the disjunction of its
+//! alternatives' conditions, and a name every alternative binds is the
+//! value of the first alternative that matches (upstream's `POC::Cond`).
 
+use super::comptime_validation::ComptimeTest;
 use super::coverage::{CoverCase, CoverCommand};
 use super::desugar::Synth;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
@@ -70,6 +82,36 @@ impl Checker {
         checked
     }
 
+    /// Check `comptime match subject:` with its `cases`: the subject is a
+    /// compile-time value, each case compiles in compile-time mode to its
+    /// condition and bindings in a scope of its own, and its body is
+    /// checked there under what the condition proves, as a `comptime if`
+    /// arm is. The plan is recorded at the statement for the conditional
+    /// chain the elaborator below MIR decides.
+    pub(super) fn check_comptime_match(
+        &mut self,
+        stmt: &Stmt,
+        subject: &Expr,
+        cases: &[MatchCase],
+        ret: Option<&Ty>,
+        in_loop: bool,
+    ) -> Result<(), TypeError> {
+        if !self.reads_compile_time_alone(subject) {
+            return Err(TypeError::Unsupported(
+                ComptimeTest::MatchSubject.dynamic_value().to_string(),
+            ));
+        }
+        let synth = Synth::for_statement(stmt, subject.source.clone());
+        self.push_scope();
+        let checked = self
+            .anchor_comptime_subject(&synth, subject)
+            .and_then(|(anchor, root)| {
+                self.check_comptime_cases(stmt, &root, anchor, cases, ret, in_loop)
+            });
+        self.pop_scope();
+        checked
+    }
+
     /// Check the `case pattern = value` condition of an `if`, `elif`, or
     /// `while` branch whose body is `body`: anchor the value, compile the
     /// pattern's commands, and check the body in the scope that holds the
@@ -95,8 +137,9 @@ impl Checker {
                 self.compile_pattern(pattern, &subject, Join::None, &mut commands)?;
                 self.check_block(body, ret, in_loop)?;
                 self.record_at(pattern.source_span()).match_plan = Some(MatchPlan {
-                    anchor,
+                    anchor: Some(anchor),
                     cases: vec![commands.into_parts().0],
+                    conditions: Vec::new(),
                     concluded: false,
                     unreachable: Vec::new(),
                 });
@@ -283,13 +326,198 @@ impl Checker {
             .collect::<HashSet<_>>();
         let mut facts = self.record_at(stmt.source_span());
         facts.match_plan = Some(MatchPlan {
-            anchor,
+            anchor: Some(anchor),
             cases: programs,
+            conditions: Vec::new(),
             concluded: concluded.is_some(),
             unreachable: verdict.unreachable,
         });
         facts.match_warnings = (!verdict.warnings.is_empty()).then_some(verdict.warnings);
         Ok(())
+    }
+
+    /// The root a `comptime match`'s patterns read, and the statement
+    /// anchoring it: a type, or a compile-time name (a value parameter, a
+    /// `comptime` binding, a `comptime for` variable, `Self.n`), is read
+    /// where it is, as upstream's parameter value of a declaration is the
+    /// reference itself; any other subject is bound once by `comptime
+    /// $match<id> = subject`, so an application is demanded once.
+    fn anchor_comptime_subject<'s>(
+        &mut self,
+        synth: &'s Synth,
+        subject: &Expr,
+    ) -> Result<(Option<Stmt>, MatchSubject<'s>), TypeError> {
+        let name = format!("$match{}", synth.parent().0);
+        let named = self.comptime_type_operand(subject).ok().flatten().is_some()
+            || matches!(
+                subject.kind,
+                ExprKind::Identifier(_) | ExprKind::Member { .. }
+            ) && self.parameter_value_ty(subject).is_some();
+        if named {
+            // The name's declared type: reading it is no runtime
+            // materialization.
+            let declared = self.parameter_value_ty(subject).cloned();
+            let ty = declared
+                .map_or_else(|| self.infer(subject), Ok)
+                .map_or_else(|_| Ty::error(), dereferenced);
+            let mut root = MatchSubject::root(synth, &name, ty, false);
+            root.reading = Reading::Comptime(Some(subject.clone()));
+            return Ok((None, root));
+        }
+        let anchor = synth.stmt(StmtKind::Comptime {
+            name: name.clone(),
+            type_params: Vec::new(),
+            ty: None,
+            where_clauses: Vec::new(),
+            value: subject.clone(),
+        });
+        self.check_comptime_declaration(&anchor, &name)?;
+        let ty = self.lookup(&name).cloned().ok_or_else(|| {
+            TypeError::InvariantViolation("the comptime match subject was not declared".into())
+        })?;
+        let mut root = MatchSubject::root(synth, &name, dereferenced(ty), false);
+        root.reading = Reading::Comptime(None);
+        Ok((Some(anchor), root))
+    }
+
+    /// Check the synthesized local `comptime name = value` `declaration` as
+    /// a block's own is checked: the binding is a compile-time one.
+    fn check_comptime_declaration(
+        &mut self,
+        declaration: &Stmt,
+        name: &str,
+    ) -> Result<(), TypeError> {
+        self.check_stmt(declaration, None, false)?;
+        if let Some(owner) = self.lookup_owner(name) {
+            self.comptime_binding_owners.insert(owner);
+        }
+        Ok(())
+    }
+
+    /// [`Self::check_match_cases`] for a `comptime match`: each case's
+    /// condition and bindings, and its body under the condition, then the
+    /// coverage verdict, which drops the concluding case's condition, so
+    /// that it is the chain's else arm, and seals the cases earlier ones
+    /// cover.
+    fn check_comptime_cases(
+        &mut self,
+        stmt: &Stmt,
+        subject: &MatchSubject,
+        anchor: Option<Stmt>,
+        cases: &[MatchCase],
+        ret: Option<&Ty>,
+        in_loop: bool,
+    ) -> Result<(), TypeError> {
+        let before = self.uninitialized.borrow().clone();
+        let mut exits = Vec::new();
+        let mut programs = Vec::new();
+        let mut conditions = Vec::new();
+        let mut covers = Vec::new();
+        for case in cases {
+            (*self.uninitialized.borrow_mut()).clone_from(&before);
+            self.push_scope();
+            let checked = self.check_comptime_case(case, subject, ret, in_loop);
+            self.pop_scope();
+            let ComptimeCase {
+                declarations,
+                condition,
+                cover,
+            } = checked?;
+            programs.push(declarations);
+            conditions.push(condition);
+            covers.push(CoverCase {
+                commands: cover,
+                guarded: case.guard.is_some(),
+                span: case.pattern.source_span(),
+            });
+            exits.push(self.uninitialized.borrow().clone());
+        }
+        let verdict = self.match_coverage(&subject.ty, &covers, &stmt.source_span())?;
+        // The concluding case's tests pass whenever it is reached, so it is
+        // the else arm.
+        if let Some(index) = verdict.concluding {
+            conditions[index] = None;
+        }
+        let reached = exits
+            .into_iter()
+            .zip(&verdict.unreachable)
+            .filter_map(|(exit, unreachable)| (!unreachable).then_some(exit));
+        let fall_through = verdict.concluding.is_none().then_some(before);
+        *self.uninitialized.borrow_mut() = reached
+            .chain(fall_through)
+            .flatten()
+            .collect::<HashSet<_>>();
+        let mut facts = self.record_at(stmt.source_span());
+        facts.match_plan = Some(MatchPlan {
+            anchor,
+            cases: programs,
+            conditions,
+            concluded: verdict.concluding.is_some(),
+            unreachable: verdict.unreachable,
+        });
+        facts.match_warnings = (!verdict.warnings.is_empty()).then_some(verdict.warnings);
+        Ok(())
+    }
+
+    /// One `comptime match` case in its own scope: its pattern's tests and
+    /// bindings, each binding declared as `comptime name = path`, then its
+    /// guard over what the bindings denote, the conjunction of the tests
+    /// and the guard checked and recorded as a `comptime if` condition,
+    /// and its body under what that condition proves. The bindings, the
+    /// condition (none when the case always matches), and the shapes
+    /// coverage reads.
+    fn check_comptime_case(
+        &mut self,
+        case: &MatchCase,
+        subject: &MatchSubject,
+        ret: Option<&Ty>,
+        in_loop: bool,
+    ) -> Result<ComptimeCase, TypeError> {
+        let synth = subject.synth;
+        let mut commands = Commands::default();
+        self.compile_pattern(&case.pattern, subject, Join::None, &mut commands)?;
+        let mut declarations = Vec::new();
+        for binding in &commands.bindings {
+            let declaration = synth.stmt(StmtKind::Comptime {
+                name: binding.name.clone(),
+                type_params: Vec::new(),
+                ty: None,
+                where_clauses: Vec::new(),
+                value: synth.refresh(&binding.value),
+            });
+            self.check_comptime_declaration(&declaration, &binding.name)?;
+            self.record_at(binding.span.clone()).binding = self.lookup_owner(&binding.name);
+            declarations.push(PlannedCommand::Bind(Box::new(declaration)));
+        }
+        let mut conjuncts = std::mem::take(&mut commands.conditions);
+        if let Some(guard) = &case.guard {
+            let guard = synth.refresh(&substitute_bindings(guard, &commands.bindings));
+            self.register_named_bindings(&guard)?;
+            self.check_comptime_condition(&guard, ComptimeTest::If)?;
+            conjuncts.push(guard);
+        }
+        let condition = conjoin(synth, conjuncts, InfixOp::And);
+        let constraint = condition
+            .as_ref()
+            .map(|condition| self.check_comptime_condition(condition, ComptimeTest::If))
+            .transpose()?
+            .flatten();
+        let checked = match &condition {
+            Some(condition) => {
+                // What the condition proves holds in this arm alone.
+                self.assume_condition(condition, constraint.as_ref())?;
+                let checked = self.check_block(&case.body, ret, in_loop);
+                self.assumed_conformances.borrow_mut().pop();
+                checked
+            }
+            None => self.check_block(&case.body, ret, in_loop),
+        };
+        checked?;
+        Ok(ComptimeCase {
+            declarations,
+            condition,
+            cover: commands.cover,
+        })
     }
 
     /// One case in its own scope: its pattern's commands, then its body.
@@ -408,6 +636,9 @@ impl Checker {
         mut join: Join<'_>,
         commands: &mut Commands,
     ) -> Result<(), TypeError> {
+        if subject.comptime() {
+            return self.compile_comptime_or_pattern(alternatives, subject, join, commands);
+        }
         let mut first: Option<Vec<String>> = None;
         let mut programs = Vec::new();
         let mut covers = Vec::new();
@@ -447,6 +678,112 @@ impl Checker {
             join.record(names);
         }
         commands.tests.push(PlannedCommand::Alternatives(programs));
+        commands.cover.push(CoverCommand::Or(covers));
+        Ok(())
+    }
+
+    /// [`Self::compile_or_pattern`] in compile-time mode: the condition is
+    /// the disjunction of the alternatives' conditions, and each name every
+    /// alternative binds is the value of the first alternative that
+    /// matches, `v0 if c0 else v1 if c1 else ...`, as upstream merges it
+    /// into a `POC::Cond`; every alternative binds the same names at one
+    /// type.
+    fn compile_comptime_or_pattern(
+        &mut self,
+        alternatives: &[MatchPattern],
+        subject: &MatchSubject,
+        mut join: Join<'_>,
+        commands: &mut Commands,
+    ) -> Result<(), TypeError> {
+        let synth = subject.synth;
+        let mut compiled: Vec<(Option<Expr>, Vec<ComptimeBinding>)> = Vec::new();
+        let mut covers = Vec::new();
+        for alternative in alternatives {
+            let mut program = Commands::default();
+            let mut bound = Vec::new();
+            self.compile_pattern(
+                alternative,
+                subject,
+                Join::Declare(&mut bound),
+                &mut program,
+            )?;
+            if let Some((_, first)) = compiled.first() {
+                let first: Vec<&str> = first.iter().map(|binding| binding.name.as_str()).collect();
+                if let Some(missing) = first
+                    .iter()
+                    .find(|name| !bound.iter().any(|bound| bound == *name))
+                    .map(|name| (*name).to_string())
+                    .or_else(|| {
+                        bound
+                            .iter()
+                            .find(|name| !first.contains(&name.as_str()))
+                            .cloned()
+                    })
+                {
+                    return Err(TypeError::MatchPattern(format!(
+                        "or-pattern alternatives must bind the same names; '{missing}' is \
+                         bound in one alternative but not the other"
+                    )));
+                }
+            }
+            let condition = conjoin(synth, std::mem::take(&mut program.conditions), InfixOp::And);
+            compiled.push((condition, program.bindings));
+            covers.push(program.cover);
+        }
+        let conditions = compiled
+            .iter()
+            .map(|(condition, _)| condition.as_ref().map(|condition| synth.refresh(condition)))
+            .collect::<Option<Vec<_>>>();
+        let first = compiled
+            .first()
+            .map(|(_, first)| first.clone())
+            .unwrap_or_default();
+        let mut names = Vec::new();
+        for binding in &first {
+            let declared = dereferenced(self.infer(&binding.value)?);
+            let mut values = Vec::new();
+            for (condition, bindings) in &compiled {
+                let Some(value) = bindings.iter().find(|bound| bound.name == binding.name) else {
+                    continue;
+                };
+                let found = dereferenced(self.infer(&value.value)?);
+                if found != declared {
+                    return Err(TypeError::MatchPattern(format!(
+                        "or-pattern binding '{}' has incompatible types across alternatives: \
+                         first alternative has type '{declared}', this alternative has type \
+                         '{found}'",
+                        binding.name
+                    )));
+                }
+                values.push((condition, &value.value));
+            }
+            let mut merged = values.pop().map(|(_, value)| synth.refresh(value));
+            while let Some((condition, value)) = values.pop() {
+                let value = synth.refresh(value);
+                merged = Some(match (condition, merged) {
+                    (Some(condition), Some(otherwise)) => synth.expr(ExprKind::IfExpr {
+                        cond: Box::new(synth.refresh(condition)),
+                        then_branch: Box::new(value),
+                        else_branch: Box::new(otherwise),
+                    }),
+                    _ => value,
+                });
+            }
+            if let Some(value) = merged {
+                names.push(binding.name.clone());
+                commands.bindings.push(ComptimeBinding {
+                    name: binding.name.clone(),
+                    value,
+                    span: binding.span.clone(),
+                });
+            }
+        }
+        join.record(names);
+        if let Some(condition) =
+            conditions.and_then(|conditions| conjoin(synth, conditions, InfixOp::Or))
+        {
+            commands.conditions.push(condition);
+        }
         commands.cover.push(CoverCommand::Or(covers));
         Ok(())
     }
@@ -529,6 +866,11 @@ impl Checker {
         let star = items
             .iter()
             .position(|item| matches!(item, SequencePattern::Star(_)));
+        if subject.comptime() && star.is_some() {
+            return Err(TypeError::Unsupported(
+                "a starred sequence pattern in 'comptime match'".into(),
+            ));
+        }
         let test = synth.expr(ExprKind::Call {
             name: length_matches,
             param_args: Vec::new(),
@@ -539,8 +881,7 @@ impl Checker {
             ],
             kwargs: Vec::new(),
         });
-        self.expect_bool(&test, "case pattern")?;
-        commands.tests.push(PlannedCommand::ListLength(test));
+        self.push_test(test, subject, commands, PlannedCommand::ListLength)?;
         commands.cover.push(CoverCommand::ListLength {
             path: subject.path.clone(),
         });
@@ -579,6 +920,14 @@ impl Checker {
         subject: &MatchSubject<'s>,
         commands: &mut Commands,
     ) -> Result<MatchSubject<'s>, TypeError> {
+        // A compile-time path is its expression, as upstream's parameter
+        // path value is.
+        if subject.comptime() {
+            return Ok(MatchSubject {
+                reads: Vec::new(),
+                ..subject.clone()
+            });
+        }
         let mut base = (subject.name.clone(), 0);
         let mut last = None;
         for &(depth, element) in &subject.reads {
@@ -586,7 +935,7 @@ impl Checker {
             let read = if let Some(read) = commands.reads.get(&key) {
                 read.clone()
             } else {
-                let value = spell(subject.synth, &base.0, &subject.path[base.1..depth]);
+                let value = spell(subject.synth, &base.0, None, &subject.path[base.1..depth]);
                 let read = self.read_path(subject.synth, value, element)?;
                 commands
                     .tests
@@ -610,6 +959,7 @@ impl Checker {
             rvalue: subject.rvalue,
             root: false,
             owned: (whole && read.owned).then_some(element.moves),
+            reading: Reading::Runtime,
             reads: Vec::new(),
             path,
         })
@@ -871,9 +1221,10 @@ impl Checker {
             Box::new(discriminant),
             Box::new(synth.int(case)),
         ));
-        self.expect_bool(&test, "case pattern")?;
-        commands.tests.push(PlannedCommand::EnumTag { test, case });
-        Ok(())
+        self.push_test(test, subject, commands, |test| PlannedCommand::EnumTag {
+            test,
+            case,
+        })
     }
 
     /// Push the test `subject == value` through the selected `__eq__`,
@@ -896,8 +1247,27 @@ impl Checker {
             Box::new(value.clone()),
         ));
         self.register_named_bindings(&test)?;
-        self.expect_bool(&test, "case pattern")?;
-        commands.tests.push(PlannedCommand::Equal(test));
+        self.push_test(test, subject, commands, PlannedCommand::Equal)
+    }
+
+    /// Push the test `test` over `subject`: a `Bool` the case's program
+    /// branches on, or in compile-time mode a conjunct of the case's
+    /// condition, a compile-time `Bool` whose dynamic operand is the pin's
+    /// `match subject` rejection.
+    fn push_test(
+        &self,
+        test: Expr,
+        subject: &MatchSubject,
+        commands: &mut Commands,
+        planned: impl FnOnce(Expr) -> PlannedCommand,
+    ) -> Result<(), TypeError> {
+        if subject.comptime() {
+            self.check_comptime_condition(&test, ComptimeTest::MatchSubject)?;
+            commands.conditions.push(test);
+        } else {
+            self.expect_bool(&test, "case pattern")?;
+            commands.tests.push(planned(test));
+        }
         Ok(())
     }
 
@@ -954,6 +1324,9 @@ impl Checker {
         commands.cover.push(CoverCommand::Bind {
             path: subject.path.clone(),
         });
+        if subject.comptime() {
+            return comptime_binding(name, binding, pattern_span, subject, join, commands);
+        }
         let subject = &self.materialize(subject, commands)?;
         match join {
             Join::None => {}
@@ -1119,6 +1492,9 @@ struct MatchSubject<'a> {
     /// For an owned path read, an rvalue: whether a `var` binding takes it
     /// by transfer, being the only binding of it.
     owned: Option<bool>,
+    /// Whether the subject is a `comptime match`'s, read in compile-time
+    /// mode.
+    reading: Reading,
     /// The path's reads (sequence elements and enum payloads), each the
     /// length of the path prefix it reads and how it is read.
     reads: Vec<(usize, ElementRead)>,
@@ -1136,6 +1512,7 @@ impl<'a> MatchSubject<'a> {
             rvalue: temporary,
             root: true,
             owned: None,
+            reading: Reading::Runtime,
             reads: Vec::new(),
             path: Vec::new(),
         }
@@ -1144,7 +1521,17 @@ impl<'a> MatchSubject<'a> {
     /// The expression reading this subject: `$match<id>` under the path's
     /// subscripts, field selections, and payload reads.
     fn value(&self) -> Expr {
-        spell(self.synth, &self.name, &self.path)
+        let base = match &self.reading {
+            Reading::Comptime(base) => base.as_ref(),
+            Reading::Runtime => None,
+        };
+        spell(self.synth, &self.name, base, &self.path)
+    }
+
+    /// Whether this is a `comptime match` subject, read in compile-time
+    /// mode.
+    const fn comptime(&self) -> bool {
+        matches!(self.reading, Reading::Comptime(_))
     }
 
     /// Whether this is an unread sequence element, whose type is unknown,
@@ -1180,6 +1567,7 @@ impl<'a> MatchSubject<'a> {
             rvalue: self.rvalue,
             root: false,
             owned: None,
+            reading: self.reading.clone(),
             reads: self.reads.clone(),
             path,
         }
@@ -1194,18 +1582,31 @@ impl<'a> MatchSubject<'a> {
     }
 }
 
+/// How a subject's patterns read it: at run time, or at compile time in a
+/// `comptime match`, through the hidden name or the compile-time name read
+/// in its place (`T`, `Self.n`).
+#[derive(Clone)]
+enum Reading {
+    Runtime,
+    Comptime(Option<Expr>),
+}
+
 /// A case's commands as they are collected: its tests and element reads,
 /// then its bindings, as upstream runs every test of a pattern before any
 /// binding materializes (a failed alternative copies nothing), with the
 /// element reads made so far, by path, as upstream's per-path values, and
 /// each command's shape at its path, in pattern order, as coverage reads
 /// upstream's command list.
+/// In compile-time mode the tests are `conditions` and the bindings
+/// `bindings` instead.
 #[derive(Default)]
 struct Commands {
     tests: Vec<PlannedCommand>,
     binds: Vec<PlannedCommand>,
     reads: HashMap<Vec<Step>, Read>,
     cover: Vec<CoverCommand>,
+    conditions: Vec<Expr>,
+    bindings: Vec<ComptimeBinding>,
 }
 
 impl Commands {
@@ -1216,6 +1617,23 @@ impl Commands {
             self.cover,
         )
     }
+}
+
+/// One checked `comptime match` case: its binding declarations, its
+/// condition (none when it always matches), and the shapes coverage reads.
+struct ComptimeCase {
+    declarations: Vec<PlannedCommand>,
+    condition: Option<Expr>,
+    cover: Vec<CoverCommand>,
+}
+
+/// A name a `comptime match` pattern binds, the compile-time value it
+/// denotes, and the binding pattern's location.
+#[derive(Clone)]
+struct ComptimeBinding {
+    name: String,
+    value: Expr,
+    span: SourceSpan,
 }
 
 /// How a pattern binds a name: the source modes, and `as`, which keeps the
@@ -1288,16 +1706,17 @@ struct Read {
 /// What an unread sequence element's type is spelled as in a rejection.
 const UNTYPED_ELEMENT: &str = "an untyped sequence element";
 
-/// The expression reading `name` under `steps`, each sequence step
-/// spelled as upstream's path values are: an element from the end and a
-/// slice's end read the parent's `__len__` afresh, and a payload is the
-/// getter `parent._unsafe_get_enum_payload[case]()`.
-fn spell(synth: &Synth, name: &str, steps: &[Step]) -> Expr {
+/// The expression reading `name`, or the compile-time name `base` in its
+/// place, under `steps`, each sequence step spelled as upstream's path
+/// values are: an element from the end and a slice's end read the parent's
+/// `__len__` afresh, and a payload is the getter
+/// `parent._unsafe_get_enum_payload[case]()`.
+fn spell(synth: &Synth, name: &str, base: Option<&Expr>, steps: &[Step]) -> Expr {
     // `parent.__len__() - offset`, the parent being `steps[..depth]`, read
     // afresh.
     let length_minus = |depth: usize, offset: usize| {
         let length = synth.expr(ExprKind::MethodCall {
-            object: Box::new(spell(synth, name, &steps[..depth])),
+            object: Box::new(spell(synth, name, base, &steps[..depth])),
             method: "__len__".to_string(),
             args: Vec::new(),
             kwargs: Vec::new(),
@@ -1308,7 +1727,7 @@ fn spell(synth: &Synth, name: &str, steps: &[Step]) -> Expr {
             Box::new(synth.int(offset)),
         ))
     };
-    let mut value = synth.identifier(name);
+    let mut value = base.map_or_else(|| synth.identifier(name), |base| synth.refresh(base));
     for (at, step) in steps.iter().enumerate() {
         let object = Box::new(value);
         value = match step {
@@ -1423,4 +1842,64 @@ fn droppable_test(command: &PlannedCommand) -> bool {
             .flatten()
             .all(|command| !matches!(command, PlannedCommand::Bind(_)) && droppable_test(command)),
     }
+}
+
+/// Bind `name` to the compile-time `subject` of a `comptime match`: a bare
+/// or `as` binding is the path's value, noted for a `|` alternative's
+/// merge; `var` and `ref` bindings are the pin's rejections.
+fn comptime_binding(
+    name: &str,
+    binding: Binding,
+    pattern_span: SourceSpan,
+    subject: &MatchSubject,
+    join: Join<'_>,
+    commands: &mut Commands,
+) -> Result<(), TypeError> {
+    match binding {
+        Binding::Var => Err(TypeError::MatchPattern(
+            "'var' bindings are not supported in 'comptime match'".into(),
+        )),
+        Binding::Ref => Err(TypeError::MatchPattern(
+            "'ref' bindings are not supported in 'comptime match'".into(),
+        )),
+        Binding::Bare | Binding::As => {
+            if let Join::Declare(bound) | Join::Assign(bound) = join {
+                bound.push(name.to_string());
+            }
+            commands.bindings.push(ComptimeBinding {
+                name: name.to_string(),
+                value: subject.value(),
+                span: pattern_span,
+            });
+            Ok(())
+        }
+    }
+}
+
+/// `conjuncts` joined left to right by `op` (`and` or `or`); none when
+/// there are none.
+fn conjoin(synth: &Synth, conjuncts: Vec<Expr>, op: InfixOp) -> Option<Expr> {
+    conjuncts
+        .into_iter()
+        .reduce(|left, right| synth.expr(ExprKind::Infix(op, Box::new(left), Box::new(right))))
+}
+
+/// `guard` with each name a case binds read as the value it denotes, as a
+/// guard reads upstream's `PValue` binding.
+fn substitute_bindings(guard: &Expr, bindings: &[ComptimeBinding]) -> Expr {
+    struct Substitute<'b>(&'b [ComptimeBinding]);
+
+    impl mojito_ast::visit::MutVisitor for Substitute<'_> {
+        fn visit_expr_mut(&mut self, expr: &mut Expr) {
+            if let ExprKind::Identifier(name) = &expr.kind
+                && let Some(binding) = self.0.iter().find(|binding| binding.name == *name)
+            {
+                *expr = binding.value.clone();
+            }
+        }
+    }
+
+    let mut guard = guard.clone();
+    mojito_ast::visit::walk_expr_mut(&mut Substitute(bindings), &mut guard);
+    guard
 }

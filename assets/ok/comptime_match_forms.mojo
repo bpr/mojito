@@ -1,17 +1,8 @@
-# PROBE: `comptime match` over a type parameter with `== Int`, over a value with literals, a tuple binding, and `1 | 3 as k if k > 2`.
-#
-# The pin runs it and prints:
-#   integer string other
-#   three
-#   m 4
-#   guarded 3
-#
-# Observed 2026-10-17 against `Mojo 1.2.0.dev2026101705 (46f49943)`.
-# Mojito: rejects `comptime match` until R1139 lands.
-# When Mojito runs it, promote this file to `assets/ok/` with its manifest rows.
-#
-# Run:    mojo run comptime_match_forms.mojo
-#         cargo run -- run conformance/probes/comptime_match_forms.mojo
+# `comptime match` over a type parameter with `== Int`, over a value with
+# literals, over a tuple with a binding, and with `1 | 3 as k if k > 2`: each
+# case's tests and guard are one compile-time condition of a `comptime if`
+# chain, its bindings compile-time values, and the elaborator keeps the
+# first case whose condition holds.
 def kind[T: AnyType]() -> String:
     comptime match T:
         case == Int:

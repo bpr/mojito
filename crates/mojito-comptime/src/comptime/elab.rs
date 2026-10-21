@@ -285,6 +285,11 @@ impl Elab<'_> {
                     out.push(stmt.clone());
                 }
             }
+            StmtKind::ComptimeMatch { .. } => {
+                if !self.keep_template_comptime_match(stmt, env, in_fn, out)? {
+                    out.push(stmt.clone());
+                }
+            }
             StmtKind::VarDecl { name, ty, value } => {
                 let ty = ty
                     .as_ref()
@@ -320,8 +325,7 @@ impl Elab<'_> {
                 ));
             }
             // A `match` is checked whole; its case bodies elaborate as a
-            // branch's do. A `comptime match` stays in its template like a
-            // `comptime if`: the elaborator below MIR selects its case.
+            // branch's do.
             StmtKind::Match { subject, cases } => {
                 let cases = self.match_cases(cases, env, in_fn)?;
                 out.push(rebuilt(
@@ -1493,6 +1497,58 @@ impl Elab<'_> {
             .collect::<Result<Vec<_>, ComptimeError>>()?;
         let orelse = orelse.as_deref().map(arm).transpose()?;
         out.push(rebuilt(stmt, StmtKind::ComptimeIf { branches, orelse }));
+        Ok(true)
+    }
+
+    /// Keep every `comptime match` of a function body, as upstream emits it
+    /// as one `hlcf.comptime.if`: each case body is elaborated with the
+    /// case's pattern bindings binders, as a `comptime for` body is with its
+    /// index, and the subject, patterns, and guards stay as written for the
+    /// check, which builds each case's condition and the elaborator below
+    /// MIR decides. Returns `false`, emitting nothing, at module scope.
+    fn keep_template_comptime_match(
+        &self,
+        stmt: &Stmt,
+        env: &ConstEnv<'_>,
+        in_fn: bool,
+        out: &mut Vec<Stmt>,
+    ) -> Result<bool, ComptimeError> {
+        let StmtKind::ComptimeMatch { subject, cases } = &stmt.kind else {
+            return Ok(false);
+        };
+        if !in_fn {
+            return Ok(false);
+        }
+        let Some(binders) = self.template_binders.borrow().last().cloned() else {
+            return Ok(false);
+        };
+        let cases = cases
+            .iter()
+            .map(|case| {
+                let mut binders = binders.clone();
+                let mut inner = env.clone();
+                for (name, _) in case.pattern.bindings() {
+                    binders.insert(name.to_string());
+                    inner.shadow(name);
+                }
+                self.template_binders.borrow_mut().push(binders);
+                let body = self.block(&case.body, &mut inner, true);
+                self.template_binders.borrow_mut().pop();
+                Ok(mojito_ast::ast::MatchCase {
+                    pattern: case.pattern.clone(),
+                    guard: case.guard.clone(),
+                    body: body?,
+                    span: case.span,
+                })
+            })
+            .collect::<Result<Vec<_>, ComptimeError>>()?;
+        out.push(rebuilt(
+            stmt,
+            StmtKind::ComptimeMatch {
+                subject: subject.clone(),
+                cases,
+            },
+        ));
         Ok(true)
     }
 

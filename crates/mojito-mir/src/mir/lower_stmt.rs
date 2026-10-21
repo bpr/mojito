@@ -2796,6 +2796,7 @@ impl<'a> Flatten<'a> {
                 CheckedStmtOp::With { .. }
                 | CheckedStmtOp::ComptimeIf { .. }
                 | CheckedStmtOp::ComptimeFor { .. }
+                | CheckedStmtOp::ComptimeMatch { .. }
                 | CheckedStmtOp::ComptimeAssert { .. },
                 _,
             ) => {
@@ -2825,16 +2826,10 @@ impl<'a> Flatten<'a> {
                     node.op.kind_name()
                 )));
             }
-            // A `match` without its plan, or a `comptime match`, is a form
-            // the checker admits before its lowering lands: a later-phase
-            // boundary here.
+            // A `match` without its plan is a form the checker admits before
+            // its lowering lands: a later-phase boundary here.
             (CheckedStmtOp::Match { .. }, _) => {
                 self.emit(MirInstr::Unsupported("'match' statement lowering".into()));
-            }
-            (CheckedStmtOp::ComptimeMatch { .. }, _) => {
-                self.emit(MirInstr::Unsupported(
-                    "'comptime match' statement lowering".into(),
-                ));
             }
             (
                 CheckedStmtOp::RefDecl { .. }

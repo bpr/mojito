@@ -1836,14 +1836,18 @@ impl Checker {
                     return Ok(());
                 }
                 // A type name takes the alias route; an alias of a value
-                // binder (`comptime lane = dt`), of an applied module
-                // constant (`comptime E = D`), or of a value alias's
-                // application (`comptime n = First[5, 6]`) is the ordinary
-                // path below.
+                // binder (`comptime lane = dt`), of a local compile-time
+                // value (`comptime k = $match<id>`, a `comptime match`
+                // binding), of an applied module constant (`comptime E =
+                // D`), or of a value alias's application (`comptime n =
+                // First[5, 6]`) is the ordinary path below.
                 let value_alias = self.names_value_binder(value)
                     || (type_params.is_empty()
                         && (self.names_applied_module_constant(value)
-                            || self.applies_value_alias(value)));
+                            || self.applies_value_alias(value)
+                            || matches!(&value.kind, ExprKind::Identifier(source)
+                                if self.lookup_tparam(source).is_none()
+                                    && self.parameter_value_ty(value).is_some())));
                 if !value_alias
                     && (!type_params.is_empty()
                         || self.comptime_aliases.contains_key(name)
@@ -1993,10 +1997,8 @@ impl Checker {
             StmtKind::Match { subject, cases } => {
                 self.check_match(stmt, subject, cases, ret, in_loop)
             }
-            // Pattern matching lands by slice: the parsed forms are rejected
-            // here until their checked plans exist.
-            StmtKind::ComptimeMatch { .. } => {
-                Err(TypeError::Unsupported("'comptime match' statements".into()))
+            StmtKind::ComptimeMatch { subject, cases } => {
+                self.check_comptime_match(stmt, subject, cases, ret, in_loop)
             }
 
             StmtKind::While { cond, body, orelse } => {

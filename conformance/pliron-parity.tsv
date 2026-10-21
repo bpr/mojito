@@ -86,6 +86,7 @@ assets/ok/comptime_assert_proves_proposition.mojo	main	exe-differential	sanitize
 assets/ok/comptime_call_callee_shapes.mojo	main	exe-differential	sanitized
 assets/ok/comptime_call_signature.mojo	main	exe-differential	sanitized
 assets/ok/comptime_collections.mojo	main	exe-differential	sanitized
+assets/ok/comptime_conditions_short_circuit.mojo	main	exe-differential	sanitized
 assets/ok/comptime_ctfe.mojo	main	exe-differential	sanitized
 assets/ok/comptime_display_binding_alias.mojo	main	exe-differential	sanitized
 assets/ok/comptime_display_binding_arguments.mojo	main	exe-differential	sanitized
@@ -144,6 +145,7 @@ assets/ok/comptime_if_overload_pack_plain_triple.mojo	main	exe-differential	sani
 assets/ok/comptime_if_overload_pack_zero_arity.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_overloaded_def.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_overloaded_def_explicit.mojo	main	exe-differential	sanitized
+assets/ok/comptime_if_struct_equality.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_template_served.mojo	main	exe-differential	sanitized
 assets/ok/comptime_lambda_initializer.mojo	main	exe-differential	sanitized
 assets/ok/comptime_layout_constant.mojo	main	exe-differential	sanitized
@@ -151,6 +153,9 @@ assets/ok/comptime_local_application_per_read.mojo	main	exe-differential	sanitiz
 assets/ok/comptime_local_binder_alias.mojo	main	exe-differential	sanitized
 assets/ok/comptime_local_display_applications.mojo	main	exe-differential	sanitized
 assets/ok/comptime_local_over_binder.mojo	main	exe-differential	sanitized
+assets/ok/comptime_match_coverage_warnings.mojo	main	exe-differential	sanitized
+assets/ok/comptime_match_forms.mojo	main	exe-differential	sanitized
+assets/ok/comptime_match_patterns.mojo	main	exe-differential	sanitized
 assets/ok/comptime_module_constant_parameter_values.mojo	main	exe-differential	sanitized
 assets/ok/comptime_shadowed_locals.mojo	main	exe-differential	sanitized
 assets/ok/comptime_sized_scalar_constant.mojo	main	exe-differential	sanitized

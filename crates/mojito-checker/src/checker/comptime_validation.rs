@@ -89,20 +89,32 @@ pub(super) enum ConstantScope<'a> {
 pub(super) enum ComptimeTest {
     If,
     Assert,
+    /// A `comptime match` subject, and each test its patterns compile to.
+    MatchSubject,
 }
 
 impl ComptimeTest {
+    pub(super) const fn dynamic_value(self) -> &'static str {
+        match self {
+            Self::If => "cannot use a dynamic value in 'comptime if' condition",
+            Self::Assert => "cannot use a dynamic value in 'comptime assert' expression",
+            Self::MatchSubject => "cannot use a dynamic value in 'match' subject",
+        }
+    }
+
     const fn context(self) -> &'static str {
         match self {
             Self::If => "comptime if condition",
             Self::Assert => "comptime assert condition",
+            Self::MatchSubject => "match subject",
         }
     }
 
-    const fn dynamic_value(self) -> &'static str {
+    const fn raising_call(self) -> &'static str {
         match self {
-            Self::If => "cannot use a dynamic value in 'comptime if' condition",
-            Self::Assert => "cannot use a dynamic value in 'comptime assert' expression",
+            Self::If => "cannot call raising function in 'comptime if' condition",
+            Self::Assert => "cannot call raising function in 'comptime assert' expression",
+            Self::MatchSubject => "cannot call raising function in boolean condition",
         }
     }
 }
@@ -330,20 +342,10 @@ impl Checker {
         }
     }
 
-    /// Record `constraint` as the compile-time reading of `cond`, each
-    /// operand naming its binder by identity: the innermost open scope's,
-    /// else the enclosing struct's.
-    fn record_comptime_condition(&self, cond: &Expr, constraint: &GenericConstraint) {
-        let bound = self.bind_constraint(constraint, &[]);
-        self.record_at(cond.source_span()).adjustment = Some(Box::new(
-            mojito_checked::checked::SemanticAdjustment::ComptimeCondition(bound),
-        ));
-    }
-
     /// The type of the parameter value `operand` names: a value binder, a
     /// `comptime for` variable, a local or module `comptime` binding, or the
     /// enclosing struct's value parameter (`Self.flag`).
-    fn parameter_value_ty(&self, operand: &Expr) -> Option<&Ty> {
+    pub(super) fn parameter_value_ty(&self, operand: &Expr) -> Option<&Ty> {
         match &operand.kind {
             ExprKind::Identifier(name)
                 if self.is_compile_time_binding(name)
@@ -367,6 +369,16 @@ impl Checker {
             }
             _ => None,
         }
+    }
+
+    /// Record `constraint` as the compile-time reading of `cond`, each
+    /// operand naming its binder by identity: the innermost open scope's,
+    /// else the enclosing struct's.
+    fn record_comptime_condition(&self, cond: &Expr, constraint: &GenericConstraint) {
+        let bound = self.bind_constraint(constraint, &[]);
+        self.record_at(cond.source_span()).adjustment = Some(Box::new(
+            mojito_checked::checked::SemanticAdjustment::ComptimeCondition(bound),
+        ));
     }
 
     /// Whether `operand` of a comparison is a parameter value whose builtin
@@ -526,13 +538,13 @@ impl Checker {
             // A local `comptime` binding the elaborator evaluates (`comptime
             // e = L[1]`) is no parameter: the condition runs with it.
             Ok(constraint) if self.names_evaluated_binding(&constraint) => {
-                self.expect_bool(cond, test.context())?;
+                self.expect_evaluated_bool(cond, test)?;
                 self.reject_dynamic_condition(cond, test)?;
                 Ok(None)
             }
             // A runtime local compiles to a parameter no binder declares.
             Ok(constraint) if self.names_unbound_parameter(&constraint) => {
-                self.expect_bool(cond, test.context())?;
+                self.expect_evaluated_bool(cond, test)?;
                 self.reject_dynamic_condition(cond, test)?;
                 Ok(None)
             }
@@ -541,7 +553,7 @@ impl Checker {
                 self.record_comptime_condition(cond, &constraint);
                 Ok(Some(constraint))
             }
-            Err(constraint_error) => match self.expect_bool(cond, test.context()) {
+            Err(constraint_error) => match self.expect_evaluated_bool(cond, test) {
                 Ok(()) => {
                     self.reject_dynamic_condition(cond, test)?;
                     Ok(None)
@@ -571,6 +583,18 @@ impl Checker {
             }
             _ => constraint,
         }
+    }
+
+    /// Require the leaf `cond` of a compile-time test, which the
+    /// elaborator runs, to be a `Bool` that calls no raising function: a
+    /// raising call (a `raises` `__eq__`) is the pin's rejection.
+    fn expect_evaluated_bool(&self, cond: &Expr, test: ComptimeTest) -> Result<(), TypeError> {
+        let (checked, raised) = self.observing_raises(|| self.expect_bool(cond, test.context()));
+        checked?;
+        if raised {
+            return Err(TypeError::Unsupported(test.raising_call().to_string()));
+        }
+        Ok(())
     }
 
     /// A `comptime if` condition the constraint compiler does not close

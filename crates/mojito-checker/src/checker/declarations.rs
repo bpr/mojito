@@ -152,7 +152,7 @@ pub(super) fn stmt_returns(stmt: &Stmt, reach: &dyn Fn(&Stmt) -> MatchReach) -> 
         // A `match` falls through unless its cases cover the subject or a
         // case the subject cannot miss concludes it; then every case a value
         // reaches must return.
-        StmtKind::Match { cases, .. } => {
+        StmtKind::Match { cases, .. } | StmtKind::ComptimeMatch { cases, .. } => {
             let reached = match_reach(stmt, cases, reach);
             reached.concluded
                 && reached
@@ -258,7 +258,7 @@ pub(super) fn definitely_initializes_named_result(
                     return true;
                 }
             }
-            StmtKind::Match { cases, .. } => {
+            StmtKind::Match { cases, .. } | StmtKind::ComptimeMatch { cases, .. } => {
                 let reached = match_reach(stmt, cases, reach);
                 if reached.concluded
                     && reached
@@ -483,7 +483,7 @@ fn init_field_flow(
             }
             // A `match` is a branch per case a value reaches, plus the
             // fall-through when no case concludes it.
-            StmtKind::Match { cases, .. } => {
+            StmtKind::Match { cases, .. } | StmtKind::ComptimeMatch { cases, .. } => {
                 let reached = match_reach(stmt, cases, reach);
                 let mut flows: Vec<_> = reached
                     .reachable(cases)

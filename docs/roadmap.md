@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1243**.
+Next free ID: **R1246**.
 
 ## Ordered Work
 
@@ -2938,32 +2938,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1139 `comptime match` folds in the parameter conditional chain**
+- [ ] **R1243 A starred sequence pattern in `comptime match` is rejected**
 
-  Problem: `comptime match` statements are rejected ("'comptime match'
-  statements"), where the pin matches a parameter subject by type equality
-  (`case == Int`), literals, tuples, bindings, `|`, `as`, and guards.
-  - The same checked commands compile to parameter comparisons and their
-    conjunctions, joining the existing `comptime if` chain:
-    `check_comptime_condition`, `ParamExpr`, type refinement, and
-    `native::mono`, which selects the case. A matched compile-time value
-    is bound in the arm's parameter environment before its guard.
-  - `case == Int` is ordinary parameter type equality. A subject that is
-    a CTFE application is demanded once and shared across the conditions.
-  - No folding of an applying subject in `mojito-comptime`, no cloned AST
-    arms, and no pattern evaluator over runtime values. Unselected bodies
-    are still checked once.
-  - A dynamic subject, a dynamic guard, a `var` binding, and an accessor
-    call in the pattern reject with the pin's texts.
-  - Stop: type equality, value parameters, tuple bindings, `|`, `as`, and
-    guards run in plain and generic functions, untaken-arm diagnostics
-    agree with the pin, and the textual MIR round-trip keeps the
-    parametric conditions.
-  - Coverage reuses `Checker::match_coverage` (`checker/coverage.rs`) over
-    the same recorded command shapes.
-  - Probe: `conformance/probes/comptime_match_forms.mojo`.
-  - Depends on R1134.
-  - Model: Fable, Planned.
+  Problem: `case [first, *_]` and `case [first, *rest]` over a compile-time
+  `List` are rejected ("a starred sequence pattern in 'comptime match'"),
+  where the pin binds the star to the subject's slice and prints `1`.
+  - The cause is the compile-time mode of `compile_sequence_pattern`
+    (`checker/patterns.rs`): a path is its expression over the subject,
+    and no compile-time value spells the slice, a `Span[T,
+    ComptimeOrigin]` over the compile-time list.
+  - The pin fails only where the slice crosses to run time: `len(rest)`
+    in the body is "cannot materialize compile-time value of type
+    'Span[Int, ComptimeOrigin]' to a runtime value".
+  - Lever: spell `Step::SequenceSlice` in compile-time mode, bind the star
+    as `comptime rest = subject[1:]`, and reject its runtime read with
+    the pin's text.
+  - Found while landing R1139 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1140 Repeated leading tests of neighbouring cases are shared**
 
@@ -4321,6 +4313,27 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1244 A compile-time arm does not assume that the earlier
+  conditions failed**
+
+  Problem: `comptime if not conforms_to(T, Writable): ... else: print(x)`
+  is rejected ("an element of 'values' with type 'T' does not conform to
+  trait 'Writable'"), where the pin prints `1`, and so is a `comptime
+  match` case after `case U if not conforms_to(U, Writable)`.
+  - Upstream's `buildBranchAssumption` (`emitComptimeCases`) gives each
+    arm its own condition and the negation of every earlier arm's, so an
+    `else` arm knows that every condition failed.
+  - Mojito's arms assume their own condition alone:
+    `check_conditional`'s compile-time branch (`checker/statements.rs`)
+    and `check_comptime_case` (`checker/patterns.rs`) call
+    `assume_condition` over that condition only.
+  - Lever: assume each earlier condition's negation too, through
+    `conformance_arm_assumptions`, which must then read a `conforms_to`
+    atom under a double negation.
+  - Found while landing R1139 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R972 A generic caller omitting a parameter whose default reads
   an earlier one is rejected**
 
@@ -4610,6 +4623,20 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     float twin of the probe.
   - Found while landing R887 (2026-10-14).
   - Depends on R482.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1245 A local `comptime` conditional expression in a plain body
+  is rejected**
+
+  Problem: `comptime x = t[1] if c else t[0]` over `comptime t = (5, 1)`
+  and `comptime c = t[0] == 1` fails with "not a compile-time value:
+  unsupported compile-time expression", where the pin prints `5`.
+  - The elaborator's evaluator (`crates/mojito-comptime/src/comptime/eval.rs`)
+    has no arm for `ExprKind::IfExpr`, so a closed conditional cannot
+    fold before the check.
+  - Lever: evaluate the condition, then the selected arm only.
+  - Found while planning R1139 (2026-10-20).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R483 A method's explicit value parameter supplied from the caller's

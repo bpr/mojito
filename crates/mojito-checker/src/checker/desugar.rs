@@ -122,6 +122,23 @@ impl Synth {
         )))
     }
 
+    /// A copy of `expr` each of whose nodes is a fresh occurrence of this
+    /// factory, at its own source location, so that the copy's facts are
+    /// its own.
+    pub(super) fn refresh(&self, expr: &Expr) -> Expr {
+        struct Refresh<'s>(&'s Synth);
+
+        impl MutVisitor for Refresh<'_> {
+            fn visit_expr_mut(&mut self, expr: &mut Expr) {
+                expr.syntax_id = self.0.identity();
+            }
+        }
+
+        let mut copy = expr.clone();
+        mojito_ast::visit::walk_expr_mut(&mut Refresh(self), &mut copy);
+        copy
+    }
+
     fn identity(&self) -> SyntaxId {
         let ordinal = self.next.get();
         self.next.set(ordinal + 1);

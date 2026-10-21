@@ -3,8 +3,9 @@
 Evidence for the pattern-matching entries (R1132–R1143), gathered 2026-10-17 against
 `Mojo 1.2.0.dev2026101705 (46f49943)` (upstream checkout `cfd79ca736`).
 Every row names the probe that pins it; runnable probes live under
-`conformance/probes/match_*.mojo`, `destructure_*.mojo`, `if_case_*.mojo`,
-and `comptime_match_forms.mojo`, each with the pin's output in its header.
+`conformance/probes/match_*.mojo`, `destructure_*.mojo`, and `if_case_*.mojo`,
+each with the pin's output in its header; the `comptime match` rows were
+extended on 2026-10-20 while landing R1139.
 Rows marked *diagnostic only* were run once and are recorded here rather
 than kept as files, with the pin's exact text. A probe Mojito runs with the
 pin's output moves to `assets/ok/` (or `assets/type_error/`) under the same
@@ -92,8 +93,14 @@ they wait for.
 |---|---|---|
 | `if case` / `elif case` | Each RHS is evaluated only when its branch is reached; mixes with boolean branches. A trailing `if` guard is not accepted (parsed as a ternary: `expected 'else' clause in ternary`). | `if_case_and_while_case`, `if_case_mixed_with_boolean_elif` |
 | `while case` | Re-evaluates the subject each iteration; `else` runs on failure, `break` skips it. | `if_case_and_while_case` |
-| `comptime match` | `== Int` over a type parameter, literals and tuples over values, bare bindings, OR, `as`, guards. `var` bindings reject (`'var' bindings are not supported in 'comptime match'`); a dynamic subject: `cannot use a dynamic value in 'match' subject`; a dynamic guard: `cannot use a dynamic value in 'comptime if' condition`. | `comptime_match_forms`, diagnostic only |
-| Untaken arm bodies | Still checked: `var bad: Int = "str"` in an untaken arm is `cannot implicitly convert 'StringLiteral["str"]' value to 'Int'`. | diagnostic only (`comptime_match` first draft) |
+| `comptime match` | `== Int` over a type parameter, literals and tuples over values, bare bindings, OR, `as`, guards. `var` bindings reject (`'var' bindings are not supported in 'comptime match'`); a dynamic subject: `cannot use a dynamic value in 'match' subject`; a dynamic guard: `cannot use a dynamic value in 'comptime if' condition`. | `assets/ok/comptime_match_forms`, `assets/type_error/comptime_match_*` |
+| `comptime match` paths and shapes | Struct (`P(a=1, b=y)`), enum-case (`.Some(x)` over `comptime o = Optional[Int](3)`), and fixed-length sequence (`[a, b]` over `comptime l = [1, 2]`) patterns run over compile-time values; a CTFE subject (`fib(10)`), string and float literals, a merging `(1, x) \| (x, 1)`, `Self.n`, nesting in `comptime for`, and `== m` against a compile-time binding all run; a match no case takes falls through. A `ref` binding rejects (`'ref' bindings are not supported in 'comptime match'`), a `== value` over a runtime local is `cannot use a dynamic value in 'match' subject`, a raising `__eq__` is `cannot call raising function in boolean condition`, `case 1` over `T: AnyType` is `'AnyType' does not implement the '__eq__' method`, and at module scope `'comptime match' must be contained in a function`. | `assets/ok/comptime_match_patterns`, `assets/type_error/comptime_match_*` |
+| `comptime match` refinement | `case == Int` does not refine `T` in its arm (`var x: T = 41` is `cannot implicitly convert 'IntLiteral[41]' value to 'T'`), and an arm also assumes every earlier condition failed (`case U if not conforms_to(U, Writable)` then `case _: print(x)` runs; R1244). | diagnostic only |
+| `comptime match` starred sequence | `case [first, *rest]` binds the star; only a runtime read of `rest` fails (`cannot materialize compile-time value of type 'Span[Int, ComptimeOrigin]' to a runtime value`); `case [first, *_]` prints `1` (R1243). | diagnostic only |
+| `comptime match` inside a struct method | A binding of a `Self.n` path (`case k if k > 5` over `Self.n`) is `unqualified access to struct parameter 'k'; use 'Self.k' instead`; a binding over any other subject runs. | diagnostic only |
+| Compile-time `and`/`or` and `elif` | Decided lazily: `o._get_enum_discriminant() == 1 and o._unsafe_get_enum_payload[1]() > 2` over an empty `o` is `False`, and an `elif` past a taken arm is never decided. | `assets/ok/comptime_conditions_short_circuit` |
+| Compile-time comparisons | A struct value's `==` runs its `__eq__`; a raising one in `comptime if` is `cannot call raising function in 'comptime if' condition`; `T == 1` is `'Copyable' does not implement the '__eq__' method` (the first bound), `T != 1` names `__ne__`. | `assets/ok/comptime_if_struct_equality`, `assets/type_error/comptime_if_*` |
+| Untaken arm bodies | Still checked: `var bad: Int = "str"` in an untaken arm is `cannot implicitly convert 'StringLiteral["str"]' value to 'Int'`. | `assets/type_error/comptime_match_untaken_arm_checked` |
 
 ## EnumLike prerequisites
 

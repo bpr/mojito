@@ -2892,14 +2892,9 @@ fn reassigned_names(
                 scan_all(body, counts);
                 scan_all(orelse.as_deref().unwrap_or_default(), counts);
             }
-            CheckedStmtOp::Match { .. } => {
+            CheckedStmtOp::Match { .. } | CheckedStmtOp::ComptimeMatch { .. } => {
                 for body in node.op.bodies() {
                     scan_all(body, counts);
-                }
-            }
-            CheckedStmtOp::ComptimeMatch { cases, .. } => {
-                for case in cases {
-                    scan_all(&case.body, counts);
                 }
             }
             CheckedStmtOp::Scope(body) => scan_all(body, counts),

@@ -1980,10 +1980,13 @@ pub enum CheckedStmtOp {
         cond: CheckedNodeId,
         message: Option<String>,
     },
-    /// `comptime match`: the subject's node, then each case's pattern
-    /// nodes, guard, and body.
+    /// `comptime match`, upstream's `hlcf.comptime.if` over its cases: the
+    /// statement anchoring the subject (`comptime $match<id> = subject`),
+    /// none when the subject is a compile-time name, then each case's
+    /// pattern nodes, bindings, compile-time condition, and body. A case's
+    /// guard is a conjunct of its condition.
     ComptimeMatch {
-        subject: CheckedNodeId,
+        anchor: Option<CheckedStmtId>,
         cases: Vec<CheckedMatchCase>,
     },
     If {
@@ -2064,8 +2067,9 @@ impl CheckedStmtOp {
                 .iter()
                 .flat_map(CheckedMatchCase::expressions)
                 .collect(),
-            Self::ComptimeMatch { subject, cases } => std::iter::once(*subject)
-                .chain(cases.iter().flat_map(CheckedMatchCase::expressions))
+            Self::ComptimeMatch { cases, .. } => cases
+                .iter()
+                .flat_map(CheckedMatchCase::expressions)
                 .collect(),
             Self::Comptime {
                 where_clauses,
@@ -2159,7 +2163,7 @@ impl CheckedStmtOp {
             Self::For { body, orelse, .. } => std::iter::once(body.as_slice())
                 .chain(orelse.as_deref())
                 .collect(),
-            Self::Match { anchor, cases } => anchor
+            Self::Match { anchor, cases } | Self::ComptimeMatch { anchor, cases } => anchor
                 .iter()
                 .map(std::slice::from_ref)
                 .chain(cases.iter().flat_map(|case| {
@@ -2168,9 +2172,6 @@ impl CheckedStmtOp {
                         .chain(std::iter::once(case.body.as_slice()))
                 }))
                 .collect(),
-            Self::ComptimeMatch { cases, .. } => {
-                cases.iter().map(|case| case.body.as_slice()).collect()
-            }
             Self::Try {
                 body,
                 except,
@@ -2236,6 +2237,7 @@ impl CheckedStmtOp {
                         .map(|command| command.map_operands(map))
                         .collect(),
                     guard: case.guard.map(|guard| map.expression(guard)),
+                    condition: case.condition.map(|condition| map.expression(condition)),
                     body: block(map, &case.body),
                     unreachable: case.unreachable,
                 })
@@ -2383,10 +2385,10 @@ impl CheckedStmtOp {
                 cases: cases(map, arms),
             },
             Self::ComptimeMatch {
-                subject,
+                anchor,
                 cases: arms,
             } => Self::ComptimeMatch {
-                subject: map.expression(*subject),
+                anchor: anchor.map(|anchor| map.statement(anchor)),
                 cases: cases(map, arms),
             },
             Self::For {
@@ -2761,6 +2763,10 @@ pub struct CheckedMatchCase {
     /// case when it fails, and each binding, as upstream's command list.
     pub commands: Vec<CheckedCommand>,
     pub guard: Option<CheckedNodeId>,
+    /// A `comptime match` case's compile-time condition: the conjunction of
+    /// its tests and its guard, recorded as a `comptime if` condition is;
+    /// none for a runtime case and for one that always matches.
+    pub condition: Option<CheckedNodeId>,
     pub body: Vec<CheckedStmtId>,
     /// Whether earlier cases cover every value the case matches: it is
     /// checked, and sealed unreached, as upstream's `hlcf.unreachable`.
@@ -2768,14 +2774,15 @@ pub struct CheckedMatchCase {
 }
 
 impl CheckedMatchCase {
-    /// The arm's nodes in checked order: the pattern's, the tests', then
-    /// the guard.
+    /// The arm's nodes in checked order: the pattern's, the tests', the
+    /// guard, then the compile-time condition.
     pub fn expressions(&self) -> Vec<CheckedNodeId> {
         self.pattern
             .expressions()
             .into_iter()
             .chain(self.commands.iter().flat_map(CheckedCommand::expressions))
             .chain(self.guard)
+            .chain(self.condition)
             .collect()
     }
 
@@ -2894,11 +2901,20 @@ impl CheckedCommand {
 /// It holds the declaration anchoring the subject, each case's commands,
 /// which the checked program's nodes are built from, and whether the
 /// cases cover every value of the subject, so that nothing falls through.
+/// A `comptime match`'s plan also holds each case's compile-time condition.
 #[derive(Debug, Clone)]
 pub struct MatchPlan {
-    /// `ref $match<id> = subject` or `var $match<id> = subject`.
-    pub anchor: Stmt,
+    /// `ref $match<id> = subject` or `var $match<id> = subject`; for a
+    /// `comptime match`, `comptime $match<id> = subject`, or none when the
+    /// subject is a compile-time name the cases read directly.
+    pub anchor: Option<Stmt>,
+    /// Per case, its program; a `comptime match` case's is its bindings
+    /// alone (`comptime name = path`), its tests being its condition.
     pub cases: Vec<Vec<PlannedCommand>>,
+    /// Per `comptime match` case, the conjunction of its tests and its
+    /// guard, a compile-time `Bool` (none when the case always matches);
+    /// empty for a runtime `match`.
+    pub conditions: Vec<Option<Expr>>,
     pub concluded: bool,
     /// Per case, whether earlier cases cover every value it matches, so
     /// that it is never reached (empty for a `case` condition).
@@ -3575,13 +3591,17 @@ impl CheckedTables {
                 }
                 walk(orelse.as_deref().unwrap_or_default(), visit);
             }
-            CheckedStmtOp::Match { anchor, cases } => {
+            CheckedStmtOp::Match { anchor, cases }
+            | CheckedStmtOp::ComptimeMatch { anchor, cases } => {
                 if let Some(anchor) = anchor {
                     walk(std::slice::from_ref(anchor), visit);
                 }
                 for case in cases {
                     for node in case.pattern.expressions() {
                         self.walk_expression(node, visit);
+                    }
+                    if let Some(condition) = case.condition {
+                        self.walk_expression(condition, visit);
                     }
                     for command in &case.commands {
                         for node in command.expressions() {
@@ -3593,15 +3613,6 @@ impl CheckedTables {
                     }
                     if let Some(guard) = case.guard {
                         self.walk_expression(guard, visit);
-                    }
-                    walk(&case.body, visit);
-                }
-            }
-            CheckedStmtOp::ComptimeMatch { subject, cases } => {
-                self.walk_expression(*subject, visit);
-                for case in cases {
-                    for node in case.expressions() {
-                        self.walk_expression(node, visit);
                     }
                     walk(&case.body, visit);
                 }
@@ -4914,7 +4925,10 @@ impl<'a> ArenaBuilder<'a> {
                 CheckedCondition::Case {
                     pattern: self.pattern(pattern),
                     value,
-                    anchor: plan.as_ref().map(|plan| self.stmt(&plan.anchor)),
+                    anchor: plan
+                        .as_ref()
+                        .and_then(|plan| plan.anchor.as_ref())
+                        .map(|anchor| self.stmt(anchor)),
                     commands: plan
                         .as_ref()
                         .and_then(|plan| plan.cases.first())
@@ -5666,8 +5680,11 @@ impl<'a> ArenaBuilder<'a> {
                 .map(|(condition, body)| (this.condition(condition), this.block(body)))
                 .collect::<Vec<_>>()
         };
+        // A `comptime match` case's guard is a conjunct of its condition,
+        // which holds its own copy of it.
         let cases =
             |this: &mut Self, cases: &[mojito_ast::ast::MatchCase], plan: Option<&MatchPlan>| {
+                let comptime = plan.is_some_and(|plan| !plan.conditions.is_empty());
                 cases
                     .iter()
                     .enumerate()
@@ -5682,7 +5699,15 @@ impl<'a> ArenaBuilder<'a> {
                                     .collect()
                             })
                             .unwrap_or_default(),
-                        guard: case.guard.as_ref().map(|guard| this.expr(guard)),
+                        guard: case
+                            .guard
+                            .as_ref()
+                            .filter(|_| !comptime)
+                            .map(|guard| this.expr(guard)),
+                        condition: plan
+                            .and_then(|plan| plan.conditions.get(index))
+                            .and_then(Option::as_ref)
+                            .map(|condition| this.expr(condition)),
                         body: this.block(&case.body),
                         unreachable: plan
                             .and_then(|plan| plan.unreachable.get(index).copied())
@@ -5775,19 +5800,26 @@ impl<'a> ArenaBuilder<'a> {
             },
             StmtKind::Match { cases: arms, .. } => {
                 let plan = self.facts(&statement.source_span()).match_plan.clone();
-                let anchor = plan.as_ref().map(|plan| self.stmt(&plan.anchor));
+                let anchor = plan
+                    .as_ref()
+                    .and_then(|plan| plan.anchor.as_ref())
+                    .map(|anchor| self.stmt(anchor));
                 CheckedStmtOp::Match {
                     anchor,
                     cases: cases(self, arms, plan.as_ref()),
                 }
             }
-            StmtKind::ComptimeMatch {
-                subject,
-                cases: arms,
-            } => CheckedStmtOp::ComptimeMatch {
-                subject: self.expr(subject),
-                cases: cases(self, arms, None),
-            },
+            StmtKind::ComptimeMatch { cases: arms, .. } => {
+                let plan = self.facts(&statement.source_span()).match_plan.clone();
+                let anchor = plan
+                    .as_ref()
+                    .and_then(|plan| plan.anchor.as_ref())
+                    .map(|anchor| self.stmt(anchor));
+                CheckedStmtOp::ComptimeMatch {
+                    anchor,
+                    cases: cases(self, arms, plan.as_ref()),
+                }
+            }
             StmtKind::For {
                 target,
                 iter,

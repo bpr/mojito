@@ -210,7 +210,20 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   program carries the commands as `CheckedCommand`s
   (`crates/mojito-checked/src/checked.rs`: `Equal`, `ListLength`, `Bind`,
   `PathValue`, `Alternatives`; `statements()` lists the reads and
-  bindings). HIR's `case_commands` lowers a test (`Equal`, `ListLength`)
+  bindings). `check_comptime_match` runs the same builder in
+  compile-time mode (`MatchSubject::comptime`): `anchor_comptime_subject`
+  reads a type or compile-time name in place (`MatchSubject::base`) or
+  binds `comptime $match<id> = subject`, `push_test` checks each test with
+  `check_comptime_condition` under `ComptimeTest::MatchSubject` and keeps it
+  in `Commands::conditions`, `materialize` reads no `$elem<id>`, a binding
+  is a `ComptimeBinding` (`comptime_binding`; `var`/`ref` rejected),
+  `compile_comptime_or_pattern` disjoins the alternatives and merges each
+  name into a conditional expression, and `check_comptime_case` declares
+  the bindings, reads the guard through `substitute_bindings`, conjoins the
+  case's condition (`conjoin`), checks the body under `assume_condition`,
+  and `check_comptime_cases` records `MatchPlan::conditions` (the
+  concluding case's dropped); `CheckedMatchCase::condition` carries it, and
+  HIR's `comptime_match` emits `HirInstr::ComptimeIf`. HIR's `case_commands` lowers a test (`Equal`, `ListLength`)
   to a conditional whose else advances, a read or binding to its
   statement, and `Alternatives` to an inner `hlcf.match` whose else region
   advances the enclosing case. `check_case_condition` checks an
@@ -546,7 +559,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   parameters symbolic: `check_comptime_condition` types a `comptime if`
   condition (a generic constraint, a concrete `conforms_to`, or a `Bool`
   value; `fold_closed_constraint` folds a closed one to its verdict and
-  `reject_dynamic_condition` is the pin's rejection of a runtime local),
+  `reject_dynamic_condition` is the pin's rejection of a runtime local,
+  `expect_evaluated_bool` of a raising call in a leaf the elaborator runs;
+  `ComptimeTest` words each for `comptime if`, `comptime assert`, and a
+  `comptime match` subject),
   `check_comptime_for` checks a loop body under its element type,
   `bind_template_comptime` binds a local `comptime` binding over the
   body's binders (at module scope, a constant's lifted initializer as
@@ -793,8 +809,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   an enclosing `where` supplies, and `eval_generic_constraint` its
   `is_proven()` projection. `compile_where_clause` retains an optional source
   diagnostic around the semantic constraint compiled by
-  `compile_generic_constraint`; declarations compile one constraint per
-  trailing `where` clause. `lower_parameterized_member` lowers the symbolic
+  `compile_generic_constraint`, which rejects a type compared with a value
+  (`reject_type_parameter_comparison`) and leaves a comparison of struct
+  values (`struct_valued_operand`) to its operator method; declarations
+  compile one constraint per trailing `where` clause. `lower_parameterized_member` lowers the symbolic
   type template shared by parameterized associated members and generic
   comptime aliases (`MemberTemplate::Type`, keeping the member's classified
   binders, which `type_resolution.rs:resolve_parameterized_member` binds by
@@ -1214,7 +1232,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `elaborate` composes prepare → elaborate for the CLI's
   `check` and the phase tests), the `Elab` elaboration driver
   (`block`/`stmt`; its
-  `keep_template_comptime_if` keeps every `comptime if` of a function body and `keep_template_comptime_for` every loop, `def_body` pushing a binder set for every body, empty for a plain one; a module constant that applies a callable, asks a layout, or reads one is marked `CtMarker::Applied` and kept as written, `applied_initializer`; its
+  `keep_template_comptime_if` keeps every `comptime if` of a function body, `keep_template_comptime_match` every `comptime match` (each case body elaborated with its pattern's bindings as binders), and `keep_template_comptime_for` every loop, `def_body` pushing a binder set for every body, empty for a plain one; a module constant that applies a callable, asks a layout, or reads one is marked `CtMarker::Applied` and kept as written, `applied_initializer`; its
   own binders (`Elab::template_binders`) for the check, where every other
   one is selected), and type resolution; nothing is cloned or specialized
   above the check. `Elab`'s remaining
@@ -1613,8 +1631,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Tuple` (`is_nominal_tuple`) freezes to its elements — and
   `copy_body` appends one finished copy per
   iterator, after `stop_test` finds the body's `has_next` branch,
-  `Specializer::decide_comptime_condition` (`mono/specializer.rs`) decides
-  it under the copy's binding, and `kept_blocks` keeps the taken arm alone
+  `Specializer::decide_comptime_condition` (`mono/specializer.rs`, which
+  decides `and`/`or` left to right and stops once the left side decides)
+  decides it under the copy's binding, and `kept_blocks` keeps the taken arm alone
   (fresh registers, a fresh slot from `fresh_slots` for each slot
   whose type names the index (`mojito_types::types::names_binder`),
   `substitute_value_parameter_reads` with the index among the locals,

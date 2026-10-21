@@ -1765,20 +1765,40 @@ impl<'a> Specializer<'a> {
         function: &mut MirFunction,
         bindings: &Bindings,
     ) -> Result<(), MonoError> {
-        if self.select_comptime_branches_in(template, &mut function.blocks, bindings)? {
+        if self.select_comptime_branches_in(template, &mut function.blocks, (0, 0), bindings)? {
             mojito_mir::mir::prune_unreachable_blocks(function);
         }
         Ok(())
     }
 
-    /// Whether the `comptime if` condition `cond` holds under the bindings,
-    /// its compile-time applications run first.
+    /// Whether the `comptime if` condition `cond` holds under the bindings.
+    /// `and` and `or` decide left to right and stop once the left side
+    /// decides them, as upstream's `ParamOperatorAttr` folds them, so a
+    /// right side's compile-time applications run only when it is reached:
+    /// a payload read guarded by its tag test never runs over the other
+    /// variant. Each other leaf runs its applications first.
     pub(super) fn decide_comptime_condition(
         &mut self,
         template: &str,
         cond: &GenericConstraint,
         bindings: &Bindings,
     ) -> Result<bool, MonoError> {
+        match cond {
+            GenericConstraint::WithMessage(inner, _) => {
+                return self.decide_comptime_condition(template, inner, bindings);
+            }
+            GenericConstraint::Not(inner) => {
+                return Ok(!self.decide_comptime_condition(template, inner, bindings)?);
+            }
+            GenericConstraint::And(left, right) | GenericConstraint::Or(left, right) => {
+                let conjunction = matches!(cond, GenericConstraint::And(..));
+                if self.decide_comptime_condition(template, left, bindings)? != conjunction {
+                    return Ok(!conjunction);
+                }
+                return self.decide_comptime_condition(template, right, bindings);
+            }
+            _ => {}
+        }
         let cond = self.resolve_applications(template, cond, bindings)?;
         self.constraint_holds(&cond, bindings, &mut HashSet::new())
             .ok_or_else(|| {
@@ -1789,16 +1809,31 @@ impl<'a> Specializer<'a> {
             })
     }
 
-    /// [`Self::select_comptime_branches`] over one block list and the
-    /// regions below it; whether any branch was decided.
+    /// [`Self::select_comptime_branches`] over the blocks `blocks` holds,
+    /// the first numbered `base`, and the regions below them; whether any
+    /// branch was decided. Only a block reached from `entry` under the
+    /// decisions already made is decided, as upstream folds the taken arm of
+    /// one `hlcf.comptime.if` before it reaches the next: an `elif` past a
+    /// taken arm never runs its condition's applications. A block never
+    /// reached keeps its branch for pruning to remove.
     pub(super) fn select_comptime_branches_in(
         &mut self,
         template: &str,
         blocks: &mut [MirBlock],
+        (base, entry): (mojito_mir::mir::MirBlockId, mojito_mir::mir::MirBlockId),
         bindings: &Bindings,
     ) -> Result<bool, MonoError> {
         let mut decided = false;
-        for block in blocks {
+        let mut reached = vec![false; blocks.len()];
+        let mut pending = vec![entry];
+        while let Some(id) = pending.pop() {
+            let Some(index) = id.checked_sub(base).filter(|&index| index < blocks.len()) else {
+                continue;
+            };
+            if std::mem::replace(&mut reached[index], true) {
+                continue;
+            }
+            let block = &mut blocks[index];
             if let MirTerm::ComptimeBranch {
                 cond,
                 then_b,
@@ -1844,12 +1879,17 @@ impl<'a> Specializer<'a> {
                         .chain(orelse.iter_mut())
                         .chain(finalbody.iter_mut());
                     for region in regions {
-                        decided |= self.select_comptime_branches_in(template, region, bindings)?;
+                        decided |=
+                            self.select_comptime_branches_in(template, region, (0, 0), bindings)?;
                     }
                 }
             }
+            pending.extend(mojito_mir::mir::block_successors(block));
         }
-        Ok(decided)
+        Ok(decided
+            || blocks.iter().zip(&reached).any(|(block, reached)| {
+                !reached && matches!(block.term, MirTerm::ComptimeBranch { .. })
+            }))
     }
 
     /// Fold every parameter constant of the instance, and every bracket

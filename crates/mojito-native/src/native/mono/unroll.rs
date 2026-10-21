@@ -186,7 +186,7 @@ impl Specializer<'_> {
             copies.push((first, entry));
             self.copy_body(
                 blocks,
-                (&kept, test.block, taken),
+                (&kept, entry, test.block, taken),
                 frame,
                 tables,
                 (&iteration, bindings, suite.then_some(&source.next_value)),
@@ -229,11 +229,12 @@ impl Specializer<'_> {
     /// is the suite, registers fresh, each of the `indexed` slots the copy
     /// addresses fresh at its type for the iteration, reads of the binder
     /// folded, types substituted, nested loops unrolled, and the
-    /// compile-time branches over the binder decided.
+    /// compile-time branches over the binder that the copy's `entry`
+    /// reaches decided.
     fn copy_body(
         &mut self,
         blocks: &mut Vec<MirBlock>,
-        (kept, test, taken): (&[MirBlockId], MirBlockId, MirBlockId),
+        (kept, entry, test, taken): (&[MirBlockId], MirBlockId, MirBlockId, MirBlockId),
         frame: &LoopFrame<'_>,
         tables: &mut FrameTables<'_>,
         (iteration, bindings, element): (&Bindings, &Bindings, Option<&ParamExpr>),
@@ -306,7 +307,12 @@ impl Specializer<'_> {
             tables.reg_types,
             false,
         )?;
-        self.select_comptime_branches_in(frame.template, &mut blocks[first..], iteration)?;
+        self.select_comptime_branches_in(
+            frame.template,
+            &mut blocks[first..],
+            (first, entry),
+            iteration,
+        )?;
         self.instantiate_region_references(frame.template, &mut blocks[first..], iteration)
     }
 

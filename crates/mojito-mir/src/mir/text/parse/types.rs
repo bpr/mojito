@@ -46,7 +46,14 @@ impl Decoder {
                 // one argument holds.
                 "dependent_parameter" => {
                     let expr = self.param_expr(inner)?;
-                    if *expr.meta() == MetaTy::type_list() {
+                    // A trait-valued parameter types the elements of the
+                    // raw list it bounds (`KGENParamList[Trait]`).
+                    if *expr.meta() == MetaTy::type_list()
+                        || expr
+                            .meta()
+                            .as_value()
+                            .is_some_and(|ty| matches!(ty.kind(), TyKind::AnyTrait(_)))
+                    {
                         return Some(TyKind::Dependent(DependentType::Parameter(expr)).into());
                     }
                     if *expr.meta() != MetaTy::Type {

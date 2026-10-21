@@ -884,8 +884,25 @@ that does not, if the instance reaches it
 For the rest of its block the checker knows the asserted condition, as it
 knows a `comptime if` arm's (`Checker::assume_condition`: the `conforms_to`
 atoms below, and each conjunct of the residual proposition the condition
-states, which proves a callee's `where` clause). The
-template keeps every `comptime for` in a generic body, as upstream keeps its
+states, which proves a callee's `where` clause). The elaborator decides a
+condition lazily, as upstream folds a `ParamOperatorAttr` (`Specializer::
+decide_comptime_condition`): `and` and `or` stop once their left side
+decides them, and only a block reached under the decisions already made is
+decided (`select_comptime_branches_in`), so an `elif` past a taken arm, or
+an enum payload read guarded by its tag, never runs.
+A `comptime match` is that same conditional chain, as upstream emits its
+cases as one `hlcf.comptime.if` (`emitComptimeCases`): the elaborator above
+the check keeps it with each case body elaborated over its pattern's
+bindings as binders (`comptime/elab.rs::keep_template_comptime_match`), the
+checker compiles each case's pattern with the runtime `match`'s builder in
+compile-time mode (`Checker::check_comptime_match`, `checker/patterns.rs`)
+— its tests conjoined with its guard into one compile-time condition that
+`check_comptime_condition` records, its bindings `comptime name = path`
+declarations — and records the plan (`MatchPlan::conditions`), the checked
+handoff carries `CheckedStmtOp::ComptimeMatch` with each case's
+`CheckedMatchCase::condition`, and HIR lowers it to `HirInstr::ComptimeIf`
+(`hir::Lower::comptime_match`), so MIR and below see only the existing op.
+The template keeps every `comptime for` in a generic body, as upstream keeps its
 parameter `for` (`comptime/elab.rs::keep_template_comptime_for`, which
 forces a pending module constant the loop iterates): the checker types the body
 once and records how the loop iterates

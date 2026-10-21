@@ -214,8 +214,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     }
 }
 
-/// Upstream requires a `comptime if` or a `comptime assert` to sit inside a
-/// function, with its own wording for each. The walk stops at every `def`, so
+/// Upstream requires a `comptime if`, a `comptime match`, or a `comptime
+/// assert` to sit inside a function, with its own wording for each. The walk stops at every `def`, so
 /// a function body — including a nested one — keeps the form. A struct or
 /// trait body holds members rather than statements; its member parser
 /// rejects the assertion itself (`comptime_assert_outside_function`).
@@ -229,6 +229,10 @@ fn reject_comptime_statement_outside_function(statement: &Stmt) -> Result<(), Pa
     match &statement.kind {
         StmtKind::ComptimeIf { .. } => Err(ParseError::Message(
             "'comptime if' must be contained in a function".to_string(),
+        )
+        .at(statement.span)),
+        StmtKind::ComptimeMatch { .. } => Err(ParseError::Message(
+            "'comptime match' must be contained in a function".to_string(),
         )
         .at(statement.span)),
         StmtKind::ComptimeAssert { .. } => {

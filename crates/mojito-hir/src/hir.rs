@@ -540,7 +540,9 @@ fn collect_function_implicit_names(
             CheckedStmtOp::ComptimeFor { body, .. }
             | CheckedStmtOp::With { body, .. }
             | CheckedStmtOp::Scope(body) => vec![body.as_slice()],
-            CheckedStmtOp::Match { .. } => statement.op.bodies(),
+            CheckedStmtOp::Match { .. } | CheckedStmtOp::ComptimeMatch { .. } => {
+                statement.op.bodies()
+            }
             _ => Vec::new(),
         };
         for body in bodies {
@@ -935,6 +937,9 @@ impl Lower {
                 anchor: Some(anchor),
                 cases,
             } => self.match_statement(*anchor, cases),
+            CheckedStmtOp::ComptimeMatch { anchor, cases } => {
+                self.comptime_match(*anchor, cases);
+            }
             CheckedStmtOp::For { .. } => self.for_loop(s),
             CheckedStmtOp::Break => self.leave(id, true),
             CheckedStmtOp::Continue => self.leave(id, false),
@@ -1323,6 +1328,70 @@ impl Lower {
         });
     }
 
+    /// `comptime match` as upstream's `hlcf.comptime.if`: the anchor, then
+    /// one arm per tested case a value reaches, its condition the case's,
+    /// and the concluding case, whose condition the coverage proof
+    /// dropped, the else arm; an arm runs its case's bindings, then its
+    /// body. A case earlier ones cover lowers nothing, nor does any case
+    /// after the else arm. With no tested case the else arm is inlined, as
+    /// upstream emits a lone always-matching case.
+    fn comptime_match(&mut self, anchor: Option<CheckedStmtId>, cases: &[CheckedMatchCase]) {
+        if let Some(anchor) = anchor {
+            self.stmt(anchor);
+        }
+        let reached: Vec<&CheckedMatchCase> =
+            cases.iter().filter(|case| !case.unreachable).collect();
+        let tested = reached
+            .iter()
+            .position(|case| case.condition.is_none())
+            .unwrap_or(reached.len());
+        let (tested, orelse) = (&reached[..tested], reached.get(tested).copied());
+        if tested.is_empty() {
+            if let Some(case) = orelse {
+                self.scopes.push(HashMap::new());
+                self.comptime_case(case);
+                self.scopes.pop();
+            }
+            return;
+        }
+        let conds = tested
+            .iter()
+            .filter_map(|case| case.condition)
+            .map(|condition| self.expr(condition))
+            .collect();
+        let arms = tested
+            .iter()
+            .map(|case| self.comptime_case_arm(Some(case)))
+            .collect();
+        let orelse = self.comptime_case_arm(orelse);
+        self.push(HirInstr::ComptimeIf {
+            conds,
+            arms,
+            orelse,
+        });
+    }
+
+    /// A `comptime match` arm: `case`'s bindings and body in their own
+    /// scope, then `comptime.yield`.
+    fn comptime_case_arm(&mut self, case: Option<&CheckedMatchCase>) -> HirRegion {
+        self.region(|this| {
+            if let Some(case) = case {
+                this.scopes.push(HashMap::new());
+                this.comptime_case(case);
+                this.scopes.pop();
+            }
+            Terminator::ComptimeYield
+        })
+    }
+
+    /// A `comptime match` case's bindings, then its body.
+    fn comptime_case(&mut self, case: &CheckedMatchCase) {
+        for declarations in case.statements() {
+            self.block(declarations);
+        }
+        self.block(&case.body);
+    }
+
     /// A `comptime if` arm: `body` in its own scope, then `comptime.yield`.
     fn comptime_arm(&mut self, body: Option<&[CheckedStmtId]>) -> HirRegion {
         self.region(|this| {
@@ -1655,7 +1724,7 @@ fn explicit_local_names(checked: &CheckedTables, body: &[CheckedStmtId]) -> Hash
                 | CheckedStmtOp::ComptimeFor { body, .. }
                 | CheckedStmtOp::With { body, .. }
                 | CheckedStmtOp::Scope(body) => walk(checked, body, names),
-                CheckedStmtOp::Match { .. } => {
+                CheckedStmtOp::Match { .. } | CheckedStmtOp::ComptimeMatch { .. } => {
                     for body in statement.op.bodies() {
                         walk(checked, body, names);
                     }

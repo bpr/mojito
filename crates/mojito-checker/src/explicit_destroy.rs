@@ -1235,6 +1235,45 @@ fn check_stmt(
             }
             env = join(exits)?;
         }
+        // Each case is a `comptime if` arm, run from the entry state; the
+        // fall-through, unless a case concludes the match, is the missing
+        // `else`.
+        StmtKind::ComptimeMatch { subject, cases } => {
+            let plan = node_facts
+                .get(&stmt.source_span())
+                .and_then(|facts| facts.match_plan.as_ref());
+            let mut exits = Vec::new();
+            for (index, case) in cases.iter().enumerate() {
+                let exit = check_block(
+                    &case.body,
+                    env.clone(),
+                    true,
+                    node_facts,
+                    deletability,
+                    types,
+                )?;
+                let unreachable = plan
+                    .and_then(|plan| plan.unreachable.get(index).copied())
+                    .unwrap_or(false);
+                exits.extend(exit.filter(|_| !unreachable));
+            }
+            let concluded = plan.is_some_and(|plan| plan.concluded)
+                || cases.iter().any(|case| {
+                    case.guard.is_none() && crate::checker::irrefutable_pattern(&case.pattern)
+                });
+            if !concluded {
+                exits.push(env.clone());
+            }
+            if env.is_parametric(subject) {
+                let Some(next) = join_parametric(exits) else {
+                    return Ok(None);
+                };
+                env = next;
+            } else {
+                exits.push(env);
+                env = join_comptime(exits);
+            }
+        }
         StmtKind::While { cond, body, orelse } => {
             check_expr(cond.value(), &mut env, node_facts, types)?;
             finish_statement(&mut env, types)?;

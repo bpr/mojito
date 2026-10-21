@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `comptime match` runs as upstream's compile-time conditional chain: each
+  case's tests (`== Int` type equality, literals, enum tags, sequence
+  lengths) and guard are one compile-time condition over the subject, its
+  bare and `as` bindings are compile-time values, `|` is the disjunction of
+  its alternatives with merged bindings, and the elaborator keeps the first
+  case whose condition holds. Type and value parameters, tuples, struct,
+  enum-case, and fixed-length sequence patterns, CTFE subjects (demanded
+  once), and nesting in `comptime for` run in plain and generic functions,
+  coverage warns as for `match`, and dynamic subjects, dynamic guards,
+  `var`/`ref` bindings, and module scope reject with the pin's texts
+  (`assets/ok/comptime_match_*.mojo`, `assets/type_error/comptime_match_*`).
+  This closes R1139.
+
 - `match` coverage ports upstream's covering spaces over each case's
   command shapes (`checker/coverage.rs`): a closed `EnumLike` (`Optional`,
   `Bool`) is its constructors, an open one keeps its fall-through and only
@@ -457,6 +470,17 @@ to evolve under the `0.x` compatibility rules.
   the package format is 70.
 
 ### Fixed
+
+- Compile-time conditions follow the pin: the elaborator decides `and` and
+  `or` left to right and an `elif` only when no earlier arm was taken, so a
+  payload read guarded by its tag never runs over the other variant; a
+  struct value compared with `==` runs its own `__eq__` instead of a
+  structural comparison; and a raising call in a condition, or a type
+  compared with a value (`T == 1`), is rejected with the pin's text
+  (`assets/ok/comptime_conditions_short_circuit.mojo`,
+  `comptime_if_struct_equality.mojo`, `assets/type_error/comptime_if_*`).
+  The textual MIR reader accepts the trait-valued element type of
+  `TypeList`'s raw list, so an emitted artifact executes again.
 
 - A destructured leaf or comprehension binder that shadows an outer name
   (`[x * 2 for x in xs]` beside a local `x`, `(ref x, ref y) = t` in a loop
