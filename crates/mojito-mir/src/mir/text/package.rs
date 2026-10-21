@@ -22,7 +22,7 @@
 //! The container is a header followed by records:
 //!
 //! ```text
-//! mojito-package 52
+//! mojito-package 77
 //! <the header's length, 8 bytes little-endian>
 //! <the header, as bytecode>
 //! <the payload: every record, as bytecode, then the type section>
@@ -107,6 +107,9 @@ pub struct PackageBodies {
     units: Mutex<HashMap<usize, Arc<OnceLock<LoweredUnit>>>>,
     /// Each function table row's body, once finished.
     decoded: Vec<OnceLock<FinishedBody>>,
+    /// Each function table row's finished body with its control flow
+    /// lowered, once the elaborator first fetches it as a template.
+    templates: Vec<OnceLock<MirFunction>>,
     /// Whether each row's function lies on a cycle of the calls
     /// [`Self::on_cycle`] was asked about, once answered.
     cycles: Mutex<HashMap<usize, bool>>,
@@ -133,6 +136,23 @@ impl PackageBodies {
     /// thread that first asks for it.
     pub fn get(&self, name: &str) -> Option<&MirFunction> {
         self.finished(name)?.function.as_ref()
+    }
+
+    /// The body of `name` as the elaborator instantiates it: [`Self::get`]'s
+    /// with its structured control flow lowered to blocks
+    /// (`lower-control-flow`), lowered once per process, as the package is
+    /// shared by every compilation that imports it.
+    pub fn template(&self, name: &str) -> Option<&MirFunction> {
+        let function = self.get(name)?;
+        if !crate::mir::has_structured_control_flow(function) {
+            return Some(function);
+        }
+        let row = self.package.body_row(name)?;
+        Some(self.templates.get(row)?.get_or_init(|| {
+            let mut template = function.clone();
+            crate::mir::lower_control_flow(&mut template);
+            template
+        }))
     }
 
     /// What made the body of `name` unusable, finishing it on first use:
@@ -339,7 +359,7 @@ impl PackageBodies {
                     finish(name, function, &view.declarations, self, &mut findings)
                 };
                 let _verify = timing::span("package.body.verify");
-                findings.extend(crate::mir::verify::verify_function_in(
+                findings.extend(crate::mir::verify::verify_structured_function_in(
                     name,
                     &function,
                     &view.declarations,
@@ -699,6 +719,9 @@ pub fn read_package(bytes: PackageBytes, root: &LibraryRoot) -> Result<Package, 
             payload,
             root: root.clone(),
             decoded: (0..declarations.body_count())
+                .map(|_| OnceLock::new())
+                .collect(),
+            templates: (0..declarations.body_count())
                 .map(|_| OnceLock::new())
                 .collect(),
             modules,

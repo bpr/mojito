@@ -616,6 +616,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The seams no longer lower control flow: the pre-elaboration pipeline,
+  `emit-mir`, and the artifacts keep structured bodies, one block per
+  region, as upstream's generators keep `hlcf`, and the elaborator lowers
+  each template once where it first fetches it (`mono/bodies.rs`
+  `Templates`, `PackageBodies::template`). Every inlined body now goes in
+  its `inlined_cf_scope` loop, the inliner's block splice is gone, and the
+  call takes the inlined result forwarded, so an inlined initializer or
+  multi-return callee runs no move initializer, as on the pin
+  (`assets/ok/always_inline_result_runs_no_move.mojo`). An unread `if`
+  now skips its `elif` condition's call, as the pin does
+  (`assets/ok/if_unread_elif_call_skipped.mojo`), and a parameter read
+  only in a `comptime if False` arm is removed. The elaborator's
+  `comptime for` body recovery and CSE read immediate dominators
+  (`mir::immediate_dominators`), computed once per unroll step, so
+  `tuple_reverse_concat` elaborates several times faster. This closes
+  R1254.
 - `inline-parametric` inlines a callee whose body holds an `if`, a loop,
   a `comptime if`, a `comptime for`, or a `match`, as upstream's
   `inlineGeneratorCall` does: on a structured body each inlined body goes

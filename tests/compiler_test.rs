@@ -4776,3 +4776,28 @@ fn compiler_reports_enum_and_product_coverage_warnings_in_pin_order() {
         [(67, missing("case for 'Leaf'")), (89, covered("A"))]
     );
 }
+
+#[test]
+fn comptime_if_false_parameter_is_removed() {
+    // The pipeline reads `f`'s `comptime if False` as a region, whose
+    // untaken arm alone reads `n`, so `remove-unused-params` drops `n`.
+    let source = "@no_inline\n\
+                  def f[n: Int]() -> Int:\n\
+                  \x20   comptime if False:\n\
+                  \x20       comptime k = n * 2\n\
+                  \x20       return k\n\
+                  \x20   return 3\n\
+                  \n\
+                  def main():\n\
+                  \x20   print(f[1](), f[2]())\n";
+    let compiled = Compiler::default()
+        .compile_source(source, std::path::Path::new("comptime_if_false.mojo"))
+        .expect("compile");
+    let mir = compiled.elaborated_mir();
+    let (_, f) = mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "f")
+        .expect("`f`");
+    assert_eq!(f.removed_params, [mojito::param_expr::ParamId::new("f", 0)]);
+}

@@ -878,7 +878,9 @@ fn demanded_member_its_instance_disproves_is_an_error() {
     let compiled = compiler
         .compile_source(CONDITIONAL_MEMBERS, std::path::Path::new("mono_test.mojo"))
         .expect("compile conditional members");
-    let mut specializer = Specializer::new(compiled.drop_elaborated_mir(), None);
+    let program = compiled.drop_elaborated_mir();
+    let templates = bodies::Templates::of(program);
+    let mut specializer = Specializer::new(program, None, &templates);
     let available = slot_bindings(&specializer, Ty::int());
     specializer
         .enqueue(&nullary_slot_init(), available, Vec::new())
@@ -899,7 +901,9 @@ fn available_member_that_does_not_materialize_is_an_error() {
     let compiled = compiler
         .compile_source(CONDITIONAL_MEMBERS, std::path::Path::new("mono_test.mojo"))
         .expect("compile conditional members");
-    let mut specializer = Specializer::new(compiled.drop_elaborated_mir(), None);
+    let program = compiled.drop_elaborated_mir();
+    let templates = bodies::Templates::of(program);
+    let mut specializer = Specializer::new(program, None, &templates);
     // The empty tuple is `Defaultable`, and `T()` has no construction for it.
     let bindings = slot_bindings(&specializer, TyKind::Tuple(Vec::new()).into());
     specializer
@@ -957,7 +961,9 @@ fn trivial_value_and_pack_clauses_are_decided() {
             std::path::Path::new("mono_test.mojo"),
         )
         .expect("compile trivial and value members");
-    let specializer = Specializer::new(compiled.drop_elaborated_mir(), None);
+    let program = compiled.drop_elaborated_mir();
+    let templates = bodies::Templates::of(program);
+    let specializer = Specializer::new(program, None, &templates);
     let cell = |argument: &str, n: i64| {
         let template = &specializer.structs["Cell"];
         let mut bindings = specializer.base_bindings();
@@ -1075,7 +1081,9 @@ fn a_struct_conformance_is_decided_from_its_declaration_when_asked() {
         .compile_source(source, std::path::Path::new("mono_test.mojo"))
         .expect("compile conformance program");
     assert!(compiled.imported_package().is_some());
-    let specializer = Specializer::new(compiled.drop_elaborated_mir(), None);
+    let program = compiled.drop_elaborated_mir();
+    let templates = bodies::Templates::of(program);
+    let specializer = Specializer::new(program, None, &templates);
     let list = Ty::new(TyKind::Struct("List".into(), vec![TyArg::Ty(Ty::int())]));
     let book = Ty::new(TyKind::Struct("Book".into(), Vec::new()));
     let conforms =

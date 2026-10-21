@@ -80,21 +80,8 @@
               var.use { dest: %r1, var: $v0, mode: copy },
               call { dest: %r2, func: D, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: present(%r0), expr: present(param_decl_ref { owner: "destructor_drop", slot: 0, name: n, type: meta_value(Int) }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "destructor_drop", slot: 0, name: n, type: meta_value(Int) }))], spread: absent },
               var.store { var: $v1, src: %r2, binding_type: present(struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "destructor_drop", slot: 0, name: n, type: meta_value(Int) }))] }), in_place: true },
-              place.load { dest: %r3, place: place { root: $v1, root_type: present(struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "destructor_drop", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } }
-            ],
-            terminator: jump { target: bb1 }
-          },
-          bb1 {
-            instructions: [
-              const { dest: %r7, value: param(param_decl_ref { owner: "destructor_drop", slot: 0, name: n, type: meta_value(Int) }) },
-              place.load { dest: %r8, place: place { root: $v1, root_type: present(struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "destructor_drop", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
-              call { dest: %r9, func: note, raises: absent, args: [%r7, %r8], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
-              consume.var { var: $v1 }
-            ],
-            terminator: jump { target: bb2 }
-          },
-          bb2 {
-            instructions: [
+              place.load { dest: %r3, place: place { root: $v1, root_type: present(struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "destructor_drop", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
+              loop { label: present(loop4294967295), body: [bb0 { instructions: [const { dest: %r7, value: param(param_decl_ref { owner: "destructor_drop", slot: 0, name: n, type: meta_value(Int) }) }, place.load { dest: %r8, place: place { root: $v1, root_type: present(struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "destructor_drop", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } }, call { dest: %r9, func: note, raises: absent, args: [%r7, %r8], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, consume.var { var: $v1 }], terminator: break { label: present(loop4294967295) } }] },
               const { dest: %r6, value: none },
               value.copy { dest: %r4, value: %r3 }
             ],

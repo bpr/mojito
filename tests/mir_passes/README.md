@@ -27,14 +27,11 @@ below. Labels are `<pass>/<case>.mir`, so the reports hold no machine path.
    `mojito emit-mir`. A pass in `analysis::PIPELINE` takes this post-drop
    form; emit it with `MOJITO_PRE_ELABORATION=0`, or the pipeline will
    already have run (`eliminate-dead-symbols` would have removed what its
-   case is about). The CLI prints that form lowered; `sccp`,
-   `canonicalize`, `mem-2-reg`, and `inline-parametric` also read a
-   structured body, so their region cases are built by hand, as
-   `lower-control-flow/*.mir` are, or emitted by a scratch build whose
-   `Compiler::elaborated_mir` skips its `lower-control-flow` span
-   (`src/compiler.rs`), which prints the structured form under
-   `MOJITO_PRE_ELABORATION=0` but cannot `run` (the
-   `inline-parametric/region_*` cases were made so). This form is also past `lower-lit`, so it holds no
+   case is about). The CLI prints that form structured, every region one
+   block, as every pipeline pass reads it; a case for a pass's
+   lowered-body rules (`canonicalize`, `mem-2-reg`, `sccp`, and `cse`
+   keep them for the post-elaboration pipeline) lowers it first with
+   `mojito opt --pass lower-control-flow`. This form is also past `lower-lit`, so it holds no
    `lifetime.keep_alive` or `interiors.invalidate`. `elaborate-drops` takes
    pre-drop MIR in its structured form (every region one block, as
    `verify_structured_shape` checks; `opt` refuses a lowered body), which
@@ -43,7 +40,7 @@ below. Labels are `<pass>/<case>.mir`, so the reports hold no machine path.
    `loop`, `break`/`continue`/`yield`, as in
    `lower-control-flow/*.mir`) and remove the `drop.*` lines (when no copy
    elision or deinit refinement is in play). Its output keeps the
-   regions: the seams run `lower-control-flow` only after `lower-lit`. A
+   regions, as every pipeline pass reads them. A
    `lower-lit`
    case needs the markers, so emit it with a binary from before the pass or
    from pre-drop text, as for `elaborate-drops`.

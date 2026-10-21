@@ -1,4 +1,4 @@
-mojito-mir 1.69
+mojito-mir 1.81
 artifact {
   features: [],
   files: [
@@ -36,29 +36,11 @@ artifact {
               const { dest: %r1, value: int_literal(100) },
               literal.materialize { dest: %r2, value: %r1, target: Int },
               var.use { dest: %r0, var: $v0, mode: copy },
-              binary { op: lt, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent }
-            ],
-            terminator: branch { condition: %r3, then: bb2, else: bb3 }
-          },
-          bb1 {
-            instructions: [
+              binary { op: lt, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent },
+              if { results: [], condition: %r3, then: [bb0 { instructions: [const { dest: %r5, value: int_literal(3) }, literal.materialize { dest: %r6, value: %r5, target: Int }, var.use { dest: %r4, var: $v0, mode: copy }, binary { op: add, dest: %r7, a: %r4, b: %r6, resolved: absent, raises: absent }], terminator: return { value: present(%r7) } }], elifs: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
               var.use { dest: %r8, var: $v0, mode: copy }
             ],
             terminator: return { value: present(%r8) }
-          },
-          bb2 {
-            instructions: [
-              const { dest: %r5, value: int_literal(3) },
-              literal.materialize { dest: %r6, value: %r5, target: Int },
-              var.use { dest: %r4, var: $v0, mode: copy },
-              binary { op: add, dest: %r7, a: %r4, b: %r6, resolved: absent, raises: absent }
-            ],
-            terminator: return { value: present(%r7) }
-          },
-          bb3 {
-            instructions: [
-            ],
-            terminator: jump { target: bb1 }
           }
         ]
       },

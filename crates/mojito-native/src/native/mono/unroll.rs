@@ -8,8 +8,8 @@ use super::*;
 use mojito_checked::checked::ComptimeSequence;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
-    MirBlockId, SpanTable, comptime_for_body, instruction_regs_mut, renumber_block_slots,
-    terminator_regs_mut, terminator_targets, terminator_targets_mut,
+    ComptimeForBodies, MirBlockId, SpanTable, comptime_for_body, instruction_regs_mut,
+    renumber_block_slots, terminator_regs_mut, terminator_targets, terminator_targets_mut,
 };
 
 impl Specializer<'_> {
@@ -624,15 +624,19 @@ struct FrameTables<'a> {
 /// The header of a loop no other loop of `blocks[from..]` encloses, lowest
 /// first; `None` once every loop is unrolled.
 fn outermost_loop(blocks: &[MirBlock], from: usize, function_level: bool) -> Option<MirBlockId> {
+    if !blocks[from..]
+        .iter()
+        .any(|block| matches!(block.term, MirTerm::ComptimeFor { .. }))
+    {
+        return None;
+    }
+    let bodies = ComptimeForBodies::new(blocks, function_level);
     let headers: Vec<(MirBlockId, Vec<MirBlockId>)> = blocks
         .iter()
         .enumerate()
         .skip(from)
         .filter_map(|(id, block)| match &block.term {
-            MirTerm::ComptimeFor { body, exit, .. } => Some((
-                id,
-                comptime_for_body(blocks, id, *body, *exit, function_level),
-            )),
+            MirTerm::ComptimeFor { body, exit, .. } => Some((id, bodies.body(id, *body, *exit))),
             _ => None,
         })
         .collect();

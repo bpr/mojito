@@ -314,21 +314,19 @@ pub fn specialize_importing(
     // deeper than the last, and the type walks recurse on that nesting, so
     // the elaborator runs on a stack deep enough to reach the instance
     // budget rather than overflow on the way.
+    let elaborate = || {
+        let templates = bodies::Templates::of(program);
+        Specializer::new(program, target, &templates)
+            .importing(package)
+            .run(entries)
+    };
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .name("elaborator".to_string())
             .stack_size(ELABORATOR_STACK_BYTES)
-            .spawn_scoped(scope, || {
-                Specializer::new(program, target)
-                    .importing(package)
-                    .run(entries)
-            })
+            .spawn_scoped(scope, elaborate)
             .map_or_else(
-                |_| {
-                    Specializer::new(program, target)
-                        .importing(package)
-                        .run(entries)
-                },
+                |_| elaborate(),
                 |elaborator| {
                     elaborator
                         .join()

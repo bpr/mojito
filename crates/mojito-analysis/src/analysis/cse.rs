@@ -30,9 +30,8 @@ use super::pre_elaboration::BodyPass;
 use mojito_common::timing;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
-    MirBlock, MirBlockId, MirDeclarations, MirFunction, MirInstr, Reg, block_successors,
-    has_structured_control_flow, instruction_regions, instruction_regs_mut, reverse_postorder,
-    terminator_targets,
+    DominatorRoots, MirBlock, MirBlockId, MirDeclarations, MirFunction, MirInstr, Reg,
+    has_structured_control_flow, immediate_dominators, instruction_regions, instruction_regs_mut,
 };
 use mojito_types::types::{Ty, TyKind, copy_is_identity};
 use std::collections::{HashMap, HashSet};
@@ -234,67 +233,10 @@ enum Visit {
 }
 
 /// Each block's children in the dominator tree of `blocks`, rooted at the
-/// entry; a block the entry does not reach is no one's child.
-///
-/// The immediate dominators come from Cooper, Harvey, and Kennedy's
-/// iteration over the reverse postorder, as MLIR's `DominanceInfo` builds
-/// its tree.
+/// entry; a block the entry does not reach is no one's child
+/// ([`immediate_dominators`]).
 fn dominator_children(blocks: &[MirBlock], function_level: bool) -> Vec<Vec<MirBlockId>> {
-    let successors: Vec<Vec<MirBlockId>> = blocks
-        .iter()
-        .map(|block| {
-            let targets = if function_level {
-                block_successors(block)
-            } else {
-                terminator_targets(&block.term)
-            };
-            targets
-                .into_iter()
-                .filter(|&target| target < blocks.len())
-                .collect()
-        })
-        .collect();
-    let order = reverse_postorder(blocks, function_level);
-    let mut rank = vec![usize::MAX; blocks.len()];
-    for (at, &block) in order.iter().rev().enumerate() {
-        rank[block] = at;
-    }
-    let mut predecessors = vec![Vec::new(); blocks.len()];
-    for (block, targets) in successors.iter().enumerate() {
-        for &target in targets {
-            predecessors[target].push(block);
-        }
-    }
-    let mut idom: Vec<Option<MirBlockId>> = vec![None; blocks.len()];
-    idom[0] = Some(0);
-    let intersect = |idom: &[Option<MirBlockId>], mut left: MirBlockId, mut right| {
-        while left != right {
-            while rank[left] < rank[right] {
-                left = idom[left].unwrap_or(0);
-            }
-            while rank[right] < rank[left] {
-                right = idom[right].unwrap_or(0);
-            }
-        }
-        left
-    };
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for &block in order.iter().filter(|&&block| block != 0) {
-            let next = predecessors[block]
-                .iter()
-                .filter(|&&predecessor| idom[predecessor].is_some())
-                .fold(None, |dominator, &predecessor| match dominator {
-                    None => Some(predecessor),
-                    Some(dominator) => Some(intersect(&idom, dominator, predecessor)),
-                });
-            if next.is_some() && next != idom[block] {
-                idom[block] = next;
-                changed = true;
-            }
-        }
-    }
+    let idom = immediate_dominators(blocks, function_level, DominatorRoots::Entry);
     let mut children = vec![Vec::new(); blocks.len()];
     for (block, dominator) in idom.iter().enumerate().skip(1) {
         if let Some(dominator) = dominator {

@@ -83,7 +83,7 @@ each named by its accessor and each computed once:
 | Phase | Accessor | What it is | Who consumes it |
 |---|---|---|---|
 | Parametric MIR | `mir()` | The ownership-verified, pre-drop `MirProgram` the driver lowered; generic bodies name their parameters. With an imported package, the program's own functions and declarations, with the package's MIR declarations attached and each resolved the first time a lookup names it | Ownership analysis |
-| Drop-elaborated MIR | `elaborated_mir()` | Parametric MIR with drops inserted and the pre-elaboration pipeline run, re-verified; may still be generic | The elaborator, beside an imported package's bodies |
+| Drop-elaborated MIR | `elaborated_mir()` | Parametric MIR with drops inserted and the pre-elaboration pipeline run, re-verified; may still be generic, and its control flow is still structured (one block per region) | The elaborator, beside an imported package's bodies |
 | Whole drop-elaborated MIR | `drop_elaborated_mir()` | `elaborated_mir()` with every package body joined, decoded, drop-elaborated, and through the pre-elaboration pipeline; the same program when nothing is imported | `emit_mir` and the serialized artifact |
 | Concrete MIR | `concrete_mir()` | The elaborator's entry-rooted output, a `SpecializedProgram` whose `mir::ConcreteMir` passed `verify_concrete` | The VM and the native backend |
 
@@ -1073,7 +1073,9 @@ the ownership analysis and drop
 elaboration decide it as the loop of the same shape with its trip count
 unknown, and `native::mono` unrolls it under the instance's bindings before
 substitution (`unroll_comptime_loops`): the body — the blocks its entry
-dominates — is copied once per element with fresh registers, the binder's
+dominates, from one dominator tree per step (`mir::ComptimeForBodies`, by
+`mir::immediate_dominators` below a virtual root over the entry and every
+block no block enters, as each copy's header is mid-unroll) — is copied once per element with fresh registers, the binder's
 reads folded and its types substituted, the loops nested in the copy
 unrolled under its binding first and the `comptime if`s over it decided, the
 copies chained where the loop stood, and the original body left unreachable
@@ -2667,7 +2669,7 @@ ops after a terminator, so they reach no slot, block, or nested function
 (`find_nested_defs` reads the same rule). MIR lowering builds the matching
 MIR region ops (`Flatten::hir_region`); `lower_cfg` lowers them to blocks
 with `lower-control-flow` for phase tests, and the production pipeline only
-once drops are placed and `lower-lit` has run.
+in the elaborator, as it fetches each template.
 
 Each HIR block has:
 
@@ -3419,8 +3421,8 @@ per function, the move and initialization scan, carrying interior origins
 as upstream's `TrackedAndInteriorLiveness`, walks the structured body as
 upstream's `CheckLifetimes` walks `hlcf`, and the loan check walks it backward
 for reference liveness and forward for loan generations. The body stays
-structured for drop elaboration and the passes after it, which the seams
-lower (`lower-control-flow`) once `lower-lit` has run. A `try`
+structured for drop elaboration and every pass after it; the elaborator
+lowers it (`lower-control-flow`) where it first fetches it as a template. A `try`
 is one instruction to the loan
 check: it uses every variable its parts read, and no access or loan inside
 it is checked (upstream has no persistent-loan check, so the exemption
@@ -4036,9 +4038,11 @@ chains, and comprehensions as `If`/`Loop`, each region one block (a
 conditional expression whose condition the checker found a parameter value,
 `SemanticAdjustment::ComptimeConditional`, is a `ComptimeIf` with results,
 as upstream's `IfElseOpNode` emits `hlcf.comptime.if`), and
-`mir::lower_control_flow` (upstream's `LowerControlFlow`), which both seams
-(`Compiler::elaborated_mir` and the package bodies' finishing hooks) run on
-each body after `lower-lit`, before the pre-elaboration pipeline, lowers them to blocks and the CFG terminators: a
+`mir::lower_control_flow` (upstream's `LowerControlFlow`), which the
+elaborator runs once on each template where it first fetches it
+(`mono/bodies.rs`'s `Bodies::get`: a program body's lowered copy in a
+`Templates` arena, a package body's in `PackageBodies::template`), after
+the pre-elaboration pipeline has read the structured body, lowers them to blocks and the CFG terminators: a
 region's blocks are appended to its list, the rest of the block moves to a
 join, an op's results go through one slot each, stored at a `yield` and
 forwarded at the join, a `break`/`continue` leaving a `try` part to a
@@ -5179,9 +5183,9 @@ ordinary residual fields of an incomplete linear aggregate.
 Drop elaboration (`analysis/drops.rs`) reads the structured body, as
 upstream's `DestructorInsertion` reads `hlcf`, and so do the passes after it
 up to `lower-lit`: field drops, copy elision, destructor and constructor
-naming with `mir::lower_whole_drops`, and the copy/move lowering. Both seams
-lower the body (`lower-control-flow`) after `lower-lit`, before the
-pre-elaboration pipeline. Two walks of `analysis/region_walk.rs` give its
+naming with `mir::lower_whole_drops`, and the copy/move lowering, and
+the pre-elaboration pipeline after them; the elaborator lowers the body
+(`lower-control-flow`) as it fetches it. Two walks of `analysis/region_walk.rs` give its
 facts: one forward walk (`DropFacts`, in `register_loans.rs`) records the loan
 generations reaching each instruction and block and the roots each instruction
 consumes through its operand registers (`RegisterUses`), and one backward walk
@@ -5398,9 +5402,10 @@ point where a slot declared in a loop is uninitialized again.
   `propagated_conditions`, `hoisted_unconditional_exits`,
   `hoisted_conditional_returns`, `hoisted_yield_results`,
   `removed_unused_results`, `removed_dead_loops`, `folded_comptime_ifs`).
-  The seams still lower control flow before the pipeline (R1254), so in
-  production every body the pipeline reads is lowered, and the patterns
-  run on the structured inputs `mojito opt` reads.
+  Every body the pipeline reads is structured, so these patterns are the
+  production path; the lowered-body rules below run on the CFG inputs
+  `mojito opt` reads, until the post-elaboration pipeline reads regions
+  too (R881).
   On a lowered body it rewrites a `branch` whose
   condition has one definition, a `const bool`, to a `jump` to the arm it
   takes, a comparison it just folded included (R781, as
@@ -5488,23 +5493,23 @@ point where a slot declared in a loop is uninitialized again.
   (32), the pin's count of the operations its first round leaves,
   calibrated on probe bodies: a slot's reads, stores, and declarations, a
   copy or drop running no constructor or destructor, and a repeated
-  constant are free, an `if` costs one plus one per `elif` (a lowered
-  body's `branch` one each), each reached `continue` four beyond its
-  loop's test and body (a lowered body's back edge alike: the private
-  `structured_back_edges` and `back_edges` count them, so a body prices
-  the same before and after `lower-control-flow`), `iter.init` the whole
+  constant are free, an `if` costs one plus one per `elif`, each reached
+  `continue` four beyond its loop's test and body (the private
+  `structured_back_edges` counts them; the unit test pins that a body
+  prices the same as its `lower-control-flow` lowering, a `branch` and a
+  back edge priced alike), `iter.init` the whole
   bound as the pin's `range` protocol does, and `print` the 28 its call
   site costs there; each other instruction costs one, a `try` with its
-  parts free. When the caller or the callee holds structured control flow
-  (`mir::has_structured_control_flow`), the body is placed as upstream's
-  `inlineGeneratorCall` places every one (the private `splice_region`): in
-  a `loop` labelled `LoopLabel::INLINED_CF_SCOPE`, upstream's
-  `inlined_cf_scope`, which no source loop carries, appended to the call's
-  block, so a structured callee's one block goes into a structured list's
-  one block (a call mixing the shapes stays a call). A lowered callee
-  called from a lowered caller, every production body until the seams stop
-  lowering control flow (R1254), has its blocks appended to the block list
-  holding the call instead (the private `splice_blocks`). Either way the
+  parts free. Every body is placed as upstream's `inlineGeneratorCall`
+  places it (the private `splice_region`): in a `loop` labelled
+  `LoopLabel::INLINED_CF_SCOPE`, upstream's `inlined_cf_scope`, which no
+  source loop carries, appended to the call's block, so the callee's one
+  block goes into the caller's list's one block (a call in a list of more
+  blocks, or of a callee whose body has more, stays a call). Each return
+  stores its value to a result slot and breaks the loop, and the call's
+  register takes the slot (or an initializer's `out self` slot) forwarded,
+  `UseMode::Forward`, so no move initializer runs, as upstream's break
+  carries the value. The
   body's registers and slots move past the caller's
   (`mir::renumber_block_slots`), regions included, and its slot names gain
   `$inline{n}`, so no binder name or `self` matches them. The call's block binds each owned
@@ -6153,18 +6158,20 @@ point where a slot declared in a loop is uninitialized again.
   `__toplevel__` is skipped, as ASAP drops skip it, so its slots keep the
   values `bindings()` reports.
 - **Verification.** In debug builds each body is verified after every body
-  or call-graph pass that changed it (`run_pipeline`), each finding naming
+  or call-graph pass that changed it (`run_pipeline`), its structured shape
+  included (`verify_structured_function_in`), each finding naming
   the pass, into `invariant_errors` or
   the package body's verdict (`PackageBodies::findings`), which the
   elaborator refuses when it materializes the body. The post-drop verify
-  after the seam runs in every build.
+  after the seam runs in every build, and checks every body's structured
+  shape (`verify_structured_shape`).
 - **Pass tests.** `pass_named` looks a pass up by name, as MLIR's pass
   registry does: every `PIPELINE` pass, plus `ELABORATE_DROPS`
   (`elaborate-drops`), drop elaboration run on request, and
-  `LOWER_CONTROL_FLOW` (`lower-control-flow`), the transitional lowering of
-  structured region ops to blocks, which both seams run on each body after
-  `lower-lit`. `elaborate-drops` output is structured, so a pipeline pass
-  chained after it in `opt` needs `--pass lower-control-flow` first. `analysis::opt`,
+  `LOWER_CONTROL_FLOW` (`lower-control-flow`), the lowering of structured
+  region ops to blocks, which the elaborator runs on each template it
+  fetches and no seam runs. `elaborate-drops` output is structured, as
+  every pipeline pass reads it. `analysis::opt`,
   the `mlir-opt` analogue behind `mojito opt [--pass NAME]… [FILE]`, loads a
   MIR artifact, runs the named passes in order (a program pass over the
   program, a body pass over every body but `__toplevel__`, a call-graph pass
@@ -6271,8 +6278,9 @@ concrete verifier rejects a reference slot read as its handle.
   R991), so callers apart only by that read merge with their callees.
 
 - **CSE.** `cse` (`analysis::CSE`, `analysis/cse.rs`, R845) is MLIR's
-  `CSE`: it walks each block list's dominator tree (Cooper, Harvey, and
-  Kennedy's iteration over `mir::reverse_postorder`) with a scoped table,
+  `CSE`: it walks each block list's dominator tree
+  (`mir::immediate_dominators`, Cooper, Harvey, and Kennedy's iteration
+  over the reverse postorder) with a scoped table,
   and an instruction free of effects that a dominating one matches
   (mnemonic, attributes, operands, result type) is erased, its result's
   reads renamed. Free of effects is narrower than

@@ -31,37 +31,26 @@
       fn {
         name: generic_method,
         registers: 5,
-        vars: 3,
-        var_names: [m, "self$inline1", "k$inline1"],
+        vars: 4,
+        var_names: [m, "self$inline1", "k$inline1", "$inline1$result"],
         params: 1,
         param_types: [struct_type { name: Meter, arguments: [] }],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: Meter, arguments: [] } }, var_type { var: $v1, type: struct_type { name: Meter, arguments: [] } }, var_type { var: $v2, type: Int }],
+        var_types: [var_type { var: $v0, type: struct_type { name: Meter, arguments: [] } }, var_type { var: $v1, type: struct_type { name: Meter, arguments: [] } }, var_type { var: $v2, type: Int }, var_type { var: $v3, type: Int }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: struct_type { name: Meter, arguments: [] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 952, end: 953, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 952, end: 965, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 952, end: 965, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 952, end: 965, origin: absent }) }, reg_loc { reg: %r4, location: absent }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: Meter, arguments: [] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 952, end: 953, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 952, end: 965, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 952, end: 965, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 952, end: 965, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 952, end: 965, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
-              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Meter, arguments: [] }), projections: [], type: present(struct_type { name: Meter, arguments: [] }), through: absent } }
-            ],
-            terminator: jump { target: bb1 }
-          },
-          bb1 {
-            instructions: [
-              place.load { dest: %r2, place: place { root: $v0, root_type: present(struct_type { name: Meter, arguments: [] }), projections: [projection { op: field(value), type: Int }], type: present(Int), through: absent } },
-              const { dest: %r3, value: int(3) },
-              binary { op: mul, dest: %r1, a: %r2, b: %r3, resolved: absent, raises: absent }
-            ],
-            terminator: jump { target: bb2 }
-          },
-          bb2 {
-            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Meter, arguments: [] }), projections: [], type: present(struct_type { name: Meter, arguments: [] }), through: absent } },
+              loop { label: present(loop4294967295), body: [bb0 { instructions: [place.load { dest: %r2, place: place { root: $v0, root_type: present(struct_type { name: Meter, arguments: [] }), projections: [projection { op: field(value), type: Int }], type: present(Int), through: absent } }, const { dest: %r3, value: int(3) }, binary { op: mul, dest: %r4, a: %r2, b: %r3, resolved: absent, raises: absent }, var.store { var: $v3, src: %r4, binding_type: present(Int), in_place: false }], terminator: break { label: present(loop4294967295) } }] },
+              var.use { dest: %r1, var: $v3, mode: forward }
             ],
             terminator: return { value: present(%r1) }
           }

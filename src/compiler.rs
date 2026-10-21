@@ -81,12 +81,14 @@ impl CompiledProgram {
 
     /// The program's own drop-elaborated MIR, re-verified: [`Self::mir`]
     /// with drops inserted, the lifetime-only markers erased (`lower-lit`),
-    /// the structured control flow lowered to blocks
-    /// (`lower-control-flow`), and the pre-elaboration pipeline run. It is the
+    /// and the pre-elaboration pipeline run. Its bodies keep their
+    /// structured control flow, as upstream's generators keep `hlcf`; the
+    /// elaborator lowers each template where it first fetches it. It is the
     /// elaborator's input, beside an imported package's bodies, which are
     /// finished the same way as each is materialized.
-    /// Post-drop verification findings are folded into `invariant_errors`;
-    /// consumers refuse a non-empty list.
+    /// Post-drop verification findings, a body's structured shape
+    /// included, are folded into `invariant_errors`; consumers refuse a
+    /// non-empty list.
     pub fn elaborated_mir(&self) -> &MirProgram {
         self.elaborated.get_or_init(|| {
             let mut mir = {
@@ -96,10 +98,6 @@ impl CompiledProgram {
             {
                 let _lower = timing::span("lower-lit");
                 crate::analysis::lower_lit_program(&mut mir);
-            }
-            {
-                let _lower = timing::span("lower-control-flow");
-                crate::mir::lower_control_flow_program(&mut mir);
             }
             if self.pre_elaboration {
                 let _passes = timing::span("pre_elaboration");
@@ -112,13 +110,21 @@ impl CompiledProgram {
             let _verify = timing::span("mir.verify.post_drop");
             let findings = crate::mir::verify::verify(&mir);
             mir.invariant_errors.extend(findings);
+            let shapes: Vec<String> = mir
+                .functions
+                .iter()
+                .flat_map(|(name, function)| {
+                    crate::mir::verify::verify_structured_shape(name, function)
+                })
+                .collect();
+            mir.invariant_errors.extend(shapes);
             mir
         })
     }
 
     /// Drop-elaborated MIR: parametric MIR with drops inserted, the
-    /// lifetime-only markers erased, the control flow lowered to blocks,
-    /// and the pre-elaboration pipeline run, re-verified.
+    /// lifetime-only markers erased, and the pre-elaboration pipeline run,
+    /// re-verified, its control flow still structured.
     /// It may still be generic. It is the whole program: an imported
     /// package's bodies, every one lowered, join [`Self::elaborated_mir`],
     /// so it serializes as one artifact.

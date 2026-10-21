@@ -19,6 +19,7 @@ assets/ok/always_inline_nodebug_nested_calls.mojo	main	exe-differential	sanitize
 assets/ok/always_inline_nodebug_reference_results.mojo	main	exe-differential	sanitized
 assets/ok/always_inline_nodebug_struct_calls.mojo	main	exe-differential	sanitized
 assets/ok/always_inline_nodebug_tuple_members.mojo	main	exe-differential	sanitized
+assets/ok/always_inline_result_runs_no_move.mojo	main	exe-differential	sanitized
 assets/ok/always_inline_small_calls.mojo	main	exe-differential	sanitized
 assets/ok/arithmetic.mojo	main	exe-differential	sanitized
 assets/ok/array_comparable.mojo	main	exe-differential	sanitized
@@ -320,6 +321,7 @@ assets/ok/homogeneous_variadic_loan_carrying_element.mojo	main	exe-differential	
 assets/ok/if_case_and_while_case.mojo	main	exe-differential	sanitized
 assets/ok/if_case_elif_chains_and_while_case.mojo	main	exe-differential	sanitized
 assets/ok/if_case_mixed_with_boolean_elif.mojo	main	exe-differential	sanitized
+assets/ok/if_unread_elif_call_skipped.mojo	main	exe-differential	sanitized
 assets/ok/imm_origin_binders.mojo	main	exe-differential	sanitized
 assets/ok/imm_origin_cast_view.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion.mojo	main	exe-differential	sanitized

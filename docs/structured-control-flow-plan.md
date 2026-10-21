@@ -102,11 +102,10 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
     `Flatten::hir_region`). `verify_structured_shape` checks each body, a
     finding being a MIR invariant error (stage 5); register typing,
     pre-drop verification, the ownership checks, drop elaboration, and
-    every pass after it up to `lower-lit` read the structured body; both
-    seams (`Compiler::elaborated_mir` and the package bodies' finishing
-    hooks) run `lower-control-flow` after `lower-lit`, so the
-    pre-elaboration pipeline and every phase after it still see blocks
-    (stages 6–9).
+    every pass after it, the pre-elaboration pipeline included, read the
+    structured body (stages 6–10); the elaborator runs
+    `lower-control-flow` on each template where it first fetches it
+    (`Bodies::get`), so it and every phase after it still see blocks.
 - **The ownership checks and drop elaboration walk regions.** The move and
   initialization scan, carrying interior origins, walks the structure as
   `CheckLifetimes` does (stages 6–7), and so does the loan check. Drop
@@ -114,13 +113,13 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
   does (stage 8), and field drops, copy elision, destructor and
   constructor naming, and the copy/move lowering read the same regions
   after it (stage 9).
-- **The pre-elaboration passes read regions, but get blocks.** `sccp`
-  walks a structured body as `SCCP` walks `hlcf`, `canonicalize` applies
-  the `hlcf` patterns (`analysis/canonicalize/hlcf.rs`), and `mem-2-reg`
-  solves reaching stores over regions (stage 10a). Since the seams lower
-  first, production bodies still take `canonicalize`'s R836 CFG rewrites
+- **The pre-elaboration passes read regions.** `sccp` walks a structured
+  body as `SCCP` walks `hlcf`, `canonicalize` applies the `hlcf` patterns
+  (`analysis/canonicalize/hlcf.rs`), `mem-2-reg` solves reaching stores
+  over regions, and `inline-parametric` wraps every inlined body in an
+  `inlined_cf_scope` loop (stage 10). `canonicalize`'s R836 CFG rewrites
   (pass-through threading, identical-successor folds, single-predecessor
-  merges), which the post-elaboration pipeline also runs.
+  merges) run only on the post-elaboration pipeline's lowered bodies.
 - **The elaborator recovers structure.** `mono/unroll.rs`'s `loop_body`
   finds a `comptime for` body as the blocks its `body` target dominates, and
   `outermost_loop` finds the enclosing loop. A region op would hold both.
@@ -396,8 +395,11 @@ last producer. Every stage keeps program output unchanged; the
     - **10b (R1253, landed).** `inline-parametric` inlines structured
       callees, wrapping every inlined body in one loop labelled
       `inlined_cf_scope`.
-    - **10c (R1254).** The seams stop lowering, and the elaborator lowers
-      each template where it first fetches it (`Bodies::get`).
+    - **10c (R1254, landed).** The seams stop lowering, and the elaborator
+      lowers each template where it first fetches it (`Bodies::get`). An
+      inlined result is forwarded, so no move initializer runs, and the
+      elaborator's `comptime for` body recovery reads one dominator tree
+      per step (`mir::ComptimeForBodies`).
 11. **Elaborator.** Instantiation, substitution, and `ComptimeIf`/
     `ComptimeFor` work on regions; the dominator code is deleted; a CTFE
     fragment is lowered before `call_concrete`. The lowering point moves to

@@ -963,7 +963,8 @@ pub fn addressed_slots<'a>(blocks: impl IntoIterator<Item = &'a MirBlock>) -> BT
 /// They are those its entry `body` dominates, but the `header` and the
 /// `exit`. Reachability would not do: drop elaboration splits a `break` arm's edge so it leaves for the
 /// block after the loop directly, past the exit. At function level a `try`
-/// region's escapes are edges of this list too.
+/// region's escapes are edges of this list too. An unreached block counts
+/// when no root reaches it ([`ComptimeForBodies`]).
 pub fn comptime_for_body(
     blocks: &[MirBlock],
     header: MirBlockId,
@@ -971,57 +972,88 @@ pub fn comptime_for_body(
     exit: MirBlockId,
     function_level: bool,
 ) -> Vec<MirBlockId> {
-    let successors = |block: MirBlockId| {
-        if function_level {
-            block_successors(&blocks[block])
-        } else {
-            terminator_targets(&blocks[block].term)
+    ComptimeForBodies::new(blocks, function_level).body(header, body, exit)
+}
+
+/// The dominator tree [`comptime_for_body`] reads, computed once for every
+/// `comptime for` of a block list.
+///
+/// Its roots are the entry and every block with no predecessor, below one
+/// virtual root ([`DominatorRoots::Unreferenced`]): mid-unroll, a body's
+/// copies hang off a header no block jumps to yet, and each must dominate
+/// what it reaches as the entry does.
+pub struct ComptimeForBodies {
+    predecessors: Vec<Vec<MirBlockId>>,
+    dominators: Vec<Option<MirBlockId>>,
+}
+
+impl ComptimeForBodies {
+    /// The dominator tree of `blocks`, a function's own list when
+    /// `function_level` ([`block_successors`]).
+    pub fn new(blocks: &[MirBlock], function_level: bool) -> Self {
+        let successors = list_successors(blocks, function_level);
+        Self {
+            predecessors: list_predecessors(&successors),
+            dominators: dominators_over(&successors, DominatorRoots::Unreferenced),
         }
-    };
-    let mut predecessors: Vec<Vec<MirBlockId>> = vec![Vec::new(); blocks.len()];
-    for block in 0..blocks.len() {
-        for successor in successors(block) {
-            if successor < blocks.len() {
-                predecessors[successor].push(block);
+    }
+
+    /// The blocks of the `comptime for` body whose loop tests at `header`,
+    /// enters at `body`, and leaves for `exit`, in index order.
+    pub fn body(&self, header: MirBlockId, body: MirBlockId, exit: MirBlockId) -> Vec<MirBlockId> {
+        (0..self.predecessors.len())
+            .filter(|&block| {
+                block != header
+                    && block != exit
+                    && !self.predecessors[block].is_empty()
+                    && self.dominated_by(block, body)
+            })
+            .collect()
+    }
+
+    /// Whether `dominator` lies on `block`'s chain of immediate dominators;
+    /// a block no root reaches is dominated by every block, as the
+    /// dataflow's full set says.
+    fn dominated_by(&self, mut block: MirBlockId, dominator: MirBlockId) -> bool {
+        if self.dominators[block].is_none() {
+            return true;
+        }
+        loop {
+            if block == dominator {
+                return true;
+            }
+            match self.dominators[block] {
+                Some(up) if up != block => block = up,
+                _ => return false,
             }
         }
     }
-    // Dominators by iteration: the entry dominates itself alone; every other
-    // block is dominated by itself and by what dominates all of its
-    // predecessors. An unreached block keeps the full set and is no member.
-    let everything: HashSet<MirBlockId> = (0..blocks.len()).collect();
-    let mut dominators: Vec<HashSet<MirBlockId>> = vec![everything; blocks.len()];
-    dominators[0] = HashSet::from([0]);
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for block in 1..blocks.len() {
-            let mut next: Option<HashSet<MirBlockId>> = None;
-            for &predecessor in &predecessors[block] {
-                next = Some(match next {
-                    None => dominators[predecessor].clone(),
-                    Some(set) => set
-                        .intersection(&dominators[predecessor])
-                        .copied()
-                        .collect(),
-                });
-            }
-            let mut next = next.unwrap_or_default();
-            next.insert(block);
-            if next != dominators[block] {
-                dominators[block] = next;
-                changed = true;
-            }
-        }
-    }
-    (0..blocks.len())
-        .filter(|&block| {
-            block != header
-                && block != exit
-                && !predecessors[block].is_empty()
-                && dominators[block].contains(&body)
-        })
-        .collect()
+}
+
+/// Which blocks of a list hang off the virtual root
+/// [`immediate_dominators`] builds its tree from.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum DominatorRoots {
+    /// The entry alone: the function's dominator tree.
+    Entry,
+    /// The entry and every block with no predecessor.
+    Unreferenced,
+}
+
+/// Each block's immediate dominator in `blocks`, a function's own list when
+/// `function_level` ([`block_successors`]), below a virtual root over
+/// `roots`.
+///
+/// A block no real block dominates, a root among them, is its own; a block
+/// no root reaches has none. The immediate dominators come from Cooper,
+/// Harvey, and Kennedy's iteration over the reverse postorder, as MLIR's
+/// `DominanceInfo` builds its tree.
+pub fn immediate_dominators(
+    blocks: &[MirBlock],
+    function_level: bool,
+    roots: DominatorRoots,
+) -> Vec<Option<MirBlockId>> {
+    dominators_over(&list_successors(blocks, function_level), roots)
 }
 
 /// The renumbering [`retire_slots`] and [`retire_parameters`] share.
@@ -1043,6 +1075,119 @@ fn retire(function: &mut MirFunction, retired: &BTreeSet<VarId>) {
         .map(|(var, ty)| (renumber(*var), ty.clone()))
         .collect();
     function.n_vars -= retired.len();
+}
+
+/// The successors of each block of `blocks` within the list, a function's
+/// own when `function_level` ([`block_successors`]).
+fn list_successors(blocks: &[MirBlock], function_level: bool) -> Vec<Vec<MirBlockId>> {
+    blocks
+        .iter()
+        .map(|block| {
+            let targets = if function_level {
+                block_successors(block)
+            } else {
+                terminator_targets(&block.term)
+            };
+            targets
+                .into_iter()
+                .filter(|&target| target < blocks.len())
+                .collect()
+        })
+        .collect()
+}
+
+/// The predecessors of each block of a list whose successors are
+/// `successors`.
+fn list_predecessors(successors: &[Vec<MirBlockId>]) -> Vec<Vec<MirBlockId>> {
+    let mut predecessors = vec![Vec::new(); successors.len()];
+    for (block, targets) in successors.iter().enumerate() {
+        for &target in targets {
+            predecessors[target].push(block);
+        }
+    }
+    predecessors
+}
+
+/// [`immediate_dominators`] over a list whose successors are `successors`.
+fn dominators_over(
+    successors: &[Vec<MirBlockId>],
+    roots: DominatorRoots,
+) -> Vec<Option<MirBlockId>> {
+    let count = successors.len();
+    if count == 0 {
+        return Vec::new();
+    }
+    let mut predecessors = list_predecessors(successors);
+    let root = count;
+    let mut root_successors = vec![0];
+    if roots == DominatorRoots::Unreferenced {
+        root_successors.extend((1..count).filter(|&block| predecessors[block].is_empty()));
+    }
+    for &block in &root_successors {
+        predecessors[block].push(root);
+    }
+    let successors_of = |block: MirBlockId| {
+        if block == root {
+            &root_successors[..]
+        } else {
+            &successors[block][..]
+        }
+    };
+    let mut rank = vec![usize::MAX; count + 1];
+    let mut seen = vec![false; count + 1];
+    let mut postorder = Vec::with_capacity(count + 1);
+    let mut stack = vec![(root, 0)];
+    seen[root] = true;
+    while let Some((block, next)) = stack.last_mut() {
+        if let Some(&target) = successors_of(*block).get(*next) {
+            *next += 1;
+            if !seen[target] {
+                seen[target] = true;
+                stack.push((target, 0));
+            }
+        } else {
+            rank[*block] = postorder.len();
+            postorder.push(*block);
+            stack.pop();
+        }
+    }
+    let mut idom: Vec<Option<MirBlockId>> = vec![None; count + 1];
+    idom[root] = Some(root);
+    let intersect = |idom: &[Option<MirBlockId>], mut left: MirBlockId, mut right| {
+        while left != right {
+            while rank[left] < rank[right] {
+                left = idom[left].unwrap_or(root);
+            }
+            while rank[right] < rank[left] {
+                right = idom[right].unwrap_or(root);
+            }
+        }
+        left
+    };
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for &block in postorder.iter().rev().filter(|&&block| block != root) {
+            let next = predecessors[block]
+                .iter()
+                .filter(|&&predecessor| idom[predecessor].is_some())
+                .fold(None, |dominator, &predecessor| match dominator {
+                    None => Some(predecessor),
+                    Some(dominator) => Some(intersect(&idom, dominator, predecessor)),
+                });
+            if next.is_some() && next != idom[block] {
+                idom[block] = next;
+                changed = true;
+            }
+        }
+    }
+    idom.truncate(count);
+    for (block, dominator) in idom.iter_mut().enumerate() {
+        if *dominator == Some(root) {
+            *dominator = Some(block);
+        }
+    }
+    idom
 }
 
 /// Every slot one block names: its instructions', its regions' and their
@@ -3331,6 +3476,157 @@ mod tests {
 
     fn block(instrs: Vec<MirInstr>, term: MirTerm) -> MirBlock {
         MirBlock { instrs, term }
+    }
+
+    /// The `comptime for` body by the dataflow over dominator sets, the
+    /// reference [`ComptimeForBodies`] must equal: the entry dominates
+    /// itself alone, and every other block is dominated by itself and by
+    /// what dominates all of its predecessors.
+    fn dominator_set_body(
+        blocks: &[MirBlock],
+        (header, body, exit): (MirBlockId, MirBlockId, MirBlockId),
+        function_level: bool,
+    ) -> Vec<MirBlockId> {
+        let predecessors = list_predecessors(&list_successors(blocks, function_level));
+        let everything: HashSet<MirBlockId> = (0..blocks.len()).collect();
+        let mut dominators: Vec<HashSet<MirBlockId>> = vec![everything; blocks.len()];
+        dominators[0] = HashSet::from([0]);
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for block in 1..blocks.len() {
+                let mut next = predecessors[block]
+                    .iter()
+                    .map(|&predecessor| dominators[predecessor].clone())
+                    .reduce(|set, other| set.intersection(&other).copied().collect())
+                    .unwrap_or_default();
+                next.insert(block);
+                if next != dominators[block] {
+                    dominators[block] = next;
+                    changed = true;
+                }
+            }
+        }
+        (0..blocks.len())
+            .filter(|&block| {
+                block != header
+                    && block != exit
+                    && !predecessors[block].is_empty()
+                    && dominators[block].contains(&body)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn comptime_for_body_matches_dominator_sets() {
+        let branch = |then_b, else_b| MirTerm::Branch {
+            cond: Reg(0),
+            then_b,
+            else_b,
+        };
+        let jump = |target| block(Vec::new(), MirTerm::Jump(target));
+        let ret = || block(Vec::new(), MirTerm::Return(None));
+        let escape = |target| MirInstr::Try {
+            body: vec![block(
+                Vec::new(),
+                MirTerm::EscapeJump {
+                    target,
+                    cleanup: Vec::new(),
+                },
+            )],
+            handler: None,
+            orelse: None,
+            finalbody: None,
+            cleanup: Vec::new(),
+        };
+        let cases = vec![
+            (
+                "a plain loop",
+                vec![
+                    jump(1),
+                    block(Vec::new(), branch(2, 4)),
+                    jump(3),
+                    jump(1),
+                    ret(),
+                ],
+                (1, 2, 4),
+                false,
+            ),
+            (
+                "a split break edge past the exit",
+                vec![
+                    jump(1),
+                    block(Vec::new(), branch(2, 5)),
+                    block(Vec::new(), branch(3, 4)),
+                    jump(1),
+                    jump(6),
+                    jump(6),
+                    ret(),
+                ],
+                (1, 2, 5),
+                false,
+            ),
+            (
+                "a function-level try escape",
+                vec![
+                    jump(1),
+                    block(Vec::new(), branch(2, 3)),
+                    block(vec![escape(4)], MirTerm::Jump(1)),
+                    jump(5),
+                    jump(5),
+                    ret(),
+                ],
+                (1, 2, 3),
+                true,
+            ),
+            (
+                "a copy off a header no block enters",
+                vec![
+                    jump(1),
+                    ret(),
+                    block(Vec::new(), branch(3, 4)),
+                    jump(2),
+                    ret(),
+                ],
+                (2, 3, 4),
+                false,
+            ),
+            (
+                "an unreached cycle",
+                vec![
+                    block(Vec::new(), branch(1, 2)),
+                    jump(0),
+                    ret(),
+                    jump(4),
+                    jump(3),
+                ],
+                (0, 1, 2),
+                false,
+            ),
+            (
+                "a reached block with an unreferenced predecessor",
+                vec![
+                    block(Vec::new(), branch(1, 3)),
+                    jump(2),
+                    jump(0),
+                    ret(),
+                    jump(2),
+                ],
+                (0, 1, 3),
+                false,
+            ),
+        ];
+        for (name, blocks, (header, body, exit), function_level) in cases {
+            let bodies = ComptimeForBodies::new(&blocks, function_level);
+            for entered in 0..blocks.len() {
+                assert_eq!(
+                    bodies.body(header, entered, exit),
+                    dominator_set_body(&blocks, (header, entered, exit), function_level),
+                    "{name}, entered at bb{entered}"
+                );
+            }
+            assert!(!bodies.body(header, body, exit).is_empty(), "{name}");
+        }
     }
 
     fn function(blocks: Vec<MirBlock>) -> MirFunction {

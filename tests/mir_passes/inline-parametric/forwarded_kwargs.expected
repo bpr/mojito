@@ -31,40 +31,28 @@
       fn {
         name: outer,
         registers: 7,
-        vars: 2,
-        var_names: [kwargs, "kwargs$inline1"],
+        vars: 3,
+        var_names: [kwargs, "kwargs$inline1", "$inline1$result"],
         params: 1,
         param_types: [struct_type { name: StringDict, arguments: [type_arg(Int)] }],
         owned_params: [true],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: StringDict, arguments: [type_arg(Int)] } }, var_type { var: $v1, type: struct_type { name: StringDict, arguments: [type_arg(Int)] } }],
+        var_types: [var_type { var: $v0, type: struct_type { name: StringDict, arguments: [type_arg(Int)] } }, var_type { var: $v1, type: struct_type { name: StringDict, arguments: [type_arg(Int)] } }, var_type { var: $v2, type: Int }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: struct_type { name: StringDict, arguments: [type_arg(Int)] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: StringDict, arguments: [type_arg(Int)] } }, reg_type { reg: %r3, type: struct_type { name: StringDict, arguments: [type_arg(Int)] } }, reg_type { reg: %r5, type: struct_type { name: StringDict, arguments: [type_arg(Int)] } }, reg_type { reg: %r6, type: None }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 143, end: 150, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 135, end: 151, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 143, end: 150, origin: present($v0) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 135, end: 151, origin: absent }) }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 135, end: 151, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 135, end: 151, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: StringDict, arguments: [type_arg(Int)] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: StringDict, arguments: [type_arg(Int)] } }, reg_type { reg: %r3, type: struct_type { name: StringDict, arguments: [type_arg(Int)] } }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: struct_type { name: StringDict, arguments: [type_arg(Int)] } }, reg_type { reg: %r6, type: None }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 143, end: 150, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 135, end: 151, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 143, end: 150, origin: present($v0) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 135, end: 151, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 135, end: 151, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 135, end: 151, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 135, end: 151, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
               var.use { dest: %r2, var: $v0, mode: forward },
               call { dest: %r0, func: "StringDict.__moveinit__", raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
-              var.store { var: $v1, src: %r0, binding_type: present(struct_type { name: StringDict, arguments: [type_arg(Int)] }), in_place: false }
-            ],
-            terminator: jump { target: bb1 }
-          },
-          bb1 {
-            instructions: [
-              place.load { dest: %r3, place: place { root: $v1, root_type: present(struct_type { name: StringDict, arguments: [type_arg(Int)] }), projections: [], type: present(struct_type { name: StringDict, arguments: [type_arg(Int)] }), through: absent } },
-              call { dest: %r1, func: len, raises: absent, args: [%r3], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
-              var.use { dest: %r5, var: $v1, mode: forward },
-              call.method { dest: %r6, recv: %r5, method: __deinit__, resolved: present("StringDict.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }
-            ],
-            terminator: jump { target: bb2 }
-          },
-          bb2 {
-            instructions: [
+              var.store { var: $v1, src: %r0, binding_type: present(struct_type { name: StringDict, arguments: [type_arg(Int)] }), in_place: false },
+              loop { label: present(loop4294967295), body: [bb0 { instructions: [place.load { dest: %r3, place: place { root: $v1, root_type: present(struct_type { name: StringDict, arguments: [type_arg(Int)] }), projections: [], type: present(struct_type { name: StringDict, arguments: [type_arg(Int)] }), through: absent } }, call { dest: %r4, func: len, raises: absent, args: [%r3], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, var.use { dest: %r5, var: $v1, mode: forward }, call.method { dest: %r6, recv: %r5, method: __deinit__, resolved: present("StringDict.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }, var.store { var: $v2, src: %r4, binding_type: present(Int), in_place: false }], terminator: break { label: present(loop4294967295) } }] },
+              var.use { dest: %r1, var: $v2, mode: forward }
             ],
             terminator: return { value: present(%r1) }
           }

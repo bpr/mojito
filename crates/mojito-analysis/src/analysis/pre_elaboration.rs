@@ -187,8 +187,7 @@ pub const PIPELINE: &[Pass] = &[
 /// text whose drops are not yet inserted.
 ///
 /// The pipeline does not list it: every pipeline body already had its drops
-/// inserted. Its output is still structured: a pipeline pass after it needs
-/// `lower-control-flow` first.
+/// inserted. Its output is structured, as every pipeline pass reads it.
 pub const ELABORATE_DROPS: BodyPass = BodyPass {
     name: "elaborate-drops",
     run: |name, function, declarations| {
@@ -199,10 +198,10 @@ pub const ELABORATE_DROPS: BodyPass = BodyPass {
 
 /// Structured control flow lowered to blocks: upstream's `LowerControlFlow`.
 ///
-/// Upstream lowers `hlcf` as it reaches LLVM. Both seams run this pass on
-/// each body after `lower-lit` and before [`PIPELINE`] (which may be
-/// switched off), so the pipeline does not list it: no body it reaches
-/// holds a region op.
+/// Upstream lowers `hlcf` as it reaches LLVM. No seam runs it: every
+/// [`PIPELINE`] pass reads structured bodies, and the elaborator lowers each
+/// template where it first fetches it. It is registered for a pass test or
+/// `opt` to run on request.
 pub const LOWER_CONTROL_FLOW: BodyPass = BodyPass {
     name: "lower-control-flow",
     run: |_, function, _| {
@@ -318,7 +317,10 @@ pub fn pre_elaborate_program(
 }
 
 /// The package seam's finishing hook: [`elaborate_drops_function`], then
-/// [`lower_lit`] and `lower-control-flow`, then [`run_pipeline`].
+/// [`lower_lit`], then [`run_pipeline`].
+///
+/// The body keeps its structured control flow, which the elaborator lowers
+/// as it fetches the body ([`PackageBodies::template`]).
 pub fn finish_package_body(
     name: &str,
     function: MirFunction,
@@ -331,8 +333,8 @@ pub fn finish_package_body(
     function
 }
 
-/// [`finish_package_body`] with the pipeline switched off: drops,
-/// [`lower_lit`], and `lower-control-flow` only.
+/// [`finish_package_body`] with the pipeline switched off: drops and
+/// [`lower_lit`] only.
 pub fn finish_package_body_without_pipeline(
     name: &str,
     function: MirFunction,
@@ -437,8 +439,9 @@ fn run_body_pass(
     }
 }
 
-/// In debug builds, verify the body `name` the pass `pass` changed, each
-/// finding, naming the pass, going to `findings`.
+/// In debug builds, verify the body `name` the pass `pass` changed, its
+/// structured shape included, each finding, naming the pass, going to
+/// `findings`.
 fn verify_after(
     pass: &str,
     name: &str,
@@ -448,7 +451,7 @@ fn verify_after(
 ) {
     if cfg!(debug_assertions) {
         findings.extend(
-            mojito_mir::mir::verify::verify_function_in(name, function, declarations)
+            mojito_mir::mir::verify::verify_structured_function_in(name, function, declarations)
                 .into_iter()
                 .map(|finding| pass_finding(pass, &finding)),
         );
@@ -613,13 +616,11 @@ fn bottom_up_order(
     (tarjan.order, tarjan.cyclic)
 }
 
-/// A package body's drops inserted, its lifetime-only markers erased, and
-/// its control flow lowered: what each package-seam hook runs before the
-/// pipeline.
+/// A package body's drops inserted and its lifetime-only markers erased:
+/// what each package-seam hook runs before the pipeline.
 fn finish_drops(name: &str, function: MirFunction, declarations: &MirDeclarations) -> MirFunction {
     let mut function = elaborate_drops_function(name, function, declarations);
     lower_lit(name, &mut function, declarations);
-    mojito_mir::mir::lower_control_flow(&mut function);
     function
 }
 

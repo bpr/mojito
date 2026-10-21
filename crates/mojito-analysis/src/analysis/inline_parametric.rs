@@ -99,8 +99,9 @@
 //! otherwise, or reads through a reference the block did not make, keeps
 //! the call (R1099). A default is a fresh slot, dropped after
 //! the body when the parameter only borrows it. An initializer's
-//! `out self` is a fresh slot the body initializes, and the call's result
-//! moves out of it. A nested `def`'s captures, its leading parameters, are
+//! `out self` is a fresh slot the body initializes, which the call's result
+//! takes forwarded, with no move initializer, as upstream hands the value
+//! to the call's user. A nested `def`'s captures, its leading parameters, are
 //! the places the closure captures by reference, and a read of an
 //! enclosing declaration's value binder is a reference to that binder, in
 //! whose scope the caller lies. A copied or moved capture the caller's
@@ -119,17 +120,13 @@
 //! one outside any `try` leaves the function holding them, as every raise
 //! leaving a function does (R20).
 //!
-//! A body is placed as upstream's `inlineGeneratorCall` places every one
-//! when the caller or the callee holds structured control flow: in a loop
-//! labelled [`LoopLabel::INLINED_CF_SCOPE`], its returns, at any depth,
-//! breaks of that loop that store a returned value to the result slot the
-//! call's register moves from after it. A lowered callee called from a
-//! lowered caller has its blocks spliced after the caller's instead, each
-//! return a jump to a block holding what followed the call, until the seams
-//! stop lowering control flow before the pipeline (R1254). Either way the
-//! caller-side reads that bind an argument look back only over the
-//! straight-line run lowering leaves the call in, so both placements make
-//! the same choices.
+//! Every body is placed as upstream's `inlineGeneratorCall` places it: in
+//! a loop labelled [`LoopLabel::INLINED_CF_SCOPE`], its returns, at any
+//! depth, breaks of that loop that store a returned value to the result
+//! slot the call's register takes forwarded after it, with no move
+//! initializer, as upstream's break carries the value. The caller-side
+//! reads that bind an argument look back only over the straight-line run
+//! lowering would leave the call in, which a region op ends.
 //!
 //! A drop of a slot whose struct's `__deinit__` is such a function holds the
 //! destructor's body, as upstream inserts the destructor's call at the death
@@ -157,15 +154,14 @@ use mojito_mir::mir::visit::{
     MutTypeVisitor, ParamArgSite, ParamDeclSite, TySite, walk_function_mut,
 };
 use mojito_mir::mir::{
-    CleanupDrop, Const, FuncRef, LoopLabel, MirBlock, MirBlockId, MirCaptureAccess, MirCaptureMode,
+    CleanupDrop, Const, FuncRef, LoopLabel, MirBlock, MirCaptureAccess, MirCaptureMode,
     MirClosureCapture, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg,
-    MirPlace, MirSubscriptCall, MirTerm, Proj, Reg, RegionFrame, UseMode, block_successors,
-    callable_targets, cleanup_slots, comptime_for_body, count_register_reads,
-    erase_removed_operands, fresh_register, has_no_destructor, has_structured_control_flow,
+    MirPlace, MirSubscriptCall, MirTerm, Proj, Reg, RegionFrame, UseMode, callable_targets,
+    cleanup_slots, count_register_reads, erase_removed_operands, fresh_register, has_no_destructor,
     instruction_regions, instruction_regions_mut, instruction_regs_mut, instruction_slots,
     lower_copies_and_moves, name_constructors, region_exit, removed_argument_operands,
-    renumber_block_slots, terminator_regs_mut, terminator_targets_mut,
-    with_removed_argument_forwards_erased, without_removed_arguments,
+    renumber_block_slots, terminator_regs_mut, with_removed_argument_forwards_erased,
+    without_removed_arguments,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{
@@ -178,7 +174,7 @@ use mojito_types::types::{
     replace_parameters, replace_value_parameters, rewrite_ty, scalar_simd_dtype,
 };
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 
 pub const INLINE_PARAMETRIC: CallGraphPass = CallGraphPass {
     name: "inline-parametric",
@@ -219,17 +215,15 @@ pub const INLINE_SIZE_BOUND: usize = 32;
 /// lowers them: an `if` costs one, and one more per `elif`, as each
 /// `branch` lowering makes of it, and each reached `continue` the four
 /// operations its loop, its condition's test, and its break and continue
-/// cost there beyond its own test and body; a lowered body prices its
-/// `branch`es and back edges alike. A `try` is one operation, its parts
-/// free. A `for` loop's iterator protocol costs at least the bound at the
+/// cost there beyond its own test and body. A `try` is one operation, its
+/// parts free. A `for` loop's iterator protocol costs at least the bound at the
 /// pin, where `range`'s inlined methods alone keep `for i in range(3): s +=
 /// x` a call, so `iter.init` is priced at the bound; `print`, a builtin
 /// call here, costs the pin's 28, where `print(s)` inlines alone and keeps
 /// the call with four statements more.
 pub fn inline_cost(callee: &MirFunction) -> usize {
     let mut constants = BTreeSet::new();
-    blocks_cost(&callee.blocks, &mut constants)
-        + LOOP_COST * (back_edges(&callee.blocks) + structured_back_edges(&callee.blocks))
+    blocks_cost(&callee.blocks, &mut constants) + LOOP_COST * structured_back_edges(&callee.blocks)
 }
 
 /// Inline into `function` every call [`Callees::body`] answers whose shape
@@ -244,7 +238,6 @@ pub fn inline_parametric(
     let mut reads = vec![0; function.n_regs as usize];
     count_register_reads(&mut function.blocks, &mut reads);
     let function_values = callable_targets(function);
-    let structured = has_structured_control_flow(function);
     let mut blocks = std::mem::take(&mut function.blocks);
     let closures = Closures::of(&blocks);
     let mut inliner = Inliner {
@@ -257,8 +250,6 @@ pub fn inline_parametric(
         raise_held: Vec::new(),
         dropped_operands: false,
         loop_binders: Vec::new(),
-        region_depth: 0,
-        structured,
     };
     let changed = inliner.block_list(&mut blocks);
     let dropped_operands = inliner.dropped_operands;
@@ -305,18 +296,11 @@ struct Inliner<'f, 'c> {
     /// The binders of the `comptime for` loops enclosing the block list
     /// being inlined into, outermost first.
     loop_binders: Vec<ParamId>,
-    /// How many regions enclose the block list being inlined into: the
-    /// function's own blocks are at depth zero.
-    region_depth: usize,
-    /// Whether the caller holds a region op other than a `try`, so that an
-    /// inlined body goes in a loop of its own ([`splice_region`]).
-    structured: bool,
 }
 
-/// Where an inlined call stands: its block, its index there, and the
+/// Where an inlined call stands: its index in the caller's block, and the
 /// register it defines.
 struct CallSite {
-    block: usize,
     index: usize,
     dest: Reg,
 }
@@ -324,15 +308,13 @@ struct CallSite {
 /// A call [`Inliner::inlinable`] inlines: the register it defines, its
 /// callee instantiated at it, the binding of each parameter, whether it
 /// passed an operand for a removed argument, and each callable binder's
-/// slot of the callee bound to a caller's closure register, and the
-/// binders of its regions a `comptime for` holding the call must bind.
+/// slot of the callee bound to a caller's closure register.
 struct Inlinable<'c> {
     dest: Reg,
     callee: Cow<'c, MirFunction>,
     bindings: Vec<Binding>,
     dropped: bool,
     closures: Vec<(VarId, Reg)>,
-    region_binders: Vec<ParamId>,
 }
 
 /// A callee instantiated at a call: its body, and each callable binder's
@@ -340,47 +322,6 @@ struct Inlinable<'c> {
 struct Instantiated<'c> {
     body: Cow<'c, MirFunction>,
     closures: Vec<(VarId, Reg)>,
-}
-
-/// The bodies of a block list's `comptime for` loops, found when first
-/// asked and again after the list changes.
-#[derive(Default)]
-struct LoopBodies {
-    bodies: Option<Vec<(ParamId, HashSet<MirBlockId>)>>,
-}
-
-impl LoopBodies {
-    /// The binders of the `comptime for` loops of `list`, the function's
-    /// own blocks when `function_level`, whose bodies hold its block
-    /// `block`.
-    fn enclosing(
-        &mut self,
-        list: &[MirBlock],
-        block: MirBlockId,
-        function_level: bool,
-    ) -> Vec<ParamId> {
-        self.bodies
-            .get_or_insert_with(|| {
-                list.iter()
-                    .enumerate()
-                    .filter_map(|(header, candidate)| match &candidate.term {
-                        MirTerm::ComptimeFor {
-                            binder, body, exit, ..
-                        } => Some((
-                            binder.id.clone(),
-                            comptime_for_body(list, header, *body, *exit, function_level)
-                                .into_iter()
-                                .collect(),
-                        )),
-                        _ => None,
-                    })
-                    .collect()
-            })
-            .iter()
-            .filter(|(_, body)| body.contains(&block))
-            .map(|(binder, _)| binder.clone())
-            .collect()
-    }
 }
 
 /// How an inlined parameter's slot is bound.
@@ -399,7 +340,7 @@ enum Binding {
     /// the caller's consumption of it is the body's end of the parameter.
     Part { place: MirPlace, argument: Reg },
     /// A constructor's `out self`: a fresh slot the body initializes and
-    /// the call's result moves out of.
+    /// the call's result takes forwarded.
     Out,
     /// A fresh slot, initialized from the omitted argument's default
     /// materialized at the call, and dropped after the body when the
@@ -724,43 +665,21 @@ struct OwnerInstance<'c> {
 }
 
 /// The caller register each register of an inlined callee becomes: past
-/// the caller's, but for the one the callee returns, which becomes the
-/// call's.
+/// the caller's.
 struct Registers {
     base: u32,
-    returned: Returned,
-    dest: Reg,
 }
 
 impl Registers {
-    /// The renumbering of `callee`'s registers into `caller`'s, at the call
-    /// defining `dest` whose parameters `bindings` binds, its body
-    /// `wrapped` in a loop or spliced as blocks.
-    fn new(
-        caller: &MirFunction,
-        callee: &MirFunction,
-        bindings: &[Binding],
-        dest: Reg,
-        wrapped: bool,
-    ) -> Self {
-        let returned = if matches!(bindings.first(), Some(Binding::Out)) {
-            Returned::Out
-        } else {
-            result_of(callee, wrapped)
-        };
+    /// The renumbering of an inlined callee's registers into `caller`'s.
+    const fn new(caller: &MirFunction) -> Self {
         Self {
             base: caller.n_regs,
-            returned,
-            dest,
         }
     }
 
-    fn of(&self, reg: Reg) -> Reg {
-        if self.returned == Returned::Register(reg) {
-            self.dest
-        } else {
-            Reg(reg.0 + self.base)
-        }
+    const fn of(&self, reg: Reg) -> Reg {
+        Reg(reg.0 + self.base)
     }
 }
 
@@ -769,59 +688,48 @@ impl Registers {
 enum Returned {
     /// Nothing: the callee returns `None`.
     None,
-    /// The callee's one returned register, which becomes the call's.
-    Register(Reg),
-    /// A slot every return stores to, which the call's register moves from.
+    /// A slot every return stores to, which the call's register takes
+    /// forwarded, with no move initializer, as upstream's break carries
+    /// the value.
     Slot,
-    /// A constructor's `out self` slot, which the call's register moves
-    /// from.
+    /// A constructor's `out self` slot, which the call's register takes
+    /// forwarded, as [`Returned::Slot`].
     Out,
 }
 
 impl<'c> Inliner<'_, 'c> {
-    /// Inline every inlinable call of `list`, a block list of the caller
-    /// whose ids are its own; returns whether it inlined one.
-    fn block_list(&mut self, list: &mut Vec<MirBlock>) -> bool {
+    /// Inline every inlinable call of `list`, a block list of the caller,
+    /// in its regions too; returns whether it inlined one.
+    ///
+    /// A structured list holds one block, as does a structured callee's
+    /// body; a call in a list of more, or of a callee whose body has more,
+    /// stays a call.
+    fn block_list(&mut self, list: &mut [MirBlock]) -> bool {
         let mut changed = false;
-        let mut loops = LoopBodies::default();
-        let mut block = 0;
-        while block < list.len() {
+        let structured = list.len() == 1;
+        for caller in list {
             let mut index = 0;
-            while index < list[block].instrs.len() {
-                if !instruction_regions(&list[block].instrs[index]).is_empty() {
-                    let depth = self.loop_binders.len();
-                    let enclosing = loops.enclosing(list, block, self.region_depth == 0);
-                    self.loop_binders.extend(enclosing);
-                    changed |= self.regions(&mut list[block].instrs[index]);
-                    self.loop_binders.truncate(depth);
+            while index < caller.instrs.len() {
+                if !instruction_regions(&caller.instrs[index]).is_empty() {
+                    changed |= self.instruction_regions(&mut caller.instrs[index]);
                 }
-                if let Some(Inlinable {
-                    dest,
-                    mut callee,
-                    mut bindings,
-                    dropped,
-                    closures,
-                    region_binders,
-                }) = self.inlinable(&list[block], index)
-                    && (region_binders.is_empty() || {
-                        let enclosing = loops.enclosing(list, block, self.region_depth == 0);
-                        region_binders
-                            .iter()
-                            .all(|binder| enclosing.contains(binder))
-                    })
-                    && let Some(wrapped) = self.wraps(&callee, list)
-                    && let Some(blocks) = self
-                        .inlined_blocks(callee.to_mut(), &bindings, dest, wrapped)
-                        .or_else(|| {
+                if structured
+                    && let Some(Inlinable {
+                        dest,
+                        mut callee,
+                        mut bindings,
+                        dropped,
+                        closures,
+                    }) = self.inlinable(caller, index)
+                    && callee.blocks.len() == 1
+                    && let Some(blocks) =
+                        self.inlined_blocks(callee.to_mut(), &bindings).or_else(|| {
                             demote_parts(&mut bindings)
-                                .then(|| {
-                                    self.inlined_blocks(callee.to_mut(), &bindings, dest, wrapped)
-                                })
+                                .then(|| self.inlined_blocks(callee.to_mut(), &bindings))
                                 .flatten()
                         })
                 {
                     self.dropped_operands |= dropped;
-                    let site = CallSite { block, index, dest };
                     if callee.raises {
                         self.raise_held.extend(raise_held(
                             &blocks,
@@ -831,38 +739,31 @@ impl<'c> Inliner<'_, 'c> {
                         ));
                     }
                     changed = true;
-                    // A wrapped body's loop is scanned next, its regions
-                    // as any region op's; a spliced body's blocks are
-                    // scanned after the list's own.
-                    if let Some(at) = self.splice(
-                        list,
-                        &site,
+                    // The body's loop is scanned next, its regions as any
+                    // region op's.
+                    index = self.splice(
+                        caller,
+                        &CallSite { index, dest },
                         &callee,
                         (&bindings, &closures),
                         blocks,
-                        wrapped,
-                    ) {
-                        self.structured = true;
-                        index = at;
-                        continue;
-                    }
-                    loops = LoopBodies::default();
-                    break;
+                    );
+                    continue;
                 }
                 index += 1;
             }
-            block += 1;
         }
         changed
     }
 
-    /// The binders of the regions `declaration`, and each declaration it
-    /// is nested in, is declared in that are not in scope everywhere in
-    /// the call being inlined: neither a binder of the caller's own scope
-    /// nor of a `comptime for` region enclosing the block list being
-    /// inlined into. The call inlines only inside a `comptime for` of each,
-    /// whose binder the inlined body names itself.
-    fn unscoped_region_binders(&self, declaration: &MirFunctionDeclaration) -> Vec<ParamId> {
+    /// The declaration of `name`, when every binder of the regions it, and
+    /// each declaration it is nested in, is declared in is in scope
+    /// everywhere in the call being inlined: a binder of the caller's own
+    /// scope or of a `comptime for` region enclosing the block list being
+    /// inlined into. A body declared in a `comptime for` inlines only
+    /// inside that loop, whose binder the inlined body names itself.
+    fn scoped_declaration(&self, name: &str) -> Option<&'c MirFunctionDeclaration> {
+        let declaration = self.declarations.function(name)?;
         let mut caller_scope: Vec<&ParamId> = Vec::new();
         let mut link = Some(self.caller);
         while let Some(current) = link {
@@ -878,50 +779,28 @@ impl<'c> Inliner<'_, 'c> {
             }
             link = scope.and_then(|scope| scope.enclosing.as_deref());
         }
-        let mut unscoped = Vec::new();
         let mut link = Some(declaration);
         while let Some(current) = link {
-            unscoped.extend(
-                current
-                    .region_binders
-                    .iter()
-                    .map(ParamDecl::id)
-                    .filter(|id| !caller_scope.contains(id) && !self.loop_binders.contains(id))
-                    .cloned(),
-            );
+            if !current
+                .region_binders
+                .iter()
+                .map(ParamDecl::id)
+                .all(|id| caller_scope.contains(&id) || self.loop_binders.contains(id))
+            {
+                return None;
+            }
             link = current
                 .enclosing
                 .as_deref()
                 .and_then(|name| self.declarations.function(name));
         }
-        unscoped
-    }
-
-    /// How a call to `callee` in `list` is inlined, upstream's way when
-    /// either holds structured control flow: `Some(true)` wraps the body
-    /// in a loop ([`splice_region`]), which takes a structured callee's one
-    /// block into a structured list's, `Some(false)` splices a lowered
-    /// callee's blocks into a lowered caller ([`splice_blocks`]); `None`
-    /// keeps a call mixing the two shapes.
-    fn wraps(&self, callee: &MirFunction, list: &[MirBlock]) -> Option<bool> {
-        if !self.structured && !has_structured_control_flow(callee) {
-            return Some(false);
-        }
-        (callee.blocks.len() == 1 && list.len() == 1).then_some(true)
+        Some(declaration)
     }
 
     /// Inline into the regions `instruction` holds; returns whether it
     /// inlined a call. A `try`'s raise-edge cleanup takes the inlined slots
     /// a raise in its body may hold, which its handler, `else`, and
     /// `finally` raise past.
-    fn regions(&mut self, instruction: &mut MirInstr) -> bool {
-        self.region_depth += 1;
-        let changed = self.instruction_regions(instruction);
-        self.region_depth -= 1;
-        changed
-    }
-
-    /// [`Self::regions`] at the regions' depth.
     fn instruction_regions(&mut self, instruction: &mut MirInstr) -> bool {
         if let MirInstr::ComptimeFor {
             binder,
@@ -1175,7 +1054,7 @@ impl<'c> Inliner<'_, 'c> {
             .filter(|&at| Some(at) != forwarded_at)
             .collect();
         let full = self.callees.body(&target)?;
-        let full_declaration = self.declarations.function(&target)?;
+        let full_declaration = self.scoped_declaration(&target)?;
         // A direct call names the generator without its removed arguments,
         // as upstream's `RemoveUnusedParams` rewrote it, and passes no
         // operand for them; that generator is the body inlined.
@@ -1313,7 +1192,6 @@ impl<'c> Inliner<'_, 'c> {
             bindings,
             dropped,
             closures,
-            region_binders: self.unscoped_region_binders(full_declaration),
         })
     }
 
@@ -1533,8 +1411,6 @@ impl<'c> Inliner<'_, 'c> {
         &self,
         callee: &mut MirFunction,
         bindings: &[Binding],
-        dest: Reg,
-        wrapped: bool,
     ) -> Option<Vec<MirBlock>> {
         let base = self.function.n_vars as VarId;
         let mut blocks = callee.blocks.clone();
@@ -1559,49 +1435,46 @@ impl<'c> Inliner<'_, 'c> {
         };
         retain_unconsumed(&mut blocks, &part_bound);
         copy_bound_parameters(&mut blocks, callee, &bound);
-        let registers = Registers::new(self.function, callee, bindings, dest, wrapped);
-        rebind_blocks(&mut blocks, &registers, &bound)?;
+        rebind_blocks(&mut blocks, &Registers::new(self.function), &bound)?;
         Some(blocks)
     }
 
-    /// Replace the call at `site` of `list` by `blocks`, the callee's body
-    /// [`Self::inlined_blocks`] prepared: the call's block binds the
-    /// parameters, then holds the body as [`splice_region`] or
-    /// [`splice_blocks`] places it, `wrapped` choosing, and resumes with
-    /// what followed the call. Returns, for a wrapped body, the position of
-    /// its loop in the call's block.
+    /// Replace the call at `site` of `caller`, the call's block, by
+    /// `blocks`, the callee's body [`Self::inlined_blocks`] prepared: the
+    /// block binds the parameters, then holds the body as [`splice_region`]
+    /// places it, and resumes with what followed the call. Returns the
+    /// position of the body's loop in the block.
     fn splice(
         &mut self,
-        list: &mut Vec<MirBlock>,
+        caller: &mut MirBlock,
         site: &CallSite,
         callee: &MirFunction,
         (bindings, closures): (&[Binding], &[(VarId, Reg)]),
         mut blocks: Vec<MirBlock>,
-        wrapped: bool,
-    ) -> Option<usize> {
+    ) -> usize {
         let declarations = self.declarations;
         let function = &mut *self.function;
         merge_callee_removals(
             &mut function.callee_removed_params,
             &callee.callee_removed_params,
         );
-        let CallSite { block, index, dest } = *site;
-        let mut after = list[block].instrs.split_off(index + 1);
-        list[block].instrs.truncate(index);
+        let CallSite { index, dest } = *site;
+        let mut after = caller.instrs.split_off(index + 1);
+        caller.instrs.truncate(index);
         // A slot the body takes in place keeps its value until the body
         // ends it: the forward that fed the call goes, and so does the
         // caller's consume of a loaded receiver's residue after the call,
         // which the body's own consume of its receiver is.
-        let run = run_start(&list[block], index);
+        let run = run_start(caller, index);
         let resumed_run = after.iter().position(splits_runs).unwrap_or(after.len());
         for binding in bindings {
             let Binding::Slot(slot) = binding else {
                 continue;
             };
-            if let Some(forward) = list[block].instrs[run..].iter().rposition(|instruction| {
+            if let Some(forward) = caller.instrs[run..].iter().rposition(|instruction| {
                 matches!(instruction, MirInstr::UseVar { var, mode: UseMode::Forward, .. } if var == slot)
             }) {
-                list[block].instrs.remove(run + forward);
+                caller.instrs.remove(run + forward);
             } else if let Some(consume) = after[..resumed_run]
                 .iter()
                 .position(|instruction| instruction_slots(instruction).contains(slot))
@@ -1611,8 +1484,12 @@ impl<'c> Inliner<'_, 'c> {
             }
         }
         let var_base = function.n_vars as VarId;
-        let registers = Registers::new(function, callee, bindings, dest, wrapped);
-        let result = registers.returned;
+        let registers = Registers::new(function);
+        let result = if matches!(bindings.first(), Some(Binding::Out)) {
+            Returned::Out
+        } else {
+            result_of(callee)
+        };
         let result_slot = var_base + callee.n_vars as VarId;
         // A returned reference is the call's, of the caller's reference
         // type; the callee's own spells its origin untracked.
@@ -1630,9 +1507,6 @@ impl<'c> Inliner<'_, 'c> {
         let call_span = function.spans.0.get(&dest.0).map(|(span, _)| span.clone());
         for reg in 0..callee.n_regs {
             let inlined = registers.of(Reg(reg));
-            if inlined == dest {
-                continue;
-            }
             if let Some(ty) = callee.reg_types.get(&reg) {
                 function.reg_types.insert(inlined.0, ty.clone());
             }
@@ -1641,11 +1515,8 @@ impl<'c> Inliner<'_, 'c> {
             }
         }
         function.n_regs += callee.n_regs;
-        // A reference a wrapped body stores to the result slot is the
-        // call's, as the one returned register a spliced body's call takes
-        // over is.
-        if wrapped
-            && callee.returns_reference
+        // A reference the body stores to the result slot is the call's.
+        if callee.returns_reference
             && result == Returned::Slot
             && let Some(ty) = &result_ty
         {
@@ -1678,11 +1549,10 @@ impl<'c> Inliner<'_, 'c> {
                 dest,
                 k: Const::None,
             }),
-            Returned::Register(_) => {}
             Returned::Out => resumed.push(MirInstr::UseVar {
                 dest,
                 var: var_base,
-                mode: UseMode::Move,
+                mode: UseMode::Forward,
                 constructor: None,
             }),
             Returned::Slot => {
@@ -1694,7 +1564,7 @@ impl<'c> Inliner<'_, 'c> {
                 resumed.push(MirInstr::UseVar {
                     dest,
                     var: result_slot,
-                    mode: UseMode::Move,
+                    mode: UseMode::Forward,
                     constructor: None,
                 });
             }
@@ -1725,7 +1595,6 @@ impl<'c> Inliner<'_, 'c> {
             other => other,
         }));
 
-        let caller = &mut list[block];
         for (param, binding) in bindings.iter().enumerate() {
             let var = param as VarId;
             let ty = callee
@@ -1787,12 +1656,7 @@ impl<'c> Inliner<'_, 'c> {
             });
             self.closures.slots.insert(var, closure.0);
         }
-        if wrapped {
-            Some(splice_region(&mut list[block], blocks, resumed, &exit))
-        } else {
-            splice_blocks(list, block, blocks, resumed, &exit);
-            None
-        }
+        splice_region(caller, blocks, resumed, &exit)
     }
 }
 
@@ -1815,33 +1679,6 @@ fn splice_region(
     });
     caller.instrs.extend(resumed);
     at
-}
-
-/// Place `blocks`, a lowered inlined body, after `list`'s blocks: the
-/// call's block `block` jumps to its entry, and every return, as `exit`
-/// rewrites it, jumps to a new block holding `resumed` and the call's
-/// block's terminator.
-fn splice_blocks(
-    list: &mut Vec<MirBlock>,
-    block: usize,
-    mut blocks: Vec<MirBlock>,
-    resumed: Vec<MirInstr>,
-    exit: &ReturnExit,
-) {
-    let entry = list.len();
-    let continuation = entry + blocks.len();
-    for inlined in &mut blocks {
-        for target in terminator_targets_mut(&mut inlined.term) {
-            *target += entry;
-        }
-        exit.rewrite(inlined, MirTerm::Jump(continuation));
-    }
-    let term = std::mem::replace(&mut list[block].term, MirTerm::Jump(entry));
-    list.extend(blocks);
-    list.push(MirBlock {
-        instrs: resumed,
-        term,
-    });
 }
 
 /// How an inlined body's returns leave it: through what it returns, and
@@ -1930,7 +1767,7 @@ fn retype_closure_slot(
 
 /// Add to `function`'s `callee_removed_params` each callee a call names
 /// that it has no entry for, by the removals of the callee's body: the
-/// copy or move constructor a copy or move of a spliced body's slot calls
+/// copy or move constructor a copy or move of an inlined body's slot calls
 /// once named and lowered, which no inlined callee's snapshot listed, so
 /// the verifier reads the call at the constructor's kept parameters as the
 /// call-graph pass will.
@@ -1967,7 +1804,7 @@ fn call_targets_in(blocks: &[MirBlock], out: &mut Vec<String>) {
 }
 
 /// Add to a caller's `callee_removed_params` an inlined callee's: the
-/// spliced body forwards to the callee's callees as the callee did, by
+/// inlined body forwards to the callee's callees as the callee did, by
 /// their removals then.
 fn merge_callee_removals(
     into: &mut Vec<(String, Vec<mojito_types::param_expr::ParamId>)>,
@@ -2630,41 +2467,6 @@ fn rebind_blocks<'b>(
     Some(())
 }
 
-/// How many edges of `blocks` close a loop: the edges to a block still on
-/// the stack of a depth-first walk from the entry.
-fn back_edges(blocks: &[MirBlock]) -> usize {
-    #[derive(Clone, Copy, PartialEq)]
-    enum Visit {
-        Unseen,
-        Open,
-        Done,
-    }
-    let mut state = vec![Visit::Unseen; blocks.len()];
-    let mut stack: Vec<(MirBlockId, Vec<MirBlockId>)> = Vec::new();
-    let mut back = 0;
-    if blocks.is_empty() {
-        return 0;
-    }
-    state[0] = Visit::Open;
-    stack.push((0, block_successors(&blocks[0])));
-    while let Some((block, successors)) = stack.last_mut() {
-        let Some(next) = successors.pop() else {
-            state[*block] = Visit::Done;
-            stack.pop();
-            continue;
-        };
-        match state[next] {
-            Visit::Open => back += 1,
-            Visit::Done => {}
-            Visit::Unseen => {
-                state[next] = Visit::Open;
-                stack.push((next, block_successors(&blocks[next])));
-            }
-        }
-    }
-    back
-}
-
 /// The [`inline_cost`] of `blocks` and their regions but for their back
 /// edges, each constant of `constants` counted once.
 fn blocks_cost(blocks: &[MirBlock], constants: &mut BTreeSet<String>) -> usize {
@@ -2676,7 +2478,6 @@ fn blocks_cost(blocks: &[MirBlock], constants: &mut BTreeSet<String>) -> usize {
                 .iter()
                 .map(|instruction| instruction_cost(instruction, constants))
                 .sum::<usize>()
-                + usize::from(matches!(block.term, MirTerm::Branch { .. }))
         })
         .sum()
 }
@@ -2710,8 +2511,7 @@ fn instruction_cost(instruction: &MirInstr, constants: &mut BTreeSet<String>) ->
 }
 
 /// How many `continue`s of `blocks`, a structured body, are reached, each
-/// the back edge lowering makes of it: a lowered body's own edges are
-/// [`back_edges`]'.
+/// the back edge lowering makes of it.
 fn structured_back_edges(blocks: &[MirBlock]) -> usize {
     let mut walk = ContinueWalk::default();
     walk.region(blocks);
@@ -2815,28 +2615,17 @@ impl ContinueWalk {
     }
 }
 
-/// What the callee returns through: nothing when it returns `None`; when
-/// its body is `wrapped` in a loop, a slot, since no register its region
-/// defines is read after the loop; otherwise its register when one return
-/// names it, and a slot when several do.
-fn result_of(callee: &MirFunction, wrapped: bool) -> Returned {
+/// What the callee returns through: nothing when it returns `None`, else a
+/// slot, since no register the body's loop defines is read after it.
+fn result_of(callee: &MirFunction) -> Returned {
     if callee
         .ret_ty
         .as_ref()
         .is_none_or(|ty| matches!(ty.kind(), TyKind::None))
     {
-        return Returned::None;
-    }
-    if wrapped {
-        return Returned::Slot;
-    }
-    let mut returned = callee.blocks.iter().filter_map(|block| match block.term {
-        MirTerm::Return(Some(value)) => Some(value),
-        _ => None,
-    });
-    match (returned.next(), returned.next()) {
-        (Some(value), None) => Returned::Register(value),
-        _ => Returned::Slot,
+        Returned::None
+    } else {
+        Returned::Slot
     }
 }
 
@@ -3674,7 +3463,70 @@ fn fold_parameter_constants(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mojito_mir::mir::lower_control_flow;
+    use mojito_mir::mir::{
+        MirBlockId, block_successors, has_structured_control_flow, lower_control_flow,
+    };
+
+    /// How many edges of `blocks` close a loop: the edges to a block still
+    /// on the stack of a depth-first walk from the entry.
+    fn back_edges(blocks: &[MirBlock]) -> usize {
+        #[derive(Clone, Copy, PartialEq)]
+        enum Visit {
+            Unseen,
+            Open,
+            Done,
+        }
+        let mut state = vec![Visit::Unseen; blocks.len()];
+        let mut stack: Vec<(MirBlockId, Vec<MirBlockId>)> = Vec::new();
+        let mut back = 0;
+        if blocks.is_empty() {
+            return 0;
+        }
+        state[0] = Visit::Open;
+        stack.push((0, block_successors(&blocks[0])));
+        while let Some((block, successors)) = stack.last_mut() {
+            let Some(next) = successors.pop() else {
+                state[*block] = Visit::Done;
+                stack.pop();
+                continue;
+            };
+            match state[next] {
+                Visit::Open => back += 1,
+                Visit::Done => {}
+                Visit::Unseen => {
+                    state[next] = Visit::Open;
+                    stack.push((next, block_successors(&blocks[next])));
+                }
+            }
+        }
+        back
+    }
+
+    /// How many blocks of `blocks` and their regions end in a `branch`.
+    fn branches(blocks: &[MirBlock]) -> usize {
+        blocks
+            .iter()
+            .map(|block| {
+                usize::from(matches!(block.term, MirTerm::Branch { .. }))
+                    + block
+                        .instrs
+                        .iter()
+                        .flat_map(instruction_regions)
+                        .map(|region| branches(region))
+                        .sum::<usize>()
+            })
+            .sum()
+    }
+
+    /// The price of a lowered body, the reference [`inline_cost`] is
+    /// calibrated against: its operations, each `branch` one, and each
+    /// back edge a loop's.
+    fn lowered_price(function: &MirFunction) -> usize {
+        let mut constants = BTreeSet::new();
+        blocks_cost(&function.blocks, &mut constants)
+            + branches(&function.blocks)
+            + LOOP_COST * back_edges(&function.blocks)
+    }
 
     fn one(instrs: Vec<MirInstr>, term: MirTerm) -> Vec<MirBlock> {
         vec![MirBlock { instrs, term }]
@@ -3702,11 +3554,12 @@ mod tests {
             })
     }
 
-    /// The price of `function` and of its lowered clone.
+    /// The price of `function` and the reference price of its lowered
+    /// clone.
     fn prices(function: &MirFunction) -> (usize, usize) {
         let mut lowered = function.clone();
         lower_control_flow(&mut lowered);
-        (inline_cost(function), inline_cost(&lowered))
+        (inline_cost(function), lowered_price(&lowered))
     }
 
     #[test]

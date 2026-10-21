@@ -19,6 +19,7 @@ assets/ok/always_inline_nodebug_nested_calls.mojo	-	ineligible	no-scalar-entry-s
 assets/ok/always_inline_nodebug_reference_results.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_nodebug_struct_calls.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_nodebug_tuple_members.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/always_inline_result_runs_no_move.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_small_calls.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/arithmetic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/array_comparable.mojo	-	ineligible	no-scalar-entry-shape
@@ -320,6 +321,7 @@ assets/ok/homogeneous_variadic_loan_carrying_element.mojo	-	ineligible	no-scalar
 assets/ok/if_case_and_while_case.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/if_case_elif_chains_and_while_case.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/if_case_mixed_with_boolean_elif.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/if_unread_elif_call_skipped.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/imm_origin_binders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/imm_origin_cast_view.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/implicit_conversion.mojo	-	ineligible	no-scalar-entry-shape

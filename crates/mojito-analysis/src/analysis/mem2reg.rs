@@ -50,10 +50,10 @@ use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
-    MirBlock, MirBlockId, MirDeclarations, MirFunction, MirInstr, MirTerm, Reg, UseMode,
-    block_successors, cleanup_slots, comptime_for_body, count_register_reads,
-    has_structured_control_flow, instruction_regions, instruction_regions_mut, instruction_slots,
-    region_escape_targets, renumber_block_slots, retire_slots, terminator_targets,
+    ComptimeForBodies, MirBlock, MirBlockId, MirDeclarations, MirFunction, MirInstr, MirTerm, Reg,
+    UseMode, block_successors, cleanup_slots, count_register_reads, has_structured_control_flow,
+    instruction_regions, instruction_regions_mut, instruction_slots, region_escape_targets,
+    renumber_block_slots, retire_slots, terminator_targets,
 };
 use mojito_types::types::{Ty, is_symbolic};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -848,12 +848,15 @@ fn solve(flow: &ListFlow<'_>, entry: Vec<Reaching>, promotion: &mut Promotion) {
             }
         }
     }
+    let mut loops = None;
     let bodies: Vec<HashSet<MirBlockId>> = blocks
         .iter()
         .enumerate()
-        .filter_map(|(header, block)| match block.term {
+        .filter_map(|(header, block)| match &block.term {
             MirTerm::ComptimeFor { body, exit, .. } => Some(
-                comptime_for_body(blocks, header, body, exit, function_level)
+                loops
+                    .get_or_insert_with(|| ComptimeForBodies::new(blocks, function_level))
+                    .body(header, *body, *exit)
                     .into_iter()
                     .collect(),
             ),

@@ -57,20 +57,20 @@
       fn {
         name: taken,
         registers: 10,
-        vars: 4,
-        var_names: [v, b, first, "self$inline3"],
+        vars: 5,
+        var_names: [v, b, first, "self$inline3", "$inline3$result"],
         params: 1,
         param_types: [Int],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: struct_type { name: Box, arguments: [] } }, var_type { var: $v2, type: Int }, var_type { var: $v3, type: struct_type { name: Box, arguments: [] } }],
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: struct_type { name: Box, arguments: [] } }, var_type { var: $v2, type: Int }, var_type { var: $v3, type: struct_type { name: Box, arguments: [] } }, var_type { var: $v4, type: Int }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: Box, arguments: [] } }, reg_type { reg: %r2, type: struct_type { name: Box, arguments: [] } }, reg_type { reg: %r3, type: struct_type { name: Box, arguments: [] } }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 252, end: 253, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 248, end: 254, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 271, end: 272, origin: present($v1) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 271, end: 272, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 271, end: 279, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 291, end: 296, origin: present($v2) }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 299, end: 302, origin: present($v1) }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 291, end: 302, origin: absent }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 271, end: 279, origin: absent }) }, reg_loc { reg: %r9, location: absent }],
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: Box, arguments: [] } }, reg_type { reg: %r2, type: struct_type { name: Box, arguments: [] } }, reg_type { reg: %r3, type: struct_type { name: Box, arguments: [] } }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r9, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 252, end: 253, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 248, end: 254, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 271, end: 272, origin: present($v1) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 271, end: 272, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 271, end: 279, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 291, end: 296, origin: present($v2) }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 299, end: 302, origin: present($v1) }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 291, end: 302, origin: absent }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 271, end: 279, origin: absent }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 271, end: 279, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
@@ -79,20 +79,9 @@
               var.store { var: $v1, src: %r1, binding_type: present(struct_type { name: Box, arguments: [] }), in_place: true },
               place.load { dest: %r2, place: place { root: $v1, root_type: present(struct_type { name: Box, arguments: [] }), projections: [], type: present(struct_type { name: Box, arguments: [] }), through: absent } },
               value.copy { dest: %r3, value: %r2 },
-              var.store { var: $v3, src: %r3, binding_type: present(struct_type { name: Box, arguments: [] }), in_place: false }
-            ],
-            terminator: jump { target: bb1 }
-          },
-          bb1 {
-            instructions: [
-              place.load { dest: %r8, place: place { root: $v3, root_type: present(struct_type { name: Box, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
-              value.copy { dest: %r4, value: %r8 },
-              consume.var { var: $v3 }
-            ],
-            terminator: jump { target: bb2 }
-          },
-          bb2 {
-            instructions: [
+              var.store { var: $v3, src: %r3, binding_type: present(struct_type { name: Box, arguments: [] }), in_place: false },
+              loop { label: present(loop4294967295), body: [bb0 { instructions: [place.load { dest: %r8, place: place { root: $v3, root_type: present(struct_type { name: Box, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } }, value.copy { dest: %r9, value: %r8 }, consume.var { var: $v3 }, var.store { var: $v4, src: %r9, binding_type: present(Int), in_place: false }], terminator: break { label: present(loop4294967295) } }] },
+              var.use { dest: %r4, var: $v4, mode: forward },
               var.store { var: $v2, src: %r4, binding_type: present(Int), in_place: false },
               var.use { dest: %r5, var: $v2, mode: copy },
               drop.var { var: $v2 },

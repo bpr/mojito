@@ -31,19 +31,19 @@
       fn {
         name: outer,
         registers: 11,
-        vars: 5,
-        var_names: [k, "x$inline1", "f$inline1", "k$inline3", "y$inline3"],
+        vars: 7,
+        var_names: [k, "x$inline1", "f$inline1", "$inline1$result", "k$inline4", "y$inline4", "$inline4$result"],
         params: 1,
         param_types: [Int],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v130, path: [] }, access: read }])), param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }, var_type { var: $v3, type: Int }, var_type { var: $v4, type: Int }],
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v130, path: [] }, access: read }])), param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }, var_type { var: $v3, type: Int }, var_type { var: $v4, type: Int }, var_type { var: $v5, type: Int }, var_type { var: $v6, type: Int }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v130, path: [] }, access: read }])), param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v130, path: [] }, access: read }])), param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r9, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }],
+        register_types: [reg_type { reg: %r0, type: func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v130, path: [] }, access: read }])), param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v130, path: [] }, access: read }])), param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r9, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }, reg_type { reg: %r10, type: Int }],
         locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }, reg_loc { reg: %r10, location: absent }],
         blocks: [
           bb0 {
@@ -52,37 +52,11 @@
               const { dest: %r1, value: int_literal(3) },
               literal.materialize { dest: %r2, value: %r1, target: Int },
               var.store { var: $v1, src: %r2, binding_type: present(Int), in_place: false },
-              var.store { var: $v2, src: %r0, binding_type: present(func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v130, path: [] }, access: read }])), param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] }), in_place: false }
-            ],
-            terminator: jump { target: bb1 }
-          },
-          bb1 {
-            instructions: [
-              var.use { dest: %r4, var: $v2, mode: copy },
-              var.use { dest: %r5, var: $v1, mode: copy },
-              var.store { var: $v4, src: %r5, binding_type: present(Int), in_place: false }
-            ],
-            terminator: jump { target: bb3 }
-          },
-          bb2 {
-            instructions: [
+              var.store { var: $v2, src: %r0, binding_type: present(func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v130, path: [] }, access: read }])), param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] }), in_place: false },
+              loop { label: present(loop4294967295), body: [bb0 { instructions: [var.use { dest: %r4, var: $v2, mode: copy }, var.use { dest: %r5, var: $v1, mode: copy }, var.store { var: $v5, src: %r5, binding_type: present(Int), in_place: false }, loop { label: present(loop4294967295), body: [bb0 { instructions: [ref.make { dest: %r9, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } }, ref.read { dest: %r8, reference: %r9 }, var.use { dest: %r7, var: $v5, mode: copy }, binary { op: add, dest: %r10, a: %r7, b: %r8, resolved: absent, raises: absent }, var.store { var: $v6, src: %r10, binding_type: present(Int), in_place: false }], terminator: break { label: present(loop4294967295) } }] }, var.use { dest: %r6, var: $v6, mode: forward }, drop.var { var: $v2 }, var.store { var: $v3, src: %r6, binding_type: present(Int), in_place: false }], terminator: break { label: present(loop4294967295) } }] },
+              var.use { dest: %r3, var: $v3, mode: forward }
             ],
             terminator: return { value: present(%r3) }
-          },
-          bb3 {
-            instructions: [
-              ref.make { dest: %r9, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } },
-              ref.read { dest: %r8, reference: %r9 },
-              var.use { dest: %r7, var: $v4, mode: copy },
-              binary { op: add, dest: %r3, a: %r7, b: %r8, resolved: absent, raises: absent }
-            ],
-            terminator: jump { target: bb4 }
-          },
-          bb4 {
-            instructions: [
-              drop.var { var: $v2 }
-            ],
-            terminator: jump { target: bb2 }
           }
         ]
       },

@@ -56,36 +56,26 @@
       fn {
         name: default_wrapper,
         registers: 4,
-        vars: 2,
-        var_names: [s, "self$inline1"],
+        vars: 3,
+        var_names: [s, "self$inline1", "$inline1$result"],
         params: 1,
         param_types: [struct_type { name: S, arguments: [] }],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: S, arguments: [] } }, var_type { var: $v1, type: struct_type { name: S, arguments: [] } }],
+        var_types: [var_type { var: $v0, type: struct_type { name: S, arguments: [] } }, var_type { var: $v1, type: struct_type { name: S, arguments: [] } }, var_type { var: $v2, type: Int }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: struct_type { name: S, arguments: [] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: S, arguments: [] } }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 127, end: 128, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 127, end: 132, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 127, end: 132, origin: absent }) }, reg_loc { reg: %r3, location: absent }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: S, arguments: [] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: S, arguments: [] } }, reg_type { reg: %r3, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 127, end: 128, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 127, end: 132, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 127, end: 132, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 127, end: 132, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
-              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [], type: present(struct_type { name: S, arguments: [] }), through: absent } }
-            ],
-            terminator: jump { target: bb1 }
-          },
-          bb1 {
-            instructions: [
-              place.load { dest: %r2, place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [], type: present(struct_type { name: S, arguments: [] }), through: absent } },
-              call { dest: %r1, func: "Tr.m", raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [type_arg(struct_type { name: S, arguments: [] })], spread: absent }
-            ],
-            terminator: jump { target: bb2 }
-          },
-          bb2 {
-            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [], type: present(struct_type { name: S, arguments: [] }), through: absent } },
+              loop { label: present(loop4294967295), body: [bb0 { instructions: [place.load { dest: %r2, place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [], type: present(struct_type { name: S, arguments: [] }), through: absent } }, call { dest: %r3, func: "Tr.m", raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [type_arg(struct_type { name: S, arguments: [] })], spread: absent }, var.store { var: $v2, src: %r3, binding_type: present(Int), in_place: false }], terminator: break { label: present(loop4294967295) } }] },
+              var.use { dest: %r1, var: $v2, mode: forward }
             ],
             terminator: return { value: present(%r1) }
           }

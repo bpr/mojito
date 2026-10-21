@@ -8,14 +8,16 @@ use mojito_types::types::TyKind;
 use std::collections::BTreeMap;
 
 impl<'a> Specializer<'a> {
-    pub(super) fn new(source: &'a MirProgram, target: Option<&'a NativeTarget>) -> Self {
+    /// The elaborator of `source`, whose templates `templates` holds.
+    pub(super) fn new(
+        source: &'a MirProgram,
+        target: Option<&'a NativeTarget>,
+        templates: &'a bodies::Templates,
+    ) -> Self {
         Self {
             source,
             target,
-            functions: bodies::Bodies::new(
-                source.functions.iter().map(|(n, f)| (n.as_str(), f)),
-                None,
-            ),
+            functions: bodies::Bodies::new(source, templates),
             declarations: Catalog::new(
                 source
                     .declarations
@@ -79,11 +81,8 @@ impl<'a> Specializer<'a> {
     /// Elaborate against `package` too: a callee the program does not
     /// define is the package's.
     pub(super) fn importing(mut self, package: Option<&'a PackageBodies>) -> Self {
-        if package.is_some() {
-            self.functions = bodies::Bodies::new(
-                self.source.functions.iter().map(|(n, f)| (n.as_str(), f)),
-                package,
-            );
+        if let Some(package) = package {
+            self.functions = self.functions.importing(package);
         }
         self
     }

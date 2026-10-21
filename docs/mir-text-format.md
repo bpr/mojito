@@ -1024,8 +1024,9 @@ subscripts are `tuple_storage`, `variadic_storage`, `simd`, `pointer`, and
 For `Try`, `body`, `handler`, `orelse`, and `finalbody` contain lists of local
 blocks, as every region of `if`, `loop`, `comptime.if`, and `comptime.for`
 does: a region's blocks are numbered `bb0..bbN` among themselves, entered at
-`bb0`. Nothing produces those four structured ops yet, and concrete MIR
-carries none: the `lower-control-flow` pass lowers them to blocks first. Handler absence differs from a present empty handler. Its `cleanup`
+`bb0`. Parametric MIR, and so every artifact `emit-mir` writes, holds
+them, one block per region; concrete MIR carries none, since the
+elaborator runs the `lower-control-flow` pass on each template it fetches. Handler absence differs from a present empty handler. Its `cleanup`
 runs on the body's raise edge only, before the handler or the `finally`, and
 names the slots some raise in the body still holds (schema 1.53; before, it
 ran on every exit of the body). Each entry is a `drop { var: $vN,

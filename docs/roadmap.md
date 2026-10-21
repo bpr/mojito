@@ -112,41 +112,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1254 The seams lower control flow before the pre-elaboration
-  pipeline, where upstream keeps `hlcf` until LLVM**
-
-  `Compiler::elaborated_mir` and `pre_elaboration::finish_drops` run
-  `lower-control-flow` before the pipeline, so every pre-elaboration pass
-  and the elaborator read CFG bodies, though `sccp`, `canonicalize`, and
-  `mem-2-reg` now read regions.
-  - Slices S5 and S6 of
-    `R879-the-pre-elaboration-pipeline-and-the-plan.md`: the seams stop
-    lowering, and `mono/bodies.rs` `Bodies::get` lowers each template
-    once (an arena outside the `Specializer`, `PackageBodies::template`).
-  - The inliner's CFG splice and its CFG-shaped pass inputs go.
-  - `inline-parametric`'s `splice_region` then runs for every call, so a
-    straight-line callee is wrapped in its `inlined_cf_scope` loop too,
-    and `Inliner::wraps` stops keeping a call that mixes a lowered body
-    with a structured one.
-  - No package holds MIR, so `PACKAGE_FORMAT` does not change.
-  - Probe: `@no_inline def f[n: Int]() -> Int` whose body is
-    `comptime if False: comptime k = n * 2; return k` then `return 3`
-    gets `removed_params` naming `n` in `emit-mir` (a scratch build with
-    the move showed it), and the features row's `comptime if False`
-    caveat goes.
-  - Probe: `if c: pass elif f(): pass` then skips `f()`, as the pin does,
-    since `HoistYieldResults` erases the op with its condition regions.
-  - The scratch build matched every `if`/loop/`try`/`match` fixture's
-    output; its structured `mem-2-reg` promoted 369 slots where the CFG
-    path promotes 384, before R1253.
-  - With R1253's structured inlining live, the same scratch build matched
-    all 153 `always_inline` and control-flow fixtures' output, and its
-    `mem-2-reg` promoted 544 slots there, as the CFG path does.
-  - Updates `docs/architecture.md` §Pre-Elaboration Pipeline and
-    `docs/features.md`'s pipeline row.
-  - Depends on R1253.
-  - Model: Fable, Planned.
-
 - [ ] **R880 The elaborator unrolls `comptime for` by recovering its body
   through dominators where upstream clones the op's region**
 
@@ -157,6 +122,9 @@ which names the upstream pass each one follows. Each is measured by the
   - Instantiation, substitution, `ComptimeIf` (keep the taken arm), and
     `ComptimeFor` work on regions, with `simplifyParamForLoop`'s folding.
   - `unroll.rs`'s `loop_body` and `outermost_loop` are deleted.
+  - `mir::ComptimeForBodies`, and `mir::immediate_dominators`' virtual
+    root over unreferenced blocks (`DominatorRoots::Unreferenced`), go
+    with that recovery.
   - A CTFE fragment is lowered before `call_concrete`.
   - After it lands, `lower-control-flow` runs at the end of elaboration.
   - Depends on R1254.
@@ -174,6 +142,9 @@ which names the upstream pass each one follows. Each is measured by the
     eight CFG cases, and so do the CFG paths of `sccp`, `canonicalize`'s
     constant-branch fold, and `mem-2-reg`, which only lowered bodies use.
   - Add `SimplifyCF`'s trivial-loop removal (`lib/Transforms/SimplifyCF.cpp`).
+  - It would also remove the blocks each lowered `inlined_cf_scope`
+    wrapper leaves: wrapping every inlined body (R1254) grew corpus
+    concrete blocks about 2.7 % in the planning sweep.
   - After it lands, `lower-control-flow` runs at the backend boundary
     (`src/compiler.rs`, `src/artifact.rs`, the Pliron entry).
   - Depends on R880.
@@ -10108,6 +10079,11 @@ follow-ups the landed producer stages filed come last.
     `$inline{n}$result` slot each `break` stores, where upstream's
     `hlcf.break` carries it as the loop's result: probe
     `tests/mir_passes/inline-parametric/region_multi_return.expected`.
+  - Since every inlined body is wrapped (R1254), that slot traffic costs
+    about 1.8 % more corpus concrete instructions (the planning sweep), and
+    pre-elaboration `mem-2-reg` promotes fewer slots, since a result slot
+    stored inside the wrapper and read after it keeps its slot; a `break`
+    carrying the value recovers both.
   - Depends on R787, R872.
   - Model: Fable, Not Planned.
 
