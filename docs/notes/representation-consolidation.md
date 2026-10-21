@@ -34,7 +34,7 @@ which is, in order:
 | 1 | R875 | the move and initialization checks (`CheckLifetimes`) |
 | 2 | R876 | the borrow checks |
 | 3 | R877 | drop elaboration (`DestructorInsertion` on region exits, not CFG edges) |
-| 4 | R878 | field drops, store drops, and copy elision |
+| 4 | R878 | field drops, copy elision, and the lifecycle-call namings |
 | 5 | R879 | the pre-elaboration pipeline and the package hold structured bodies |
 | 6 | R886 | region ops carry values across a region boundary (`mojo-shape`) |
 | 7 | R880 | the elaborator unrolls `comptime for` by cloning the region |

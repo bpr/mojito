@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1252**.
+Next free ID: **R1253**.
 
 ## Ordered Work
 
@@ -62,7 +62,7 @@ which names the upstream pass each one follows. Each is measured by the
 
   Whether a drop is a whole-value destructor call, a field-by-field
   teardown, or nothing is decided after drop elaboration, by a separate
-  definite-initialization fold that follows `try` regions.
+  definite-initialization fold that follows every region op.
   - Upstream's `scheduleNeededDtors` and `DestructorInserter::destroyValueIfNeeded`
     decide it in the destructor-insertion walk, from that walk's own
     field-sensitive consumed bits.
@@ -71,31 +71,32 @@ which names the upstream pass each one follows. Each is measured by the
     `selfPartiallyInitializedAttrName`, `liveValueIdsAfterNoReturnCallAttrName`),
     not its per-point state.
   - Lever: `crates/mojito-mir/src/mir/drop_calls.rs`, its caller
-    `name_destructors`, and the elaborator's `name_lifecycle_calls`
-    (`mono/specializer.rs`), which run on the lowered CFG.
+    `name_destructors`, which reads regions, and the elaborator's
+    `name_lifecycle_calls` (`mono/specializer.rs`), which runs on the
+    lowered CFG.
   - The drop walk (`analysis/drops.rs`, `DropLiveness`) is variable-granular
     today; this entry makes its decision field-sensitive.
   - Related to R932 (runtime drop flags where upstream decides statically).
   - Depends on R878, so the fold's callers read regions.
   - Model: Fable, Planned.
 
-- [ ] **R878 Field drops, copy elision, and the lifecycle-call namings run
-  on a lowered CFG rather than on regions**
+- [ ] **R1252 A `deinit` receiver's fields die in a second backward walk
+  after drop elaboration, where `DestructorInsertion` destroys them in its
+  one field-sensitive walk**
 
-  These passes follow drop elaboration and still read the CFG the
-  transitional pass builds right after it.
-  - Stage 9 of `docs/structured-control-flow-plan.md`.
-  - The lever is `field_drops` (`refine_deinit_fields`), `copy_elision`,
-    and `destructor_calls` (`name_destructors` with `mir::lower_whole_drops`)
-    in `crates/mojito-analysis`, `mir::name_constructors`,
-    `mir::lower_copies_and_moves`, and `lower-lit`.
-  - Store drops already read regions: they run before drop elaboration.
-  - After it lands, `lower-control-flow` runs at the start of the
-    pre-elaboration pipeline.
-  - The entry's planning session may split it by pass if one session
-    cannot land it, filing the rest as chained entries.
-  - Depends on R877.
-  - Model: Opus, Planned.
+  Upstream tracks one bit per field of each value (`ValueSet`/`ValueInfo`
+  in `CheckLifetimes.cpp`), so a `deinit self` receiver's fields die in the
+  same walk as every variable, with no pass after it.
+  - `analysis/field_drops.rs` (`refine_deinit_fields`) runs its own
+    forward and backward walks per receiver after `drops.rs` has placed
+    the variable drops, and splices `DropPlace`s around them.
+  - Lever: fold `FieldFacts`/`FieldLiveness` into `drops.rs`'s
+    `DropFacts`/`DropLiveness` over field bits, and let the splice place
+    field and variable drops together.
+  - No output difference is known: R878's probes (a field read in a
+    handler, in one `if` arm, in a loop) match the pin.
+  - Depends on R1251, whose field-sensitive drop state this walk needs.
+  - Model: Fable, Not Planned.
 
 - [ ] **R879 The pre-elaboration pipeline and the package hold CFG bodies,
   and `canonicalize` simplifies blocks `hlcf` would not have**
@@ -2666,17 +2667,20 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R827 Field drops and copy elision take every call as raising**
+- [ ] **R827 Copy elision takes every instruction outside a short list as
+  raising**
 
-  `field_drops.rs` and `copy_elision.rs` treat every instruction outside a
-  small silent list as a raise point (`scan::may_raise`), where drop
-  elaboration now seeds a handler only at checked raise points
+  `copy_elision.rs`'s `cannot_raise` accepts only a few silent
+  instructions and non-raising calls, where drop elaboration and field
+  drops seed a handler only at checked raise points
   (`scan::raises_to_handler`).
-  - A non-raising call can keep a field live past its move, the field-level
-    form of the dead drop R825 fixed for whole slots.
-  - The R825 verifier rule checks whole slots only, so it does not catch it.
-  - Fix: switch both to `raises_to_handler`, and compare `mojito run`
-    output on the `try` and `__deinit__` fixtures against the old binary.
+  - A non-raising operator, subscript, or other instruction between a
+    dying copy and the call that takes it keeps the copy as a move instead
+    of a forward or a loan.
+  - Field drops switched to `raises_to_handler` with R878.
+  - Fix: build `cannot_raise` on `raises_to_handler`, and compare
+    `mojito run` output on the copy-elision fixtures against the old
+    binary.
   - Found while landing R825 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.

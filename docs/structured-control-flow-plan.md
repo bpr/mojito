@@ -2,8 +2,8 @@
 
 **Status:** plan recorded 2026-10-14 (R859); stages 1 (R870), 2 (R871),
 3 (R872), 4 (R873), and 5 (R874) landed 2026-10-14, and the `comptime for`
-body's `has_next` test (R885) with them; stages 6 (R875), 7 (R876), and
-8 (R877) landed 2026-10-21.
+body's `has_next` test (R885) with them; stages 6 (R875), 7 (R876),
+8 (R877), and 9 (R878) landed 2026-10-21.
 The scheduled tasks are on [`docs/roadmap.md`](roadmap.md) track `pmir`,
 one entry per stage below.
 This document is their design record and is updated as stages land. It is
@@ -101,16 +101,19 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
     lowering builds HIR's region ops as the same ops (stage 3,
     `Flatten::hir_region`). `verify_structured_shape` checks each body, a
     finding being a MIR invariant error (stage 5); register typing,
-    pre-drop verification, the ownership checks, and drop elaboration read
-    the structured body, and drop elaboration runs `lower-control-flow` on
-    each body once its drops are placed, so every phase after drop
-    elaboration still sees blocks (stages 6–8).
+    pre-drop verification, the ownership checks, drop elaboration, and
+    every pass after it up to `lower-lit` read the structured body; both
+    seams (`Compiler::elaborated_mir` and the package bodies' finishing
+    hooks) run `lower-control-flow` after `lower-lit`, so the
+    pre-elaboration pipeline and every phase after it still see blocks
+    (stages 6–9).
 - **The ownership checks and drop elaboration walk regions.** The move and
   initialization scan, carrying interior origins, walks the structure as
   `CheckLifetimes` does (stages 6–7), and so does the loan check. Drop
   elaboration places its drops in the regions as `DestructorInsertion`
-  does (stage 8). Field drops, copy elision, destructor and constructor
-  naming, and the copy/move lowering still read the CFG after it.
+  does (stage 8), and field drops, copy elision, destructor and
+  constructor naming, and the copy/move lowering read the same regions
+  after it (stage 9).
 - **`canonicalize`** (`analysis/canonicalize.rs`, R836) threads
   pass-through blocks, folds identical-successor branches, and merges
   single-predecessor blocks: MLIR `cf` patterns standing in for structure
@@ -349,13 +352,38 @@ last producer. Every stage keeps program output unchanged; the
      lists are computed as before (R829, R884).
    - Pass tests feed structured bodies; `analysis::opt` refuses
      `elaborate-drops` on a lowered one.
-9. **Field drops and copy elision on regions.** Field drops, copy elision,
-   destructor and constructor naming (with `lower_whole_drops`), the
-   copy/move lowering, and `lower-lit` still read the CFG after drop
-   elaboration. The lowering point moves below them.
+9. **Field drops and copy elision on regions.** *Landed (R878).* Every
+   pass between drop elaboration and the pre-elaboration pipeline reads
+   the structured body, and both seams run `lower-control-flow` after
+   `lower-lit`, before `PIPELINE` (a seam step, not a pipeline pass: the
+   pipeline can be switched off and skips `__toplevel__`).
+   - `lower-lit`, constructor naming, the copy/move lowering, and
+     destructor naming already walked every region.
+   - `lower_whole_drops`'s definite-initialization fold
+     (`mir/drop_calls.rs`) follows every `hlcf` op as `CheckLifetimes`
+     walks it, with a frame stack resolving `break`/`continue`/`match`
+     exits by the rule `lower-control-flow` uses (`mir::RegionFrame`,
+     `mir::region_exit`). A region exit leaving a `try` part arrives as it
+     leaves, or past a `finally` holding no whole value, as an escape
+     from a lowered part does.
+   - Copy elision counts a region terminator's registers
+     (`mir::terminator_regs`), and its forward scans stop at a region op
+     other than `try`, where lowering would have ended the block.
+   - Field drops ride the shared walks: `FieldFacts` (forward register
+     provenance), `FieldLiveness` (backward), and a splice placing each
+     field's drop after its last use, at an `if`/`comptime if` arm's entry
+     (`destroyValuesAtEntryIfNeeded`), and at a handler's entry. A raise
+     keeps live only what its handler reads, at real raise points, so a
+     field a handler reads now dies right after the body's last raising
+     call, as on the pin. Edge drops and critical-edge splitting are
+     gone. They stay a second walk after drop elaboration, where upstream
+     tracks fields in `DestructorInsertion`'s one walk (filed on the
+     roadmap).
+   - `elaborate-drops` pass output is structured.
 10. **Pre-elaboration pipeline and package.** `canonicalize` gains the
     `hlcf` patterns and loses R836's; `sccp` walks regions; package bodies
-    are structured (`PACKAGE_FORMAT` bump). The lowering point moves to the
+    are structured (`PACKAGE_FORMAT` bump). It starts from stage 9's
+    seams, which lower after `lower-lit`; the lowering point moves to the
     elaborator's entry.
 11. **Elaborator.** Instantiation, substitution, and `ComptimeIf`/
     `ComptimeFor` work on regions; the dominator code is deleted; a CTFE

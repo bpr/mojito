@@ -15,7 +15,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_mir::mir::{LoopLabel, MirBlockId};
+use mojito_mir::mir::{MirBlockId, RegionFrame, region_exit};
 
 /// A forward analysis the walk carries through regions.
 pub(super) trait ForwardScan {
@@ -218,23 +218,11 @@ impl<T: Clone> Flow<T> {
     }
 }
 
-/// Which region terminators a frame resolves, by the rules
-/// `lower-control-flow` resolves them by: a `break`/`continue` names the
-/// nearest loop carrying its label (any loop when it has none),
-/// `comptime.for.break`/`continue` the nearest `comptime for`, and
-/// `match.next`/`match.complete` the nearest `match` case.
-#[derive(Clone, Copy)]
-enum FrameKind {
-    Loop(Option<LoopLabel>),
-    ComptimeFor,
-    MatchCase,
-}
-
 /// An op a region terminator inside it leaves to, upstream's break and
 /// continue sets of a loop and the next and complete sets of a `match`
 /// entry: the states joined at each of its two exits.
 struct Frame<T> {
-    kind: FrameKind,
+    kind: RegionFrame,
     /// A loop's break set; a `match` case's complete set.
     leave: Option<T>,
     /// A loop's continue set; a `match` case's next set.
@@ -242,7 +230,7 @@ struct Frame<T> {
 }
 
 impl<T> Frame<T> {
-    const fn new(kind: FrameKind) -> Self {
+    const fn new(kind: RegionFrame) -> Self {
         Self {
             kind,
             leave: None,
@@ -263,30 +251,6 @@ fn add_state<S: ForwardScan>(scan: &S, target: &mut Option<S::State>, source: Op
         (_, None) => {}
         (None, Some(source)) => *target = Some(source.clone()),
         (Some(target), Some(source)) => *target = scan.join(target, source),
-    }
-}
-
-/// The frame a region terminator leaves to, as the frame kind it names, and
-/// whether it resumes that frame (`continue`, `match.next`) or leaves it.
-const fn region_exit(term: &MirTerm) -> Option<(FrameKind, bool)> {
-    match term {
-        MirTerm::Break { label } => Some((FrameKind::Loop(*label), false)),
-        MirTerm::Continue { label } => Some((FrameKind::Loop(*label), true)),
-        MirTerm::ComptimeBreak => Some((FrameKind::ComptimeFor, false)),
-        MirTerm::ComptimeContinue => Some((FrameKind::ComptimeFor, true)),
-        MirTerm::MatchComplete => Some((FrameKind::MatchCase, false)),
-        MirTerm::MatchNext => Some((FrameKind::MatchCase, true)),
-        _ => None,
-    }
-}
-
-/// Whether a terminator naming `target` resolves to a frame of `kind`.
-fn names(target: FrameKind, kind: FrameKind) -> bool {
-    match (target, kind) {
-        (FrameKind::Loop(label), FrameKind::Loop(found)) => label.is_none() || found == label,
-        (FrameKind::ComptimeFor, FrameKind::ComptimeFor)
-        | (FrameKind::MatchCase, FrameKind::MatchCase) => true,
-        _ => false,
     }
 }
 
@@ -438,13 +402,23 @@ where
             observer,
             frames,
         ),
-        MirInstr::Loop { label, body } => {
-            walk_loop(scan, entry, FrameKind::Loop(*label), body, observer, frames)
-        }
+        MirInstr::Loop { label, body } => walk_loop(
+            scan,
+            entry,
+            RegionFrame::Loop(*label),
+            body,
+            observer,
+            frames,
+        ),
         // The else region is `unreachable` once `LowerSemanticCF` has run.
-        MirInstr::ComptimeFor { body, .. } => {
-            walk_loop(scan, entry, FrameKind::ComptimeFor, body, observer, frames)
-        }
+        MirInstr::ComptimeFor { body, .. } => walk_loop(
+            scan,
+            entry,
+            RegionFrame::ComptimeFor,
+            body,
+            observer,
+            frames,
+        ),
         MirInstr::Match { cases, orelse } => {
             walk_match(scan, entry, cases, orelse, observer, frames)
         }
@@ -457,14 +431,14 @@ where
 fn leave_to<S: ForwardScan>(
     scan: &S,
     frames: &mut [Frame<S::State>],
-    target: FrameKind,
+    target: RegionFrame,
     resume: bool,
     state: &S::State,
 ) {
     if let Some(frame) = frames
         .iter_mut()
         .rev()
-        .find(|frame| names(target, frame.kind))
+        .find(|frame| target.names(frame.kind))
     {
         let set = if resume {
             &mut frame.resume
@@ -480,7 +454,7 @@ fn leave_to<S: ForwardScan>(
 fn walk_framed<S, O>(
     scan: &S,
     entry: S::State,
-    kind: FrameKind,
+    kind: RegionFrame,
     blocks: &[MirBlock],
     observer: Option<&mut O>,
     frames: &mut Vec<Frame<S::State>>,
@@ -580,7 +554,7 @@ where
 fn walk_loop<S, O>(
     scan: &S,
     entry: S::State,
-    kind: FrameKind,
+    kind: RegionFrame,
     body: &[MirBlock],
     observer: Option<&mut O>,
     frames: &mut Vec<Frame<S::State>>,
@@ -635,7 +609,7 @@ where
         let (case_flow, frame) = walk_framed(
             scan,
             entry,
-            FrameKind::MatchCase,
+            RegionFrame::MatchCase,
             case,
             observer.as_deref_mut(),
             frames,
@@ -910,7 +884,7 @@ fn transfer_block<S: ForwardScan>(
 
 /// A frame of the backward walk: the states live where its two exits go.
 struct BackFrame<T> {
-    kind: FrameKind,
+    kind: RegionFrame,
     leave: T,
     resume: T,
 }
@@ -1028,7 +1002,7 @@ impl<S: BackwardScan> BackWalk<'_, S> {
                 self.frames
                     .iter()
                     .rev()
-                    .find(|frame| names(target, frame.kind))
+                    .find(|frame| target.names(frame.kind))
                     .map(|frame| {
                         if resume {
                             frame.resume.clone()
@@ -1096,16 +1070,16 @@ impl<S: BackwardScan> BackWalk<'_, S> {
                 live
             }
             MirInstr::Loop { label, body } => {
-                self.looped(FrameKind::Loop(*label), body, exit, recorder)
+                self.looped(RegionFrame::Loop(*label), body, exit, recorder)
             }
             MirInstr::ComptimeFor { body, .. } => {
-                self.looped(FrameKind::ComptimeFor, body, exit, recorder)
+                self.looped(RegionFrame::ComptimeFor, body, exit, recorder)
             }
             MirInstr::Match { cases, orelse } => {
                 let mut next = self.region(orelse, exit, recorder.as_deref_mut());
                 for case in cases.iter().rev() {
                     self.frames.push(BackFrame {
-                        kind: FrameKind::MatchCase,
+                        kind: RegionFrame::MatchCase,
                         leave: exit.clone(),
                         resume: next,
                     });
@@ -1130,7 +1104,7 @@ impl<S: BackwardScan> BackWalk<'_, S> {
     /// for `recorder`.
     fn looped<R: BackwardRecorder<S::State>>(
         &mut self,
-        kind: FrameKind,
+        kind: RegionFrame,
         body: &[MirBlock],
         exit: &S::State,
         recorder: Option<&mut R>,
@@ -1154,7 +1128,7 @@ impl<S: BackwardScan> BackWalk<'_, S> {
     /// and whose continue set is `resume`.
     fn framed<R: BackwardRecorder<S::State>>(
         &mut self,
-        kind: FrameKind,
+        kind: RegionFrame,
         body: &[MirBlock],
         exit: &S::State,
         resume: S::State,

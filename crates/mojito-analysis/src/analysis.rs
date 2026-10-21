@@ -207,8 +207,8 @@ impl CalleeRefParams<'_> {
 /// overwrites an initialized droppable field, splice a `DropPlace`; after each
 /// variable's last use, splice a `DropVar`.
 ///
-/// Each body is structured on the way in and lowered to blocks on the way
-/// out (`lower-control-flow`).
+/// Each body stays structured, as upstream's `DestructorInsertion` leaves
+/// `hlcf`: the seams lower it (`lower-control-flow`) after `lower-lit`.
 ///
 /// Applied by the VM before execution so a struct's `__deinit__` fires at the
 /// value's last use (not at scope end), and a replaced field's at the store.
@@ -224,7 +224,6 @@ pub fn elaborate_drops_program(prog: MirProgram) -> MirProgram {
             let elaborated = if name == "__toplevel__" {
                 let mut f = f;
                 elaborate_store_drops(&mut f, &name, &prog.declarations);
-                mojito_mir::mir::lower_control_flow(&mut f);
                 name_destructors(&mut f, &prog.declarations);
                 lower_copies_and_moves(&name, &mut f, &|name| prog.declarations.function(name));
                 f
@@ -262,7 +261,6 @@ pub fn elaborate_drops_function(
     let scope = binder_scope(name, |name| declarations.function(name));
     let slots = materialized_parameter_slots(&function, &scope);
     let mut elaborated = elaborate_drops(function, &slots, declarations);
-    mojito_mir::mir::lower_control_flow(&mut elaborated);
     elide_dying_copies(&mut elaborated, declarations);
     refine_deinit_fields(&mut elaborated, declarations);
     name_destructors(&mut elaborated, declarations);

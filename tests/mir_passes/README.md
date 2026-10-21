@@ -35,7 +35,9 @@ below. Labels are `<pass>/<case>.mir`, so the reports hold no machine path.
    scratch build, or rebuild the printed body's regions by hand (`if`,
    `loop`, `break`/`continue`/`yield`, as in
    `lower-control-flow/*.mir`) and remove the `drop.*` lines (when no copy
-   elision or deinit refinement is in play). A `lower-lit`
+   elision or deinit refinement is in play). Its output keeps the
+   regions: the seams run `lower-control-flow` only after `lower-lit`. A
+   `lower-lit`
    case needs the markers, so emit it with a binary from before the pass or
    from pre-drop text, as for `elaborate-drops`.
 2. Trim the artifact by hand to the case's own functions, their `decls`

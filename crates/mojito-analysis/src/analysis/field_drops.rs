@@ -4,42 +4,63 @@
 //! unused one at entry), as Mojo destroys a destructor body's fields. The
 //! receiver's `ConsumeVar` teardown stays where the variable pass put it and
 //! destroys only the fields that survive to that point.
+//!
+//! The fields ride the region walks drop elaboration rides: one forward walk
+//! ([`walk_forward`]) finds the fields each instruction consumes through its
+//! operand registers, one backward walk ([`walk_backward`]) where each field
+//! is live, a raise keeping live only what its handler reads, and a splice
+//! places each field's drop after its last use, at the entry of an `if` or
+//! `comptime if` arm that leaves out a field a sibling arm keeps (upstream's
+//! `destroyValuesAtEntryIfNeeded`), and at a handler's entry for what the
+//! body's raise points hold that the handler does not read. Upstream tracks
+//! these fields in the one field-sensitive walk of `DestructorInsertion`;
+//! here they are a walk of their own after drop elaboration.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_mir::mir::MirDeclarations;
 use mojito_mir::mir::verify::{
     instruction_operand_regs, instruction_places, instruction_result_regs,
 };
+use mojito_mir::mir::{instruction_regions, instruction_regions_mut};
 use mojito_types::types::Ty;
 use mojito_types::types::TyKind;
 
 /// Splice `DropPlace`s for every refinable field of every `deinit`
 /// parameter of struct type with a known declaration.
 pub(super) fn refine_deinit_fields(f: &mut MirFunction, declarations: &MirDeclarations) {
-    let register_types = &f.reg_types;
-    let roots: Vec<DeinitRoot> = (0..f.n_params)
+    let roots: Vec<VarId> = (0..f.n_params)
         .filter(|&i| f.deinit_params.get(i).copied().unwrap_or(false))
-        .filter_map(|i| {
-            deinit_root(
-                &f.blocks,
-                &f.var_tys,
-                register_types,
-                i as VarId,
-                declarations,
-            )
-        })
+        .map(|i| i as VarId)
         .collect();
-    for root in roots {
-        let top_live_in = top_level_field_liveness(&f.blocks, &root);
-        let seeds = FieldSeeds {
-            try_yield: FieldSet::new(),
-            raise: FieldSet::new(),
-            finally_live: FieldSet::new(),
-            top_live_in: &top_live_in,
+    for var in roots {
+        let Some(root) = deinit_root(&f.blocks, &f.var_tys, &f.reg_types, var, declarations) else {
+            continue;
         };
+        let facts = FieldFacts::new(&f.blocks, &root);
+        let liveness = FieldLiveness {
+            root: &root,
+            facts: &facts,
+        };
+        let mut plan = FieldPlan::default();
+        walk_backward(&liveness, &f.blocks, &mut plan);
+        // Fields present on entry that no path reads die there.
+        let entry_dead: Vec<usize> = f
+            .blocks
+            .first()
+            .and_then(|entry| plan.blocks.get(&std::ptr::from_ref(entry)))
+            .map(|entry| root.all.difference(&entry.live_in).copied().collect())
+            .unwrap_or_default();
+        // Taking the blocks moves no block: the plan's addresses stay valid.
         let mut blocks = std::mem::take(&mut f.blocks);
-        refine_region(&mut blocks, &root, &seeds, Some(&root.all));
+        let splice = FieldSplice {
+            root: &root,
+            liveness: &liveness,
+            plan: &plan,
+        };
+        splice.region(&mut blocks);
+        if let Some(entry) = blocks.first_mut() {
+            prepend_field_drops(&mut entry.instrs, &root, entry_dead);
+        }
         f.blocks = blocks;
     }
 }
@@ -75,15 +96,6 @@ impl DeinitRoot<'_> {
         place.project(Proj::Field(name.clone()), ty.clone());
         place
     }
-}
-
-/// Live-out seeds for one region of a lowered `try` part, per exit kind:
-/// the fall-off, every raising instruction, and each escape.
-struct FieldSeeds<'a> {
-    try_yield: FieldSet,
-    raise: FieldSet,
-    finally_live: FieldSet,
-    top_live_in: &'a [FieldSet],
 }
 
 fn deinit_root<'a>(
@@ -141,424 +153,6 @@ fn deinit_root<'a>(
         passing: ArgumentPassing::new(declarations),
         register_types,
     })
-}
-
-/// The top-level per-block field live-in sets, bounding `EscapeJump` targets.
-fn top_level_field_liveness(blocks: &[MirBlock], root: &DeinitRoot) -> Vec<FieldSet> {
-    let empty: Vec<FieldSet> = vec![FieldSet::new(); blocks.len()];
-    let seeds = FieldSeeds {
-        try_yield: FieldSet::new(),
-        raise: FieldSet::new(),
-        finally_live: FieldSet::new(),
-        top_live_in: &empty,
-    };
-    region_field_liveness(blocks, root, &seeds).live_in
-}
-
-/// Elaborate one region (a function body or a `try` mini-CFG) in place:
-/// in-block last-use drops, edge drops, entry drops (when `entry_present`
-/// names the fields alive on entry), recursing into nested `try`s. Returns
-/// the region's entry liveness.
-fn refine_region(
-    blocks: &mut Vec<MirBlock>,
-    root: &DeinitRoot,
-    seeds: &FieldSeeds,
-    entry_present: Option<&FieldSet>,
-) -> FieldSet {
-    let nb = blocks.len();
-    if nb == 0 {
-        return seeds.try_yield.clone();
-    }
-    let FieldLiveness {
-        live_in,
-        uses,
-        loaded,
-    } = region_field_liveness(blocks, root, seeds);
-
-    // (1) Block-internal deaths.
-    for b in 0..nb {
-        let live_out = block_field_live_out(blocks, b, &live_in, seeds, root);
-        let instrs = std::mem::take(&mut blocks[b].instrs);
-        let n = instrs.len();
-        let mut live_after = vec![FieldSet::new(); n];
-        let mut live_before = vec![FieldSet::new(); n];
-        let mut live = live_out;
-        for i in (0..n).rev() {
-            live_after[i].clone_from(&live);
-            live.extend(uses[b][i].iter().copied());
-            if may_raise(&instrs[i]) {
-                live.extend(seeds.raise.iter().copied());
-            }
-            live_before[i].clone_from(&live);
-        }
-
-        let mut rebuilt = Vec::with_capacity(n);
-        let mut i = 0;
-        while i < n {
-            let mut instr = instrs[i].clone();
-            if let MirInstr::Try { .. } = &mut instr {
-                refine_try(&mut instr, root, &live_after[i], seeds);
-            }
-            let moved = moved_fields(&instrs[i], root);
-            let mut dying: Vec<usize> = live_before[i]
-                .difference(&live_after[i])
-                .copied()
-                .filter(|position| !moved.contains(position))
-                .collect();
-            // A field whose last use is a scalar the instruction loads by
-            // value dies at that load, before the instruction runs, unless
-            // the raise edge leaving it still observes the field.
-            let direct = direct_field_uses(&instrs[i], root);
-            let raises = may_raise(&instrs[i]);
-            let before: Vec<usize> = loaded[b][i]
-                .iter()
-                .copied()
-                .filter(|position| {
-                    dying.contains(position)
-                        && !direct.contains(position)
-                        && !(raises && seeds.raise.contains(position))
-                })
-                .collect();
-            dying.retain(|position| !before.contains(position));
-            rebuilt.extend(before.into_iter().map(|position| MirInstr::DropPlace {
-                place: root.place(position),
-                destructor: None,
-            }));
-            rebuilt.push(instr);
-            i += 1;
-            // Keep the variable pass's trailing drop group together; a
-            // `ConsumeVar` of the receiver in it destroys these fields at
-            // this point, each by its own named drop just before it.
-            let group = rebuilt.len();
-            while i < n && is_drop_instr(&instrs[i]) {
-                rebuilt.push(instrs[i].clone());
-                i += 1;
-            }
-            let consume = rebuilt[group..]
-                .iter()
-                .position(|instr| matches!(instr, MirInstr::ConsumeVar { var } if *var == root.var))
-                .map_or(rebuilt.len(), |offset| group + offset);
-            insert_field_drops(&mut rebuilt, consume, root, dying);
-        }
-        blocks[b].instrs = rebuilt;
-    }
-
-    // (1b) Entry deaths: fields present on entry that no path reads.
-    if let Some(present) = entry_present {
-        let dead: Vec<usize> = present.difference(&live_in[0]).copied().collect();
-        prepend_field_drops(&mut blocks[0].instrs, root, dead);
-    }
-
-    // (2) Edge deaths.
-    let mut pred_count = vec![0usize; nb];
-    for block in blocks.iter() {
-        for s in terminator_targets(&block.term) {
-            if s < nb {
-                pred_count[s] += 1;
-            }
-        }
-    }
-    for p in 0..nb {
-        let mut succs: Vec<usize> = terminator_targets(&blocks[p].term)
-            .into_iter()
-            .filter(|s| *s < nb)
-            .collect();
-        succs.sort_unstable();
-        succs.dedup();
-        let n_succ = succs.len();
-        let live_out_p: FieldSet = succs
-            .iter()
-            .flat_map(|s| live_in[*s].iter().copied())
-            .collect();
-        for &s in &succs {
-            let dying: Vec<usize> = live_out_p
-                .iter()
-                .copied()
-                .filter(|position| !live_in[s].contains(position))
-                .collect();
-            if dying.is_empty() {
-                continue;
-            }
-            if n_succ == 1 {
-                append_field_drops(&mut blocks[p].instrs, root, dying);
-            } else if pred_count[s] == 1 {
-                prepend_field_drops(&mut blocks[s].instrs, root, dying);
-            } else {
-                let new_idx = blocks.len();
-                let mut instrs = Vec::new();
-                append_field_drops(&mut instrs, root, dying);
-                blocks.push(MirBlock {
-                    instrs,
-                    term: MirTerm::Jump(s),
-                });
-                rewire_target(&mut blocks[p].term, s, new_idx);
-            }
-        }
-    }
-
-    live_in[0].clone()
-}
-
-/// Elaborate the four regions of one `try` in place, seeded as drop
-/// elaboration's `try` walk seeds them ([`walk_backward`]): `finally`
-/// first, then handler/`else`, then the body.
-fn refine_try(try_instr: &mut MirInstr, root: &DeinitRoot, after: &FieldSet, seeds: &FieldSeeds) {
-    let MirInstr::Try {
-        body,
-        handler,
-        orelse,
-        finalbody,
-        ..
-    } = try_instr
-    else {
-        return;
-    };
-    let fin_live = match finalbody {
-        Some(fb) => {
-            let fin_seeds = FieldSeeds {
-                try_yield: after.clone(),
-                raise: seeds.raise.clone(),
-                finally_live: after.clone(),
-                top_live_in: seeds.top_live_in,
-            };
-            refine_region(fb, root, &fin_seeds, None)
-        }
-        None => after.clone(),
-    };
-    let mut outward_raise = fin_live.clone();
-    outward_raise.extend(seeds.raise.iter().copied());
-
-    let inner_seeds = FieldSeeds {
-        try_yield: fin_live.clone(),
-        raise: outward_raise.clone(),
-        finally_live: fin_live.clone(),
-        top_live_in: seeds.top_live_in,
-    };
-    // The handler's entry liveness seeds the body's raise edges; the fields
-    // alive at any of the body's raise points are present on handler entry.
-    let handler_entry = handler.as_ref().map(|(_, h)| {
-        region_field_liveness(h, root, &inner_seeds)
-            .live_in
-            .first()
-            .cloned()
-            .unwrap_or_default()
-    });
-    let orelse_live = orelse
-        .as_mut()
-        .map(|e| refine_region(e, root, &inner_seeds, None));
-    let body_seeds = FieldSeeds {
-        try_yield: orelse_live.unwrap_or_else(|| fin_live.clone()),
-        raise: handler_entry.unwrap_or_else(|| outward_raise.clone()),
-        finally_live: fin_live,
-        top_live_in: seeds.top_live_in,
-    };
-    let raise_present = raise_point_liveness(body, root, &body_seeds);
-    if let Some((_, h)) = handler.as_mut() {
-        refine_region(h, root, &inner_seeds, Some(&raise_present));
-    }
-    refine_region(body, root, &body_seeds, None);
-}
-
-/// One region's backward field liveness.
-struct FieldLiveness {
-    /// Per block, the fields live on entry.
-    live_in: Vec<FieldSet>,
-    /// Per block, per instruction, the fields it uses: direct place uses plus
-    /// register-carried provenance.
-    uses: Vec<Vec<FieldSet>>,
-    /// Per block, per instruction, the fields of the scalars it loads by
-    /// value, in load order.
-    loaded: Vec<Vec<Vec<usize>>>,
-}
-
-/// Backward field liveness over a region's blocks, recursing into nested
-/// `try`s without mutating them.
-fn region_field_liveness(
-    blocks: &[MirBlock],
-    root: &DeinitRoot,
-    seeds: &FieldSeeds,
-) -> FieldLiveness {
-    let nb = blocks.len();
-    let (carried, loaded) = register_field_provenance(blocks, root);
-    let mut uses: Vec<Vec<FieldSet>> = blocks
-        .iter()
-        .enumerate()
-        .map(|(b, block)| {
-            block
-                .instrs
-                .iter()
-                .enumerate()
-                .map(|(i, instr)| {
-                    let mut set = direct_field_uses(instr, root);
-                    set.extend(carried[b][i].iter().copied());
-                    set
-                })
-                .collect()
-        })
-        .collect();
-    let mut live_in: Vec<FieldSet> = vec![FieldSet::new(); nb];
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for b in (0..nb).rev() {
-            let mut live = block_field_live_out(blocks, b, &live_in, seeds, root);
-            for (i, instr) in blocks[b].instrs.iter().enumerate().rev() {
-                if let MirInstr::Try { .. } = instr {
-                    let entry = try_entry_liveness(instr, root, &live, seeds);
-                    uses[b][i].clone_from(&entry);
-                    live = entry;
-                } else {
-                    live.extend(uses[b][i].iter().copied());
-                    if may_raise(instr) {
-                        live.extend(seeds.raise.iter().copied());
-                    }
-                }
-            }
-            if live != live_in[b] {
-                live_in[b] = live;
-                changed = true;
-            }
-        }
-    }
-    FieldLiveness {
-        live_in,
-        uses,
-        loaded,
-    }
-}
-
-/// The fields alive at any potentially-raising instruction of a region —
-/// what its handler may still find on entry.
-fn raise_point_liveness(blocks: &[MirBlock], root: &DeinitRoot, seeds: &FieldSeeds) -> FieldSet {
-    let FieldLiveness { live_in, uses, .. } = region_field_liveness(blocks, root, seeds);
-    let mut present = FieldSet::new();
-    for b in 0..blocks.len() {
-        let mut live = block_field_live_out(blocks, b, &live_in, seeds, root);
-        for (i, instr) in blocks[b].instrs.iter().enumerate().rev() {
-            if let MirInstr::Try { .. } = instr {
-                live = try_entry_liveness(instr, root, &live, seeds);
-                present.extend(live.iter().copied());
-            } else {
-                live.extend(uses[b][i].iter().copied());
-                if may_raise(instr) {
-                    live.extend(seeds.raise.iter().copied());
-                    present.extend(live.iter().copied());
-                }
-            }
-        }
-    }
-    present
-}
-
-/// A nested `try`'s entry liveness (pure), seeded like [`refine_try`].
-fn try_entry_liveness(
-    try_instr: &MirInstr,
-    root: &DeinitRoot,
-    after: &FieldSet,
-    seeds: &FieldSeeds,
-) -> FieldSet {
-    let MirInstr::Try {
-        body,
-        handler,
-        orelse,
-        finalbody,
-        ..
-    } = try_instr
-    else {
-        return after.clone();
-    };
-    let region_entry = |blocks: &[MirBlock], seeds: &FieldSeeds| -> FieldSet {
-        if blocks.is_empty() {
-            seeds.try_yield.clone()
-        } else {
-            region_field_liveness(blocks, root, seeds).live_in[0].clone()
-        }
-    };
-    let fin_live = match finalbody {
-        Some(fb) => region_entry(
-            fb,
-            &FieldSeeds {
-                try_yield: after.clone(),
-                raise: seeds.raise.clone(),
-                finally_live: after.clone(),
-                top_live_in: seeds.top_live_in,
-            },
-        ),
-        None => after.clone(),
-    };
-    let mut outward_raise = fin_live.clone();
-    outward_raise.extend(seeds.raise.iter().copied());
-    let inner_seeds = FieldSeeds {
-        try_yield: fin_live.clone(),
-        raise: outward_raise.clone(),
-        finally_live: fin_live.clone(),
-        top_live_in: seeds.top_live_in,
-    };
-    let handler_entry = handler.as_ref().map(|(_, h)| region_entry(h, &inner_seeds));
-    let orelse_entry = orelse.as_ref().map(|e| region_entry(e, &inner_seeds));
-    let body_seeds = FieldSeeds {
-        try_yield: orelse_entry.unwrap_or_else(|| fin_live.clone()),
-        raise: handler_entry.unwrap_or(outward_raise),
-        finally_live: fin_live,
-        top_live_in: seeds.top_live_in,
-    };
-    region_entry(body, &body_seeds)
-}
-
-/// A region block's live-out per terminator kind: a local successor's
-/// live-in, or the seed of the exit it takes; a cleanup list naming the
-/// receiver keeps every field alive to the exit.
-fn block_field_live_out(
-    blocks: &[MirBlock],
-    b: usize,
-    live_in: &[FieldSet],
-    seeds: &FieldSeeds,
-    root: &DeinitRoot,
-) -> FieldSet {
-    match &blocks[b].term {
-        MirTerm::Jump(_)
-        | MirTerm::Branch { .. }
-        | MirTerm::ComptimeBranch { .. }
-        | MirTerm::ComptimeFor { .. } => {
-            let mut out = FieldSet::new();
-            for s in terminator_targets(&blocks[b].term) {
-                if let Some(live) = live_in.get(s) {
-                    out.extend(live.iter().copied());
-                }
-            }
-            out
-        }
-        MirTerm::TryYield => seeds.try_yield.clone(),
-        MirTerm::Return(_) => seeds.finally_live.clone(),
-        // Region terminators are lowered before this analysis runs.
-        MirTerm::Yield(_)
-        | MirTerm::ElifCond(_)
-        | MirTerm::Break { .. }
-        | MirTerm::Continue { .. }
-        | MirTerm::ComptimeYield(_)
-        | MirTerm::ComptimeBreak
-        | MirTerm::ComptimeContinue
-        | MirTerm::MatchNext
-        | MirTerm::MatchComplete
-        | MirTerm::Unreachable => FieldSet::new(),
-        MirTerm::ReturnWithCleanup { cleanup, .. } => {
-            let mut out = seeds.finally_live.clone();
-            if cleanup_drops(cleanup, root.var) {
-                out.extend(root.all.iter().copied());
-            }
-            out
-        }
-        MirTerm::EscapeJump { target, cleanup } => {
-            let mut out = seeds.finally_live.clone();
-            if cleanup_drops(cleanup, root.var) {
-                out.extend(root.all.iter().copied());
-            }
-            if let Some(live) = seeds.top_live_in.get(*target) {
-                out.extend(live.iter().copied());
-            }
-            out
-        }
-    }
 }
 
 /// The receiver fields an instruction reads through its places: a depth-one
@@ -629,45 +223,113 @@ fn moved_fields(instr: &MirInstr, root: &DeinitRoot) -> FieldSet {
     set
 }
 
-/// Per-instruction fields kept alive by the registers an instruction reads:
-/// a load or handle of a receiver field carries that field to every consumer
-/// (results of non-call instructions inherit it; a call result is a fresh
-/// value; a scalar load borrows for one hop only), mirroring the
-/// register-loan transfer [`DropFacts`] records.
-/// Beside them, per instruction, the fields of the scalars it loads by value,
-/// in load order.
-fn register_field_provenance(
-    blocks: &[MirBlock],
-    root: &DeinitRoot,
-) -> (Vec<Vec<FieldSet>>, Vec<Vec<Vec<usize>>>) {
-    type Carry = BTreeMap<u32, (FieldSet, FieldSet)>;
-    fn join(mut left: Carry, right: &Carry) -> Carry {
-        for (register, (carry, single)) in right {
-            let entry = left.entry(*register).or_default();
-            entry.0.extend(carry.iter().copied());
-            entry.1.extend(single.iter().copied());
-        }
-        left
+/// The forward facts of one receiver's fields, from one walk of the
+/// structured body entering every region op, keyed by node address: the
+/// fields each instruction consumes through its operand registers, and
+/// those each yielding block's terminator hands its op.
+struct FieldFacts {
+    uses: HashMap<*const MirInstr, RegisterFields>,
+    yielded: HashMap<*const MirBlock, FieldSet>,
+    unused: RegisterFields,
+}
+
+/// The receiver fields one instruction consumes through its operand
+/// registers: every one, and, in load order, those of the scalars it loads
+/// by value.
+#[derive(Default)]
+struct RegisterFields {
+    used: FieldSet,
+    loaded: Vec<usize>,
+}
+
+impl FieldFacts {
+    fn new(blocks: &[MirBlock], root: &DeinitRoot) -> Self {
+        let scan = FieldCarryScan { root };
+        let mut observer = FieldFactsObserver {
+            scan: &scan,
+            facts: Self {
+                uses: HashMap::new(),
+                yielded: HashMap::new(),
+                unused: RegisterFields::default(),
+            },
+        };
+        // The observer never refuses an instruction.
+        let _ = walk_forward(&scan, Carry::new(), blocks, &mut observer);
+        observer.facts
     }
-    fn transfer(state: &mut Carry, instr: &MirInstr, root: &DeinitRoot) -> (FieldSet, Vec<usize>) {
+
+    fn uses(&self, instr: &MirInstr) -> &RegisterFields {
+        self.uses
+            .get(&std::ptr::from_ref(instr))
+            .unwrap_or(&self.unused)
+    }
+
+    /// The fields `block`'s `yield` or `comptime.yield` hands its op
+    /// through the registers it yields: the op's results carry none, so
+    /// the terminator is their last use.
+    fn yielded(&self, block: &MirBlock) -> Option<&FieldSet> {
+        self.yielded.get(&std::ptr::from_ref(block))
+    }
+}
+
+/// The receiver fields each register carries: a load or handle of a
+/// receiver field carries that field to every consumer (results of
+/// non-call instructions inherit it; a call result is a fresh value; a
+/// scalar load borrows for one hop only), mirroring the register-loan
+/// transfer [`DropFacts`] records. Per register, the carried fields and the
+/// single-hop ones.
+type Carry = BTreeMap<u32, (FieldSet, FieldSet)>;
+
+/// The forward walk [`FieldFacts`] records.
+struct FieldCarryScan<'a> {
+    root: &'a DeinitRoot<'a>,
+}
+
+impl FieldCarryScan<'_> {
+    /// The fields `instr` consumes through its operand registers in `state`.
+    fn register_fields(&self, state: &Carry, instr: &MirInstr) -> RegisterFields {
         let mut operands = Vec::new();
         instruction_operand_regs(instr, &mut operands);
-        let mut carried = FieldSet::new();
-        let mut uses = FieldSet::new();
+        let mut used = FieldSet::new();
         let mut single_hop = Vec::new();
         for operand in operands {
             if let Some((carry, single)) = state.get(&operand.0) {
-                carried.extend(carry.iter().copied());
-                uses.extend(carry.iter().copied());
+                used.extend(carry.iter().copied());
                 if !single.is_empty() {
                     single_hop.push((operand.0, single.clone()));
                 }
             }
         }
-        let loaded = split_single_hop(&mut uses, single_hop, || {
-            root.passing.by_value(instr, root.register_types)
+        let loaded = split_single_hop(&mut used, single_hop, || {
+            self.root.passing.by_value(instr, self.root.register_types)
         });
-        uses.extend(loaded.iter().copied());
+        used.extend(loaded.iter().copied());
+        RegisterFields { used, loaded }
+    }
+}
+
+impl ForwardScan for FieldCarryScan<'_> {
+    type State = Carry;
+
+    fn join(&self, state: &Carry, other: &Carry) -> Carry {
+        let mut joined = state.clone();
+        for (register, (carry, single)) in other {
+            let entry = joined.entry(*register).or_default();
+            entry.0.extend(carry.iter().copied());
+            entry.1.extend(single.iter().copied());
+        }
+        joined
+    }
+
+    fn transfer(&self, state: &mut Carry, instr: &MirInstr) {
+        let root = self.root;
+        let mut operands = Vec::new();
+        instruction_operand_regs(instr, &mut operands);
+        let mut carried: FieldSet = operands
+            .iter()
+            .filter_map(|operand| state.get(&operand.0))
+            .flat_map(|(carry, _)| carry.iter().copied())
+            .collect();
         let mut single_hop = FieldSet::new();
         if let MirInstr::MakeRef { place, .. } | MirInstr::LoadPlace { place, .. } = instr
             && place.root == root.var
@@ -707,56 +369,356 @@ fn register_field_provenance(
                 state.insert(result.0, (carried.clone(), single_hop.clone()));
             }
         }
-        (uses, loaded)
     }
 
-    let nb = blocks.len();
-    let mut predecessors: Vec<Vec<usize>> = vec![Vec::new(); nb];
-    for (b, block) in blocks.iter().enumerate() {
-        for s in terminator_targets(&block.term) {
-            if s < nb {
-                predecessors[s].push(b);
-            }
+    fn raise_seed(&self, state: &Carry, _next: Option<&MirInstr>) -> Carry {
+        state.clone()
+    }
+
+    fn enters(&self, _instr: &MirInstr) -> bool {
+        true
+    }
+}
+
+/// The observer filling [`FieldFacts`].
+struct FieldFactsObserver<'a> {
+    scan: &'a FieldCarryScan<'a>,
+    facts: FieldFacts,
+}
+
+impl ForwardObserver<Carry> for FieldFactsObserver<'_> {
+    fn instr(&mut self, state: &Carry, instr: &MirInstr) -> Result<(), OwnershipError> {
+        let fields = self.scan.register_fields(state, instr);
+        if !fields.used.is_empty() {
+            self.facts.uses.insert(std::ptr::from_ref(instr), fields);
+        }
+        Ok(())
+    }
+
+    fn block(&mut self, _entry: &Carry, end: Option<&Carry>, block: &MirBlock) {
+        let (Some(state), MirTerm::Yield(values) | MirTerm::ComptimeYield(values)) =
+            (end, &block.term)
+        else {
+            return;
+        };
+        let fields: FieldSet = values
+            .iter()
+            .filter_map(|value| state.get(&value.0))
+            .flat_map(|(carry, single)| carry.iter().chain(single).copied())
+            .collect();
+        if !fields.is_empty() {
+            self.facts.yielded.insert(std::ptr::from_ref(block), fields);
         }
     }
-    let mut incoming: Vec<Option<Carry>> = vec![None; nb];
-    let mut outgoing: Vec<Option<Carry>> = vec![None; nb];
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for b in 0..nb {
-            let new_in = if b == 0 || predecessors[b].is_empty() {
-                Carry::new()
-            } else {
-                let mut states = predecessors[b].iter().filter_map(|p| outgoing[*p].as_ref());
-                let Some(first) = states.next() else {
-                    continue;
-                };
-                states.fold(first.clone(), join)
+}
+
+/// Backward field liveness: a field is live from a use, through its places
+/// or through the registers an instruction consumes, back to the entry. A
+/// `yield` reads what its values carry, and a `return` whose cleanup
+/// consumes the receiver every field.
+struct FieldLiveness<'a> {
+    root: &'a DeinitRoot<'a>,
+    facts: &'a FieldFacts,
+}
+
+impl FieldLiveness<'_> {
+    /// The fields `block`'s terminator destroys with the receiver: every
+    /// one at an exit whose cleanup consumes it.
+    fn cleaned(&self, block: &MirBlock) -> Option<&FieldSet> {
+        match &block.term {
+            MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. }
+                if cleanup_drops(cleanup, self.root.var) =>
+            {
+                Some(&self.root.all)
+            }
+            _ => None,
+        }
+    }
+}
+
+impl BackwardScan for FieldLiveness<'_> {
+    type State = FieldSet;
+
+    fn join(&self, state: &mut FieldSet, other: &FieldSet) {
+        state.extend(other.iter().copied());
+    }
+
+    fn transfer(&self, live: &mut FieldSet, instr: &MirInstr) {
+        live.extend(direct_field_uses(instr, self.root));
+        live.extend(self.facts.uses(instr).used.iter().copied());
+    }
+
+    fn enters(&self, _instr: &MirInstr) -> bool {
+        true
+    }
+
+    fn define(&self, _live: &mut FieldSet, _var: VarId) {}
+
+    fn terminate(&self, live: &mut FieldSet, block: &MirBlock) {
+        let read = self
+            .facts
+            .yielded(block)
+            .into_iter()
+            .chain(self.cleaned(block));
+        live.extend(read.flatten().copied());
+    }
+}
+
+/// What the backward walk reports for the splice, keyed by node address
+/// (stable while the body is borrowed, and through the splice: no block is
+/// added or moved, and an instruction is looked up before its block is
+/// rebuilt).
+#[derive(Default)]
+struct FieldPlan {
+    /// The fields live just before each instruction, region ops included.
+    instrs: HashMap<*const MirInstr, FieldSet>,
+    blocks: HashMap<*const MirBlock, FieldBlock>,
+    /// The handler live-in of each `try` with a handler.
+    handlers: HashMap<*const MirInstr, FieldSet>,
+}
+
+/// The field liveness around one block.
+struct FieldBlock {
+    live_in: FieldSet,
+    live_out: FieldSet,
+    /// What a raise in the block keeps live; `None` outside every `try`.
+    raise: Option<FieldSet>,
+}
+
+impl BackwardRecorder<FieldSet> for FieldPlan {
+    fn instr(&mut self, instr: &MirInstr, live: &FieldSet) {
+        self.instrs.insert(std::ptr::from_ref(instr), live.clone());
+    }
+
+    fn block(&mut self, block: &MirBlock, live: BlockLiveness<'_, FieldSet>) {
+        self.blocks.insert(
+            std::ptr::from_ref(block),
+            FieldBlock {
+                live_in: live.live_in.clone(),
+                live_out: live.live_out.clone(),
+                raise: live.raise.cloned(),
+            },
+        );
+    }
+
+    fn try_op(&mut self, op: &MirInstr, channels: &TryChannels<FieldSet>) {
+        if let Some(handler) = &channels.handler {
+            self.handlers
+                .insert(std::ptr::from_ref(op), handler.clone());
+        }
+    }
+}
+
+/// The splice pass: the plan's field drops placed in the body, nested
+/// regions before the blocks holding them.
+struct FieldSplice<'a> {
+    root: &'a DeinitRoot<'a>,
+    liveness: &'a FieldLiveness<'a>,
+    plan: &'a FieldPlan,
+}
+
+impl FieldSplice<'_> {
+    /// The recorded live-in of a region; nothing for an unreached one.
+    fn region_live_in(&self, region: &[MirBlock]) -> FieldSet {
+        region
+            .first()
+            .and_then(|block| self.plan.blocks.get(&std::ptr::from_ref(block)))
+            .map(|block| block.live_in.clone())
+            .unwrap_or_default()
+    }
+
+    fn region(&self, blocks: &mut [MirBlock]) {
+        for block in blocks {
+            self.block(block);
+        }
+    }
+
+    /// Place the field drops of one block: its region ops' first, then its
+    /// own, each field after the instruction that is its last use; a
+    /// scalar's field at its by-value load; a field the terminator's
+    /// yielded values last read before the terminator.
+    fn block(&self, block: &mut MirBlock) {
+        let Some(plan) = self.plan.blocks.get(&std::ptr::from_ref(&*block)) else {
+            return;
+        };
+        let live_before: Vec<FieldSet> = block
+            .instrs
+            .iter()
+            .map(|instr| {
+                self.plan
+                    .instrs
+                    .get(&std::ptr::from_ref(instr))
+                    .cloned()
+                    .unwrap_or_default()
+            })
+            .collect();
+        let steps: Vec<Option<(FieldSet, Vec<usize>)>> = block
+            .instrs
+            .iter()
+            .map(|instr| {
+                (!region_op(instr)).then(|| {
+                    let uses = self.liveness.facts.uses(instr);
+                    (direct_field_uses(instr, self.root), uses.loaded.clone())
+                })
+            })
+            .collect();
+        for instr in &mut block.instrs {
+            if region_op(instr) {
+                self.op(instr);
+            }
+        }
+        let mut end = plan.live_out.clone();
+        end.extend(self.liveness.cleaned(block).into_iter().flatten().copied());
+        let mut live_after_last = end.clone();
+        self.liveness.terminate(&mut live_after_last, block);
+
+        let instrs = std::mem::take(&mut block.instrs);
+        let n = instrs.len();
+        let mut rebuilt = Vec::with_capacity(n);
+        let mut instrs = instrs.into_iter().enumerate().peekable();
+        while let Some((i, instr)) = instrs.next() {
+            let after = live_before.get(i + 1).unwrap_or(&live_after_last);
+            let Some((direct, loaded)) = &steps[i] else {
+                // A region op is one step: what dies across it died inside it.
+                rebuilt.push(instr);
+                continue;
             };
-            let mut new_out = new_in.clone();
-            for instr in &blocks[b].instrs {
-                transfer(&mut new_out, instr, root);
+            let moved = moved_fields(&instr, self.root);
+            let mut dying: Vec<usize> = live_before[i]
+                .difference(after)
+                .copied()
+                .filter(|position| !moved.contains(position))
+                .collect();
+            // A field whose last use is a scalar the instruction loads by
+            // value dies at that load, before the instruction runs, unless
+            // the raise leaving it still observes the field.
+            let raise = plan.raise.as_ref().filter(|_| raises_to_handler(&instr));
+            let before: Vec<usize> = loaded
+                .iter()
+                .copied()
+                .filter(|position| {
+                    dying.contains(position)
+                        && !direct.contains(position)
+                        && !raise.is_some_and(|raise| raise.contains(position))
+                })
+                .collect();
+            dying.retain(|position| !before.contains(position));
+            let at = rebuilt.len();
+            insert_field_drops(&mut rebuilt, at, self.root, before);
+            rebuilt.push(instr);
+            // Keep the variable pass's trailing drop group together; a
+            // `ConsumeVar` of the receiver in it destroys these fields at
+            // this point, each by its own named drop just before it.
+            let group = rebuilt.len();
+            while let Some((_, drop)) = instrs.next_if(|(_, next)| is_drop_instr(next)) {
+                rebuilt.push(drop);
             }
-            if incoming[b].as_ref() != Some(&new_in) || outgoing[b].as_ref() != Some(&new_out) {
-                incoming[b] = Some(new_in);
-                outgoing[b] = Some(new_out);
-                changed = true;
+            let consume = rebuilt[group..]
+                .iter()
+                .position(
+                    |instr| matches!(instr, MirInstr::ConsumeVar { var } if *var == self.root.var),
+                )
+                .map_or(rebuilt.len(), |offset| group + offset);
+            insert_field_drops(&mut rebuilt, consume, self.root, dying);
+        }
+        // A field the terminator's yielded values carry dies before it.
+        let yielded: Vec<usize> = live_after_last.difference(&end).copied().collect();
+        let at = rebuilt.len();
+        insert_field_drops(&mut rebuilt, at, self.root, yielded);
+        block.instrs = rebuilt;
+    }
+
+    /// Place the field drops of one region op's regions. An `if` or
+    /// `comptime if` destroys at each arm's entry what a sibling arm keeps
+    /// and it does not, as `destroyValuesAtEntryIfNeeded` does; a `try`'s
+    /// handler destroys on entry what the body's raise points hold that it
+    /// does not read.
+    fn op(&self, instr: &mut MirInstr) {
+        let entries = {
+            let regions = instruction_regions(instr);
+            match &*instr {
+                MirInstr::If { .. } => self.if_entry_drops(&regions),
+                MirInstr::ComptimeIf { .. } => self.comptime_if_entry_drops(&regions),
+                MirInstr::Try { body, .. } => self.handler_entry_drops(instr, body),
+                _ => Vec::new(),
+            }
+        };
+        for region in instruction_regions_mut(instr) {
+            self.region(region);
+        }
+        if entries.is_empty() {
+            return;
+        }
+        let regions = instruction_regions_mut(instr);
+        for (region, drops) in regions.into_iter().zip(entries) {
+            if let Some(entry) = region.first_mut() {
+                prepend_field_drops(&mut entry.instrs, self.root, drops);
             }
         }
     }
-    blocks
-        .iter()
-        .enumerate()
-        .map(|(b, block)| {
-            let mut state = incoming[b].clone().unwrap_or_default();
-            block
-                .instrs
+
+    /// The entry drops of an `if`'s regions, listed as `then`, each elif's
+    /// condition and arm, and `else`: as `checkIfOp` unifies them, each
+    /// step's arm against the next condition (or the `else`).
+    fn if_entry_drops(&self, regions: &[&Vec<MirBlock>]) -> Vec<Vec<usize>> {
+        let mut drops = vec![Vec::new(); regions.len()];
+        // Step `k` takes the branch to arm `regions[2k]` or on to
+        // `regions[2k + 1]`.
+        for arm in (0..regions.len().saturating_sub(1)).step_by(2) {
+            let taken = self.region_live_in(regions[arm]);
+            let next = self.region_live_in(regions[arm + 1]);
+            drops[arm] = next.difference(&taken).copied().collect();
+            drops[arm + 1] = taken.difference(&next).copied().collect();
+        }
+        drops
+    }
+
+    /// The entry drops of a `comptime if`'s arms and `else`: each arm is
+    /// unified against the arms after it and the `else` in turn, and what
+    /// a step destroys on the way on runs before each later arm's own.
+    fn comptime_if_entry_drops(&self, regions: &[&Vec<MirBlock>]) -> Vec<Vec<usize>> {
+        let mut drops: Vec<Vec<usize>> = vec![Vec::new(); regions.len()];
+        for arm in 0..regions.len().saturating_sub(1) {
+            let taken = self.region_live_in(regions[arm]);
+            let rest: FieldSet = regions[arm + 1..]
                 .iter()
-                .map(|instr| transfer(&mut state, instr, root))
-                .unzip()
-        })
-        .unzip()
+                .flat_map(|region| self.region_live_in(region))
+                .collect();
+            drops[arm].extend(rest.difference(&taken).copied());
+            for later in &mut drops[arm + 1..] {
+                later.extend(taken.difference(&rest).copied());
+            }
+        }
+        drops
+    }
+
+    /// The entry drops of a `try`'s regions: its handler's are the fields
+    /// some raise point of the body holds, at any depth, a nested `try`
+    /// counted by its live-in, that the handler does not read.
+    fn handler_entry_drops(&self, op: &MirInstr, body: &[MirBlock]) -> Vec<Vec<usize>> {
+        let Some(handler) = self.plan.handlers.get(&std::ptr::from_ref(op)) else {
+            return Vec::new();
+        };
+        let mut present = FieldSet::new();
+        self.raise_points(body, &mut present);
+        vec![Vec::new(), present.difference(handler).copied().collect()]
+    }
+
+    /// Collect into `present` the fields live at each raise point of
+    /// `blocks`, entering every region op but a `try`.
+    fn raise_points(&self, blocks: &[MirBlock], present: &mut FieldSet) {
+        for instr in blocks.iter().flat_map(|block| &block.instrs) {
+            if region_op(instr) && !matches!(instr, MirInstr::Try { .. }) {
+                for region in instruction_regions(instr) {
+                    self.raise_points(region, present);
+                }
+            } else if raises_to_handler(instr)
+                && let Some(live) = self.plan.instrs.get(&std::ptr::from_ref(instr))
+            {
+                present.extend(live.iter().copied());
+            }
+        }
+    }
 }
 
 const fn is_drop_instr(instr: &MirInstr) -> bool {
@@ -764,12 +726,6 @@ const fn is_drop_instr(instr: &MirInstr) -> bool {
         instr,
         MirInstr::DropVar { .. } | MirInstr::ConsumeVar { .. } | MirInstr::DropPlace { .. }
     )
-}
-
-/// Append `DropPlace`s in declaration order.
-fn append_field_drops(instrs: &mut Vec<MirInstr>, root: &DeinitRoot, positions: Vec<usize>) {
-    let end = instrs.len();
-    insert_field_drops(instrs, end, root, positions);
 }
 
 /// Prepend `DropPlace`s (declaration order) after any leading drop group,
@@ -804,47 +760,5 @@ fn insert_field_drops(
                 destructor: None,
             },
         );
-    }
-}
-
-/// Redirect a terminator's `old` target to `new` (for critical-edge splitting).
-const fn rewire_target(term: &mut MirTerm, old: usize, new: usize) {
-    match term {
-        MirTerm::Jump(t) => {
-            if *t == old {
-                *t = new;
-            }
-        }
-        MirTerm::Branch { then_b, else_b, .. }
-        | MirTerm::ComptimeBranch { then_b, else_b, .. }
-        | MirTerm::ComptimeFor {
-            body: then_b,
-            exit: else_b,
-            ..
-        } => {
-            if *then_b == old {
-                *then_b = new;
-            }
-            if *else_b == old {
-                *else_b = new;
-            }
-        }
-        // `EscapeJump` targets a block in the enclosing function; it never appears
-        // as a *function-body* terminator (only inside a `try` region), and its
-        // target isn't a critical-edge successor here, so leave it untouched.
-        MirTerm::Return(_)
-        | MirTerm::ReturnWithCleanup { .. }
-        | MirTerm::TryYield
-        | MirTerm::EscapeJump { .. }
-        | MirTerm::Yield(_)
-        | MirTerm::ElifCond(_)
-        | MirTerm::Break { .. }
-        | MirTerm::Continue { .. }
-        | MirTerm::ComptimeYield(_)
-        | MirTerm::ComptimeBreak
-        | MirTerm::ComptimeContinue
-        | MirTerm::MatchNext
-        | MirTerm::MatchComplete
-        | MirTerm::Unreachable => {}
     }
 }

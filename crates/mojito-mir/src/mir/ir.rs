@@ -167,6 +167,71 @@ pub fn terminator_regs_mut(term: &mut MirTerm) -> Vec<&mut Reg> {
     }
 }
 
+/// Every register a terminator reads.
+pub fn terminator_regs(term: &MirTerm) -> Vec<Reg> {
+    match term {
+        MirTerm::Branch { cond, .. } | MirTerm::ElifCond(cond) => vec![*cond],
+        MirTerm::Return(Some(reg))
+        | MirTerm::ReturnWithCleanup {
+            value: Some(reg), ..
+        } => vec![*reg],
+        MirTerm::Yield(values) | MirTerm::ComptimeYield(values) => values.clone(),
+        MirTerm::Jump(_)
+        | MirTerm::ComptimeBranch { .. }
+        | MirTerm::ComptimeFor { .. }
+        | MirTerm::Return(None)
+        | MirTerm::ReturnWithCleanup { value: None, .. }
+        | MirTerm::TryYield
+        | MirTerm::EscapeJump { .. }
+        | MirTerm::Break { .. }
+        | MirTerm::Continue { .. }
+        | MirTerm::ComptimeBreak
+        | MirTerm::ComptimeContinue
+        | MirTerm::MatchNext
+        | MirTerm::MatchComplete
+        | MirTerm::Unreachable => Vec::new(),
+    }
+}
+
+/// The kind of region op a region terminator leaves to.
+///
+/// A `break`/`continue` names the nearest loop carrying its label (any loop
+/// when it has none), `comptime.for.break`/`continue` the nearest `comptime
+/// for`, and `match.next`/`match.complete` the nearest `match` case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegionFrame {
+    Loop(Option<LoopLabel>),
+    ComptimeFor,
+    MatchCase,
+}
+
+impl RegionFrame {
+    /// Whether a terminator naming `self` resolves to the enclosing frame
+    /// `frame`.
+    pub fn names(self, frame: Self) -> bool {
+        match (self, frame) {
+            (Self::Loop(label), Self::Loop(found)) => label.is_none() || found == label,
+            (Self::ComptimeFor, Self::ComptimeFor) | (Self::MatchCase, Self::MatchCase) => true,
+            _ => false,
+        }
+    }
+}
+
+/// The frame a region terminator leaves to, and whether it resumes that
+/// frame (a `continue`, `comptime.for.continue`, or `match.next`) or leaves
+/// it; `None` for every other terminator.
+pub const fn region_exit(term: &MirTerm) -> Option<(RegionFrame, bool)> {
+    match term {
+        MirTerm::Break { label } => Some((RegionFrame::Loop(*label), false)),
+        MirTerm::Continue { label } => Some((RegionFrame::Loop(*label), true)),
+        MirTerm::ComptimeBreak => Some((RegionFrame::ComptimeFor, false)),
+        MirTerm::ComptimeContinue => Some((RegionFrame::ComptimeFor, true)),
+        MirTerm::MatchComplete => Some((RegionFrame::MatchCase, false)),
+        MirTerm::MatchNext => Some((RegionFrame::MatchCase, true)),
+        _ => None,
+    }
+}
+
 /// Every block of the same list a terminator names: a `try` region's
 /// escape targets are the enclosing function's and are not among them.
 pub fn terminator_targets(term: &MirTerm) -> Vec<MirBlockId> {

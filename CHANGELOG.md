@@ -487,6 +487,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Every pass between drop elaboration and the pre-elaboration pipeline
+  now reads the structured body, and both seams lower control flow only
+  after `lower-lit`. A `deinit self` field that only a `try` handler reads
+  now dies right after the body's last raising call, before the
+  non-raising calls after it, as on the pin, where Mojito kept it alive
+  to the end of the body
+  (`assets/ok/deinit_field_dies_before_non_raising_call_in_try.mojo`).
+  Field drops no longer split edges. Destructor-call lowering follows
+  every region op, and copy elision stops its scans at a region op. This
+  closes R878 and the field half of R827.
 - Drop elaboration places its drops in the structured body, as upstream's
   destructor insertion does, and `lower-control-flow` runs right after it:
   a drop goes after a value's last use or at the entry of an `if` arm that

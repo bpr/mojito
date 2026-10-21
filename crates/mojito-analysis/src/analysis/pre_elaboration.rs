@@ -184,8 +184,11 @@ pub const PIPELINE: &[Pass] = &[
 ];
 
 /// Drop elaboration as a named pass, so a pass test can run it over MIR
-/// text whose drops are not yet inserted. The pipeline does not list it:
-/// every pipeline body already had its drops inserted.
+/// text whose drops are not yet inserted.
+///
+/// The pipeline does not list it: every pipeline body already had its drops
+/// inserted. Its output is still structured: a pipeline pass after it needs
+/// `lower-control-flow` first.
 pub const ELABORATE_DROPS: BodyPass = BodyPass {
     name: "elaborate-drops",
     run: |name, function, declarations| {
@@ -196,9 +199,10 @@ pub const ELABORATE_DROPS: BodyPass = BodyPass {
 
 /// Structured control flow lowered to blocks: upstream's `LowerControlFlow`.
 ///
-/// Upstream lowers `hlcf` as it reaches LLVM. Drop elaboration runs this
-/// pass on each body once its drops are placed, so the pipeline does not
-/// list it: no body it reaches holds a region op.
+/// Upstream lowers `hlcf` as it reaches LLVM. Both seams run this pass on
+/// each body after `lower-lit` and before [`PIPELINE`] (which may be
+/// switched off), so the pipeline does not list it: no body it reaches
+/// holds a region op.
 pub const LOWER_CONTROL_FLOW: BodyPass = BodyPass {
     name: "lower-control-flow",
     run: |_, function, _| {
@@ -314,7 +318,7 @@ pub fn pre_elaborate_program(
 }
 
 /// The package seam's finishing hook: [`elaborate_drops_function`], then
-/// [`lower_lit`], then [`run_pipeline`].
+/// [`lower_lit`] and `lower-control-flow`, then [`run_pipeline`].
 pub fn finish_package_body(
     name: &str,
     function: MirFunction,
@@ -322,14 +326,13 @@ pub fn finish_package_body(
     bodies: &PackageBodies,
     findings: &mut Vec<String>,
 ) -> MirFunction {
-    let mut function = elaborate_drops_function(name, function, declarations);
-    lower_lit(name, &mut function, declarations);
+    let mut function = finish_drops(name, function, declarations);
     run_pipeline(name, &mut function, declarations, bodies, findings);
     function
 }
 
-/// [`finish_package_body`] with the pipeline switched off: drops and
-/// [`lower_lit`] only.
+/// [`finish_package_body`] with the pipeline switched off: drops,
+/// [`lower_lit`], and `lower-control-flow` only.
 pub fn finish_package_body_without_pipeline(
     name: &str,
     function: MirFunction,
@@ -337,9 +340,7 @@ pub fn finish_package_body_without_pipeline(
     _bodies: &PackageBodies,
     _findings: &mut Vec<String>,
 ) -> MirFunction {
-    let mut function = elaborate_drops_function(name, function, declarations);
-    lower_lit(name, &mut function, declarations);
-    function
+    finish_drops(name, function, declarations)
 }
 
 /// A verifier finding after the pass `pass` ran, naming the pass.
@@ -610,6 +611,16 @@ fn bottom_up_order(
         }
     }
     (tarjan.order, tarjan.cyclic)
+}
+
+/// A package body's drops inserted, its lifetime-only markers erased, and
+/// its control flow lowered: what each package-seam hook runs before the
+/// pipeline.
+fn finish_drops(name: &str, function: MirFunction, declarations: &MirDeclarations) -> MirFunction {
+    let mut function = elaborate_drops_function(name, function, declarations);
+    lower_lit(name, &mut function, declarations);
+    mojito_mir::mir::lower_control_flow(&mut function);
+    function
 }
 
 #[cfg(test)]

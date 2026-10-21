@@ -9,7 +9,8 @@
 //! `deinit` slots get no such drop, and a field source is not a whole slot,
 //! so neither is rewritten. A type parameter's `T(copy=x)` is still a
 //! `ConstructTypeParam` here and stays a copy, as at Mojo. A source that dies
-//! only on a successor edge keeps its copy.
+//! only at a region's entry keeps its copy, and no scan reaches past a
+//! region op other than `try`.
 //!
 //! A copy an owned parameter or owned receiver takes is bound in place to a
 //! forwarding slot ([`FORWARDED_ARGUMENT_SLOT`]) whose forwarding use sits
@@ -38,7 +39,7 @@ use mojito_mir::mir::verify::instruction_operand_regs;
 use mojito_mir::mir::{
     CleanupDrop, FORWARDED_ARGUMENT_SLOT, MirBlock, MirDeclarations, MirFunction, MirInstr,
     MirPlace, MirTerm, READ_TEMPORARY_SLOT, Reg, UseMode, cleanup_drops, instruction_regions,
-    instruction_regions_mut,
+    instruction_regions_mut, terminator_regs,
 };
 use std::collections::HashMap;
 
@@ -97,13 +98,7 @@ fn count_operand_uses(blocks: &[MirBlock], uses: &mut HashMap<u32, usize>) {
                 count_operand_uses(region, uses);
             }
         }
-        if let MirTerm::Branch { cond: register, .. }
-        | MirTerm::Return(Some(register))
-        | MirTerm::ReturnWithCleanup {
-            value: Some(register),
-            ..
-        } = &block.term
-        {
+        for register in terminator_regs(&block.term) {
             *uses.entry(register.0).or_default() += 1;
         }
     }
@@ -237,7 +232,8 @@ fn dying_copy(
 }
 
 /// Where the call takes the forwarding slot the dying copy is bound to: the
-/// slot's one forwarding use later in the block, when nothing past the
+/// slot's one forwarding use later in the block, before any region op, when
+/// nothing past the
 /// source's death up to the call that consumes the slot can raise, names
 /// the source, or names the slot.
 fn forwarding_use(instrs: &[MirInstr], source: DyingCopy, var_names: &[String]) -> Option<usize> {
@@ -250,7 +246,8 @@ fn forwarding_use(instrs: &[MirInstr], source: DyingCopy, var_names: &[String]) 
     {
         return None;
     }
-    let (forward_at, forwarded) = instrs
+    let end = segment_end(instrs, source.drop_at + 1);
+    let (forward_at, forwarded) = instrs[..end]
         .iter()
         .enumerate()
         .skip(source.drop_at + 1)
@@ -264,7 +261,7 @@ fn forwarding_use(instrs: &[MirInstr], source: DyingCopy, var_names: &[String]) 
             _ => None,
         })?;
     let mut operands = Vec::new();
-    let consumer_at = (forward_at + 1..instrs.len()).find(|&at| {
+    let consumer_at = (forward_at + 1..end).find(|&at| {
         operands.clear();
         instruction_operand_regs(&instrs[at], &mut operands);
         operands.contains(&forwarded)
@@ -310,7 +307,8 @@ struct Lending {
 /// The read-temporary slot the dying copy at `at` binds right past the run
 /// of drops holding its source's death, when the source can stand in for
 /// it: only the binding and one whole load name the slot, that load's one
-/// use is a later instruction of the block, nothing from the binding to that
+/// use is a later instruction of the block before any region op, nothing
+/// from the binding to that
 /// use can raise, and nothing from the binding to the slot's last death in
 /// the block names the source.
 fn lending_use(
@@ -343,27 +341,27 @@ fn lending_use(
     if src != dest || !read_temporary || elision.mentions.get(&slot) != Some(&2) {
         return None;
     }
-    let (load_at, load) =
-        instrs
-            .iter()
-            .enumerate()
-            .skip(binding_at + 1)
-            .find_map(|(load_at, instruction)| match instruction {
-                MirInstr::LoadPlace { dest, place } if place.root == slot => {
-                    (place.proj.is_empty() && place.through.is_none()).then_some((load_at, *dest))
-                }
-                _ => None,
-            })?;
+    let end = segment_end(instrs, binding_at + 1);
+    let (load_at, load) = instrs[..end]
+        .iter()
+        .enumerate()
+        .skip(binding_at + 1)
+        .find_map(|(load_at, instruction)| match instruction {
+            MirInstr::LoadPlace { dest, place } if place.root == slot => {
+                (place.proj.is_empty() && place.through.is_none()).then_some((load_at, *dest))
+            }
+            _ => None,
+        })?;
     if elision.uses.get(&load.0) != Some(&1) {
         return None;
     }
     let mut operands = Vec::new();
-    let consumer_at = (load_at + 1..instrs.len()).find(|&at| {
+    let consumer_at = (load_at + 1..end).find(|&at| {
         operands.clear();
         instruction_operand_regs(&instrs[at], &mut operands);
         operands.contains(&load)
     })?;
-    let last_death = instrs
+    let last_death = instrs[..end]
         .iter()
         .rposition(
             |instruction| matches!(instruction, MirInstr::DropVar { var, .. } if *var == slot),
@@ -420,6 +418,25 @@ fn elide(instrs: &mut Vec<MirInstr>, at: usize, source: DyingCopy) {
         constructor: None,
     };
     instrs.remove(at - 1);
+}
+
+/// The index of the first region op other than `try` at or after `from`,
+/// or the block's end: lowering would end the block there.
+fn segment_end(instrs: &[MirInstr], from: usize) -> usize {
+    instrs
+        .iter()
+        .skip(from)
+        .position(|instruction| {
+            matches!(
+                instruction,
+                MirInstr::If { .. }
+                    | MirInstr::Loop { .. }
+                    | MirInstr::ComptimeIf { .. }
+                    | MirInstr::ComptimeFor { .. }
+                    | MirInstr::Match { .. }
+            )
+        })
+        .map_or(instrs.len(), |offset| from + offset)
 }
 
 const fn is_drop(instruction: &MirInstr) -> bool {

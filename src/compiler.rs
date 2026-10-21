@@ -81,7 +81,8 @@ impl CompiledProgram {
 
     /// The program's own drop-elaborated MIR, re-verified: [`Self::mir`]
     /// with drops inserted, the lifetime-only markers erased (`lower-lit`),
-    /// and the pre-elaboration pipeline run. It is the
+    /// the structured control flow lowered to blocks
+    /// (`lower-control-flow`), and the pre-elaboration pipeline run. It is the
     /// elaborator's input, beside an imported package's bodies, which are
     /// finished the same way as each is materialized.
     /// Post-drop verification findings are folded into `invariant_errors`;
@@ -95,6 +96,10 @@ impl CompiledProgram {
             {
                 let _lower = timing::span("lower-lit");
                 crate::analysis::lower_lit_program(&mut mir);
+            }
+            {
+                let _lower = timing::span("lower-control-flow");
+                crate::mir::lower_control_flow_program(&mut mir);
             }
             if self.pre_elaboration {
                 let _passes = timing::span("pre_elaboration");
@@ -112,8 +117,8 @@ impl CompiledProgram {
     }
 
     /// Drop-elaborated MIR: parametric MIR with drops inserted, the
-    /// lifetime-only markers erased, and the pre-elaboration pipeline run,
-    /// re-verified.
+    /// lifetime-only markers erased, the control flow lowered to blocks,
+    /// and the pre-elaboration pipeline run, re-verified.
     /// It may still be generic. It is the whole program: an imported
     /// package's bodies, every one lowered, join [`Self::elaborated_mir`],
     /// so it serializes as one artifact.

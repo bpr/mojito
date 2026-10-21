@@ -439,6 +439,7 @@ indexer-int-return	reject	assets/type_error/indexer_int_return.mojo
 tuple-deinit-with-abandoned-element	reject	assets/type_error/tuple_deinit_with_abandoned_element.mojo
 deinit-body-field-last-use	run	assets/ok/deinit_body_field_last_use.mojo
 deinit-body-field-loop-read	output-diff	conformance/fixtures/deinit_body_field_loop_read.mojo
+deinit-field-dies-before-non-raising-call-in-try	run	assets/ok/deinit_field_dies_before_non_raising_call_in_try.mojo
 use-after-move-in-try-handler	reject	assets/ownership_error/use_after_move_in_try_handler.mojo
 use-after-move-in-try-else	reject	assets/ownership_error/use_after_move_in_try_else.mojo
 use-after-move-after-try	reject	assets/ownership_error/use_after_move_after_try.mojo

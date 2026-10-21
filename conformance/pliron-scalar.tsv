@@ -208,6 +208,7 @@ assets/ok/default_converting_constructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/default_reads_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/defines_main.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/deinit_body_field_last_use.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/deinit_field_dies_before_non_raising_call_in_try.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/deinit_param_destruction_timing.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/delegated_ref_return_projection.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/destructure_list_wrong_length_raises.mojo	-	ineligible	no-scalar-entry-shape

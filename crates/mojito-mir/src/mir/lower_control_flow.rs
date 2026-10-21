@@ -60,16 +60,10 @@ struct Lowering<'f> {
 /// `match.complete` leaves: where it continues (a loop's header, the next
 /// case's entry), where it exits, and the list its blocks are in.
 struct Frame {
-    kind: FrameKind,
+    kind: RegionFrame,
     header: MirBlockId,
     exit: MirBlockId,
     depth: usize,
-}
-
-enum FrameKind {
-    Loop(Option<LoopLabel>),
-    ComptimeFor,
-    MatchCase,
 }
 
 /// How a region's own terminators end it.
@@ -158,7 +152,7 @@ impl Lowering<'_> {
                 orelse,
             } => self.lower_if(&results, cond, then, elifs, orelse, join),
             MirInstr::Loop { label, body } => {
-                let entry = self.lower_loop(FrameKind::Loop(label), body, join, None);
+                let entry = self.lower_loop(RegionFrame::Loop(label), body, join, None);
                 (MirTerm::Jump(entry), Vec::new())
             }
             MirInstr::ComptimeIf {
@@ -174,7 +168,7 @@ impl Lowering<'_> {
                 orelse: _,
             } => {
                 let header = self.reserve(1);
-                let body = self.lower_loop(FrameKind::ComptimeFor, body, join, Some(header));
+                let body = self.lower_loop(RegionFrame::ComptimeFor, body, join, Some(header));
                 self.out[header].term = MirTerm::ComptimeFor {
                     binder,
                     source,
@@ -210,7 +204,7 @@ impl Lowering<'_> {
         for blocks in cases.into_iter().rev() {
             let entry = self.reserve(blocks.len());
             self.frames.push(Frame {
-                kind: FrameKind::MatchCase,
+                kind: RegionFrame::MatchCase,
                 header: next,
                 exit: join,
                 depth: self.depth,
@@ -262,7 +256,7 @@ impl Lowering<'_> {
     /// at the body's entry when there is none, and return that entry.
     fn lower_loop(
         &mut self,
-        kind: FrameKind,
+        kind: RegionFrame,
         body: Vec<MirBlock>,
         join: MirBlockId,
         header: Option<MirBlockId>,
@@ -375,46 +369,37 @@ impl Lowering<'_> {
                 then_b: *then,
                 else_b: *next,
             },
-            (term @ MirTerm::Break { label }, _) => self
-                .leave(instrs, |frame| frame.exit, |kind| names_loop(kind, label))
-                .unwrap_or(term),
-            (term @ MirTerm::Continue { label }, _) => self
-                .leave(instrs, |frame| frame.header, |kind| names_loop(kind, label))
-                .unwrap_or(term),
-            (MirTerm::ComptimeBreak, _) => self
-                .leave(instrs, |frame| frame.exit, is_comptime_for)
-                .unwrap_or(MirTerm::ComptimeBreak),
-            (MirTerm::ComptimeContinue, _) => self
-                .leave(instrs, |frame| frame.header, is_comptime_for)
-                .unwrap_or(MirTerm::ComptimeContinue),
-            (MirTerm::MatchNext, _) => self
-                .leave(instrs, |frame| frame.header, is_match_case)
-                .unwrap_or(MirTerm::MatchNext),
-            (MirTerm::MatchComplete, _) => self
-                .leave(instrs, |frame| frame.exit, is_match_case)
-                .unwrap_or(MirTerm::MatchComplete),
             (MirTerm::Unreachable, _) => MirTerm::Return(None),
-            (term, _) => term,
+            (term, _) => match region_exit(&term) {
+                Some((target, resume)) => self.leave(instrs, target, resume).unwrap_or(term),
+                None => term,
+            },
         }
     }
 
-    /// The edge a `break`/`continue` takes to the innermost frame `names`
-    /// accepts: a jump within its list, an escape to the function's list
+    /// The edge a region terminator naming `target` takes to the innermost
+    /// frame it resolves to, its header when it `resume`s, else its exit: a
+    /// jump within its list, an escape to the function's list
     /// from a `try` part, and the unsupported boundary from a `try` part
     /// nested in another. `None` when no frame encloses it, which the
     /// verifier rejects.
     fn leave(
         &self,
         instrs: &mut Vec<MirInstr>,
-        target: impl Fn(&Frame) -> MirBlockId,
-        names: impl Fn(&FrameKind) -> bool,
+        target: RegionFrame,
+        resume: bool,
     ) -> Option<MirTerm> {
-        let frame = self.frames.iter().rev().find(|frame| names(&frame.kind))?;
+        let frame = self
+            .frames
+            .iter()
+            .rev()
+            .find(|frame| target.names(frame.kind))?;
+        let to = if resume { frame.header } else { frame.exit };
         Some(if frame.depth == self.depth {
-            MirTerm::Jump(target(frame))
+            MirTerm::Jump(to)
         } else if frame.depth == 0 {
             MirTerm::EscapeJump {
-                target: target(frame),
+                target: to,
                 cleanup: Vec::new(),
             }
         } else {
@@ -438,21 +423,6 @@ fn forwards(results: &[Reg], slots: &[VarId]) -> Vec<MirInstr> {
             constructor: None,
         })
         .collect()
-}
-
-const fn is_comptime_for(kind: &FrameKind) -> bool {
-    matches!(kind, FrameKind::ComptimeFor)
-}
-
-const fn is_match_case(kind: &FrameKind) -> bool {
-    matches!(kind, FrameKind::MatchCase)
-}
-
-fn names_loop(kind: &FrameKind, label: Option<LoopLabel>) -> bool {
-    match kind {
-        FrameKind::Loop(found) => label.is_none() || *found == label,
-        FrameKind::ComptimeFor | FrameKind::MatchCase => false,
-    }
 }
 
 fn blocks_hold_structure(blocks: &[MirBlock]) -> bool {

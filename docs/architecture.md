@@ -2667,7 +2667,7 @@ ops after a terminator, so they reach no slot, block, or nested function
 (`find_nested_defs` reads the same rule). MIR lowering builds the matching
 MIR region ops (`Flatten::hir_region`); `lower_cfg` lowers them to blocks
 with `lower-control-flow` for phase tests, and the production pipeline only
-once drops are placed.
+once drops are placed and `lower-lit` has run.
 
 Each HIR block has:
 
@@ -3419,7 +3419,8 @@ per function, the move and initialization scan, carrying interior origins
 as upstream's `TrackedAndInteriorLiveness`, walks the structured body as
 upstream's `CheckLifetimes` walks `hlcf`, and the loan check walks it backward
 for reference liveness and forward for loan generations. The body stays
-structured for drop elaboration, which `lower-control-flow` follows. A `try`
+structured for drop elaboration and the passes after it, which the seams
+lower (`lower-control-flow`) once `lower-lit` has run. A `try`
 is one instruction to the loan
 check: it uses every variable its parts read, and no access or loan inside
 it is checked (upstream has no persistent-loan check, so the exemption
@@ -4035,9 +4036,9 @@ chains, and comprehensions as `If`/`Loop`, each region one block (a
 conditional expression whose condition the checker found a parameter value,
 `SemanticAdjustment::ComptimeConditional`, is a `ComptimeIf` with results,
 as upstream's `IfElseOpNode` emits `hlcf.comptime.if`), and
-`mir::lower_control_flow` (upstream's `LowerControlFlow`), which drop
-elaboration (`analysis::elaborate_drops_function`) runs on each body once its
-drops are placed, lowers them to blocks and the CFG terminators: a
+`mir::lower_control_flow` (upstream's `LowerControlFlow`), which both seams
+(`Compiler::elaborated_mir` and the package bodies' finishing hooks) run on
+each body after `lower-lit`, before the pre-elaboration pipeline, lowers them to blocks and the CFG terminators: a
 region's blocks are appended to its list, the rest of the block moves to a
 join, an op's results go through one slot each, stored at a `yield` and
 forwarded at the join, a `break`/`continue` leaving a `try` part to a
@@ -4667,12 +4668,19 @@ before elaboration, for the elaborator to name per instance (R302). The
 test is a
 definite-initialization state per slot (`Held`: whole, whole but for
 missing owned parts, empty, or partial), joined over a list's blocks and
-followed through a `try` as upstream's `CheckLifetimes` walks its regions:
-the body entered as the op is, the handler in the states the body's raise
-points leave (through the raise edge's cleanup, its error slot bound
-whole), a region op raising in any state inside it, the `else` as the
-body completes, the `finally` on every way out of them, and the op
-completing as its `else` (or body) and handler do. A `var.store`, a
+followed through each region op as upstream's `CheckLifetimes` walks it: an
+`if` entering each arm as its condition leaves the state and completing as
+its arms' yields join; a loop (or `comptime for`) entering its body joined
+with its `continue` states until stable and completing as its `break`s
+join; a `match` entering each case as the previous case's `match.next`s
+leave it; and a `try` with the body entered as the op is, the handler in
+the states the body's raise points leave (through the raise edge's cleanup,
+its error slot bound whole), the `try` raising in any state inside it, the
+`else` as the body completes, the `finally` on every way out of them, and
+the op completing as its `else` (or body) and handler do. Region exits
+resolve by `lower-control-flow`'s rule (`mir::RegionFrame`,
+`mir::region_exit`); one leaving a `try` part arrives as it leaves, or
+partial past a `finally`, as an escape from a lowered part does. A `var.store`, a
 whole-slot `mark_initialized`, or a `for` loop's iterator fills the slot;
 a declaration, a drop, a consume, a moving use, or an owned `iter.init`
 consuming it into an iterator slot of its own empties it; a move,
@@ -5034,19 +5042,29 @@ collections, including `Tuple`, are nominal structs and follow the ordinary
 declaration order for fields; their library destructors own any
 element-specific teardown. Per-field liveness for `deinit` parameters is a
 refinement pass after the variable-granular elaboration
-(`analysis/field_drops.rs`): for every `deinit` parameter of struct type it
-runs a backward liveness over `(parameter, field)` keys — a depth-one field
-projection uses that field, a bare receiver touch uses every field, a loaded
-register carries its field to every consumer as the register-loan rule does
-— with the same fall-off/raise/`finally` seeds and edge splitting as the
-variable pass, recursing into `try` regions, and splices `DropPlace` (a
-whole-value destruction of one field that tombstones it) after each field's
-last use, on block 0 for the unused, and on edges. The receiver's existing
-`ConsumeVar` (in-block, cleanup lists, and the native exit backstop) then
-skips the tombstoned fields, so raise edges stay sound. Fields that root a
-loan, are moved below depth one, or need no destructor work are left to the
-`ConsumeVar`. A field read only inside a loop dies after the loop; the pinned
-Mojo destroys it at entry (recorded as an `output-diff` row).
+(`analysis/field_drops.rs`), on the structured body and the same region
+walks: for every `deinit` parameter of struct type a forward walk
+(`FieldFacts`) records the fields each instruction consumes through its
+operand registers — a loaded register carries its field to every consumer as
+the register-loan rule does, and a `yield` hands its op what its values carry
+— and a backward walk (`FieldLiveness`) gives liveness over the parameter's
+fields — a depth-one field projection uses that field, a bare receiver touch
+uses every field — with the variable pass's raise, return, and frame
+channels. A splice places `DropPlace` (a whole-value destruction of one field
+that tombstones it) after each field's last use, at the function's entry for
+the unused, at the entry of an `if`/`comptime if` arm that leaves out a field
+a sibling keeps (`destroyValuesAtEntryIfNeeded`), and at a handler's entry for
+what the body's raise points hold that the handler does not read. A raise
+keeps live only what its handler reads, at real raise points, so a field the
+handler reads dies right after the body's last raising call, as on the pin.
+The receiver's existing `ConsumeVar` (in-block, cleanup lists, and the native
+exit backstop) then skips the tombstoned fields, so raise edges stay sound.
+Fields that root a loan, are moved below depth one, or need no destructor
+work are left to the `ConsumeVar`. A field read only inside a loop dies after
+the loop, as on the pin; in the recorded `deinit_body_field_loop_read` shape
+the pinned Mojo destroys it at entry instead and reads the destroyed value (an
+upstream bug left unmatched, an `output-diff` row). Upstream destroys fields in `DestructorInsertion`'s
+one field-sensitive walk; here they are a second walk after it.
 
 A store into a field destroys the value it replaces at the store, as Mojo's
 assignment does. A whole-variable reassignment needs nothing extra (the old
@@ -5159,8 +5177,11 @@ ordinary residual fields of an incomplete linear aggregate.
 ### Region Drops
 
 Drop elaboration (`analysis/drops.rs`) reads the structured body, as
-upstream's `DestructorInsertion` reads `hlcf`, and `lower-control-flow` lowers
-the body right after it. Two walks of `analysis/region_walk.rs` give its
+upstream's `DestructorInsertion` reads `hlcf`, and so do the passes after it
+up to `lower-lit`: field drops, copy elision, destructor and constructor
+naming with `mir::lower_whole_drops`, and the copy/move lowering. Both seams
+lower the body (`lower-control-flow`) after `lower-lit`, before the
+pre-elaboration pipeline. Two walks of `analysis/region_walk.rs` give its
 facts: one forward walk (`DropFacts`, in `register_loans.rs`) records the loan
 generations reaching each instruction and block and the roots each instruction
 consumes through its operand registers (`RegisterUses`), and one backward walk
@@ -6073,8 +6094,9 @@ point where a slot declared in a loop is uninitialized again.
   registry does: every `PIPELINE` pass, plus `ELABORATE_DROPS`
   (`elaborate-drops`), drop elaboration run on request, and
   `LOWER_CONTROL_FLOW` (`lower-control-flow`), the transitional lowering of
-  structured region ops to blocks, which drop elaboration runs at the end of
-  each body. `analysis::opt`,
+  structured region ops to blocks, which both seams run on each body after
+  `lower-lit`. `elaborate-drops` output is structured, so a pipeline pass
+  chained after it in `opt` needs `--pass lower-control-flow` first. `analysis::opt`,
   the `mlir-opt` analogue behind `mojito opt [--pass NAME]… [FILE]`, loads a
   MIR artifact, runs the named passes in order (a program pass over the
   program, a body pass over every body but `__toplevel__`, a call-graph pass
