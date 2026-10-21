@@ -2500,6 +2500,7 @@ fn const_value(value: &Const) -> String {
         Const::None => "none".into(),
         Const::Param(v) => positional("param", &param_expr(v)),
         Const::Value(v) => positional("value", &ct_value(v)),
+        Const::UninitMem => "uninitmem".into(),
     }
 }
 fn checked_const(value: &CheckedConst) -> String {

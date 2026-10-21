@@ -406,6 +406,7 @@ fn constant_families_reprint_byte_identically() {
         Const::Function("needs quoting!".into()),
         Const::Dtype(Dtype::UInt16),
         Const::None,
+        Const::UninitMem,
     ];
     let reg_types = vec![Ty::int(); constants.len()];
     let instrs = constants

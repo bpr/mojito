@@ -64,7 +64,35 @@ impl FnLowering<'_> {
                 dest,
             )),
             MirConst::Value(value) => self.lower_parameter_value(ctx, dest, value),
+            MirConst::UninitMem => self.lower_uninit_mem(ctx, dest),
         }
+    }
+
+    /// `#interp.uninitmem` of the register's type, as `KGENToLLVM` lowers
+    /// it: a scalar's `llvm.undef`, an aggregate's storage left unwritten,
+    /// and nothing for a zero-sized value.
+    fn lower_uninit_mem(&mut self, ctx: &mut Context, dest: Reg) -> Result<(), PlironError> {
+        let ty = self
+            .func
+            .reg_types
+            .get(&dest.0)
+            .cloned()
+            .ok_or_else(|| self.unsupported_reg("untyped `uninitmem`".to_string(), dest))?;
+        match lower_ty(self.name, &ty, &self.layout, self.reg_span(dest))? {
+            LowerTy::Scalar(scalar) => {
+                let undef = UndefOp::new(ctx, scalar.handle(ctx));
+                self.append(ctx, undef.get_operation(), Some(dest));
+                self.reg_values.insert(dest.0, undef.get_result(ctx));
+            }
+            LowerTy::Aggregate { layout, .. } => {
+                let storage = self.entry_alloca(ctx, layout.size, layout.align);
+                self.reg_values.insert(dest.0, storage);
+            }
+            LowerTy::ZeroSized => {
+                self.erased.insert(dest.0);
+            }
+        }
+        Ok(())
     }
 
     /// The static address of a closed parameter list's elements: a private

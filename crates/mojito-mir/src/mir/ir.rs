@@ -1640,6 +1640,12 @@ pub enum Const {
     /// or a one-lane SIMD type, or a splat or per-lane construction of a SIMD type of any width, to it. It holds a `CtValue::UInt`, a
     /// `CtValue::Simd`, or a `CtValue::Struct` of such values and scalars.
     Value(mojito_types::ct::CtValue),
+    /// The value of a promoted slot that holds nothing on this edge:
+    /// upstream's `kgen.param.constant #interp.uninitmem`, which `mem-2-reg`
+    /// materializes for a read or a carried value with no store before it.
+    /// It is typed by its register; it may be copied, stored, and dropped,
+    /// but never turned into a concrete value.
+    UninitMem,
 }
 
 impl Const {

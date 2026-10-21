@@ -554,6 +554,7 @@ impl Decoder {
     pub(super) fn constant(&mut self, value: &Value) -> Option<Const> {
         match &value.kind {
             ValueKind::Atom(tag) if tag == "none" => Some(Const::None),
+            ValueKind::Atom(tag) if tag == "uninitmem" => Some(Const::UninitMem),
             ValueKind::Positional(tag, inner) => match tag.as_str() {
                 "int" => self.int64(inner).map(Const::Int),
                 "int_literal" => self.int_literal(inner).map(Const::IntLiteral),

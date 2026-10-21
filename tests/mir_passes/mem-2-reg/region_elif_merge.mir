@@ -1,0 +1,46 @@
+mojito-mir 1.86
+artifact {
+  features: [],
+  files: [
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: elif_merge, param_names: [c, d], param_types: [Bool, Bool], defaults: [absent, absent], required: [true, true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent, absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false, false], param_writes: [false, false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: elif_merge,
+        registers: 11,
+        vars: 3,
+        var_names: [c, d, x],
+        params: 2,
+        param_types: [Bool, Bool],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Bool }, var_type { var: $v1, type: Bool }, var_type { var: $v2, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Bool }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r6, type: Bool }, reg_type { reg: %r7, type: IntLiteral }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r10, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }, reg_loc { reg: %r10, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(1) },
+              literal.materialize { dest: %r1, value: %r0, target: Int },
+              var.store { var: $v2, src: %r1, binding_type: present(Int), in_place: false },
+              var.use { dest: %r2, var: $v0, mode: copy },
+              if { results: [], condition: %r2, then: [bb0 { instructions: [drop.var { var: $v2 }, const { dest: %r3, value: int_literal(2) }, literal.materialize { dest: %r4, value: %r3, target: Int }, var.store { var: $v2, src: %r4, binding_type: absent, in_place: false }], terminator: yield { values: [] } }], elifs: [elif { condition_arguments: [], condition: [bb0 { instructions: [var.use { dest: %r6, var: $v1, mode: copy }], terminator: if.elifcond.yield { condition: %r6, values: [] } }], then_arguments: [], then: [bb0 { instructions: [drop.var { var: $v2 }, const { dest: %r7, value: int_literal(3) }, literal.materialize { dest: %r8, value: %r7, target: Int }, var.store { var: $v2, src: %r8, binding_type: absent, in_place: false }], terminator: yield { values: [] } }] }], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
+              var.use { dest: %r10, var: $v2, mode: copy },
+              drop.var { var: $v2 }
+            ],
+            terminator: return { value: present(%r10) }
+          }
+        ]
+      }
+  ]
+}

@@ -1745,7 +1745,7 @@ pre-elaboration rounds' `canonicalize`, and after elaboration behind
 argument into a local it can promote (`docs/architecture.md`
 §Pre-Elaboration Pipeline and §Post-Elaboration Pipeline). A slot each of
 whose reads sees one reaching store becomes registers; a slot whose reads
-merge two stores keeps its slot until region values arrive (R927). Debug
+merge two stores kept its slot until region values arrived (R927, below). Debug
 binary, before and after (output identical):
 
 | fixture | `concrete_instructions` | `generator_instance_instructions` | promoted slots (pre / post) |
@@ -2072,3 +2072,26 @@ nightly `scripts/instantiation-report` refreshes `benchmarks/instantiation.tsv`,
 and `generator_instances` should fall by the `Tuple.reverse`,
 `Tuple.concat`, and collector-taking `nodebug` instances the corpus no
 longer names.
+
+## Mem2Reg carries slots through region values (2026-10-21, R927)
+
+On a structured body `mem-2-reg` is now upstream's `processRegion`: a slot
+assigned in an arm, an elif condition, a loop or `comptime for` body, or a
+`match` case and read after the op travels through the op's region
+arguments, init operands, and results instead of keeping its slot
+(`docs/architecture.md`, §Pre-Elaboration Pipeline). Summed `--timings`
+counters over the `assets/ok` fixtures, debug binary, HEAD against the
+change (every fixture's output identical on the VM, the whole asset tree
+diffed):
+
+| counter | before | after |
+|---|---:|---:|
+| pre-elaboration promoted slots, program bodies | 2,597 | 2,872 |
+| pre-elaboration promoted slots, package bodies | 1,560 | 2,205 |
+| post-elaboration promoted slots | 15,041 | 14,422 |
+| concrete instructions | 414,023 | 382,714 (−7.6 %) |
+| generator-instance instructions | 163,107 | 154,382 (−5.3 %) |
+
+Fewer slots are left for the post-elaboration round, and every instance
+of a generic body starts from the smaller generator. The nightly
+`scripts/instantiation-report` refreshes `benchmarks/instantiation.tsv`.

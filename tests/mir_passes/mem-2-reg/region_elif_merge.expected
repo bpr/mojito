@@ -1,0 +1,32 @@
+  functions: [
+      fn {
+        name: elif_merge,
+        registers: 14,
+        vars: 2,
+        var_names: [c, d],
+        params: 2,
+        param_types: [Bool, Bool],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Bool }, var_type { var: $v1, type: Bool }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Bool }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r6, type: Bool }, reg_type { reg: %r7, type: IntLiteral }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r10, type: Int }, reg_type { reg: %r11, type: Int }, reg_type { reg: %r12, type: Int }, reg_type { reg: %r13, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }, reg_loc { reg: %r10, location: absent }, reg_loc { reg: %r11, location: absent }, reg_loc { reg: %r12, location: absent }, reg_loc { reg: %r13, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(1) },
+              literal.materialize { dest: %r1, value: %r0, target: Int },
+              var.use { dest: %r2, var: $v0, mode: copy },
+              if { results: [%r13], condition: %r2, then: [bb0 { instructions: [const { dest: %r3, value: int_literal(2) }, literal.materialize { dest: %r4, value: %r3, target: Int }], terminator: yield { values: [%r4] } }], elifs: [elif { condition_arguments: [], condition: [bb0 { instructions: [var.use { dest: %r6, var: $v1, mode: copy }], terminator: if.elifcond.yield { condition: %r6, values: [%r1] } }], then_arguments: [%r11], then: [bb0 { instructions: [const { dest: %r7, value: int_literal(3) }, literal.materialize { dest: %r8, value: %r7, target: Int }], terminator: yield { values: [%r8] } }] }], else_arguments: [%r12], else: [bb0 { instructions: [], terminator: yield { values: [%r12] } }] },
+              value.copy { dest: %r10, value: %r13 }
+            ],
+            terminator: return { value: present(%r10) }
+          }
+        ]
+      }
+  ]

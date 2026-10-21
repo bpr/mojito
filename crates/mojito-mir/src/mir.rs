@@ -4526,6 +4526,8 @@ fn close_register_types(
                                     .as_value()
                                     .cloned()
                             }
+                            // Typed by its register, as `UninitMemAttr` is.
+                            Const::UninitMem => None,
                         };
                         Some((dest, ty))
                     }

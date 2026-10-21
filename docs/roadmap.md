@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1264**.
+Next free ID: **R1266**.
 
 ## Ordered Work
 
@@ -452,12 +452,13 @@ which names the upstream pass each one follows. Each is measured by the
   - Fold an integer `lt`, `gt`, or `ne` of one register with itself to
     `False`, and `le`, `ge`, or `eq` to `True`, in
     `MirInstr::folded_constant`; a float comparison stays, for NaN.
-  - The slot itself is promoted only once R927 lands, since its arm
-    stores to it.
+  - `mem-2-reg` promotes `s` now, but `s < x` then compares two
+    `var.use`s of the parameter `x`, which only the post-elaboration
+    `lower-arg-conventions` makes one value.
   - Done when such a body inlines, pin-checked, and a `canonicalize`
     pass case pins the fold.
   - Found while landing R923 (2026-10-16).
-  - Depends on R927.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1255 MIR has no select instruction, so `canonicalize` cannot turn
@@ -706,45 +707,24 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R927 A slot whose reads merge two stores keeps its slot, where
-  upstream's `Mem2Reg` carries it through region results**
+- [ ] **R1264 A slot stored inside a `try` part keeps its slot, where
+  upstream's `Mem2Reg` carries it through `lit.try`'s results**
 
-  `mem-2-reg` promotes only a slot each of whose reads sees one reaching
-  store, so a variable assigned in an `if` arm or a loop and read after it
-  stays in memory.
-  - Upstream's `processRegion` makes such an allocation variant across an
-    `hlcf` op and threads it through region arguments, terminator
-    operands, and new op results (`Mem2Reg.cpp`, `insertVariants`).
-  - MIR is a CFG at the pre-elaboration seam and its blocks take no
-    arguments, so the pass solves reaching stores over blocks instead
-    (`analysis/mem2reg.rs`).
-  - On a structured body the pass now walks regions, but promotes a read
-    only when its store's block encloses it: probe
-    `tests/mir_passes/mem-2-reg/region_store_in_arm_kept.mir` and the
-    loop-body store in `region_loop_read.mir`.
-  - Every region op upstream gives values now has them (R886, R1258,
-    R1259, R1260): loop, elif, `match` case and else region, and `comptime
-    for` arguments, and loop, `if`, `match`, and `comptime for` results,
-    which the pass would produce.
-  - The ownership walks (`region_walk.rs`, `moves.rs`) and
-    `close_register_types` track and type no value carried through them,
-    so the producer must; an owned value the elaborator carries from one
-    `comptime for` iteration loop's results to the next clone's arguments
-    (`unroll_op`) is unprobed.
-  - `region_loop_read.mir`'s `y` is stored in the body and read only
-    after the loop, so upstream carries it as a loop argument and a loop
-    result whose initial operand is `currValueOrUndef`'s undef: MIR has no
-    undef value to spell that operand with.
-  - The fix rewrites the pass as `processRegion`'s scoped walk over
-    structured bodies with region values.
-  - The pass's structured `comptime for` guard (`encloses`'
-    `Boundary::ComptimeFor`, a read and its store on one side of a loop
-    body's boundary) can go: the elaborator renumbers only the registers
-    each clone of the body defines (R880).
-  - About two thirds of the promotable-type slot mentions in the
-    pre-elaboration bodies of `collections_many` are merged ones.
-  - Depends on R880 (regions cloned).
-  - Model: Fable, Planned.
+  `mem-2-reg` keeps a slot one of whose stores sits in a `try` part when
+  the slot is allocated outside it, because MIR's `try` carries no values.
+  - Upstream's `lit.try` is a `ControlFlowNode` with variadic results and
+    except-region arguments (`LITOps.td`), so `processRegion` makes the
+    allocation variant across it.
+  - Upstream's `LowerSemanticCF` makes each raise an explicit
+    `lit.try.raise` terminator (`emitRaise`), which carries the variant
+    values into the except region; Mojito's raise points are implicit
+    raising instructions.
+  - The fix gives `Try` results, a `try.yield` with values, and handler
+    arguments, and has `variance` stop refusing a store under a `try`.
+  - Probe: `tests/mir_passes/mem-2-reg/region_try_store_kept.mir`.
+  - Found while landing R927 (2026-10-21).
+  - Depends on R831 (an explicit raise edge per raising instruction).
+  - Model: Fable, Not Planned.
 
 - [ ] **R1105 `mem-2-reg` keeps a slot that a body reads through a
   reference the same block makes**
@@ -969,6 +949,27 @@ Track: `native`.
 
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
+
+- [ ] **R1265 pliron 0.20.0's DCE panics when it queues one block
+  argument twice**
+
+  pliron's `DCEPass` queues each operand of an erased op or dead block
+  argument once per occurrence, and erasing a block argument a second time
+  panics in `Value::find_index`.
+  - A dead phi whose edges carry one block argument twice, which
+    `mem-2-reg`'s region values now leave in `match` lowering
+    (`assets/ok/match_sequence_fixed_length.mojo`), was the first shape.
+  - Mojito's `EraseDeadBlockArgs` (`crates/mojito-pliron/src/pipeline.rs`)
+    erases every dead argument before DCE runs, so none starts the chain.
+  - A dead op with one block argument as two operands, or a dead argument
+    an erased op exposes whose edges repeat a block argument, still
+    panics.
+  - The fix runs a DCE that skips an already-erased argument, as pliron's
+    does for an erased op, until a pliron release dedups its queue; draft
+    the upstream report as a local file.
+  - Found while landing R927 (2026-10-21).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1113 Natively, an owned temporary is not released when a raise edge
   or a `try` region separates it from its final read**
@@ -10264,6 +10265,10 @@ follow-ups the landed producer stages filed come last.
     same for an inlined callee (`read_binder`).
   - Lowering should emit `Const::Param` of the binder's declaration
     reference, and both name-keyed rewrites then go away.
+  - `mem-2-reg` refuses a slot nothing stores or declares for this reason
+    (`variance`): its reads are binder reads, and that rule goes with the
+    slot. Probe: `n` in `$comptime$unrolled$0` of a `comptime for k in
+    range(n)` body.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

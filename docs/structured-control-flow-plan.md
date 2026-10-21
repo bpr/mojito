@@ -150,8 +150,8 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
     as `else_args` are the last one's.
   - `Loop { label, operands, args, results, body }` — `hlcf.loop`, its
     body's arguments defined by its operands and each `Continue`'s values,
-    its results by each `Break`'s. Loop-carried values stay in slots until
-    register promotion of merged slots (R927) produces them.
+    its results by each `Break`'s. `mem-2-reg` produces them for a slot
+    stored in the body (R927).
   - `ComptimeIf { results, conds, arms, orelse }` — `hlcf.comptime.if`:
     one arm per condition, then the else region.
   - `ComptimeFor { binder, source, body, orelse }` —

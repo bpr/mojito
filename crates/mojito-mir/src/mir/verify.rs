@@ -130,8 +130,8 @@ pub use places::{instruction_places, instruction_places_mut, place_base_ty};
 pub use regs::*;
 use scope::verify_scope;
 pub use scope::{instruction_named_types, instruction_variant_indices};
+pub use structure::{is_structured_shape, verify_structured_function_in, verify_structured_shape};
 use structure::{verify_region_terminator, verify_regions};
-pub use structure::{verify_structured_function_in, verify_structured_shape};
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use subscripts::*;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]

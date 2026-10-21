@@ -616,6 +616,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `mem-2-reg` promotes a structured body as upstream's `processRegion`
+  does: one scoped walk in which a slot allocated in the innermost region
+  holding its mentions, and stored inside a region op, is carried through
+  that op's region arguments, init operands, terminator values, and
+  results, so a variable assigned in an arm, an elif condition, a loop or
+  `comptime for` body, or a `match` case and read after the op no longer
+  keeps its slot, and a read inside a `try` part or a `comptime for` body
+  of a value stored outside it is promoted. An edge on which the slot
+  holds nothing carries the new constant `uninitmem` (MIR text 1.86,
+  upstream's `#interp.uninitmem`), which the VM reads as uninitialized
+  storage and the native backend lowers to `llvm.undef`. A store inside a
+  `try` part keeps its slot (R1264), and natively a pass erases dead block
+  arguments before pliron's DCE, which panics on one such shape (R1265).
+  Program output is unchanged; concrete instructions over `assets/ok`
+  fall 7.6 %. This closes R927.
 - The elaborator instantiates each body with its structured control flow,
   as upstream's elaborator receives `hlcf`: a `comptime if` is decided on
   its region op, its taken arm spliced where it stood, and a `comptime

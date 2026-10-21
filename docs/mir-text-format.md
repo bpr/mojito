@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.85
+# Mojito Textual MIR Format, Version 1.86
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.85 is implemented end to end for inspection and loading: canonical
+Version 1.86 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.85
+mojito-mir 1.86
 ```
 
-The writer emits 1.85. The reader accepts 1.0 through 1.85; *Schema 1.0*
+The writer emits 1.86. The reader accepts 1.0 through 1.86; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -354,6 +354,11 @@ results. `match.complete`, `comptime.for.break`, and
 `comptime.for.continue` gain `values`. An older artifact's ops carried no
 values, so the reader reads each field's absence as an empty list; the
 writer always writes them.
+
+Minor version 86 adds the constant `uninitmem`, upstream's
+`kgen.param.constant #interp.uninitmem`: the value of a slot `mem-2-reg`
+promotes where the slot holds nothing, typed by its register. A 1.85
+consumer rejects the spelling, which is the intended failure.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -696,7 +701,9 @@ record.
 `length`, membership, or conformance — which a generator carries, the
 elaborator folds per instance, and concrete MIR never holds, or
 `value(ct-value)` (schema 1.27), a closed `ct_simd` or `ct_struct`
-parameter value read at runtime. Concrete `float` stores the
+parameter value read at runtime, or `uninitmem` (schema 1.86),
+uninitialized memory of the register's type, which may be copied, stored,
+and dropped but never read as a concrete value. Concrete `float` stores the
 exact IEEE-754 binary64 bits as 16 lowercase hex digits. `IntLiteral` uses
 arbitrary-precision decimal. `FloatLiteral` uses its canonical exact spelling
 and may never round through host `f64`: `-0.0` for negative zero, `{n}.0` for

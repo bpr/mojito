@@ -2,15 +2,15 @@
       fn {
         name: try_crossing,
         registers: 4,
-        vars: 3,
-        var_names: [a, x, e],
+        vars: 2,
+        var_names: [a, e],
         params: 1,
         param_types: [Int],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: Error }],
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Error }],
         return_type: absent,
         raises: false,
         error_type: absent,
@@ -20,8 +20,7 @@
           bb0 {
             instructions: [
               const { dest: %r0, value: int(1) },
-              var.store { var: $v1, src: %r0, binding_type: absent, in_place: false },
-              try { body: [bb0 { instructions: [var.use { dest: %r1, var: $v1, mode: copy }, call { dest: %r2, func: fail, raises: present(Error), args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: try.yield {} }], handler: present(handler { error_var: present($v2), blocks: [bb0 { instructions: [var.use { dest: %r3, var: $v2, mode: copy }, drop.var { var: $v2 }], terminator: try.yield {} }] }), orelse: absent, finalbody: absent, cleanup: [] }
+              try { body: [bb0 { instructions: [value.copy { dest: %r1, value: %r0 }, call { dest: %r2, func: fail, raises: present(Error), args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: try.yield {} }], handler: present(handler { error_var: present($v1), blocks: [bb0 { instructions: [var.use { dest: %r3, var: $v1, mode: copy }, drop.var { var: $v1 }], terminator: try.yield {} }] }), orelse: absent, finalbody: absent, cleanup: [] }
             ],
             terminator: return { value: absent }
           }

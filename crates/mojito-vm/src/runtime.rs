@@ -99,6 +99,8 @@ pub enum Value {
     /// `None` is uninitialized, `Some` holds the raw payload. Dropping one is
     /// a no-op regardless of contents — the payload leaks by design, matching
     /// upstream's no-op destructor — and reading/taking the `None` state traps.
+    /// `None` is also the value of [`Const::UninitMem`](mojito_mir::mir::Const::UninitMem),
+    /// uninitialized memory that is copied, stored, and dropped freely.
     UninitStorage(Option<Box<Self>>),
 }
 

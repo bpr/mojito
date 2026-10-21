@@ -320,8 +320,9 @@ folds the operators over it (R840);
       upstream's `LowerArgConventions` does. Once drops are elaborated, a
       slot of a type with no destructor and an identity copy carries no
       ownership effect, so no ownership state is rewritten.
-    - A slot whose reads merge two stores waits on structured bodies and
-      region values (R927).
+    - A slot whose reads merge two stores is carried through region
+      values on a structured body, as `processRegion` carries it (R927); a
+      store inside a `try` part still keeps its slot (R1264).
     - `SROA` waits on a value-level aggregate construction (R928).
 
 `ApplyInliner` has no counterpart: Mojito has no `apply` operator.

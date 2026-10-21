@@ -1,6 +1,7 @@
 //! The profile-to-pipeline table: the single owner of native optimization
 //! policy. Both profiles share the pliron cleanup stage (per-function
-//! mem2reg then DCE, run between module verifications by `compile`);
+//! mem2reg, dead block arguments, then DCE, run between module
+//! verifications by `compile`);
 //! profiles diverge only at the LLVM stage, where `release` runs the pinned
 //! `default<O1>` pipeline through an external `opt` over emitted bitcode
 //! (pliron-llvm 0.17 keeps its raw `LLVMModuleRef` private, so the
@@ -8,11 +9,19 @@
 //! LLVM pipeline string, or the `opt` invocation shape is a reviewed policy
 //! change and must update the snapshot tests below.
 
+use pliron::basic_block::BasicBlock;
+use pliron::builtin::op_interfaces::BranchOpInterface;
 use pliron::builtin::ops::ModuleOp;
-use pliron::context::Context;
-use pliron::op::Op;
-use pliron::pass::{AnalysisManager, NestedOpsPass, OpPass, Pass, Passes};
+use pliron::context::{Context, Ptr};
+use pliron::graph::dominance::DomInfo;
+use pliron::irbuild::IRStatus;
+use pliron::linked_list::ContainsLinkedList;
+use pliron::op::{Op, op_cast, op_impls};
+use pliron::operation::Operation;
+use pliron::opts::dce::BlockArgRemoval;
+use pliron::pass::{AnalysisManager, NestedOpsPass, OpPass, Pass, PassResult, Passes};
 use pliron::printable::Printable;
+use pliron::value::Value;
 
 use super::{OptLevel, PlironError, PlironErrorKind};
 
@@ -48,6 +57,7 @@ impl Pipeline {
             pliron_llvm::ops::FuncOp,
             pliron::opts::mem2reg::Mem2RegPass,
         >::default());
+        per_func.add_pass(OpPass::<pliron_llvm::ops::FuncOp, EraseDeadBlockArgs>::default());
         per_func
             .add_pass(OpPass::<pliron_llvm::ops::FuncOp, pliron::opts::dce::DCEPass>::default());
         module_passes.add_pass(NestedOpsPass::new(per_func));
@@ -120,11 +130,97 @@ impl Pipeline {
     }
 }
 
+/// Erase each block argument nothing reads, to a fixpoint, as pliron's
+/// `DCEPass` would, before that pass runs.
+///
+/// pliron 0.20.0's DCE queues a value once per edge forwarding it to a dead
+/// block argument, so a block argument forwarded on two edges to one dead
+/// argument (a dead phi `[%a, %x], [%a, %y]`) is erased twice, which
+/// panics. mem2reg leaves such phis wherever one slot is stored the same
+/// value on two edges and never read after, as a `match`'s unread case
+/// argument is; erasing the dead arguments here leaves DCE none to start
+/// from.
+#[derive(Default)]
+struct EraseDeadBlockArgs;
+
+impl Pass for EraseDeadBlockArgs {
+    fn name(&self) -> &'static str {
+        "erase-dead-block-args"
+    }
+
+    fn run(
+        &mut self,
+        op: Ptr<Operation>,
+        ctx: &mut Context,
+        _analyses: &mut AnalysisManager,
+    ) -> pliron::result::Result<PassResult> {
+        let mut result = PassResult::default();
+        loop {
+            let dead = dead_block_args(op, ctx);
+            if dead.is_empty() {
+                break;
+            }
+            for arg in dead {
+                erase_block_arg(arg, ctx);
+            }
+            result.ir_changed = IRStatus::Changed;
+        }
+        result.set_preserved::<DomInfo>();
+        Ok(result)
+    }
+}
+
+/// The block arguments of `op`'s regions nothing reads that DCE may erase:
+/// the region's op allows it and every predecessor's terminator branches.
+fn dead_block_args(op: Ptr<Operation>, ctx: &Context) -> Vec<Value> {
+    let mut dead = Vec::new();
+    let op_dyn = Operation::get_op_dyn(op, ctx);
+    let Some(removal) = op_cast::<dyn BlockArgRemoval>(&*op_dyn) else {
+        return dead;
+    };
+    for region in op.deref(ctx).regions() {
+        for block in region.deref(ctx).iter(ctx) {
+            if !removal.can_remove_block_args(ctx, block)
+                || !block.preds(ctx).iter().all(|pred| {
+                    pred.deref(ctx)
+                        .get_terminator(ctx)
+                        .is_some_and(|terminator| {
+                            op_impls::<dyn BranchOpInterface>(&*Operation::get_op_dyn(
+                                terminator, ctx,
+                            ))
+                        })
+                })
+            {
+                continue;
+            }
+            dead.extend(block.deref(ctx).arguments().filter(|arg| !arg.is_used(ctx)));
+        }
+    }
+    dead
+}
+
+/// Erase the block argument `arg` and the operand each predecessor
+/// forwards to it.
+fn erase_block_arg(arg: Value, ctx: &mut Context) {
+    let Some(block) = arg.defining_block() else {
+        return;
+    };
+    let index = arg.find_index(ctx);
+    for edge in block.uses(ctx) {
+        let successor = edge.find_index(ctx);
+        let terminator = Operation::get_op_dyn(edge.user_op(), ctx);
+        if let Some(branch) = op_cast::<dyn BranchOpInterface>(&*terminator) {
+            branch.remove_successor_operand(ctx, successor, index);
+        }
+    }
+    BasicBlock::remove_argument(block, ctx, index);
+}
+
 /// The pliron cleanup stage's ordered per-function pass names, as rendered by
 /// [`Pipeline::describe`]. Kept adjacent to [`Pipeline::run_pliron_passes`],
 /// which constructs exactly this sequence.
 #[cfg(test)]
-const PLIRON_FUNCTION_PASSES: &[&str] = &["mem2reg", "dce"];
+const PLIRON_FUNCTION_PASSES: &[&str] = &["mem2reg", "erase-dead-block-args", "dce"];
 
 #[cfg(test)]
 mod tests {
@@ -323,7 +419,7 @@ mod tests {
     fn pliron_pipeline_snapshot_o0() {
         expect![[r"
             profile: O0
-            pliron function passes: mem2reg, dce
+            pliron function passes: mem2reg, erase-dead-block-args, dce
             llvm opt pipeline: (none)
         "]]
         .assert_eq(&Pipeline::for_profile(OptLevel::O0).describe());
@@ -333,7 +429,7 @@ mod tests {
     fn pliron_pipeline_snapshot_release() {
         expect![[r"
             profile: release (alias: 1)
-            pliron function passes: mem2reg, dce
+            pliron function passes: mem2reg, erase-dead-block-args, dce
             llvm opt pipeline: default<O1>
             opt argv template: opt -passes=default<O1> <bitcode> -o <bitcode>
         "]]

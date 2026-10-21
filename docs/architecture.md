@@ -5775,9 +5775,8 @@ point where a slot declared in a loop is uninitialized again.
   trivially register-passable at a concrete size
   (`MirDeclarations::copy_is_identity`, never symbolic: upstream promotes
   only allocations of concrete size), it is no parameter, and every
-  mention of it lies in one block list (the function's own or one `try`
-  part) and is a `var.store` of a register defined once, earlier in its
-  block, and read by the store alone; a `var.use` (copy, move, or forward)
+  mention of it is a `var.store` of a register defined once and read by
+  the store alone; a `var.use` (copy, move, or forward)
   or a whole-root `place.load` at the slot's type; or a `var.declare`,
   `drop.var`, or `var.consume`, all of which do nothing to such a type
   once drops are elaborated.
@@ -5788,30 +5787,46 @@ point where a slot declared in a loop is uninitialized again.
   closure is a struct of pointers, trivially register-passable as
   upstream's is, and a `call.indirect` through the slot keeps it;
   `canonicalize` then forwards a `value.copy` of such a closure and erases
-  the unread `closure.make` (`MirInstr::would_be_trivially_dead`). A forward dataflow over the
-  list's blocks (a `try`'s escapes taking the state at the `try`) finds
-  each read's reaching store; when every read sees exactly one, that store
-  lies on every path to the read and its register's definition before it,
-  so the read becomes a `value.copy` of the stored register, the other
-  mentions go, and the slot leaves the function (`mir::retire_slots`). The
-  `canonicalize` after it forwards the copies. A slot whose reads merge two
-  stores keeps its slot (R927): upstream carries such an allocation through
-  `hlcf` region arguments and results, which MIR's loops and elif and
-  `match` regions now take but `mem-2-reg` does not yet produce. A
-  structured body is walked region by region instead
-  (`region_walk::walk_forward` with a reaching-store `ForwardScan`): its
-  mentions may sit in several regions of one `try` part (a mention inside
-  a `try` part with another outside keeps the slot, as upstream's
-  `userCrossesFunctionCFG` refuses to cross `lit.try`), a store need not
-  share its block with its register's definition, and a read is promoted
-  when its one reaching store lies before it in its own block or in a
-  block enclosing it, so the stored register is visible there; a store in
-  an arm or a loop body read after the op keeps its slot (R927). In a
-  structured body no read and its store may sit on two sides of a
-  `comptime for` region's boundary, though the elaborator renumbers only
-  the registers each clone of the body defines (R927 drops the guard). A
-  lowered list holding a `comptime for` terminator, which only a phase
-  test's lowering makes, promotes nothing.
+  the unread `closure.make` (`MirInstr::would_be_trivially_dead`).
+  A structured body (`mir::verify::is_structured_shape`) is promoted as
+  upstream's `processRegion` promotes `hlcf`: one scoped walk, each region
+  a scope, in which a `var.store` binds the slot's current value and goes,
+  a read becomes a `value.copy` of that value (the `canonicalize` after it
+  forwards it), and a `var.declare` binds nothing while a `drop.var` or
+  `var.consume` leaves the value, as upstream's lifetime markers do. A
+  slot is allocated in the innermost region holding every mention of it,
+  which is where its declaration sits. A store or declaration inside a
+  region op makes the slot variant across each op between it and that
+  region (`userCrossesFunctionCFG`'s `enclosingNodes`), and the walk
+  carries the value through the op's region values: one argument per
+  variant slot for each region a terminator enters (a loop body with a
+  `continue`, a `comptime for` body, an elif's arm, each later elif
+  condition, the else region after elifs, a `match` case after one a
+  `match.next` leaves, and the else region after the last), init operands
+  for a body the op enters too, and one result per variant slot, bound as
+  the slot's value after the op; each region terminator appends the
+  current values its target needs (`insertVariants`). Where a slot holds
+  nothing on an edge, the edge carries a `uninitmem` constant
+  (`Const::UninitMem`, upstream's `currValueOrUndef`), which the VM reads
+  as uninitialized storage and the native backend as `llvm.undef`. A read
+  needs no carrying, so one inside a `try` part or a `comptime for` body
+  of a value stored outside it is promoted (the elaborator renumbers only
+  the registers each clone of a body defines). A `try` carries no values,
+  so a slot stored inside a `try` part and allocated outside it keeps its
+  slot (R1264), where upstream's `lit.try` carries it through its results
+  and except arguments; and a slot nothing stores or declares is a
+  compile-time parameter's binding the elaborator substitutes by name
+  (R950), and keeps its slot. A lowered body, which only the
+  post-elaboration pipeline runs this on, takes a forward dataflow over
+  each block list's blocks instead (a `try`'s escapes taking the state at
+  the `try`): every mention must lie in one list, and when every read
+  sees exactly one reaching store, that store lies on every path to the
+  read and its register's definition before it, so the read becomes a
+  `value.copy` of the stored register; a slot whose reads merge two
+  stores keeps its slot there. In both, the other mentions go and the
+  slot leaves the function (`mir::retire_slots`). A lowered list holding a
+  `comptime for` terminator, which only a phase test's lowering makes,
+  promotes nothing.
   Its `--timings` counters are `promoted_slots` and
   `erased_slot_instructions`.
 - **`sccp` runs between the two `canonicalize` runs** (`analysis::SCCP`,

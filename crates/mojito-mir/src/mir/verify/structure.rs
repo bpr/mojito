@@ -34,6 +34,11 @@ pub fn verify_structured_shape(name: &str, function: &MirFunction) -> Vec<String
     errors
 }
 
+/// Whether `function` has [`verify_structured_shape`]'s shape.
+pub fn is_structured_shape(function: &MirFunction) -> bool {
+    function.blocks.len() == 1 && blocks_structured(&function.blocks)
+}
+
 /// Verify each region a region op holds, under the region's kind and its
 /// handler protection. A `try` body is protected by its handler; every other
 /// region keeps its op's protection.
@@ -461,17 +466,35 @@ fn enclosing_loop(context: &RegionContext, label: Option<LoopLabel>) -> Option<(
     })
 }
 
+/// Whether no block of `blocks` ends in a CFG terminator and every region
+/// below them holds one block, as [`structured_blocks`] checks.
+fn blocks_structured(blocks: &[MirBlock]) -> bool {
+    blocks.iter().all(|block| {
+        !is_cfg_terminator(&block.term)
+            && block.instrs.iter().all(|instruction| {
+                instruction_regions(instruction)
+                    .into_iter()
+                    .all(|region| region.len() == 1 && blocks_structured(region))
+            })
+    })
+}
+
+/// A terminator only a lowered body holds.
+const fn is_cfg_terminator(term: &MirTerm) -> bool {
+    matches!(
+        term,
+        MirTerm::Jump(_)
+            | MirTerm::Branch { .. }
+            | MirTerm::ComptimeBranch { .. }
+            | MirTerm::ComptimeFor { .. }
+            | MirTerm::EscapeJump { .. }
+    )
+}
+
 fn structured_blocks(name: &str, blocks: &[MirBlock], errors: &mut Vec<String>) {
     for (index, block) in blocks.iter().enumerate() {
         let prefix = format!("MIR function '{name}' block {index}");
-        if matches!(
-            block.term,
-            MirTerm::Jump(_)
-                | MirTerm::Branch { .. }
-                | MirTerm::ComptimeBranch { .. }
-                | MirTerm::ComptimeFor { .. }
-                | MirTerm::EscapeJump { .. }
-        ) {
+        if is_cfg_terminator(&block.term) {
             errors.push(format!(
                 "{prefix}: CFG terminator `{}` in a structured body",
                 terminator_mnemonic(&block.term)

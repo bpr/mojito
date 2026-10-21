@@ -745,6 +745,7 @@ impl<'a> Flatten<'a> {
             Const::Value(value) => mojito_types::param_expr::MetaTy::of_value(value)
                 .as_value()
                 .cloned(),
+            Const::UninitMem => None,
         };
         let d = match constant_ty {
             Some(ty) => self.fresh_typed(location, None, ty),

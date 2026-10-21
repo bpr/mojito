@@ -7,9 +7,9 @@
 //! A MIR variable slot is the allocation. One is promoted when its type is
 //! trivially register-passable at a concrete size
 //! ([`MirDeclarations::copy_is_identity`], never symbolic), and every
-//! mention of it, in one block list, is a store (`var.store`), a read
-//! (`var.use`, or a whole-root `place.load`), or a mention with no effect
-//! on such a type once drops are elaborated (`var.declare`, `drop.var`, and
+//! mention of it is a store (`var.store`), a read (`var.use`, or a
+//! whole-root `place.load`), or a mention with no effect on such a type
+//! once drops are elaborated (`var.declare`, `drop.var`, and
 //! `var.consume`).
 //! A destructor or copy constructor would take the slot's address, so a
 //! type with either is never one, as upstream's never is; a borrow, a
@@ -18,47 +18,52 @@
 //! closure is a struct of pointers, trivially register-passable as
 //! upstream's is, and a call through the slot keeps it.
 //!
-//! Only a slot each of whose reads sees one reaching store is promoted: the
-//! read becomes a `value.copy` of the stored register, which the
-//! `canonicalize` after it forwards. A slot whose reads merge two stores
-//! keeps its slot.
-//!
-//! A structured body is walked region by region, as upstream walks `hlcf`
-//! (`region_walk::walk_forward`). A read is promoted when its one reaching
-//! store lies before it in the read's own block or in a block enclosing it,
-//! so the stored register is visible at the read. Upstream carries a value
-//! stored inside a region out of it as the op's results
-//! (`insertVariants`); Mojito's regions take no arguments, so such a slot
-//! keeps its slot. A mention inside a `try` part with another outside that
-//! part keeps it too, as upstream's `userCrossesFunctionCFG` refuses to
-//! cross `lit.try`.
+//! A structured body is promoted as upstream's `processRegion` promotes
+//! `hlcf`: one scoped walk, each region a scope, in which a store binds the
+//! slot's current value, a read becomes a `value.copy` of it (which the
+//! `canonicalize` after it forwards), and a declaration, drop, or
+//! consumption leaves it, as a lifetime marker does. A slot is allocated in
+//! the innermost region holding every mention of it, where its declaration
+//! sits; a store or declaration inside a region op makes it variant across
+//! that op, and its value is carried through the op's region values: one
+//! argument per variant slot for each region a terminator enters (a loop's
+//! or `comptime for`'s body, an elif's arm and later conditions, the else
+//! region after elifs, a `match` case after one a `match.next` leaves, and
+//! its else region), init operands for a body the op enters too, and one
+//! result per variant slot, which the region terminators define. Where the
+//! slot holds nothing on an edge, the edge carries an `uninitmem` constant,
+//! upstream's `currValueOrUndef`. A `try` carries no values, so a slot
+//! stored inside a `try` part and allocated outside it keeps its slot,
+//! where upstream carries it through `lit.try`'s results and except
+//! arguments. A slot nothing stores or declares is a compile-time
+//! parameter's binding, which the elaborator substitutes, and keeps its
+//! slot.
 //!
 //! A lowered body, which the post-elaboration pipeline still runs this on,
 //! is a CFG whose blocks take no arguments: a read is promoted when its one
 //! reaching store lies on every path to it and the stored register's one
 //! definition lies before the store in its block, and every mention of the
-//! slot sits in one block list. A list holding a lowered `comptime for`
-//! promotes nothing: upstream's `Mem2Reg` meets every `comptime for` as its
-//! op, and the elaborator unrolls none of a lowered body's.
-//!
-//! In a structured body no promoted read sits on the other side of a
-//! `comptime for` body's boundary from its store, though the elaborator
-//! renumbers only the registers each clone of the body defines.
+//! slot sits in one block list, so a slot whose reads merge two stores
+//! keeps its slot. A list holding a lowered `comptime for` promotes
+//! nothing: upstream's `Mem2Reg` meets every `comptime for` as its op, and
+//! the elaborator unrolls none of a lowered body's.
 
 use super::canonicalize::definition_counts;
 use super::pre_elaboration::BodyPass;
-use super::region_walk::{ForwardScan, walk_forward};
 use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::instruction_result_regs;
+use mojito_mir::mir::verify::is_structured_shape;
 use mojito_mir::mir::{
-    MirBlock, MirBlockId, MirDeclarations, MirFunction, MirInstr, MirTerm, Reg, UseMode,
-    block_successors, cleanup_slots, count_register_reads, has_structured_control_flow,
-    instruction_regions, instruction_regions_mut, instruction_slots, region_escape_targets,
-    renumber_block_slots, retire_slots, terminator_targets,
+    Const, MirBlock, MirBlockId, MirCase, MirDeclarations, MirElif, MirFunction, MirInstr, MirTerm,
+    Reg, RegionFrame, UseMode, block_successors, cleanup_slots, count_register_reads,
+    has_structured_control_flow, instruction_regions, instruction_regions_mut, instruction_slots,
+    loop_continues_mut, match_nexts_mut, region_escape_targets, region_exit, renumber_block_slots,
+    retire_slots, terminator_targets,
 };
 use mojito_types::types::{Ty, is_symbolic};
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::rc::Rc;
 
 /// The pass, under upstream's flag spelling.
 pub const MEM_2_REG: BodyPass = BodyPass {
@@ -73,25 +78,30 @@ pub const LOWER_ARG_CONVENTIONS: BodyPass = BodyPass {
     run: lower_arg_conventions,
 };
 
-/// Promote each local slot of `function` whose reads each see one store to
-/// registers, and remove it from the function; returns whether any was.
+/// Promote each local slot of `function` that upstream's `Mem2Reg` would
+/// promote to registers, and remove it from the function; returns whether
+/// any was.
 pub fn mem_2_reg(_name: &str, function: &mut MirFunction, declarations: &MirDeclarations) -> bool {
-    let promotion = if has_structured_control_flow(function) {
-        promotable_in_regions(function, declarations)
+    let (slots, erased_results, erased) = if is_structured_shape(function) {
+        promote_in_regions(function, declarations)
     } else {
-        promotable(function, declarations, &BTreeSet::new())
+        let promotion = promotable(function, declarations, &BTreeSet::new());
+        let mut erased_results = HashSet::new();
+        let erased = if promotion.slots.is_empty() {
+            0
+        } else {
+            rewrite_list(
+                &mut function.blocks,
+                &mut 0,
+                &promotion,
+                &mut erased_results,
+            )
+        };
+        (promotion.slots, erased_results, erased)
     };
-    if promotion.slots.is_empty() {
+    if slots.is_empty() {
         return false;
     }
-    let mut erased_results = HashSet::new();
-    let mut lists = 0;
-    let erased = rewrite_list(
-        &mut function.blocks,
-        &mut lists,
-        &promotion,
-        &mut erased_results,
-    );
     function
         .reg_types
         .retain(|reg, _| !erased_results.contains(reg));
@@ -100,12 +110,12 @@ pub fn mem_2_reg(_name: &str, function: &mut MirFunction, declarations: &MirDecl
         .0
         .retain(|reg, _| !erased_results.contains(reg));
     for (_, origin) in function.spans.0.values_mut() {
-        if origin.is_some_and(|var| promotion.slots.contains(&var)) {
+        if origin.is_some_and(|var| slots.contains(&var)) {
             *origin = None;
         }
     }
-    retire_slots(function, &promotion.slots);
-    timing::count("promoted_slots", promotion.slots.len() as u64);
+    retire_slots(function, &slots);
+    timing::count("promoted_slots", slots.len() as u64);
     timing::count("erased_slot_instructions", erased as u64);
     true
 }
@@ -214,7 +224,10 @@ enum Mention {
     Store(Reg),
     /// A read into the register; `ends` when it ends the slot.
     Read { dest: Reg, ends: bool },
-    /// A declaration, drop, or consumption: the slot holds nothing after it.
+    /// A declaration: the slot holds nothing after it.
+    Declare,
+    /// A drop or consumption: a lifetime marker, after which the slot holds
+    /// nothing.
     Kill,
 }
 
@@ -349,7 +362,7 @@ impl Facts {
         let typed = function.var_tys.get(&var);
         let stores_closures = entry.mentions.iter().all(|(_, mention)| match *mention {
             Mention::Store(src) => self.closures.contains(&src.0),
-            Mention::Read { .. } | Mention::Kill => true,
+            Mention::Read { .. } | Mention::Declare | Mention::Kill => true,
         });
         (var as usize >= function.n_params || entry_stored.contains(&var))
             && !entry.kept
@@ -361,225 +374,518 @@ impl Facts {
                         && self.reads.get(src.0 as usize) == Some(&1)
                 }
                 Mention::Read { dest, .. } => function.reg_types.get(&dest.0) == typed,
-                Mention::Kill => true,
+                Mention::Declare | Mention::Kill => true,
             })
     }
 }
 
-/// The slots of the structured body `function` [`mem_2_reg`] would
-/// promote, with each read's stored register: the reaching stores are
-/// solved by one forward walk over the regions.
-fn promotable_in_regions(function: &mut MirFunction, declarations: &MirDeclarations) -> Promotion {
+/// Promote the slots of the structured body `function` that upstream's
+/// `canPromote` accepts, as `processRegion` does: returns the slots, the
+/// results of the instructions that went, and how many went.
+fn promote_in_regions(
+    function: &mut MirFunction,
+    declarations: &MirDeclarations,
+) -> (BTreeSet<VarId>, HashSet<u32>, usize) {
+    let (slots, variants) = variance(function, declarations);
+    if slots.is_empty() {
+        return (slots, HashSet::new(), 0);
+    }
+    let mut blocks = std::mem::take(&mut function.blocks);
+    let mut promoter = Promoter {
+        var_tys: &function.var_tys,
+        slots: &slots,
+        variants,
+        scopes: Vec::new(),
+        frames: Vec::new(),
+        next_op: 0,
+        n_regs: function.n_regs,
+        fresh: Vec::new(),
+        erased_results: HashSet::new(),
+        erased: 0,
+    };
+    promoter.walk_region(&mut blocks, None, &Rc::from([]), &[]);
+    let Promoter {
+        n_regs,
+        fresh,
+        erased_results,
+        erased,
+        ..
+    } = promoter;
+    function.blocks = blocks;
+    function.n_regs = n_regs;
+    function.reg_types.extend(fresh);
+    (slots, erased_results, erased)
+}
+
+/// The slots of the structured body `function` [`mem_2_reg`] promotes, and
+/// for each region op, by its preorder number, the promoted slots variant
+/// across it, each list sorted.
+///
+/// A slot is allocated in the innermost region holding every mention of it,
+/// where its declaration sits, as upstream's `pop.stack_allocation` does.
+/// Its stores and declarations make it variant across each op between them
+/// and that region (`userCrossesFunctionCFG`'s `enclosingNodes`); a store in
+/// a `try` part of a slot allocated outside it keeps the slot, since a `try`
+/// carries no values.
+fn variance(
+    function: &mut MirFunction,
+    declarations: &MirDeclarations,
+) -> (BTreeSet<VarId>, HashMap<usize, Vec<VarId>>) {
     let facts = Facts::of(function);
     let mut regions = Vec::new();
-    collect_regions(&function.blocks, None, Boundary::Body, &mut regions);
+    let mut tries = Vec::new();
+    collect_regions(&function.blocks, None, &mut regions, &mut tries);
     let mut census: HashMap<VarId, Census> = HashMap::new();
     for (list, region) in regions.iter().enumerate() {
-        take_census((list, region.context), region.blocks, false, &mut census);
+        take_census((list, 0), region.blocks, false, &mut census);
     }
-    let mut slots: Vec<VarId> = census
+    let mut candidates: Vec<(VarId, &Census)> = census
         .iter()
         .filter(|&(&var, entry)| {
             facts.candidate(function, declarations, &BTreeSet::new(), var, entry)
         })
-        .map(|(&var, _)| var)
+        .map(|(&var, entry)| (var, entry))
         .collect();
-    let mut promotion = Promotion {
-        slots: BTreeSet::new(),
-        reads: HashMap::new(),
-    };
-    if slots.is_empty() {
-        return promotion;
-    }
-    slots.sort_unstable();
-    let mut scan = ReachingScan {
-        mentions: HashMap::new(),
-        slots: slots.len(),
-    };
-    let mut stores: Vec<(Site, Reg)> = Vec::new();
-    let mut read_counts = vec![0_usize; slots.len()];
-    for (slot, var) in slots.iter().enumerate() {
-        for &(site, mention) in &census[var].mentions {
-            let (list, block, at) = site;
-            let instruction = std::ptr::from_ref(&regions[list].blocks[block].instrs[at]);
-            let event = match mention {
-                Mention::Store(src) => {
-                    stores.push((site, src));
-                    ReachingEvent::Store(stores.len() - 1)
-                }
-                Mention::Read { ends, .. } => {
-                    read_counts[slot] += 1;
-                    ReachingEvent::Read { ends }
-                }
-                Mention::Kill => ReachingEvent::Kill,
-            };
-            scan.mentions.insert(instruction, (slot, site, event));
-        }
-    }
-    let mut observed: Vec<(usize, Site, Reaching)> = Vec::new();
-    let mut observer = |state: &Vec<Reaching>, instruction: &MirInstr| {
-        if let Some(&(slot, site, ReachingEvent::Read { .. })) =
-            scan.mentions.get(&std::ptr::from_ref(instruction))
+    candidates.sort_unstable_by_key(|&(var, _)| var);
+    let mut slots = BTreeSet::new();
+    let mut variants: HashMap<usize, Vec<VarId>> = HashMap::new();
+    for (var, entry) in candidates {
+        // A slot nothing stores or declares is a compile-time parameter's
+        // binding, which the elaborator substitutes by name: upstream reads
+        // one as a `kgen.param.constant` and allocates nothing.
+        if !entry
+            .mentions
+            .iter()
+            .any(|(_, mention)| matches!(mention, Mention::Store(_) | Mention::Declare))
         {
-            observed.push((slot, site, state[slot]));
+            continue;
         }
-        Ok(())
-    };
-    let walked = walk_forward(
-        &scan,
-        vec![Reaching::Uninit; slots.len()],
-        &function.blocks,
-        &mut observer,
-    );
-    let mut promoted = vec![walked.is_ok(); slots.len()];
-    let mut seen = vec![0_usize; slots.len()];
-    for &(slot, read, reaching) in &observed {
-        seen[slot] += 1;
-        let encloses = match reaching {
-            Reaching::Store(store) => encloses(&regions, stores[store].0, read),
-            _ => false,
-        };
-        promoted[slot] &= encloses;
-    }
-    for (slot, var) in slots.iter().enumerate() {
-        if promoted[slot] && seen[slot] == read_counts[slot] {
-            promotion.slots.insert(*var);
+        let allocation = allocation_region(
+            &regions,
+            entry.mentions.iter().map(|&((list, _, _), _)| list),
+        );
+        let mut crossed = BTreeSet::new();
+        for &((list, _, _), mention) in &entry.mentions {
+            if !matches!(mention, Mention::Store(_) | Mention::Declare) {
+                continue;
+            }
+            let mut at = list;
+            while at != allocation {
+                let Some((holder, op)) = regions[at].parent else {
+                    break;
+                };
+                crossed.insert(op);
+                at = holder;
+            }
         }
-    }
-    for (slot, read, reaching) in observed {
-        if let Reaching::Store(store) = reaching
-            && promotion.slots.contains(&slots[slot])
-        {
-            promotion.reads.insert(read, stores[store].1);
+        if crossed.iter().any(|&op| tries[op]) {
+            continue;
+        }
+        slots.insert(var);
+        for op in crossed {
+            variants.entry(op).or_default().push(var);
         }
     }
-    promotion
-}
-
-/// How a region is entered from the block holding its op.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Boundary {
-    /// The function's own body.
-    Body,
-    /// A `try` part, whose raise edges leave the function's CFG.
-    TryPart,
-    /// A `comptime for` region, which the elaborator copies per iteration.
-    ComptimeFor,
-    /// Any other region.
-    Region,
+    (slots, variants)
 }
 
 /// One region of a structured body, in preorder.
 struct RegionInfo<'a> {
     blocks: &'a [MirBlock],
-    /// The site of the op holding the region.
-    parent: Option<Site>,
-    boundary: Boundary,
-    /// The `try` part holding the region: the nearest enclosing one, or
-    /// the body (0).
-    context: usize,
+    /// The region holding the op that holds this one, and that op's
+    /// preorder number.
+    parent: Option<(usize, usize)>,
 }
 
 /// Every region of `blocks` in preorder, `blocks` first, numbered as
-/// [`collect_lists`] numbers them.
+/// [`collect_lists`] numbers them; `tries` records, for each region op in
+/// preorder, whether it is a `try`.
 fn collect_regions<'a>(
     blocks: &'a [MirBlock],
-    parent: Option<Site>,
-    boundary: Boundary,
+    parent: Option<(usize, usize)>,
     regions: &mut Vec<RegionInfo<'a>>,
+    tries: &mut Vec<bool>,
 ) {
     let list = regions.len();
-    let context = match (boundary, parent) {
-        (Boundary::TryPart, _) | (_, None) => list,
-        (_, Some((holder, _, _))) => regions[holder].context,
+    regions.push(RegionInfo { blocks, parent });
+    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+        let held = instruction_regions(instruction);
+        if held.is_empty() {
+            continue;
+        }
+        let op = tries.len();
+        tries.push(matches!(instruction, MirInstr::Try { .. }));
+        for region in held {
+            collect_regions(region, Some((list, op)), regions, tries);
+        }
+    }
+}
+
+/// The innermost region holding each of `lists`: a slot's allocation
+/// region.
+fn allocation_region(regions: &[RegionInfo<'_>], mut lists: impl Iterator<Item = usize>) -> usize {
+    let Some(first) = lists.next() else {
+        return 0;
     };
-    regions.push(RegionInfo {
-        blocks,
-        parent,
-        boundary,
-        context,
-    });
-    for (at_block, block) in blocks.iter().enumerate() {
-        for (at, instruction) in block.instrs.iter().enumerate() {
-            let boundary = match instruction {
-                MirInstr::Try { .. } => Boundary::TryPart,
-                MirInstr::ComptimeFor { .. } => Boundary::ComptimeFor,
-                _ => Boundary::Region,
-            };
-            for region in instruction_regions(instruction) {
-                collect_regions(region, Some((list, at_block, at)), boundary, regions);
+    let mut chain = vec![first];
+    while let Some((holder, _)) = regions[chain[chain.len() - 1]].parent {
+        chain.push(holder);
+    }
+    for list in lists {
+        let mut at = list;
+        loop {
+            if let Some(found) = chain.iter().position(|&region| region == at) {
+                chain.drain(..found);
+                break;
             }
+            at = regions[at].parent.map_or(0, |(holder, _)| holder);
         }
     }
+    chain[0]
 }
 
-/// Whether the store at `store` lies before the read at `read` in the
-/// read's block or in a block enclosing it, without a `try` part's or a
-/// `comptime for`'s boundary between them.
-fn encloses(regions: &[RegionInfo<'_>], store: Site, read: Site) -> bool {
-    let (store_list, store_block, store_at) = store;
-    let mut at = read;
-    loop {
-        let (list, block, index) = at;
-        if list == store_list {
-            return block == store_block && store_at < index;
-        }
-        let region = &regions[list];
-        if matches!(region.boundary, Boundary::TryPart | Boundary::ComptimeFor) {
-            return false;
-        }
-        let Some(parent) = region.parent else {
-            return false;
-        };
-        at = parent;
-    }
+/// One region the [`Promoter`] is walking: the frame a terminator leaving
+/// it by name resolves to, and its op's variant slots.
+struct Frame {
+    kind: Option<RegionFrame>,
+    variant: Rc<[VarId]>,
 }
 
-/// What a candidate's mention does to its reaching store.
-#[derive(Clone, Copy)]
-enum ReachingEvent {
-    Store(usize),
-    Read { ends: bool },
-    Kill,
+/// Upstream's `processRegion` over a structured body: one scoped walk that
+/// replaces each promoted slot's stores, reads, and lifetime markers by the
+/// slot's current value, carrying each value variant across a region op
+/// through the op's region arguments, init operands, and results.
+struct Promoter<'a> {
+    var_tys: &'a HashMap<VarId, Ty>,
+    slots: &'a BTreeSet<VarId>,
+    /// The variant slots of each region op not yet walked, by preorder
+    /// number.
+    variants: HashMap<usize, Vec<VarId>>,
+    /// Each open region's bindings, innermost last; `None` is undefined.
+    scopes: Vec<HashMap<VarId, Option<Reg>>>,
+    frames: Vec<Frame>,
+    next_op: usize,
+    n_regs: u32,
+    /// The type of each register the walk defines.
+    fresh: Vec<(u32, Ty)>,
+    erased_results: HashSet<u32>,
+    erased: usize,
 }
 
-/// The reaching-store scan of a structured body: each candidate's state,
-/// changed by its mentions, each found by the instruction's address.
-struct ReachingScan {
-    mentions: HashMap<*const MirInstr, (usize, Site, ReachingEvent)>,
-    slots: usize,
-}
-
-impl ForwardScan for ReachingScan {
-    type State = Vec<Reaching>;
-
-    fn join(&self, state: &Vec<Reaching>, other: &Vec<Reaching>) -> Vec<Reaching> {
-        debug_assert_eq!(state.len(), self.slots);
-        state
+impl Promoter<'_> {
+    /// Walk the region `blocks`, entered with `args` bound to its variant
+    /// slots `variant`.
+    fn walk_region(
+        &mut self,
+        blocks: &mut [MirBlock],
+        kind: Option<RegionFrame>,
+        variant: &Rc<[VarId]>,
+        args: &[Reg],
+    ) {
+        let scope = variant
             .iter()
-            .zip(other)
-            .map(|(&left, &right)| left.join(right))
-            .collect()
+            .zip(args)
+            .map(|(&var, &arg)| (var, Some(arg)))
+            .collect();
+        self.scopes.push(scope);
+        self.frames.push(Frame {
+            kind,
+            variant: Rc::clone(variant),
+        });
+        for block in blocks {
+            self.walk_block(block);
+        }
+        self.frames.pop();
+        self.scopes.pop();
     }
 
-    fn transfer(&self, state: &mut Vec<Reaching>, instr: &MirInstr) {
-        if let Some(&(slot, _, event)) = self.mentions.get(&std::ptr::from_ref(instr)) {
-            match event {
-                ReachingEvent::Store(store) => state[slot] = Reaching::Store(store),
-                ReachingEvent::Read { ends: true } | ReachingEvent::Kill => {
-                    state[slot] = Reaching::Uninit;
+    fn walk_block(&mut self, block: &mut MirBlock) {
+        let mut out = Vec::with_capacity(block.instrs.len());
+        for mut instruction in std::mem::take(&mut block.instrs) {
+            if let Some((var, mention)) = slot_use(&instruction)
+                && self.slots.contains(&var)
+            {
+                match mention {
+                    Mention::Store(src) => self.bind(var, Some(src)),
+                    Mention::Declare => self.bind(var, None),
+                    Mention::Read { dest, .. } => {
+                        let value = self.current_or_undef(var, &mut out);
+                        out.push(MirInstr::CopyValue {
+                            dest,
+                            value,
+                            constructor: None,
+                        });
+                        continue;
+                    }
+                    // A lifetime marker leaves the value, as upstream's
+                    // `StackAllocLifetimeEndOp` does.
+                    Mention::Kill => {}
                 }
-                ReachingEvent::Read { ends: false } => {}
+                let mut results = Vec::new();
+                instruction_result_regs(&instruction, &mut results);
+                self.erased_results.extend(results.iter().map(|reg| reg.0));
+                self.erased += 1;
+                continue;
             }
+            if !instruction_regions(&instruction).is_empty() {
+                self.walk_op(&mut instruction, &mut out);
+            }
+            out.push(instruction);
+        }
+        self.carry(&mut block.term, &mut out);
+        block.instrs = out;
+    }
+
+    /// Walk the regions of the region op `instruction`, giving each region
+    /// a terminator enters one argument per variant slot, and the op one
+    /// result per variant slot, which holds the slot after it.
+    fn walk_op(&mut self, instruction: &mut MirInstr, out: &mut Vec<MirInstr>) {
+        let op = self.next_op;
+        self.next_op += 1;
+        let variant: Rc<[VarId]> = self.variants.remove(&op).unwrap_or_default().into();
+        let results = match instruction {
+            MirInstr::If {
+                results,
+                then,
+                elifs,
+                else_args,
+                orelse,
+                ..
+            } => {
+                self.walk_if(&variant, then, elifs, else_args, orelse);
+                results
+            }
+            MirInstr::Loop {
+                label,
+                operands,
+                args,
+                results,
+                body,
+            } => {
+                let continued = !variant.is_empty() && {
+                    let mut found = false;
+                    loop_continues_mut(body, *label, &mut |_, _| found = true);
+                    found
+                };
+                let args = self.entry_arguments(&variant, continued, operands, args, out);
+                let frame = Some(RegionFrame::Loop(*label));
+                self.walk_region(body, frame, &variant, &args);
+                results
+            }
+            MirInstr::ComptimeIf {
+                results,
+                arms,
+                orelse,
+                ..
+            } => {
+                for arm in arms.iter_mut().chain(std::iter::once(orelse)) {
+                    self.walk_region(arm, None, &variant, &[]);
+                }
+                results
+            }
+            // A `comptime for`'s operands and results agree in number, so
+            // its body takes the variant slots even when no continue
+            // resumes it.
+            MirInstr::ComptimeFor {
+                operands,
+                args,
+                results,
+                body,
+                orelse,
+                ..
+            } => {
+                let carried = !variant.is_empty();
+                let args = self.entry_arguments(&variant, carried, operands, args, out);
+                self.walk_region(body, Some(RegionFrame::ComptimeFor), &variant, &args);
+                self.walk_region(orelse, None, &variant, &[]);
+                results
+            }
+            MirInstr::Match {
+                results,
+                cases,
+                else_args,
+                orelse,
+            } => {
+                self.walk_match(&variant, cases, else_args, orelse);
+                results
+            }
+            _ => {
+                for region in instruction_regions_mut(instruction) {
+                    self.walk_region(region, None, &variant, &[]);
+                }
+                return;
+            }
+        };
+        for &var in variant.iter() {
+            let result = self.fresh_register(var);
+            results.push(result);
+            self.bind(var, Some(result));
         }
     }
 
-    fn raise_seed(&self, state: &Vec<Reaching>, _next: Option<&MirInstr>) -> Vec<Reaching> {
-        state.clone()
+    /// An `if`'s regions: each elif's arm, each elif condition after the
+    /// first, and, after elifs, the else region are entered by an
+    /// `if.elifcond.yield`, so they take the variant slots.
+    fn walk_if(
+        &mut self,
+        variant: &Rc<[VarId]>,
+        then: &mut [MirBlock],
+        elifs: &mut [MirElif],
+        else_args: &mut Vec<Reg>,
+        orelse: &mut [MirBlock],
+    ) {
+        let carried = !variant.is_empty();
+        self.walk_region(then, None, variant, &[]);
+        for (index, elif) in elifs.iter_mut().enumerate() {
+            let args = self.arguments(variant, carried && index > 0, &mut elif.cond_args);
+            self.walk_region(&mut elif.cond, None, variant, &args);
+            let args = self.arguments(variant, carried, &mut elif.then_args);
+            self.walk_region(&mut elif.then, None, variant, &args);
+        }
+        let args = self.arguments(variant, carried && !elifs.is_empty(), else_args);
+        self.walk_region(orelse, None, variant, &args);
     }
 
-    fn enters(&self, _instr: &MirInstr) -> bool {
-        true
+    /// A `match`'s regions: each case after one a `match.next` leaves, and
+    /// the else region after the last, take the variant slots.
+    fn walk_match(
+        &mut self,
+        variant: &Rc<[VarId]>,
+        cases: &mut [MirCase],
+        else_args: &mut Vec<Reg>,
+        orelse: &mut [MirBlock],
+    ) {
+        let carried = !variant.is_empty();
+        let mut entered = false;
+        for case in cases {
+            let args = self.arguments(variant, carried && entered, &mut case.args);
+            entered = false;
+            match_nexts_mut(&mut case.body, &mut |_, _| entered = true);
+            let frame = Some(RegionFrame::MatchCase);
+            self.walk_region(&mut case.body, frame, variant, &args);
+        }
+        let args = self.arguments(variant, carried && entered, else_args);
+        self.walk_region(orelse, None, variant, &args);
+    }
+
+    /// A loop body's or `comptime for` body's arguments when `carried`:
+    /// the variant slots' current values become the op's init operands,
+    /// materialized before it in `out`.
+    fn entry_arguments(
+        &mut self,
+        variant: &[VarId],
+        carried: bool,
+        operands: &mut Vec<Reg>,
+        args: &mut Vec<Reg>,
+        out: &mut Vec<MirInstr>,
+    ) -> Vec<Reg> {
+        if carried {
+            for &var in variant {
+                let value = self.current_or_undef(var, out);
+                operands.push(value);
+            }
+        }
+        self.arguments(variant, carried, args)
+    }
+
+    /// One fresh argument per variant slot when `carried`, appended to the
+    /// region's `args`.
+    fn arguments(&mut self, variant: &[VarId], carried: bool, args: &mut Vec<Reg>) -> Vec<Reg> {
+        if !carried {
+            return Vec::new();
+        }
+        let added: Vec<Reg> = variant
+            .iter()
+            .map(|&var| self.fresh_register(var))
+            .collect();
+        args.extend(&added);
+        added
+    }
+
+    /// Append the current value of each variant slot of the op a region
+    /// terminator enters or leaves to its values (`insertVariants`).
+    fn carry(&mut self, term: &mut MirTerm, out: &mut Vec<MirInstr>) {
+        let frame = match region_exit(term) {
+            Some((target, _)) => self
+                .frames
+                .iter()
+                .rev()
+                .find(|frame| frame.kind.is_some_and(|kind| target.names(kind))),
+            None if matches!(
+                term,
+                MirTerm::Yield(_) | MirTerm::ElifCond { .. } | MirTerm::ComptimeYield(_)
+            ) =>
+            {
+                self.frames.last()
+            }
+            None => None,
+        };
+        let Some(variant) = frame.map(|frame| Rc::clone(&frame.variant)) else {
+            return;
+        };
+        let carried: Vec<Reg> = variant
+            .iter()
+            .map(|&var| self.current_or_undef(var, out))
+            .collect();
+        if let Some(values) = edge_values_mut(term) {
+            values.extend(carried);
+        }
+    }
+
+    /// Bind `var` to `value` in the innermost scope (upstream's `forWrite`).
+    fn bind(&mut self, var: VarId, value: Option<Reg>) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(var, value);
+        }
+    }
+
+    /// The current value of `var`, or an `uninitmem` constant pushed onto
+    /// `out` and bound in the innermost scope when it holds nothing
+    /// (`currValueOrUndef`).
+    fn current_or_undef(&mut self, var: VarId, out: &mut Vec<MirInstr>) -> Reg {
+        if let Some(value) = self
+            .scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(&var))
+            .copied()
+            .flatten()
+        {
+            return value;
+        }
+        let dest = self.fresh_register(var);
+        out.push(MirInstr::Const {
+            dest,
+            k: Const::UninitMem,
+        });
+        self.bind(var, Some(dest));
+        dest
+    }
+
+    /// A fresh register of `var`'s type.
+    fn fresh_register(&mut self, var: VarId) -> Reg {
+        let reg = Reg(self.n_regs);
+        self.n_regs += 1;
+        if let Some(ty) = self.var_tys.get(&var) {
+            self.fresh.push((reg.0, ty.clone()));
+        }
+        reg
+    }
+}
+
+/// The values a region terminator carries along its edge.
+const fn edge_values_mut(term: &mut MirTerm) -> Option<&mut Vec<Reg>> {
+    match term {
+        MirTerm::Yield(values)
+        | MirTerm::ComptimeYield(values)
+        | MirTerm::MatchNext(values)
+        | MirTerm::MatchComplete(values)
+        | MirTerm::ComptimeBreak(values)
+        | MirTerm::ComptimeContinue(values)
+        | MirTerm::ElifCond { values, .. }
+        | MirTerm::Break { values, .. }
+        | MirTerm::Continue { values, .. } => Some(values),
+        _ => None,
     }
 }
 
@@ -708,9 +1014,8 @@ const fn slot_use(instruction: &MirInstr) -> Option<(VarId, Mention)> {
                 },
             ))
         }
-        MirInstr::DeclareVar { var }
-        | MirInstr::DropVar { var, .. }
-        | MirInstr::ConsumeVar { var } => Some((*var, Mention::Kill)),
+        MirInstr::DeclareVar { var } => Some((*var, Mention::Declare)),
+        MirInstr::DropVar { var, .. } | MirInstr::ConsumeVar { var } => Some((*var, Mention::Kill)),
         _ => None,
     }
 }
@@ -779,7 +1084,7 @@ fn solve(flow: &ListFlow<'_>, entry: Vec<Reaching>, promotion: &mut Promotion) {
                     }
                     Event::Kill { slot }
                 }
-                Mention::Kill => Event::Kill { slot },
+                Mention::Declare | Mention::Kill => Event::Kill { slot },
             };
             events[block].push((at, event));
         }

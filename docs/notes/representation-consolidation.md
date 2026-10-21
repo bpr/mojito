@@ -9,45 +9,13 @@ has them.
 
 Entries are cited by stable ID and the order is computed, so every command
 below stays valid as entries are filed and landed. Before a run, preview it
-with `--dry-run` or `scripts/roadmap.py deps R927`. Add `--model opus
+with `--dry-run` or `scripts/roadmap.py deps R883`. Add `--model opus
 --plan-fable-on-opus` to any command when Fable usage runs short.
 
-## Next: structured regions, then `Mem2Reg` through them (2026-10-20)
+## Next: smaller generators
 
-Upstream's lifetime checks, drop elaboration, and `Mem2Reg` all walk
-`hlcf` structured regions. Mojito's run on the lowered CFG, which is why a
-slot whose reads merge two stores (R927) keeps its slot, and why every
-later pass sees blocks instead of the program's shape. This is the
-shape-closing step; it moves Mojito's structure toward upstream more than it
-reduces instance count on its own.
-
-One command runs the whole chain in work order:
-
-```sh
-scripts/claude_loop.py --task R927 -n 0
-```
-
-which is, in order:
-
-| step | entry | what it moves onto regions |
-|---|---|---|
-| 1 | R875 | the move and initialization checks (`CheckLifetimes`) |
-| 2 | R876 | the borrow checks |
-| 3 | R877 | drop elaboration (`DestructorInsertion` on region exits, not CFG edges) |
-| 4 | R878 | field drops, copy elision, and the lifecycle-call namings |
-| 5 | R879 | the pre-elaboration pipeline and the package hold structured bodies |
-| 6 | R886 (loop results and valued breaks landed), R1258 (loop arguments and valued continues landed), R1259 (elif and `match` region arguments landed), R1260 (`match` and `comptime for` values landed) | region ops carry values across a region boundary (`mojo-shape`) |
-| 7 | R880 (landed 2026-10-21) | the elaborator unrolls `comptime for` by cloning the region |
-| 8 | R927 | `Mem2Reg` through region values |
-
-Six of the eight are `Fable, Planned`, so each gets a plan session first.
-A session that cannot finish files what remains under new IDs and the next
-run picks them up: after the run, `scripts/roadmap.py deps R927` lists what
-is still open underneath, and the same command resumes.
-
-## Then: smaller generators
-
-With bodies structured, each generator shrinks by the passes upstream runs
+With bodies structured and `Mem2Reg` carrying values through their
+regions (R927, 2026-10-21), each generator shrinks by the passes upstream runs
 before elaboration. None of these has an open prerequisite today:
 
 ```sh
@@ -93,7 +61,9 @@ The four representation gaps are closed (10-16/17): nested `def` calls are
 direct (R1037), defaults are filled at call binding (R1077, R1060),
 lifecycle operations are synthesized calls (R1041–R1046), and
 `inline-parametric` is one substitution over every binder kind
-(R1078–R1081). Unused-argument removal (R974, R975, R1032–R1034, R1039)
-followed. What those left behind sits in the `pmir` track below the
-region chain (`scripts/roadmap.py list --track pmir`): one entry per cause,
+(R1078–R1081). The region chain (10-20/21) moved the ownership checks, drop
+elaboration, the pre-elaboration pipeline, and the elaborator onto `hlcf`
+regions with values (R875–R880, R886, R1258–R1260), and `Mem2Reg` now
+carries slots through them (R927). Unused-argument removal (R974, R975, R1032–R1034, R1039)
+followed. What those left behind sits in the `pmir` track (`scripts/roadmap.py list --track pmir`): one entry per cause,
 not per shape, as the loop prompt now asks.

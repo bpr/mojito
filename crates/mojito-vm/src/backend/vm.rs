@@ -1581,6 +1581,7 @@ fn const_value(k: &Const) -> Result<Value, RuntimeError> {
         Const::Function(name) => Value::Function(name.clone()),
         Const::Dtype(dtype) => Value::Dtype(*dtype),
         Const::None => Value::None,
+        Const::UninitMem => Value::UninitStorage(None),
         Const::Value(value) => ct_value_as_runtime(value.clone()).ok_or_else(|| {
             RuntimeError::Unsupported(format!(
                 "no runtime value for the parameter value `{value}`"
