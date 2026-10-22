@@ -5784,9 +5784,11 @@ point where a slot declared in a loop is uninitialized again.
   replaces a struct allocation by one allocation per element when every
   user is a constant `struct_gep`, a load, a store, or a lifetime marker.
   A slot is split when it is a local of a declared struct whose drop runs
-  no code (`MirDeclarations::drop_runs_no_code`) and whose every declared
-  field type is concrete, not a pointer, and trivially register-passable
-  or itself such a struct, and every mention of it is a whole store
+  no code (`MirDeclarations::drop_runs_no_code`) and whose every field type
+  at the slot type's arguments (`MirDeclarations::field_types`, over
+  `types::struct_field_types`) is not a pointer, and trivially
+  register-passable or itself such a struct, and every mention of it is a
+  whole store
   (`var.store`, or `place.store` of the whole slot), which becomes a
   `field.get` and a `var.store` per field, as upstream's store becomes a
   `kgen.struct.extract` and a store per element; a whole read that names
@@ -5801,15 +5803,23 @@ point where a slot declared in a loop is uninitialized again.
   that field's slot, as upstream replaces a `struct_gep` by its element's
   allocation whatever its users, so a borrowed field keeps only its own
   slot (a `place.store` left on a whole field slot becomes a
-  `var.store`). A borrow, capture, loan interior, `through` place, cleanup
+  `var.store`, a `consume.place` a `consume.var`, and a `drop.place` a
+  `drop.var`, so a nested struct's field slot splits the next round). Each
+  field slot is typed at the slot type's arguments, as upstream's element
+  allocation has the `!kgen.struct` element type, so a generic body splits
+  a slot of its own application (`Arr[n]`'s field slot is a
+  `SIMD[DType.int64, n]` over the body's `n`), and a `P[Int]` over a field
+  `T` splits at `Int`: its destructor is the synthesized one, which its
+  `IsTriviallyDeinitable` conformance conditions on the fields, so its drop
+  runs no code where the fields at the arguments run none. A field its
+  arguments leave open (`P[T]`'s `T`) keeps the slot. A borrow, capture, loan interior, `through` place, cleanup
   list, or a whole read naming a constructor keeps the slot, as does a
   slot nothing stores, declares, or marks, which is a compile-time
   parameter's binding. The pass reads no control flow, so it splits
   structured and lowered bodies alike, and repeats until nothing splits,
   at most ten rounds (upstream's `loopLimit`), so a nested struct splits a
-  level a round. A generic field type keeps the slot, since a field slot
-  is typed by the declaration (R1266), as do a drop that runs code
-  (R1267), a pointer field, which the VM reads through when it is a
+  level a round. A drop that runs code keeps the slot (R1267), as do a
+  pointer field, which the VM reads through when it is a
   slot's whole value (R1269), and a slice descriptor, which both backends
   build as their own value (R1158). The `--timings` counters are `split_slots`
   and `split_field_slots`.
@@ -5817,9 +5827,12 @@ point where a slot declared in a loop is uninitialized again.
   (`analysis::MEM_2_REG`, `analysis/mem2reg.rs`, R787), upstream's
   `Mem2Reg`, which promotes an allocation whose every user is a load, a
   store, or a lifetime marker. A slot is promoted when its type is
-  trivially register-passable at a concrete size
-  (`MirDeclarations::copy_is_identity`, never symbolic, where upstream's
-  `canPromote` has no type test: R1266), it is no parameter, and every
+  trivially register-passable (`MirDeclarations::copy_is_identity`, which
+  judges a struct's fields at its arguments), whatever binders it names,
+  as upstream's `canPromote` has no type test (a `SIMD[DType.int64, n]`
+  slot in a body over `n` is promoted; a `T: TrivialRegisterPassable`
+  slot is not, while that bound admits a non-trivial type: R862), it is no
+  parameter, and every
   mention of it is a `var.store` of a register defined once and read by
   the store alone; a `var.use` (copy, move, or forward)
   or a whole-root `place.load` at the slot's type; or a `var.declare`,

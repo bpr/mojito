@@ -316,8 +316,8 @@ folds the operators over it (R840);
 11. **Memory traffic** (`Mem2Reg`, `SROA`). Promote a generic body's
     variable slots to registers, and split aggregates.
     - `Mem2Reg` landed as `mem-2-reg` (R787) for its no-variant case, at
-      both seams: in the first three rounds over generators' concrete-sized
-      locals, and after elaboration behind `lower-arg-conventions`, which
+      both seams: in the first three rounds over generators' locals,
+      including those whose types name the generator's binders (R1266), and after elaboration behind `lower-arg-conventions`, which
       stores each register-passable argument into a local first, as
       upstream's `LowerArgConventions` does. Once drops are elaborated, a
       slot of a type with no destructor and an identity copy carries no
@@ -328,8 +328,8 @@ folds the operators over it (R840);
     - `SROA` landed as `sroa` (R928) before each `Mem2Reg`, at both seams,
       with `struct.create` as its value-level construction and upstream's
       `kgen.struct` folds in `canonicalize`. It splits a struct whose drop
-      runs no code and whose fields are concrete and register-passable;
-      generic field types (R1266), destructors (R1267), struct arguments
+      runs no code and whose fields, at the slot type's arguments, are
+      register-passable (R1266); destructors (R1267), struct arguments
       (R1268), and pointer fields (R1269) still keep the slot.
 12. **Generator CSE** (`CSEPass`) *(done, R926)*. The fourth round ends
     with the post-elaboration `cse`, which walks a structured body's

@@ -4133,36 +4133,53 @@ mod tests {
             ],
             ..MirDeclarations::default()
         };
-        declarations.functions.push(MirFunctionDeclaration {
-            lowered_name: "Copied.__copyinit__".into(),
-            param_names: Vec::new(),
-            param_types: Vec::new(),
-            defaults: Vec::new(),
-            required: Vec::new(),
-            variadic: None,
-            variadic_convention: None,
-            variadic_index: None,
-            kw_variadic: None,
-            kw_variadic_convention: None,
-            kw_variadic_index: None,
-            positional_only: None,
-            keyword_only: None,
-            param_decls: Vec::new(),
-            has_receiver: false,
-            receiver_convention: None,
-            param_conventions: Vec::new(),
-            ret_ty: Ty::none(),
-            returns_reference: false,
-            raises: false,
-            error_ty: None,
-            ref_params: Vec::new(),
-            param_writes: Vec::new(),
-            availability: Vec::new(),
-            enclosing: None,
-            region_binders: Vec::new(),
-            inline: mojito_checked::declaration::InlineLevel::default(),
-            provenance: mojito_checked::declaration::FunctionProvenance::default(),
-        });
+        let width = mojito_types::types::ParamDecl::Value {
+            id: mojito_types::param_expr::ParamId::new("Lanes", 0),
+            name: "n".into(),
+            ty: Ty::new(TyKind::Int),
+            default: None,
+            callable_default: None,
+            infer_only: false,
+            variadic: false,
+            constraints: Vec::new(),
+        };
+        let lanes_over = |id: &str| {
+            let width = mojito_types::param_expr::ParamContext::detached().decl_ref(
+                mojito_types::param_expr::ParamId::new(id, 0),
+                "n",
+                width.binder_meta(),
+            );
+            mojito_types::types::simd_ty_from_slots(
+                mojito_types::types::SimdDtype::Known(Dtype::Int32),
+                mojito_types::types::SimdWidth::Expr(width),
+            )
+            .expect("a symbolic SIMD type")
+        };
+        let mut generic_lanes =
+            structure("Lanes", vec![lanes_over("Lanes")], trivial, unconditional());
+        generic_lanes.param_decls = vec![width];
+        declarations.structs.push(generic_lanes);
+        let lanes_at = |arguments| Ty::new(TyKind::Struct("Lanes".into(), arguments));
+        assert!(declarations.copy_is_identity(&lanes_at(vec![TyArg::Val(CtValue::Int(4))])));
+        let forwarded = mojito_types::param_expr::ParamContext::detached().decl_ref(
+            mojito_types::param_expr::ParamId::new("f", 0),
+            "n",
+            mojito_types::param_expr::MetaTy::value(Ty::new(TyKind::Int)),
+        );
+        assert!(
+            declarations.copy_is_identity(&lanes_at(vec![TyArg::Val(CtValue::Expr(forwarded))]))
+        );
+        assert!(!declarations.copy_is_identity(&lanes_at(Vec::new())));
+        if let Some(copied) = declarations
+            .structs
+            .iter_mut()
+            .find(|declaration| declaration.name == "Copied")
+        {
+            copied.members.push(MirStructMember {
+                member: "__copyinit__".into(),
+                symbol: "Copied.__copyinit__".into(),
+            });
+        }
         let answers = |name: &str| declarations.copy_is_identity(&struct_ty(name));
         assert!(answers("P"));
         assert!(answers("Nested"));

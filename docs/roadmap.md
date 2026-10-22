@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1275**.
+Next free ID: **R1276**.
 
 ## Ordered Work
 
@@ -782,30 +782,27 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1266 A slot of a generic struct or field type stays in memory,
-  where upstream's `SROA` and `Mem2Reg` take any allocation**
+- [ ] **R1275 A struct's synthesized `copy` is not `@inline(.always)`, so
+  `inline-parametric` keeps the call before elaboration**
 
-  `sroa` keeps a struct slot one of whose declared field types is
-  symbolic, and `mem-2-reg` keeps any slot of a symbolic type, while
-  upstream's `ReplaceStructs` and `canPromote` have no such type test.
-  - `sroa`'s `splittable_type` refuses an `is_symbolic` field, since a
-    field slot is typed by the declaration, not substituted at the slot
-    type's arguments.
-  - `mem2reg::promotable_type` refuses an `is_symbolic` slot, and
-    `MirDeclarations::copy_is_identity` refuses a symbolic field.
-  - Lever: a `mojito-types` helper that computes a struct's field types at
-    its arguments (over `struct_argument_substitution` and value
-    arguments); have `sroa` type field slots with it, have
-    `copy_is_identity` judge fields with it, and drop `promotable_type`'s
-    symbolic test.
-  - Probe: `plain_nested[n]` passing `Arr[n](SIMD[DType.int64, n](1))` to a
-    nested `inner`'s removed argument, where `Arr`'s `@always_inline`
-    `__init__` stores `self.v`, keeps one instance per `n`, where the pin
-    has one: the inlined constructor leaves the `Arr[n]` slot's field store
-    and whole load, which neither pass takes, so the dead construction's
-    type still reads `n` (found while landing R1039).
+  `synthesize_copyable_copy` (`mojito-comptime/src/comptime/synth.rs`)
+  gives the `copy` it adds to every `Copyable` struct no decorator, so its
+  inline level is `automatic`, where upstream's `Copyable.copy` default
+  (`std/traits/copyable.mojo`) is `@inline(.always)`.
+  - `inline-parametric` inlines only an `always`, `nodebug`, or `builtin`
+    callee before elaboration (`is_inlined_before_elaboration`), so a
+    `.copy()` of a generic struct stays a call whose receiver type reads
+    the generator's parameters.
+  - Lever: give the synthesized method upstream's `@inline(.always)`
+    decorator, then measure `benchmarks/instantiation.tsv`.
+  - Probe: `assets/ok/generic_struct_slot_instances.mojo` with `Outer`'s
+    constructor taking `arr: Arr[Self.n]` and storing `arr.copy()` keeps
+    three `outer_nested` instances, where the pin (`@no_inline` on
+    `outer_nested`, `mojo build --emit llvm`) defines one `_REMOVED_ARG`
+    instance.
+  - Found while landing R1266 (2026-10-22).
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1267 `sroa` keeps a struct slot whose drop runs code**
 
@@ -7541,6 +7538,12 @@ retained on purpose and re-probed rather than fixed; they are listed in
     bound holds, `MirDeclarations::copy_is_identity` can answer yes for
     such a `T`: `def both[T: TrivialRegisterPassable](x: T) -> Int:
     return pair(x, x)` keeps two `var.use` copies of `x` in the generator.
+  - Probe: `mem-2-reg` keeps a slot of such a `T` for the same reason:
+    `def keep[T: TrivialRegisterPassable](x: T) -> T: var y = x; return y`
+    keeps `y`'s slot in the generator. Once the bound holds,
+    `MirDeclarations::copy_is_identity` answers yes for a type parameter
+    whose bound is or refines `TrivialRegisterPassable`, and the slot
+    promotes (found while landing R1266).
   - Found while landing R838 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.

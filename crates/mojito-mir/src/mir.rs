@@ -44,6 +44,7 @@ use mojito_types::types::TyKind;
 use mojito_types::types::{
     ConstraintOperand, GenericConstraint, ParamDecl, Ty, TyArg, dict_elements, tuple_elements,
 };
+use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
 mod ir;
@@ -337,6 +338,21 @@ impl MirDeclarations {
         )
     }
 
+    /// The fields of a value of the declared struct type `ty` at its
+    /// arguments ([`mojito_types::types::struct_field_types`]); `None` for
+    /// any other type, or one whose fields its arguments do not close.
+    pub fn field_types(&self, ty: &Ty) -> Option<Cow<'_, [(String, Ty)]>> {
+        let TyKind::Struct(name, arguments) = ty.kind() else {
+            return None;
+        };
+        let declaration = self.structure(name)?;
+        mojito_types::types::struct_field_types(
+            &declaration.param_decls,
+            arguments,
+            &declaration.fields,
+        )
+    }
+
     /// Whether a copy of a value of `ty` is the value itself, as upstream's
     /// parser loads a register-passable trivial value into an SSA value: a
     /// compiler-known type upstream declares `TrivialRegisterPassable`
@@ -344,9 +360,9 @@ impl MirDeclarations {
     /// declares it unconditionally, directly or through a refining trait.
     /// The trait forbids a custom copy constructor or destructor and requires
     /// every field to conform, so such a struct also owns no
-    /// `__copyinit__` or `__deinit__` and holds only fields of concrete types
-    /// this answers for. A field typed by a
-    /// parameter answers no until an instance closes it, and a conditional
+    /// `__copyinit__` or `__deinit__` and holds only fields this answers
+    /// for, each judged at the struct's arguments ([`Self::field_types`]).
+    /// A field the arguments leave open answers no, and a conditional
     /// conformance until the elaborator decides it.
     pub fn copy_is_identity(&self, ty: &Ty) -> bool {
         if mojito_types::types::trivially_register_passable_leaf(ty.kind()) {
@@ -363,8 +379,8 @@ impl MirDeclarations {
             }) && ["__copyinit__", "__deinit__"]
                 .iter()
                 .all(|member| declaration.member(member).is_none())
-                && declaration.fields.iter().all(|(_, field)| {
-                    !mojito_types::types::is_symbolic(field) && self.copy_is_identity(field)
+                && self.field_types(ty).is_some_and(|fields| {
+                    fields.iter().all(|(_, field)| self.copy_is_identity(field))
                 })
         })
     }
@@ -372,9 +388,14 @@ impl MirDeclarations {
     /// Whether dropping a value of `ty` runs no code, as upstream's
     /// `IsTriviallyDeinitable` answers: a compiler-known scalar
     /// ([`has_no_destructor`]), a pointer, a tuple or pack of such types,
-    /// or a struct with no destructor and no explicit-destroy obligation
-    /// whose every field answers so. A type parameter, an associated type,
-    /// and anything unknown answer no.
+    /// or a struct with no declared destructor and no explicit-destroy
+    /// obligation whose every field answers so, judged at the struct's
+    /// arguments ([`Self::field_types`]) or, when they leave one open, as
+    /// declared. A destructor the struct's `IsTriviallyDeinitable`
+    /// conformance conditions on its fields is the synthesized one, which
+    /// only destroys them, so it runs no code where they run none: the
+    /// conformance holds at those arguments (`P[Int]` over a field `T`). A
+    /// type parameter, an associated type, and anything unknown answer no.
     pub fn drop_runs_no_code(&self, ty: &Ty) -> bool {
         self.drop_runs_no_code_within(ty, &mut Vec::new())
     }
@@ -394,15 +415,20 @@ impl MirDeclarations {
                 let Some(declaration) = self.structure(name) else {
                     return false;
                 };
+                let fieldwise = declaration.conformances.iter().any(|row| {
+                    row.trait_name == "IsTriviallyDeinitable"
+                        && !matches!(row.conditions.as_slice(), [] | [GenericConstraint::Bool(_)])
+                });
                 if declaration.explicit_destroy.is_some()
                     || !declaration.explicit_destructors.is_empty()
-                    || declaration.member("__deinit__").is_some()
+                    || (declaration.member("__deinit__").is_some() && !fieldwise)
                 {
                     return false;
                 }
                 visiting.push(name.clone());
-                let trivial = declaration
-                    .fields
+                let trivial = self
+                    .field_types(ty)
+                    .unwrap_or(Cow::Borrowed(&declaration.fields))
                     .iter()
                     .all(|(_, field)| self.drop_runs_no_code_within(field, visiting));
                 visiting.pop();

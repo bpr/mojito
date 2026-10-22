@@ -3434,8 +3434,9 @@ pub fn reown_generic_signature(
 /// The substitution mapping a struct's type-parameter names to an instance's
 /// type arguments (`[T] @ [Int]` ⟹ `{T: Int}`), for [`substitute`].
 ///
-/// Value parameters and arguments are skipped: they never appear in a type.
-/// Empty for a non-generic struct.
+/// Value parameters and arguments are skipped; [`struct_field_types`]
+/// binds them too, for a value binder a field's lane slot or value
+/// argument names. Empty for a non-generic struct.
 pub fn struct_argument_substitution(decls: &[ParamDecl], arguments: &[TyArg]) -> TySubst {
     decls
         .iter()
@@ -3445,6 +3446,69 @@ pub fn struct_argument_substitution(decls: &[ParamDecl], arguments: &[TyArg]) ->
             _ => None,
         })
         .collect()
+}
+
+/// A struct's declared `fields` at an application's `arguments`.
+///
+/// Upstream's `!kgen.struct` element types are the field types at the
+/// struct's arguments. Each type and value binder `decls` declares is bound
+/// to its argument and replaced through [`replace_parameters`] (a lane slot
+/// or value argument re-canonicalizes); the fields are borrowed when none
+/// names a binder. Origin arguments are left as declared.
+///
+/// `None` when a field still names one of the struct's own binders: a
+/// missing, erased (`CtValue::RemovedArg`), or unbindable argument, or a
+/// pack the substitution does not expand.
+pub fn struct_field_types<'a>(
+    decls: &[ParamDecl],
+    arguments: &[TyArg],
+    fields: &'a [(String, Ty)],
+) -> Option<std::borrow::Cow<'a, [(String, Ty)]>> {
+    let binders: Vec<ParamRef> = decls.iter().map(ParamDecl::binder).collect();
+    let names_own_binder = |ty: &Ty| binders.iter().any(|binder| names_binder(ty, binder));
+    if !fields.iter().any(|(_, field)| names_own_binder(field)) {
+        return Some(std::borrow::Cow::Borrowed(fields));
+    }
+    let context = ParamContext::detached();
+    let mut bindings = ParamBindings::new();
+    for (decl, argument) in decls.iter().zip(arguments) {
+        match (decl, argument) {
+            (
+                ParamDecl::Type {
+                    id,
+                    variadic: false,
+                    ..
+                },
+                TyArg::Ty(ty),
+            ) => {
+                bindings.bind(id.clone(), context.type_shape(ty.clone()));
+                bindings.bind_type(id.clone(), ty.clone());
+            }
+            (
+                ParamDecl::Value {
+                    id,
+                    variadic: false,
+                    ..
+                },
+                TyArg::Val(value),
+            ) if !matches!(value, CtValue::RemovedArg) => {
+                if let Ok(value) = context.constant(value.clone()) {
+                    bindings.bind(id.clone(), value);
+                }
+            }
+            _ => {}
+        }
+    }
+    fields
+        .iter()
+        .map(|(name, field)| {
+            replace_parameters(&context, field, &bindings, 0)
+                .ok()
+                .filter(|field| !names_own_binder(field))
+                .map(|field| (name.clone(), field))
+        })
+        .collect::<Option<Vec<_>>>()
+        .map(std::borrow::Cow::Owned)
 }
 
 /// [`substitute`] under the solutions of type packs and of compile-time
@@ -5372,5 +5436,97 @@ mod canonical_signature_tests {
             pack_element_signature("Getter.get", 1),
             pack_element_signature("S.get", 0)
         );
+    }
+}
+
+#[cfg(test)]
+mod struct_field_types_tests {
+    use super::*;
+    use std::borrow::Cow;
+
+    fn value_param(owner: &str) -> ParamDecl {
+        ParamDecl::Value {
+            id: ParamId::new(owner, 0),
+            name: "n".to_string(),
+            ty: Ty::new(TyKind::Int),
+            default: None,
+            callable_default: None,
+            infer_only: false,
+            variadic: false,
+            constraints: Vec::new(),
+        }
+    }
+
+    fn type_param(owner: &str) -> ParamDecl {
+        ParamDecl::Type {
+            id: ParamId::new(owner, 0),
+            name: "T".to_string(),
+            bounds: vec!["Copyable".to_string()],
+            trait_param: None,
+            callable_bound: None,
+            default: None,
+            infer_only: false,
+            variadic: false,
+            constraints: Vec::new(),
+        }
+    }
+
+    /// `SIMD[DType.int64, n]` over the value binder `decl`.
+    fn lanes_over(decl: &ParamDecl) -> Ty {
+        let width = ParamContext::detached().decl_ref(decl.id().clone(), "n", decl.binder_meta());
+        simd_ty_from_slots(SimdDtype::Known(Dtype::Int64), SimdWidth::Expr(width))
+            .expect("a symbolic SIMD type")
+    }
+
+    #[test]
+    fn struct_field_types_are_the_fields_at_the_arguments() {
+        let arr = value_param("Arr");
+        let fields = vec![("v".to_string(), lanes_over(&arr))];
+        let at = |arguments: &[TyArg]| {
+            struct_field_types(std::slice::from_ref(&arr), arguments, &fields)
+                .map(|fields| fields[0].1.clone())
+        };
+        assert_eq!(
+            at(&[TyArg::Val(CtValue::Int(4))]),
+            Some(Ty::new(TyKind::Simd {
+                dtype: SimdDtype::Known(Dtype::Int64),
+                width: SimdWidth::Known(4),
+            }))
+        );
+        let caller = value_param("plain_nested");
+        let forwarded =
+            ParamContext::detached().decl_ref(caller.id().clone(), "n", caller.binder_meta());
+        assert_eq!(
+            at(&[TyArg::Val(CtValue::Expr(forwarded))]),
+            Some(lanes_over(&caller))
+        );
+        assert_eq!(at(&[TyArg::Val(CtValue::RemovedArg)]), None);
+        assert_eq!(at(&[]), None);
+
+        let p = type_param("P");
+        let fields = vec![(
+            "x".to_string(),
+            Ty::new(TyKind::Param {
+                binder: p.binder(),
+                bounds: vec!["Copyable".to_string()],
+                callable_bound: None,
+            }),
+        )];
+        let at = |arguments: &[TyArg]| {
+            struct_field_types(std::slice::from_ref(&p), arguments, &fields)
+                .map(|fields| fields[0].1.clone())
+        };
+        assert_eq!(
+            at(&[TyArg::Ty(Ty::new(TyKind::Int))]),
+            Some(Ty::new(TyKind::Int))
+        );
+        assert_eq!(at(&[TyArg::Val(CtValue::RemovedArg)]), None);
+        assert_eq!(at(&[]), None);
+
+        let concrete = vec![("x".to_string(), Ty::new(TyKind::Int))];
+        assert!(matches!(
+            struct_field_types(&[], &[], &concrete),
+            Some(Cow::Borrowed(_))
+        ));
     }
 }

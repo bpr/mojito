@@ -3,10 +3,10 @@
 //! each field a body reads and writes through field places.
 //!
 //! A MIR variable slot is the allocation. One is split when it is a local
-//! of a declared struct type whose drop runs no code and whose every field
-//! is of a concrete type other than a pointer, either trivially
-//! register-passable or itself such a struct, and every mention of it is
-//! one of:
+//! of a declared struct type whose drop runs no code and whose every field,
+//! at the slot type's arguments, is of a type other than a pointer, either
+//! trivially register-passable or itself such a struct, and every mention
+//! of it is one of:
 //! - a whole store (`var.store`, or `place.store` on the whole slot), which
 //!   becomes one `field.get` of the stored value and one `var.store` per
 //!   field, as upstream's whole store becomes a `kgen.struct.extract` and a
@@ -22,11 +22,16 @@
 //!   field first, which then addresses that field's slot: upstream replaces
 //!   each `struct_gep` by its element's allocation, whatever its users, so
 //!   a borrowed field keeps only its own slot. A `place.store` left on a
-//!   whole field slot becomes a `var.store`.
+//!   whole field slot becomes a `var.store`, a `consume.place` a
+//!   `consume.var`, and a `drop.place` a `drop.var`, so a nested struct's
+//!   field slot splits in the next round.
 //!
 //! Any other mention keeps the slot whole: a borrow, a capture, a loan
 //! interior, a cleanup, a `through` place, or a whole read that names a
-//! constructor, as any other user of upstream's allocation does. A slot
+//! constructor, as any other user of upstream's allocation does. Each field
+//! slot is typed at the slot type's arguments, as upstream's element
+//! allocation has the `!kgen.struct` element type, so a generic body splits
+//! a slot of its own struct application (`Arr[n]`). A slot
 //! nothing stores, declares, or marks is a compile-time parameter's
 //! binding, which the elaborator substitutes, and is never split.
 //!
@@ -43,7 +48,8 @@ use mojito_mir::mir::{
     UseMode, cleanup_slots, fresh_register, instruction_regions, instruction_regions_mut,
     instruction_slots, retire_slots,
 };
-use mojito_types::types::{SliceKind, Ty, TyKind, is_symbolic};
+use mojito_types::types::{SliceKind, Ty, TyKind};
+use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
@@ -145,6 +151,9 @@ struct Candidate {
     ended: BTreeSet<String>,
 }
 
+/// A struct's fields at a slot type's arguments, each a name and a type.
+type Fields<'a> = Cow<'a, [(String, Ty)]>;
+
 /// The census of one candidate slot.
 #[derive(Default)]
 struct Census {
@@ -157,11 +166,17 @@ struct Census {
 
 /// The slots of `function` a round splits, each with its fields, sorted.
 fn splittable_slots(function: &MirFunction, declarations: &MirDeclarations) -> Vec<Candidate> {
-    let fields: HashMap<VarId, &[(String, Ty)]> = function
+    let mut judged: HashMap<&Ty, Option<Fields<'_>>> = HashMap::new();
+    let fields: HashMap<VarId, Fields<'_>> = function
         .var_tys
         .iter()
         .filter(|&(&var, _)| var as usize >= function.n_params)
-        .filter_map(|(&var, ty)| Some((var, splittable_type(ty, declarations)?)))
+        .filter_map(|(&var, ty)| {
+            let fields = judged
+                .entry(ty)
+                .or_insert_with(|| splittable_type(ty, declarations));
+            Some((var, fields.clone()?))
+        })
         .collect();
     if fields.is_empty() {
         return Vec::new();
@@ -183,14 +198,15 @@ fn splittable_slots(function: &MirFunction, declarations: &MirDeclarations) -> V
     slots
 }
 
-/// The fields of a slot of `ty` [`sroa`] may split: a declared struct whose
-/// drop runs no code, each field of a concrete type that is trivially
-/// register-passable or itself such a struct. A slice descriptor, which
+/// The fields of a slot of `ty` [`sroa`] may split, at its arguments
+/// ([`MirDeclarations::field_types`]): a declared struct whose drop runs no
+/// code, each field of a type that is trivially register-passable or itself
+/// such a struct. A slice descriptor, which
 /// both backends build as their own value, is never one, nor is a struct
 /// with a pointer field: the VM reads a place on a whole slot that holds a
 /// reference handle through the handle, so the field's own slot would not
 /// read as the field did.
-fn splittable_type<'a>(ty: &Ty, declarations: &'a MirDeclarations) -> Option<&'a [(String, Ty)]> {
+fn splittable_type<'a>(ty: &Ty, declarations: &'a MirDeclarations) -> Option<Fields<'a>> {
     let TyKind::Struct(name, _) = ty.kind() else {
         return None;
     };
@@ -204,22 +220,25 @@ fn splittable_type<'a>(ty: &Ty, declarations: &'a MirDeclarations) -> Option<&'a
     if descriptor {
         return None;
     }
-    let declaration = declarations.structure(name)?;
-    (declarations.drop_runs_no_code(ty)
-        && declaration.fields.iter().all(|(_, field)| {
-            !is_symbolic(field)
-                && !matches!(field.kind(), TyKind::Pointer { .. })
+    if !declarations.drop_runs_no_code(ty) {
+        return None;
+    }
+    let fields = declarations.field_types(ty)?;
+    fields
+        .iter()
+        .all(|(_, field)| {
+            !matches!(field.kind(), TyKind::Pointer { .. })
                 && (declarations.copy_is_identity(field)
                     || splittable_type(field, declarations).is_some())
-        }))
-    .then_some(declaration.fields.as_slice())
+        })
+        .then_some(fields)
 }
 
 /// Record every mention of the candidate slots `fields` names in `blocks`
 /// and the regions they hold in `census`.
 fn take_census(
     blocks: &[MirBlock],
-    fields: &HashMap<VarId, &[(String, Ty)]>,
+    fields: &HashMap<VarId, Fields<'_>>,
     census: &mut HashMap<VarId, Census>,
 ) {
     for block in blocks {
@@ -452,7 +471,8 @@ impl Splitter<'_> {
 
     /// Readdress each place of `instruction` on a split slot to the slot of
     /// the field it projects first; a store left on a whole field slot
-    /// becomes a `var.store`.
+    /// becomes a `var.store`, a consumption a `consume.var`, and a drop a
+    /// `drop.var`.
     fn reroot(&self, instruction: &mut MirInstr) {
         let mut rerooted = false;
         for place in instruction_places_mut(instruction) {
@@ -473,16 +493,28 @@ impl Splitter<'_> {
             }
             rerooted = true;
         }
-        if rerooted
-            && let MirInstr::Store { place, src } = instruction
-            && place.proj.is_empty()
-        {
-            *instruction = MirInstr::DefVar {
-                var: place.root,
-                src: *src,
-                binding_ty: place.root_ty.clone(),
-                in_place: false,
-            };
+        if !rerooted {
+            return;
+        }
+        match instruction {
+            MirInstr::Store { place, src } if place.proj.is_empty() => {
+                *instruction = MirInstr::DefVar {
+                    var: place.root,
+                    src: *src,
+                    binding_ty: place.root_ty.clone(),
+                    in_place: false,
+                };
+            }
+            MirInstr::ConsumePlace { place, .. } if place.proj.is_empty() => {
+                *instruction = MirInstr::ConsumeVar { var: place.root };
+            }
+            MirInstr::DropPlace { place, destructor } if place.proj.is_empty() => {
+                *instruction = MirInstr::DropVar {
+                    var: place.root,
+                    destructor: destructor.take(),
+                };
+            }
+            _ => {}
         }
     }
 

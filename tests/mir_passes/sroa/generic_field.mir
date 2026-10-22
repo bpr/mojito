@@ -1,0 +1,81 @@
+mojito-mir 1.87
+artifact {
+  features: [],
+  files: [
+  ],
+  traits: [],
+  structs: [
+    struct { name: Arr, fields: [field { name: v, type: simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "Arr", slot: 0, name: n, type: meta_value(Int) }) } }], mut_self_methods: [], fieldwise_init: false, param_decls: [value_param { owner: "Arr", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [] }
+  ],
+  decls: [
+    decl { lowered_name: plain_nested, param_names: [y], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "plain_nested", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: "plain_nested$inner", param_names: [a, y], param_types: [struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "plain_nested", slot: 0, name: n, type: meta_value(Int) }))] }, Int], defaults: [absent, absent], required: [true, true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent, absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false, false], param_writes: [false, false], availability: [], enclosing: present(plain_nested), region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: plain_nested,
+        registers: 10,
+        vars: 4,
+        var_names: [y, n, "self$inline2", "v$inline2"],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "plain_nested", slot: 0, name: n, type: meta_value(Int) }))] } }, var_type { var: $v3, type: simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "plain_nested", slot: 0, name: n, type: meta_value(Int) }) } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "plain_nested", slot: 0, name: n, type: meta_value(Int) }) } }, reg_type { reg: %r3, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "plain_nested", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r9, type: simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "plain_nested", slot: 0, name: n, type: meta_value(Int) }) } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v1, mode: copy },
+              drop.var { var: $v1 },
+              const { dest: %r1, value: int_literal(1) },
+              simd.make { dest: %r2, dtype: int64, width: ct_expr(param_decl_ref { owner: "plain_nested", slot: 0, name: n, type: meta_value(Int) }), elems: [%r1] },
+              ownership.mark_initialized { place: place { root: $v2, root_type: present(struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "plain_nested", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [], type: present(struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "plain_nested", slot: 0, name: n, type: meta_value(Int) }))] }), through: absent } },
+              var.store { var: $v3, src: %r2, binding_type: present(simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "plain_nested", slot: 0, name: n, type: meta_value(Int) }) }), in_place: false },
+              loop { results: [], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [var.use { dest: %r9, var: $v3, mode: copy }, place.store { place: place { root: $v2, root_type: present(struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "plain_nested", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "plain_nested", slot: 0, name: n, type: meta_value(Int) }) } }], type: present(simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "plain_nested", slot: 0, name: n, type: meta_value(Int) }) }), through: absent }, src: %r9 }], terminator: break { label: present(loop4294967295), values: [] } }] },
+              var.use { dest: %r3, var: $v2, mode: forward },
+              var.use { dest: %r5, var: $v0, mode: copy },
+              call { dest: %r6, func: "plain_nested$inner", raises: absent, args: [%r3, %r5], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r6) }
+          }
+        ]
+      },
+      fn {
+        name: "plain_nested$inner",
+        registers: 4,
+        vars: 2,
+        var_names: [a, y],
+        params: 2,
+        param_types: [struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "plain_nested", slot: 0, name: n, type: meta_value(Int) }))] }, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "plain_nested", slot: 0, name: n, type: meta_value(Int) }))] } }, var_type { var: $v1, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }],
+        removed_params: [param_id { owner: "plain_nested", slot: 0 }],
+        removed_args: [$v0],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r2, value: int(1) },
+              var.use { dest: %r0, var: $v1, mode: copy },
+              binary { op: add, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r3) }
+          }
+        ]
+      }
+  ]
+}

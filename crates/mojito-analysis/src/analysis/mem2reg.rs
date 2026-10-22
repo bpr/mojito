@@ -5,8 +5,9 @@
 //! a temporary that `Mem2Reg` then promotes.
 //!
 //! A MIR variable slot is the allocation. One is promoted when its type is
-//! trivially register-passable at a concrete size
-//! ([`MirDeclarations::copy_is_identity`], never symbolic), and every
+//! trivially register-passable ([`MirDeclarations::copy_is_identity`]),
+//! whatever binders it names (`SIMD[DType.int64, n]` in a body over `n`),
+//! as upstream's `canPromote` has no type test, and every
 //! mention of it is a store (`var.store`), a read (`var.use`, or a
 //! whole-root `place.load`), or a mention with no effect on such a type
 //! once drops are elaborated (`var.declare`, `drop.var`, `var.consume`, and
@@ -55,7 +56,7 @@ use mojito_mir::mir::{
     instruction_regions_mut, instruction_slots, loop_continues_mut, match_nexts_mut, region_exit,
     renumber_block_slots, retire_slots,
 };
-use mojito_types::types::{Ty, is_symbolic};
+use mojito_types::types::Ty;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
@@ -124,7 +125,7 @@ pub fn lower_arg_conventions(
                 && function
                     .param_types
                     .get(param)
-                    .is_some_and(|ty| promotable_type(ty, declarations))
+                    .is_some_and(|ty| declarations.copy_is_identity(ty))
         })
         .filter_map(|param| VarId::try_from(param).ok())
         .collect();
@@ -251,7 +252,7 @@ impl Facts {
         });
         (var as usize >= function.n_params || entry_stored.contains(&var))
             && !entry.kept
-            && typed.is_some_and(|ty| promotable_type(ty, declarations) || stores_closures)
+            && typed.is_some_and(|ty| declarations.copy_is_identity(ty) || stores_closures)
             && entry.mentions.iter().all(|(_, mention)| match *mention {
                 Mention::Store(src) => {
                     function.reg_types.get(&src.0) == typed
@@ -794,12 +795,6 @@ fn reference_closures(blocks: &[MirBlock], closures: &mut HashSet<u32>) {
             closures.insert(dest.0);
         }
     }
-}
-
-/// Whether a slot of `ty` may be promoted: a trivially register-passable
-/// value of a size the declaration fixes.
-fn promotable_type(ty: &Ty, declarations: &MirDeclarations) -> bool {
-    !is_symbolic(ty) && declarations.copy_is_identity(ty)
 }
 
 /// Record every slot mention of the region `list`'s own blocks (not of the

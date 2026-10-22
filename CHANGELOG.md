@@ -621,6 +621,24 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `sroa` and `mem-2-reg` take a slot of a generic struct or field type, as
+  upstream's `SROA` and `Mem2Reg` take any allocation (R1266). A struct's
+  fields are judged and typed at its arguments
+  (`types::struct_field_types`, `MirDeclarations::field_types`), so a
+  generic body splits a slot of its own application (`Arr[n]`'s field
+  slot is a `SIMD[DType.int64, n]` over the body's `n`) and `mem-2-reg`
+  promotes it, and `P[Int]` over a field `T` splits, its synthesized
+  destructor running no code at `Int`. A `consume.place` or `drop.place`
+  left on a whole field slot becomes `consume.var` or `drop.var`, so a
+  nested struct's field slot splits the next round and an inlined
+  destructor's receiver keeps no stale marker. A dead `Arr[n](...)`
+  construction passed to a nested function's removed argument then leaves
+  no read of `n`, so `plain_nested[1/2/4]` is one instance, as on the pin
+  (`assets/ok/generic_struct_slot_instances.mojo`). Program output is
+  unchanged; over the corpus, generator instances fall from 14,003 to
+  13,996, generator instructions by 0.6 %, and concrete instructions by
+  0.23 % (`benchmarks/instantiation.tsv`). The MIR text and package
+  formats are unchanged.
 - Pliron now lowers region ops to LLVM blocks itself, as upstream's
   `LowerControlFlow` lowers `hlcf` and `lit.try` (R883, stage 14a of
   `docs/structured-control-flow-plan.md`), so neither backend runs
