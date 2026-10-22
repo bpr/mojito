@@ -616,6 +616,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `cse` now merges a result of any register-passable trivial type (R930),
+  as upstream holds only such a value in an SSA value: a multi-lane SIMD
+  construction, including a generator's `SIMD[dtype, width]`, a
+  `StringLiteral`, a `TrivialRegisterPassable` struct, and the field reads
+  and slot copies yielding one. Two identical `SIMD[DType.float32, 4]`
+  constructions merge (`tests/mir_passes/cse/storage_values.mir`).
+  `canonicalize` also forwards a copy of such a value when its source has
+  other readers. Merging is safe because readers that consume a register
+  now copy it. On Pliron, the callee of an owned (`var`) parameter of such
+  a type copies the value its caller's pointer addresses into a slot of
+  its own, as upstream passes the value by value, instead of writing
+  through to the caller's register. The VM's `UninitStorage` and
+  `StoreToMem` copy their operand instead of taking it. Over a
+  186-fixture sample, concrete instructions fall 0.36 %. Program output is
+  unchanged, and so are the MIR text and package formats. This closes R930.
 - `cse` now merges reads of memory as MLIR's `CSE` merges an op whose
   only effect is a read (R929): a `place.load`, `ref.make`, `ref.read`,
   `var.use` borrow or one-register copy, or field read through a

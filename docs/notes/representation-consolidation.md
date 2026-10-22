@@ -15,14 +15,14 @@ with `--dry-run` or `scripts/roadmap.py deps R883`. Add `--model opus
 ## Next: smaller generators
 
 With bodies structured, `Mem2Reg` carrying values through their regions
-(R927, 2026-10-21), and `cse` ending the fourth round (R926), each
+(R927, 2026-10-21), and `cse` ending the fourth round (R926) and merging
+register-passable trivial values (R930), each
 generator shrinks by the passes upstream runs before elaboration. None of these has an open prerequisite today:
 
 ```sh
-scripts/claude_loop.py --only R930 --only R1270 --only R1266 -n 0
+scripts/claude_loop.py --only R1270 --only R1266 -n 0
 ```
 
-- R930 — CSE merges values held in storage.
 - R1270 — CSE merges built-in operators.
 - R1266 — `sroa` and `mem-2-reg` take slots of generic struct and field
   types (`Fable, Planned`); `SROA` itself landed as `sroa` (R928).

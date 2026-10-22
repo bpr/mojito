@@ -1,0 +1,113 @@
+mojito-mir 1.87
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("case.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+    struct { name: P, fields: [field { name: x, type: Int }, field { name: v, type: simd { dtype: float32, width: 4 } }], mut_self_methods: [], fieldwise_init: true, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [conformance { trait: TrivialRegisterPassable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [] }
+  ],
+  decls: [
+    decl { lowered_name: fields, param_names: [p], param_types: [struct_type { name: P, arguments: [] }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: simd { dtype: float32, width: 4 }, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: splats, param_names: [a], param_types: [simd { dtype: float32, width: 1 }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: simd { dtype: float32, width: 4 }, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: take, param_names: [v], param_types: [simd { dtype: float32, width: 4 }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [present(var)], return_type: simd { dtype: float32, width: 4 }, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [true], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: take,
+        registers: 4,
+        vars: 1,
+        var_names: [v],
+        params: 1,
+        param_types: [simd { dtype: float32, width: 4 }],
+        owned_params: [true],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: simd { dtype: float32, width: 4 } }],
+        return_type: present(simd { dtype: float32, width: 4 }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: simd { dtype: float32, width: 1 } }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: simd { dtype: float32, width: 4 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 180, end: 182, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 180, end: 182, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 175, end: 176, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 194, end: 195, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(99) },
+              literal.materialize { dest: %r1, value: %r0, target: simd { dtype: float32, width: 1 } },
+              const { dest: %r2, value: int_literal(0) },
+              place.store { place: place { root: $v0, root_type: present(simd { dtype: float32, width: 4 }), projections: [projection { op: index(%r2), type: simd { dtype: float32, width: 1 } }], type: present(simd { dtype: float32, width: 1 }), through: absent }, src: %r1 },
+              var.use { dest: %r3, var: $v0, mode: copy },
+              drop.var { var: $v0 }
+            ],
+            terminator: return { value: present(%r3) }
+          }
+        ]
+      },
+      fn {
+        name: splats,
+        registers: 8,
+        vars: 3,
+        var_names: [a, u, w],
+        params: 1,
+        param_types: [simd { dtype: float32, width: 1 }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: simd { dtype: float32, width: 1 } }, var_type { var: $v1, type: simd { dtype: float32, width: 4 } }, var_type { var: $v2, type: simd { dtype: float32, width: 4 } }],
+        return_type: present(simd { dtype: float32, width: 4 }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: simd { dtype: float32, width: 1 } }, reg_type { reg: %r1, type: simd { dtype: float32, width: 4 } }, reg_type { reg: %r2, type: simd { dtype: float32, width: 4 } }, reg_type { reg: %r3, type: simd { dtype: float32, width: 1 } }, reg_type { reg: %r4, type: simd { dtype: float32, width: 4 } }, reg_type { reg: %r5, type: simd { dtype: float32, width: 4 } }, reg_type { reg: %r6, type: simd { dtype: float32, width: 4 } }, reg_type { reg: %r7, type: simd { dtype: float32, width: 4 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 288, end: 289, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 265, end: 290, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 260, end: 291, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 327, end: 328, origin: present($v0) }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 304, end: 329, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 341, end: 342, origin: present($v1) }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 345, end: 346, origin: present($v2) }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 341, end: 346, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              simd.make { dest: %r1, dtype: float32, width: 4, elems: [%r0] },
+              call { dest: %r2, func: take, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              var.store { var: $v1, src: %r2, binding_type: present(simd { dtype: float32, width: 4 }), in_place: true },
+              simd.make { dest: %r4, dtype: float32, width: 4, elems: [%r0] },
+              var.store { var: $v2, src: %r4, binding_type: present(simd { dtype: float32, width: 4 }), in_place: false },
+              var.use { dest: %r5, var: $v1, mode: copy },
+              drop.var { var: $v1 },
+              var.use { dest: %r6, var: $v2, mode: copy },
+              drop.var { var: $v2 },
+              binary { op: add, dest: %r7, a: %r5, b: %r6, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r7) }
+          }
+        ]
+      },
+      fn {
+        name: fields,
+        registers: 3,
+        vars: 1,
+        var_names: [p],
+        params: 1,
+        param_types: [struct_type { name: P, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: P, arguments: [] } }],
+        return_type: present(simd { dtype: float32, width: 4 }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: simd { dtype: float32, width: 4 } }, reg_type { reg: %r1, type: simd { dtype: float32, width: 4 } }, reg_type { reg: %r2, type: simd { dtype: float32, width: 4 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 404, end: 407, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 410, end: 413, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 404, end: 413, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: P, arguments: [] }), projections: [projection { op: field(v), type: simd { dtype: float32, width: 4 } }], type: present(simd { dtype: float32, width: 4 }), through: absent } },
+              place.load { dest: %r1, place: place { root: $v0, root_type: present(struct_type { name: P, arguments: [] }), projections: [projection { op: field(v), type: simd { dtype: float32, width: 4 } }], type: present(simd { dtype: float32, width: 4 }), through: absent } },
+              binary { op: add, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      }
+  ]
+}

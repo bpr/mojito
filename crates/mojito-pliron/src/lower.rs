@@ -247,6 +247,7 @@ pub fn lower_body(
         signatures: env.signatures,
         declarations: env.declarations,
         struct_decls: env.struct_decls,
+        mir_declarations: env.mir_declarations,
         layout: env.layout,
         locator: env.locator,
         shared,
@@ -444,6 +445,9 @@ struct FnLowering<'a> {
     signatures: &'a HashMap<String, FnSignature>,
     declarations: &'a HashMap<String, MirFunctionDeclaration>,
     struct_decls: &'a HashMap<&'a str, &'a MirStructDeclaration>,
+    /// The program's MIR declarations, which answer whether a value is
+    /// register-passable trivial ([`MirDeclarations::copy_is_identity`]).
+    mir_declarations: &'a MirDeclarations,
     layout: LayoutCx<'a>,
     locator: &'a Locator,
     shared: &'a mut ModuleShared,
@@ -540,7 +544,8 @@ struct FnLowering<'a> {
     /// start initialized.
     drop_flags: HashMap<u32, Value>,
     /// Alloca (pointer) value of each variable slot; aggregate parameter
-    /// slots alias the incoming pointer (write-through).
+    /// slots alias the incoming pointer (write-through), but an owned one of
+    /// a register-passable trivial type, which the callee copies.
     var_slots: Vec<Value>,
     /// Pliron block for each MIR block id — the enclosing function's blocks
     /// outside `try` regions, a region's local mini-CFG blocks while one

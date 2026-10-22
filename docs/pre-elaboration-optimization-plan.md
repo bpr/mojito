@@ -165,8 +165,9 @@ In order:
    temporaries do not survive into every instance: a `value.copy` of a
    scalar, pointer, `None`, or SIMD lane folds (`MirInstr::forwarded_operand`).
    A copy of a register-passable trivial aggregate (vector SIMD,
-   `StringLiteral`, a `TrivialRegisterPassable` struct) folds when it is its
-   operand's sole reader (`MirDeclarations::copy_is_identity`), as
+   `StringLiteral`, a `TrivialRegisterPassable` struct) folds too
+   (`MirDeclarations::copy_is_identity`; R930 lifted its sole-reader
+   condition once an owned parameter's callee copies such a value), as
    upstream's loads of such values are SSA values; any other struct copy,
    a tuple's included, or a type-parameter copy may run `__copyinit__` and
    stays; a type-parameter copy that an instance makes trivial is forwarded by the

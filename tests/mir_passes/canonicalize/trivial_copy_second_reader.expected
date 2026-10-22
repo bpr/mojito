@@ -1,0 +1,28 @@
+  functions: [
+      fn {
+        name: corner,
+        registers: 3,
+        vars: 1,
+        var_names: [h],
+        params: 1,
+        param_types: [struct_type { name: Holder, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Holder, arguments: [] } }],
+        return_type: present(struct_type { name: Point, arguments: [] }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: Point, arguments: [] } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 294, end: 301, origin: present($v0) }) }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Holder, arguments: [] }), projections: [projection { op: field(point), type: struct_type { name: Point, arguments: [] } }], type: present(struct_type { name: Point, arguments: [] }), through: absent } }
+            ],
+            terminator: return { value: present(%r0) }
+          }
+        ]
+      }
+  ]

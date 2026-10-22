@@ -250,8 +250,10 @@ impl VmBackend {
                     offset: 0,
                 };
             }
+            // A register is a value its readers copy, which `cse` may give
+            // more readers than this one.
             MirInstr::StoreToMem { dest, src } => {
-                let value = std::mem::replace(&mut regs[src.0 as usize], Value::Moved);
+                let value = regs[src.0 as usize].clone();
                 regs[dest.0 as usize] = self.store_to_comptime_memory(value);
             }
             MirInstr::ConstructTypeParam { param, .. } => {
@@ -860,9 +862,10 @@ impl VmBackend {
                 }
                 regs[dest.0 as usize] = Value::None;
             }
+            // The initializer register keeps its value, as `StoreToMem`'s does.
             MirInstr::UninitStorage { dest, init } => {
                 let payload = init
-                    .map(|register| std::mem::replace(&mut regs[register.0 as usize], Value::Moved))
+                    .map(|register| regs[register.0 as usize].clone())
                     .map(Box::new);
                 regs[dest.0 as usize] = Value::UninitStorage(payload);
             }

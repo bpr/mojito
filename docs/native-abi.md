@@ -285,6 +285,13 @@ Rules:
   deliberately does not adopt SysV register classification for aggregates.
   (The runtime C ABI itself passes only primitives and pointers, so this rule
   binds generated-code-to-generated-code calls from Stage 3 on.)
+- An owned (`var`) aggregate parameter of a register-passable trivial type
+  (`MirDeclarations::copy_is_identity`: a SIMD vector, `StringLiteral`, or a
+  struct declaring `TrivialRegisterPassable`) still passes by reference, but
+  its callee copies the addressed value into a slot of its own at entry,
+  as upstream passes such a value by value: the caller's storage is a
+  register's value, which other readers may share. Every other owned
+  aggregate parameter binds the caller's storage.
 - The synthesized executable wrapper is the plain C `main() -> i32`: it calls
   `mjrt_version`, then the mangled `__toplevel__` (when present), then the
   mangled `main`, then returns 0.

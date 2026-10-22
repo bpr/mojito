@@ -18,21 +18,24 @@
 //! value register, or a SIMD construction, cast, or shuffle. A read of
 //! storage or through a reference (a `var.use` borrow, `place.load`,
 //! `ref.make`, `ref.read`, a field read through a reference) has only a read
-//! effect, as does a `var.use` copy of a slot held whole in one register,
-//! which upstream reads with a load. As in MLIR, a read matches only an
-//! instruction in its own block with no instruction between that may
-//! write: anything but an instruction free of effects, a read, a built-in
-//! operator, a declaration, or a copy or drop of a value held whole in one
-//! register that runs no constructor or destructor (which upstream does not
-//! emit), where an instruction holding regions writes when its own kind
+//! effect, as does a `var.use` copy of a slot of a register-passable
+//! trivial type, which upstream reads with a load. As in MLIR, a read
+//! matches only an instruction in its own block with no instruction between
+//! that may write: anything but an instruction free of effects, a read, a
+//! built-in operator, a declaration, or a copy or drop of a register-passable
+//! trivial value that runs no constructor or destructor (which upstream does
+//! not emit), where an instruction holding regions writes when its own kind
 //! does (a `try`) or what its regions hold does, and a terminator writes
 //! when it runs a cleanup list. A read that misses becomes the one later
 //! reads match.
 //!
-//! Only a result held whole in one register
-//! ([`mojito_types::types::copy_is_identity`]) or a reference handle is
-//! merged, since a reader may consume a value held in storage. Each merged
-//! result and every operand of
+//! Only a result of a register-passable trivial type
+//! ([`MirDeclarations::copy_is_identity`]) or a reference handle is merged,
+//! as upstream's parser holds only such a value in an SSA value. Its
+//! readers may consume it: a register is a value no reader writes, so an
+//! owned parameter's callee and an `UninitStorage` initialization copy it.
+//! A value of any other type may own what a consuming reader takes. Each
+//! merged result and every operand of
 //! the matched instructions has one definition, which the walk has passed
 //! on the dominating path: MIR does not verify that a definition dominates
 //! its reads, and an operand redefined between the two would hold another
@@ -47,7 +50,7 @@ use mojito_mir::mir::{
     MirBlock, MirBlockId, MirDeclarations, MirFunction, MirInstr, MirTerm, Reg, UseMode,
     immediate_dominators, instruction_regions, instruction_regs_mut,
 };
-use mojito_types::types::{Ty, TyKind, copy_is_identity, trivially_register_passable_leaf};
+use mojito_types::types::{Ty, TyKind, trivially_register_passable_leaf};
 use std::collections::{HashMap, HashSet};
 
 /// The pass, under MLIR's flag spelling.
@@ -61,9 +64,10 @@ pub const CSE: BodyPass = BodyPass {
 /// A duplicate is an instruction free of effects that a dominating one
 /// matches, or a read that one earlier in its block matches with no write
 /// between; its result's reads are renamed to the matched one's result.
-pub fn cse(_name: &str, function: &mut MirFunction, _declarations: &MirDeclarations) -> bool {
+pub fn cse(_name: &str, function: &mut MirFunction, declarations: &MirDeclarations) -> bool {
     let definitions = definition_counts(&mut function.blocks, function.n_regs);
     let mut table = Table {
+        declarations,
         reg_types: &function.reg_types,
         var_types: &function.var_tys,
         definitions,
@@ -93,6 +97,7 @@ pub fn cse(_name: &str, function: &mut MirFunction, _declarations: &MirDeclarati
 
 /// The scoped table of the instructions available on a dominator-tree walk.
 struct Table<'f> {
+    declarations: &'f MirDeclarations,
     reg_types: &'f HashMap<u32, Ty>,
     var_types: &'f HashMap<VarId, Ty>,
     /// How many times the function defines each register.
@@ -228,7 +233,7 @@ impl Table<'_> {
             return None;
         };
         let ty = self.reg_types.get(&dest.0)?;
-        if !(copy_is_identity(ty.kind()) || matches!(ty.kind(), TyKind::Ref(_)))
+        if !(self.declarations.copy_is_identity(ty) || matches!(ty.kind(), TyKind::Ref(_)))
             || self.definitions(dest) != 1
         {
             return None;
@@ -256,7 +261,7 @@ impl Table<'_> {
                     .is_some_and(|ty| trivially_register_passable_leaf(ty.kind()))
             })
         };
-        let one_register = |ty: Option<&Ty>| ty.is_some_and(|ty| copy_is_identity(ty.kind()));
+        let trivial = |ty: Option<&Ty>| ty.is_some_and(|ty| self.declarations.copy_is_identity(ty));
         if self.free_of_effects(instruction) {
             return Effect::Free;
         }
@@ -281,17 +286,17 @@ impl Table<'_> {
                 dest,
                 constructor: None,
                 ..
-            } if one_register(self.reg_types.get(&dest.0)) => Effect::Nested,
+            } if trivial(self.reg_types.get(&dest.0)) => Effect::Nested,
             MirInstr::DropVar {
                 var,
                 destructor: None,
-            } if one_register(self.var_types.get(var)) => Effect::Nested,
+            } if trivial(self.var_types.get(var)) => Effect::Nested,
             MirInstr::UseVar {
                 var,
                 mode: UseMode::Copy,
                 constructor: None,
                 ..
-            } if one_register(self.var_types.get(var)) => Effect::Read,
+            } if trivial(self.var_types.get(var)) => Effect::Read,
             _ if instruction.would_be_trivially_dead() => Effect::Read,
             _ => Effect::Write,
         }

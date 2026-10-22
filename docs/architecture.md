@@ -5542,9 +5542,11 @@ point where a slot declared in a loop is uninitialized again.
   fields of one value of its type, read in order by extracts each read only
   there and its only readers, is that value (`foldTrivialStructCopy`).
   Only a result with one definition whose source has at most one is
-  forwarded, so the source's definition dominates every reader, and a copy
-  of a value held in storage only when it is its source's sole reader, since
-  a reader may consume it. The forwarding repeats until nothing forwards,
+  forwarded, so the source's definition dominates every reader. A
+  register-passable trivial source may gain readers, since a register is a
+  value no reader writes (R930: an owned parameter's callee copies it, see
+  the CSE paragraph); any other forwarded source (an extracted field) only
+  when the fold is its sole reader, since a reader may consume it. The forwarding repeats until nothing forwards,
   as the greedy driver folds to a fixpoint, so a struct copy whose fields
   were copies folds once they are forwarded. A `place.load` result is the place's value at the
   read: a backend may alias it to the place (Pliron's
@@ -6448,20 +6450,30 @@ concrete verifier rejects a reference slot read as its handle.
   materialization, a size or type-name query, a parameter list's address,
   a field or variant-tag read of a value register, or a SIMD construction,
   cast, or shuffle. A read of storage or through a reference (a
-  `var.use` borrow, or a copy of a slot held whole in one register that
-  runs no constructor, `place.load`, `ref.make`, `ref.read`, a field read
+  `var.use` borrow, or a copy of a slot of a register-passable trivial type
+  that runs no constructor, `place.load`, `ref.make`, `ref.read`, a field read
   through a reference) has only a read effect, and as MLIR's `CSE` does
   for an op whose only effect is a read (R929), `cse` erases it only
   when an identical read earlier in the same block matches it with no
   instruction between that may write: the walk counts writes, every
   instruction counting but those free of effects, reads, built-in
-  operators, declarations, and copies and drops of a one-register value
-  that run no code (which upstream does not emit), a region op counting
+  operators, declarations, and copies and drops of a register-passable
+  trivial value that run no code (which upstream does not emit), a region op counting
   through what its regions hold, as MLIR's recursive memory effects do, a
   `try` always, and a terminator when it runs a cleanup list; a read that
   misses shadows the entry it matched for the rest of its scope. Only a
-  result held whole in one register, or a reference handle, is merged,
-  since a reader may consume a value held in storage, and each merged
+  result of a register-passable trivial type
+  (`MirDeclarations::copy_is_identity`: a scalar, pointer, SIMD vector of
+  any width, `StringLiteral`, or a struct declaring
+  `TrivialRegisterPassable`), or a reference handle, is merged, as
+  upstream's parser holds only such a value in an SSA value (R930). A
+  register is a value no reader writes, so a merged one's consuming readers
+  copy it: the Pliron callee of an owned parameter of such a type copies
+  the aggregate the caller's pointer addresses into a slot of its own, as
+  upstream passes the value by value, rather than writing through to the
+  caller's register, and the VM's `UninitStorage` and `StoreToMem` copy
+  their operand rather than taking it. A value of any other type may own
+  what a consuming reader takes, so it is never merged. Each merged
   result and
   operand has one definition the walk has passed on the dominating path,
   since MIR does not verify that a definition dominates its reads. The
@@ -6473,8 +6485,9 @@ concrete verifier rejects a reference slot read as its handle.
   available at its op and its own arguments, and what it defines does not
   leave it, so sibling regions (an `if`'s arms, a `match`'s cases) never
   share an instruction, as MLIR's region scoping has it. A generator's
-  register of a parameter type is never merged, since its value is not
-  known to be held in one register.
+  `SIMD[dtype, width]` result merges whatever its parameters, since every
+  instance is register-passable trivial; a register of a parameter type
+  (`T`) is never merged, since an instance may own memory.
 - **The seam.** `analysis::post_elaborate_program` runs each pass over
   every concrete function but `__toplevel__`, on the driver thread after
   `native::mono` returns (timing counters are thread-local, and the

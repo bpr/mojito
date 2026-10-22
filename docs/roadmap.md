@@ -811,30 +811,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R930 CSE leaves values held in storage unmerged**
-
-  `cse` merges only a result held whole in one register, so two identical
-  multi-lane SIMD constructions or trivial-struct field reads stay apart,
-  where MLIR's `CSE` merges any op free of effects.
-  - It is a missing optimization, not a difference in semantics.
-  - The guard exists because a reader may consume a register-passable
-    value held in storage (an owned argument, an `UninitStorage`
-    initialization), as `canonicalize`'s copy forwarding also assumes.
-  - Done when a merged storage value's readers are proven non-consuming,
-    or a consuming reader copies, and a pass test merges two identical
-    `SIMD[DType.float32, 4]` constructions.
-  - Probe: in a generator, where the pre-elaboration `cse` runs (R926), a
-    result of a parameter type (`T`, `SIMD[dtype, width]` with a symbolic
-    width) is never merged, since `copy_is_identity` cannot say it is held
-    in one register: two `simd.make` splats of one operand at
-    `SIMD[dtype, width]` stay apart until each instance's `cse`.
-  - Probe: `cse` merges reads of memory only under the same guard, so
-    `def twin(p: Pt) -> Bool: return same(p, p)` over
-    `@fieldwise_init struct Pt(Copyable, Movable): var x: Int; var y: Int`
-    keeps two adjacent whole `place.load`s of `p` in concrete `twin`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1270 CSE does not merge built-in operators**
 
   `cse` keeps every `binary` and `unary` apart, where MLIR's `CSE` merges
@@ -2736,6 +2712,12 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     origin-bearing pointer is rejected, so `UnsafePointer(to=w)` inside the
     callee cannot be compared with the caller's.
   - It becomes a defect once pointer identity lands.
+  - Probe: MIR passes such an argument as a whole `place.load`, so `cse`
+    cannot merge the loads of a memory-only value its readers may consume:
+    `def twin(p: Pt) -> Bool: return same(p, p)` over
+    `@fieldwise_init struct Pt(Copyable, Movable): var x: Int; var y: Int`
+    keeps two adjacent whole `place.load`s of `p` in concrete `twin`,
+    where upstream passes `p`'s address twice and loads nothing.
   - Found while landing R672 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -7509,6 +7491,12 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Pinned by
     `conformance/probes/conforms_to_trivial_register_passable_undeclared.mojo`
     and `conformance/probes/trivial_register_passable_bound_undeclared.mojo`.
+  - Probe: `cse` never merges a generator's result of a
+    `T: TrivialRegisterPassable` type, since the bound admits a `List`
+    instance whose consuming readers would share one buffer; once the
+    bound holds, `MirDeclarations::copy_is_identity` can answer yes for
+    such a `T`: `def both[T: TrivialRegisterPassable](x: T) -> Int:
+    return pair(x, x)` keeps two `var.use` copies of `x` in the generator.
   - Found while landing R838 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.

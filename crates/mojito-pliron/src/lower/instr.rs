@@ -32,7 +32,10 @@ impl FnLowering<'_> {
         // out-pointer as argument 0, shifting every parameter right by one;
         // aggregate parameter slots alias the incoming pointer directly
         // (write-through — `out`/`mut` receivers mutate caller storage), so
-        // they allocate nothing.
+        // they allocate nothing. An owned aggregate of a register-passable
+        // trivial type is copied into a slot of the callee's own, as
+        // upstream passes such a value by value: the caller's register is a
+        // value other readers may share.
         self.current = Some(entry);
         let signature = &self.signatures[self.name];
         let arg_offset = usize::from(signature.sret.is_some() || signature.outcome.is_some());
@@ -70,6 +73,12 @@ impl FnLowering<'_> {
                     let null = ZeroOp::new(ctx, ptr_ty);
                     self.append(ctx, null.get_operation(), None);
                     self.var_slots.push(null.get_result(ctx));
+                }
+                Some(LowerTy::Aggregate { ty, layout }) if self.copied_param(var) => {
+                    let incoming = entry.deref(ctx).get_argument(physical_index(var));
+                    let slot = self.value_storage(ctx, ty, *layout);
+                    self.copy_value(ctx, slot, incoming, ty, *layout, Reg(u32::MAX));
+                    self.var_slots.push(slot);
                 }
                 // Aggregate and `mut`/`ref` parameter slots alias the
                 // incoming pointer (write-through).
@@ -947,5 +956,20 @@ impl FnLowering<'_> {
                 Err(self.unsupported(format!("lowering-marked construct: {message}"), None))
             }
         }
+    }
+
+    /// Whether the parameter `var` is an owned (`var`) one of a
+    /// register-passable trivial type, whose callee copies the caller's
+    /// value rather than writing through to it.
+    fn copied_param(&self, var: usize) -> bool {
+        let flag = |flags: &[bool]| flags.get(var).copied().unwrap_or(false);
+        flag(&self.func.owned_params)
+            && !flag(&self.func.deinit_params)
+            && !flag(&self.func.ref_params)
+            && self
+                .func
+                .param_types
+                .get(var)
+                .is_some_and(|ty| self.mir_declarations.copy_is_identity(ty))
     }
 }
