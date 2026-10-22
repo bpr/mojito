@@ -4376,9 +4376,7 @@ fn for_each_lifecycle_site_mut(
         })
     };
     for block in blocks.iter_mut() {
-        if let MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } =
-            &mut block.term
-        {
+        if let MirTerm::ReturnWithCleanup { cleanup, .. } = &mut block.term {
             name_cleanup(cleanup, name)?;
         }
         for instruction in &mut block.instrs {

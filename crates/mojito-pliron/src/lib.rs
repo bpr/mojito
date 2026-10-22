@@ -112,27 +112,12 @@ pub fn compile(
         structs: &struct_index,
     };
 
-    // Native lowering reads the structured form, as upstream's
-    // `LowerControlFlow` does: a lowered artifact (CFG blocks) is refused.
     let reachable_functions: Vec<(&str, &MirFunction)> = program
         .functions
         .iter()
         .filter(|(name, _)| reachable.contains(name.as_str()))
         .map(|(name, function)| (name.as_str(), function))
         .collect();
-    if let Some((name, _)) = reachable_functions
-        .iter()
-        .find(|(_, function)| !mojito_mir::mir::verify::is_structured_shape(function))
-    {
-        return Err(PlironError {
-            function: Some((*name).to_string()),
-            kind: PlironErrorKind::Unsupported {
-                construct: "a lowered body (CFG blocks) reached native lowering".to_string(),
-            },
-            location: None,
-        });
-    }
-
     // Declare every reachable function first (program order, so output is
     // deterministic and calls may reference any of them), then lower bodies.
     let mut signatures = HashMap::new();

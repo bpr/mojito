@@ -104,8 +104,6 @@ pub(super) fn lower_fn_nested(
     }
     let mut thunks = ComptimeThunks::for_owner(name);
     let mut f = lower_cfg_nested(
-        name,
-        invariant_errors,
         &cfg,
         declared,
         &registry,
@@ -709,8 +707,6 @@ fn lower_nested_node(
     }
     let mut thunks = ComptimeThunks::for_owner(mangled);
     let mut nf = lower_cfg_nested(
-        mangled,
-        invariant_errors,
         &ncfg,
         declared,
         &registry,

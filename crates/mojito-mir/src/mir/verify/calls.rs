@@ -659,9 +659,13 @@ pub(super) fn verify_function(
     }
     verify_scope(name, function, declarations, errors);
     verify_slot_ends(name, function, errors);
+    if function.blocks.len() != 1 {
+        errors.push(format!(
+            "MIR function '{name}' body holds {} blocks",
+            function.blocks.len()
+        ));
+    }
     let context = RegionContext {
-        region_len: function.blocks.len(),
-        function_len: function.blocks.len(),
         regions: vec![RegionKind::Function],
         protected: false,
     };

@@ -1130,11 +1130,6 @@ fn comptime_for_unrolls_one_copy_per_iteration() {
             .into_iter()
             .filter(|instruction| matches!(instruction, MirInstr::ComptimeFor { .. }))
             .count()
-            + function
-                .blocks
-                .iter()
-                .filter(|block| matches!(block.term, MirTerm::ComptimeFor { .. }))
-                .count()
     };
     let additions = |function: &MirFunction| {
         nested_instructions(&function.blocks)
@@ -1236,12 +1231,6 @@ fn comptime_for_steps_an_iterator_one_copy_per_element() {
         .map(|(_, function)| function)
         .expect("the instance is emitted");
     assert_eq!(iterator_loops(instance), 0);
-    assert!(
-        instance
-            .blocks
-            .iter()
-            .all(|block| !matches!(block.term, MirTerm::ComptimeFor { .. }))
-    );
     assert_eq!(additions(instance), 3, "one body copy per element");
 }
 
@@ -1367,11 +1356,6 @@ fn comptime_branch_selection_keeps_the_taken_arm() {
             .into_iter()
             .filter(|instruction| matches!(instruction, MirInstr::ComptimeIf { .. }))
             .count()
-            + function
-                .blocks
-                .iter()
-                .filter(|block| matches!(block.term, MirTerm::ComptimeBranch { .. }))
-                .count()
     };
     let prints_else = |function: &MirFunction| {
         nested_instructions(&function.blocks)

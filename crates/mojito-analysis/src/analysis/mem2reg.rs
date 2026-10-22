@@ -40,16 +40,12 @@
 //! arguments. A slot nothing stores or declares is a compile-time
 //! parameter's binding, which the elaborator substitutes, and keeps its
 //! slot.
-//!
-//! A lowered body is left alone, by both passes: Mojo has no `cf`
-//! dialect, so upstream's never meets one.
 
 use super::canonicalize::definition_counts;
 use super::pre_elaboration::BodyPass;
 use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::instruction_result_regs;
-use mojito_mir::mir::verify::is_structured_shape;
 use mojito_mir::mir::{
     Const, MirBlock, MirCase, MirDeclarations, MirElif, MirFunction, MirInstr, MirTerm, Reg,
     RegionFrame, UseMode, cleanup_slots, count_register_reads, instruction_regions,
@@ -77,9 +73,6 @@ pub const LOWER_ARG_CONVENTIONS: BodyPass = BodyPass {
 /// promote to registers, and remove it from the function; returns whether
 /// any was.
 pub fn mem_2_reg(_name: &str, function: &mut MirFunction, declarations: &MirDeclarations) -> bool {
-    if !is_structured_shape(function) {
-        return false;
-    }
     let (slots, erased_results, erased) = promote_in_regions(function, declarations);
     if slots.is_empty() {
         return false;
@@ -115,9 +108,6 @@ pub fn lower_arg_conventions(
     function: &mut MirFunction,
     declarations: &MirDeclarations,
 ) -> bool {
-    if !is_structured_shape(function) {
-        return false;
-    }
     let eligible: BTreeSet<VarId> = (0..function.n_params)
         .filter(|&param| {
             !function.ref_params.get(param).copied().unwrap_or(true)
@@ -821,9 +811,7 @@ fn take_census(list: usize, blocks: &[MirBlock], census: &mut HashMap<VarId, Cen
                 keep(census, cleanup_slots(cleanup));
             }
         }
-        if let MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } =
-            &block.term
-        {
+        if let MirTerm::ReturnWithCleanup { cleanup, .. } = &block.term {
             keep(census, cleanup_slots(cleanup));
         }
     }

@@ -119,9 +119,7 @@ impl Walk<'_> {
                     self.blocks(region);
                 }
             }
-            if let MirTerm::ReturnWithCleanup { cleanup, .. }
-            | MirTerm::EscapeJump { cleanup, .. } = &block.term
-            {
+            if let MirTerm::ReturnWithCleanup { cleanup, .. } = &block.term {
                 self.cleanup(cleanup);
             }
         }

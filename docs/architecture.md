@@ -618,8 +618,8 @@ a loop's arguments stays a parallel copy. A `break`, `continue`,
 names (`mir::region_exit`, `RegionFrame::names`); one leaving a `try` part
 for an op outside it pends on each `finally` it crosses as a return does,
 its values staged at the site. `hlcf.unreachable` is `llvm.unreachable`.
-Concrete MIR reaches `compile` structured, and a lowered body (CFG blocks,
-which only older MIR text holds) is refused. Owned register
+Concrete MIR reaches `compile` structured, every region one block, as
+`mir::verify` requires. Owned register
 temporaries follow the region tree: one is released in the block defining
 it, after the instruction there that reads it last (a region op reads what
 its regions read), and on each terminator leaving that block before then.
@@ -874,11 +874,10 @@ keeps a `comptime if`, the checker types every arm with the binders symbolic
 and records each condition it compiles as a constraint
 (`SemanticAdjustment::ComptimeCondition`), HIR and MIR lower it as the
 `ComptimeIf` region op (`hlcf.comptime.if`), every condition first, then one
-region per arm (older MIR text spells it as a chain of `ComptimeBranch`
-terminators — branches whose condition is a `GenericConstraint` over the
-function's binders, not a register), and `native::mono` decides it under the instance's bindings after drop
-elaboration (`select_comptime_branches`), keeping the taken arm and pruning
-the other (`mir::prune_unreachable_blocks`) before any call in it is
+region per arm, each condition a `GenericConstraint` over the function's
+binders, not a register, and `native::mono` decides it under the
+instance's bindings after drop elaboration (`select_comptime_branches`),
+keeping the taken arm and erasing the others before any call in them is
 enqueued. A condition the constraint compiler does not close (an
 application) is lowered as a zero-parameter thunk over the binders in scope at
 the condition — the function's, then the enclosing `comptime for` indices,
@@ -1085,7 +1084,7 @@ alias. A thunk reads a local `comptime` value bound before it (`comptime k
 = n + 1`) as the parameter expression it denotes
 (`EnclosingBinders::comptime_bindings`). HIR lowers the
 loop as an `HirInstr::ComptimeFor` region op, MIR lowering as the
-`ComptimeFor` region op (older MIR text as the `ComptimeFor` terminator) —
+`ComptimeFor` region op —
 the binder, the slot the body reads it through, and the
 sequence, as upstream's `hlcf.comptime.for` iterates a compile-time sequence —
 the ownership analysis and drop
@@ -3171,7 +3170,10 @@ legacy statement snippets in phase-level tests.
 
 ### MIR Blocks And Terminators
 
-MIR blocks are simple:
+MIR blocks are simple, and a function body or region holds exactly one
+(`mir::verify` requires it, as upstream's `hlcf` regions are
+`SizedRegion<1>`); MIR has no CFG above a backend, as upstream has none
+above LLVM:
 
 ```rust
 pub struct MirBlock {
@@ -3180,16 +3182,15 @@ pub struct MirBlock {
 }
 ```
 
-Terminators are:
+Besides the `hlcf` region terminators (below), the terminators are:
 
 ```rust
 pub enum MirTerm {
-    Jump(MirBlockId),
-    Branch { cond: Reg, then_b: MirBlockId, else_b: MirBlockId },
     Return(Option<Reg>),
     ReturnWithCleanup { value: Option<Reg>, cleanup: Vec<CleanupDrop> },
     TryYield,
-    EscapeJump { target: MirBlockId, cleanup: Vec<CleanupDrop> },
+    // Yield, ElifCond, Break, Continue, ComptimeYield, ComptimeBreak,
+    // ComptimeContinue, MatchNext, MatchComplete, Unreachable
 }
 ```
 
@@ -3198,8 +3199,7 @@ destructor the drop runs, as a `DropVar` does, so the backends call it
 without looking it up from the slot's type.
 
 `TryYield` (`lit.try.yield`) completes a `try` part and never ends a function
-body. `EscapeJump` is for a `break`/`continue` inside a try region whose
-target belongs to the enclosing function. Drop elaboration writes
+body. Drop elaboration writes
 `ReturnWithCleanup` on a return that crosses a `finally`, listing what the
 return still holds once the crossed `finally` blocks have run; the VM runs
 every pending `finally` before destroying those values and completing the
@@ -3319,16 +3319,11 @@ its `break`s, and a `break`, `continue`, or `match` exit resolves through
 `RegionFrame` and `region_exit`, running each `finally` it crosses. A body
 that ends no slot (no `drop.var`, `var.consume`, or
 cleanup list), as every pre-drop body is but for explicit destroys, has no
-finding without one. A third
-mode, `verify_structured_function_in`, adds upstream's structured form for
-a body: every region, the body included, one block, and no CFG terminator
-(`Jump`, `Branch`, `ComptimeBranch`, the `ComptimeFor` terminator,
-`EscapeJump`); its shape half, `verify_structured_shape`, runs in
-production on every body `lower_cfg_nested` builds, each finding a MIR
-invariant error, and pre-drop `verify` checks those bodies structured,
-before the ownership check lowers them. `verify_concrete`
-rejects every structured op and region
-terminator, which the transitional lowering removes first.
+finding without one. Every mode requires upstream's structured shape:
+every region, the body included, one block (a "body holds N blocks" or
+"region holds N blocks" finding), as `SizedRegion<1>` is an op verifier's
+constraint upstream. `verify_concrete` rejects every compile-time region
+op and its region terminators.
 `native::mono` verifies its output in the concrete mode, and asks
 `concrete_function_findings` per instance so that a failure names the
 instance it came from. The concrete mode also rejects a declaration that
@@ -3425,8 +3420,8 @@ too. Elaborated MIR carries none.
 `MirDeclarations` alone it checks place completeness and projection
 consistency, register bounds and register-type completeness, store/binding/
 return/call-argument type consistency (through the checker's coercion
-predicate — never re-derived rules), CFG-edge validity (jump-target bounds per
-region, `TryYield`/`EscapeJump` only inside `try` sub-regions), effect
+predicate — never re-derived rules), structured shape (one block per region,
+`TryYield` only inside `try` sub-regions), effect
 protection (a raising site in a nonraising function must sit under a handler),
 and reference invariants (`StoreRef` targets reference storage; declared
 write-back parameters receive caller places). For method-dispatched nominal subscripts it also
@@ -4020,7 +4015,7 @@ result—not permission for compatibility APIs to guess from unchecked input.
 
 ### Try In MIR
 
-`MirInstr::Try` contains mini-CFGs:
+`MirInstr::Try` contains regions, each one block:
 
 ```rust
 Try {
@@ -4032,9 +4027,9 @@ Try {
 }
 ```
 
-Those mini-CFGs share the enclosing function's register and variable spaces. They
-have local block numbers, but their instructions address the same `regs` and
-`vars` vectors as the outer function frame.
+Those regions share the enclosing function's register and variable spaces.
+Each block is its region's `bb0`, but its instructions address the same
+`regs` and `vars` vectors as the outer function frame.
 
 The structure mirrors source-level exception semantics:
 
@@ -4092,10 +4087,10 @@ they define, as `ControlFlowVerifier`'s `verifyTypesAlongEdge` does), `ComptimeY
 `ComptimeContinue`, `MatchNext`/`MatchComplete`, and `Unreachable`;
 `Return` may end any region.
 `instruction_regions`/`instruction_regions_mut` walk every op's regions in
-a fixed order, and `prune_unreachable_blocks`, `block_successors`, the
-analyses, and the elaborator's slot renumbering walk through them.
+a fixed order, and the analyses and the elaborator's slot renumbering walk
+through them.
 `mir::visit` walks every type and compile-time parameter site of a body,
-regions and terminators included, as MLIR's `AttrTypeReplacer` does, and
+regions included, as MLIR's `AttrTypeReplacer` does, and
 the elaborator substitutes an instance's bindings through it.
 
 MIR lowering builds `and`/`or`, conditional expressions, comparison
@@ -4187,12 +4182,12 @@ consumed on the back edge. Substitution keeps the taken arm with the drops the
 analysis placed and never recomputes a last use
 ([`docs/notes/comptime-region-ownership.md`](notes/comptime-region-ownership.md)).
 A `comptime if` in a generic `def` reaches the analysis as that region: the
-`ComptimeBranch` terminator joins like a `Branch`, and the elaborator keeps the
+`ComptimeIf` op joins its arms like an `if`, and the elaborator keeps the
 taken arm with the destroys the analysis placed at its entry. A `comptime
-for` the template serves reaches it as a loop: the `ComptimeFor` header's
-successors are its body and its exit, the body's back edge returns to the
-header, a compile-time `break` and `continue` are the loop's edges, and the
-elaborator's copies carry the destroys the analysis placed in the body.
+for` the template serves reaches it as a loop: the `ComptimeFor` op's body
+is iterated to a fixpoint, a compile-time `break` and `continue` are the
+loop's exits, and the elaborator's copies carry the destroys the analysis
+placed in the body.
 
 ### Persistent local loans
 
@@ -4894,7 +4889,7 @@ current Mojo:
   binding and one whole load name the slot (`lending_use`), the load,
   construction, binding, and `a`'s `DropVar` go and the slot's load reads
   `a` itself (`lend`). Every death of the slot — its `DropVar`, a `try`
-  body's `cleanup`, an exit's `ReturnWithCleanup`/`EscapeJump` cleanup — is
+  body's `cleanup`, an exit's `ReturnWithCleanup` cleanup — is
   then renamed to `a` function-wide, so `a` dies when the call returns, or
   on its raise before the handler, as Mojo binds the borrowed temporary to
   the dead source's storage. A raising argument evaluated after the
@@ -5333,8 +5328,7 @@ to back, so a raise destroys the body's live values newest declaration first,
 as Mojo does.
 
 A `break`/`continue` leaving a `try` part carries no cleanup list: what dies
-on the exit died before it, in the part. (An `EscapeJump` in older MIR text
-keeps its list, which the slot-ends check still reads.)
+on the exit died before it, in the part.
 
 Iterator-driven loops also place an explicit drop at their common exhaustion or
 `break` exit. A `return` cannot reach that block, so HIR lists its current
@@ -5470,14 +5464,8 @@ point where a slot declared in a loop is uninitialized again.
   `removed_unused_results`, `removed_dead_loops`,
   `removed_unused_loop_results`, `removed_unused_loop_args`,
   `folded_comptime_ifs`).
-  Every body the pipeline reads is structured, so these patterns are the
-  production path. A lowered body, which only `mojito opt` hands it, takes
-  the region-generic rules below alone: Mojo has no `cf` dialect, so no
-  pass of its pipeline rewrites a CFG, and the R836 CFG rewrites and the
-  constant-branch fold went with R881. It then erases
-  the blocks the entry does not reach, at the
-  function level and in each `try` region from its own entry
-  (`mir::prune_unreachable_blocks`, MLIR's `eraseUnreachableBlocks`), and
+  Every body is structured, so these patterns are the production path, as
+  Mojo has no `cf` dialect. It then
   cuts each `try`'s raise-edge cleanup to the slots a remaining raise path
   still holds (`verify::cut_try_cleanups`, over the slot-ends walk of
   `verify/drops.rs`, which walks the structured body and finds each list
@@ -5527,8 +5515,8 @@ point where a slot declared in a loop is uninitialized again.
   An erased result loses its type and span; registers are not renumbered.
   Erasure can empty an arm, so the `hlcf` patterns and erasure repeat until
   neither changes anything.
-  Its `--timings` counters are `folded_constants`, `erased_blocks`,
-  `forwarded_copies`, and `erased_instructions`.
+  Its `--timings` counters are `folded_constants`, `forwarded_copies`,
+  and `erased_instructions`.
 - **`inline-parametric` opens the second round and runs again in the third**
   (`analysis::INLINE_PARAMETRIC`, `analysis/inline_parametric.rs`, R784),
   upstream's `InlineParametric`. It follows the callees whose declaration's
@@ -5811,8 +5799,7 @@ point where a slot declared in a loop is uninitialized again.
   upstream's is, and a `call.indirect` through the slot keeps it;
   `canonicalize` then forwards a `value.copy` of such a closure and erases
   the unread `closure.make` (`MirInstr::would_be_trivially_dead`).
-  A structured body (`mir::verify::is_structured_shape`) is promoted as
-  upstream's `processRegion` promotes `hlcf`: one scoped walk, each region
+  A body is promoted as upstream's `processRegion` promotes `hlcf`: one scoped walk, each region
   a scope, in which a `var.store` binds the slot's current value and goes,
   a read becomes a `value.copy` of that value (the `canonicalize` after it
   forwards it), and a `var.declare` binds nothing while a `drop.var` or
@@ -5840,16 +5827,14 @@ point where a slot declared in a loop is uninitialized again.
   and except arguments; and a slot nothing stores or declares is a
   compile-time parameter's binding the elaborator substitutes by name
   (R950), and keeps its slot. The other mentions go and the slot leaves
-  the function (`mir::retire_slots`). A lowered body is left alone, as
-  upstream's `Mem2Reg` never meets a CFG (`mojito opt` refuses one).
+  the function (`mir::retire_slots`).
   Its `--timings` counters are `promoted_slots` and
   `erased_slot_instructions`.
 - **`sccp` runs between the two `canonicalize` runs** (`analysis::SCCP`,
   `analysis/sccp.rs`, R781), upstream's `SCCP` (MLIR's sparse conditional
   constant propagation). Each register takes a lattice value, unknown, one
   constant, or overdefined, over the regions the walk makes executable,
-  the body's own first. A lowered body is left alone (`mojito opt`
-  refuses one), as Mojo has no `cf` dialect. An `if` makes only the arm a
+  the body's own first. An `if` makes only the arm a
   constant
   condition takes executable, or the first elif's condition region when it
   is false, none while the condition is unknown, and both otherwise, as
@@ -6277,12 +6262,11 @@ point where a slot declared in a loop is uninitialized again.
   values `bindings()` reports.
 - **Verification.** In debug builds each body is verified after every body
   or call-graph pass that changed it (`run_pipeline`), its structured shape
-  included (`verify_structured_function_in`), each finding naming
+  included, each finding naming
   the pass, into `invariant_errors` or
   the package body's verdict (`PackageBodies::findings`), which the
   elaborator refuses when it materializes the body. The post-drop verify
-  after the seam runs in every build, and checks every body's structured
-  shape (`verify_structured_shape`).
+  after the seam runs in every build.
 - **Pass tests.** `pass_named` looks a pass up by name, as MLIR's pass
   registry does: every `PIPELINE` pass, plus `ELABORATE_DROPS`
   (`elaborate-drops`), drop elaboration run on request, and `SIMPLIFY_CF` (`simplify-cf`), which only the post-elaboration
@@ -6292,10 +6276,9 @@ point where a slot declared in a loop is uninitialized again.
   MIR artifact, runs the named passes in order (a program pass over the
   program, a body pass over every body but `__toplevel__`, a call-graph pass
   over the same bodies callees first, with no package), and verifies the
-  whole program after each pass in every build. It refuses
-  `elaborate-drops`, `lower-arg-conventions`, `mem-2-reg`, `simplify-cf`,
-  and `sccp` on a body that is not structured (`OptError::Unstructured`),
-  since upstream runs them only on `hlcf`. `tests/mir_pass_test.rs` pins each case under
+  whole program after each pass in every build; loading verifies the
+  input, so a body that is not structured fails at load.
+  `tests/mir_pass_test.rs` pins each case under
   `tests/mir_passes/<pass>/` by its `functions:` section
   (`mir::text::disassemble_functions`), so a format bump breaks no expected
   file.
@@ -6424,9 +6407,8 @@ concrete verifier rejects a reference slot read as its handle.
   R991), so callers apart only by that read merge with their callees.
 
 - **CSE.** `cse` (`analysis::CSE`, `analysis/cse.rs`, R845) is MLIR's
-  `CSE`: it walks each block list's dominator tree
-  (`mir::immediate_dominators`, Cooper, Harvey, and Kennedy's iteration
-  over the reverse postorder) with a scoped table,
+  `CSE`: it walks each region's dominator tree, which for a region's one
+  block is that block, with a scoped table,
   and an instruction free of effects that a dominating one matches
   (mnemonic, attributes, operands, result type) is erased, its result's
   reads renamed. Free of effects is not

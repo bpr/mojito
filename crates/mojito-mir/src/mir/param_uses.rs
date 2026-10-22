@@ -1084,9 +1084,7 @@ impl SlotReads<'_> {
                     self.blocks(region);
                 }
             }
-            if let MirTerm::ReturnWithCleanup { cleanup, .. }
-            | MirTerm::EscapeJump { cleanup, .. } = &block.term
-            {
+            if let MirTerm::ReturnWithCleanup { cleanup, .. } = &block.term {
                 self.drops(cleanup_slots(cleanup));
             }
         }
@@ -1381,12 +1379,6 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
                 for region in instruction_regions(instruction) {
                     self.nominal_blocks(function, declarations, region);
                 }
-            }
-            if matches!(
-                block.term,
-                MirTerm::ComptimeBranch { .. } | MirTerm::ComptimeFor { .. }
-            ) {
-                self.visit(&block.term);
             }
         }
     }

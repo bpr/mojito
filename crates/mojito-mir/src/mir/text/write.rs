@@ -1700,42 +1700,6 @@ fn instruction_value(instruction: &MirInstr) -> String {
 fn term_value(term: &MirTerm) -> String {
     let tag = terminator_mnemonic(term);
     match term {
-        MirTerm::Jump(target) => record(tag, &[("target", format!("bb{target}"))]),
-        MirTerm::Branch {
-            cond,
-            then_b,
-            else_b,
-        } => record(
-            tag,
-            &[
-                ("condition", reg_value(*cond)),
-                ("then", format!("bb{then_b}")),
-                ("else", format!("bb{else_b}")),
-            ],
-        ),
-        MirTerm::ComptimeBranch {
-            cond,
-            then_b,
-            else_b,
-        } => record(
-            tag,
-            &[
-                ("condition", constraint(cond)),
-                ("then", format!("bb{then_b}")),
-                ("else", format!("bb{else_b}")),
-            ],
-        ),
-        MirTerm::ComptimeFor {
-            binder,
-            source,
-            body,
-            exit,
-        } => {
-            let mut fields = vec![("binder", binder_ref(binder))];
-            fields.extend(sequence_fields(source));
-            fields.extend([("body", format!("bb{body}")), ("exit", format!("bb{exit}"))]);
-            record(tag, &fields)
-        }
         MirTerm::Return(value) => record(tag, &[("value", option(value.map(reg_value)))]),
         MirTerm::ReturnWithCleanup { value, cleanup } => record(
             tag,
@@ -1763,13 +1727,6 @@ fn term_value(term: &MirTerm) -> String {
             &[
                 ("label", option(label.map(loop_label))),
                 ("values", list(values.iter().map(|v| reg_value(*v)))),
-            ],
-        ),
-        MirTerm::EscapeJump { target, cleanup } => record(
-            tag,
-            &[
-                ("target", format!("bb{target}")),
-                ("cleanup", cleanup_value(cleanup)),
             ],
         ),
     }

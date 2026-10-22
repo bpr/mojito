@@ -513,10 +513,6 @@ impl Decoder {
         self.identity(Some(value), "$v").map(|v| v as u32)
     }
 
-    pub(super) fn block_id(&mut self, value: &Value) -> Option<usize> {
-        self.identity(Some(value), "bb")
-    }
-
     pub(super) fn regs(&mut self, value: &Value) -> Vec<Reg> {
         self.list(value)
             .map(|values| values.iter().filter_map(|v| self.reg(v)).collect())

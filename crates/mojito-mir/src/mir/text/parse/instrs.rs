@@ -936,28 +936,6 @@ impl Decoder {
     pub(super) fn term(&mut self, value: &Value) -> Option<MirTerm> {
         let (tag, fields) = self.any_record(value)?;
         match tag {
-            "jump" => Some(MirTerm::Jump(self.req(
-                value,
-                fields,
-                "target",
-                Self::block_id,
-            )?)),
-            "branch" => Some(MirTerm::Branch {
-                cond: self.req(value, fields, "condition", Self::reg)?,
-                then_b: self.req(value, fields, "then", Self::block_id)?,
-                else_b: self.req(value, fields, "else", Self::block_id)?,
-            }),
-            "comptime_branch" => Some(MirTerm::ComptimeBranch {
-                cond: Box::new(self.req(value, fields, "condition", Self::constraint)?),
-                then_b: self.req(value, fields, "then", Self::block_id)?,
-                else_b: self.req(value, fields, "else", Self::block_id)?,
-            }),
-            "comptime_for.iterator" => Some(MirTerm::ComptimeFor {
-                binder: self.req(value, fields, "binder", Self::binder_ref)?,
-                source: self.comptime_sequence(value, fields)?,
-                body: self.req(value, fields, "body", Self::block_id)?,
-                exit: self.req(value, fields, "exit", Self::block_id)?,
-            }),
             "return" => Some(MirTerm::Return(self.req(
                 value,
                 fields,
@@ -969,10 +947,6 @@ impl Decoder {
                 cleanup: self.req(value, fields, "cleanup", |d, v| Some(d.cleanup_drops(v)))?,
             }),
             "try.yield" => Some(MirTerm::TryYield),
-            "escape" => Some(MirTerm::EscapeJump {
-                target: self.req(value, fields, "target", Self::block_id)?,
-                cleanup: self.req(value, fields, "cleanup", |d, v| Some(d.cleanup_drops(v)))?,
-            }),
             "yield" => Some(MirTerm::Yield(self.req(
                 value,
                 fields,

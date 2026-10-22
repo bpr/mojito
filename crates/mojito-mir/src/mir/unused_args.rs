@@ -396,9 +396,7 @@ fn collect_used(blocks: &[MirBlock], trivial: &dyn Fn(VarId) -> bool, used: &mut
                 collect_used(region, trivial, used);
             }
         }
-        if let MirTerm::ReturnWithCleanup { cleanup: slots, .. }
-        | MirTerm::EscapeJump { cleanup: slots, .. } = &block.term
-        {
+        if let MirTerm::ReturnWithCleanup { cleanup: slots, .. } = &block.term {
             cleanup(slots, used);
         }
     }
@@ -419,9 +417,7 @@ fn remove_drops(blocks: &mut [MirBlock], retired: &BTreeSet<VarId>) {
                 remove_drops(region, retired);
             }
         }
-        if let MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } =
-            &mut block.term
-        {
+        if let MirTerm::ReturnWithCleanup { cleanup, .. } = &mut block.term {
             cleanup.retain(|drop| !retired.contains(&drop.var));
         }
     }

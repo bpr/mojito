@@ -1,16 +1,16 @@
 //! The walk over every type and compile-time parameter site of a MIR body.
 //!
 //! It reaches them as MLIR's `AttrTypeReplacer` reaches every op's
-//! attributes and types, regions and terminators included.
+//! attributes and types, regions included.
 //! A client implements [`MutTypeVisitor`], one hook per kind of site, and
 //! drives it with [`walk_function_mut`] or [`walk_blocks_mut`]. The walk
-//! matches every [`MirInstr`] and [`MirTerm`] variant by name, so a new
-//! variant cannot skip it. Within an instruction the sites are visited in a
+//! matches every [`MirInstr`] variant by name, so a new variant cannot skip
+//! it. Within an instruction the sites are visited in a
 //! fixed order, which is the order a failing client reports its first error
 //! in.
 
 use super::{
-    Const, MirBlock, MirFunction, MirInstr, MirParamArg, MirPlace, MirSubscriptCall, MirTerm, Proj,
+    Const, MirBlock, MirFunction, MirInstr, MirParamArg, MirPlace, MirSubscriptCall, Proj,
     instruction_regions_mut,
 };
 use mojito_checked::checked::{CheckedIteratorCall, ComptimeSequence};
@@ -106,7 +106,7 @@ pub trait MutTypeVisitor {
     /// A constant an instruction reads or addresses: a `Const`'s and a
     /// parameter list address's values.
     fn visit_constant(&mut self, constant: &mut Const) -> Result<(), Self::Error>;
-    /// A parameter an instruction or terminator names: a constructed type
+    /// A parameter an instruction names: a constructed type
     /// parameter, a `comptime for` binder.
     fn visit_param_ref(&mut self, param: &mut ParamRef) -> Result<(), Self::Error>;
     fn visit_constraint(&mut self, cond: &mut GenericConstraint) -> Result<(), Self::Error>;
@@ -148,8 +148,8 @@ pub fn walk_function_mut<V: MutTypeVisitor + ?Sized>(
     walk_blocks_mut(visitor, &mut function.blocks)
 }
 
-/// Visit each block's instructions, each followed by its regions, then the
-/// block's terminator.
+/// Visit each block's instructions, each followed by its regions. A
+/// terminator names no type or parameter site.
 pub fn walk_blocks_mut<V: MutTypeVisitor + ?Sized>(
     visitor: &mut V,
     blocks: &mut [MirBlock],
@@ -161,7 +161,6 @@ pub fn walk_blocks_mut<V: MutTypeVisitor + ?Sized>(
                 walk_blocks_mut(visitor, region)?;
             }
         }
-        walk_terminator_mut(visitor, &mut block.term)?;
     }
     Ok(())
 }
@@ -408,37 +407,6 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
     }
 }
 
-/// Visit the parameter sites of one terminator: a `comptime if` arm test's
-/// condition, a `comptime for` header's binder and sequence.
-pub fn walk_terminator_mut<V: MutTypeVisitor + ?Sized>(
-    visitor: &mut V,
-    term: &mut MirTerm,
-) -> Result<(), V::Error> {
-    match term {
-        MirTerm::ComptimeBranch { cond, .. } => visitor.visit_constraint(cond),
-        MirTerm::ComptimeFor { binder, source, .. } => {
-            visitor.visit_param_ref(binder)?;
-            visitor.visit_sequence(source)
-        }
-        MirTerm::Jump(_)
-        | MirTerm::Branch { .. }
-        | MirTerm::Return(_)
-        | MirTerm::ReturnWithCleanup { .. }
-        | MirTerm::TryYield
-        | MirTerm::EscapeJump { .. }
-        | MirTerm::Yield(_)
-        | MirTerm::ElifCond { .. }
-        | MirTerm::Break { .. }
-        | MirTerm::Continue { .. }
-        | MirTerm::ComptimeYield(_)
-        | MirTerm::ComptimeBreak(_)
-        | MirTerm::ComptimeContinue(_)
-        | MirTerm::MatchNext(_)
-        | MirTerm::MatchComplete(_)
-        | MirTerm::Unreachable => Ok(()),
-    }
-}
-
 /// Visit a place's root type, its projection types, the alternatives its
 /// variant projections select, then its designated type.
 pub fn walk_place_mut<V: MutTypeVisitor + ?Sized>(
@@ -550,7 +518,7 @@ fn visit_vector_slots<V: MutTypeVisitor + ?Sized>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mir::Reg;
+    use crate::mir::{MirTerm, Reg};
 
     /// Counts each hook's visits and the sites its types sit at.
     #[derive(Default)]
@@ -623,55 +591,57 @@ mod tests {
             param_types: vec![int()],
             ret_ty: Some(int()),
             reg_types: std::iter::once((0, int())).collect(),
-            blocks: vec![
-                MirBlock {
-                    instrs: vec![
-                        MirInstr::Const {
-                            dest: Reg(0),
-                            k: Const::Int(1),
-                        },
-                        MirInstr::MakeVariant {
-                            dest: Reg(1),
-                            alternatives: vec![int()],
-                            index: VariantIndex::Known(0),
-                            value: Reg(0),
-                            constructor: None,
-                        },
-                        MirInstr::SimdShuffle {
-                            dest: Reg(2),
-                            value: Reg(1),
-                            other: None,
-                            mask: LaneMask::Known(vec![0]),
-                        },
-                        MirInstr::MakeSimd {
-                            dest: Reg(3),
-                            dtype: SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
-                            width: SimdWidth::Known(4),
-                            elems: vec![Reg(0)],
-                        },
-                        MirInstr::LoadPlace {
-                            dest: Reg(4),
-                            place,
-                        },
-                        MirInstr::Try {
-                            body: region,
-                            handler: None,
-                            orelse: None,
-                            finalbody: None,
-                            cleanup: Vec::new(),
-                        },
-                    ],
-                    term: MirTerm::ComptimeBranch {
-                        cond: Box::new(GenericConstraint::Bool(true)),
-                        then_b: 1,
-                        else_b: 1,
+            blocks: vec![MirBlock {
+                instrs: vec![
+                    MirInstr::Const {
+                        dest: Reg(0),
+                        k: Const::Int(1),
                     },
-                },
-                MirBlock {
-                    instrs: Vec::new(),
-                    term: MirTerm::Return(None),
-                },
-            ],
+                    MirInstr::MakeVariant {
+                        dest: Reg(1),
+                        alternatives: vec![int()],
+                        index: VariantIndex::Known(0),
+                        value: Reg(0),
+                        constructor: None,
+                    },
+                    MirInstr::SimdShuffle {
+                        dest: Reg(2),
+                        value: Reg(1),
+                        other: None,
+                        mask: LaneMask::Known(vec![0]),
+                    },
+                    MirInstr::MakeSimd {
+                        dest: Reg(3),
+                        dtype: SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
+                        width: SimdWidth::Known(4),
+                        elems: vec![Reg(0)],
+                    },
+                    MirInstr::LoadPlace {
+                        dest: Reg(4),
+                        place,
+                    },
+                    MirInstr::Try {
+                        body: region,
+                        handler: None,
+                        orelse: None,
+                        finalbody: None,
+                        cleanup: Vec::new(),
+                    },
+                    MirInstr::ComptimeIf {
+                        results: Vec::new(),
+                        conds: vec![GenericConstraint::Bool(true)],
+                        arms: vec![vec![MirBlock {
+                            instrs: Vec::new(),
+                            term: MirTerm::ComptimeYield(Vec::new()),
+                        }]],
+                        orelse: vec![MirBlock {
+                            instrs: Vec::new(),
+                            term: MirTerm::ComptimeYield(Vec::new()),
+                        }],
+                    },
+                ],
+                term: MirTerm::Return(None),
+            }],
             ..MirFunction::default()
         };
         let mut counter = Counter::default();

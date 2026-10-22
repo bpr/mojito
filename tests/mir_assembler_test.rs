@@ -61,14 +61,18 @@ fn verifier_findings_locate_the_offending_block() {
 fn verifier_findings_locate_terminator_blocks() {
     let source = String::from_utf8(MINIMAL.to_vec()).unwrap().replace(
         "terminator: return { value: present(%r0) }",
-        "terminator: jump { target: bb7 }",
+        "terminator: try.yield {}",
     );
     let report = load_artifact(source.as_bytes(), "terminator.mir").unwrap_err();
     let diagnostic = report
         .diagnostics
         .iter()
-        .find(|diagnostic| diagnostic.message.contains("jump to invalid block 7"))
-        .expect("invalid-jump finding");
+        .find(|diagnostic| {
+            diagnostic
+                .message
+                .contains("TryYield terminator outside a try region")
+        })
+        .expect("misplaced try.yield finding");
     assert_eq!(diagnostic.context, ["function/identity/bb0"]);
     let located = &source.as_bytes()[diagnostic.span.0..diagnostic.span.1];
     assert!(located.starts_with(b"bb0 {"));

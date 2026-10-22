@@ -426,9 +426,7 @@ impl FieldLiveness<'_> {
     /// one at an exit whose cleanup consumes it.
     fn cleaned(&self, block: &MirBlock) -> Option<&FieldSet> {
         match &block.term {
-            MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. }
-                if cleanup_drops(cleanup, self.root.var) =>
-            {
+            MirTerm::ReturnWithCleanup { cleanup, .. } if cleanup_drops(cleanup, self.root.var) => {
                 Some(&self.root.all)
             }
             _ => None,

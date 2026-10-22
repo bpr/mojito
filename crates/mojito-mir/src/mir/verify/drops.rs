@@ -11,15 +11,12 @@
 //! its `match.next`s join, and a `try` is walked as the ownership analysis
 //! walks it. A `break`, `continue`, or `match` exit resolves to its region
 //! op through [`RegionFrame`] and [`region_exit`], running each `finally`
-//! it crosses. Older MIR text whose block lists branch, and whose regions
-//! escape to the function's blocks, is walked the same way, each list to
-//! a fixpoint. Anything that names a slot revives it: over-reviving hides
+//! it crosses. Anything that names a slot revives it: over-reviving hides
 //! a finding, never invents one.
 //!
-//! The three cleanup lists end what they name where they run, and a listed
+//! The two cleanup lists end what they name where they run, and a listed
 //! slot every path has already ended is the same finding. A `try`'s list
-//! runs on its body's raise edge, before the handler or the `finally`; an
-//! escape's runs at the escape, before the `finally` blocks it crosses; a
+//! runs on its body's raise edge, before the handler or the `finally`; a
 //! return's runs after the last `finally` it crosses, as the function is
 //! left. A `finally` that returns itself overrides a pending return, whose
 //! list it then runs unchecked here.
@@ -30,9 +27,8 @@
 
 use super::{MirBlock, MirFunction, MirInstr, MirTerm};
 use crate::mir::{
-    CleanupDrop, MirBlockId, MirCaptureMode, RegionFrame, VarId, cleanup_slots,
-    instruction_regions, instruction_regions_mut, instruction_slots, region_exit,
-    terminator_targets,
+    CleanupDrop, MirCaptureMode, RegionFrame, VarId, cleanup_slots, instruction_regions,
+    instruction_regions_mut, instruction_slots, region_exit,
 };
 use std::collections::HashMap;
 
@@ -61,7 +57,7 @@ pub(super) fn verify_slot_ends(name: &str, function: &MirFunction, errors: &mut 
         return;
     }
     let mut walk = Walk::new(name, function);
-    let flow = walk.region(&vec![false; function.n_vars], &function.blocks, true, true);
+    let flow = walk.region(&vec![false; function.n_vars], &function.blocks, true);
     for (index, cleanup, state) in flow.returns {
         walk.end_listed(index, "return.cleanup", &mut state.clone(), cleanup, true);
     }
@@ -72,15 +68,13 @@ pub(super) fn verify_slot_ends(name: &str, function: &MirFunction, errors: &mut 
 type Ended = Vec<bool>;
 
 /// The states a region (or one block) leaves by: falling off, raising,
-/// leaving the function, escaping to a function block, and leaving or
-/// resuming an enclosing region op. A return carrying a cleanup list is
+/// leaving the function, and leaving or resuming an enclosing region op. A return carrying a cleanup list is
 /// also kept apart, with its block and list, until it leaves the function.
 #[derive(Default, Clone)]
 struct Flow<'a> {
     normal: Option<Ended>,
     raises: Option<Ended>,
     exits: Option<Ended>,
-    escapes: Vec<(MirBlockId, Ended)>,
     returns: Vec<(usize, &'a [CleanupDrop], Ended)>,
     /// The enclosing frames this flow leaves or resumes: the frame's depth
     /// in [`Walk::frames`], whether it resumes it, and the states joined
@@ -93,7 +87,6 @@ impl Flow<'_> {
     fn absorb(&mut self, other: Self) {
         meet(&mut self.raises, other.raises.as_ref());
         meet(&mut self.exits, other.exits.as_ref());
-        self.escapes.extend(other.escapes);
         self.returns.extend(other.returns);
         for (depth, resume, state) in other.frame_exits {
             self.leave(depth, resume, &state);
@@ -175,102 +168,43 @@ impl<'a> Walk<'a> {
     /// to their `try`'s raise edge has already ended.
     fn ended_cleanups(mut self) -> Vec<(*const CleanupDrop, VarId)> {
         let function = self.function;
-        self.region(&vec![false; function.n_vars], &function.blocks, true, true);
+        self.region(&vec![false; function.n_vars], &function.blocks, true);
         self.ended_cleanups
     }
 
-    /// Iterate `blocks` to a fixpoint from `entry`, then, when `report`, make
-    /// one reporting pass over the reached blocks. At the function's `top`
-    /// level the escapes of its regions feed their target blocks.
-    fn region(
-        &mut self,
-        entry: &Ended,
-        blocks: &'a [MirBlock],
-        top: bool,
-        report: bool,
-    ) -> Flow<'a> {
-        let mut predecessors = vec![Vec::new(); blocks.len()];
-        for (index, block) in blocks.iter().enumerate() {
-            for target in terminator_targets(&block.term) {
-                if let Some(list) = predecessors.get_mut(target) {
-                    list.push(index);
-                }
-            }
-        }
-        let mut inputs: Vec<Option<Ended>> = vec![None; blocks.len()];
-        let mut outputs: Vec<Option<Flow>> = (0..blocks.len()).map(|_| None).collect();
-        loop {
-            let mut changed = false;
-            for index in 0..blocks.len() {
-                let mut input = (index == 0).then(|| entry.clone());
-                for &predecessor in &predecessors[index] {
-                    let out = outputs[predecessor].as_ref();
-                    meet(&mut input, out.and_then(|flow| flow.normal.as_ref()));
-                }
-                if top {
-                    for (target, state) in outputs.iter().flatten().flat_map(|flow| &flow.escapes) {
-                        if *target == index {
-                            meet(&mut input, Some(state));
-                        }
-                    }
-                }
-                if input.is_none() || inputs[index] == input {
-                    continue;
-                }
-                let state = input.clone().unwrap_or_default();
-                outputs[index] = Some(self.block(index, state, &blocks[index], false));
-                inputs[index] = input;
-                changed = true;
-            }
-            if !changed {
-                break;
-            }
-        }
+    /// Walk `blocks`, a region's one block, from `entry`, reporting when
+    /// `report`, and sort how it leaves by its terminator.
+    fn region(&mut self, entry: &Ended, blocks: &'a [MirBlock], report: bool) -> Flow<'a> {
         let mut flow = Flow::default();
-        for (index, block) in blocks.iter().enumerate() {
-            let Some(state) = inputs[index].clone() else {
-                continue;
-            };
-            let out = if report {
-                self.block(index, state, block, true)
-            } else {
-                outputs[index].take().unwrap_or_default()
-            };
-            match (&block.term, out.normal.as_ref()) {
-                (
-                    MirTerm::TryYield
-                    | MirTerm::Yield(_)
-                    | MirTerm::ComptimeYield(_)
-                    | MirTerm::ElifCond { .. },
-                    normal,
-                ) => meet(&mut flow.normal, normal),
-                (MirTerm::ReturnWithCleanup { cleanup, .. }, Some(state))
-                    if !cleanup.is_empty() =>
-                {
-                    meet(&mut flow.exits, Some(state));
-                    flow.returns.push((index, cleanup, state.clone()));
-                }
-                (MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. }, exits) => {
-                    meet(&mut flow.exits, exits);
-                }
-                (MirTerm::EscapeJump { target, cleanup }, Some(state)) if !top => {
-                    let mut state = state.clone();
-                    self.end_listed(index, "escape cleanup", &mut state, cleanup, report);
-                    flow.escapes.push((*target, state));
-                }
-                (term, Some(state)) => {
-                    if let Some((target, resume)) = region_exit(term)
-                        && let Some(depth) =
-                            self.frames.iter().rposition(|&frame| target.names(frame))
-                    {
-                        flow.leave(depth, resume, state);
-                    }
-                }
-                _ => {}
+        let Some(block) = blocks.first() else {
+            return flow;
+        };
+        let out = self.block(0, entry.clone(), block, report);
+        match (&block.term, out.normal.as_ref()) {
+            (
+                MirTerm::TryYield
+                | MirTerm::Yield(_)
+                | MirTerm::ComptimeYield(_)
+                | MirTerm::ElifCond { .. },
+                normal,
+            ) => meet(&mut flow.normal, normal),
+            (MirTerm::ReturnWithCleanup { cleanup, .. }, Some(state)) if !cleanup.is_empty() => {
+                meet(&mut flow.exits, Some(state));
+                flow.returns.push((0, cleanup, state.clone()));
             }
-            let escapes = if top { Vec::new() } else { out.escapes };
-            flow.absorb(Flow { escapes, ..out });
+            (MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. }, exits) => {
+                meet(&mut flow.exits, exits);
+            }
+            (term, Some(state)) => {
+                if let Some((target, resume)) = region_exit(term)
+                    && let Some(depth) = self.frames.iter().rposition(|&frame| target.names(frame))
+                {
+                    flow.leave(depth, resume, state);
+                }
+            }
+            _ => {}
         }
+        flow.absorb(out);
         flow
     }
 
@@ -399,7 +333,7 @@ impl<'a> Walk<'a> {
                         break;
                     };
                     self.frames.push(RegionFrame::MatchCase);
-                    let mut case = self.region(&start, &case.body, false, report);
+                    let mut case = self.region(&start, &case.body, report);
                     self.frames.pop();
                     let (complete, resume) = case.take_frame(depth);
                     meet(&mut flow.normal, complete.as_ref());
@@ -427,7 +361,7 @@ impl<'a> Walk<'a> {
         blocks: &'a [MirBlock],
         report: bool,
     ) -> Option<Ended> {
-        let mut region = self.region(entry, blocks, false, report);
+        let mut region = self.region(entry, blocks, report);
         let normal = region.normal.take();
         flow.absorb(region);
         normal
@@ -448,7 +382,7 @@ impl<'a> Walk<'a> {
         self.frames.push(frame);
         let mut resume = state;
         let (mut flow, broken) = loop {
-            let mut flow = self.region(&resume, body, false, false);
+            let mut flow = self.region(&resume, body, false);
             let (broken, continued) = flow.take_frame(depth);
             let mut next = Some(resume.clone());
             meet(&mut next, continued.as_ref());
@@ -459,18 +393,19 @@ impl<'a> Walk<'a> {
             resume = next;
         };
         if report {
-            flow = self.region(&resume, body, false, true);
+            flow = self.region(&resume, body, true);
             flow.take_frame(depth);
         }
         self.frames.pop();
         flow.normal = broken;
         flow
     }
+
     /// A `try` from `entry`, as the ownership analysis walks it: the handler
     /// starts from the body's raises past the raise-edge cleanup, `orelse`
-    /// from its normal fall-off, and `finally` runs on every channel. An
-    /// escape, a region exit, or a return leaves through the normal
-    /// fall-off of the `finally` it crosses.
+    /// from its normal fall-off, and `finally` runs on every channel. A
+    /// region exit or a return leaves through the normal fall-off of the
+    /// `finally` it crosses.
     fn try_regions(
         &mut self,
         index: usize,
@@ -491,7 +426,7 @@ impl<'a> Walk<'a> {
                 ..Flow::default()
             };
         };
-        let mut body_flow = self.region(&entry, body, false, report);
+        let mut body_flow = self.region(&entry, body, report);
         let body_normal = body_flow.normal.take();
         let body_raises = body_flow.raises.take().map(|mut state| {
             if report {
@@ -506,7 +441,6 @@ impl<'a> Walk<'a> {
         });
         let mut flow = Flow {
             exits: body_flow.exits,
-            escapes: body_flow.escapes,
             returns: body_flow.returns,
             frame_exits: body_flow.frame_exits,
             ..Flow::default()
@@ -514,7 +448,7 @@ impl<'a> Walk<'a> {
         match orelse {
             Some(orelse) => {
                 if let Some(start) = body_normal {
-                    let mut else_flow = self.region(&start, orelse, false, report);
+                    let mut else_flow = self.region(&start, orelse, report);
                     meet(&mut flow.normal, else_flow.normal.take().as_ref());
                     flow.absorb(else_flow);
                 }
@@ -527,7 +461,7 @@ impl<'a> Walk<'a> {
                     if let Some(binding) = binding {
                         set(&mut start, *binding, false);
                     }
-                    let mut handler_flow = self.region(&start, handler, false, report);
+                    let mut handler_flow = self.region(&start, handler, report);
                     meet(&mut flow.normal, handler_flow.normal.take().as_ref());
                     flow.absorb(handler_flow);
                 }
@@ -541,20 +475,17 @@ impl<'a> Walk<'a> {
             let mut all = flow.normal.clone();
             meet(&mut all, flow.raises.as_ref());
             meet(&mut all, flow.exits.as_ref());
-            for (_, state) in &flow.escapes {
-                meet(&mut all, Some(state));
-            }
             let returns = flow.returns.iter().map(|(.., state)| state);
             for state in returns.chain(flow.frame_exits.iter().map(|(.., state)| state)) {
                 meet(&mut all, Some(state));
             }
             if let Some(all) = all {
-                self.region(&all, finalbody, false, true);
+                self.region(&all, finalbody, true);
             }
         }
         let mut out = Flow::default();
         let mut through = |walk: &mut Self, state: Option<Ended>| {
-            let mut finally = walk.region(&state?, finalbody, false, false);
+            let mut finally = walk.region(&state?, finalbody, false);
             let normal = finally.normal.take();
             out.absorb(finally);
             normal
@@ -562,11 +493,6 @@ impl<'a> Walk<'a> {
         let normal = through(self, flow.normal);
         let raises = through(self, flow.raises);
         let exits = through(self, flow.exits);
-        let escapes: Vec<_> = flow
-            .escapes
-            .into_iter()
-            .filter_map(|(target, state)| Some((target, through(self, Some(state))?)))
-            .collect();
         let returns: Vec<_> = flow
             .returns
             .into_iter()
@@ -582,7 +508,6 @@ impl<'a> Walk<'a> {
         out.normal = normal;
         meet(&mut out.raises, raises.as_ref());
         meet(&mut out.exits, exits.as_ref());
-        out.escapes.extend(escapes);
         out.returns.extend(returns);
         for (depth, resume, state) in frame_exits {
             out.leave(depth, resume, &state);
@@ -696,10 +621,12 @@ fn set(state: &mut Ended, slot: VarId, ended: bool) {
 /// a `var.consume`, or a cleanup list naming one.
 fn ends_slots(blocks: &[MirBlock]) -> bool {
     blocks.iter().any(|block| {
-        matches!(&block.term, MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } if !cleanup.is_empty())
+        matches!(&block.term, MirTerm::ReturnWithCleanup { cleanup, .. } if !cleanup.is_empty())
             || block.instrs.iter().any(|instruction| {
-                matches!(instruction, MirInstr::DropVar { .. } | MirInstr::ConsumeVar { .. })
-                    || matches!(instruction, MirInstr::Try { cleanup, .. } if !cleanup.is_empty())
+                matches!(
+                    instruction,
+                    MirInstr::DropVar { .. } | MirInstr::ConsumeVar { .. }
+                ) || matches!(instruction, MirInstr::Try { cleanup, .. } if !cleanup.is_empty())
                     || instruction_regions(instruction)
                         .into_iter()
                         .any(|region| ends_slots(region))

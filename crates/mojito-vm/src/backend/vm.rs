@@ -1462,11 +1462,6 @@ enum Flow {
     /// out of the `try` (running each `finally`) until the cursor of a list
     /// inside that op resolves it ([`RegionCursor::resolve_leave`]).
     Leave(regions::Leave),
-    /// A lowered `break`/`continue` that crossed a `try` boundary
-    /// ([`MirTerm::EscapeJump`]), already resolved to the target loop block in
-    /// the enclosing **function** CFG. Propagates out of the `try` (running
-    /// each `finally`) until the function driver jumps there.
-    Jump(usize),
 }
 
 struct TryRegions<'a> {

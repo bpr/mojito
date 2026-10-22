@@ -2167,7 +2167,7 @@ impl VmBackend {
             }
             // A non-raised runtime error propagates untouched.
             Err(other) => Err(other),
-            // The body completed (normally, or via a `return` or escape that
+            // The body completed (normally, or via a `return` or region exit that
             // crossed out), having ended its own locals. `else` runs only on
             // *normal* completion; a `return` from the body skips `else` and
             // carries out.
@@ -2218,7 +2218,7 @@ impl VmBackend {
         outcome
     }
 
-    /// Run one cleanup list — a `try`'s raise edge, a return's, or an escape's:
+    /// Run one cleanup list — a `try`'s raise edge or a return's:
     /// a `DropVar` on each listed slot through the destructor the entry
     /// names, as upstream's unwind blocks call each `__del__`. Drop
     /// elaboration lists only slots the edge still holds; a vacated slot is a
@@ -2273,7 +2273,7 @@ impl VmBackend {
                         Some(leave) => return Ok(Flow::Leave(leave)),
                         None => continue 'region,
                     },
-                    non_normal => return Ok(non_normal),
+                    returned @ Flow::Return { .. } => return Ok(returned),
                 }
             }
             match cursor.transfer(blocks, &block.term, regs)? {
@@ -2296,14 +2296,6 @@ impl VmBackend {
                         value,
                         cleanup: cleanup.clone(),
                     });
-                }
-                // A lowered `break`/`continue` targeting an outer function
-                // loop: run this part's escape-edge cleanup (values that die
-                // leaving the part), then carry the resolved target out as a
-                // `Flow::Jump`.
-                Transfer::Exit(MirTerm::EscapeJump { target, cleanup }) => {
-                    self.run_cleanup(prog, scope.function, cleanup, vars)?;
-                    return Ok(Flow::Jump(*target));
                 }
                 Transfer::Exit(_) => return Ok(Flow::Normal),
             }

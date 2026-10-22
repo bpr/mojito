@@ -9,14 +9,16 @@ has them.
 
 Entries are cited by stable ID and the order is computed, so every command
 below stays valid as entries are filed and landed. Before a run, preview it
-with `--dry-run` or `scripts/roadmap.py deps R1274`. Every command runs on
+with `--dry-run` or `scripts/roadmap.py deps R884`. Every command runs on
 Opus, with a plan pass for each entry whose `Model:` bullet says Fable.
 
 ## Where things stand (2026-10-21)
 
 The region chain is finished: the post-elaboration pipeline (R881), the VM
-(R882), and Pliron (R883) all read structured bodies, so nothing below the
-seams needs a lowered body any more.
+(R882), and Pliron (R883) all read structured bodies, and since R1274
+(10-22) MIR has no CFG terminator at all and `mir::verify` requires one
+block per region. R1276 (a region typed as one block) is the cleanup that
+remains, outside the gaps below.
 
 The two leftovers this note listed both landed 10-22: R1266 (`sroa` and
 `mem-2-reg` take generic slots) and R1270 (`cse` merges built-in
@@ -74,8 +76,7 @@ This gap blocks about 14 entries across four tracks (`pmir`,
   - R829 is very likely the `return` case of R884.
 - **Cost**: generators grow by one `if` per raising call. That is
   upstream's shape. Expect the instruction counters to rise slightly.
-- **Order**: R1274 first (R1273 deleted `lower-control-flow` on
-  2026-10-22), since it deletes `CleanupDrop`'s escape role. Then R906 → R831 → R20 → R884. Plan this as
+- **Order**: R906 → R831 → R20 → R884. Plan this as
   one arc with a plan file, as the region chain was: R831, R20, and R884
   are Fable, Planned.
 
@@ -121,14 +122,7 @@ entry's probe is "one instance per `n` where the pin has one".
 
 ## Recommended order
 
-1. **Finish deleting the CFG** (both entries Planned; slices B and C of
-   `R883-pliron-lowers-a-mir-cfg-where-plan.md`):
-
-   ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1274 -n 0
-   ```
-
-2. **Gap B**, for size. The entries are independent:
+1. **Gap B**, for size. The entries are independent:
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1049 --only R1050 --only R1052 -n 0
@@ -147,9 +141,9 @@ entry's probe is "one instance per `n` where the pin has one".
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1021 --task R1075 -n 0
    ```
 
-3. **Gap A**, for leverage. Its order is encoded as Depends bullets (R906
-   on R1274, R831 on R906, R20 and R884 on R831), so the run below does
-   step 1 first if it has not landed:
+2. **Gap A**, for leverage. Its order is encoded as Depends bullets (R831
+   on R906, R20 and R884 on R831), so the run below brings in R906 and
+   R831:
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R20 --task R884 -n 0
@@ -166,13 +160,13 @@ entry's probe is "one instance per `n` where the pin has one".
 
    R832 waits for gap D.
 
-4. **Gap C**. R1103 brings in R1102, and R1073 brings in R743:
+3. **Gap C**. R1103 brings in R1102, and R1073 brings in R743:
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1103 --task R1070 --task R1073 --task R1090 -n 0
    ```
 
-5. **Gap D**. R1252 brings in R1251, and R932 brings in R931:
+4. **Gap D**. R1252 brings in R1251, and R932 brings in R931:
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1252 --task R932 --task R832 --task R1267 -n 0
@@ -186,7 +180,7 @@ None of these unblocks another entry. Run them whenever they are useful.
   R1098 (lets the third round inline through a known callee), R1099,
   R1105, R1076, R1110, R1268. R1271 (`AutomaticInline`) is the largest
   but shrinks only concrete code, not instance counts. R1097 is also in
-  step 2; leave it out here if that step ran.
+  step 1; leave it out here if that step ran.
 
   ```sh
   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1096 --only R1097 --only R1098 --only R1099 \

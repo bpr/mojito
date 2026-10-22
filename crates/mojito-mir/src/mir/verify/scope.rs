@@ -340,9 +340,6 @@ impl Scope {
     /// that the body's types and conditions name.
     fn declare_loop_binders(&mut self, blocks: &[MirBlock]) {
         for block in blocks {
-            if let MirTerm::ComptimeFor { binder, source, .. } = &block.term {
-                self.kinds.insert(binder.id.clone(), source.binder_meta());
-            }
             for instruction in &block.instrs {
                 if let MirInstr::ComptimeFor { binder, source, .. } = instruction {
                     self.kinds.insert(binder.id.clone(), source.binder_meta());
@@ -464,15 +461,6 @@ impl ScopeCx<'_> {
                     let mut nested = Vec::new();
                     self.expr_nodes(&role, "parameter constant", value, &mut nested);
                 }
-            }
-            match &block.term {
-                MirTerm::ComptimeBranch { cond, .. } => {
-                    self.constraint(&format!("block {index} compile-time branch"), cond);
-                }
-                MirTerm::ComptimeFor { binder, source, .. } => {
-                    self.comptime_loop(&format!("block {index} compile-time loop"), binder, source);
-                }
-                _ => {}
             }
         }
     }

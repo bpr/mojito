@@ -2,10 +2,10 @@
 //! (`HLCFOpsCanonicalizers.cpp`) and the generator `Canonicalizer`'s
 //! `ConditionPropagation`, over a structured body.
 //!
-//! Every region of a structured body is one block. The patterns rewrite an
-//! op in place, splice a region into its parent block, or move the rest of
-//! a block into an arm, so each reads one region block at a time and skips
-//! a region of several blocks. The driver walks each block list innermost
+//! Every region of a structured body is one block, as `verify` requires.
+//! The patterns rewrite an op in place, splice a region into its parent
+//! block, or move the rest of a block into an arm, so each reads one region
+//! block at a time. The driver walks each block list innermost
 //! regions first and applies the patterns at each op until none applies, as
 //! MLIR's greedy driver does, then repeats the walk until a whole walk
 //! changes nothing. A replaced result is rewritten to its replacement in

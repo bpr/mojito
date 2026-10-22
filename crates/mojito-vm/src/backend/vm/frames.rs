@@ -169,11 +169,6 @@ impl VmBackend {
                         self.frames.push(frame);
                         continue 'frames;
                     }
-                    Flow::Jump(block) => {
-                        frame.cursor.escape(block);
-                        self.frames.push(frame);
-                        continue 'frames;
-                    }
                     Flow::Return { value, cleanup } => {
                         self.run_cleanup(prog, frame.function, &cleanup, &mut frame.variables)?;
                         // Re-root returned reference handles exactly as the

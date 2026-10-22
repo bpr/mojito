@@ -215,7 +215,7 @@ impl Specializer<'_> {
         let mut iterations = iterations.into_iter();
         for iteration in iterations.by_ref() {
             match simplify_param_for_loop(iteration, folded) {
-                Simplified::Kept(iteration) => outer.instrs.push(iteration),
+                Simplified::Kept(iteration) => outer.instrs.push(*iteration),
                 Simplified::Spliced(instrs) => outer.instrs.extend(instrs),
                 Simplified::Breakless { body, results } => {
                     tables.forget(&results);
@@ -244,7 +244,7 @@ impl Specializer<'_> {
             body: vec![outer],
         };
         Ok(match simplify_param_for_loop(outer, folded) {
-            Simplified::Kept(outer) => vec![outer],
+            Simplified::Kept(outer) => vec![*outer],
             Simplified::Spliced(instrs) => instrs,
             // A loop no break leaves stays, as upstream keeps it.
             Simplified::Breakless { body, results } => vec![MirInstr::Loop {
@@ -707,7 +707,7 @@ impl FrameTables<'_> {
 /// What `simplifyParamForLoop` makes of a loop.
 enum Simplified {
     /// The loop stays.
-    Kept(MirInstr),
+    Kept(Box<MirInstr>),
     /// One break leaves the loop, and it ends the loop's body: the body
     /// without it stands where the loop stood, the loop's results read as
     /// the break's values.
@@ -731,7 +731,7 @@ fn simplify_param_for_loop(instruction: MirInstr, folded: &mut HashMap<u32, Reg>
         mut body,
     } = instruction
     else {
-        return Simplified::Kept(instruction);
+        return Simplified::Kept(Box::new(instruction));
     };
     let mut breaks = 0;
     loop_breaks_mut(&mut body, label, &mut |_, _| breaks += 1);
@@ -752,20 +752,20 @@ fn simplify_param_for_loop(instruction: MirInstr, folded: &mut HashMap<u32, Reg>
             folded.extend(results.iter().map(|reg| reg.0).zip(values));
             Simplified::Spliced(instrs)
         }
-        Ok(body) => Simplified::Kept(MirInstr::Loop {
+        Ok(body) => Simplified::Kept(Box::new(MirInstr::Loop {
             label,
             operands,
             args,
             results,
             body: body.into(),
-        }),
-        Err(body) => Simplified::Kept(MirInstr::Loop {
+        })),
+        Err(body) => Simplified::Kept(Box::new(MirInstr::Loop {
             label,
             operands,
             args,
             results,
             body,
-        }),
+        })),
     }
 }
 
@@ -939,7 +939,7 @@ mod tests {
         let mut folded = HashMap::new();
         assert!(matches!(
             simplify_param_for_loop(looped(None, Vec::new(), body), &mut folded),
-            Simplified::Kept(MirInstr::Loop { .. })
+            Simplified::Kept(kept) if matches!(*kept, MirInstr::Loop { .. })
         ));
     }
 

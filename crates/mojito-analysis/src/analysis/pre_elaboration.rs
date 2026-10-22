@@ -429,9 +429,8 @@ fn run_body_pass(
     }
 }
 
-/// In debug builds, verify the body `name` the pass `pass` changed, its
-/// structured shape included, each finding, naming the pass, going to
-/// `findings`.
+/// In debug builds, verify the body `name` the pass `pass` changed, each
+/// finding, naming the pass, going to `findings`.
 fn verify_after(
     pass: &str,
     name: &str,
@@ -441,7 +440,7 @@ fn verify_after(
 ) {
     if cfg!(debug_assertions) {
         findings.extend(
-            mojito_mir::mir::verify::verify_structured_function_in(name, function, declarations)
+            mojito_mir::mir::verify::verify_function_in(name, function, declarations)
                 .into_iter()
                 .map(|finding| pass_finding(pass, &finding)),
         );

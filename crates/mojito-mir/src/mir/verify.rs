@@ -18,12 +18,10 @@
 //!   predicate; calls are compared against `MirFunctionDeclaration` facts when
 //!   the callee is declared — builtin callees have no declaration and only
 //!   participate in register checks);
-//! - CFG edges: jump-target bounds per region, `TryYield`/`EscapeJump` only
-//!   inside `try` sub-regions;
-//! - structured control flow: each region terminator inside the region op
-//!   it ends, a `break`/`continue` inside its loop, and — in
-//!   [`verify_structured_function_in`]'s mode — one block per region and no
-//!   CFG terminator;
+//! - structured control flow: one block per region, the body included, as
+//!   upstream's `hlcf` regions are `SizedRegion<1>`; each region terminator
+//!   inside the region op it ends, a `break`/`continue` inside its loop, and
+//!   `TryYield` only inside a `try` part;
 //! - effects: a raising site (a `Raise`, or a call carrying a checked error
 //!   type) inside a nonraising function must be protected by a handler;
 //! - reference invariants: `StoreRef` initializes reference storage, and a
@@ -115,7 +113,7 @@ mod types;
 use calls::*;
 pub use concrete::concrete_function_findings;
 use concrete::verify_concrete_program;
-pub(crate) use drops::cut_try_cleanups;
+pub use drops::cut_try_cleanups;
 use drops::verify_slot_ends;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use instr::*;
@@ -129,7 +127,6 @@ pub use places::{instruction_places, instruction_places_mut, place_base_ty};
 pub use regs::*;
 use scope::verify_scope;
 pub use scope::{instruction_named_types, instruction_variant_indices};
-pub use structure::{is_structured_shape, verify_structured_function_in, verify_structured_shape};
 use structure::{verify_region_terminator, verify_regions};
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use subscripts::*;
@@ -173,14 +170,9 @@ impl ReferencePermission {
     }
 }
 
-/// Where a run of blocks sits: the function's top level, or one region of a
-/// region op (with its handler-protection status).
+/// Where a block sits: the function's top level, or one region of a region
+/// op (with its handler-protection status).
 struct RegionContext {
-    /// Number of blocks in this region — the bound for region-local jumps.
-    region_len: usize,
-    /// Number of blocks in the enclosing function — the bound for
-    /// `EscapeJump` targets.
-    function_len: usize,
     /// The kind of each region from the function's top level in, this
     /// region's last: a region terminator is checked against the regions
     /// enclosing it.
@@ -195,18 +187,10 @@ impl RegionContext {
         self.regions.last().unwrap_or(&RegionKind::Function)
     }
 
-    /// Whether this run of blocks is a `try` part, where `TryYield` is the
-    /// legal way to complete.
+    /// Whether this block is a `try` part's, where `TryYield` is the legal
+    /// way to complete.
     fn is_try_part(&self) -> bool {
         matches!(self.kind(), RegionKind::TryPart)
-    }
-
-    /// Whether some enclosing region is a `try` part, from which an
-    /// `EscapeJump` reaches the function's blocks.
-    fn in_try_region(&self) -> bool {
-        self.regions
-            .iter()
-            .any(|kind| matches!(kind, RegionKind::TryPart))
     }
 }
 

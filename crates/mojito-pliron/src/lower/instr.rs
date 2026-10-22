@@ -20,7 +20,7 @@ impl FnLowering<'_> {
         let [body_block] = func.blocks.as_slice() else {
             return Err(self.unsupported(
                 format!(
-                    "a lowered body of {} blocks reached native lowering",
+                    "a body of {} blocks reached native lowering",
                     self.func.blocks.len()
                 ),
                 None,

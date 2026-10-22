@@ -171,7 +171,7 @@ pub fn disassemble_functions(program: &MirProgram) -> Result<String, Disassemble
 
 pub const MAGIC: &str = "mojito-mir";
 pub const VERSION_MAJOR: u16 = 1;
-pub const VERSION_MINOR: u16 = 87;
+pub const VERSION_MINOR: u16 = 88;
 
 pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "loans.establish",
@@ -250,14 +250,9 @@ pub const INSTRUCTION_MNEMONICS: &[&str] = &[
 ];
 
 pub const TERMINATOR_MNEMONICS: &[&str] = &[
-    "jump",
-    "branch",
-    "comptime_branch",
-    "comptime_for.iterator",
     "return",
     "return.cleanup",
     "try.yield",
-    "escape",
     "yield",
     "if.elifcond.yield",
     "break",
@@ -414,14 +409,9 @@ pub const fn instruction_mnemonic(instruction: &MirInstr) -> &'static str {
 
 pub const fn terminator_mnemonic(terminator: &MirTerm) -> &'static str {
     match terminator {
-        MirTerm::Jump(_) => "jump",
-        MirTerm::Branch { .. } => "branch",
-        MirTerm::ComptimeBranch { .. } => "comptime_branch",
-        MirTerm::ComptimeFor { .. } => "comptime_for.iterator",
         MirTerm::Return(_) => "return",
         MirTerm::ReturnWithCleanup { .. } => "return.cleanup",
         MirTerm::TryYield => "try.yield",
-        MirTerm::EscapeJump { .. } => "escape",
         MirTerm::Yield(_) => "yield",
         MirTerm::ElifCond { .. } => "if.elifcond.yield",
         MirTerm::Break { .. } => "break",

@@ -37,20 +37,6 @@ pub(super) const fn is_deinit(c: &Option<ArgConvention>) -> bool {
     matches!(c, Some(ArgConvention::Deinit))
 }
 
-/// Drop every block unreachable from the entry and renumber the targets
-/// that survive.
-///
-/// The function level and each region are pruned alike, a region from
-/// its own entry. A block a region's `EscapeJump` names is reachable through
-/// the block holding the region. A `try`'s raise-edge cleanup loses the
-/// slots only a pruned raise point held. Registers, slots, and spans are
-/// untouched.
-pub fn prune_unreachable_blocks(function: &mut MirFunction) {
-    let kept = prune_block_list(&mut function.blocks);
-    renumber_escapes(&mut function.blocks, &kept);
-    super::verify::cut_try_cleanups(function);
-}
-
 /// A fresh register of `function`, of type `ty`, located at `span` when it
 /// has a location.
 pub fn fresh_register(function: &mut MirFunction, ty: Ty, span: Option<&SourceSpan>) -> Reg {
@@ -150,7 +136,6 @@ pub fn instruction_regions_mut(instruction: &mut MirInstr) -> Vec<&mut Vec<MirBl
 /// Every register a terminator reads, mutably.
 pub fn terminator_regs_mut(term: &mut MirTerm) -> Vec<&mut Reg> {
     match term {
-        MirTerm::Branch { cond, .. } => vec![cond],
         MirTerm::ElifCond { cond, values } => std::iter::once(cond).chain(values).collect(),
         MirTerm::Return(Some(reg))
         | MirTerm::ReturnWithCleanup {
@@ -164,13 +149,9 @@ pub fn terminator_regs_mut(term: &mut MirTerm) -> Vec<&mut Reg> {
         | MirTerm::ComptimeContinue(values)
         | MirTerm::Break { values, .. }
         | MirTerm::Continue { values, .. } => values.iter_mut().collect(),
-        MirTerm::Jump(_)
-        | MirTerm::ComptimeBranch { .. }
-        | MirTerm::ComptimeFor { .. }
-        | MirTerm::Return(None)
+        MirTerm::Return(None)
         | MirTerm::ReturnWithCleanup { value: None, .. }
         | MirTerm::TryYield
-        | MirTerm::EscapeJump { .. }
         | MirTerm::Unreachable => Vec::new(),
     }
 }
@@ -178,7 +159,6 @@ pub fn terminator_regs_mut(term: &mut MirTerm) -> Vec<&mut Reg> {
 /// Every register a terminator reads.
 pub fn terminator_regs(term: &MirTerm) -> Vec<Reg> {
     match term {
-        MirTerm::Branch { cond, .. } => vec![*cond],
         MirTerm::ElifCond { cond, values } => std::iter::once(*cond)
             .chain(values.iter().copied())
             .collect(),
@@ -194,13 +174,9 @@ pub fn terminator_regs(term: &MirTerm) -> Vec<Reg> {
         | MirTerm::ComptimeContinue(values)
         | MirTerm::Break { values, .. }
         | MirTerm::Continue { values, .. } => values.clone(),
-        MirTerm::Jump(_)
-        | MirTerm::ComptimeBranch { .. }
-        | MirTerm::ComptimeFor { .. }
-        | MirTerm::Return(None)
+        MirTerm::Return(None)
         | MirTerm::ReturnWithCleanup { value: None, .. }
         | MirTerm::TryYield
-        | MirTerm::EscapeJump { .. }
         | MirTerm::Unreachable => Vec::new(),
     }
 }
@@ -387,63 +363,6 @@ pub fn replace_register_reads<S: std::hash::BuildHasher>(
                 *reg = *root;
             }
         }
-    }
-}
-
-/// Every block of the same list a terminator names: a `try` region's
-/// escape targets are the enclosing function's and are not among them.
-pub fn terminator_targets(term: &MirTerm) -> Vec<MirBlockId> {
-    match term {
-        MirTerm::Jump(to) => vec![*to],
-        MirTerm::Branch { then_b, else_b, .. }
-        | MirTerm::ComptimeBranch { then_b, else_b, .. }
-        | MirTerm::ComptimeFor {
-            body: then_b,
-            exit: else_b,
-            ..
-        } => vec![*then_b, *else_b],
-        MirTerm::Return(_)
-        | MirTerm::ReturnWithCleanup { .. }
-        | MirTerm::TryYield
-        | MirTerm::EscapeJump { .. }
-        | MirTerm::Yield(_)
-        | MirTerm::ElifCond { .. }
-        | MirTerm::Break { .. }
-        | MirTerm::Continue { .. }
-        | MirTerm::ComptimeYield(_)
-        | MirTerm::ComptimeBreak(_)
-        | MirTerm::ComptimeContinue(_)
-        | MirTerm::MatchNext(_)
-        | MirTerm::MatchComplete(_)
-        | MirTerm::Unreachable => Vec::new(),
-    }
-}
-
-/// [`terminator_targets`], mutably.
-pub fn terminator_targets_mut(term: &mut MirTerm) -> Vec<&mut MirBlockId> {
-    match term {
-        MirTerm::Jump(to) => vec![to],
-        MirTerm::Branch { then_b, else_b, .. }
-        | MirTerm::ComptimeBranch { then_b, else_b, .. }
-        | MirTerm::ComptimeFor {
-            body: then_b,
-            exit: else_b,
-            ..
-        } => vec![then_b, else_b],
-        MirTerm::Return(_)
-        | MirTerm::ReturnWithCleanup { .. }
-        | MirTerm::TryYield
-        | MirTerm::EscapeJump { .. }
-        | MirTerm::Yield(_)
-        | MirTerm::ElifCond { .. }
-        | MirTerm::Break { .. }
-        | MirTerm::Continue { .. }
-        | MirTerm::ComptimeYield(_)
-        | MirTerm::ComptimeBreak(_)
-        | MirTerm::ComptimeContinue(_)
-        | MirTerm::MatchNext(_)
-        | MirTerm::MatchComplete(_)
-        | MirTerm::Unreachable => Vec::new(),
     }
 }
 
@@ -1018,28 +937,10 @@ pub fn renumber_block_slots(blocks: &mut [MirBlock], renumber: &dyn Fn(VarId) ->
                 renumber_block_slots(region, renumber);
             }
         }
-        match &mut block.term {
-            MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } => {
-                for drop in cleanup {
-                    drop.var = renumber(drop.var);
-                }
+        if let MirTerm::ReturnWithCleanup { cleanup, .. } = &mut block.term {
+            for drop in cleanup {
+                drop.var = renumber(drop.var);
             }
-            MirTerm::ComptimeFor { .. }
-            | MirTerm::Jump(_)
-            | MirTerm::Branch { .. }
-            | MirTerm::ComptimeBranch { .. }
-            | MirTerm::Return(_)
-            | MirTerm::TryYield
-            | MirTerm::Yield(_)
-            | MirTerm::ElifCond { .. }
-            | MirTerm::Break { .. }
-            | MirTerm::Continue { .. }
-            | MirTerm::ComptimeYield(_)
-            | MirTerm::ComptimeBreak(_)
-            | MirTerm::ComptimeContinue(_)
-            | MirTerm::MatchNext(_)
-            | MirTerm::MatchComplete(_)
-            | MirTerm::Unreachable => {}
         }
     }
 }
@@ -1121,16 +1022,6 @@ pub fn addressed_slots<'a>(blocks: impl IntoIterator<Item = &'a MirBlock>) -> BT
     addressed
 }
 
-/// Each block's immediate dominator in `blocks`, a function's own list when
-/// `function_level` ([`block_successors`]).
-///
-/// The entry is its own; a block the entry does not reach has none. The immediate dominators come from Cooper,
-/// Harvey, and Kennedy's iteration over the reverse postorder, as MLIR's
-/// `DominanceInfo` builds its tree.
-pub fn immediate_dominators(blocks: &[MirBlock], function_level: bool) -> Vec<Option<MirBlockId>> {
-    dominators_over(&list_successors(blocks, function_level))
-}
-
 /// The renumbering [`retire_slots`] and [`retire_parameters`] share.
 fn retire(function: &mut MirFunction, retired: &BTreeSet<VarId>) {
     let addressed = std::cell::Cell::new(false);
@@ -1152,113 +1043,6 @@ fn retire(function: &mut MirFunction, retired: &BTreeSet<VarId>) {
     function.n_vars -= retired.len();
 }
 
-/// The successors of each block of `blocks` within the list, a function's
-/// own when `function_level` ([`block_successors`]).
-fn list_successors(blocks: &[MirBlock], function_level: bool) -> Vec<Vec<MirBlockId>> {
-    blocks
-        .iter()
-        .map(|block| {
-            let targets = if function_level {
-                block_successors(block)
-            } else {
-                terminator_targets(&block.term)
-            };
-            targets
-                .into_iter()
-                .filter(|&target| target < blocks.len())
-                .collect()
-        })
-        .collect()
-}
-
-/// The predecessors of each block of a list whose successors are
-/// `successors`.
-fn list_predecessors(successors: &[Vec<MirBlockId>]) -> Vec<Vec<MirBlockId>> {
-    let mut predecessors = vec![Vec::new(); successors.len()];
-    for (block, targets) in successors.iter().enumerate() {
-        for &target in targets {
-            predecessors[target].push(block);
-        }
-    }
-    predecessors
-}
-
-/// [`immediate_dominators`] over a list whose successors are `successors`.
-fn dominators_over(successors: &[Vec<MirBlockId>]) -> Vec<Option<MirBlockId>> {
-    let count = successors.len();
-    if count == 0 {
-        return Vec::new();
-    }
-    let mut predecessors = list_predecessors(successors);
-    let root = count;
-    // A virtual root above the entry, so the entry, its one successor, is
-    // dominated by no real block.
-    let root_successors = [0];
-    predecessors[0].push(root);
-    let successors_of = |block: MirBlockId| {
-        if block == root {
-            &root_successors[..]
-        } else {
-            &successors[block][..]
-        }
-    };
-    let mut rank = vec![usize::MAX; count + 1];
-    let mut seen = vec![false; count + 1];
-    let mut postorder = Vec::with_capacity(count + 1);
-    let mut stack = vec![(root, 0)];
-    seen[root] = true;
-    while let Some((block, next)) = stack.last_mut() {
-        if let Some(&target) = successors_of(*block).get(*next) {
-            *next += 1;
-            if !seen[target] {
-                seen[target] = true;
-                stack.push((target, 0));
-            }
-        } else {
-            rank[*block] = postorder.len();
-            postorder.push(*block);
-            stack.pop();
-        }
-    }
-    let mut idom: Vec<Option<MirBlockId>> = vec![None; count + 1];
-    idom[root] = Some(root);
-    let intersect = |idom: &[Option<MirBlockId>], mut left: MirBlockId, mut right| {
-        while left != right {
-            while rank[left] < rank[right] {
-                left = idom[left].unwrap_or(root);
-            }
-            while rank[right] < rank[left] {
-                right = idom[right].unwrap_or(root);
-            }
-        }
-        left
-    };
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for &block in postorder.iter().rev().filter(|&&block| block != root) {
-            let next = predecessors[block]
-                .iter()
-                .filter(|&&predecessor| idom[predecessor].is_some())
-                .fold(None, |dominator, &predecessor| match dominator {
-                    None => Some(predecessor),
-                    Some(dominator) => Some(intersect(&idom, dominator, predecessor)),
-                });
-            if next.is_some() && next != idom[block] {
-                idom[block] = next;
-                changed = true;
-            }
-        }
-    }
-    idom.truncate(count);
-    for (block, dominator) in idom.iter_mut().enumerate() {
-        if *dominator == Some(root) {
-            *dominator = Some(block);
-        }
-    }
-    idom
-}
-
 /// Every slot one block names: its instructions', its regions' and their
 /// handler bindings and cleanups, and its terminator's.
 fn collect_block_slots(block: &MirBlock, addressed: &mut BTreeSet<VarId>) {
@@ -1275,26 +1059,8 @@ fn collect_block_slots(block: &MirBlock, addressed: &mut BTreeSet<VarId>) {
             collect_block_slots(inner, addressed);
         }
     }
-    match &block.term {
-        MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } => {
-            addressed.extend(cleanup_slots(cleanup));
-        }
-        MirTerm::ComptimeFor { .. }
-        | MirTerm::Jump(_)
-        | MirTerm::Branch { .. }
-        | MirTerm::ComptimeBranch { .. }
-        | MirTerm::Return(_)
-        | MirTerm::TryYield
-        | MirTerm::Yield(_)
-        | MirTerm::ElifCond { .. }
-        | MirTerm::Break { .. }
-        | MirTerm::Continue { .. }
-        | MirTerm::ComptimeYield(_)
-        | MirTerm::ComptimeBreak(_)
-        | MirTerm::ComptimeContinue(_)
-        | MirTerm::MatchNext(_)
-        | MirTerm::MatchComplete(_)
-        | MirTerm::Unreachable => {}
+    if let MirTerm::ReturnWithCleanup { cleanup, .. } = &block.term {
+        addressed.extend(cleanup_slots(cleanup));
     }
 }
 
@@ -1378,126 +1144,6 @@ fn keyword_regs_mut<'a>(
 ) {
     out.extend(kwargs.iter_mut().map(|(_, reg)| reg));
     places_regs_mut(kwarg_places.iter_mut().flatten(), out);
-}
-
-/// Prune `blocks` from block 0 and renumber their local targets; the
-/// returned table maps each old index to its new one. Nested regions are
-/// pruned the same way, and their escape targets are left for the caller,
-/// since they name the enclosing function's blocks.
-fn prune_block_list(blocks: &mut Vec<MirBlock>) -> Vec<Option<usize>> {
-    let mut reachable = vec![false; blocks.len()];
-    let mut pending = vec![0usize];
-    while let Some(block) = pending.pop() {
-        if block >= blocks.len() || std::mem::replace(&mut reachable[block], true) {
-            continue;
-        }
-        pending.extend(block_successors(&blocks[block]));
-    }
-    let mut kept = vec![None; blocks.len()];
-    let mut next = 0;
-    for (index, reached) in reachable.iter().enumerate() {
-        if *reached {
-            kept[index] = Some(next);
-            next += 1;
-        }
-    }
-    let mut index = 0;
-    blocks.retain(|_| {
-        let keep = reachable[index];
-        index += 1;
-        keep
-    });
-    let target = |old: &mut MirBlockId| {
-        *old = kept[*old].expect("a surviving block jumps only to surviving blocks");
-    };
-    for block in blocks.iter_mut() {
-        terminator_targets_mut(&mut block.term)
-            .into_iter()
-            .for_each(target);
-        for region in block.instrs.iter_mut().flat_map(instruction_regions_mut) {
-            prune_block_list(region);
-        }
-    }
-    kept
-}
-
-/// The blocks of the same list a block hands control to: its terminator's
-/// targets, and the escape targets of every region it holds.
-pub fn block_successors(block: &MirBlock) -> Vec<MirBlockId> {
-    let mut successors = terminator_targets(&block.term);
-    successors.extend(block.instrs.iter().flat_map(region_escape_targets));
-    successors
-}
-
-/// The blocks of `blocks` its entry reaches, in reverse postorder.
-///
-/// Each block comes before every block it dominates. `function_level` says
-/// `blocks` is a function's list, whose regions' escapes are edges too
-/// ([`block_successors`]); a region's list follows its terminators alone.
-pub fn reverse_postorder(blocks: &[MirBlock], function_level: bool) -> Vec<MirBlockId> {
-    let mut order = Vec::new();
-    if blocks.is_empty() {
-        return order;
-    }
-    let successors = |block: MirBlockId| {
-        if function_level {
-            block_successors(&blocks[block])
-        } else {
-            terminator_targets(&blocks[block].term)
-        }
-    };
-    let mut seen = vec![false; blocks.len()];
-    seen[0] = true;
-    let mut stack = vec![(0, successors(0), 0)];
-    while let Some((block, targets, next)) = stack.last_mut() {
-        if let Some(&target) = targets.get(*next) {
-            *next += 1;
-            if target < blocks.len() && !seen[target] {
-                seen[target] = true;
-                stack.push((target, successors(target), 0));
-            }
-        } else {
-            order.push(*block);
-            stack.pop();
-        }
-    }
-    order.reverse();
-    order
-}
-
-/// The function-level blocks the regions of `instruction` escape to, at any
-/// depth below it.
-pub fn region_escape_targets(instruction: &MirInstr) -> Vec<MirBlockId> {
-    let mut targets = Vec::new();
-    for region in instruction_regions(instruction) {
-        collect_escape_targets(region, &mut targets);
-    }
-    targets
-}
-
-fn collect_escape_targets(blocks: &[MirBlock], targets: &mut Vec<MirBlockId>) {
-    for block in blocks {
-        if let MirTerm::EscapeJump { target, .. } = &block.term {
-            targets.push(*target);
-        }
-        for region in block.instrs.iter().flat_map(instruction_regions) {
-            collect_escape_targets(region, targets);
-        }
-    }
-}
-
-/// Renumber every escape target below `blocks` with the function-level table.
-fn renumber_escapes(blocks: &mut [MirBlock], kept: &[Option<usize>]) {
-    for block in blocks {
-        for region in block.instrs.iter_mut().flat_map(instruction_regions_mut) {
-            for inner in region.iter_mut() {
-                if let MirTerm::EscapeJump { target, .. } = &mut inner.term {
-                    *target = kept[*target].expect("an escape names a surviving block");
-                }
-            }
-            renumber_escapes(region, kept);
-        }
-    }
 }
 
 /// Whether an argument convention is a written-back reference (`mut`/`ref`).
@@ -3241,39 +2887,11 @@ pub struct MirCaptureAccess {
     pub access: mojito_types::origin::CaptureAccess,
 }
 
-/// How a basic block hands off control. Block targets are indices into
-/// `MirFunction::blocks`; values are registers.
+/// How a region's one block hands off control: a return, the end of a
+/// `try` part, or one of upstream's `hlcf` region terminators. Values are
+/// registers.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum MirTerm {
-    Jump(MirBlockId),
-    Branch {
-        cond: Reg,
-        then_b: MirBlockId,
-        else_b: MirBlockId,
-    },
-    /// A `comptime if` arm test in a lowered CFG body, which only older MIR
-    /// text holds, in place of a [`MirInstr::ComptimeIf`]: a branch whose condition is a parameter
-    /// expression over the function's binders, decided by the elaborator, which keeps
-    /// the taken arm. Ownership and drops treat it as `Branch` with the
-    /// condition opaque; concrete MIR carries none.
-    ComptimeBranch {
-        cond: Box<GenericConstraint>,
-        then_b: MirBlockId,
-        else_b: MirBlockId,
-    },
-    /// A `comptime for` header: a loop whose binder `binder` takes each
-    /// iterator the compile-time sequence `source` steps through; the loop
-    /// variable is an alias of `source.next_value` over it and has no
-    /// storage. The body's back edge jumps here; `exit` follows the loop,
-    /// where a `break` and the body's stop arm land. Ownership and drops
-    /// treat it as a loop with its trip count unknown; the elaborator unrolls
-    /// it, so concrete MIR carries none.
-    ComptimeFor {
-        binder: mojito_types::param_expr::ParamRef,
-        source: mojito_checked::checked::ComptimeSequence,
-        body: MirBlockId,
-        exit: MirBlockId,
-    },
     Return(Option<Reg>),
     /// Return after evaluating `value`, carrying structured loop-owned cleanup
     /// out through any enclosing `try/finally` regions. The VM performs these
@@ -3286,17 +2904,6 @@ pub enum MirTerm {
     /// [`hir::Terminator::TryYield`]), so the `try` goes on to its
     /// `else`/`finally`. Never appears in a function body's blocks.
     TryYield,
-    /// A `break`/`continue` inside a `try` region that targets an enclosing
-    /// **function** loop: `target` is that loop's exit/header block in the
-    /// *enclosing function*'s `blocks` (not the region's). The VM propagates it out
-    /// as a `Flow::Jump(target)` — running each `finally` on the way — until the
-    /// function driver jumps there. `cleanup` lists the drops of the
-    /// region-body-local variables this escape edge runs (filled by drop
-    /// elaboration), each naming its destructor.
-    EscapeJump {
-        target: MirBlockId,
-        cleanup: Vec<CleanupDrop>,
-    },
     /// `hlcf.yield`: end an [`MirInstr::If`] arm, its values defining the
     /// op's results.
     Yield(Vec<Reg>),
@@ -3345,10 +2952,10 @@ pub enum MirTerm {
 
 /// One drop a cleanup list runs, as a [`MirInstr::DropVar`] does.
 ///
-/// A `try`'s raise edge, a [`MirTerm::ReturnWithCleanup`], or a
-/// [`MirTerm::EscapeJump`] drops `var` through `destructor`, the `__deinit__`
-/// its type's member table records, as upstream's destructor insertion
-/// names the `__del__` of each value an unwind block destroys. `None` for a
+/// A `try`'s raise edge or a [`MirTerm::ReturnWithCleanup`] drops `var`
+/// through `destructor`, the `__deinit__` its type's member table records,
+/// as upstream's destructor insertion names the `__del__` of each value an
+/// unwind block destroys. `None` for a
 /// type naming no destructor, a symbolic one included: drop elaboration's
 /// `name_destructors` names it, and the elaborator names an instance's once
 /// the type is concrete.
@@ -3829,157 +3436,7 @@ mod tests {
     }
 
     #[test]
-    fn prune_unreachable_blocks_renumbers_jumps_and_escapes() {
-        // bb0 -> bb2 -> bb3; bb1 is the untaken arm. bb2 holds a region
-        // whose escape names bb3 by its function-level index.
-        let region = vec![block(
-            Vec::new(),
-            MirTerm::EscapeJump {
-                target: 3,
-                cleanup: Vec::new(),
-            },
-        )];
-        let mut f = function(vec![
-            block(Vec::new(), MirTerm::Jump(2)),
-            block(Vec::new(), MirTerm::Return(None)),
-            block(
-                vec![MirInstr::Try {
-                    body: region,
-                    handler: None,
-                    orelse: None,
-                    finalbody: None,
-                    cleanup: Vec::new(),
-                }],
-                MirTerm::Jump(3),
-            ),
-            block(Vec::new(), MirTerm::Return(None)),
-        ]);
-        prune_unreachable_blocks(&mut f);
-        assert_eq!(f.blocks.len(), 3);
-        assert!(matches!(f.blocks[0].term, MirTerm::Jump(1)));
-        assert!(matches!(f.blocks[1].term, MirTerm::Jump(2)));
-        let MirInstr::Try { body, .. } = &f.blocks[1].instrs[0] else {
-            panic!("the region survives with its block");
-        };
-        assert!(matches!(
-            body[0].term,
-            MirTerm::EscapeJump { target: 2, .. }
-        ));
-    }
-
-    #[test]
-    fn prune_unreachable_blocks_keeps_a_block_only_an_escape_reaches() {
-        let region = vec![block(
-            Vec::new(),
-            MirTerm::EscapeJump {
-                target: 2,
-                cleanup: Vec::new(),
-            },
-        )];
-        let mut f = function(vec![
-            block(
-                vec![MirInstr::Try {
-                    body: region,
-                    handler: None,
-                    orelse: None,
-                    finalbody: None,
-                    cleanup: Vec::new(),
-                }],
-                MirTerm::Return(None),
-            ),
-            block(Vec::new(), MirTerm::Return(None)),
-            block(Vec::new(), MirTerm::Return(None)),
-        ]);
-        prune_unreachable_blocks(&mut f);
-        assert_eq!(f.blocks.len(), 2);
-        let MirInstr::Try { body, .. } = &f.blocks[0].instrs[0] else {
-            panic!("the region survives with its block");
-        };
-        assert!(matches!(
-            body[0].term,
-            MirTerm::EscapeJump { target: 1, .. }
-        ));
-    }
-
-    #[test]
-    fn prune_unreachable_blocks_prunes_every_region_from_its_entry() {
-        // An `if` arm and a loop body each hold an unreachable block; the
-        // loop body holds a `try` whose escape alone reaches bb2.
-        let arm = vec![
-            block(Vec::new(), MirTerm::Yield(Vec::new())),
-            block(Vec::new(), MirTerm::Unreachable),
-        ];
-        let escape = vec![block(
-            Vec::new(),
-            MirTerm::EscapeJump {
-                target: 2,
-                cleanup: Vec::new(),
-            },
-        )];
-        let body = vec![
-            block(
-                vec![MirInstr::Try {
-                    body: escape,
-                    handler: None,
-                    orelse: None,
-                    finalbody: None,
-                    cleanup: Vec::new(),
-                }],
-                MirTerm::Jump(2),
-            ),
-            block(Vec::new(), MirTerm::Unreachable),
-            block(
-                Vec::new(),
-                MirTerm::Break {
-                    label: None,
-                    values: Vec::new(),
-                },
-            ),
-        ];
-        let mut f = function(vec![
-            block(
-                vec![
-                    MirInstr::If {
-                        results: Vec::new(),
-                        cond: Reg(0),
-                        then: arm.clone(),
-                        else_args: Vec::new(),
-                        elifs: Vec::new(),
-                        orelse: arm,
-                    },
-                    MirInstr::Loop {
-                        label: None,
-                        operands: Vec::new(),
-                        args: Vec::new(),
-                        results: Vec::new(),
-                        body,
-                    },
-                ],
-                MirTerm::Return(None),
-            ),
-            block(Vec::new(), MirTerm::Return(None)),
-            block(Vec::new(), MirTerm::Return(None)),
-        ]);
-        prune_unreachable_blocks(&mut f);
-        assert_eq!(f.blocks.len(), 2);
-        let regions = instruction_regions(&f.blocks[0].instrs[0]);
-        assert!(regions.iter().all(|region| region.len() == 1));
-        let MirInstr::Loop { body, .. } = &f.blocks[0].instrs[1] else {
-            panic!("the loop survives");
-        };
-        assert_eq!(body.len(), 2);
-        assert!(matches!(body[0].term, MirTerm::Jump(1)));
-        let MirInstr::Try { body: escape, .. } = &body[0].instrs[0] else {
-            panic!("the try survives");
-        };
-        assert!(matches!(
-            escape[0].term,
-            MirTerm::EscapeJump { target: 1, .. }
-        ));
-    }
-
-    #[test]
-    fn prune_unreachable_blocks_cuts_a_listed_slot_a_loop_ended() {
+    fn cut_try_cleanups_cuts_a_listed_slot_a_loop_ended() {
         // A `try` in a loop body lists slot 0, which every path to its raise
         // point has already dropped, so the list entry goes.
         let body = vec![block(
@@ -4016,7 +3473,7 @@ mod tests {
             MirTerm::Return(None),
         )]);
         f.n_vars = 1;
-        prune_unreachable_blocks(&mut f);
+        crate::mir::verify::cut_try_cleanups(&mut f);
         let MirInstr::Loop { body, .. } = &f.blocks[0].instrs[0] else {
             panic!("the loop survives");
         };

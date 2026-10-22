@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1276**.
+Next free ID: **R1277**.
 
 ## Ordered Work
 
@@ -126,32 +126,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R882.
   - Model: Opus, Not Planned.
 
-- [ ] **R1274 `MirTerm` keeps `Jump`, `Branch`, `ComptimeBranch`, a
-  `ComptimeFor` terminator, and `EscapeJump`, a CFG vocabulary Mojo never
-  has above LLVM**
-
-  Since R1273 deleted `lower-control-flow`, only the MIR text reader makes
-  these terminators, and a lowered artifact is still legal MIR text.
-  - Stage 14c of `docs/structured-control-flow-plan.md`.
-  - Delete the five variants (`crates/mojito-mir/src/mir/ir.rs`) and
-    follow every exhaustive match, `renumber_escapes` and `CleanupDrop`'s
-    escape role included.
-  - MIR text moves to 1.88: the five spellings leave the writer, the
-    reader, and `TERMINATOR_MNEMONICS`.
-  - The VM's arms for them (`backend/vm/regions.rs`, `exec.rs`) and
-    `Flow::Jump` (`frames.rs`) go.
-  - `verify_concrete_program` then requires `verify_structured_shape`.
-  - The lowered-body guards go with it: `is_structured_shape` in `sccp`,
-    `mem2reg`, `simplify_cf`, `opt.rs`, and Pliron's `compile`.
-  - The pass cases whose inputs hold CFG terminators are rewritten
-    structured, and the refusal cases `sccp/lowered_body` and
-    `elaborate-drops/lowered_body` are deleted.
-  - `verify/drops.rs`'s block-list fixpoint (`Walk::region`'s
-    predecessors, its `top` escape feed) and `EscapeJump` channel go.
-  - Plan: slice C of `R883-pliron-lowers-a-mir-cfg-where-plan.md`.
-  - Depends on R1273.
-  - Model: Opus, Planned.
-
 - [ ] **R1271 The post-elaboration pipeline has no `AutomaticInline`, so
   `simplify-cf` runs once where upstream's inliner runs it per function**
 
@@ -170,6 +144,33 @@ which names the upstream pass each one follows. Each is measured by the
     function; `HoistTrivialInvariants` and `StackReuse` are separate
     entries once it lands.
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1276 A region is a `Vec<MirBlock>` the verifier holds to one
+  block, where upstream's `hlcf` regions are `SizedRegion<1>`**
+
+  Since R1274 `mir::verify` rejects a body or region of more than one
+  block, but the type still admits any number, so every walker indexes a
+  block list it knows holds one.
+  - Lever: `MirFunction::blocks` and every region field of `MirInstr`
+    (`If`, `MirElif`, `Loop`, `ComptimeIf`, `ComptimeFor`, `MirCase`,
+    `Try`) become one `MirBlock` (boxed inside an instruction), and
+    `instruction_regions{,_mut}` return blocks; the "body/region holds N
+    blocks" findings go with the shape they guard.
+  - Probe: `MirBlockId` (`mir/ir.rs`) names nothing but block 0.
+  - Probe: the VM's `RegionLevel::block` (`backend/vm/regions.rs`) is
+    always 0.
+  - Probe: Pliron's `BlockKey` bookkeeping (`lower/regions.rs`,
+    `lower/release.rs`) keys blocks of one-block lists.
+  - Probe: `mir/drop_calls.rs`'s `Flow::before` and `DropSite::block`,
+    and `verify/drops.rs`'s `Walk::block` index, index block 0 only.
+  - Probe: the `block N` finding prefix and `verify_artifact`'s block
+    locator name block 0 only.
+  - The MIR text may keep its `[bb0 { … }]` region spelling: MLIR prints a
+    region's entry block label only when it has arguments.
+  - Large but mechanical: each of the ~200 `instruction_regions` callers
+    loses a loop over a list.
+  - Depends on R1274.
   - Model: Opus, Not Planned.
 
 - [ ] **R1090 A drop of a tuple's storage names no destructor per element;
@@ -10154,9 +10155,9 @@ follow-ups the landed producer stages filed come last.
     after the op verifies.
   - Probe: a `comptime.for` whose operand is defined after the op
     verifies, and the VM reads `None` for it (found while landing R1260).
-  - The fix is a scoped walk over each structured body (lowered bodies by
-    `mir::immediate_dominators`), each region seeing the registers defined
-    before it in the regions enclosing it plus its own arguments.
+  - The fix is a scoped walk over each structured body, each region
+    seeing the registers defined before it in the regions enclosing it
+    plus its own arguments.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10234,8 +10235,8 @@ follow-ups the landed producer stages filed come last.
   `raise` ends its block**
 
   `MirInstr::Raise` is followed by its region's normal terminator
-  (`jump`/`yield`), so every analysis special-cases it as "the rest of the
-  block is unreachable".
+  (`yield`, or a region exit), so every analysis special-cases it as "the
+  rest of the block is unreachable".
   - The special cases: `moves.rs` (two), `interior.rs`, `verify/drops.rs`,
     and `register_loans.rs`.
   - Lever: a `raise` region terminator in HIR (`Terminator`) and MIR

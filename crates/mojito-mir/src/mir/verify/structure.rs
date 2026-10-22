@@ -7,38 +7,6 @@ use crate::mir::text::{instruction_mnemonic, terminator_mnemonic};
 use crate::mir::{LoopLabel, instruction_regions};
 use mojito_types::types::TyKind;
 
-/// [`verify_function_in`] for a structured body, upstream's `hlcf` form,
-/// plus its [`verify_structured_shape`].
-pub fn verify_structured_function_in(
-    name: &str,
-    function: &MirFunction,
-    declarations: &MirDeclarations,
-) -> Vec<String> {
-    let mut errors = verify_function_in(name, function, declarations);
-    errors.extend(verify_structured_shape(name, function));
-    errors
-}
-
-/// The shape of a structured body: every region, the body included, holds
-/// exactly one block, and no block ends in a CFG terminator (`jump`,
-/// `branch`, `comptime_branch`, `comptime_for`, `escape`).
-pub fn verify_structured_shape(name: &str, function: &MirFunction) -> Vec<String> {
-    let mut errors = Vec::new();
-    if function.blocks.len() != 1 {
-        errors.push(format!(
-            "MIR function '{name}' body holds {} blocks",
-            function.blocks.len()
-        ));
-    }
-    structured_blocks(name, &function.blocks, &mut errors);
-    errors
-}
-
-/// Whether `function` has [`verify_structured_shape`]'s shape.
-pub fn is_structured_shape(function: &MirFunction) -> bool {
-    function.blocks.len() == 1 && blocks_structured(&function.blocks)
-}
-
 /// Verify each region a region op holds, under the region's kind and its
 /// handler protection. A `try` body is protected by its handler; every other
 /// region keeps its op's protection.
@@ -316,17 +284,16 @@ fn verify_region(
     blocks: &[MirBlock],
     errors: &mut Vec<String>,
 ) {
-    if blocks.is_empty() {
-        errors.push(format!("{}: region holds no block", cx.prefix));
+    if blocks.len() != 1 {
+        errors.push(format!(
+            "{}: region holds {} blocks",
+            cx.prefix,
+            blocks.len()
+        ));
     }
     let mut regions = cx.context.regions.clone();
     regions.push(kind);
-    let context = RegionContext {
-        region_len: blocks.len(),
-        function_len: cx.context.function_len,
-        regions,
-        protected,
-    };
+    let context = RegionContext { regions, protected };
     verify_blocks(
         cx.name,
         cx.function,
@@ -466,61 +433,13 @@ fn enclosing_loop(context: &RegionContext, label: Option<LoopLabel>) -> Option<(
     })
 }
 
-/// Whether no block of `blocks` ends in a CFG terminator and every region
-/// below them holds one block, as [`structured_blocks`] checks.
-fn blocks_structured(blocks: &[MirBlock]) -> bool {
-    blocks.iter().all(|block| {
-        !is_cfg_terminator(&block.term)
-            && block.instrs.iter().all(|instruction| {
-                instruction_regions(instruction)
-                    .into_iter()
-                    .all(|region| region.len() == 1 && blocks_structured(region))
-            })
-    })
-}
-
-/// A terminator only a lowered body holds.
-const fn is_cfg_terminator(term: &MirTerm) -> bool {
-    matches!(
-        term,
-        MirTerm::Jump(_)
-            | MirTerm::Branch { .. }
-            | MirTerm::ComptimeBranch { .. }
-            | MirTerm::ComptimeFor { .. }
-            | MirTerm::EscapeJump { .. }
-    )
-}
-
-fn structured_blocks(name: &str, blocks: &[MirBlock], errors: &mut Vec<String>) {
-    for (index, block) in blocks.iter().enumerate() {
-        let prefix = format!("MIR function '{name}' block {index}");
-        if is_cfg_terminator(&block.term) {
-            errors.push(format!(
-                "{prefix}: CFG terminator `{}` in a structured body",
-                terminator_mnemonic(&block.term)
-            ));
-        }
-        for instruction in &block.instrs {
-            for region in instruction_regions(instruction) {
-                if region.len() != 1 {
-                    errors.push(format!(
-                        "{prefix}: `{}` region holds {} blocks",
-                        instruction_mnemonic(instruction),
-                        region.len()
-                    ));
-                }
-                structured_blocks(name, region, errors);
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::mir::{MirProgram, SpanTable};
     use mojito_checked::checked::ComptimeSequence;
     use mojito_types::param_expr::{ParamContext, ParamId, ParamRef};
+    use mojito_types::types::GenericConstraint;
 
     fn one(instrs: Vec<MirInstr>, term: MirTerm) -> Vec<MirBlock> {
         vec![MirBlock { instrs, term }]
@@ -1366,7 +1285,7 @@ mod tests {
     }
 
     #[test]
-    fn a_multi_block_region_is_rejected_only_by_the_structured_mode() {
+    fn a_multi_block_region_is_rejected() {
         let function = function_with(vec![MirInstr::Loop {
             label: None,
             operands: Vec::new(),
@@ -1375,32 +1294,27 @@ mod tests {
             body: vec![
                 MirBlock {
                     instrs: Vec::new(),
-                    term: MirTerm::Jump(1),
-                },
-                MirBlock {
-                    instrs: Vec::new(),
                     term: MirTerm::Break {
                         label: None,
                         values: Vec::new(),
                     },
                 },
+                MirBlock {
+                    instrs: Vec::new(),
+                    term: MirTerm::Return(None),
+                },
             ],
         }]);
-        assert_eq!(findings(&function), Vec::<String>::new());
-        let structured = verify_structured_function_in("f", &function, &MirDeclarations::default());
-        assert_finding(&structured, "`loop` region holds 2 blocks");
-        assert_finding(&structured, "CFG terminator `jump` in a structured body");
+        assert_finding(&findings(&function), "region holds 2 blocks");
     }
 
     #[test]
-    fn concrete_mir_carries_no_structured_control_flow() {
-        let function = function_with(vec![MirInstr::If {
+    fn concrete_mir_carries_no_compile_time_control_flow() {
+        let function = function_with(vec![MirInstr::ComptimeIf {
             results: Vec::new(),
-            cond: Reg(0),
-            then: one(Vec::new(), MirTerm::Yield(Vec::new())),
-            else_args: Vec::new(),
-            elifs: Vec::new(),
-            orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            conds: vec![GenericConstraint::Bool(true)],
+            arms: vec![one(Vec::new(), MirTerm::ComptimeYield(Vec::new()))],
+            orelse: one(Vec::new(), MirTerm::ComptimeYield(Vec::new())),
         }]);
         let program = MirProgram {
             functions: vec![("f".into(), function)],
@@ -1408,13 +1322,10 @@ mod tests {
             invariant_errors: Vec::new(),
         };
         let found = verify_concrete(&program);
+        assert_finding(&found, "keeps a compile-time branch");
         assert_finding(
             &found,
-            "keeps structured control flow `if` in elaborated MIR",
-        );
-        assert_finding(
-            &found,
-            "keeps the region terminator `yield` in elaborated MIR",
+            "keeps the region terminator `comptime.yield` in elaborated MIR",
         );
     }
 }

@@ -26,7 +26,7 @@
 use super::{
     MirBlock, MirFunction, MirInstr, MirPlace, MirTerm, Proj, RegionFrame, UseMode, VarId,
     cleanup_drops, fresh_register, instruction_regions, instruction_regions_mut, instruction_slots,
-    region_escape_targets, region_exit, terminator_targets,
+    region_exit,
 };
 use mojito_common::token::SourceSpan;
 use mojito_types::types::TyKind;
@@ -413,10 +413,9 @@ fn death_span(function: &MirFunction, var: VarId) -> Option<SourceSpan> {
         .map(|(_, (span, _))| span.clone())
 }
 
-/// The state of the slot `var` through the block list `list`, entered in
-/// `entry`, under the enclosing `frames`: a block ending in a region
-/// terminator joins its end state into the frame it names. An escape into
-/// `list` from one of its regions is taken to hold no whole value.
+/// The state of the slot `var` through the block list `list`, its one
+/// block entered in `entry`, under the enclosing `frames`: a block ending in
+/// a region terminator joins its end state into the frame it names.
 fn flow(
     list: &[MirBlock],
     entry: State,
@@ -424,54 +423,11 @@ fn flow(
     frames: &mut [Frame],
     memo: &mut Memo,
 ) -> Flow {
-    let mut inputs: Vec<State> = vec![None; list.len()];
-    let Some(first) = inputs.first_mut() else {
-        return Flow {
-            before: Vec::new(),
-            yielded: entry.clone(),
-            raised: None,
-            anywhere: entry,
-        };
-    };
-    *first = entry;
-    // The fixpoint's walks fill frames of their own; the replay below fills
-    // the enclosing ones.
-    let mut scratch: Vec<Frame> = frames.iter().map(|frame| Frame::new(frame.kind)).collect();
-    let mut pending = vec![0];
-    while let Some(current) = pending.pop() {
-        if inputs[current].is_none() {
-            continue;
-        }
-        let (states, ..) = through(
-            &list[current],
-            inputs[current].clone(),
-            var,
-            &mut scratch,
-            memo,
-        );
-        let out = states.last().cloned().flatten();
-        let escapes = list[current]
-            .instrs
-            .iter()
-            .flat_map(region_escape_targets)
-            .map(|target| (target, Some(Held::Partial)));
-        let successors = terminator_targets(&list[current].term)
-            .into_iter()
-            .map(|target| (target, out.clone()));
-        for (target, state) in successors.chain(escapes) {
-            if let Some(input) = inputs.get_mut(target) {
-                let joined = join(input.clone(), state);
-                if *input != joined {
-                    *input = joined;
-                    pending.push(target);
-                }
-            }
-        }
-    }
     let mut before = Vec::with_capacity(list.len());
     let mut yielded = None;
     let mut raised = None;
     let mut anywhere = None;
+    let inputs = std::iter::once(entry).chain(std::iter::repeat(None));
     for (block, input) in list.iter().zip(inputs) {
         let (states, raising, inside) = through(block, input, var, frames, memo);
         raised = join(raised, raising);
@@ -622,8 +578,7 @@ fn memoized_region_flow(
 ///   The op completes as its `else`, or its body without one, and its
 ///   handler complete, through the `finally`. A `break`, `continue`, or
 ///   `match` exit leaving one of its parts arrives in the state it leaves
-///   in, or, past a `finally`, holding no whole value, as an escape from a
-///   part of a lowered `try` does.
+///   in, or, past a `finally`, holding no whole value.
 fn region_flow(
     instruction: &MirInstr,
     state: State,

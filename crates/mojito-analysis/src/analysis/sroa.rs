@@ -287,9 +287,7 @@ fn take_census(
                 keep(census, cleanup_slots(cleanup));
             }
         }
-        if let MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } =
-            &block.term
-        {
+        if let MirTerm::ReturnWithCleanup { cleanup, .. } = &block.term {
             keep(census, cleanup_slots(cleanup));
         }
     }

@@ -10,12 +10,11 @@
 //! break set, a `continue` its continue set, a loop is dry-run until
 //! stable, then replayed once, and a `try` walks its parts from its
 //! `finally` back to its body (`checkTryOp`), a raising instruction keeping
-//! live what its handler reads. A lowered block list (older MIR text)
-//! reaches its per-block fixpoint first.
+//! live what its handler reads. Every region is one block.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_mir::mir::{MirBlockId, MirCase, RegionFrame, region_exit};
+use mojito_mir::mir::{MirCase, RegionFrame, region_exit};
 
 /// A forward analysis the walk carries through regions.
 pub(super) trait ForwardScan {
@@ -36,14 +35,11 @@ pub(super) trait ForwardScan {
 /// A region's states per exit channel: the normal fall-off, every
 /// potentially-raising point, and `return` exits. `None` marks an
 /// unreachable channel. The states a `break`, `continue`, `match.next`, or
-/// `match.complete` carries go to their [`Frame`] instead; in a lowered
-/// body, the state an escape from a `try` part carries is kept with the
-/// function block it enters, which the function's fixpoint joins it into.
+/// `match.complete` carries go to their [`Frame`] instead.
 pub(super) struct Flow<T> {
     pub(super) normal: Option<T>,
     pub(super) raises: Option<T>,
     pub(super) exits: Option<T>,
-    escapes: Vec<(MirBlockId, T)>,
 }
 
 /// What a forward walk reports as it replays a body: every instruction it
@@ -189,7 +185,6 @@ impl<T: Clone> Flow<T> {
             normal: None,
             raises: None,
             exits: None,
-            escapes: Vec::new(),
         }
     }
 
@@ -199,7 +194,6 @@ impl<T: Clone> Flow<T> {
             normal: Some(state),
             raises: None,
             exits: None,
-            escapes: Vec::new(),
         }
     }
 
@@ -209,12 +203,10 @@ impl<T: Clone> Flow<T> {
         self.absorb_abnormal(scan, other);
     }
 
-    /// Join the raising, exiting, and escaping channels of `other` into
-    /// this flow's.
+    /// Join the raising and exiting channels of `other` into this flow's.
     fn absorb_abnormal<S: ForwardScan<State = T>>(&mut self, scan: &S, other: &Self) {
         add_state(scan, &mut self.raises, other.raises.as_ref());
         add_state(scan, &mut self.exits, other.exits.as_ref());
-        self.escapes.extend(other.escapes.iter().cloned());
     }
 }
 
@@ -242,9 +234,6 @@ impl<T> Frame<T> {
 /// A region's flow beside the frame its terminators filled.
 type Framed<T> = (Flow<T>, Frame<T>);
 
-/// The observer type of a replay that observes nothing (a fixpoint pass).
-type NoObserver<T> = fn(&T, &MirInstr) -> Result<(), OwnershipError>;
-
 /// Join a channel state into `target` (unreachable contributes nothing).
 fn add_state<S: ForwardScan>(scan: &S, target: &mut Option<S::State>, source: Option<&S::State>) {
     match (target.as_mut(), source) {
@@ -259,16 +248,15 @@ fn enters<S: ForwardScan>(scan: &S, instr: &MirInstr) -> bool {
     region_op(instr) && scan.enters(instr)
 }
 
-/// Walk one region from its entry state, handing every instruction and the
-/// state reaching it to `observer` when one is given. A structured region is
-/// one block, replayed from `entry`; a lowered block list first reaches its
-/// per-block fixpoint. Region ops recurse through [`walk_op`], and a region
-/// terminator hands its state to the frame it names.
+/// Walk one region, its one block, from its entry state, handing every
+/// instruction and the state reaching it to `observer` when one is given.
+/// Region ops recurse through [`walk_op`], and a region terminator hands
+/// its state to the frame it names.
 fn walk_region<S, O>(
     scan: &S,
     entry: Option<S::State>,
     blocks: &[MirBlock],
-    mut observer: Option<&mut O>,
+    observer: Option<&mut O>,
     frames: &mut Vec<Frame<S::State>>,
 ) -> Result<Flow<S::State>, OwnershipError>
 where
@@ -278,55 +266,33 @@ where
     let Some(entry) = entry else {
         return Ok(Flow::unreachable());
     };
-    if blocks.is_empty() {
+    let Some(block) = blocks.first() else {
         return Ok(Flow::falls_off(entry));
-    }
-    let in_states = match blocks {
-        [block] if terminator_targets(&block.term).is_empty() => vec![Some(entry)],
-        _ => region_in_states(scan, &entry, blocks, frames),
     };
     let mut flow = Flow::unreachable();
-    for (b, block) in blocks.iter().enumerate() {
-        let Some(state) = in_states[b].clone() else {
-            continue;
-        };
-        let Some(state) = walk_block(
-            scan,
-            state,
-            block,
-            &mut flow,
-            observer.as_deref_mut(),
-            frames,
-        )?
-        else {
-            continue;
-        };
-        match block.term {
-            MirTerm::TryYield
-            | MirTerm::Yield(_)
-            | MirTerm::ComptimeYield(_)
-            | MirTerm::ElifCond { .. } => add_state(scan, &mut flow.normal, Some(&state)),
-            MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. } => {
-                add_state(scan, &mut flow.exits, Some(&state));
-            }
-            MirTerm::EscapeJump { target, .. } => flow.escapes.push((target, state)),
-            MirTerm::Break { .. }
-            | MirTerm::Continue { .. }
-            | MirTerm::ComptimeBreak(_)
-            | MirTerm::ComptimeContinue(_)
-            | MirTerm::MatchComplete(_)
-            | MirTerm::MatchNext(_) => {
-                if let Some((target, resume)) = region_exit(&block.term) {
-                    leave_to(scan, frames, target, resume, &state);
-                }
-            }
-            // `hlcf.unreachable` checks nothing: no value reaches past it.
-            MirTerm::Jump(_)
-            | MirTerm::Branch { .. }
-            | MirTerm::ComptimeBranch { .. }
-            | MirTerm::ComptimeFor { .. }
-            | MirTerm::Unreachable => {}
+    let Some(state) = walk_block(scan, entry, block, &mut flow, observer, frames)? else {
+        return Ok(flow);
+    };
+    match block.term {
+        MirTerm::TryYield
+        | MirTerm::Yield(_)
+        | MirTerm::ComptimeYield(_)
+        | MirTerm::ElifCond { .. } => add_state(scan, &mut flow.normal, Some(&state)),
+        MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. } => {
+            add_state(scan, &mut flow.exits, Some(&state));
         }
+        MirTerm::Break { .. }
+        | MirTerm::Continue { .. }
+        | MirTerm::ComptimeBreak(_)
+        | MirTerm::ComptimeContinue(_)
+        | MirTerm::MatchComplete(_)
+        | MirTerm::MatchNext(_) => {
+            if let Some((target, resume)) = region_exit(&block.term) {
+                leave_to(scan, frames, target, resume, &state);
+            }
+        }
+        // `hlcf.unreachable` checks nothing: no value reaches past it.
+        MirTerm::Unreachable => {}
     }
     Ok(flow)
 }
@@ -666,7 +632,6 @@ where
     let mut normal = None;
     let mut raises = None;
     let mut exits = body_flow.exits.clone();
-    let mut escapes = body_flow.escapes.clone();
     if let Some(orelse) = orelse {
         let else_flow = walk_region(
             scan,
@@ -678,7 +643,6 @@ where
         add_state(scan, &mut normal, else_flow.normal.as_ref());
         add_state(scan, &mut raises, else_flow.raises.as_ref());
         add_state(scan, &mut exits, else_flow.exits.as_ref());
-        escapes.extend(else_flow.escapes);
     } else {
         add_state(scan, &mut normal, body_flow.normal.as_ref());
     }
@@ -693,7 +657,6 @@ where
         add_state(scan, &mut normal, handler_flow.normal.as_ref());
         add_state(scan, &mut raises, handler_flow.raises.as_ref());
         add_state(scan, &mut exits, handler_flow.exits.as_ref());
-        escapes.extend(handler_flow.escapes);
     } else {
         add_state(scan, &mut raises, body_flow.raises.as_ref());
     }
@@ -702,7 +665,6 @@ where
             normal,
             raises,
             exits,
-            escapes,
         });
     };
     let leaving: Vec<_> = frames
@@ -723,9 +685,6 @@ where
             add_state(scan, &mut all, leave.as_ref());
             add_state(scan, &mut all, resume.as_ref());
         }
-        for (_, state) in &escapes {
-            add_state(scan, &mut all, Some(state));
-        }
         let mut scratch: Vec<Frame<S::State>> =
             frames.iter().map(|frame| Frame::new(frame.kind)).collect();
         walk_region(scan, all, finalbody, Some(observer), &mut scratch)?;
@@ -745,20 +704,7 @@ where
         normal: normal_final.normal,
         raises,
         exits,
-        escapes: [
-            normal_final.escapes,
-            raising_final.escapes,
-            exiting_final.escapes,
-        ]
-        .concat(),
     };
-    for (target, state) in escapes {
-        let finished = walk_region(scan, Some(state), finalbody, None::<&mut O>, frames)?;
-        through.absorb_abnormal(scan, &finished);
-        through
-            .escapes
-            .extend(finished.normal.map(|state| (target, state)));
-    }
     for (index, (leave, resume)) in leaving.into_iter().enumerate() {
         for (state, resumes) in [(leave, false), (resume, true)] {
             let finished = walk_region(scan, state, finalbody, None::<&mut O>, frames)?;
@@ -773,113 +719,6 @@ where
         }
     }
     Ok(through)
-}
-
-/// Per-block in-states of a lowered block list at the dataflow fixpoint:
-/// `in[b] = ⨆ out[pred]`, `out[b] = transfer(in[b])`. The entry state is a
-/// real program state, not the lattice bottom, so unvisited blocks stay
-/// absent (a loop header must not join a definite preheader move with a
-/// seeded backedge and report it forever). A block an escape from a `try`
-/// part enters also joins the escape's state. The region terminators of the
-/// fixpoint's walks fill frames of their own, which the replay refills.
-fn region_in_states<S: ForwardScan>(
-    scan: &S,
-    entry: &S::State,
-    blocks: &[MirBlock],
-    frames: &[Frame<S::State>],
-) -> Vec<Option<S::State>> {
-    let nb = blocks.len();
-    let preds = block_predecessors(blocks);
-    let mut in_states: Vec<Option<S::State>> = vec![None; nb];
-    let mut out_states: Vec<Option<S::State>> = vec![None; nb];
-    let mut escape_out: Vec<Vec<(MirBlockId, S::State)>> = vec![Vec::new(); nb];
-    let mut escape_sources: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); nb];
-    let mut scratch: Vec<Frame<S::State>> =
-        frames.iter().map(|frame| Frame::new(frame.kind)).collect();
-    let mut worklist = Worklist::forward(blocks);
-    while let Some(b) = worklist.pop() {
-        let new_in = if b == 0 || (preds[b].is_empty() && escape_sources[b].is_empty()) {
-            entry.clone()
-        } else {
-            let escaped = escape_sources[b].iter().flat_map(|source| {
-                escape_out[*source]
-                    .iter()
-                    .filter(|(target, _)| *target == b)
-                    .map(|(_, state)| state)
-            });
-            let mut predecessors = preds[b]
-                .iter()
-                .filter_map(|predecessor| out_states[*predecessor].as_ref())
-                .chain(escaped);
-            let Some(first) = predecessors.next() else {
-                continue;
-            };
-            predecessors.fold(first.clone(), |acc, predecessor| {
-                scan.join(&acc, predecessor)
-            })
-        };
-        if in_states[b].as_ref() == Some(&new_in) {
-            continue;
-        }
-        let mut escapes = Vec::new();
-        let new_out = transfer_block(
-            scan,
-            new_in.clone(),
-            &blocks[b].instrs,
-            &mut scratch,
-            &mut escapes,
-        );
-        in_states[b] = Some(new_in);
-        if escape_out[b] != escapes {
-            for (target, _) in escape_out[b].iter().chain(&escapes) {
-                worklist.push(*target);
-            }
-            for (target, _) in &escapes {
-                if let Some(sources) = escape_sources.get_mut(*target) {
-                    sources.insert(b);
-                }
-            }
-            escape_out[b] = escapes;
-        }
-        if out_states[b] != new_out {
-            out_states[b] = new_out;
-            worklist.push_successors(&blocks[b].term);
-        }
-    }
-    in_states
-}
-
-/// Apply a block's instructions to a state without reporting; a nested
-/// region op continues from its normal completion, its escapes collected in
-/// `escapes`, and an always-raising or always-exiting one, like a `raise`,
-/// leaves the rest of the block unreachable.
-fn transfer_block<S: ForwardScan>(
-    scan: &S,
-    mut state: S::State,
-    instrs: &[MirInstr],
-    frames: &mut Vec<Frame<S::State>>,
-    escapes: &mut Vec<(MirBlockId, S::State)>,
-) -> Option<S::State> {
-    for instr in instrs {
-        if enters(scan, instr) {
-            let nested = walk_op(
-                scan,
-                state,
-                instr,
-                None::<&mut NoObserver<S::State>>,
-                frames,
-            )
-            .ok()?;
-            escapes.extend(nested.escapes);
-            state = nested.normal?;
-        } else {
-            scan.transfer(&mut state, instr);
-            if matches!(instr, MirInstr::Raise { .. }) {
-                return None;
-            }
-        }
-    }
-    Some(state)
 }
 
 /// A frame of the backward walk: the states live where its two exits go.
@@ -903,53 +742,27 @@ struct BackWalk<'s, S: BackwardScan> {
 }
 
 impl<S: BackwardScan> BackWalk<'_, S> {
-    /// Walk one region backward from `exit`, the state its yields continue
-    /// to, returning its live-in. A structured region is one block, walked
-    /// once; a lowered block list reaches its per-block fixpoint first and
-    /// is then replayed for `recorder`.
+    /// Walk one region, its one block, backward from `exit`, the state its
+    /// yields continue to, returning its live-in.
     fn region<R: BackwardRecorder<S::State>>(
         &mut self,
         blocks: &[MirBlock],
         exit: &S::State,
         recorder: Option<&mut R>,
     ) -> S::State {
-        match blocks {
-            [] => return exit.clone(),
-            [block] if terminator_targets(&block.term).is_empty() => {
-                return self.block(block, exit, &[], recorder);
-            }
-            _ => {}
-        }
-        let preds = block_predecessors(blocks);
-        let mut live_in = vec![S::State::default(); blocks.len()];
-        let mut worklist = Worklist::backward(blocks);
-        while let Some(b) = worklist.pop() {
-            let incoming = self.block(&blocks[b], exit, &live_in, None::<&mut R>);
-            if incoming != live_in[b] {
-                live_in[b] = incoming;
-                for predecessor in &preds[b] {
-                    worklist.push(*predecessor);
-                }
-            }
-        }
-        if let Some(recorder) = recorder {
-            for block in blocks {
-                self.block(block, exit, &live_in, Some(&mut *recorder));
-            }
-        }
-        live_in.swap_remove(0)
+        blocks
+            .first()
+            .map_or_else(|| exit.clone(), |block| self.block(block, exit, recorder))
     }
 
-    /// Walk one block from its terminator back, returning its live-in;
-    /// `live_in` holds its lowered successors' live-ins.
+    /// Walk one block from its terminator back, returning its live-in.
     fn block<R: BackwardRecorder<S::State>>(
         &mut self,
         block: &MirBlock,
         exit: &S::State,
-        live_in: &[S::State],
         mut recorder: Option<&mut R>,
     ) -> S::State {
-        let out = self.live_out(&block.term, exit, live_in);
+        let out = self.live_out(&block.term, exit);
         let mut live = out.clone();
         self.scan.terminate(&mut live, block);
         for instr in block.instrs.iter().rev() {
@@ -979,17 +792,16 @@ impl<S: BackwardScan> BackWalk<'_, S> {
     }
 
     /// The state live after a block's terminator: `exit` after a yield,
-    /// the return channel after a `return`, the named frame's set after a
-    /// region terminator, and the join of its successors' live-ins after a
-    /// lowered branch.
-    fn live_out(&self, term: &MirTerm, exit: &S::State, live_in: &[S::State]) -> S::State {
+    /// the return channel after a `return`, and the named frame's set after
+    /// a region terminator.
+    fn live_out(&self, term: &MirTerm, exit: &S::State) -> S::State {
         match term {
             MirTerm::TryYield
             | MirTerm::Yield(_)
             | MirTerm::ComptimeYield(_)
             | MirTerm::ElifCond { .. } => exit.clone(),
             MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. } => self.exit.clone(),
-            MirTerm::EscapeJump { .. } | MirTerm::Unreachable => S::State::default(),
+            MirTerm::Unreachable => S::State::default(),
             MirTerm::Break { .. }
             | MirTerm::Continue { .. }
             | MirTerm::ComptimeBreak(_)
@@ -1011,18 +823,6 @@ impl<S: BackwardScan> BackWalk<'_, S> {
                         }
                     })
                     .unwrap_or_default()
-            }
-            MirTerm::Jump(_)
-            | MirTerm::Branch { .. }
-            | MirTerm::ComptimeBranch { .. }
-            | MirTerm::ComptimeFor { .. } => {
-                let mut out = S::State::default();
-                for successor in terminator_targets(term) {
-                    if let Some(live) = live_in.get(successor) {
-                        self.scan.join(&mut out, live);
-                    }
-                }
-                out
             }
         }
     }

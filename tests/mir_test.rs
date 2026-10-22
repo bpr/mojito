@@ -654,10 +654,15 @@ def main() raises:
 "#;
     for name in ["f", "main"] {
         let (_, mir) = checked_function(source, name);
-        assert_eq!(
-            mojito::mir::verify::verify_structured_shape(name, &mir),
-            Vec::<String>::new()
-        );
+        let shapes: Vec<String> = mojito::mir::verify::verify_function_in(
+            name,
+            &mir,
+            &mojito::mir::MirDeclarations::default(),
+        )
+        .into_iter()
+        .filter(|finding| finding.contains(" blocks"))
+        .collect();
+        assert_eq!(shapes, Vec::<String>::new());
     }
 }
 

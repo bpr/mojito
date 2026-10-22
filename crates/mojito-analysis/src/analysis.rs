@@ -45,7 +45,7 @@ use mojito_mir::mir::{
     CleanupDrop, MirBlock, MirCaptureMode, MirDeclarations, MirFunction, MirFunctionDeclaration,
     MirInstr, MirInteriorOrigin, MirIntrinsicSubscript, MirPlace, MirProgram, MirSubscriptArg,
     MirTerm, Proj, Reg, binder_scope, cleanup_drops, lower_copies_and_moves,
-    materialized_parameter_slots, terminator_targets,
+    materialized_parameter_slots,
 };
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use moves::*;

@@ -1,4 +1,4 @@
-mojito-mir 1.73
+mojito-mir 1.87
 artifact {
   features: [],
   files: [
@@ -63,35 +63,15 @@ artifact {
             instructions: [
               closure.make { dest: %r0, function: "outer$plus", captures: [closure_capture { place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent }, mode: reference }] },
               const { dest: %r1, value: int_literal(3) },
-              literal.materialize { dest: %r2, value: %r1, target: Int }
-            ],
-            terminator: jump { target: bb1 }
-          },
-          bb1 {
-            instructions: [
+              literal.materialize { dest: %r2, value: %r1, target: Int },
               value.copy { dest: %r4, value: %r0 },
-              value.copy { dest: %r5, value: %r2 }
-            ],
-            terminator: jump { target: bb3 }
-          },
-          bb2 {
-            instructions: [
-            ],
-            terminator: return { value: present(%r3) }
-          },
-          bb3 {
-            instructions: [
+              value.copy { dest: %r5, value: %r2 },
               ref.make { dest: %r9, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } },
               ref.read { dest: %r8, reference: %r9 },
               value.copy { dest: %r7, value: %r5 },
               binary { op: add, dest: %r3, a: %r7, b: %r8, resolved: absent, raises: absent }
             ],
-            terminator: jump { target: bb4 }
-          },
-          bb4 {
-            instructions: [
-            ],
-            terminator: jump { target: bb2 }
+            terminator: return { value: present(%r3) }
           }
         ]
       },

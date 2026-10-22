@@ -21,18 +21,15 @@ A function owns two indexed storage spaces:
 
 Registers are function-local virtual registers. They are allocated densely but
 are not physical machine registers. Variable slots have stable identities across
-the function's control-flow graph.
+the function's body and its regions.
 
-A function is a list of basic blocks:
+A function body is one block, as each region of a region op is:
 
 ```text
 fn example(%parameters...) {
 bb0:
     const.i64 %r0, 1
     var.store $v0, %r0 : Int
-    jump bb1
-
-bb1:
     var.copy %r1, $v0
     return %r1
 }
@@ -192,17 +189,16 @@ stored handle and operating on its referent.
 
 | Mnemonic | MIR terminator | Purpose |
 |---|---|---|
-| `jump` | `Jump` | Unconditional block transfer |
-| `branch` | `Branch` | Conditional block transfer |
 | `return` | `Return` | Return from a function or structured region |
 | `return.cleanup` | `ReturnWithCleanup` | Return after pending `finally` regions, then destroy what the return still holds |
 | `try.yield` | `TryYield` | Complete a try sub-region normally |
-| `escape` | `EscapeJump` | Leave a try region for an enclosing loop target |
 
 The structured region terminators — `yield`, `if.elifcond.yield`, `break`,
-`continue`, `comptime.yield`, `comptime.for.break`, `comptime.for.continue`,
-and `unreachable` — end only the regions of the ops above, and the VM
-likewise rejects one as unsupported.
+`continue`, `match.next`, `match.complete`, `comptime.yield`,
+`comptime.for.break`, `comptime.for.continue`, and `unreachable` — end only
+the regions of the ops above. The VM's region cursor runs those of runtime
+control flow, and rejects a compile-time one, or a reached `unreachable`,
+as unsupported.
 
 ## Constants and Variable Transfer
 
@@ -841,8 +837,8 @@ try {
 }
 ```
 
-Executes structured mini-CFG regions that share the enclosing function's
-registers and variable slots.
+Executes structured regions that share the enclosing function's registers
+and variable slots.
 
 Semantics:
 
@@ -854,8 +850,8 @@ Semantics:
 4. Execute `finally` on normal completion, raise, return, break, or continue.
 5. A non-normal result from `finally` overrides the pending result.
 
-The body, handler, else, and finally components are each local basic-block
-graphs whose entry is block zero.
+The body, handler, else, and finally components are each one block,
+`bb0`.
 
 ### `unsupported` — Explicit Backend Failure
 
@@ -906,23 +902,6 @@ unsupported. Current lifetime elaboration uses `drop.var`.
 
 Terminators appear only as the final operation of a basic block.
 
-### `jump` — Unconditional Transfer
-
-```text
-jump bb_target
-```
-
-Continues execution at `bb_target`.
-
-### `branch` — Conditional Transfer
-
-```text
-branch %condition, bb_true, bb_false
-```
-
-Tests `%condition` using runtime truth-value semantics. Control transfers to
-`bb_true` when true and `bb_false` otherwise.
-
 ### `return` — Return Value
 
 ```text
@@ -948,17 +927,6 @@ try.yield
 Marks normal completion of a try sub-region. It is not a valid ordinary function
 terminator. The region runner translates it to normal flow and allows the
 surrounding `try` instruction to continue with `else` or `finally` as required.
-
-### `escape` — Escape Structured Region
-
-```text
-escape bb_target cleanup [$v3, $v4]
-```
-
-Represents `break` or `continue` leaving a try sub-region for a loop block in the
-enclosing function. Before propagating the jump, the VM destroys the listed
-variables, those dead at the target. Every intervening `finally` executes before control
-reaches `bb_target`.
 
 ## Call ABI and Function Metadata
 

@@ -1219,9 +1219,7 @@ fn erase_slice(
             }
             !serves
         });
-        if let MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } =
-            &mut block.term
-        {
+        if let MirTerm::ReturnWithCleanup { cleanup, .. } = &mut block.term {
             cleanup.retain(|drop| !slots.contains(&drop.var));
         }
     }

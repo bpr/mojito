@@ -1235,95 +1235,11 @@ fn instruction_families_reprint_byte_identically() {
         },
     ];
     let mut function = function_with(vec![Ty::int(); 43], instrs);
-    function.blocks.push(MirBlock {
-        instrs: Vec::new(),
-        term: MirTerm::ReturnWithCleanup {
-            value: Some(Reg(0)),
-            cleanup: vec![CleanupDrop::unnamed(1), CleanupDrop::unnamed(2)],
-        },
-    });
-    function.blocks.push(MirBlock {
-        instrs: Vec::new(),
-        term: MirTerm::Branch {
-            cond: Reg(0),
-            then_b: 0,
-            else_b: 1,
-        },
-    });
-    function.blocks.push(MirBlock {
-        instrs: Vec::new(),
-        term: MirTerm::Jump(0),
-    });
-    function.blocks.push(MirBlock {
-        instrs: Vec::new(),
-        term: MirTerm::Return(None),
-    });
+    function.blocks[0].term = MirTerm::ReturnWithCleanup {
+        value: Some(Reg(0)),
+        cleanup: vec![CleanupDrop::unnamed(1), CleanupDrop::unnamed(2)],
+    };
     let program = program_with(vec![("instructions".into(), function)]);
-    assert_reprints(&program);
-}
-
-#[test]
-fn comptime_branch_terminator_reprints() {
-    use mojito_types::types::{ConstraintOperand, GenericConstraint};
-    let mut function = function_with(vec![Ty::int()], Vec::new());
-    function.blocks[0].term = MirTerm::ComptimeBranch {
-        cond: Box::new(GenericConstraint::And(
-            Box::new(GenericConstraint::Eq(
-                ConstraintOperand::Value(CtValue::Int(1)),
-                ConstraintOperand::Value(CtValue::IntLiteral(2.into())),
-            )),
-            Box::new(GenericConstraint::Bool(true)),
-        )),
-        then_b: 1,
-        else_b: 2,
-    };
-    function.blocks.push(MirBlock {
-        instrs: Vec::new(),
-        term: MirTerm::Return(None),
-    });
-    function.blocks.push(MirBlock {
-        instrs: Vec::new(),
-        term: MirTerm::Return(None),
-    });
-    let program = program_with(vec![("comptime_branch".into(), function)]);
-    assert_reprints(&program);
-}
-
-#[test]
-fn comptime_for_iterator_terminator_reprints() {
-    use mojito_types::param_expr::{MetaTy, ParamContext, ParamId, ParamRef};
-    let context = ParamContext::detached();
-    let binder = ParamRef {
-        id: ParamId::new("$comptime_for@f:10..18", 0),
-        name: "$iter".into(),
-    };
-    let iterator = context.decl_ref(binder.id.clone(), "$iter", MetaTy::int());
-    let initial = context.constant(CtValue::Int(3)).expect("a constant");
-    let step =
-        |function: &str, meta| context.apply(function, std::slice::from_ref(&iterator), meta);
-    let mut function = function_with(vec![Ty::int()], Vec::new());
-    function.n_vars = 1;
-    function.var_names = vec!["x".to_string()];
-    function.blocks[0].term = MirTerm::ComptimeFor {
-        binder,
-        source: mojito_checked::checked::ComptimeSequence {
-            initial,
-            has_next: step("has_next", MetaTy::value(Ty::bool())),
-            next_iter: step("next_iter", MetaTy::int()),
-            next_value: step("next_value", MetaTy::int()),
-        },
-        body: 1,
-        exit: 2,
-    };
-    function.blocks.push(MirBlock {
-        instrs: Vec::new(),
-        term: MirTerm::Jump(0),
-    });
-    function.blocks.push(MirBlock {
-        instrs: Vec::new(),
-        term: MirTerm::Return(None),
-    });
-    let program = program_with(vec![("comptime_for_iterator".into(), function)]);
     assert_reprints(&program);
 }
 
@@ -1334,23 +1250,17 @@ fn nested_try_regions_reprint_without_region_source_marks() {
         term,
     };
     let inner_try = MirInstr::Try {
-        body: vec![region_block(MirTerm::EscapeJump {
-            target: 0,
-            cleanup: vec![CleanupDrop::unnamed(1)],
-        })],
+        body: vec![region_block(MirTerm::TryYield)],
         handler: None,
         orelse: None,
         finalbody: None,
         cleanup: Vec::new(),
     };
     let outer_try = MirInstr::Try {
-        body: vec![
-            MirBlock {
-                instrs: vec![inner_try],
-                term: MirTerm::Jump(1),
-            },
-            region_block(MirTerm::TryYield),
-        ],
+        body: vec![MirBlock {
+            instrs: vec![inner_try],
+            term: MirTerm::TryYield,
+        }],
         handler: Some((Some(3), vec![region_block(MirTerm::TryYield)])),
         orelse: Some(vec![region_block(MirTerm::TryYield)]),
         finalbody: Some(vec![region_block(MirTerm::TryYield)]),
@@ -1377,6 +1287,32 @@ fn nested_try_regions_reprint_without_region_source_marks() {
             "function/regions/bb0/instruction/0",
             "function/regions/bb0/terminator",
         ]
+    );
+}
+
+/// MIR 1.88 has no CFG terminator: an older artifact whose block ends in
+/// one names it as an unknown terminator.
+#[test]
+fn a_cfg_terminator_is_an_unknown_terminator() {
+    let program = program_with(vec![("f".into(), function_with(Vec::new(), Vec::new()))]);
+    let text = write::program(&program);
+    let header = format!(
+        "{} {}.{}",
+        crate::mir::text::MAGIC,
+        crate::mir::text::VERSION_MAJOR,
+        crate::mir::text::VERSION_MINOR
+    );
+    assert!(text.contains("terminator: try.yield {}"));
+    let lowered = text.replacen(&header, "mojito-mir 1.87", 1).replace(
+        "terminator: try.yield {}",
+        "terminator: jump { target: bb0 }",
+    );
+    let found = diagnostics(&lowered);
+    assert!(
+        found
+            .iter()
+            .any(|message| message.contains("unknown terminator `jump`")),
+        "{found:?}"
     );
 }
 
@@ -2957,30 +2893,29 @@ fn structured_region_ops_and_terminators_reprint() {
             operands: vec![Reg(2)],
             args: vec![Reg(1)],
             results: vec![Reg(2)],
-            body: vec![
-                MirBlock {
-                    instrs: Vec::new(),
-                    term: MirTerm::Branch {
-                        cond: Reg(0),
-                        then_b: 1,
-                        else_b: 2,
-                    },
-                },
-                MirBlock {
-                    instrs: Vec::new(),
-                    term: MirTerm::Break {
-                        label: Some(LoopLabel(3)),
-                        values: vec![Reg(1)],
-                    },
-                },
-                MirBlock {
-                    instrs: Vec::new(),
-                    term: MirTerm::Continue {
-                        label: None,
-                        values: vec![Reg(1)],
-                    },
-                },
-            ],
+            body: one(
+                vec![MirInstr::If {
+                    results: Vec::new(),
+                    cond: Reg(0),
+                    then: one(
+                        Vec::new(),
+                        MirTerm::Break {
+                            label: Some(LoopLabel(3)),
+                            values: vec![Reg(1)],
+                        },
+                    ),
+                    elifs: Vec::new(),
+                    else_args: Vec::new(),
+                    orelse: one(
+                        Vec::new(),
+                        MirTerm::Continue {
+                            label: None,
+                            values: vec![Reg(1)],
+                        },
+                    ),
+                }],
+                MirTerm::Unreachable,
+            ),
         },
         MirInstr::ComptimeIf {
             results: Vec::new(),
@@ -3019,24 +2954,17 @@ fn structured_region_ops_and_terminators_reprint() {
         operands: vec![Reg(2)],
         args: vec![Reg(1)],
         results: vec![Reg(3)],
-        body: vec![
-            MirBlock {
-                instrs: Vec::new(),
-                term: MirTerm::Branch {
-                    cond: Reg(0),
-                    then_b: 1,
-                    else_b: 2,
-                },
-            },
-            MirBlock {
-                instrs: Vec::new(),
-                term: MirTerm::ComptimeBreak(vec![Reg(1)]),
-            },
-            MirBlock {
-                instrs: Vec::new(),
-                term: MirTerm::ComptimeContinue(vec![Reg(1)]),
-            },
-        ],
+        body: one(
+            vec![MirInstr::If {
+                results: Vec::new(),
+                cond: Reg(0),
+                then: one(Vec::new(), MirTerm::ComptimeBreak(vec![Reg(1)])),
+                elifs: Vec::new(),
+                else_args: Vec::new(),
+                orelse: one(Vec::new(), MirTerm::ComptimeContinue(vec![Reg(1)])),
+            }],
+            MirTerm::Unreachable,
+        ),
         orelse: one(Vec::new(), MirTerm::Unreachable),
     });
     let types = vec![
@@ -3206,24 +3134,17 @@ fn a_match_and_comptime_for_without_values_read_as_carrying_none() {
                 operands: Vec::new(),
                 args: Vec::new(),
                 results: Vec::new(),
-                body: vec![
-                    MirBlock {
-                        instrs: Vec::new(),
-                        term: MirTerm::Branch {
-                            cond: Reg(0),
-                            then_b: 1,
-                            else_b: 2,
-                        },
-                    },
-                    MirBlock {
-                        instrs: Vec::new(),
-                        term: MirTerm::ComptimeBreak(Vec::new()),
-                    },
-                    MirBlock {
-                        instrs: Vec::new(),
-                        term: MirTerm::ComptimeContinue(Vec::new()),
-                    },
-                ],
+                body: one(
+                    vec![MirInstr::If {
+                        results: Vec::new(),
+                        cond: Reg(0),
+                        then: one(Vec::new(), MirTerm::ComptimeBreak(Vec::new())),
+                        elifs: Vec::new(),
+                        else_args: Vec::new(),
+                        orelse: one(Vec::new(), MirTerm::ComptimeContinue(Vec::new())),
+                    }],
+                    MirTerm::Unreachable,
+                ),
                 orelse: one(Vec::new(), MirTerm::Unreachable),
             },
         ],

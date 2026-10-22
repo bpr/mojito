@@ -1,4 +1,4 @@
-mojito-mir 1.61
+mojito-mir 1.87
 artifact {
   features: [],
   files: [
@@ -36,12 +36,8 @@ artifact {
               const { dest: %r1, value: int_literal(0) },
               literal.materialize { dest: %r2, value: %r1, target: Int },
               var.use { dest: %r0, var: $v0, mode: copy },
-              binary { op: gt, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent }
-            ],
-            terminator: branch { condition: %r3, then: bb2, else: bb3 }
-          },
-          bb1 {
-            instructions: [
+              binary { op: gt, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent },
+              if { results: [], condition: %r3, then: [bb0 { instructions: [var.use { dest: %r4, var: $v0, mode: copy }, interiors.invalidate { base: interior_origin { root: $v1, path: [] }, except: absent, include_base_generation: false, marker: %r5 }, var.store { var: $v1, src: %r4, binding_type: absent, in_place: false }], terminator: yield { values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [const { dest: %r6, value: int_literal(2) }, literal.materialize { dest: %r7, value: %r6, target: Int }, interiors.invalidate { base: interior_origin { root: $v1, path: [] }, except: absent, include_base_generation: false, marker: %r8 }, var.store { var: $v1, src: %r7, binding_type: absent, in_place: false }], terminator: yield { values: [] } }] },
               const { dest: %r10, value: int_literal(2) },
               literal.materialize { dest: %r11, value: %r10, target: Int },
               var.use { dest: %r9, var: $v1, mode: copy },
@@ -62,23 +58,6 @@ artifact {
               lifetime.keep_alive { var: $v0 }
             ],
             terminator: return { value: present(%r18) }
-          },
-          bb2 {
-            instructions: [
-              var.use { dest: %r4, var: $v0, mode: copy },
-              interiors.invalidate { base: interior_origin { root: $v1, path: [] }, except: absent, include_base_generation: false, marker: %r5 },
-              var.store { var: $v1, src: %r4, binding_type: absent, in_place: false }
-            ],
-            terminator: jump { target: bb1 }
-          },
-          bb3 {
-            instructions: [
-              const { dest: %r6, value: int_literal(2) },
-              literal.materialize { dest: %r7, value: %r6, target: Int },
-              interiors.invalidate { base: interior_origin { root: $v1, path: [] }, except: absent, include_base_generation: false, marker: %r8 },
-              var.store { var: $v1, src: %r7, binding_type: absent, in_place: false }
-            ],
-            terminator: jump { target: bb1 }
           }
         ]
       },

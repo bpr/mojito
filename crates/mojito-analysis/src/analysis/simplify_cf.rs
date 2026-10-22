@@ -25,13 +25,10 @@
 //!   the condition is `false` wherever the `if`'s block reads it later; with
 //!   no elifs and an `else` arm that cannot fall through, it is `true`.
 //!   `canonicalize` then folds what reads it.
-//!
-//! A lowered body, which holds no region op to simplify, is left alone.
 
 use super::canonicalize::erased_results;
 use super::pre_elaboration::BodyPass;
 use mojito_common::timing;
-use mojito_mir::mir::verify::is_structured_shape;
 use mojito_mir::mir::{
     Const, LoopLabel, MirBlock, MirDeclarations, MirFunction, MirInstr, MirTerm, Reg, RegionFrame,
     count_register_reads, fresh_register, instruction_regions, instruction_regions_mut,
@@ -51,9 +48,6 @@ pub const SIMPLIFY_CF: BodyPass = BodyPass {
 /// conditions its `if`s imply, as upstream's `SimplifyCF` does; returns
 /// whether any of these applied.
 pub fn simplify_cf(_name: &str, function: &mut MirFunction, _: &MirDeclarations) -> bool {
-    if !is_structured_shape(function) {
-        return false;
-    }
     let mut census = Census::default();
     census.walk(&function.blocks);
     let mut removal = Removal {

@@ -40,14 +40,11 @@
 //! decide, so `sccp` adds the folds that need its executable-block reasoning
 //! or a lattice meet. Region ops are left alone: the `Canonicalizer` after
 //! it decides an `if` on a constant.
-//!
-//! A lowered body is left alone: Mojo has no `cf` dialect, so `SCCP` never
-//! meets one.
 
 use super::fold;
 use super::pre_elaboration::BodyPass;
 use mojito_common::timing;
-use mojito_mir::mir::verify::{instruction_result_regs, is_structured_shape};
+use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
     Const, LoopLabel, MirBlock, MirCase, MirDeclarations, MirElif, MirFunction, MirInstr, MirTerm,
     Reg, RegionFrame, instruction_regions,
@@ -64,9 +61,6 @@ pub const SCCP: BodyPass = BodyPass {
 /// Propagate `function`'s constants over its executable regions and replace
 /// each instruction they decide by its constant; returns whether any was.
 pub fn sccp(_name: &str, function: &mut MirFunction, declarations: &MirDeclarations) -> bool {
-    if !is_structured_shape(function) {
-        return false;
-    }
     let mut solver = Solver {
         lattice: vec![Lattice::Unknown; function.n_regs as usize],
         reg_types: &function.reg_types,

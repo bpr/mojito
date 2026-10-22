@@ -219,22 +219,14 @@ fn concrete_blocks(
             concrete_instruction(&head, instruction, errors);
             reference_read(&head, function, instruction, errors);
         }
-        match &block.term {
-            MirTerm::ComptimeBranch { cond, .. } => errors.push(format!(
-                "{head} keeps a compile-time branch on `{cond:?}` in elaborated MIR"
-            )),
-            MirTerm::ComptimeFor { binder, .. } => errors.push(format!(
-                "{head} keeps a compile-time loop over `{binder}` in elaborated MIR"
-            )),
-            MirTerm::ComptimeYield(_)
-            | MirTerm::ComptimeBreak(_)
-            | MirTerm::ComptimeContinue(_) => {
-                errors.push(format!(
-                    "{head} keeps the region terminator `{}` in elaborated MIR",
-                    crate::mir::text::terminator_mnemonic(&block.term)
-                ));
-            }
-            _ => {}
+        if matches!(
+            block.term,
+            MirTerm::ComptimeYield(_) | MirTerm::ComptimeBreak(_) | MirTerm::ComptimeContinue(_)
+        ) {
+            errors.push(format!(
+                "{head} keeps the region terminator `{}` in elaborated MIR",
+                crate::mir::text::terminator_mnemonic(&block.term)
+            ));
         }
     }
 }

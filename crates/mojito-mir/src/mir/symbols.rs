@@ -323,9 +323,7 @@ pub fn replace_symbol_uses(blocks: &mut [MirBlock], replace: &mut dyn FnMut(&mut
                 replace_symbol_uses(region, replace);
             }
         }
-        if let MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } =
-            &mut block.term
-        {
+        if let MirTerm::ReturnWithCleanup { cleanup, .. } = &mut block.term {
             replace_cleanup_destructors(cleanup, replace);
         }
     }

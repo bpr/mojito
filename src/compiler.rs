@@ -111,14 +111,6 @@ impl CompiledProgram {
             let _verify = timing::span("mir.verify.post_drop");
             let findings = crate::mir::verify::verify(&mir);
             mir.invariant_errors.extend(findings);
-            let shapes: Vec<String> = mir
-                .functions
-                .iter()
-                .flat_map(|(name, function)| {
-                    crate::mir::verify::verify_structured_shape(name, function)
-                })
-                .collect();
-            mir.invariant_errors.extend(shapes);
             mir
         })
     }

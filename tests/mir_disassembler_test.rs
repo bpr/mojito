@@ -77,30 +77,32 @@ fn control_flow_program() -> MirProgram {
         ]
     };
     let function = MirFunction {
-        blocks: vec![
-            MirBlock {
-                instrs: vec![MirInstr::UseVar {
+        blocks: vec![MirBlock {
+            instrs: vec![
+                MirInstr::UseVar {
                     dest: Reg(0),
                     var: 0,
                     mode: UseMode::Copy,
                     constructor: None,
-                }],
-                term: MirTerm::Branch {
-                    cond: Reg(0),
-                    then_b: 1,
-                    else_b: 2,
                 },
-            },
-            MirBlock {
-                instrs: literal(1, "7"),
-                term: MirTerm::Return(Some(Reg(2))),
-            },
-            MirBlock {
-                instrs: literal(3, "-3"),
-                term: MirTerm::Return(Some(Reg(4))),
-            },
-        ],
-        n_regs: 5,
+                MirInstr::If {
+                    results: vec![Reg(5)],
+                    cond: Reg(0),
+                    then: vec![MirBlock {
+                        instrs: literal(1, "7"),
+                        term: MirTerm::Yield(vec![Reg(2)]),
+                    }],
+                    elifs: Vec::new(),
+                    else_args: Vec::new(),
+                    orelse: vec![MirBlock {
+                        instrs: literal(3, "-3"),
+                        term: MirTerm::Yield(vec![Reg(4)]),
+                    }],
+                },
+            ],
+            term: MirTerm::Return(Some(Reg(5))),
+        }],
+        n_regs: 6,
         n_vars: 1,
         var_names: vec!["flag".into()],
         n_params: 1,
@@ -120,6 +122,7 @@ fn control_flow_program() -> MirProgram {
             (2, Ty::int()),
             (3, Ty::int_literal()),
             (4, Ty::int()),
+            (5, Ty::int()),
         ]),
         removed_params: Vec::new(),
         callee_removed_params: Vec::new(),

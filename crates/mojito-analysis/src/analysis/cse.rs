@@ -3,8 +3,9 @@
 //! `EliminateDeadSymbols`, and which its `'kgen.func'` pipeline runs last,
 //! after `Canonicalizer`, on every function `ElaborateGenerators` emits.
 //!
-//! As in MLIR, the pass walks each block list's dominator tree with a scoped
-//! table of the instructions available at each block: an instruction free
+//! As in MLIR, the pass walks each region's dominator tree, which for a
+//! region's one block is that block, with a scoped table of the
+//! instructions available at each block: an instruction free
 //! of effects that matches one in the table, with the same mnemonic,
 //! attributes, operands, and result type, is erased and its result's reads
 //! name the dominating instruction's result. A region's blocks see what is
@@ -50,8 +51,8 @@ use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
-    MirBlock, MirBlockId, MirDeclarations, MirFunction, MirInstr, MirTerm, Reg, UseMode,
-    immediate_dominators, instruction_regions, instruction_regs_mut,
+    MirBlock, MirDeclarations, MirFunction, MirInstr, MirTerm, Reg, UseMode, instruction_regions,
+    instruction_regs_mut,
 };
 use mojito_types::types::{Ty, TyKind, trivially_register_passable_leaf};
 use std::collections::{HashMap, HashSet};
@@ -81,7 +82,7 @@ pub fn cse(_name: &str, function: &mut MirFunction, declarations: &MirDeclaratio
         blocks: 0,
         writes: 0,
     };
-    table.block_list(&function.blocks, true);
+    table.block_list(&function.blocks);
     let replaced = table.replaced;
     timing::count("erased_instructions", replaced.len() as u64);
     if replaced.is_empty() {
@@ -122,24 +123,13 @@ struct Table<'f> {
 }
 
 impl Table<'_> {
-    /// Walk the dominator tree of `blocks` from its entry; `function_level`
-    /// says `blocks` is the function's list, whose regions' escapes are
-    /// edges too.
-    fn block_list(&mut self, blocks: &[MirBlock], function_level: bool) {
-        if blocks.is_empty() {
-            return;
-        }
-        let children = dominator_children(blocks, function_level);
-        let mut work = vec![Visit::Enter(0)];
-        while let Some(visit) = work.pop() {
-            match visit {
-                Visit::Enter(at) => {
-                    work.push(Visit::Leave(self.scope.len()));
-                    self.block(&blocks[at]);
-                    work.extend(children[at].iter().rev().map(|&child| Visit::Enter(child)));
-                }
-                Visit::Leave(mark) => self.leave(mark),
-            }
+    /// Walk `blocks`, a region's one block, in a scope of its own: the
+    /// dominator tree of a one-block region is its block.
+    fn block_list(&mut self, blocks: &[MirBlock]) {
+        if let Some(block) = blocks.first() {
+            let mark = self.scope.len();
+            self.block(block);
+            self.leave(mark);
         }
     }
 
@@ -154,7 +144,7 @@ impl Table<'_> {
             for (region, args) in instruction_regions(instruction).into_iter().zip(&arguments) {
                 let mark = self.scope.len();
                 self.define(args.iter().copied());
-                self.block_list(region, false);
+                self.block_list(region);
                 self.leave(mark);
             }
             match self.effect(instruction) {
@@ -168,10 +158,7 @@ impl Table<'_> {
             results.retain(|reg| !arguments.iter().any(|args| args.contains(reg)));
             self.define(results);
         }
-        if matches!(
-            block.term,
-            MirTerm::ReturnWithCleanup { .. } | MirTerm::EscapeJump { .. }
-        ) {
+        if matches!(block.term, MirTerm::ReturnWithCleanup { .. }) {
             self.writes += 1;
         }
     }
@@ -365,13 +352,6 @@ enum Effect {
     Nested,
 }
 
-/// A step of the dominator-tree walk: a block to enter, or the scope length
-/// to restore on leaving one.
-enum Visit {
-    Enter(MirBlockId),
-    Leave(usize),
-}
-
 /// The arguments of each region of `instruction`, in
 /// [`instruction_regions`]' order.
 fn region_arguments(instruction: &MirInstr) -> Vec<&[Reg]> {
@@ -397,18 +377,4 @@ fn region_arguments(instruction: &MirInstr) -> Vec<&[Reg]> {
             .collect(),
         _ => vec![&[]; instruction_regions(instruction).len()],
     }
-}
-
-/// Each block's children in the dominator tree of `blocks`, rooted at the
-/// entry; a block the entry does not reach is no one's child
-/// ([`immediate_dominators`]).
-fn dominator_children(blocks: &[MirBlock], function_level: bool) -> Vec<Vec<MirBlockId>> {
-    let idom = immediate_dominators(blocks, function_level);
-    let mut children = vec![Vec::new(); blocks.len()];
-    for (block, dominator) in idom.iter().enumerate().skip(1) {
-        if let Some(dominator) = dominator {
-            children[*dominator].push(block);
-        }
-    }
-    children
 }

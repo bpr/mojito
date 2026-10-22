@@ -41,13 +41,7 @@ impl FnLowering<'_> {
             // compile-time region.
             MirTerm::ComptimeYield(_)
             | MirTerm::ComptimeBreak(_)
-            | MirTerm::ComptimeContinue(_)
-            // A lowered body (CFG blocks) is refused before lowering.
-            | MirTerm::Jump(_)
-            | MirTerm::Branch { .. }
-            | MirTerm::ComptimeBranch { .. }
-            | MirTerm::ComptimeFor { .. }
-            | MirTerm::EscapeJump { .. } => Err(self.unsupported(
+            | MirTerm::ComptimeContinue(_) => Err(self.unsupported(
                 format!(
                     "the terminator `{}` reached native lowering",
                     mojito_mir::mir::text::terminator_mnemonic(term)

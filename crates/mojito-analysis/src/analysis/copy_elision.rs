@@ -500,9 +500,7 @@ fn strip_forwarded_slots(blocks: &mut [MirBlock], forwarded: &[VarId]) {
                 strip_forwarded_slots(region, forwarded);
             }
         }
-        if let MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } =
-            &mut block.term
-        {
+        if let MirTerm::ReturnWithCleanup { cleanup, .. } = &mut block.term {
             cleanup.retain(|drop| !forwarded.contains(&drop.var));
         }
     }
@@ -524,9 +522,7 @@ fn rename_deaths(blocks: &mut [MirBlock], sources: &HashMap<VarId, VarId>) {
                 rename_deaths(region, sources);
             }
         }
-        if let MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } =
-            &mut block.term
-        {
+        if let MirTerm::ReturnWithCleanup { cleanup, .. } = &mut block.term {
             rename_cleanup(cleanup, sources);
         }
     }

@@ -621,6 +621,27 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR has no CFG terminator (R1274): `Jump`, `Branch`, `ComptimeBranch`,
+  the `ComptimeFor` terminator, and `EscapeJump` left `MirTerm`, as Mojo
+  has no CFG above LLVM, and MIR text 1.88 withdraws their spellings
+  (`jump`, `branch`, `comptime_branch`, `comptime_for.iterator`,
+  `escape`), so an older artifact holding one fails at load as an unknown
+  terminator. `mir::verify` itself now requires every region, the body
+  included, to be one block, as upstream's `hlcf` regions are
+  `SizedRegion<1>`, which replaces the separate shape checks
+  (`verify_structured_function_in`, `verify_structured_shape`), the
+  `is_structured_shape` guards of `sccp`, `mem-2-reg`,
+  `lower-arg-conventions`, `simplify-cf`, and Pliron's `compile`, and
+  `opt`'s `OptError::Unstructured`. Every walker reads one block per
+  region: the ownership walks, drop lowering, and the slot-ends check lose
+  their block-list fixpoints and escape channels, `cse` its dominator tree
+  (`mir::immediate_dominators`), and `canonicalize` its unreachable-block
+  erasure (`mir::prune_unreachable_blocks` and the `erased_blocks`
+  counter), keeping only `cut_try_cleanups`; the VM loses its CFG arms and
+  `Flow::Jump`. The pass cases that held CFG terminators were rewritten as
+  structured `if`s, and `canonicalize/unreachable_join` and the two
+  `lowered_body` refusal cases were deleted. No program's output changes.
+
 - The transitional `lower-control-flow` MIR pass is gone (R1273): as
   upstream lowers `hlcf` only on its way to LLVM, Pliron's region lowering
   is now the only lowering of control flow to blocks. `lower_cfg` and

@@ -5,8 +5,7 @@
 //! instruction [`MirInstr::folded_constant`] folds over operands defined
 //! once by a constant becomes that `const`, as MLIR's greedy driver applies
 //! a `fold` that returns an attribute (through the replacement `sccp`
-//! shares, `fold::replace_folded`); blocks the entry does not reach go, as
-//! MLIR's `eraseUnreachableBlocks` erases them; an instruction that folds to
+//! shares, `fold::replace_folded`); an instruction that folds to
 //! one of its operands ([`MirInstr::forwarded_operand`], an identity
 //! `value.copy`, or a copy of a closure of reference captures, a struct of
 //! pointers) is replaced by that operand in every reader, as MLIR's greedy
@@ -19,11 +18,9 @@
 //! every arm shares are hoisted after the `if`, arms that only yield fold
 //! into the results, a loop that only breaks goes, and a `comptime if` on a
 //! constant keeps its live arm. Folding and the patterns alternate until
-//! the patterns stop, as the greedy driver's worklist does.
-//!
-//! A lowered body, which only `mojito opt` hands it, takes the folding,
-//! unreachable-block erasure, forwarding, and dead-op erasure alone: Mojo
-//! has no `cf` dialect, so no pass of its pipeline rewrites a CFG.
+//! the patterns stop, as the greedy driver's worklist does. An erased raise
+//! point erases the destructors on its edge: each `try`'s raise-edge
+//! cleanup is cut to what a remaining raise path holds.
 
 mod hlcf;
 
@@ -32,10 +29,10 @@ pub(super) use hlcf::erased_results;
 use super::fold;
 use super::pre_elaboration::BodyPass;
 use mojito_common::timing;
-use mojito_mir::mir::verify::instruction_result_regs;
+use mojito_mir::mir::verify::{cut_try_cleanups, instruction_result_regs};
 use mojito_mir::mir::{
     MirBlock, MirDeclarations, MirFunction, MirInstr, Reg, count_register_reads,
-    instruction_regions_mut, instruction_regs_mut, prune_unreachable_blocks, terminator_regs_mut,
+    instruction_regions_mut, instruction_regs_mut, terminator_regs_mut,
 };
 use mojito_types::types::{Ty, TyKind};
 use std::collections::{HashMap, HashSet};
@@ -50,8 +47,8 @@ pub const CANONICALIZE: BodyPass = BodyPass {
 /// longer reaches or reads.
 ///
 /// Each instruction over constant operands becomes a `const` and each
-/// region op the `hlcf` patterns match is rewritten; unreachable blocks go,
-/// identity copies are forwarded, and dead instructions are erased.
+/// region op the `hlcf` patterns match is rewritten; identity copies are
+/// forwarded, and dead instructions are erased.
 /// Constants fold first, so a comparison folded to a `const bool` decides
 /// its `if` in the same run. Erasure and the patterns repeat until neither
 /// changes anything: an erased instruction can empty an arm. A removed
@@ -74,8 +71,7 @@ pub fn canonicalize(
         patterns += rewritten;
     }
     timing::count("folded_constants", folded_constants as u64);
-    let blocks = block_count(&mut function.blocks);
-    prune_unreachable_blocks(function);
+    cut_try_cleanups(function);
     // A fold can expose another, as a struct copy whose fields were copies
     // does once they are forwarded: the greedy driver folds to a fixpoint.
     let mut forwarded_copies = 0;
@@ -98,14 +94,12 @@ pub fn canonicalize(
             break;
         }
         patterns += rewritten;
-        prune_unreachable_blocks(function);
+        cut_try_cleanups(function);
     }
     function.reg_types.retain(|reg, _| !erased.contains(reg));
     function.spans.0.retain(|reg, _| !erased.contains(reg));
-    let erased_blocks = blocks - block_count(&mut function.blocks);
-    timing::count("erased_blocks", erased_blocks as u64);
     timing::count("erased_instructions", erased.len() as u64);
-    folded_constants + patterns + forwarded_copies + erased_blocks + erased.len() > 0
+    folded_constants + patterns + forwarded_copies + erased.len() > 0
 }
 
 /// How many times `blocks` and their regions define each of `n_regs`
@@ -356,21 +350,6 @@ impl StructFolds<'_> {
             .iter()
             .position(|(candidate, _)| candidate == field)
     }
-}
-
-/// Every block of `blocks` and of the `try` regions they hold.
-fn block_count(blocks: &mut [MirBlock]) -> usize {
-    blocks
-        .iter_mut()
-        .map(|block| {
-            1 + block
-                .instrs
-                .iter_mut()
-                .flat_map(instruction_regions_mut)
-                .map(|region| block_count(region))
-                .sum::<usize>()
-        })
-        .sum()
 }
 
 /// Erase the trivially dead instructions of `function` until none is left,

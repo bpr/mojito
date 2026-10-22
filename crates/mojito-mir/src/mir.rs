@@ -107,7 +107,7 @@ pub use unused_args::{
 /// Expression and statement control flow are the structured region ops,
 /// upstream's `hlcf` form.
 pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
-    lower_cfg_body(
+    lower_cfg_nested(
         cfg,
         HashMap::new(),
         &HashMap::new(),
@@ -964,8 +964,6 @@ fn lower_program(
         let mut thunks = ComptimeThunks::for_owner("__toplevel__");
         let cfg = Cfg::build_checked_fn(checked, &[], &toplevel);
         let function = lower_cfg_nested(
-            "__toplevel__",
-            &mut invariant_errors,
             &cfg,
             HashMap::new(),
             &HashMap::new(),
@@ -4125,46 +4123,10 @@ struct NestedInfo {
 /// frame's declaration binds before its body runs (parameters, value
 /// parameters, a named result); every other slot is typed by the op that
 /// declares it as the body lowers. The body stays structured, as upstream's
-/// generators hold it in `hlcf` until `CheckLifetimes` has run: its shape is
-/// verified, a finding recorded in `invariant_errors` under the function's
-/// `name`, and the ownership check lowers it to blocks after its checks.
+/// generators hold it in `hlcf`: each region, the body included, is one
+/// block, which `verify` requires.
 #[allow(clippy::too_many_arguments)]
 fn lower_cfg_nested(
-    name: &str,
-    invariant_errors: &mut Vec<String>,
-    cfg: &Cfg,
-    declared: HashMap<VarId, Ty>,
-    nested: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
-    overloads: &std::sync::Arc<mojito_checked::package::ProgramOverloads>,
-    returns_reference: bool,
-    reference_parameters: &[bool],
-    capture_bindings: &[mojito_types::origin::OwnerId],
-    receiver_value_parameters: &[(String, Ty)],
-    static_receiver: Option<&Ty>,
-    enclosing_binders: &EnclosingBinders,
-    comptime_thunks: &mut ComptimeThunks,
-) -> MirFunction {
-    let mir = lower_cfg_body(
-        cfg,
-        declared,
-        nested,
-        overloads,
-        returns_reference,
-        reference_parameters,
-        capture_bindings,
-        receiver_value_parameters,
-        static_receiver,
-        enclosing_binders,
-        comptime_thunks,
-    );
-    invariant_errors.extend(verify::verify_structured_shape(name, &mir));
-    mir
-}
-
-/// [`lower_cfg_nested`]'s body, its expression control flow still the
-/// `if`/`loop` region ops the builders emit.
-#[allow(clippy::too_many_arguments)]
-fn lower_cfg_body(
     cfg: &Cfg,
     declared: HashMap<VarId, Ty>,
     nested: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,

@@ -2,13 +2,9 @@
 //! named passes over its bodies in order, and verify the program after
 //! each one, in every build.
 
-use super::mem2reg::{LOWER_ARG_CONVENTIONS, MEM_2_REG};
-use super::pre_elaboration::{BodyPass, ELABORATE_DROPS, Pass, pass_finding, run_call_graph_pass};
-use super::sccp::SCCP;
-use super::simplify_cf::SIMPLIFY_CF;
+use super::pre_elaboration::{Pass, pass_finding, run_call_graph_pass};
 use mojito_mir::mir::MirProgram;
 use mojito_mir::mir::text::{ArtifactReport, load_artifact};
-use mojito_mir::mir::verify::verify_structured_shape;
 use std::fmt;
 
 /// Why [`opt`] produced no program.
@@ -18,14 +14,6 @@ pub enum OptError {
     Load(ArtifactReport),
     /// The program did not verify after the pass `pass`.
     Verify {
-        pass: &'static str,
-        findings: Vec<String>,
-    },
-    /// A body is not in the form the pass `pass` reads: a pass of
-    /// `STRUCTURED_ONLY` reads structured bodies, as `DestructorInsertion`
-    /// asserts its regions hold one block each and Mojo's other passes
-    /// never meet a CFG.
-    Unstructured {
         pass: &'static str,
         findings: Vec<String>,
     },
@@ -46,11 +34,6 @@ impl fmt::Display for OptError {
                 "MIR does not verify after pass `{pass}`: {}",
                 findings.join("; ")
             ),
-            Self::Unstructured { pass, findings } => write!(
-                formatter,
-                "pass `{pass}` reads structured bodies: {}",
-                findings.join("; ")
-            ),
         }
     }
 }
@@ -63,8 +46,7 @@ impl std::error::Error for OptError {}
 /// As in the pre-elaboration pipeline, a program pass runs over the
 /// program, exporting nothing beyond its entry roots; a body pass over
 /// every body but `__toplevel__`; and a call-graph pass over the same
-/// bodies callees first, with no package to read callees from. A pass of
-/// `STRUCTURED_ONLY` refuses a body that is not structured.
+/// bodies callees first, with no package to read callees from.
 pub fn opt(
     input: &[u8],
     source_name: &str,
@@ -80,20 +62,6 @@ pub fn opt(
                 run_call_graph_pass(pass, &mut program, None);
             }
             Pass::Body(pass) => {
-                if STRUCTURED_ONLY.iter().any(|only| only.name == pass.name) {
-                    let findings: Vec<String> = program
-                        .functions
-                        .iter()
-                        .filter(|(name, _)| name != "__toplevel__")
-                        .flat_map(|(name, function)| verify_structured_shape(name, function))
-                        .collect();
-                    if !findings.is_empty() {
-                        return Err(OptError::Unstructured {
-                            pass: pass.name,
-                            findings,
-                        });
-                    }
-                }
                 let MirProgram {
                     functions,
                     declarations,
@@ -119,16 +87,6 @@ pub fn opt(
     }
     Ok(program)
 }
-
-/// The body passes that read only structured bodies: drop elaboration, and
-/// the passes upstream runs only on `hlcf`, since Mojo has no `cf` dialect.
-const STRUCTURED_ONLY: &[BodyPass] = &[
-    ELABORATE_DROPS,
-    LOWER_ARG_CONVENTIONS,
-    MEM_2_REG,
-    SIMPLIFY_CF,
-    SCCP,
-];
 
 #[cfg(test)]
 mod tests {

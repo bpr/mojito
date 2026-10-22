@@ -2184,7 +2184,7 @@ fn closed_blocks(blocks: &[MirBlock]) -> bool {
                 .all(|region| closed_blocks(region))
         }) && !matches!(
             block.term,
-            MirTerm::ReturnWithCleanup { .. } | MirTerm::TryYield | MirTerm::EscapeJump { .. }
+            MirTerm::ReturnWithCleanup { .. } | MirTerm::TryYield
         )
     })
 }

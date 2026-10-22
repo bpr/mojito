@@ -80,8 +80,8 @@ impl RegionCursor {
     }
 
     /// The transfer of the terminator `term` the cursor is at in `root`:
-    /// to a block of its list, into a sibling region, or out to the op it
-    /// names, binding the values it carries. A terminator that leaves the
+    /// into a sibling region, or out to the op it names, binding the values
+    /// it carries. A terminator that leaves the
     /// root list comes back for the driver to run.
     pub(super) fn transfer<'p>(
         &mut self,
@@ -90,16 +90,6 @@ impl RegionCursor {
         regs: &mut [Value],
     ) -> Result<Transfer<'p>, RuntimeError> {
         match term {
-            MirTerm::Jump(next) => self.jump(*next),
-            MirTerm::Branch {
-                cond,
-                then_b,
-                else_b,
-            } => self.jump(if is_true(&regs[cond.0 as usize]) {
-                *then_b
-            } else {
-                *else_b
-            }),
             MirTerm::Yield(values) => {
                 let values = read(regs, values);
                 self.complete(root, values, regs)?;
@@ -123,24 +113,13 @@ impl RegionCursor {
                     return Ok(Transfer::Leave(leave));
                 }
             }
-            MirTerm::Return(_)
-            | MirTerm::ReturnWithCleanup { .. }
-            | MirTerm::TryYield
-            | MirTerm::EscapeJump { .. } => return Ok(Transfer::Exit(term)),
+            MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. } | MirTerm::TryYield => {
+                return Ok(Transfer::Exit(term));
+            }
             MirTerm::Unreachable => {
                 return Err(RuntimeError::Unsupported(
                     "vm: control reached `hlcf.unreachable`".to_string(),
                 ));
-            }
-            MirTerm::ComptimeBranch { cond, .. } => {
-                return Err(parametric_instruction(&format!(
-                    "a compile-time branch on `{cond:?}`"
-                )));
-            }
-            MirTerm::ComptimeFor { binder, .. } => {
-                return Err(parametric_instruction(&format!(
-                    "a compile-time loop over `{binder}`"
-                )));
             }
             MirTerm::ComptimeYield(_)
             | MirTerm::ComptimeBreak(_)
@@ -198,21 +177,6 @@ impl RegionCursor {
         self.levels[depth] = RegionLevel::entry(region);
         store(regs, args, leave.values);
         Ok(None)
-    }
-
-    /// Jump to `block` of the root list: a lowered `break`/`continue`
-    /// leaving a `try` part ([`MirTerm::EscapeJump`]).
-    pub(super) fn escape(&mut self, block: MirBlockId) {
-        self.levels.truncate(1);
-        self.jump(block);
-    }
-
-    /// Jump to `block` of the innermost list.
-    fn jump(&mut self, block: MirBlockId) {
-        if let Some(level) = self.levels.last_mut() {
-            level.block = block;
-            level.instruction = 0;
-        }
     }
 
     /// Leave the innermost region to its op, `values` defining the op's
@@ -288,8 +252,8 @@ impl RegionCursor {
 pub(super) enum Transfer<'p> {
     /// The cursor moved to the terminator's target.
     Moved,
-    /// A `return`, `lit.try.yield`, or lowered escape, which leaves the
-    /// root list: the driver's to run.
+    /// A `return` or `lit.try.yield`, which leaves the root list: the
+    /// driver's to run.
     Exit(&'p MirTerm),
     /// A region exit naming an op outside the root list.
     Leave(Leave),

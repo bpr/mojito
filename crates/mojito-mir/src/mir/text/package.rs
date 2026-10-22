@@ -339,7 +339,7 @@ impl PackageBodies {
                     finish(name, function, &view.declarations, self, &mut findings)
                 };
                 let _verify = timing::span("package.body.verify");
-                findings.extend(crate::mir::verify::verify_structured_function_in(
+                findings.extend(crate::mir::verify::verify_function_in(
                     name,
                     &function,
                     &view.declarations,

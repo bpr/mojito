@@ -64,9 +64,7 @@ fn name_in_blocks(
                 name_in_blocks(region, var_tys, declarations);
             }
         }
-        if let MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } =
-            &mut block.term
-        {
+        if let MirTerm::ReturnWithCleanup { cleanup, .. } = &mut block.term {
             name_cleanup(cleanup);
         }
     }

@@ -100,21 +100,22 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
   `try` is `HirInstr::Try` whose parts are regions of the same walk. No
   terminator jumps between blocks, and dead code after a sealed block is
   erased, so every region is one block.
-- **MIR** (`crates/mojito-mir/src/mir/ir.rs`) as a lowered artifact (older
-  MIR text) is a CFG: `MirTerm` is `Jump`, `Branch`, `ComptimeBranch`, `ComptimeFor`,
-  `Return`, `ReturnWithCleanup`, `TryYield`, and `EscapeJump`.
+- **MIR** (`crates/mojito-mir/src/mir/ir.rs`) has no CFG since stage 14c:
+  `MirTerm` is `Return`, `ReturnWithCleanup`, `TryYield`, and the `hlcf`
+  region terminators, and `mir::verify` requires every region, the body
+  included, to be one block.
   - The region ops are `MirInstr::Try` and, since stage 1, `If`, `Loop`,
     `ComptimeIf`, and `ComptimeFor`. Each
-    region is a `Vec<MirBlock>` sharing the function's registers and
-    slots, walked by `instruction_regions`/`instruction_regions_mut` and
-    `block_successors`. A structured `try` part completes by `TryYield`
-    (`lit.try.yield`) and leaves to a loop by a labelled `Break`/`Continue`,
-    where a lowered artifact (older MIR text) holds an `EscapeJump`.
+    region is a `Vec<MirBlock>` of one block sharing the function's
+    registers and slots, walked by
+    `instruction_regions`/`instruction_regions_mut`. A structured `try`
+    part completes by `TryYield` (`lit.try.yield`) and leaves to a loop by
+    a labelled `Break`/`Continue`.
   - `lower_expr/ctrl.rs` builds `short_circuit`, `ternary`, `compare_chain`,
     and `comprehension_clauses` as `If`/`Loop` region ops (stage 2), and MIR
     lowering builds HIR's region ops as the same ops (stage 3,
-    `Flatten::hir_region`). `verify_structured_shape` checks each body, a
-    finding being a MIR invariant error (stage 5); register typing,
+    `Flatten::hir_region`). `mir::verify` checks each body's shape (stage
+    5, in every mode since 14c); register typing,
     pre-drop verification, the ownership checks, drop elaboration, and
     every pass after it, the pre-elaboration pipeline included, read the
     structured body (stages 6–10), and so do the elaborator (stage 11)
@@ -136,9 +137,8 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
 - **The post-elaboration passes read regions** (stage 12), with
   `simplify-cf` (`analysis/simplify_cf.rs`, upstream's `SimplifyCF`) after
   the first `mem-2-reg`, where upstream's `AutomaticInline` function
-  pipeline starts. No pass rewrites a CFG: `sccp`, `mem-2-reg`,
-  `lower-arg-conventions`, and `simplify-cf` leave a lowered body alone,
-  and `canonicalize` gives one only its region-generic folds.
+  pipeline starts. No pass rewrites a CFG, and since 14c none can meet
+  one.
 - **The elaborator works on regions** (stage 11). `mono/select.rs`
   decides a `comptime if` and splices its taken arm, and `mono/unroll.rs`
   makes `processComptimeForOp`'s loops (`LoopLabel::PARAM_FOR_OUTER`
@@ -193,9 +193,9 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
   ends inside the Pliron lowering. The VM then executes region ops, as
   upstream's interpreter does, and `Jump`, `Branch`, `ComptimeBranch`, the
   `ComptimeFor` terminator, and `EscapeJump` leave `MirTerm`.
-- **The verifier enforces it.** `mir::verify` gains a structured mode —
-  every region one block, only region terminators — applied to a body until
-  the point where it is lowered.
+- **The verifier enforces it.** `mir::verify` requires every region to be
+  one block in every mode, as `SizedRegion<1>` is an op verifier's
+  constraint upstream; MIR text cannot spell a CFG terminator.
 - **`hlcf` canonicalizations replace R836's CFG rewrites.**
   `RemoveStaticCondition`, `HoistYieldResults`, `RemoveUnusedResults`,
   `HoistUnconditionalReturn`, and `HoistConditionalReturn` on `If`;
@@ -471,8 +471,8 @@ last producer. Every stage keeps program output unchanged; the
       region promotion's `variance`.
     - R836's CFG rewrites in `canonicalize`, its constant-branch fold, and
       the CFG paths of `sccp` and `mem-2-reg` are deleted with their pass
-      cases: Mojo has no `cf` dialect. `mojito opt` refuses a lowered body
-      for `sccp`, `mem-2-reg`, `lower-arg-conventions`, and `simplify-cf`.
+      cases: Mojo has no `cf` dialect. Since 14c `mojito opt` refuses a
+      lowered body at load, when it verifies.
     - `MirFunction::instruction_count`/`block_count`, and so every
       elaboration counter, count every region.
 13. **VM.** *Landed (R882).* It executes region ops, as upstream's
@@ -492,15 +492,14 @@ last producer. Every stage keeps program output unchanged; the
       no `interpret`, where the lowering made it a return.
     - The `try` itself still runs its parts on the host stack
       (`exec_try`/`run_region`), filed as R1272. The CFG terminator arms
-      stay for a lowered artifact fed to `exec`, until stage 14.
+      went with stage 14c.
 14. **Pliron.** Split in three:
     - **14a, landed (R883).** `lower/regions.rs` and `try_flow.rs` lower
       region ops to LLVM blocks, as `LowerControlFlow` does: an op's
       results and a region's arguments are block arguments (aggregates
       through staging storage), and a region exit leaving a `try` part
       crosses each `finally` on the way, so R905's shape runs natively.
-      Owned temporaries release on the region tree. `compile` refuses a
-      lowered body.
+      Owned temporaries release on the region tree.
     - **14b, landed (R1273).** The transitional `lower-control-flow` pass
       went, with its `opt` registration and pass cases: the phase entry
       points return the structured body (one `lower_checked_program`, one
@@ -508,11 +507,19 @@ last producer. Every stage keeps program output unchanged; the
       regions as `CheckLifetimes` does, an `if` or `match` joining its
       arms, a loop iterated to a fixpoint with its break set as live-out,
       and region exits resolved through `RegionFrame` and `region_exit`
-      across each `finally` they cross. The block-list fixpoint and the
-      `EscapeJump` channel stay for older MIR text until 14c.
-    - **14c (R1274).** The CFG terminators leave `MirTerm`, with the VM's
-      arms for them, and concrete verification requires the structured
-      shape.
+      across each `finally` they cross.
+    - **14c, landed (R1274).** `Jump`, `Branch`, `ComptimeBranch`, the
+      `ComptimeFor` terminator, and `EscapeJump` left `MirTerm`, with
+      their MIR text spellings (1.88), the VM's arms and `Flow::Jump`, and
+      Pliron's refusal. `mir::verify` itself requires one block per
+      region, so the separate shape checks, the `is_structured_shape`
+      guards, and `opt`'s `STRUCTURED_ONLY` went too, and every walker
+      reads one block per list: the block-list fixpoints of the ownership
+      walks, drop lowering, and the slot-ends check, their escape
+      channels, `cse`'s dominator tree, and `canonicalize`'s
+      unreachable-block erasure are gone. A region is still a
+      `Vec<MirBlock>` the verifier holds to one block, where upstream's is
+      `SizedRegion<1>`: filed on the roadmap's `pmir` track.
 
 Each stage moves Mojito strictly closer to upstream; no stage adopts a
 Mojito-only shape.

@@ -1095,73 +1095,49 @@ fn verifier_rejects_an_undeclared_lifted_closure_target() {
 }
 
 #[test]
-fn verifier_rejects_invalid_jump_targets() {
-    let f = function(vec![block(Vec::new(), MirTerm::Jump(7))], 0, &[]);
-    expect_finding(&program(f), "jump to invalid block 7");
-}
-
-#[test]
-fn verifier_rejects_top_level_falloff_and_escape() {
+fn verifier_rejects_a_top_level_try_yield() {
     let f = function(vec![block(Vec::new(), MirTerm::TryYield)], 0, &[]);
     expect_finding(&program(f), "TryYield terminator outside a try region");
-    let f = function(
-        vec![block(
-            Vec::new(),
-            MirTerm::EscapeJump {
-                target: 0,
-                cleanup: Vec::new(),
-            },
-        )],
-        0,
-        &[],
-    );
-    expect_finding(&program(f), "EscapeJump terminator outside a try region");
 }
 
 #[test]
-fn verifier_rejects_a_branch_to_a_try_region_entry() {
-    let body = vec![
-        block(Vec::new(), MirTerm::Jump(1)),
-        block(Vec::new(), MirTerm::Jump(0)),
-    ];
+fn verifier_rejects_a_non_bool_if_condition() {
+    let arm = || vec![block(Vec::new(), MirTerm::Yield(Vec::new()))];
     let f = function(
         vec![block(
-            vec![MirInstr::Try {
-                body,
-                handler: None,
-                orelse: None,
-                finalbody: None,
-                cleanup: Vec::new(),
-            }],
-            MirTerm::Return(None),
-        )],
-        0,
-        &[],
-    );
-    expect_finding(&program(f), "branch to its region's entry block");
-}
-
-#[test]
-fn verifier_rejects_non_bool_branch_conditions() {
-    let f = function(
-        vec![
-            block(
-                vec![MirInstr::Const {
+            vec![
+                MirInstr::Const {
                     dest: Reg(0),
                     k: Const::Int(1),
-                }],
-                MirTerm::Branch {
-                    cond: Reg(0),
-                    then_b: 1,
-                    else_b: 1,
                 },
-            ),
-            block(Vec::new(), MirTerm::Return(None)),
-        ],
+                MirInstr::If {
+                    results: Vec::new(),
+                    cond: Reg(0),
+                    then: arm(),
+                    elifs: Vec::new(),
+                    else_args: Vec::new(),
+                    orelse: arm(),
+                },
+            ],
+            MirTerm::Return(None),
+        )],
         1,
         &[(0, Ty::int())],
     );
-    expect_finding(&program(f), "branch condition has type Int");
+    expect_finding(&program(f), "`if` condition has type Int");
+}
+
+#[test]
+fn verifier_rejects_a_body_of_two_blocks() {
+    let f = function(
+        vec![
+            block(Vec::new(), MirTerm::Return(None)),
+            block(Vec::new(), MirTerm::Return(None)),
+        ],
+        0,
+        &[],
+    );
+    expect_finding(&program(f), "body holds 2 blocks");
 }
 
 #[test]
@@ -2158,41 +2134,15 @@ fn verifier_rejects_a_drop_of_an_ended_slot() {
         findings[0].contains("var.consume of slot $v0"),
         "{findings:?}"
     );
-    let branch = MirTerm::Branch {
-        cond: Reg(1),
-        then_b: 1,
-        else_b: 2,
-    };
-    let both_arms = vec![
-        block(define_x(), branch.clone()),
-        block(vec![move_x()], MirTerm::Jump(3)),
-        block(vec![move_x()], MirTerm::Jump(3)),
-        block(vec![DROP_X], MirTerm::Return(None)),
-    ];
+    let moved = || vec![block(vec![move_x()], MirTerm::Yield(Vec::new()))];
+    let both_arms = vec![block(
+        [define_x(), vec![if_region(moved(), moved()), DROP_X]].concat(),
+        MirTerm::Return(None),
+    )];
     assert_eq!(slot_end_findings(both_arms).len(), 1);
-    // An escape and the `try`'s fall-off both reach block 1 with `x` moved.
-    let body = vec![
-        block(vec![move_x()], branch),
-        block(
-            Vec::new(),
-            MirTerm::EscapeJump {
-                target: 1,
-                cleanup: Vec::new(),
-            },
-        ),
-        block(Vec::new(), MirTerm::TryYield),
-    ];
-    let escaping = vec![
-        block(
-            [define_x(), vec![try_region(body, None)]].concat(),
-            MirTerm::Jump(1),
-        ),
-        block(vec![DROP_X], MirTerm::Return(None)),
-    ];
-    assert_eq!(slot_end_findings(escaping).len(), 1);
 }
 
-/// A `try` whose raise edge, an escape, or a return runs a cleanup list
+/// A `try` whose raise edge or a return runs a cleanup list
 /// over `x` once, after `x` ended or before something ends it again.
 fn listed_try(
     body: Vec<MirBlock>,
@@ -2210,8 +2160,7 @@ fn listed_try(
 
 /// A cleanup list naming a slot every path reaching it already ended
 /// destroys its value twice, as a second `drop.var` does: a `try`'s
-/// raise-edge list, a return's, and an escape's, and a drop after any of
-/// them.
+/// raise-edge list and a return's, and a drop after either.
 #[test]
 fn verifier_rejects_a_cleanup_list_naming_an_ended_slot() {
     let top = |region: MirInstr| {
@@ -2255,25 +2204,6 @@ fn verifier_rejects_a_cleanup_list_naming_an_ended_slot() {
     let findings = slot_end_findings(top(try_region_finally(body, finalbody)));
     assert!(
         findings[0].contains("return.cleanup of slot $v0"),
-        "{findings:?}"
-    );
-    let body = vec![block(
-        vec![DROP_X],
-        MirTerm::EscapeJump {
-            target: 1,
-            cleanup: vec![CleanupDrop::unnamed(0)],
-        },
-    )];
-    let escaping = vec![
-        block(
-            [define_x(), vec![try_region(body, None)]].concat(),
-            MirTerm::Jump(1),
-        ),
-        block(Vec::new(), MirTerm::Return(None)),
-    ];
-    let findings = slot_end_findings(escaping);
-    assert!(
-        findings[0].contains("escape cleanup of slot $v0"),
         "{findings:?}"
     );
 }
@@ -2322,20 +2252,23 @@ const fn try_region_finally(body: Vec<MirBlock>, finalbody: Vec<MirBlock>) -> Mi
 }
 
 /// A slot ended on some paths only, re-stored, or still live where a
-/// region escapes or raises is not ended on every path.
+/// region raises is not ended on every path.
 #[test]
 fn verifier_accepts_a_drop_of_a_slot_some_path_left_live() {
-    let branch = MirTerm::Branch {
-        cond: Reg(1),
-        then_b: 1,
-        else_b: 2,
-    };
-    let one_arm = vec![
-        block(define_x(), branch.clone()),
-        block(vec![move_x()], MirTerm::Jump(3)),
-        block(Vec::new(), MirTerm::Jump(3)),
-        block(vec![DROP_X], MirTerm::Return(None)),
-    ];
+    let one_arm = vec![block(
+        [
+            define_x(),
+            vec![
+                if_region(
+                    vec![block(vec![move_x()], MirTerm::Yield(Vec::new()))],
+                    vec![block(Vec::new(), MirTerm::Yield(Vec::new()))],
+                ),
+                DROP_X,
+            ],
+        ]
+        .concat(),
+        MirTerm::Return(None),
+    )];
     assert_eq!(slot_end_findings(one_arm), Vec::<String>::new());
     let restored = [
         define_x(),
@@ -2353,26 +2286,6 @@ fn verifier_accepts_a_drop_of_a_slot_some_path_left_live() {
     .concat();
     let restored = vec![block(restored, MirTerm::Return(None))];
     assert_eq!(slot_end_findings(restored), Vec::<String>::new());
-    // The body escapes to block 1 before moving `x`, and falls off after.
-    let body = vec![
-        block(Vec::new(), branch),
-        block(
-            Vec::new(),
-            MirTerm::EscapeJump {
-                target: 1,
-                cleanup: Vec::new(),
-            },
-        ),
-        block(vec![move_x()], MirTerm::TryYield),
-    ];
-    let escaping = vec![
-        block(
-            [define_x(), vec![try_region(body, None)]].concat(),
-            MirTerm::Jump(1),
-        ),
-        block(vec![DROP_X], MirTerm::Return(None)),
-    ];
-    assert_eq!(slot_end_findings(escaping), Vec::<String>::new());
     // The body moves `x` after its last raise, so its handler still owns it.
     let body = vec![block(vec![raising_call(), move_x()], MirTerm::TryYield)];
     let handler = vec![block(vec![DROP_X], MirTerm::TryYield)];

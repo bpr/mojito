@@ -13,54 +13,7 @@ pub(super) fn verify_terminator(
     errors: &mut Vec<String>,
 ) {
     let prefix = format!("MIR function '{name}' block {block_index}");
-    // A region's entry block has no predecessors: control enters a region
-    // only from its op (a `try` handler's error binding is the entry block's
-    // argument), never from a branch inside it.
-    if !matches!(context.kind(), RegionKind::Function)
-        && crate::mir::terminator_targets(terminator).contains(&0)
-    {
-        errors.push(format!("{prefix}: branch to its region's entry block"));
-    }
     match terminator {
-        MirTerm::Jump(target) => {
-            if *target >= context.region_len {
-                errors.push(format!("{prefix}: jump to invalid block {target}"));
-            }
-        }
-        MirTerm::Branch {
-            cond,
-            then_b,
-            else_b,
-        } => {
-            for target in [then_b, else_b] {
-                if *target >= context.region_len {
-                    errors.push(format!("{prefix}: branch to invalid block {target}"));
-                }
-            }
-            if let Some(found) = function.reg_types.get(&cond.0)
-                && *found != TyKind::Bool
-            {
-                errors.push(format!("{prefix}: branch condition has type {found}"));
-            }
-        }
-        MirTerm::ComptimeBranch { then_b, else_b, .. } => {
-            for target in [then_b, else_b] {
-                if *target >= context.region_len {
-                    errors.push(format!(
-                        "{prefix}: compile-time branch to invalid block {target}"
-                    ));
-                }
-            }
-        }
-        MirTerm::ComptimeFor { body, exit, .. } => {
-            for target in [body, exit] {
-                if *target >= context.region_len {
-                    errors.push(format!(
-                        "{prefix}: compile-time loop to invalid block {target}"
-                    ));
-                }
-            }
-        }
         MirTerm::Return(value) | MirTerm::ReturnWithCleanup { value, .. } => {
             // `Return(None)` doubles as the lowering placeholder terminator, so
             // only value-carrying returns are checked.
@@ -91,16 +44,6 @@ pub(super) fn verify_terminator(
                 errors.push(format!(
                     "{prefix}: TryYield terminator outside a try region"
                 ));
-            }
-        }
-        MirTerm::EscapeJump { target, .. } => {
-            if !context.in_try_region() {
-                errors.push(format!(
-                    "{prefix}: EscapeJump terminator outside a try region"
-                ));
-            }
-            if *target >= context.function_len {
-                errors.push(format!("{prefix}: escape to invalid block {target}"));
             }
         }
         MirTerm::Yield(_)

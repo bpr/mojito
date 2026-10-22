@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.87
+# Mojito Textual MIR Format, Version 1.88
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.87 is implemented end to end for inspection and loading: canonical
+Version 1.88 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.87
+mojito-mir 1.88
 ```
 
-The writer emits 1.87. The reader accepts 1.0 through 1.87; *Schema 1.0*
+The writer emits 1.88. The reader accepts 1.0 through 1.88; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -360,6 +360,14 @@ Minor version 86 adds the constant `uninitmem`, upstream's
 promotes where the slot holds nothing, typed by its register. A 1.85
 consumer rejects the spelling, which is the intended failure.
 
+Minor version 88 withdraws the CFG terminators `jump`, `branch`,
+`comptime_branch`, `comptime_for.iterator`, and `escape`. MIR has no CFG
+above a backend, as upstream has none above LLVM: every region, the body
+included, holds one block, which the verifier requires, as upstream's
+`hlcf` regions are `SizedRegion<1>`. The reader still accepts an older
+minor that spells none of them, and names one it meets as an unknown
+terminator.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -435,10 +443,8 @@ empty lists, empty strings, `none` values, and zero are distinct.
   and `bbN` identities but otherwise accepts record fields and unordered
   tables in any order; reprinting restores the canonical order.
 
-Nested `try` regions introduce a new local `bbN` namespace for each of `body`,
-`handler`, `orelse`, and `finally`. Ordinary jumps inside a region address that
-region. `escape` addresses the enclosing function's block namespace, exactly as
-`MirTerm::EscapeJump` does.
+Each region, a `try`'s `body`, `handler`, `orelse`, and `finally`
+included, introduces a new local `bbN` namespace; its one block is `bb0`.
 
 ## Source Files and Locations
 
@@ -1092,14 +1098,9 @@ as explicit options/lists. Backends must not reconstruct omitted selections.
 
 | MIR variant | Canonical record |
 |---|---|
-| `Jump(target)` | `jump { target: bbN }` |
-| `Branch` | `branch { condition: %rN, then: bbN, else: bbN }` |
-| `ComptimeBranch` | `comptime_branch { condition: <constraint>, then: bbN, else: bbN }` — a `comptime if` on a parameter expression over the function's binders (the `availability` constraint grammar), decided by the elaborator; concrete MIR carries none |
-| `ComptimeFor` | `comptime_for.iterator { binder: <binder>, initial: <param_expr>, has_next: <param_expr>, next_iter: <param_expr>, next_value: <param_expr>, body: bbN, exit: bbN }` — a `comptime for` header by upstream's iterator protocol: the binder `binder` is the iterator, starting at `initial` (the application of the iterable's lifted `__iter__()` call) and replaced by `next_iter` while `has_next` holds, both applications of the `paramfor_*` stubs over the binder; the loop variable is an alias of `next_value`, the `paramfor_next_value` application over it, and has no slot; the body's back edge jumps to the header, and its stop arm, as a `break` does, to `exit`; the elaborator unrolls it, and concrete MIR carries none (schema 1.16; the `iterator` form, schema 1.52; its `next_value`, and the withdrawal of the `range` form, schema 1.55; the withdrawal of the `elements` form `comptime_for.elements { …, elements, … }` and of the header's `slot` field, which the reader now rejects, schema 1.57) |
 | `Return` | `return { value: option<reg> }` |
 | `ReturnWithCleanup` | `return.cleanup { value: option<reg>, cleanup: [drop { var: $vN, destructor: "<symbol>" }...] }` — drop elaboration writes it on a return that crosses a `finally`: `cleanup` names what the return still holds after the last `finally` it crosses, and runs there (schema 1.53; before, it named loop-owned values); each entry names its destructor as a `try`'s does (schema 1.72) |
 | `TryYield` | `try.yield {}` — `lit.try.yield`: completes a `try` part, which goes on to its `else`/`finally` (schema 1.59; before, `falloff {}`, which the reader now rejects) |
-| `EscapeJump` | `escape { target: bbN, cleanup: [drop { var: $vN, destructor: "<symbol>" }...] }` — `cleanup` runs at the escape, before the `finally` blocks it crosses; each entry names its destructor as a `try`'s does (schema 1.72) |
 | `Yield` | `yield { values: [reg...] }` — `hlcf.yield`: ends an `if` arm, its values defining the op's results (schema 1.54) |
 | `ElifCond` | `if.elifcond.yield { condition: %rN, values: [reg...] }` — ends an elif condition region with its `Bool` (schema 1.54); its `values` (schema 1.84) define the arguments of its arm and of the next region, one per argument |
 | `Break` / `Continue` | `break { label: option<loopN>, values: [reg...] }` / `continue { label: option<loopN>, values: [reg...] }` — `hlcf.break`/`hlcf.continue`: the nearest enclosing `loop`, or the nearest carrying the label (schema 1.54); a break's `values` (schema 1.82) define the results of the loop it leaves, one per result, and a continue's (schema 1.83) the arguments of its next iteration, one per argument |

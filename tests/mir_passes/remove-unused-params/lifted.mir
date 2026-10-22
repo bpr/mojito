@@ -1,4 +1,4 @@
-mojito-mir 1.62
+mojito-mir 1.87
 artifact {
   features: [],
   files: [
@@ -151,11 +151,7 @@ artifact {
         blocks: [
           bb0 {
             instructions: [
-            ],
-            terminator: comptime_branch { condition: eq { left: operand_expr(param_apply { function: "$comptime$pick$0", type: meta_value(Bool), args: [param_decl_ref { owner: "pick", slot: 0, name: n, type: meta_value(Int) }, param_decl_ref { owner: "pick", slot: 1, name: m, type: meta_value(Int) }] }), right: operand_value(ct_bool(true)) }, then: bb2, else: bb3 }
-          },
-          bb1 {
-            instructions: [
+              comptime.if { results: [], conditions: [eq { left: operand_expr(param_apply { function: "$comptime$pick$0", type: meta_value(Bool), args: [param_decl_ref { owner: "pick", slot: 0, name: n, type: meta_value(Int) }, param_decl_ref { owner: "pick", slot: 1, name: m, type: meta_value(Int) }] }), right: operand_value(ct_bool(true)) }], arms: [[bb0 { instructions: [var.use { dest: %r0, var: $v0, mode: copy }, drop.var { var: $v0 }], terminator: return { value: present(%r0) } }]], else: [bb0 { instructions: [], terminator: comptime.yield { values: [] } }] },
               const { dest: %r2, value: int_literal(1) },
               literal.materialize { dest: %r3, value: %r2, target: Int },
               var.use { dest: %r1, var: $v0, mode: copy },
@@ -163,18 +159,6 @@ artifact {
               binary { op: add, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent }
             ],
             terminator: return { value: present(%r4) }
-          },
-          bb2 {
-            instructions: [
-              var.use { dest: %r0, var: $v0, mode: copy },
-              drop.var { var: $v0 }
-            ],
-            terminator: return { value: present(%r0) }
-          },
-          bb3 {
-            instructions: [
-            ],
-            terminator: jump { target: bb1 }
           }
         ]
       }
