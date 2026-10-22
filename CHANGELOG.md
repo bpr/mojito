@@ -487,6 +487,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `remove-unused-params` records a self-recursive callee's removed
+  parameter once in `callee_removed_params` when the self-call both spells
+  the parameter and infers it (`rec[n](k - 1)`), where it listed it twice
+  (`tests/mir_passes/remove-unused-params/forwarded.mir`). This closes
+  R1257.
 - Every pass between drop elaboration and the pre-elaboration pipeline
   now reads the structured body, and both seams lower control flow only
   after `lower-lit`. A `deinit self` field that only a `try` handler reads

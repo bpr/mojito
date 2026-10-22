@@ -98,20 +98,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1251, whose field-sensitive drop state this walk needs.
   - Model: Fable, Not Planned.
 
-- [ ] **R1257 `remove-unused-params` records a self-recursive callee's
-  removed parameter twice in `callee_removed_params`**
-
-  The pass case `tests/mir_passes/remove-unused-params/forwarded.mir`
-  fails: `rec`'s entry lists `param_id { owner: "rec", slot: 0 }` twice,
-  where its `.expected` lists it once.
-  - It fails at `2fa8c8fa`, before R879's session; the self-recursive
-    discount `self_forwarded_parameters` feeds (5b1b7744, R1034) is the
-    likely source.
-  - Probe: `mojito opt --pass remove-unused-params` on that case, diffed
-    against its `.expected`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1272 A `try` runs its parts on the host stack, so recursion
   through a call in a `try` part overflows where upstream's interpreter
   transfers into `lit.try`'s regions**

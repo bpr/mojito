@@ -502,6 +502,9 @@ fn self_forwards(
             itself.extend(receiver.map_or_else(Vec::new, |receiver| {
                 receiver_forwarded_owner_params(name, receiver, declarations)
             }));
+            // A parameter both spelled and inferred is supplied once.
+            let mut seen = BTreeSet::new();
+            itself.retain(|id| seen.insert(id.clone()));
             match forwarded {
                 Some(ids) => ids.retain(|id| itself.contains(id)),
                 None => *forwarded = Some(itself),
