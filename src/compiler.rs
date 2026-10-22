@@ -83,8 +83,8 @@ impl CompiledProgram {
     /// with drops inserted, the lifetime-only markers erased (`lower-lit`),
     /// and the pre-elaboration pipeline run. Its bodies keep their
     /// structured control flow, as upstream's generators keep `hlcf`, through
-    /// elaboration and the post-elaboration pipeline; each backend lowers
-    /// it at its entry. It is the
+    /// elaboration and the post-elaboration pipeline; the VM runs it as it
+    /// stands, and Pliron lowers it at its entry. It is the
     /// elaborator's input, beside an imported package's bodies, which are
     /// finished the same way as each is materialized.
     /// Post-drop verification findings, a body's structured shape

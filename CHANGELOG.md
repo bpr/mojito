@@ -616,6 +616,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The VM now runs concrete MIR's structured control flow as it stands,
+  as upstream's interpreter runs `hlcf` (R882); only Pliron still lowers
+  it (`lower-control-flow`), and neither `ConcreteProgram::new` (each CTFE
+  fragment) nor `VmBackend::run_concrete` does. Each frame holds a region
+  cursor (`backend/vm/regions.rs`), its position through the `if`, `loop`,
+  and `match` ops it is inside, which each op's entry and each region
+  terminator moves as `transferControlFlowTo` moves the interpreter's
+  `pc`, so a call inside any region stays on the explicit frame stack. A
+  `break` or `continue` from a `try` nested in another `try`'s part, to a
+  loop inside that part, now runs on the VM, running each `finally` (R905's
+  VM half; Pliron keeps the limit until R883). Reaching
+  `hlcf.unreachable` is now a runtime error rather than a return. Every
+  corpus fixture's output is unchanged, and a 200 000-iteration loop runs
+  about as fast as before. This files R1272 for a `try`, which still runs
+  its parts on the host stack.
 - The post-elaboration pipeline now reads structured instances (R881), as
   upstream's function pipeline reads `hlcf`: the elaborator emits each
   instance with its runtime regions, and each backend lowers them

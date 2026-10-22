@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1272**.
+Next free ID: **R1273**.
 
 ## Ordered Work
 
@@ -112,22 +112,33 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R882 The VM executes only CFG blocks where upstream's interpreter
-  runs `hlcf` ops**
+- [ ] **R1272 A `try` runs its parts on the host stack, so recursion
+  through a call in a `try` part overflows where upstream's interpreter
+  transfers into `lit.try`'s regions**
 
-  Every `hlcf` parent op implements `InterpreterOpInterface`, and the VM
-  needs the transitional lowering before it can run a body.
-  - Stage 13 of `docs/structured-control-flow-plan.md`.
-  - Generalize `run_region`/`exec_try`'s `Flow` in
-    `backend/vm/exec.rs` over every region op.
-  - The VM path and CTFE stop lowering, so `lower-control-flow` runs only
-    for Pliron.
-  - Lever: delete the `lower_control_flow_program` calls in
-    `ConcreteProgram::new` and `VmBackend::run_concrete`
-    (`crates/mojito-vm/src/backend/vm.rs`), the VM's lowering point since
-    R881.
-  - Depends on R881.
-  - Model: Opus, Planned.
+  `exec_instr`'s `Try` arm runs `exec_try`, which runs each part through
+  `run_region`, and a call inside a part goes through `exec_instr`'s
+  synchronous call path (`call_frame`, a nested `drive_frames`).
+  - Upstream's `TryOp::interpret` transfers into the try region, and
+    `TryYieldOp`/`TryRaiseOp` transfer to `else`, past the op, or the
+    matching `except` (`lib/LITDialect/LITOps.cpp`), so control never
+    grows the host stack.
+  - Since R882 every other region op is a level of the frame's
+    `RegionCursor` and a call inside one is a pushed frame.
+  - Probe: `def down(n: Int) raises -> Int:` whose `try:` holds
+    `if n > 0: return down(n - 1) + 1`, an `except e: print(e)`, then
+    `return 0`; `print(down(40))` aborts with a stack overflow in a debug
+    build (`down(20)` prints `20`), where `down(100000)` without the `try`
+    prints `100000`.
+  - Lever: make each `try` part a cursor level that records the part and
+    the pending outcome `finally` runs under; a raise unwinds
+    `VmBackend::frames` to the innermost frame whose cursor is in a `try`
+    body with a handler, stopping at a synchronous call's target frame.
+    `exec_try`, `run_region`, and their recursion go away.
+  - Related to R884: once each `finally` is copied before its exits, the
+    pending-outcome state goes too.
+  - Depends on R882.
+  - Model: Opus, Not Planned.
 
 - [ ] **R883 Pliron lowers a MIR CFG where `LowerControlFlow` lowers
   structured ops, so `lower-control-flow` and the CFG terminators survive**
@@ -152,6 +163,16 @@ which names the upstream pass each one follows. Each is measured by the
     elaborated body and CTFE fragment already has it, but a lowered
     artifact (`mojito opt --pass lower-control-flow` output fed to `exec`)
     is legal MIR text until the CFG terminators go.
+  - Other callers lower outside the backends and must move to Pliron or
+    go with the pass: the verifier's clone in `verify/drops.rs` (two
+    calls), `mir::lower_cfg`, `lower_checked_program_importing`, and
+    `lower_checked_program_units` (`mir.rs`, the last read by
+    `src/package.rs`'s `packaged_units` for names only),
+    `analysis::LOWER_CONTROL_FLOW` (for `opt`), `inline_parametric`'s
+    test `prices`, and `tests/mir_test.rs`'s `driver_mir`.
+  - The VM keeps its `Jump`/`Branch`/`EscapeJump` arms and `Flow::Jump`
+    (`backend/vm/regions.rs`, `exec.rs`) only for a lowered artifact;
+    they go with the terminators.
   - Depends on R882.
   - Model: Opus, Planned.
 
@@ -10242,22 +10263,27 @@ follow-ups the landed producer stages filed come last.
   - Model: Opus, Not Planned.
 
 - [ ] **R905 A `break`/`continue` from a `try` nested in another `try`'s
-  part, to a loop inside that outer part, is unsupported**
+  part, to a loop inside that outer part, is unsupported on Pliron**
 
-  The VM run fails with "try with break/continue crossing the try
-  boundary", where the same Mojo program is valid.
+  The native build fails with "try with break/continue crossing the try
+  boundary", where the same Mojo program is valid and the VM runs it.
   - The structured form is fine: the part ends in a labelled `break`
-    naming the loop (R874).
+    naming the loop (R874), and since R882 the VM's region cursor resolves
+    it, running each `finally`.
   - The limit is in the lowered form: `lower-control-flow`'s
     `Lowering::leave` can only aim an `EscapeJump` at a function-level
     block, and this loop's blocks belong to the outer part.
-  - Once the VM runs region ops (R882), the `break` leaves through the
-    regions, as upstream's interpreter does, and no escape is needed.
-  - Add an `assets/ok` fixture with a `break` and a `continue` across two
-    `try`s, each with a `finally`.
-  - Pliron keeps the limit until R883.
+  - Probe: `def main() raises:` with `try:` around `for i in range(4):`,
+    whose body is `try:` holding `if i == 1: continue` and
+    `if i == 3: break` and `print("body", i)`, with
+    `finally: print("inner finally", i)`, and an outer
+    `finally: print("outer finally")`. The pin and the VM print
+    `body 0`, `inner finally 0`, `inner finally 1`, `body 2`,
+    `inner finally 2`, `inner finally 3`, `outer finally`.
+  - Once Pliron lowers region ops itself (R883), add that program as an
+    `assets/ok` fixture with its parity row.
   - Found while landing R874 (2026-10-14).
-  - Depends on R882.
+  - Depends on R883.
   - Model: Opus, Not Planned.
 
 - [ ] **R906 A `raise` is a mid-block MIR instruction, where upstream's

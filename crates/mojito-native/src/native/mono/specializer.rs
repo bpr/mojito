@@ -140,8 +140,8 @@ impl<'a> Specializer<'a> {
             invariant_errors: self.source.invariant_errors.clone(),
         };
         // Each instance keeps its runtime structured control flow, as
-        // upstream's elaborator emits `hlcf`; each backend lowers it at its
-        // entry.
+        // upstream's elaborator emits `hlcf`; the VM runs it, and Pliron
+        // lowers it at its entry.
         let program = ConcreteMir::verified(program).map_err(|findings| MonoError {
             kind: MonoErrorKind::Unsupported,
             function: None,

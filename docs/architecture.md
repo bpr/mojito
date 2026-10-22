@@ -3068,11 +3068,14 @@ for i in range(10):
 
 The `break` targets a loop outside the `try` region. A seeded try-region CFG
 lowers it to `Terminator::Break(label)` naming that loop, and
-`lower-control-flow` resolves it to `MirTerm::EscapeJump { target }`, where
-`target` is a block of the function's list, not the region's. The VM
-propagates this as a non-local jump while running `finally` blocks on the
-way out. A `break` from a `try` part to a loop inside an enclosing `try`
-part reaches the unsupported boundary there.
+the VM's region cursor resolves it to that loop: the part ends with
+`Flow::Leave`, which propagates out of each `try`, running its `finally`, until
+the cursor of a list inside the loop resolves it, so a loop inside an
+enclosing `try` part is reached too. For Pliron, `lower-control-flow`
+resolves it to `MirTerm::EscapeJump { target }`, where `target` is a block of
+the function's list, not the region's, and a `break` from a `try` part to a
+loop inside an enclosing `try` part reaches the unsupported boundary there
+(R905).
 
 ## Stage 5: MIR Lowering
 
@@ -3429,8 +3432,8 @@ as upstream's `TrackedAndInteriorLiveness`, walks the structured body as
 upstream's `CheckLifetimes` walks `hlcf`, and the loan check walks it backward
 for reference liveness and forward for loan generations. The body stays
 structured for drop elaboration and every pass after it, the elaborator
-and the post-elaboration pipeline included; each backend lowers it
-(`lower-control-flow`) at its entry. A `try`
+and the post-elaboration pipeline included; the VM runs it as it stands,
+and Pliron lowers it (`lower-control-flow`) at its entry. A `try`
 is one instruction to the loan
 check: it uses every variable its parts read, and no access or loan inside
 it is checked (upstream has no persistent-loan check, so the exemption
@@ -4080,12 +4083,10 @@ chains, and comprehensions as `If`/`Loop`, each region one block (a
 conditional expression whose condition the checker found a parameter value,
 `SemanticAdjustment::ComptimeConditional`, is a `ComptimeIf` with results,
 as upstream's `IfElseOpNode` emits `hlcf.comptime.if`), and
-`mir::lower_control_flow` (upstream's `LowerControlFlow`), which each
-backend runs at its entry on the concrete MIR the elaborator and the
-post-elaboration pipeline leave structured (the VM's
-`ConcreteProgram::new`, which prepares each CTFE fragment, and
-`VmBackend::run_concrete`; Pliron's `compile`, on a clone of each reachable
-function), lowers runtime region ops to blocks and the CFG terminators: a
+`mir::lower_control_flow` (upstream's `LowerControlFlow`), which Pliron
+runs at its entry on the concrete MIR the elaborator and the
+post-elaboration pipeline leave structured (`compile`, on a clone of each
+reachable function; the VM runs region ops as they stand), lowers runtime region ops to blocks and the CFG terminators: a
 region's blocks are appended to its list, the rest of the block moves to a
 join, an op's results go through one slot each, stored at a `yield` or
 `break` and forwarded at the join, except that a loop left by one `break`
@@ -5255,8 +5256,8 @@ upstream's `DestructorInsertion` reads `hlcf`, and so do the passes after it
 up to `lower-lit`: field drops, copy elision, destructor and constructor
 naming with `mir::lower_whole_drops`, and the copy/move lowering, and
 the pre-elaboration pipeline after them, the elaborator, and the
-post-elaboration pipeline; each backend lowers the body
-(`lower-control-flow`) at its entry. Two walks of `analysis/region_walk.rs` give its
+post-elaboration pipeline; the VM runs the body as it stands, and Pliron
+lowers it (`lower-control-flow`) at its entry. Two walks of `analysis/region_walk.rs` give its
 facts: one forward walk (`DropFacts`, in `register_loans.rs`) records the loan
 generations reaching each instruction and block and the roots each instruction
 consumes through its operand registers (`RegisterUses`), and one backward walk
@@ -6335,8 +6336,8 @@ pipeline, then the head of the function pipeline its `AutomaticInline`
 runs (`SimplifyCF`, `SROA`, `Mem2Reg`, `Canonicalizer`, `CSEPass`), with
 `SCCP` from its `'kgen.func'` one. Mojito has no post-elaboration
 `AutomaticInline` (R1271), so `simplify-cf` runs once. Every pass reads
-the structured instance the elaborator emits; each backend lowers it at
-its entry.
+the structured instance the elaborator emits; the VM runs it as it
+stands, and Pliron lowers it at its entry.
 
 `simplify-cf` (`analysis::SIMPLIFY_CF`, `analysis/simplify_cf.rs`) is
 upstream's `SimplifyCF` (`lib/Transforms/SimplifyCF.cpp`), whole. A
@@ -6666,12 +6667,25 @@ of an owning positional collector last to first. Moved-out fields are skipped so
 catches it. This preserves fields on user-defined typed error structs; string
 raise shorthand is normalized to the builtin `Error` value.
 
-Inside try sub-regions, the VM uses a control-flow enum conceptually like:
+Each frame steps its body with a region cursor (`backend/vm/regions.rs`), the
+VM's `transferControlFlowTo`: the frame's position is a path from its block
+list through each `if`, `loop`, and `match` it is inside. Entering an op
+pushes a level for the region it runs first and binds that region's
+arguments, and each region terminator (`yield`, `if.elifcond.yield`,
+`break`, `continue`, `match.next`, `match.complete`) moves the position,
+binding the values it carries all at once. A `break` or `continue` resolves
+by `mir::region_exit` and `RegionFrame::names`, `lower-control-flow`'s rule.
+A call in any region is a pushed frame, so neither nesting nor recursion grows
+the host stack. Reaching `hlcf.unreachable` is a runtime error.
+
+A `try` runs its parts synchronously (`exec_try`/`run_region`, each part under
+a cursor of its own; R1272), and a part ends with a control-flow enum:
 
 ```rust
 Normal
-Return(Value)
-Jump(MirBlockId)
+Return { value, cleanup }
+Leave(Leave)      // a region exit naming an op around the `try`
+Jump(MirBlockId)  // a lowered `escape`, until R883
 ```
 
 This lets `return`, `break`, and `continue` cross a `try` boundary while still

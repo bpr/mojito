@@ -3,8 +3,8 @@
 **Status:** plan recorded 2026-10-14 (R859); stages 1 (R870), 2 (R871),
 3 (R872), 4 (R873), and 5 (R874) landed 2026-10-14, and the `comptime for`
 body's `has_next` test (R885) with them; stages 6 (R875), 7 (R876),
-8 (R877), 9 (R878), 10 (R879, R1253, R1254), 11 (R880), and 12 (R881)
-landed 2026-10-21.
+8 (R877), 9 (R878), 10 (R879, R1253, R1254), 11 (R880), 12 (R881), and
+13 (R882) landed 2026-10-21.
 The scheduled tasks are on [`docs/roadmap.md`](roadmap.md) track `pmir`,
 one entry per stage below.
 This document is their design record and is updated as stages land. It is
@@ -111,9 +111,9 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
     pre-drop verification, the ownership checks, drop elaboration, and
     every pass after it, the pre-elaboration pipeline included, read the
     structured body (stages 6–10), and so do the elaborator (stage 11)
-    and the post-elaboration pipeline (stage 12). Each backend lowers at
-    its entry: the VM in `ConcreteProgram::new` (each CTFE fragment) and
-    `VmBackend::run_concrete`, Pliron in `compile`.
+    and the post-elaboration pipeline (stage 12). The VM steps region ops
+    with each frame's region cursor (stage 13), and Pliron lowers at its
+    entry, in `compile`.
 - **The ownership checks and drop elaboration walk regions.** The move and
   initialization scan, carrying interior origins, walks the structure as
   `CheckLifetimes` does (stages 6–7), and so does the loan check. Drop
@@ -448,10 +448,10 @@ last producer. Every stage keeps program output unchanged; the
       its inlined bodies.
 12. **Post-elaboration pipeline.** *Landed (R881).* The elaborator emits
     structured instances, and the post-elaboration pipeline reads them.
-    - The lowering point is each backend's entry: the VM's
+    - The lowering point was each backend's entry: the VM's
       `ConcreteProgram::new` (each CTFE fragment) and
-      `VmBackend::run_concrete`, and Pliron's `compile`, which lowers a
-      clone of each reachable function. Every driver, artifact, and test
+      `VmBackend::run_concrete`, until stage 13, and Pliron's `compile`,
+      which lowers a clone of each reachable function. Every driver, artifact, and test
       path ends in one of them. Concrete verification no longer refuses
       runtime region ops.
     - `simplify-cf` ports `SimplifyCF` whole: trivial-loop removal (which
@@ -468,8 +468,24 @@ last producer. Every stage keeps program output unchanged; the
       for `sccp`, `mem-2-reg`, `lower-arg-conventions`, and `simplify-cf`.
     - `MirFunction::instruction_count`/`block_count`, and so every
       elaboration counter, count every region.
-13. **VM.** It executes region ops, generalizing `run_region`/`exec_try`'s
-    `Flow`. The VM path and CTFE stop lowering.
+13. **VM.** *Landed (R882).* It executes region ops, as upstream's
+    interpreter does, and the VM path and CTFE stop lowering.
+    - Each frame holds a `RegionCursor` (`backend/vm/regions.rs`): its
+      position as a path through the region ops it is inside, which each
+      op's entry and each region terminator moves, as
+      `transferControlFlowTo` moves the interpreter's `pc`. A call inside
+      any region stays a pushed frame, so neither nesting nor recursion
+      grows the host stack. Exits resolve through `mir::region_exit` and
+      `RegionFrame::names`, the resolvers `lower-control-flow` uses.
+    - A region exit naming an op around a `try` leaves the part as
+      `Flow::Leave`, running each `finally` on the way, until the cursor of
+      a list inside that op resolves it; a `break` across two `try`s now
+      runs (R905's VM half).
+    - Reaching `hlcf.unreachable` is a runtime error, as upstream gives it
+      no `interpret`, where the lowering made it a return.
+    - The `try` itself still runs its parts on the host stack
+      (`exec_try`/`run_region`), filed as R1272. The CFG terminator arms
+      stay for a lowered artifact fed to `exec`, until stage 14.
 14. **Pliron.** `lower/term.rs` and `try_flow.rs` lower region ops to LLVM
     blocks, as `LowerControlFlow` does. The transitional pass and the CFG
     terminators are deleted.

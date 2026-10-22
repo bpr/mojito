@@ -205,8 +205,9 @@ pub const ELABORATE_DROPS: BodyPass = BodyPass {
 ///
 /// Upstream lowers `hlcf` as it reaches LLVM. No seam runs it: every
 /// [`PIPELINE`] pass, the elaborator, and the post-elaboration pipeline
-/// read structured bodies, and each backend lowers them at its entry. It
-/// is registered for a pass test or `opt` to run on request.
+/// read structured bodies, the VM runs them as they stand, and Pliron
+/// lowers them at its entry. It is registered for a pass test or `opt` to
+/// run on request.
 pub const LOWER_CONTROL_FLOW: BodyPass = BodyPass {
     name: "lower-control-flow",
     run: |_, function, _| {

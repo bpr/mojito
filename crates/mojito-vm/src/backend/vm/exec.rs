@@ -1,5 +1,6 @@
 //! The `exec_instr` instruction dispatcher plus `try`-region execution
-//! (`exec_try`/`run_cleanup`/`run_region`).
+//! (`exec_try`/`run_cleanup`/`run_region`, the last stepping a region cursor
+//! over a `try` part).
 //! Extracted from `backend/vm.rs`; see `docs/symbol-map.md`.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
@@ -135,11 +136,13 @@ impl VmBackend {
             MirInstr::ComptimeAssert { .. } => {
                 return Err(parametric_instruction("a compile-time assertion"));
             }
-            MirInstr::If { .. }
-            | MirInstr::Loop { .. }
-            | MirInstr::ComptimeIf { .. }
-            | MirInstr::ComptimeFor { .. }
-            | MirInstr::Match { .. } => {
+            MirInstr::If { .. } | MirInstr::Loop { .. } | MirInstr::Match { .. } => {
+                return Err(RuntimeError::Unsupported(format!(
+                    "vm: `{}` outside a region cursor",
+                    mojito_mir::mir::text::instruction_mnemonic(i)
+                )));
+            }
+            MirInstr::ComptimeIf { .. } | MirInstr::ComptimeFor { .. } => {
                 return Err(parametric_instruction(&format!(
                     "structured control flow `{}`",
                     mojito_mir::mir::text::instruction_mnemonic(i)
@@ -2239,11 +2242,12 @@ impl VmBackend {
         Ok(())
     }
 
-    /// Run a `try` sub-region's mini-CFG (block ids local, entry = 0) in the current
-    /// frame. Returns the control-flow outcome — `Flow::Normal` on normal completion
-    /// (`TryYield`), or `Flow::Return` when a `return` inside the region crosses out —
-    /// and propagates a raise as `RuntimeError::Raised`. (`break`/`continue` crossing
-    /// the region are refused at lowering, so no such terminator reaches here.)
+    /// Run a `try` part (block ids local, entry = 0) in the current frame,
+    /// stepping a [`RegionCursor`] rooted at it through the region ops it
+    /// holds. Returns the control-flow outcome — `Flow::Normal` on normal
+    /// completion (`lit.try.yield`), `Flow::Return` when a `return` inside
+    /// the part crosses out, or `Flow::Leave` when a region exit names an op
+    /// around the `try` — and propagates a raise as `RuntimeError::Raised`.
     pub(super) fn run_region(
         &mut self,
         prog: &Prog,
@@ -2252,57 +2256,30 @@ impl VmBackend {
         regs: &mut [Value],
         vars: &mut Vec<Value>,
     ) -> Result<Flow, RuntimeError> {
-        let mut block = 0usize;
-        loop {
-            let b = &blocks[block];
-            for instr in &b.instrs {
-                // A non-`Normal` outcome from a nested `try` (a `return`, or a
-                // `break`/`continue` escaping to an outer loop) leaves this region
-                // carrying that outcome.
-                match self.exec_instr(prog, instr, scope, regs, vars)? {
+        let mut cursor = RegionCursor::default();
+        'region: loop {
+            let block = cursor.block(blocks)?;
+            while let Some(instruction) = block.instrs.get(cursor.instruction()) {
+                if cursor.enter(instruction, regs) {
+                    continue 'region;
+                }
+                cursor.advance();
+                // A non-`Normal` outcome from a nested `try` (a `return`, or
+                // a region exit naming an op this part does not hold) leaves
+                // this part carrying it.
+                match self.exec_instr(prog, instruction, scope, regs, vars)? {
                     Flow::Normal => {}
+                    Flow::Leave(leave) => match cursor.resolve_leave(blocks, leave, regs)? {
+                        Some(leave) => return Ok(Flow::Leave(leave)),
+                        None => continue 'region,
+                    },
                     non_normal => return Ok(non_normal),
                 }
             }
-            match &b.term {
-                MirTerm::Jump(t) => block = *t,
-                MirTerm::Branch {
-                    cond,
-                    then_b,
-                    else_b,
-                } => {
-                    block = if is_true(&regs[cond.0 as usize]) {
-                        *then_b
-                    } else {
-                        *else_b
-                    };
-                }
-                MirTerm::ComptimeBranch { cond, .. } => {
-                    return Err(parametric_instruction(&format!(
-                        "a compile-time branch on `{cond:?}`"
-                    )));
-                }
-                MirTerm::ComptimeFor { binder, .. } => {
-                    return Err(parametric_instruction(&format!(
-                        "a compile-time loop over `{binder}`"
-                    )));
-                }
-                MirTerm::Yield(_)
-                | MirTerm::ElifCond { .. }
-                | MirTerm::Break { .. }
-                | MirTerm::Continue { .. }
-                | MirTerm::ComptimeYield(_)
-                | MirTerm::ComptimeBreak(_)
-                | MirTerm::ComptimeContinue(_)
-                | MirTerm::MatchNext(_)
-                | MirTerm::MatchComplete(_)
-                | MirTerm::Unreachable => {
-                    return Err(parametric_instruction(&format!(
-                        "the region terminator `{}`",
-                        mojito_mir::mir::text::terminator_mnemonic(&b.term)
-                    )));
-                }
-                MirTerm::Return(r) => {
+            match cursor.transfer(blocks, &block.term, regs)? {
+                Transfer::Moved => {}
+                Transfer::Leave(leave) => return Ok(Flow::Leave(leave)),
+                Transfer::Exit(MirTerm::Return(r)) => {
                     let v = r
                         .as_ref()
                         .map_or(Value::None, |r| regs[r.0 as usize].clone());
@@ -2311,7 +2288,7 @@ impl VmBackend {
                         cleanup: Vec::new(),
                     });
                 }
-                MirTerm::ReturnWithCleanup { value, cleanup } => {
+                Transfer::Exit(MirTerm::ReturnWithCleanup { value, cleanup }) => {
                     let value = value
                         .as_ref()
                         .map_or(Value::None, |register| regs[register.0 as usize].clone());
@@ -2320,14 +2297,15 @@ impl VmBackend {
                         cleanup: cleanup.clone(),
                     });
                 }
-                MirTerm::TryYield => return Ok(Flow::Normal),
-                // A `break`/`continue` targeting an outer function loop: run this
-                // region's escape-edge cleanup (values that die leaving the region),
-                // then carry the resolved target out as a `Flow::Jump`.
-                MirTerm::EscapeJump { target, cleanup } => {
+                // A lowered `break`/`continue` targeting an outer function
+                // loop: run this part's escape-edge cleanup (values that die
+                // leaving the part), then carry the resolved target out as a
+                // `Flow::Jump`.
+                Transfer::Exit(MirTerm::EscapeJump { target, cleanup }) => {
                     self.run_cleanup(prog, scope.function, cleanup, vars)?;
                     return Ok(Flow::Jump(*target));
                 }
+                Transfer::Exit(_) => return Ok(Flow::Normal),
             }
         }
     }

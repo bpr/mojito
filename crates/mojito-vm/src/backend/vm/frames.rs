@@ -1,5 +1,6 @@
 //! Explicit call-frame construction and dispatch: `call_frame`, `make_frame`,
-//! the `drive_frames` loop, `finish_frame`, and `prepare_direct_call`.
+//! the `drive_frames` loop over each frame's region cursor, `finish_frame`,
+//! and `prepare_direct_call`.
 //! Extracted from `backend/vm.rs`; see `docs/symbol-map.md`.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
@@ -31,8 +32,7 @@ impl VmBackend {
             function,
             registers: Vec::new(),
             variables: std::mem::take(variables),
-            block: 0,
-            instruction: 0,
+            cursor: RegionCursor::default(),
             continuation: None,
         };
         self.frames.push(shadow);
@@ -114,35 +114,42 @@ impl VmBackend {
             function: fidx,
             registers: regs,
             variables: vars,
-            block: 0,
-            instruction: 0,
+            cursor: RegionCursor::default(),
             continuation,
         })
     }
 
+    /// Step the frame stack until the frame `target` returns, running each
+    /// frame's straight-line instructions until one moves it. A region op
+    /// moves its frame's [`RegionCursor`] into one of its regions, and a
+    /// direct call inside any of them pushes a child frame, so neither
+    /// grows the host stack.
     pub(super) fn drive_frames(
         &mut self,
         prog: &Prog,
         target: FrameId,
     ) -> Result<(Value, Vec<Value>), RuntimeError> {
-        loop {
+        'frames: loop {
             let mut frame = self.frames.pop().ok_or_else(|| {
                 RuntimeError::Unsupported("vm: frame stack underflow".to_string())
             })?;
-            self.burn_ctfe()?;
-            let function = &prog.mir.functions[frame.function].1;
-            let block = &function.blocks[frame.block];
-            if frame.instruction < block.instrs.len() {
-                let instruction = block.instrs[frame.instruction].clone();
-                frame.instruction += 1;
-                if let Some(child) = self.prepare_direct_call(prog, &frame, &instruction)? {
+            let blocks = prog.mir.functions[frame.function].1.blocks.as_slice();
+            let block = frame.cursor.block(blocks)?;
+            while let Some(instruction) = block.instrs.get(frame.cursor.instruction()) {
+                self.burn_ctfe()?;
+                if frame.cursor.enter(instruction, &mut frame.registers) {
+                    self.frames.push(frame);
+                    continue 'frames;
+                }
+                frame.cursor.advance();
+                if let Some(child) = self.prepare_direct_call(prog, &frame, instruction)? {
                     self.frames.push(frame);
                     self.frames.push(child);
-                    continue;
+                    continue 'frames;
                 }
                 match self.exec_instr(
                     prog,
-                    &instruction,
+                    instruction,
                     FrameScope {
                         function: frame.function,
                         id: frame.id,
@@ -150,15 +157,22 @@ impl VmBackend {
                     &mut frame.registers,
                     &mut frame.variables,
                 )? {
-                    Flow::Normal => {
+                    Flow::Normal => {}
+                    Flow::Leave(leave) => {
+                        if frame
+                            .cursor
+                            .resolve_leave(blocks, leave, &mut frame.registers)?
+                            .is_some()
+                        {
+                            return Err(left_function());
+                        }
                         self.frames.push(frame);
-                        continue;
+                        continue 'frames;
                     }
                     Flow::Jump(block) => {
-                        frame.block = block;
-                        frame.instruction = 0;
+                        frame.cursor.escape(block);
                         self.frames.push(frame);
-                        continue;
+                        continue 'frames;
                     }
                     Flow::Return { value, cleanup } => {
                         self.run_cleanup(prog, frame.function, &cleanup, &mut frame.variables)?;
@@ -178,67 +192,31 @@ impl VmBackend {
                         if let Some(done) = self.finish_frame(prog, target, frame, value)? {
                             return Ok(done);
                         }
-                        continue;
+                        continue 'frames;
                     }
                 }
             }
-            let returned = match &block.term {
-                MirTerm::Jump(next) => {
-                    frame.block = *next;
-                    frame.instruction = 0;
+            self.burn_ctfe()?;
+            let returned = match frame
+                .cursor
+                .transfer(blocks, &block.term, &mut frame.registers)?
+            {
+                Transfer::Moved => {
                     self.frames.push(frame);
                     continue;
                 }
-                MirTerm::Branch {
-                    cond,
-                    then_b,
-                    else_b,
-                } => {
-                    frame.block = if is_true(&frame.registers[cond.0 as usize]) {
-                        *then_b
-                    } else {
-                        *else_b
-                    };
-                    frame.instruction = 0;
-                    self.frames.push(frame);
-                    continue;
-                }
-                MirTerm::ComptimeBranch { cond, .. } => {
-                    return Err(parametric_instruction(&format!(
-                        "a compile-time branch on `{cond:?}`"
-                    )));
-                }
-                MirTerm::ComptimeFor { binder, .. } => {
-                    return Err(parametric_instruction(&format!(
-                        "a compile-time loop over `{binder}`"
-                    )));
-                }
-                MirTerm::Yield(_)
-                | MirTerm::ElifCond { .. }
-                | MirTerm::Break { .. }
-                | MirTerm::Continue { .. }
-                | MirTerm::ComptimeYield(_)
-                | MirTerm::ComptimeBreak(_)
-                | MirTerm::ComptimeContinue(_)
-                | MirTerm::MatchNext(_)
-                | MirTerm::MatchComplete(_)
-                | MirTerm::Unreachable => {
-                    return Err(parametric_instruction(&format!(
-                        "the region terminator `{}`",
-                        mojito_mir::mir::text::terminator_mnemonic(&block.term)
-                    )));
-                }
-                MirTerm::Return(reg) => reg
+                Transfer::Leave(_) => return Err(left_function()),
+                Transfer::Exit(MirTerm::Return(reg)) => reg
                     .as_ref()
                     .map_or(Value::None, |reg| frame.registers[reg.0 as usize].clone()),
-                MirTerm::ReturnWithCleanup { value, cleanup } => {
+                Transfer::Exit(MirTerm::ReturnWithCleanup { value, cleanup }) => {
                     let returned = value
                         .as_ref()
                         .map_or(Value::None, |reg| frame.registers[reg.0 as usize].clone());
                     self.run_cleanup(prog, frame.function, cleanup, &mut frame.variables)?;
                     returned
                 }
-                MirTerm::TryYield | MirTerm::EscapeJump { .. } => Value::None,
+                Transfer::Exit(_) => Value::None,
             };
             // A reference returned by projecting through a stored handle (a
             // `ref[origin]` field's element) — or buried inside a returned
@@ -653,4 +631,10 @@ impl VmBackend {
         )
         .map(Some)
     }
+}
+
+/// The error of a region exit naming no op of its function: the verifier
+/// admits only exits an enclosing op resolves.
+fn left_function() -> RuntimeError {
+    RuntimeError::Unsupported("vm: a region exit left its function".to_string())
 }

@@ -210,7 +210,8 @@ impl CalleeRefParams<'_> {
 /// variable's last use, splice a `DropVar`.
 ///
 /// Each body stays structured, as upstream's `DestructorInsertion` leaves
-/// `hlcf`: each backend lowers it (`lower-control-flow`) at its entry.
+/// `hlcf`: the VM runs it as it stands, and Pliron lowers it
+/// (`lower-control-flow`) at its entry.
 ///
 /// Applied by the VM before execution so a struct's `__deinit__` fires at the
 /// value's last use (not at scope end), and a replaced field's at the store.

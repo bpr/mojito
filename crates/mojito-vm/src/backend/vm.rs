@@ -36,15 +36,14 @@ use std::collections::HashMap;
 pub struct ConcreteProgram(Prog);
 
 impl ConcreteProgram {
-    /// Prepare `mir`, lowering its structured control flow to blocks
-    /// (`lower-control-flow`): the VM runs blocks.
+    /// Prepare `mir`, whose structured control flow the VM runs as it
+    /// stands.
     pub fn new(mir: &ConcreteMir) -> Self {
-        let mut lowered: MirProgram = (**mir).clone();
-        mojito_mir::mir::lower_control_flow_program(&mut lowered);
+        let mir: MirProgram = (**mir).clone();
         Self(Prog {
-            structs: build_structs(&lowered.declarations),
-            sigs: build_sigs(&lowered.declarations),
-            mir: lowered,
+            structs: build_structs(&mir.declarations),
+            sigs: build_sigs(&mir.declarations),
+            mir,
         })
     }
 }
@@ -436,14 +435,10 @@ impl VmBackend {
     /// Run concrete MIR, entering through `main()` when present.
     /// [`ConcreteMir`] is built only by concrete verification, so this entry
     /// verifies nothing again: the drop schedule and every instantiation are
-    /// already final. Its structured control flow is lowered to blocks
-    /// (`lower-control-flow`) first: the VM runs blocks.
+    /// already final. Its structured control flow runs as it stands, each
+    /// frame's region cursor stepping the region ops.
     pub fn run_concrete(&mut self, mir: ConcreteMir) -> Result<(), RuntimeError> {
-        let mut mir: MirProgram = mir.into_program();
-        {
-            let _lower = timing::span("lower_control_flow");
-            mojito_mir::mir::lower_control_flow_program(&mut mir);
-        }
+        let mir: MirProgram = mir.into_program();
         if !mir.invariant_errors.is_empty() {
             return Err(RuntimeError::Unsupported(format!(
                 "invalid MIR program: {}",
@@ -1201,8 +1196,7 @@ struct Frame {
     function: usize,
     registers: Vec<Value>,
     variables: Vec<Value>,
-    block: usize,
-    instruction: usize,
+    cursor: RegionCursor,
     continuation: Option<ReturnContinuation>,
 }
 
@@ -1455,19 +1449,23 @@ fn navigate_reference_mut<'a>(
 
 /// The control-flow outcome of executing an instruction or a `try` sub-region.
 /// Most execution is `Normal`; a `return` that crosses a `try` boundary surfaces
-/// as `Return`, so `finally` can run before control leaves the function. (A
-/// `raise` propagates separately as `RuntimeError::Raised`; `break`/`continue`
-/// crossing a `try` are refused at lowering — the mini-CFG region can't name the
-/// outer loop's target block.)
+/// as `Return`, so `finally` can run before control leaves the function, and a
+/// `break`/`continue` that leaves a `try` part to a loop around the `try` as
+/// `Leave`. (A `raise` propagates separately as `RuntimeError::Raised`.)
 enum Flow {
     Normal,
     Return {
         value: Value,
         cleanup: Vec<CleanupDrop>,
     },
-    /// A `break`/`continue` that crossed a `try` boundary, already resolved to the
-    /// target loop block in the enclosing **function** CFG. Propagates out of the
-    /// `try` (running each `finally`) until the function driver jumps there.
+    /// A region exit naming an op outside the `try` part it left. Propagates
+    /// out of the `try` (running each `finally`) until the cursor of a list
+    /// inside that op resolves it ([`RegionCursor::resolve_leave`]).
+    Leave(regions::Leave),
+    /// A lowered `break`/`continue` that crossed a `try` boundary
+    /// ([`MirTerm::EscapeJump`]), already resolved to the target loop block in
+    /// the enclosing **function** CFG. Propagates out of the `try` (running
+    /// each `finally`) until the function driver jumps there.
     Jump(usize),
 }
 
@@ -1612,6 +1610,9 @@ mod frames;
 mod references;
 
 mod places;
+
+mod regions;
+use regions::{RegionCursor, Transfer};
 
 #[cfg(test)]
 mod pointer_storage_tests {

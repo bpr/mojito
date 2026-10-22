@@ -132,8 +132,7 @@ impl VmBackend {
             function: usize::MAX,
             registers: caller_registers.to_vec(),
             variables: caller_variables.to_vec(),
-            block: 0,
-            instruction: 0,
+            cursor: RegionCursor::default(),
             continuation: None,
         });
         stack_base

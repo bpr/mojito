@@ -717,8 +717,7 @@ impl VmBackend {
             function: 0,
             registers: Vec::new(),
             variables: std::mem::take(current_variables),
-            block: 0,
-            instruction: 0,
+            cursor: RegionCursor::default(),
             continuation: None,
         });
 
@@ -730,8 +729,7 @@ impl VmBackend {
                 function: 0,
                 registers: Vec::new(),
                 variables: std::mem::take(variables),
-                block: 0,
-                instruction: 0,
+                cursor: RegionCursor::default(),
                 continuation: None,
             });
             variables
