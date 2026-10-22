@@ -129,7 +129,7 @@ impl<'a> Specializer<'a> {
                 .unwrap_or(decl.lowered_name.as_str());
             self.functions.position(template).unwrap_or(usize::MAX)
         });
-        let mut program = MirProgram {
+        let program = MirProgram {
             functions: self.output_functions,
             declarations: MirDeclarations {
                 structs: self.output_structs,
@@ -140,8 +140,8 @@ impl<'a> Specializer<'a> {
             invariant_errors: self.source.invariant_errors.clone(),
         };
         // Each instance keeps its runtime structured control flow, as
-        // upstream's elaborator emits `hlcf`; the backends read blocks.
-        mojito_mir::mir::lower_control_flow_program(&mut program);
+        // upstream's elaborator emits `hlcf`; each backend lowers it at its
+        // entry.
         let program = ConcreteMir::verified(program).map_err(|findings| MonoError {
             kind: MonoErrorKind::Unsupported,
             function: None,
@@ -1618,13 +1618,7 @@ impl<'a> Specializer<'a> {
             functions: closure
                 .iter()
                 .filter_map(|&member| self.output_positions.get(&self.instances[member].1))
-                .map(|&position| {
-                    // The VM runs blocks: each clone is lowered, never the
-                    // instance the output keeps.
-                    let (name, mut function) = self.output_functions[position].clone();
-                    mojito_mir::mir::lower_control_flow(&mut function);
-                    (name, function)
-                })
+                .map(|&position| self.output_functions[position].clone())
                 .collect(),
             declarations: MirDeclarations {
                 // A member table names only the instances the fragment

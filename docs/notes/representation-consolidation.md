@@ -29,8 +29,9 @@ scripts/claude_loop.py --only R1270 --only R1266 -n 0
 
 ## Then: the rest of the pipeline on regions
 
-R881 (the post-elaboration pipeline), R882 (the VM runs `hlcf` ops), and
-R883 (Pliron lowers structured ops) finish the pipeline-order move:
+R882 (the VM runs `hlcf` ops) and R883 (Pliron lowers structured ops)
+finish the pipeline-order move; R881 (the post-elaboration pipeline) has
+landed:
 
 ```sh
 scripts/claude_loop.py --task R883 -n 0

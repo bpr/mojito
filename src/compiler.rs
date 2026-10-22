@@ -82,8 +82,9 @@ impl CompiledProgram {
     /// The program's own drop-elaborated MIR, re-verified: [`Self::mir`]
     /// with drops inserted, the lifetime-only markers erased (`lower-lit`),
     /// and the pre-elaboration pipeline run. Its bodies keep their
-    /// structured control flow, as upstream's generators keep `hlcf`; the
-    /// elaborator lowers each template where it first fetches it. It is the
+    /// structured control flow, as upstream's generators keep `hlcf`, through
+    /// elaboration and the post-elaboration pipeline; each backend lowers
+    /// it at its entry. It is the
     /// elaborator's input, beside an imported package's bodies, which are
     /// finished the same way as each is materialized.
     /// Post-drop verification findings, a body's structured shape

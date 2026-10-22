@@ -333,22 +333,22 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "if",
         CapabilityStatus::Unsupported,
-        "`lower-control-flow` lowers it before elaboration; concrete MIR carries none",
+        "`compile` lowers it (`lower-control-flow`) before native lowering",
     ),
     (
         "loop",
         CapabilityStatus::Unsupported,
-        "`lower-control-flow` lowers it before elaboration; concrete MIR carries none",
+        "`compile` lowers it (`lower-control-flow`) before native lowering",
     ),
     (
         "comptime.if",
         CapabilityStatus::Unsupported,
-        "`lower-control-flow` lowers it before elaboration; concrete MIR carries none",
+        "the elaborator decides it; concrete MIR carries none",
     ),
     (
         "comptime.for",
         CapabilityStatus::Unsupported,
-        "`lower-control-flow` lowers it before elaboration; concrete MIR carries none",
+        "the elaborator decides it; concrete MIR carries none",
     ),
     (
         "drop.reg",

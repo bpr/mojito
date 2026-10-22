@@ -15,7 +15,7 @@
         raises: false,
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 938, end: 939, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 942, end: 943, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 938, end: 943, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 942, end: 943, origin: present($v0) }) }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 938, end: 939, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 942, end: 943, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 938, end: 943, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 938, end: 939, origin: present($v0) }) }],
         blocks: [
           bb0 {
             instructions: [

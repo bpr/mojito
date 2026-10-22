@@ -87,7 +87,6 @@ pub fn verify_concrete_function_in(
 ) -> Vec<String> {
     let mut errors = verify_function_in(name, function, declarations);
     errors.extend(concrete_function_findings(name, function));
-    errors.extend(lowered_function_findings(name, function));
     errors
 }
 
@@ -115,7 +114,7 @@ mod types;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use calls::*;
 pub use concrete::concrete_function_findings;
-use concrete::{lowered_function_findings, verify_concrete_program};
+use concrete::verify_concrete_program;
 pub(crate) use drops::cut_try_cleanups;
 use drops::verify_slot_ends;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]

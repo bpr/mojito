@@ -755,8 +755,11 @@ elaborator pass keeps them: `native::mono` returns them in
 `SpecializedProgram::counts` (`ElaborationCounts`), and the driver reports
 them under `elaborate`, because the elaborator runs on its own thread and
 the timing log is thread-local. An *instruction* is one `MirInstr` in a
-block, terminators not counted (`MirFunction::instruction_count`, the same
-unit as `mir.lower.instructions`).
+block at any depth, a region op counting once beside its regions' own,
+terminators not counted (`MirFunction::instruction_count`, the same unit
+as `mir.lower.instructions`). Before R881 (2026-10-21) the counts read a
+body's function-level blocks only; the measurements below dated earlier
+use that unit.
 
 - `concrete_instructions`: the instructions of the whole concrete program.
 - `generators`: the templates the elaboration instantiated under a name
@@ -772,9 +775,9 @@ unit as `mir.lower.instructions`).
   instance in the concrete output. Its ratio to `generator_instructions` is
   the expansion the pre-elaboration passes attack.
 - `concrete_blocks`, `generator_blocks`, `generator_instance_blocks`: the
-  same three sizes in blocks, a body's function-level blocks with its `try`
-  regions' not counted (`MirFunction::block_count`). A control-flow rewrite
-  that removes blocks moves no instruction, so only these show it.
+  same three sizes in blocks, every region's counted
+  (`MirFunction::block_count`). A control-flow rewrite that removes blocks
+  moves no instruction, so only these show it.
 
 `MOJITO_TIMING_NOTES=1` adds one `generator` note per row:
 `<template> <instances> <template instructions> <instance instructions>`.

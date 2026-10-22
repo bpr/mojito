@@ -19,6 +19,7 @@ use super::inline_parametric::INLINE_PARAMETRIC;
 use super::lower_lit::{LOWER_LIT, lower_lit};
 use super::mem2reg::{LOWER_ARG_CONVENTIONS, MEM_2_REG};
 use super::sccp::SCCP;
+use super::simplify_cf::SIMPLIFY_CF;
 use super::sroa::SROA;
 use super::unused_params::REMOVE_UNUSED_PARAMS;
 use mojito_common::timing;
@@ -203,10 +204,9 @@ pub const ELABORATE_DROPS: BodyPass = BodyPass {
 /// Structured control flow lowered to blocks: upstream's `LowerControlFlow`.
 ///
 /// Upstream lowers `hlcf` as it reaches LLVM. No seam runs it: every
-/// [`PIPELINE`] pass reads structured bodies, and the elaborator lowers
-/// each instance at its end, once it has unrolled and decided their
-/// compile-time control flow. It is registered for a pass test or `opt` to
-/// run on request.
+/// [`PIPELINE`] pass, the elaborator, and the post-elaboration pipeline
+/// read structured bodies, and each backend lowers them at its entry. It
+/// is registered for a pass test or `opt` to run on request.
 pub const LOWER_CONTROL_FLOW: BodyPass = BodyPass {
     name: "lower-control-flow",
     run: |_, function, _| {
@@ -426,6 +426,7 @@ const REGISTERED: &[Pass] = &[
     Pass::Body(LOWER_LIT),
     Pass::Body(LOWER_CONTROL_FLOW),
     Pass::Body(LOWER_ARG_CONVENTIONS),
+    Pass::Body(SIMPLIFY_CF),
     Pass::Program(ELIMINATE_DUPLICATE_FUNCTIONS),
 ];
 

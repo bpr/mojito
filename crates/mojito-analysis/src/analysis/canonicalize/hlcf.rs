@@ -64,6 +64,18 @@ pub(super) fn hlcf_patterns(function: &mut MirFunction, erased: &mut HashSet<u32
     counts.total()
 }
 
+/// Add the results `instruction` and its regions define to `erased`.
+pub(in crate::analysis) fn erased_results(instruction: &MirInstr, erased: &mut HashSet<u32>) {
+    let mut results = Vec::new();
+    instruction_result_regs(instruction, &mut results);
+    erased.extend(results.iter().map(|reg| reg.0));
+    for region in instruction_regions(instruction) {
+        for nested in region.iter().flat_map(|block| &block.instrs) {
+            erased_results(nested, erased);
+        }
+    }
+}
+
 /// How many times each pattern applied.
 #[derive(Default)]
 struct Counts {
@@ -1197,16 +1209,4 @@ fn reads_register(blocks: &mut [MirBlock], reg: Reg) -> bool {
     let mut reads = vec![0_u32; reg.0 as usize + 1];
     count_register_reads(blocks, &mut reads);
     reads[reg.0 as usize] > 0
-}
-
-/// Add the results `instruction` and its regions define to `erased`.
-fn erased_results(instruction: &MirInstr, erased: &mut HashSet<u32>) {
-    let mut results = Vec::new();
-    instruction_result_regs(instruction, &mut results);
-    erased.extend(results.iter().map(|reg| reg.0));
-    for region in instruction_regions(instruction) {
-        for nested in region.iter().flat_map(|block| &block.instrs) {
-            erased_results(nested, erased);
-        }
-    }
 }

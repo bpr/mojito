@@ -48,12 +48,32 @@
         blocks: [
           bb0 {
             instructions: [
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb1 {
+            instructions: [
+            ],
+            terminator: jump { target: bb3 }
+          },
+          bb2 {
+            instructions: [
+            ],
+            terminator: return { value: present(%r3) }
+          },
+          bb3 {
+            instructions: [
               ref.make { dest: %r9, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } },
               ref.read { dest: %r8, reference: %r9 },
               const { dest: %r7, value: int(3) },
               binary { op: add, dest: %r3, a: %r7, b: %r8, resolved: absent, raises: absent }
             ],
-            terminator: return { value: present(%r3) }
+            terminator: jump { target: bb4 }
+          },
+          bb4 {
+            instructions: [
+            ],
+            terminator: jump { target: bb2 }
           }
         ]
       },

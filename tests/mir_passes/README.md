@@ -28,10 +28,11 @@ below. Labels are `<pass>/<case>.mir`, so the reports hold no machine path.
    form; emit it with `MOJITO_PRE_ELABORATION=0`, or the pipeline will
    already have run (`eliminate-dead-symbols` would have removed what its
    case is about). The CLI prints that form structured, every region one
-   block, as every pipeline pass reads it; a case for a pass's
-   lowered-body rules (`canonicalize`, `mem-2-reg`, `sccp`, and `cse`
-   keep them for the post-elaboration pipeline) lowers it first with
-   `mojito opt --pass lower-control-flow`. This form is also past `lower-lit`, so it holds no
+   block, as every pipeline pass reads it. Only `canonicalize`'s generic
+   folds and erasures and `cse` take a lowered body (lower one with
+   `mojito opt --pass lower-control-flow`); `elaborate-drops`, `sccp`,
+   `mem-2-reg`, `lower-arg-conventions`, and `simplify-cf` refuse one,
+   as Mojo has no `cf` dialect. This form is also past `lower-lit`, so it holds no
    `lifetime.keep_alive` or `interiors.invalidate`. `elaborate-drops` takes
    pre-drop MIR in its structured form (every region one block, as
    `verify_structured_shape` checks; `opt` refuses a lowered body), which

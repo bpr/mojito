@@ -36,12 +36,15 @@ use std::collections::HashMap;
 pub struct ConcreteProgram(Prog);
 
 impl ConcreteProgram {
+    /// Prepare `mir`, lowering its structured control flow to blocks
+    /// (`lower-control-flow`): the VM runs blocks.
     pub fn new(mir: &ConcreteMir) -> Self {
-        let mir: &MirProgram = mir;
+        let mut lowered: MirProgram = (**mir).clone();
+        mojito_mir::mir::lower_control_flow_program(&mut lowered);
         Self(Prog {
-            structs: build_structs(&mir.declarations),
-            sigs: build_sigs(&mir.declarations),
-            mir: mir.clone(),
+            structs: build_structs(&lowered.declarations),
+            sigs: build_sigs(&lowered.declarations),
+            mir: lowered,
         })
     }
 }
@@ -433,9 +436,14 @@ impl VmBackend {
     /// Run concrete MIR, entering through `main()` when present.
     /// [`ConcreteMir`] is built only by concrete verification, so this entry
     /// verifies nothing again: the drop schedule and every instantiation are
-    /// already final.
+    /// already final. Its structured control flow is lowered to blocks
+    /// (`lower-control-flow`) first: the VM runs blocks.
     pub fn run_concrete(&mut self, mir: ConcreteMir) -> Result<(), RuntimeError> {
-        let mir: MirProgram = mir.into_program();
+        let mut mir: MirProgram = mir.into_program();
+        {
+            let _lower = timing::span("lower_control_flow");
+            mojito_mir::mir::lower_control_flow_program(&mut mir);
+        }
         if !mir.invariant_errors.is_empty() {
             return Err(RuntimeError::Unsupported(format!(
                 "invalid MIR program: {}",

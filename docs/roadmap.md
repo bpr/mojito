@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1271**.
+Next free ID: **R1272**.
 
 ## Ordered Work
 
@@ -112,26 +112,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R881 The post-elaboration pipeline runs on a CFG and has no
-  counterpart of `SimplifyCF`'s trivial-loop removal**
-
-  Upstream runs `SimplifyCF` only after elaboration, on functions, and
-  Mojito's post-elaboration `sccp`/`canonicalize` read lowered blocks.
-  - Stage 12 of `docs/structured-control-flow-plan.md`.
-  - `sccp`/`canonicalize` run on regions in `post_elaboration.rs`.
-  - Then R836's CFG rewrites in `canonicalize` (pass-through threading,
-    identical-successor fold, single-predecessor merge) go with their
-    eight CFG cases, and so do the CFG paths of `sccp`, `canonicalize`'s
-    constant-branch fold, and `mem-2-reg`, which only lowered bodies use.
-  - Add `SimplifyCF`'s trivial-loop removal (`lib/Transforms/SimplifyCF.cpp`).
-  - It would also remove the blocks each lowered `inlined_cf_scope`
-    wrapper leaves: wrapping every inlined body (R1254) grew corpus
-    concrete blocks about 2.7 % in the planning sweep.
-  - After it lands, `lower-control-flow` runs at the backend boundary
-    (`src/compiler.rs`, `src/artifact.rs`, the Pliron entry).
-  - Depends on R880.
-  - Model: Opus, Planned.
-
 - [ ] **R882 The VM executes only CFG blocks where upstream's interpreter
   runs `hlcf` ops**
 
@@ -142,6 +122,10 @@ which names the upstream pass each one follows. Each is measured by the
     `backend/vm/exec.rs` over every region op.
   - The VM path and CTFE stop lowering, so `lower-control-flow` runs only
     for Pliron.
+  - Lever: delete the `lower_control_flow_program` calls in
+    `ConcreteProgram::new` and `VmBackend::run_concrete`
+    (`crates/mojito-vm/src/backend/vm.rs`), the VM's lowering point since
+    R881.
   - Depends on R881.
   - Model: Opus, Planned.
 
@@ -160,8 +144,36 @@ which names the upstream pass each one follows. Each is measured by the
     `LowerControlFlow` makes it an argument of the exit block: probes
     `tests/mir_passes/lower-control-flow/loop_result_two_breaks.mir`,
     `loop_result_break_in_try.mir`, and `if_results.mir`.
+  - Lever: delete `compile`'s per-function `lower_control_flow` clone
+    (`crates/mojito-pliron/src/lib.rs`), Pliron's lowering point since
+    R881.
+  - Then concrete verification can require structured shape
+    (`verify_structured_shape` in `verify_concrete_program`): every
+    elaborated body and CTFE fragment already has it, but a lowered
+    artifact (`mojito opt --pass lower-control-flow` output fed to `exec`)
+    is legal MIR text until the CFG terminators go.
   - Depends on R882.
   - Model: Opus, Planned.
+
+- [ ] **R1271 The post-elaboration pipeline has no `AutomaticInline`, so
+  `simplify-cf` runs once where upstream's inliner runs it per function**
+
+  Upstream's first optimization pipeline after elaboration runs
+  `AutomaticInline` with a nested function pipeline (`SimplifyCF`, `SROA`,
+  `Mem2Reg`, `Canonicalizer`, `CSEPass`, `HoistTrivialInvariants`,
+  `Canonicalizer`, `SimplifyCF`, `SROA`, `Mem2Reg`, `StackReuse`,
+  `CSEPass`, `Canonicalizer`) over each function as its callees are
+  inlined (`lib/Compiler/Pipeline/Pipeline.cpp`).
+  - Mojito's `POST_ELABORATION_PIPELINE` inlines nothing after
+    elaboration and runs only the head of that nested pipeline, once.
+  - Probe: a call from `main` to a small plain `def` stays a call in
+    concrete MIR, where the pin's `AutomaticInline` inlines it.
+  - Port `AutomaticInline` as a call-graph pass over concrete functions,
+    reusing `inline-parametric`'s splice, and run the nested pipeline per
+    function; `HoistTrivialInvariants` and `StackReuse` are separate
+    entries once it lands.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1090 A drop of a tuple's storage names no destructor per element;
   the backends find each element's from the type**
@@ -10128,6 +10140,9 @@ follow-ups the landed producer stages filed come last.
     `finally` is copied before the `break`.
   - Once `try` parts are single regions, the copy can be made in MIR
     lowering, before the ownership checks.
+  - `simplify-cf` never elides a `try` with a `finally`, which upstream's
+    `removeTrivialTry` never meets: probe a `try`/`except`/`finally` whose
+    body cannot raise (`--timings`' `simplify-cf.erased_tries`).
   - Depends on R874.
   - Model: Fable, Planned.
 

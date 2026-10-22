@@ -112,19 +112,30 @@ pub fn compile(
         structs: &struct_index,
     };
 
+    // Native lowering reads blocks: each reachable instance's structured
+    // control flow is lowered (`lower-control-flow`) on a clone first.
+    let lowered: Vec<(&str, MirFunction)> = program
+        .functions
+        .iter()
+        .filter(|(name, _)| reachable.contains(name.as_str()))
+        .map(|(name, function)| {
+            let mut function = function.clone();
+            mojito_mir::mir::lower_control_flow(&mut function);
+            (name.as_str(), function)
+        })
+        .collect();
+
     // Declare every reachable function first (program order, so output is
     // deterministic and calls may reference any of them), then lower bodies.
     let mut signatures = HashMap::new();
     let mut functions = HashMap::new();
     let mut declared = Vec::new();
-    for (name, function) in &program.functions {
-        if !reachable.contains(name.as_str()) {
-            continue;
-        }
+    for (name, function) in &lowered {
+        let name = *name;
         let (func_op, signature) =
             lower::declare_function(&mut context, module, name, function, &layout)?;
         functions.insert(
-            name.clone(),
+            name.to_string(),
             FnMeta {
                 mangled: signature.mangled.clone(),
                 returns_value: signature.returns_value,
@@ -136,8 +147,8 @@ pub fn compile(
                     .map(|outcome| (outcome.layout, outcome.err_offset)),
             },
         );
-        signatures.insert(name.clone(), signature);
-        declared.push((name.as_str(), function, func_op));
+        signatures.insert(name.to_string(), signature);
+        declared.push((name, function, func_op));
     }
     let env = lower::LowerEnv {
         signatures: &signatures,
@@ -955,8 +966,8 @@ fn reachable_set<'p>(
 }
 
 /// Collect the call edges under `blocks` into the reachability worklist,
-/// recursing into `try` sub-regions (call sites inside a body, handler,
-/// `else`, or `finally` execute like any other).
+/// recursing into every region (call sites inside an arm, a loop body, or a
+/// `try` part execute like any other).
 fn visit_call_edges<'p>(
     blocks: &'p [mojito_mir::mir::MirBlock],
     function: &'p MirFunction,
@@ -967,21 +978,10 @@ fn visit_call_edges<'p>(
 ) {
     for block in blocks {
         for instr in &block.instrs {
-            if let MirInstr::Try {
-                body,
-                handler,
-                orelse,
-                finalbody,
-                ..
-            } = instr
-            {
-                let regions = std::iter::once(body)
-                    .chain(handler.iter().map(|(_, blocks)| blocks))
-                    .chain(orelse)
-                    .chain(finalbody);
-                for region in regions {
-                    visit_call_edges(region, function, functions, structs, reachable, queue);
-                }
+            for region in mojito_mir::mir::instruction_regions(instr) {
+                visit_call_edges(region, function, functions, structs, reachable, queue);
+            }
+            if matches!(instr, MirInstr::Try { .. }) {
                 continue;
             }
             let mut edges = CallEdges {

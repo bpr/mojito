@@ -4437,10 +4437,8 @@ fn dunder_unused_arguments_leave_the_instance_key() {
         .position(|(name, _)| name == "main")
         .expect("main")]
     .1;
-    let index_gets = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
+    let index_gets = mojito::mir::nested_instructions(&main.blocks)
+        .into_iter()
         .filter(|instruction| {
             matches!(
                 instruction,
@@ -4525,14 +4523,14 @@ fn post_elaboration_folds_parameter_arithmetic() {
             .iter()
             .find(|(name, _)| name == "f$mono$V5")
             .expect("the instance `f$mono$V5`");
-        let instructions = || instance.blocks.iter().flat_map(|block| &block.instrs);
+        let instructions = mojito::mir::nested_instructions(&instance.blocks);
         (
-            instructions()
-                .any(|instruction| matches!(instruction, mojito::mir::MirInstr::BinOp { .. })),
-            instance
-                .blocks
+            instructions
                 .iter()
-                .any(|block| matches!(block.term, mojito::mir::MirTerm::Branch { .. })),
+                .any(|instruction| matches!(instruction, mojito::mir::MirInstr::BinOp { .. })),
+            instructions
+                .iter()
+                .any(|instruction| matches!(instruction, mojito::mir::MirInstr::If { .. })),
         )
     };
     assert_eq!(

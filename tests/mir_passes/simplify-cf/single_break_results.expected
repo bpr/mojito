@@ -1,0 +1,30 @@
+  functions: [
+      fn {
+        name: single_break_results,
+        registers: 5,
+        vars: 1,
+        var_names: [c],
+        params: 1,
+        param_types: [Bool],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Bool }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Bool }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r4, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              const { dest: %r1, value: int(5) },
+              binary { op: add, dest: %r4, a: %r1, b: %r1, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r4) }
+          }
+        ]
+      }
+  ]

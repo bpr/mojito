@@ -3,9 +3,7 @@
 //! and a `Canonicalizer` on each generator.
 //!
 //! Each register takes a lattice value: unknown, one constant, or
-//! overdefined. Blocks become executable from the entry, a `branch` making
-//! only its taken arm executable while its condition is one constant. A
-//! structured body is walked region by region, as `SCCP` walks `hlcf`
+//! overdefined. The body is walked region by region, as `SCCP` walks `hlcf`
 //! through `getEntryTargets` and `getBranchTargets`: an `if` enters only the
 //! arm a constant condition takes, or the first elif's condition region
 //! when it is false, and an `if.elifcond.yield` enters its arm, the next
@@ -21,7 +19,7 @@
 //! and a `try` are executable, the other ops' results overdefined (a
 //! `comptime for`'s arguments too, as that generic path leaves each region
 //! argument at its entry state). The
-//! instructions of executable blocks are evaluated until nothing
+//! instructions of executable regions are evaluated until nothing
 //! changes: a scalar or SIMD `const` ([`Const::is_folded`], a `UInt` or
 //! SIMD `Const::Value` included) is its constant, an instruction
 //! that folds ([`MirInstr::folded_constant`]) over constant operands is the
@@ -40,16 +38,19 @@
 //! through the replacement `canonicalize` shares (`fold::replace_folded`).
 //! The first `canonicalize` has already folded what straight-line constants
 //! decide, so `sccp` adds the folds that need its executable-block reasoning
-//! or a lattice meet. Terminators are left alone: the `Canonicalizer` after
-//! it folds a `branch` on a constant and decides an `if` on one.
+//! or a lattice meet. Region ops are left alone: the `Canonicalizer` after
+//! it decides an `if` on a constant.
+//!
+//! A lowered body is left alone: Mojo has no `cf` dialect, so `SCCP` never
+//! meets one.
 
 use super::fold;
 use super::pre_elaboration::BodyPass;
 use mojito_common::timing;
-use mojito_mir::mir::verify::instruction_result_regs;
+use mojito_mir::mir::verify::{instruction_result_regs, is_structured_shape};
 use mojito_mir::mir::{
-    Const, LoopLabel, MirBlock, MirBlockId, MirCase, MirDeclarations, MirElif, MirFunction,
-    MirInstr, MirTerm, Reg, RegionFrame, instruction_regions,
+    Const, LoopLabel, MirBlock, MirCase, MirDeclarations, MirElif, MirFunction, MirInstr, MirTerm,
+    Reg, RegionFrame, instruction_regions,
 };
 use mojito_types::types::Ty;
 use std::collections::HashMap;
@@ -60,9 +61,12 @@ pub const SCCP: BodyPass = BodyPass {
     run: sccp,
 };
 
-/// Propagate `function`'s constants over its executable blocks and replace
+/// Propagate `function`'s constants over its executable regions and replace
 /// each instruction they decide by its constant; returns whether any was.
 pub fn sccp(_name: &str, function: &mut MirFunction, declarations: &MirDeclarations) -> bool {
+    if !is_structured_shape(function) {
+        return false;
+    }
     let mut solver = Solver {
         lattice: vec![Lattice::Unknown; function.n_regs as usize],
         reg_types: &function.reg_types,
@@ -72,16 +76,7 @@ pub fn sccp(_name: &str, function: &mut MirFunction, declarations: &MirDeclarati
         cases: Vec::new(),
     };
     while std::mem::take(&mut solver.changed) {
-        let mut escapes = Vec::new();
-        let mut executable = vec![false; function.blocks.len()];
-        let mut pending = vec![0];
-        while let Some(block) = pending.pop() {
-            if block >= function.blocks.len() || std::mem::replace(&mut executable[block], true) {
-                continue;
-            }
-            pending.extend(solver.visit(&function.blocks[block], &mut escapes));
-            pending.append(&mut escapes);
-        }
+        solver.visit_region(&function.blocks);
     }
     let lattice = solver.lattice;
     let constant = |reg: Reg| match lattice.get(reg.0 as usize) {
@@ -98,7 +93,7 @@ pub fn sccp(_name: &str, function: &mut MirFunction, declarations: &MirDeclarati
     folded > 0
 }
 
-/// A register's value over the executable blocks.
+/// A register's value over the executable regions.
 #[derive(Clone)]
 enum Lattice {
     Unknown,
@@ -135,10 +130,8 @@ struct CaseFrame {
 
 impl Solver<'_> {
     /// Evaluate the executable block `block`, with the executable regions
-    /// of its region ops, and return the blocks of its list it makes
-    /// executable. Escape targets, which name the function's blocks, go to
-    /// `escapes`.
-    fn visit(&mut self, block: &MirBlock, escapes: &mut Vec<MirBlockId>) -> Vec<MirBlockId> {
+    /// of its region ops.
+    fn visit(&mut self, block: &MirBlock) {
         for instruction in &block.instrs {
             if let MirInstr::If {
                 results,
@@ -149,7 +142,7 @@ impl Solver<'_> {
                 orelse,
             } = instruction
             {
-                self.visit_if(results, *cond, then, elifs, (else_args, orelse), escapes);
+                self.visit_if(results, *cond, then, elifs, (else_args, orelse));
                 continue;
             }
             if let MirInstr::Match {
@@ -159,7 +152,7 @@ impl Solver<'_> {
                 orelse,
             } = instruction
             {
-                self.visit_match(cases, (else_args, orelse), escapes);
+                self.visit_match(cases, (else_args, orelse));
                 for result in results {
                     self.meet(*result, Lattice::Overdefined);
                 }
@@ -179,59 +172,26 @@ impl Solver<'_> {
                     args: args.clone(),
                     results: results.clone(),
                 });
-                self.visit_region(body, escapes);
+                self.visit_region(body);
                 self.loops.pop();
                 continue;
             }
             self.transfer(instruction);
             for region in instruction_regions(instruction) {
-                self.visit_region(region, escapes);
+                self.visit_region(region);
             }
         }
         match &block.term {
-            MirTerm::Break { label, values } => {
-                self.resolve_exit(*label, values, false);
-                Vec::new()
-            }
-            MirTerm::Continue { label, values } => {
-                self.resolve_exit(*label, values, true);
-                Vec::new()
-            }
+            MirTerm::Break { label, values } => self.resolve_exit(*label, values, false),
+            MirTerm::Continue { label, values } => self.resolve_exit(*label, values, true),
             MirTerm::MatchNext(values) => {
                 if let Some(frame) = self.cases.last_mut() {
                     frame.next = true;
                     let next_args = frame.next_args.clone();
                     self.meet_values(&next_args, values);
                 }
-                Vec::new()
             }
-            MirTerm::Jump(target) => vec![*target],
-            MirTerm::Branch {
-                cond,
-                then_b,
-                else_b,
-            } => match self.lattice.get(cond.0 as usize) {
-                Some(Lattice::Constant(Const::Bool(true))) => vec![*then_b],
-                Some(Lattice::Constant(Const::Bool(false))) => vec![*else_b],
-                Some(Lattice::Unknown) => Vec::new(),
-                _ => vec![*then_b, *else_b],
-            },
-            MirTerm::ComptimeBranch { then_b, else_b, .. } => vec![*then_b, *else_b],
-            MirTerm::ComptimeFor { body, exit, .. } => vec![*body, *exit],
-            MirTerm::EscapeJump { target, .. } => {
-                escapes.push(*target);
-                Vec::new()
-            }
-            MirTerm::Return(_)
-            | MirTerm::ReturnWithCleanup { .. }
-            | MirTerm::TryYield
-            | MirTerm::Yield(_)
-            | MirTerm::ElifCond { .. }
-            | MirTerm::ComptimeYield(_)
-            | MirTerm::ComptimeBreak(_)
-            | MirTerm::ComptimeContinue(_)
-            | MirTerm::MatchComplete(_)
-            | MirTerm::Unreachable => Vec::new(),
+            _ => {}
         }
     }
 
@@ -249,11 +209,10 @@ impl Solver<'_> {
         then: &[MirBlock],
         elifs: &[MirElif],
         (else_args, orelse): (&[Reg], &[MirBlock]),
-        escapes: &mut Vec<MirBlockId>,
     ) {
         let (taken, mut next) = self.targets(cond);
         if taken {
-            self.visit_arm(results, then, escapes);
+            self.visit_arm(results, then);
         }
         for (index, elif) in elifs.iter().enumerate() {
             if !next {
@@ -264,35 +223,31 @@ impl Solver<'_> {
                 .map_or(else_args, |rest| &rest.cond_args);
             next = false;
             let mut taken = false;
-            for term in self.visit_region(&elif.cond, escapes) {
-                if let MirTerm::ElifCond { cond, values } = term {
-                    let (then, on) = self.targets(*cond);
-                    if then {
-                        self.meet_values(&elif.then_args, values);
-                    }
-                    if on {
-                        self.meet_values(next_args, values);
-                    }
-                    taken |= then;
-                    next |= on;
+            if let Some(MirTerm::ElifCond { cond, values }) = self.visit_region(&elif.cond) {
+                let (then, on) = self.targets(*cond);
+                if then {
+                    self.meet_values(&elif.then_args, values);
                 }
+                if on {
+                    self.meet_values(next_args, values);
+                }
+                taken = then;
+                next = on;
             }
             if taken {
-                self.visit_arm(results, &elif.then, escapes);
+                self.visit_arm(results, &elif.then);
             }
         }
         if next {
-            self.visit_arm(results, orelse, escapes);
+            self.visit_arm(results, orelse);
         }
     }
 
     /// Evaluate an `if` arm, meeting each of `results` with the values its
-    /// executable blocks yield.
-    fn visit_arm(&mut self, results: &[Reg], arm: &[MirBlock], escapes: &mut Vec<MirBlockId>) {
-        for term in self.visit_region(arm, escapes) {
-            if let MirTerm::Yield(values) = term {
-                self.meet_values(results, values);
-            }
+    /// block yields.
+    fn visit_arm(&mut self, results: &[Reg], arm: &[MirBlock]) {
+        if let Some(MirTerm::Yield(values)) = self.visit_region(arm) {
+            self.meet_values(results, values);
         }
     }
 
@@ -312,24 +267,19 @@ impl Solver<'_> {
     /// case and `MatchNextOp::getBranchTargets` the next: a case, or the
     /// else region after the last, is executable once an executable
     /// `match.next` of the case before it enters it.
-    fn visit_match(
-        &mut self,
-        cases: &[MirCase],
-        (else_args, orelse): (&[Reg], &[MirBlock]),
-        escapes: &mut Vec<MirBlockId>,
-    ) {
+    fn visit_match(&mut self, cases: &[MirCase], (else_args, orelse): (&[Reg], &[MirBlock])) {
         for (index, case) in cases.iter().enumerate() {
             let next_args = cases.get(index + 1).map_or(else_args, |next| &next.args);
             self.cases.push(CaseFrame {
                 next_args: next_args.to_vec(),
                 next: false,
             });
-            self.visit_region(&case.body, escapes);
+            self.visit_region(&case.body);
             if !self.cases.pop().is_some_and(|frame| frame.next) {
                 return;
             }
         }
-        self.visit_region(orelse, escapes);
+        self.visit_region(orelse);
     }
 
     /// Meet each register an executable `break` or `continue` labelled
@@ -367,31 +317,17 @@ impl Solver<'_> {
         }
     }
 
-    /// Evaluate a region's executable blocks, from its entry, and return
-    /// their terminators that end the region for the op holding it: each
-    /// `yield`, `comptime.yield`, and `if.elifcond.yield`.
-    fn visit_region<'b>(
-        &mut self,
-        blocks: &'b [MirBlock],
-        escapes: &mut Vec<MirBlockId>,
-    ) -> Vec<&'b MirTerm> {
-        let mut executable = vec![false; blocks.len()];
-        let mut pending = vec![0];
-        let mut ends = Vec::new();
-        while let Some(block) = pending.pop() {
-            if block >= blocks.len() || std::mem::replace(&mut executable[block], true) {
-                continue;
-            }
-            pending.extend(self.visit(&blocks[block], escapes));
-            let term = &blocks[block].term;
-            if matches!(
-                term,
-                MirTerm::Yield(_) | MirTerm::ComptimeYield(_) | MirTerm::ElifCond { .. }
-            ) {
-                ends.push(term);
-            }
-        }
-        ends
+    /// Evaluate a region, one block in a structured body, and return its
+    /// terminator when it ends the region for the op holding it: a
+    /// `yield`, `comptime.yield`, or `if.elifcond.yield`.
+    fn visit_region<'b>(&mut self, blocks: &'b [MirBlock]) -> Option<&'b MirTerm> {
+        let block = blocks.first()?;
+        self.visit(block);
+        matches!(
+            block.term,
+            MirTerm::Yield(_) | MirTerm::ComptimeYield(_) | MirTerm::ElifCond { .. }
+        )
+        .then_some(&block.term)
     }
 
     /// Meet each result of `instruction` with the value it computes.

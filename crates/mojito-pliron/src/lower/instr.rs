@@ -871,7 +871,7 @@ impl FnLowering<'_> {
                 }
             },
             MirInstr::Raise { src } => self.lower_raise(ctx, *src),
-            // Concrete MIR carries none: `lower-control-flow` runs first.
+            // `compile` lowers each body (`lower-control-flow`) first.
             MirInstr::If { .. }
             | MirInstr::Loop { .. }
             | MirInstr::ComptimeIf { .. }

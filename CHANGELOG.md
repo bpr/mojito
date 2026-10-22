@@ -616,6 +616,26 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The post-elaboration pipeline now reads structured instances (R881), as
+  upstream's function pipeline reads `hlcf`: the elaborator emits each
+  instance with its runtime regions, and each backend lowers them
+  (`lower-control-flow`) at its entry, the VM in `ConcreteProgram::new`
+  and `VmBackend::run_concrete`, Pliron in `compile`. A new `simplify-cf`
+  pass, upstream's `SimplifyCF` whole, runs after the first `mem-2-reg`,
+  as upstream's `AutomaticInline` function pipeline begins: it replaces a
+  loop its one final `break` ends, or that nothing jumps to, by its body
+  (every `inlined_cf_scope` loop an inlined body leaves), a `try` whose
+  body cannot raise by its body and `else`, and, after an `if` whose arm
+  cannot fall through, later reads of its condition by the constant it
+  implies. `lower-arg-conventions` now judges structured bodies, and
+  `canonicalize`'s CFG rewrites (R836), its constant-branch fold, and the
+  CFG paths of `sccp` and `mem-2-reg` are gone, as Mojo has no `cf`
+  dialect; `mojito opt` refuses a lowered body for the structured-only
+  passes. The elaboration counters now count every region, and
+  `benchmarks/instantiation.tsv` is regenerated: concrete instructions
+  386,579 → 373,688 against the old top-level count, 4.7 % fewer than the
+  previous pipeline counted over regions (concrete blocks 9.3 % fewer). Program output is unchanged, and so
+  are the MIR text and package formats. This closes R881 and files R1271.
 - `cse` now merges a result of any register-passable trivial type (R930),
   as upstream holds only such a value in an SSA value: a multi-lane SIMD
   construction, including a generator's `SIMD[dtype, width]`, a

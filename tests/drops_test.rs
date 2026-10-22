@@ -297,8 +297,7 @@ fn moved_variadic_pack_becomes_tuple_storage_without_double_drop() {
         .program
         .functions
         .iter()
-        .flat_map(|(_, function)| &function.blocks)
-        .flat_map(|block| &block.instrs)
+        .flat_map(|(_, function)| mojito::mir::nested_instructions(&function.blocks))
         .filter_map(|instruction| match instruction {
             mojito::mir::MirInstr::MovePlace { place, .. } => place.proj.last(),
             _ => None,

@@ -40,14 +40,8 @@
 //! parameter's binding, which the elaborator substitutes, and keeps its
 //! slot.
 //!
-//! A lowered body, which the post-elaboration pipeline still runs this on,
-//! is a CFG whose blocks take no arguments: a read is promoted when its one
-//! reaching store lies on every path to it and the stored register's one
-//! definition lies before the store in its block, and every mention of the
-//! slot sits in one block list, so a slot whose reads merge two stores
-//! keeps its slot. A list holding a lowered `comptime for` promotes
-//! nothing: upstream's `Mem2Reg` meets every `comptime for` as its op, and
-//! the elaborator unrolls none of a lowered body's.
+//! A lowered body is left alone, by both passes: Mojo has no `cf`
+//! dialect, so upstream's never meets one.
 
 use super::canonicalize::definition_counts;
 use super::pre_elaboration::BodyPass;
@@ -56,11 +50,10 @@ use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::verify::is_structured_shape;
 use mojito_mir::mir::{
-    Const, MirBlock, MirBlockId, MirCase, MirDeclarations, MirElif, MirFunction, MirInstr, MirTerm,
-    Reg, RegionFrame, UseMode, block_successors, cleanup_slots, count_register_reads,
-    has_structured_control_flow, instruction_regions, instruction_regions_mut, instruction_slots,
-    loop_continues_mut, match_nexts_mut, region_escape_targets, region_exit, renumber_block_slots,
-    retire_slots, terminator_targets,
+    Const, MirBlock, MirCase, MirDeclarations, MirElif, MirFunction, MirInstr, MirTerm, Reg,
+    RegionFrame, UseMode, cleanup_slots, count_register_reads, instruction_regions,
+    instruction_regions_mut, instruction_slots, loop_continues_mut, match_nexts_mut, region_exit,
+    renumber_block_slots, retire_slots,
 };
 use mojito_types::types::{Ty, is_symbolic};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -83,23 +76,10 @@ pub const LOWER_ARG_CONVENTIONS: BodyPass = BodyPass {
 /// promote to registers, and remove it from the function; returns whether
 /// any was.
 pub fn mem_2_reg(_name: &str, function: &mut MirFunction, declarations: &MirDeclarations) -> bool {
-    let (slots, erased_results, erased) = if is_structured_shape(function) {
-        promote_in_regions(function, declarations)
-    } else {
-        let promotion = promotable(function, declarations, &BTreeSet::new());
-        let mut erased_results = HashSet::new();
-        let erased = if promotion.slots.is_empty() {
-            0
-        } else {
-            rewrite_list(
-                &mut function.blocks,
-                &mut 0,
-                &promotion,
-                &mut erased_results,
-            )
-        };
-        (promotion.slots, erased_results, erased)
-    };
+    if !is_structured_shape(function) {
+        return false;
+    }
+    let (slots, erased_results, erased) = promote_in_regions(function, declarations);
     if slots.is_empty() {
         return false;
     }
@@ -128,19 +108,13 @@ pub fn mem_2_reg(_name: &str, function: &mut MirFunction, declarations: &MirDecl
 /// The argument is a `read` or owned parameter of a trivially
 /// register-passable type, as upstream promotes one; a `mut` or `deinit`
 /// one is never stored. Its own slot, the call ABI's, keeps the one read at
-/// the entry. A body whose entry is a jump's target is left alone: the
-/// store would run again there.
+/// the entry.
 pub fn lower_arg_conventions(
     _name: &str,
     function: &mut MirFunction,
     declarations: &MirDeclarations,
 ) -> bool {
-    if has_structured_control_flow(function)
-        || function
-            .blocks
-            .iter()
-            .any(|block| block_successors(block).contains(&0))
-    {
+    if !is_structured_shape(function) {
         return false;
     }
     let eligible: BTreeSet<VarId> = (0..function.n_params)
@@ -157,8 +131,8 @@ pub fn lower_arg_conventions(
     if eligible.is_empty() {
         return false;
     }
-    let stored: Vec<VarId> = promotable(function, declarations, &eligible)
-        .slots
+    let stored: Vec<VarId> = variance(function, declarations, &eligible)
+        .0
         .intersection(&eligible)
         .copied()
         .collect();
@@ -180,12 +154,14 @@ pub fn lower_arg_conventions(
         let value = Reg(function.n_regs);
         function.n_regs += 1;
         function.reg_types.insert(value.0, ty.clone());
-        if let Some((span, _)) = function
+        // The first register read from the parameter lends its location.
+        if let Some(span) = function
             .spans
             .0
-            .values()
-            .find(|(_, origin)| *origin == Some(param))
-            .cloned()
+            .iter()
+            .filter(|(_, (_, origin))| *origin == Some(param))
+            .min_by_key(|(reg, _)| **reg)
+            .map(|(_, (span, _))| span.clone())
         {
             function.spans.0.insert(value.0, (span, Some(param)));
         }
@@ -207,24 +183,13 @@ pub fn lower_arg_conventions(
     true
 }
 
-/// A store, read, or kill site: the block list (numbered in preorder from
-/// the function's own, 0), the block, and the instruction's index.
-type Site = (usize, MirBlockId, usize);
-
-/// The slots [`mem_2_reg`] promotes, and the register each of their reads
-/// becomes a copy of.
-struct Promotion {
-    slots: BTreeSet<VarId>,
-    reads: HashMap<Site, Reg>,
-}
-
 /// One mention of a candidate slot.
 #[derive(Clone, Copy)]
 enum Mention {
     /// A store of the register.
     Store(Reg),
-    /// A read into the register; `ends` when it ends the slot.
-    Read { dest: Reg, ends: bool },
+    /// A read into the register.
+    Read { dest: Reg },
     /// A declaration: the slot holds nothing after it.
     Declare,
     /// A drop or consumption: a lifetime marker, after which the slot holds
@@ -235,97 +200,13 @@ enum Mention {
     Mark,
 }
 
-/// A candidate's reaching store at a point of its list.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Reaching {
-    /// No path reaches the point yet: the join's identity.
-    Unreached,
-    /// Some path reaches it with the slot holding nothing.
-    Uninit,
-    /// Every path reaches it past this store last.
-    Store(usize),
-    /// Paths reach it past different stores.
-    Conflict,
-}
-
-impl Reaching {
-    fn join(self, other: Self) -> Self {
-        match (self, other) {
-            (Self::Unreached, other) | (other, Self::Unreached) => other,
-            (a, b) if a == b => a,
-            _ => Self::Conflict,
-        }
-    }
-}
-
-/// The census of one slot: the list holding its mentions, and whether some
-/// mention keeps it.
+/// The census of one slot: whether some mention keeps it, and each
+/// mention with the region holding it (numbered in preorder from the
+/// function's own, 0).
 #[derive(Default)]
 struct Census {
-    list: Option<usize>,
-    /// The `try` part (or, in a lowered body, the block list) holding the
-    /// mentions.
-    context: Option<usize>,
     kept: bool,
-    mentions: Vec<(Site, Mention)>,
-}
-
-/// The slots of `function` [`mem_2_reg`] would promote, with each read's
-/// stored register. Each of the `entry_stored` parameters counts as stored
-/// at the entry, by no register, and is a candidate as a local is.
-fn promotable(
-    function: &mut MirFunction,
-    declarations: &MirDeclarations,
-    entry_stored: &BTreeSet<VarId>,
-) -> Promotion {
-    let facts = Facts::of(function);
-    let mut lists = Vec::new();
-    collect_lists(&function.blocks, true, &mut lists);
-    let mut census: HashMap<VarId, Census> = HashMap::new();
-    for (list, (blocks, _)) in lists.iter().enumerate() {
-        take_census((list, list), blocks, true, &mut census);
-    }
-    let mut candidates: Vec<Vec<VarId>> = vec![Vec::new(); lists.len()];
-    for (&var, entry) in &census {
-        if let Some(list) = entry.list
-            && facts.candidate(function, declarations, entry_stored, var, entry)
-        {
-            candidates[list].push(var);
-        }
-    }
-    let mut promotion = Promotion {
-        slots: BTreeSet::new(),
-        reads: HashMap::new(),
-    };
-    for (list, slots) in candidates.iter_mut().enumerate() {
-        if slots.is_empty() {
-            continue;
-        }
-        slots.sort_unstable();
-        let (blocks, function_level) = lists[list];
-        let entry: Vec<Reaching> = slots
-            .iter()
-            .map(|var| {
-                if list == 0 && entry_stored.contains(var) {
-                    Reaching::Store(usize::MAX)
-                } else {
-                    Reaching::Uninit
-                }
-            })
-            .collect();
-        solve(
-            &ListFlow {
-                list,
-                blocks,
-                function_level,
-                slots,
-                census: &census,
-            },
-            entry,
-            &mut promotion,
-        );
-    }
-    promotion
+    mentions: Vec<(usize, Mention)>,
 }
 
 /// The register facts a candidate's mentions are judged by.
@@ -390,7 +271,7 @@ fn promote_in_regions(
     function: &mut MirFunction,
     declarations: &MirDeclarations,
 ) -> (BTreeSet<VarId>, HashSet<u32>, usize) {
-    let (slots, variants) = variance(function, declarations);
+    let (slots, variants) = variance(function, declarations, &BTreeSet::new());
     if slots.is_empty() {
         return (slots, HashSet::new(), 0);
     }
@@ -430,10 +311,12 @@ fn promote_in_regions(
 /// Its stores and declarations make it variant across each op between them
 /// and that region (`userCrossesFunctionCFG`'s `enclosingNodes`); a store in
 /// a `try` part of a slot allocated outside it keeps the slot, since a `try`
-/// carries no values.
+/// carries no values. Each of the `entry_stored` parameters counts as
+/// stored at the entry, as [`promotable`] counts one.
 fn variance(
     function: &mut MirFunction,
     declarations: &MirDeclarations,
+    entry_stored: &BTreeSet<VarId>,
 ) -> (BTreeSet<VarId>, HashMap<usize, Vec<VarId>>) {
     let facts = Facts::of(function);
     let mut regions = Vec::new();
@@ -441,13 +324,11 @@ fn variance(
     collect_regions(&function.blocks, None, &mut regions, &mut tries);
     let mut census: HashMap<VarId, Census> = HashMap::new();
     for (list, region) in regions.iter().enumerate() {
-        take_census((list, 0), region.blocks, false, &mut census);
+        take_census(list, region.blocks, &mut census);
     }
     let mut candidates: Vec<(VarId, &Census)> = census
         .iter()
-        .filter(|&(&var, entry)| {
-            facts.candidate(function, declarations, &BTreeSet::new(), var, entry)
-        })
+        .filter(|&(&var, entry)| facts.candidate(function, declarations, entry_stored, var, entry))
         .map(|(&var, entry)| (var, entry))
         .collect();
     candidates.sort_unstable_by_key(|&(var, _)| var);
@@ -457,19 +338,25 @@ fn variance(
         // A slot nothing stores or declares is a compile-time parameter's
         // binding, which the elaborator substitutes by name: upstream reads
         // one as a `kgen.param.constant` and allocates nothing.
-        if !entry
-            .mentions
-            .iter()
-            .any(|(_, mention)| matches!(mention, Mention::Store(_) | Mention::Declare))
+        let stored_at_entry = entry_stored.contains(&var);
+        if !stored_at_entry
+            && !entry
+                .mentions
+                .iter()
+                .any(|(_, mention)| matches!(mention, Mention::Store(_) | Mention::Declare))
         {
             continue;
         }
         let allocation = allocation_region(
             &regions,
-            entry.mentions.iter().map(|&((list, _, _), _)| list),
+            entry
+                .mentions
+                .iter()
+                .map(|&(list, _)| list)
+                .chain(stored_at_entry.then_some(0)),
         );
         let mut crossed = BTreeSet::new();
-        for &((list, _, _), mention) in &entry.mentions {
+        for &(list, mention) in &entry.mentions {
             if !matches!(mention, Mention::Store(_) | Mention::Declare) {
                 continue;
             }
@@ -915,48 +802,19 @@ fn promotable_type(ty: &Ty, declarations: &MirDeclarations) -> bool {
     !is_symbolic(ty) && declarations.copy_is_identity(ty)
 }
 
-/// Every block list of `blocks` in preorder, `blocks` first, each with
-/// whether it is the function's own.
-fn collect_lists<'a>(
-    blocks: &'a [MirBlock],
-    function_level: bool,
-    lists: &mut Vec<(&'a [MirBlock], bool)>,
-) {
-    lists.push((blocks, function_level));
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
-        for region in instruction_regions(instruction) {
-            collect_lists(region, false, lists);
-        }
-    }
-}
-
-/// Record every slot mention of the list `list`'s own blocks (not of the
-/// regions they hold), in the `try` part `context`, in `census`. A slot
-/// mentioned in two contexts is kept. With `defined_before`, a store's
-/// register must be defined before it in its block.
-fn take_census(
-    (list, context): (usize, usize),
-    blocks: &[MirBlock],
-    defined_before: bool,
-    census: &mut HashMap<VarId, Census>,
-) {
-    for (at_block, block) in blocks.iter().enumerate() {
-        let mut defined = HashSet::new();
-        for (at, instruction) in block.instrs.iter().enumerate() {
-            let site = (list, at_block, at);
+/// Record every slot mention of the region `list`'s own blocks (not of the
+/// regions they hold) in `census`.
+fn take_census(list: usize, blocks: &[MirBlock], census: &mut HashMap<VarId, Census>) {
+    for block in blocks {
+        for instruction in &block.instrs {
             let slots = instruction_slots(instruction);
-            // A stored register must be defined before the store in its block.
-            let used = slot_use(instruction).filter(|(_, mention)| match mention {
-                Mention::Store(src) => !defined_before || defined.contains(&src.0),
-                _ => true,
-            });
-            match (used, slots.as_slice()) {
+            match (slot_use(instruction), slots.as_slice()) {
                 (Some((var, mention)), [only]) if *only == var => {
-                    let entry = census.entry(var).or_default();
-                    entry.kept |= entry.context.is_some_and(|other| other != context);
-                    entry.context = Some(context);
-                    entry.list = Some(list);
-                    entry.mentions.push((site, mention));
+                    census
+                        .entry(var)
+                        .or_default()
+                        .mentions
+                        .push((list, mention));
                 }
                 _ => keep(census, slots),
             }
@@ -967,9 +825,6 @@ fn take_census(
                 keep(census, handler.iter().filter_map(|(slot, _)| *slot));
                 keep(census, cleanup_slots(cleanup));
             }
-            let mut results = Vec::new();
-            instruction_result_regs(instruction, &mut results);
-            defined.extend(results.iter().map(|reg| reg.0));
         }
         if let MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } =
             &block.term
@@ -993,30 +848,13 @@ const fn slot_use(instruction: &MirInstr) -> Option<(VarId, Mention)> {
         MirInstr::UseVar {
             dest, var, mode, ..
         } => match mode {
-            UseMode::Copy => Some((
-                *var,
-                Mention::Read {
-                    dest: *dest,
-                    ends: false,
-                },
-            )),
-            UseMode::Move | UseMode::Forward => Some((
-                *var,
-                Mention::Read {
-                    dest: *dest,
-                    ends: true,
-                },
-            )),
+            UseMode::Copy | UseMode::Move | UseMode::Forward => {
+                Some((*var, Mention::Read { dest: *dest }))
+            }
             UseMode::BorrowShared | UseMode::BorrowMut => None,
         },
         MirInstr::LoadPlace { dest, place } if place.proj.is_empty() && place.through.is_none() => {
-            Some((
-                place.root,
-                Mention::Read {
-                    dest: *dest,
-                    ends: false,
-                },
-            ))
+            Some((place.root, Mention::Read { dest: *dest }))
         }
         MirInstr::DeclareVar { var } => Some((*var, Mention::Declare)),
         MirInstr::DropVar { var, .. } | MirInstr::ConsumeVar { var } => Some((*var, Mention::Kill)),
@@ -1025,202 +863,4 @@ const fn slot_use(instruction: &MirInstr) -> Option<(VarId, Mention)> {
         }
         _ => None,
     }
-}
-
-/// One block list's candidates, as [`solve`] reads them.
-struct ListFlow<'a> {
-    list: usize,
-    blocks: &'a [MirBlock],
-    function_level: bool,
-    slots: &'a [VarId],
-    census: &'a HashMap<VarId, Census>,
-}
-
-/// One event of a block for the reaching-store flow, at its instruction
-/// index.
-enum Event {
-    Store {
-        slot: usize,
-        store: usize,
-    },
-    Kill {
-        slot: usize,
-    },
-    Read {
-        slot: usize,
-        at: usize,
-    },
-    /// A region op whose regions escape to these function-level blocks.
-    Escape(Vec<MirBlockId>),
-}
-
-/// Solve the reaching stores of `flow`'s candidates from the `entry`
-/// states, and add each candidate whose every read sees one store to
-/// `promotion`; none when the list holds a lowered `comptime for`.
-fn solve(flow: &ListFlow<'_>, entry: Vec<Reaching>, promotion: &mut Promotion) {
-    let &ListFlow {
-        list,
-        blocks,
-        function_level,
-        slots,
-        census,
-    } = flow;
-    if blocks
-        .iter()
-        .any(|block| matches!(block.term, MirTerm::ComptimeFor { .. }))
-    {
-        return;
-    }
-    // Store sites, by number: the block and the stored register.
-    let mut stores: Vec<(MirBlockId, Reg)> = Vec::new();
-    let mut events: Vec<Vec<(usize, Event)>> = (0..blocks.len()).map(|_| Vec::new()).collect();
-    for (slot, var) in slots.iter().enumerate() {
-        for &((_, block, at), mention) in &census[var].mentions {
-            let event = match mention {
-                Mention::Store(src) => {
-                    stores.push((block, src));
-                    Event::Store {
-                        slot,
-                        store: stores.len() - 1,
-                    }
-                }
-                Mention::Read { ends, .. } => {
-                    events[block].push((at, Event::Read { slot, at }));
-                    if !ends {
-                        continue;
-                    }
-                    Event::Kill { slot }
-                }
-                Mention::Declare | Mention::Kill => Event::Kill { slot },
-                Mention::Mark => continue,
-            };
-            events[block].push((at, event));
-        }
-    }
-    if function_level {
-        for (at_block, block) in blocks.iter().enumerate() {
-            for (at, instruction) in block.instrs.iter().enumerate() {
-                let escapes = region_escape_targets(instruction);
-                if !escapes.is_empty() {
-                    events[at_block].push((at, Event::Escape(escapes)));
-                }
-            }
-        }
-    }
-    // A read and the kill that ends it share an index: the read comes first.
-    for block in &mut events {
-        block.sort_by_key(|(at, event)| (*at, !matches!(event, Event::Read { .. })));
-    }
-    let mut states = vec![vec![Reaching::Unreached; slots.len()]; blocks.len()];
-    if blocks.is_empty() {
-        return;
-    }
-    states[0] = entry;
-    let mut pending = vec![0];
-    let flow_into = |target: MirBlockId,
-                     state: &[Reaching],
-                     states: &mut Vec<Vec<Reaching>>,
-                     pending: &mut Vec<MirBlockId>| {
-        let Some(into) = states.get_mut(target) else {
-            return;
-        };
-        let mut changed = false;
-        for (into, &from) in into.iter_mut().zip(state) {
-            let joined = into.join(from);
-            changed |= joined != *into;
-            *into = joined;
-        }
-        if changed {
-            pending.push(target);
-        }
-    };
-    while let Some(block) = pending.pop() {
-        let mut state = states[block].clone();
-        for (_, event) in &events[block] {
-            match event {
-                Event::Store { slot, store } => state[*slot] = Reaching::Store(*store),
-                Event::Kill { slot } => state[*slot] = Reaching::Uninit,
-                Event::Read { .. } => {}
-                Event::Escape(targets) => {
-                    for &target in targets {
-                        flow_into(target, &state, &mut states, &mut pending);
-                    }
-                }
-            }
-        }
-        for target in terminator_targets(&blocks[block].term) {
-            flow_into(target, &state, &mut states, &mut pending);
-        }
-    }
-    // Each read's reaching store, replayed from the solved entry states.
-    let mut promoted = vec![true; slots.len()];
-    let mut reached: Vec<(usize, Site, usize)> = Vec::new();
-    for (at_block, block_events) in events.iter().enumerate() {
-        let mut state = states[at_block].clone();
-        for (_, event) in block_events {
-            match event {
-                Event::Store { slot, store } => state[*slot] = Reaching::Store(*store),
-                Event::Kill { slot } => state[*slot] = Reaching::Uninit,
-                Event::Read { slot, at } => match state[*slot] {
-                    Reaching::Store(store) => reached.push((*slot, (list, at_block, *at), store)),
-                    _ => promoted[*slot] = false,
-                },
-                Event::Escape(_) => {}
-            }
-        }
-    }
-    for (slot, var) in slots.iter().enumerate() {
-        if promoted[slot] {
-            promotion.slots.insert(*var);
-        }
-    }
-    for (slot, site, store) in reached {
-        if promoted[slot]
-            && let Some(&(_, src)) = stores.get(store)
-        {
-            promotion.reads.insert(site, src);
-        }
-    }
-}
-
-/// Rewrite the block list numbered `*next` and the regions below it: each
-/// promoted read becomes a copy of its stored register, and each other
-/// mention of a promoted slot goes, its results added to `erased_results`.
-/// Returns how many instructions went.
-fn rewrite_list(
-    blocks: &mut [MirBlock],
-    next: &mut usize,
-    promotion: &Promotion,
-    erased_results: &mut HashSet<u32>,
-) -> usize {
-    let list = *next;
-    *next += 1;
-    let mut erased = 0;
-    for (at_block, block) in blocks.iter_mut().enumerate() {
-        let instructions = std::mem::take(&mut block.instrs);
-        for (at, mut instruction) in instructions.into_iter().enumerate() {
-            for region in instruction_regions_mut(&mut instruction) {
-                erased += rewrite_list(region, next, promotion, erased_results);
-            }
-            if let Some(&value) = promotion.reads.get(&(list, at_block, at)) {
-                let mut results = Vec::new();
-                instruction_result_regs(&instruction, &mut results);
-                block.instrs.push(MirInstr::CopyValue {
-                    dest: results[0],
-                    value,
-                    constructor: None,
-                });
-                continue;
-            }
-            if slot_use(&instruction).is_some_and(|(var, _)| promotion.slots.contains(&var)) {
-                let mut results = Vec::new();
-                instruction_result_regs(&instruction, &mut results);
-                erased_results.extend(results.iter().map(|reg| reg.0));
-                erased += 1;
-                continue;
-            }
-            block.instrs.push(instruction);
-        }
-    }
-    erased
 }

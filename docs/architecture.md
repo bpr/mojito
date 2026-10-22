@@ -3429,7 +3429,8 @@ as upstream's `TrackedAndInteriorLiveness`, walks the structured body as
 upstream's `CheckLifetimes` walks `hlcf`, and the loan check walks it backward
 for reference liveness and forward for loan generations. The body stays
 structured for drop elaboration and every pass after it, the elaborator
-included, which lowers each instance (`lower-control-flow`) at its end. A `try`
+and the post-elaboration pipeline included; each backend lowers it
+(`lower-control-flow`) at its entry. A `try`
 is one instruction to the loan
 check: it uses every variable its parts read, and no access or loan inside
 it is checked (upstream has no persistent-loan check, so the exemption
@@ -4079,12 +4080,12 @@ chains, and comprehensions as `If`/`Loop`, each region one block (a
 conditional expression whose condition the checker found a parameter value,
 `SemanticAdjustment::ComptimeConditional`, is a `ComptimeIf` with results,
 as upstream's `IfElseOpNode` emits `hlcf.comptime.if`), and
-`mir::lower_control_flow` (upstream's `LowerControlFlow`), which the
-elaborator runs on each instance at the end of elaboration
-(`Specializer::run`, before `ConcreteMir::verified`) and on each clone a
-CTFE fragment collects (`verified_fragment`), after it has unrolled and
-decided the instance's compile-time control flow on its regions, lowers
-them to blocks and the CFG terminators: a
+`mir::lower_control_flow` (upstream's `LowerControlFlow`), which each
+backend runs at its entry on the concrete MIR the elaborator and the
+post-elaboration pipeline leave structured (the VM's
+`ConcreteProgram::new`, which prepares each CTFE fragment, and
+`VmBackend::run_concrete`; Pliron's `compile`, on a clone of each reachable
+function), lowers runtime region ops to blocks and the CFG terminators: a
 region's blocks are appended to its list, the rest of the block moves to a
 join, an op's results go through one slot each, stored at a `yield` or
 `break` and forwarded at the join, except that a loop left by one `break`
@@ -5253,8 +5254,9 @@ Drop elaboration (`analysis/drops.rs`) reads the structured body, as
 upstream's `DestructorInsertion` reads `hlcf`, and so do the passes after it
 up to `lower-lit`: field drops, copy elision, destructor and constructor
 naming with `mir::lower_whole_drops`, and the copy/move lowering, and
-the pre-elaboration pipeline after them; the elaborator lowers the body
-(`lower-control-flow`) as it fetches it. Two walks of `analysis/region_walk.rs` give its
+the pre-elaboration pipeline after them, the elaborator, and the
+post-elaboration pipeline; each backend lowers the body
+(`lower-control-flow`) at its entry. Two walks of `analysis/region_walk.rs` give its
 facts: one forward walk (`DropFacts`, in `register_loans.rs`) records the loan
 generations reaching each instruction and block and the roots each instruction
 consumes through its operand registers (`RegisterUses`), and one backward walk
@@ -5484,37 +5486,10 @@ point where a slot declared in a loop is uninitialized again.
   `removed_unused_loop_results`, `removed_unused_loop_args`,
   `folded_comptime_ifs`).
   Every body the pipeline reads is structured, so these patterns are the
-  production path; the lowered-body rules below run on the CFG inputs
-  `mojito opt` reads, until the post-elaboration pipeline reads regions
-  too (R881).
-  On a lowered body it rewrites a `branch` whose
-  condition has one definition, a `const bool`, to a `jump` to the arm it
-  takes, a comparison it just folded included (R781, as
-  `hlcf.if`'s `RemoveStaticCondition` keeps the arm a static condition
-  takes); the untaken arm keeps its own drops at its entry, so removing it
-  ends nothing twice. It then simplifies the control flow (R836), at the
-  function level and in each `try` region, until nothing applies: an edge
-  of a `jump`, `branch`, or `comptime if` into an empty block that only
-  jumps on is threaded to the first block past the chain that is not one
-  (MLIR's `SimplifyPassThroughBr`), a `branch` or `comptime if` whose arms
-  name one block becomes a `jump` (`SimplifyCondBranchIdenticalSuccessors`,
-  as `hlcf.if`'s `HoistYieldResults` and `comptime.if`'s
-  `checkTrivialBlocks` erase an `if` whose arms are bare yields), and a
-  block a reachable block's `jump` alone reaches is appended to it
-  (`SimplifyBrToBlockWithSinglePred`). Upstream needs none of these: its
-  generators keep run-time control flow as structured `hlcf` region ops
-  until `LowerControlFlow`, after elaboration, so a join or a loop latch is
-  no block there; a lowered body has them, and the rewrites remove the
-  blocks that structure would not have. They go with the CFG paths once
-  the post-elaboration pipeline reads regions too (R881,
-  `docs/structured-control-flow-plan.md`). A `comptime for` header's
-  targets are never rewritten, since the elaborator finds a loop's body as
-  the blocks its `body` target dominates; an escape counts as a
-  predecessor and is never rewritten; an edge that would close a cycle of
-  empty blocks stays; and a list's entry block is never merged away. Only
-  empty blocks are threaded past and only an unconditional jump's target is
-  merged, so a drop that drop elaboration put on an edge, and an escape's or a
-  return's cleanup, stays on its path. It then erases
+  production path. A lowered body, which only `mojito opt` hands it, takes
+  the region-generic rules below alone: Mojo has no `cf` dialect, so no
+  pass of its pipeline rewrites a CFG, and the R836 CFG rewrites and the
+  constant-branch fold went with R881. It then erases
   the blocks the entry does not reach, at the
   function level and in each `try` region from its own entry
   (`mir::prune_unreachable_blocks`, MLIR's `eraseUnreachableBlocks`), and
@@ -5566,11 +5541,9 @@ point where a slot declared in a loop is uninitialized again.
   A register's read count is every register its instruction names but its
   own results, so an operand no enumeration classifies keeps its definition.
   An erased result loses its type and span; registers are not renumbered.
-  Erasure can empty a block and a folded branch leaves its condition
-  unread, so the control-flow simplification and erasure repeat until
+  Erasure can empty an arm, so the `hlcf` patterns and erasure repeat until
   neither changes anything.
-  Its `--timings` counters are `folded_constants`, `folded_branches`, `threaded_branches`,
-  `folded_successors`, `merged_blocks`, `erased_blocks`,
+  Its `--timings` counters are `folded_constants`, `erased_blocks`,
   `forwarded_copies`, and `erased_instructions`.
 - **`inline-parametric` opens the second round and runs again in the third**
   (`analysis::INLINE_PARAMETRIC`, `analysis/inline_parametric.rs`, R784),
@@ -5871,27 +5844,18 @@ point where a slot declared in a loop is uninitialized again.
   slot (R1264), where upstream's `lit.try` carries it through its results
   and except arguments; and a slot nothing stores or declares is a
   compile-time parameter's binding the elaborator substitutes by name
-  (R950), and keeps its slot. A lowered body, which only the
-  post-elaboration pipeline runs this on, takes a forward dataflow over
-  each block list's blocks instead (a `try`'s escapes taking the state at
-  the `try`): every mention must lie in one list, and when every read
-  sees exactly one reaching store, that store lies on every path to the
-  read and its register's definition before it, so the read becomes a
-  `value.copy` of the stored register; a slot whose reads merge two
-  stores keeps its slot there. In both, the other mentions go and the
-  slot leaves the function (`mir::retire_slots`). A lowered list holding a
-  `comptime for` terminator, which only a phase test's lowering makes,
-  promotes nothing.
+  (R950), and keeps its slot. The other mentions go and the slot leaves
+  the function (`mir::retire_slots`). A lowered body is left alone, as
+  upstream's `Mem2Reg` never meets a CFG (`mojito opt` refuses one).
   Its `--timings` counters are `promoted_slots` and
   `erased_slot_instructions`.
 - **`sccp` runs between the two `canonicalize` runs** (`analysis::SCCP`,
   `analysis/sccp.rs`, R781), upstream's `SCCP` (MLIR's sparse conditional
   constant propagation). Each register takes a lattice value, unknown, one
-  constant, or overdefined, over the blocks the entry makes executable: a
-  `branch` makes only its taken arm executable while its condition is one
-  constant, a `comptime if` or `comptime for` both of its targets, and a
-  `try` its regions, whose escapes make their function-level targets
-  executable. On a structured body an `if` makes only the arm a constant
+  constant, or overdefined, over the regions the walk makes executable,
+  the body's own first. A lowered body is left alone (`mojito opt`
+  refuses one), as Mojo has no `cf` dialect. An `if` makes only the arm a
+  constant
   condition takes executable, or the first elif's condition region when it
   is false, none while the condition is unknown, and both otherwise, as
   `IfOp::getEntryTargets` does, and each executable `if.elifcond.yield`
@@ -6328,15 +6292,18 @@ point where a slot declared in a loop is uninitialized again.
   registry does: every `PIPELINE` pass, plus `ELABORATE_DROPS`
   (`elaborate-drops`), drop elaboration run on request, and
   `LOWER_CONTROL_FLOW` (`lower-control-flow`), the lowering of structured
-  region ops to blocks, which the elaborator runs on each template it
-  fetches and no seam runs. `elaborate-drops` output is structured, as
+  region ops to blocks, which each backend runs at its entry and no seam
+  runs, and `SIMPLIFY_CF` (`simplify-cf`), which only the post-elaboration
+  pipeline runs. `elaborate-drops` output is structured, as
   every pipeline pass reads it. `analysis::opt`,
   the `mlir-opt` analogue behind `mojito opt [--pass NAME]… [FILE]`, loads a
   MIR artifact, runs the named passes in order (a program pass over the
   program, a body pass over every body but `__toplevel__`, a call-graph pass
   over the same bodies callees first, with no package), and verifies the
-  whole program after each pass in every build. It refuses `elaborate-drops`
-  on a body that is not structured (`OptError::Unstructured`). `tests/mir_pass_test.rs` pins each case under
+  whole program after each pass in every build. It refuses
+  `elaborate-drops`, `lower-arg-conventions`, `mem-2-reg`, `simplify-cf`,
+  and `sccp` on a body that is not structured (`OptError::Unstructured`),
+  since upstream runs them only on `hlcf`. `tests/mir_pass_test.rs` pins each case under
   `tests/mir_passes/<pass>/` by its `functions:` section
   (`mir::text::disassemble_functions`), so a format bump breaks no expected
   file.
@@ -6362,10 +6329,34 @@ Upstream nests a per-function `'kgen.func'` pipeline after
 `SROA`, `Mem2Reg`, `SCCP`, `Canonicalizer`, and `CSEPass` on each concrete
 function. Mojito's is `analysis::POST_ELABORATION_PIPELINE`
 (`crates/mojito-analysis/src/analysis/post_elaboration.rs`, R840):
-`lower-arg-conventions`, `mem-2-reg`, `sroa`, `mem-2-reg`, `sccp`,
-`canonicalize`, then `cse`: the pre-elaboration pipeline's own body passes
-but the first, then MLIR's CSE, which is upstream's first post-elaboration
-pipeline followed by its `'kgen.func'` one. `lower-arg-conventions` stores
+`lower-arg-conventions`, `mem-2-reg`, `simplify-cf`, `sroa`, `mem-2-reg`,
+`sccp`, `canonicalize`, then `cse`: upstream's first post-elaboration
+pipeline, then the head of the function pipeline its `AutomaticInline`
+runs (`SimplifyCF`, `SROA`, `Mem2Reg`, `Canonicalizer`, `CSEPass`), with
+`SCCP` from its `'kgen.func'` one. Mojito has no post-elaboration
+`AutomaticInline` (R1271), so `simplify-cf` runs once. Every pass reads
+the structured instance the elaborator emits; each backend lowers it at
+its entry.
+
+`simplify-cf` (`analysis::SIMPLIFY_CF`, `analysis/simplify_cf.rs`) is
+upstream's `SimplifyCF` (`lib/Transforms/SimplifyCF.cpp`), whole. A
+preorder walk counts the `break`s and `continue`s that resolve to each
+loop (`RegionFrame::names`) and finds each `try` with a handler whose body
+holds no raise point (`MirInstr::is_raise_point`; a raise in a nested
+`try`'s body is that `try`'s, one in its other parts the enclosing
+one's). Then, in reverse preorder, a loop whose body ends in its one
+`break` is replaced by its body, its arguments by its operands and its
+results by the break's values, and a loop nothing jumps to is replaced by
+its body, whose terminator ends the enclosing block (`tryRemovingLoop`):
+every `inlined_cf_scope` loop an inlined body leaves goes, so `cse` sees
+the inlined values in one scope. Each such `try` is then replaced by its
+body and, when the body completes, its `else` (`removeTrivialTry`); one
+with a `finally`, which upstream has lowered away by then (R884), is
+kept. Last, after an `if` whose `then` arm cannot fall through, the
+condition reads `false` in the rest of its block, and `true` after one
+with no elifs whose `else` arm cannot
+(`propagateImpliedCondition`). Its `--timings` counters are
+`erased_loops`, `erased_tries`, and `implied_conditions`. `lower-arg-conventions` stores
 only an argument `mem-2-reg` promotes whole, so `sroa` splits no struct
 argument (R1268). Upstream's first
 optimization pipeline after elaboration runs `LowerArgConventions` and then
@@ -6376,12 +6367,13 @@ is stored into a callee-side temporary, which `Mem2Reg` promotes, while a
 parameter of a trivially register-passable type that `mem-2-reg` would
 promote, were it stored at the entry, gets a fresh local every mention of
 it names, stored from one `var.use` of the parameter at the entry, so the
-call ABI's slot is read once and `mem-2-reg` promotes the local. A body
-whose entry block is a jump's target is left alone. `mem-2-reg` then
+call ABI's slot is read once and `mem-2-reg` promotes the local; which
+parameters qualify is the region promotion's own judgement
+(`variance`), the parameter counted as stored at the entry. `mem-2-reg` then
 promotes the instance's locals too, whose types the instance closed. It folds what only
 an instance knows: the elaborator answers a parameter read
 (`Const::Param`) with an ordinary scalar `const`, so the operators over it
-fold and a `branch` it decides becomes a `jump`, and a copy whose type
+fold and an `if` it decides keeps its taken arm, and a copy whose type
 substitution made trivial is forwarded. A dispatched `x.copy()` whose
 instance makes the receiver a built-in arrives as such a copy: the
 elaborator writes it as `value.copy`
@@ -6508,7 +6500,9 @@ concrete verifier rejects a reference slot read as its handle.
   whole program. It then recounts the `ElaborationCounts`
   (`ElaborationCounts::recount`, from each generator's
   `GeneratorCount::instance_names`), so `concrete_instructions` measures
-  what the backends receive. No body is verified after each pass.
+  what the backends receive. Every count walks regions
+  (`MirFunction::instruction_count`/`block_count`): a region op counts as
+  one instruction beside its regions' own. No body is verified after each pass.
 - **Callers.** `CompiledProgram::concrete_mir` (behind the switch),
   `artifact::run_artifact` (`exec`, always), and
   `mojito_pliron::compile_mir` (a scalar entry requested by name, always).

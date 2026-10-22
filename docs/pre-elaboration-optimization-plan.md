@@ -47,8 +47,9 @@ values it proves constant but never rewrites a terminator, and the
 hold run-time control flow as structured `hlcf` region ops until
 `LowerControlFlow`, after elaboration.
 Upstream also folds again on each concrete function after elaboration;
-Mojito's post-elaboration pipeline runs `sccp` and `canonicalize` there
-(R840, `docs/architecture.md` §Post-Elaboration Pipeline).
+Mojito's post-elaboration pipeline runs `simplify-cf`, `sccp`, and
+`canonicalize` there, on the instances' regions (R840, R881,
+`docs/architecture.md` §Post-Elaboration Pipeline).
 
 | Pass | Purpose, as the walkthrough states it |
 |---|---|

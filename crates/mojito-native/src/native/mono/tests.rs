@@ -1396,10 +1396,9 @@ fn comptime_branch_selection_keeps_the_taken_arm() {
     assert_eq!(comptime_branches(instance), 0);
     assert!(!prints_else(instance), "the untaken arm is gone");
     assert_eq!(
-        instance
-            .blocks
-            .iter()
-            .filter(|block| matches!(block.term, MirTerm::Branch { .. }))
+        nested_instructions(&instance.blocks)
+            .into_iter()
+            .filter(|instruction| matches!(instruction, MirInstr::If { .. }))
             .count(),
         1,
         "only the runtime `if` remains"

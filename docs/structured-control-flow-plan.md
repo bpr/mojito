@@ -3,8 +3,8 @@
 **Status:** plan recorded 2026-10-14 (R859); stages 1 (R870), 2 (R871),
 3 (R872), 4 (R873), and 5 (R874) landed 2026-10-14, and the `comptime for`
 body's `has_next` test (R885) with them; stages 6 (R875), 7 (R876),
-8 (R877), 9 (R878), 10 (R879, R1253, R1254), and 11 (R880) landed
-2026-10-21.
+8 (R877), 9 (R878), 10 (R879, R1253, R1254), 11 (R880), and 12 (R881)
+landed 2026-10-21.
 The scheduled tasks are on [`docs/roadmap.md`](roadmap.md) track `pmir`,
 one entry per stage below.
 This document is their design record and is updated as stages land. It is
@@ -110,10 +110,10 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
     finding being a MIR invariant error (stage 5); register typing,
     pre-drop verification, the ownership checks, drop elaboration, and
     every pass after it, the pre-elaboration pipeline included, read the
-    structured body (stages 6–10), and so does the elaborator, which
-    lowers each instance at its end, and each CTFE fragment's clones
-    before they run (stage 11), so every phase after it still sees
-    blocks.
+    structured body (stages 6–10), and so do the elaborator (stage 11)
+    and the post-elaboration pipeline (stage 12). Each backend lowers at
+    its entry: the VM in `ConcreteProgram::new` (each CTFE fragment) and
+    `VmBackend::run_concrete`, Pliron in `compile`.
 - **The ownership checks and drop elaboration walk regions.** The move and
   initialization scan, carrying interior origins, walks the structure as
   `CheckLifetimes` does (stages 6–7), and so does the loan check. Drop
@@ -125,9 +125,13 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
   body as `SCCP` walks `hlcf`, `canonicalize` applies the `hlcf` patterns
   (`analysis/canonicalize/hlcf.rs`), `mem-2-reg` solves reaching stores
   over regions, and `inline-parametric` wraps every inlined body in an
-  `inlined_cf_scope` loop (stage 10). `canonicalize`'s R836 CFG rewrites
-  (pass-through threading, identical-successor folds, single-predecessor
-  merges) run only on the post-elaboration pipeline's lowered bodies.
+  `inlined_cf_scope` loop (stage 10).
+- **The post-elaboration passes read regions** (stage 12), with
+  `simplify-cf` (`analysis/simplify_cf.rs`, upstream's `SimplifyCF`) after
+  the first `mem-2-reg`, where upstream's `AutomaticInline` function
+  pipeline starts. No pass rewrites a CFG: `sccp`, `mem-2-reg`,
+  `lower-arg-conventions`, and `simplify-cf` leave a lowered body alone,
+  and `canonicalize` gives one only its region-generic folds.
 - **The elaborator works on regions** (stage 11). `mono/select.rs`
   decides a `comptime if` and splices its taken arm, and `mono/unroll.rs`
   makes `processComptimeForOp`'s loops (`LoopLabel::PARAM_FOR_OUTER`
@@ -429,9 +433,10 @@ last producer. Every stage keeps program output unchanged; the
       decides its `has_next` test before anything else.
       `simplify_param_for_loop` folds a loop its one break ends and a
       breakless iteration loop, counting breaks by `loop_breaks_mut`.
-    - The lowering point is the end of elaboration
+    - The lowering point was the end of elaboration
       (`lower_control_flow_program` before `ConcreteMir::verified`), and
-      `verified_fragment` lowers each clone it collects. The concrete
+      `verified_fragment` lowered each clone it collected, until stage 12
+      moved it into the backends. The concrete
       check splits: `concrete_function_findings` accepts runtime region
       ops in an instance, and a backend's program refuses them.
     - `mir::ComptimeForBodies` and `DominatorRoots` are gone, and so is
@@ -441,10 +446,28 @@ last producer. Every stage keeps program output unchanged; the
     - `lower_whole_drops` memoizes each region op's flow within one
       list's walk, since a structured instance's loops nest as deep as
       its inlined bodies.
-12. **Post-elaboration pipeline.** `sccp`/`canonicalize` on regions, plus
-    `SimplifyCF`'s trivial-loop removal. The lowering point moves to the
-    backend boundary (`src/compiler.rs`, `src/artifact.rs`, the Pliron
-    entry).
+12. **Post-elaboration pipeline.** *Landed (R881).* The elaborator emits
+    structured instances, and the post-elaboration pipeline reads them.
+    - The lowering point is each backend's entry: the VM's
+      `ConcreteProgram::new` (each CTFE fragment) and
+      `VmBackend::run_concrete`, and Pliron's `compile`, which lowers a
+      clone of each reachable function. Every driver, artifact, and test
+      path ends in one of them. Concrete verification no longer refuses
+      runtime region ops.
+    - `simplify-cf` ports `SimplifyCF` whole: trivial-loop removal (which
+      removes every `inlined_cf_scope` loop an inlined body's one final
+      `break` ends), trivial-`try` removal, and implied-condition
+      propagation. It runs after the first `mem-2-reg`, before `sroa`, as
+      upstream's `AutomaticInline` function pipeline begins; `cse` regains
+      the merges region scoping hid across sibling loops.
+    - `lower-arg-conventions` decides its stored arguments by the
+      region promotion's `variance`.
+    - R836's CFG rewrites in `canonicalize`, its constant-branch fold, and
+      the CFG paths of `sccp` and `mem-2-reg` are deleted with their pass
+      cases: Mojo has no `cf` dialect. `mojito opt` refuses a lowered body
+      for `sccp`, `mem-2-reg`, `lower-arg-conventions`, and `simplify-cf`.
+    - `MirFunction::instruction_count`/`block_count`, and so every
+      elaboration counter, count every region.
 13. **VM.** It executes region ops, generalizing `run_region`/`exec_try`'s
     `Flow`. The VM path and CTFE stop lowering.
 14. **Pliron.** `lower/term.rs` and `try_flow.rs` lower region ops to LLVM
@@ -469,9 +492,9 @@ Mojito-only shape.
 - The one-session sizes of stages 6–11 are estimates (HIR is about
   1,400 lines; the ownership and drop analyses about 9,500). Each entry may
   be split by its planning session.
-- Where upstream lowers `lit.try` was not traced. `SimplifyCF` still names
-  `LIT::TryOp`, so the plan keeps Mojito's `Try` a region op through the
-  waist.
+- Where upstream lowers `lit.try` was not traced. `SimplifyCF`'s
+  `removeTrivialTry` shows `lit.try` survives into the function pipeline,
+  so the plan keeps Mojito's `Try` a region op through the waist.
 - Whether the pin accepts `comptime for … else` was not run here.
   Upstream's parser does parse it (`ParserStmts.cpp`), and R797 records
   the pin running it.

@@ -66,6 +66,7 @@ use register_loans::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use scan::*;
 pub use sccp::{SCCP, sccp};
+pub use simplify_cf::{SIMPLIFY_CF, simplify_cf};
 pub use sroa::{SROA, sroa};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
@@ -209,7 +210,7 @@ impl CalleeRefParams<'_> {
 /// variable's last use, splice a `DropVar`.
 ///
 /// Each body stays structured, as upstream's `DestructorInsertion` leaves
-/// `hlcf`: the elaborator lowers it (`lower-control-flow`) as it fetches it.
+/// `hlcf`: each backend lowers it (`lower-control-flow`) at its entry.
 ///
 /// Applied by the VM before execution so a struct's `__deinit__` fires at the
 /// value's last use (not at scope end), and a replaced field's at the store.
@@ -292,6 +293,7 @@ mod region_walk;
 mod register_loans;
 mod scan;
 mod sccp;
+mod simplify_cf;
 mod sroa;
 mod store_drops;
 mod unused_params;
