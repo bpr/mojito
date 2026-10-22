@@ -621,6 +621,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `cse` now merges built-in operators (R1270), as MLIR's `CSE` merges
+  upstream's built-in arithmetic and comparisons, which are free of
+  memory effects: a `binary` or `unary` with no operator method and no
+  `raises`, over built-in scalar or SIMD operands, is erased when a
+  dominating identical one matches. A duplicate division is dominated by
+  the identical division, which traps first. `(a * b) + (a * b)`
+  multiplies once, and an operator over a type parameter stays
+  (`tests/mir_passes/cse/built_in_operators.mir`). Program output is
+  unchanged, and so are the MIR text and package formats. This closes
+  R1270.
 - `sroa` and `mem-2-reg` take a slot of a generic struct or field type, as
   upstream's `SROA` and `Mem2Reg` take any allocation (R1266). A struct's
   fields are judged and typed at its arguments

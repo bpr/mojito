@@ -15,14 +15,17 @@
 //! An instruction is free of effects when it reads nothing but its
 //! operands: a constant, a literal materialization, a size or type-name
 //! query, a parameter list's address, a field or variant-tag read of a
-//! value register, or a SIMD construction, cast, or shuffle. A read of
-//! storage or through a reference (a `var.use` borrow, `place.load`,
-//! `ref.make`, `ref.read`, a field read through a reference) has only a read
-//! effect, as does a `var.use` copy of a slot of a register-passable
-//! trivial type, which upstream reads with a load. As in MLIR, a read
-//! matches only an instruction in its own block with no instruction between
-//! that may write: anything but an instruction free of effects, a read, a
-//! built-in operator, a declaration, or a copy or drop of a register-passable
+//! value register, a SIMD construction, cast, or shuffle, or a built-in
+//! operator (no operator method, every operand a built-in scalar or SIMD
+//! type), as MLIR's arithmetic and comparisons are. A duplicate of a
+//! trapping division is dominated by the identical division, which traps
+//! first. A read of storage or through a reference (a `var.use` borrow,
+//! `place.load`, `ref.make`, `ref.read`, a field read through a reference)
+//! has only a read effect, as does a `var.use` copy of a slot of a
+//! register-passable trivial type, which upstream reads with a load. As in
+//! MLIR, a read matches only an instruction in its own block with no
+//! instruction between that may write: anything but an instruction free of
+//! effects, a read, a declaration, or a copy or drop of a register-passable
 //! trivial value that runs no constructor or destructor (which upstream does
 //! not emit), where an instruction holding regions writes when its own kind
 //! does (a `try`) or what its regions hold does, and a terminator writes
@@ -254,13 +257,6 @@ impl Table<'_> {
     /// What `instruction` may do to memory, as MLIR's
     /// `MemoryEffectOpInterface` declares it.
     fn effect(&self, instruction: &MirInstr) -> Effect {
-        let built_in = |regs: &[Reg]| {
-            regs.iter().all(|reg| {
-                self.reg_types
-                    .get(&reg.0)
-                    .is_some_and(|ty| trivially_register_passable_leaf(ty.kind()))
-            })
-        };
         let trivial = |ty: Option<&Ty>| ty.is_some_and(|ty| self.declarations.copy_is_identity(ty));
         if self.free_of_effects(instruction) {
             return Effect::Free;
@@ -272,16 +268,6 @@ impl Table<'_> {
             | MirInstr::ComptimeFor { .. }
             | MirInstr::Match { .. }
             | MirInstr::DeclareVar { .. } => Effect::Nested,
-            MirInstr::BinOp {
-                a,
-                b,
-                resolved: None,
-                raises: None,
-                ..
-            } if built_in(&[*a, *b]) => Effect::Nested,
-            MirInstr::UnOp {
-                a, raises: None, ..
-            } if built_in(&[*a]) => Effect::Nested,
             MirInstr::CopyValue {
                 dest,
                 constructor: None,
@@ -319,8 +305,29 @@ impl Table<'_> {
                 .reg_types
                 .get(&base.0)
                 .is_some_and(|ty| !matches!(ty.kind(), TyKind::Ref(_))),
+            MirInstr::BinOp {
+                a,
+                b,
+                resolved: None,
+                raises: None,
+                ..
+            } => self.built_in(&[*a, *b]),
+            MirInstr::UnOp {
+                a, raises: None, ..
+            } => self.built_in(&[*a]),
             _ => false,
         }
+    }
+
+    /// Whether every one of `regs` has a built-in scalar or SIMD type, so an
+    /// operator over them is the backend's own arithmetic or comparison
+    /// rather than a call of an operator method.
+    fn built_in(&self, regs: &[Reg]) -> bool {
+        regs.iter().all(|reg| {
+            self.reg_types
+                .get(&reg.0)
+                .is_some_and(|ty| trivially_register_passable_leaf(ty.kind()))
+        })
     }
 
     /// How many times the function defines `reg`.
@@ -353,8 +360,8 @@ enum Effect {
     /// It may write.
     Write,
     /// Nothing of its own, besides what any region it holds does, which the
-    /// walk counts: a structured control-flow op, a built-in operator, a
-    /// declaration, or a copy or drop that runs no code.
+    /// walk counts: a structured control-flow op, a declaration, or a copy
+    /// or drop that runs no code.
     Nested,
 }
 

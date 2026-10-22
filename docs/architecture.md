@@ -6469,19 +6469,24 @@ concrete verifier rejects a reference slot read as its handle.
   over the reverse postorder) with a scoped table,
   and an instruction free of effects that a dominating one matches
   (mnemonic, attributes, operands, result type) is erased, its result's
-  reads renamed. Free of effects is narrower than
+  reads renamed. Free of effects is not
   `MirInstr::would_be_trivially_dead`: a constant, a literal
   materialization, a size or type-name query, a parameter list's address,
-  a field or variant-tag read of a value register, or a SIMD construction,
-  cast, or shuffle. A read of storage or through a reference (a
+  a field or variant-tag read of a value register, a SIMD construction,
+  cast, or shuffle, or a built-in operator (no operator method, no
+  `raises`, every operand a built-in scalar or SIMD type), as MLIR's
+  arithmetic and comparisons are (R1270). An operator is not trivially
+  dead, since a division may trap, but a duplicate of one is dominated by
+  the identical operation, which traps first. A
+  read of storage or through a reference (a
   `var.use` borrow, or a copy of a slot of a register-passable trivial type
   that runs no constructor, `place.load`, `ref.make`, `ref.read`, a field read
   through a reference) has only a read effect, and as MLIR's `CSE` does
   for an op whose only effect is a read (R929), `cse` erases it only
   when an identical read earlier in the same block matches it with no
   instruction between that may write: the walk counts writes, every
-  instruction counting but those free of effects, reads, built-in
-  operators, declarations, and copies and drops of a register-passable
+  instruction counting but those free of effects, reads,
+  declarations, and copies and drops of a register-passable
   trivial value that run no code (which upstream does not emit), a region op counting
   through what its regions hold, as MLIR's recursive memory effects do, a
   `try` always, and a terminator when it runs a cleanup list; a read that

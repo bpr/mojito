@@ -843,27 +843,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1270 CSE does not merge built-in operators**
-
-  `cse` keeps every `binary` and `unary` apart, where MLIR's `CSE` merges
-  upstream's built-in arithmetic and comparisons, which are free of memory
-  effects.
-  - It is a missing optimization, not a difference in semantics.
-  - `free_of_effects` in `crates/mojito-analysis/src/analysis/cse.rs`
-    lists no operator, because a generic operand's operator becomes a
-    dunder call per instance and built-in division traps.
-  - `cse`'s `effect` already reads a built-in operator (no `resolved`
-    method, no `raises`, every operand a built-in scalar or SIMD type) as
-    writing nothing; the lever is to also key it as free of effects. A
-    trapping duplicate is dominated by the identical operation, which
-    traps first.
-  - Probe: `def f(a: Int, b: Int) -> Int: return (a * b) + (a * b)` keeps
-    two `binary { op: mul }` in concrete `f`.
-  - Done when a pass test merges two identical `binary` over `Int` and
-    keeps one whose operand is a type parameter.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R931 `loans.establish` survives into every instance**
 
   `lower-lit` erases the other lifetime-only markers, but every
