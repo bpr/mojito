@@ -385,6 +385,7 @@ assets/ok/live_pointer_ref_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/loan_carrying_instance_clone.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/local_comptime_float.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/loop_binding_consuming_copy.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/loop_result_two_breaks.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mapping_key_iteration_reads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/match_case_layouts.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/match_cluster_lifecycle.mojo	-	ineligible	no-scalar-entry-shape
@@ -1056,9 +1057,11 @@ assets/ok/transferred_carrier_keeps_source_alive.mojo	-	ineligible	no-scalar-ent
 assets/ok/transferred_view_loan_stays_shared.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trivial_register_passable_copy_forwarded.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_break_continue.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/try_finally_break_carries_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_finally_break_reads_loop_reference.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_handler_exit_raise_edge_drop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_in_loop_temporary_drop_order.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/try_nested_loop_exit_crosses_finally.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_raise_edge_drop_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_reassign_outer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_region_drop_timing.mojo	-	ineligible	no-scalar-entry-shape

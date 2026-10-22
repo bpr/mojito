@@ -29,7 +29,10 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
     value, which is `hlcf.comptime.if`.
   - `comptime if` and `comptime for` are `hlcf.comptime.if` and
     `hlcf.comptime.for`. No `kgen` op carries control flow.
-  - `try` is `lit.try`.
+  - `try` is `lit.try`, a `ControlFlowNode` like `hlcf`'s ops
+    (`include/Mojo/LITDialect/LITOps.td`), so `LowerControlFlow` lowers it
+    too; its `finally` region is gone by then, since `LowerSemanticCF`
+    copies it before each exit.
 - **`LowerSemanticCF`** (`lib/LowerLIT/LowerSemanticCF.cpp`) runs before
   `CheckLifetimes`, and its output is still structured.
   - `lit.loop` becomes `hlcf.loop` with a unique label, and `lit.break`/
@@ -81,7 +84,11 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
   `SimplifyCF` (`lib/Transforms/SimplifyCF.cpp`, trivial-loop removal) runs
   only there, after elaboration, as does `LowerLoops`.
   `lib/KGENToLLVM/LowerControlFlow.cpp` lowers `hlcf` to LLVM blocks
-  through a `ControlFlowTree` analysis. No `cf` dialect is used anywhere.
+  through a `ControlFlowTree` analysis: it splits the block at each root
+  node, inlines each region's block, makes the op's results arguments of
+  the block after it, and lowers each region terminator to a branch whose
+  operands are its target's block arguments (`hlcf.unreachable` to
+  `llvm.unreachable`). No `cf` dialect is used anywhere.
 
 ## What Mojito does
 
@@ -112,8 +119,8 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
     every pass after it, the pre-elaboration pipeline included, read the
     structured body (stages 6–10), and so do the elaborator (stage 11)
     and the post-elaboration pipeline (stage 12). The VM steps region ops
-    with each frame's region cursor (stage 13), and Pliron lowers at its
-    entry, in `compile`.
+    with each frame's region cursor (stage 13), and Pliron lowers region
+    ops to LLVM blocks itself, as `LowerControlFlow` does (stage 14a).
 - **The ownership checks and drop elaboration walk regions.** The move and
   initialization scan, carrying interior origins, walks the structure as
   `CheckLifetimes` does (stages 6–7), and so does the loan check. Drop
@@ -486,9 +493,20 @@ last producer. Every stage keeps program output unchanged; the
     - The `try` itself still runs its parts on the host stack
       (`exec_try`/`run_region`), filed as R1272. The CFG terminator arms
       stay for a lowered artifact fed to `exec`, until stage 14.
-14. **Pliron.** `lower/term.rs` and `try_flow.rs` lower region ops to LLVM
-    blocks, as `LowerControlFlow` does. The transitional pass and the CFG
-    terminators are deleted.
+14. **Pliron.** Split in three:
+    - **14a, landed (R883).** `lower/regions.rs` and `try_flow.rs` lower
+      region ops to LLVM blocks, as `LowerControlFlow` does: an op's
+      results and a region's arguments are block arguments (aggregates
+      through staging storage), and a region exit leaving a `try` part
+      crosses each `finally` on the way, so R905's shape runs natively.
+      Owned temporaries release on the region tree. `compile` refuses a
+      lowered body.
+    - **14b (R1273).** The transitional pass and every caller still
+      lowering go: the slot-ends check, the phase entry points, `opt`'s
+      registration, and the pass cases.
+    - **14c (R1274).** The CFG terminators leave `MirTerm`, with the VM's
+      arms for them, and concrete verification requires the structured
+      shape.
 
 Each stage moves Mojito strictly closer to upstream; no stage adopts a
 Mojito-only shape.
@@ -508,9 +526,6 @@ Mojito-only shape.
 - The one-session sizes of stages 6–11 are estimates (HIR is about
   1,400 lines; the ownership and drop analyses about 9,500). Each entry may
   be split by its planning session.
-- Where upstream lowers `lit.try` was not traced. `SimplifyCF`'s
-  `removeTrivialTry` shows `lit.try` survives into the function pipeline,
-  so the plan keeps Mojito's `Try` a region op through the waist.
 - Whether the pin accepts `comptime for … else` was not run here.
   Upstream's parser does parse it (`ParserStmts.cpp`), and R797 records
   the pin running it.

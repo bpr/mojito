@@ -616,6 +616,29 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Pliron now lowers region ops to LLVM blocks itself, as upstream's
+  `LowerControlFlow` lowers `hlcf` and `lit.try` (R883, stage 14a of
+  `docs/structured-control-flow-plan.md`), so neither backend runs
+  `lower-control-flow` and `compile` refuses a lowered body. Each region's
+  block is an LLVM block: `if` enters it with a conditional branch, `loop`
+  and `match` with a plain one, an op's results and a region's arguments
+  are block arguments (an aggregate through staging storage), and
+  `hlcf.unreachable` is `llvm.unreachable`. A `break`, `continue`,
+  `match.next`, or `match.complete` resolves to the region op it names
+  and crosses each `finally` on the way, so a `break` or `continue` from a
+  `try` nested in another `try`'s part, to a loop inside that part, now
+  runs natively too (`assets/ok/try_nested_loop_exit_crosses_finally.mojo`,
+  closing R905). Owned register temporaries release on the region tree,
+  in their defining block after the instruction there that reads them
+  last, where the release used to follow one block list's CFG; a final
+  read inside a `try` part no longer rejects (R1113 keeps the raise-edge
+  half). Every corpus fixture's native output is unchanged
+  (`assets/ok/loop_result_two_breaks.mojo`,
+  `try_finally_break_carries_value.mojo` pin results reached by two
+  edges and across a `finally`). The capability matrix and the MIR text
+  mnemonic inventories, which had fallen behind the instruction set, are
+  current again. This files R1273 (the pass and its remaining callers)
+  and R1274 (the CFG terminators).
 - The VM now runs concrete MIR's structured control flow as it stands,
   as upstream's interpreter runs `hlcf` (R882); only Pliron still lowers
   it (`lower-control-flow`), and neither `ConcreteProgram::new` (each CTFE

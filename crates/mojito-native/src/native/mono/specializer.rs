@@ -141,7 +141,7 @@ impl<'a> Specializer<'a> {
         };
         // Each instance keeps its runtime structured control flow, as
         // upstream's elaborator emits `hlcf`; the VM runs it, and Pliron
-        // lowers it at its entry.
+        // lowers it to LLVM blocks.
         let program = ConcreteMir::verified(program).map_err(|findings| MonoError {
             kind: MonoErrorKind::Unsupported,
             function: None,

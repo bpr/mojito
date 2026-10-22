@@ -107,21 +107,20 @@ fn fib_lowers_verifies_and_prints_canonically() {
                 v5 = llvm.icmp v0 <SLT> v4 : builtin.integer i1 !0;
                 llvm.cond_br if v5 ^block5v1() else ^block6v1() !1
 
-              ^block4v1():
-                v7 = llvm.constant <builtin.integer <1: i64>> : builtin.integer i64;
-                v8 = llvm.sub v0, v7 <{nsw=false,nuw=false}>: builtin.integer i64 !2;
-                v9 = llvm.call @mj_fib (v8) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !3;
-                v11 = llvm.constant <builtin.integer <2: i64>> : builtin.integer i64;
-                v12 = llvm.sub v0, v11 <{nsw=false,nuw=false}>: builtin.integer i64 !4;
-                v13 = llvm.call @mj_fib (v12) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !5;
-                v14 = llvm.add v9, v13 <{nsw=false,nuw=false}>: builtin.integer i64 !6;
-                llvm.return v14 !7
+              ^block4v1(v6: builtin.integer i64):
+                llvm.return v6 !2
 
               ^block5v1():
-                llvm.return v0 !8
+                llvm.br ^block4v1(v0)
 
               ^block6v1():
-                llvm.br ^block4v1()
+                v7 = llvm.constant <builtin.integer <1: i64>> : builtin.integer i64;
+                v8 = llvm.sub v0, v7 <{nsw=false,nuw=false}>: builtin.integer i64 !3;
+                v9 = llvm.call @mj_fib (v8) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !4;
+                v10 = llvm.sub v0, v4 <{nsw=false,nuw=false}>: builtin.integer i64 !5;
+                v11 = llvm.call @mj_fib (v10) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !6;
+                v12 = llvm.add v9, v11 <{nsw=false,nuw=false}>: builtin.integer i64 !7;
+                llvm.br ^block4v1(v12)
             };
             llvm.func @mj_compute: llvm.func <builtin.integer i64() variadic = false>
               [] 
@@ -130,24 +129,23 @@ fn fib_lowers_verifies_and_prints_canonically() {
                 llvm.br ^block8v1()
 
               ^block8v1():
-                v17 = llvm.constant <builtin.integer <10: i64>> : builtin.integer i64;
-                v18 = llvm.call @mj_fib (v17) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !9;
-                llvm.return v18 !10
+                v14 = llvm.constant <builtin.integer <10: i64>> : builtin.integer i64;
+                v15 = llvm.call @mj_fib (v14) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !8;
+                llvm.return v15 !9
             }
         }
 
         outlined_attributes:
         !0 = @["pliron_fixture.mojo": line: 2, column: 8], []
         !1 = @["pliron_fixture.mojo": line: 2, column: 8], []
-        !2 = @["pliron_fixture.mojo": line: 4, column: 16], []
-        !3 = @["pliron_fixture.mojo": line: 4, column: 12], []
-        !4 = @["pliron_fixture.mojo": line: 4, column: 29], []
-        !5 = @["pliron_fixture.mojo": line: 4, column: 25], []
-        !6 = @["pliron_fixture.mojo": line: 4, column: 12], []
+        !2 = @["pliron_fixture.mojo": line: 3, column: 16], []
+        !3 = @["pliron_fixture.mojo": line: 4, column: 16], []
+        !4 = @["pliron_fixture.mojo": line: 4, column: 12], []
+        !5 = @["pliron_fixture.mojo": line: 4, column: 29], []
+        !6 = @["pliron_fixture.mojo": line: 4, column: 25], []
         !7 = @["pliron_fixture.mojo": line: 4, column: 12], []
-        !8 = @["pliron_fixture.mojo": line: 3, column: 16], []
+        !8 = @["pliron_fixture.mojo": line: 7, column: 12], []
         !9 = @["pliron_fixture.mojo": line: 7, column: 12], []
-        !10 = @["pliron_fixture.mojo": line: 7, column: 12], []
     "#]].assert_eq(module.plir_text());
 }
 

@@ -1,79 +1,55 @@
-//! Terminator lowering: branches, return edges, escapes, and
-//! top-level binding releases.
+//! Terminator lowering: return edges, region exits, and top-level binding
+//! releases.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
+    /// Lower `term`, which ends a block as `end` says: a return leaves the
+    /// function, a region exit the region op it names, and a region end
+    /// the region it sits in.
     pub(super) fn lower_term(
         &mut self,
         ctx: &mut Context,
         term: &MirTerm,
+        end: RegionEnd,
     ) -> Result<(), PlironError> {
         match term {
-            MirTerm::Jump(target) => {
-                let target = self.edge_to(ctx, *target)?;
-                let jump = BrOp::new(ctx, target, vec![]);
-                self.append(ctx, jump.get_operation(), None);
-                Ok(())
-            }
-            MirTerm::Branch {
-                cond,
-                then_b,
-                else_b,
-            } => {
-                let condition = self.reg_value(ctx, *cond, ScalarTy::Bool)?;
-                let then_block = self.edge_to(ctx, *then_b)?;
-                let else_block = self.edge_to(ctx, *else_b)?;
-                let branch = CondBrOp::new(ctx, condition, then_block, vec![], else_block, vec![]);
-                self.append(ctx, branch.get_operation(), Some(*cond));
-                Ok(())
-            }
-            // Concrete MIR carries none: the elaborator keeps the taken arm.
-            MirTerm::ComptimeBranch { cond, .. } => Err(self.unsupported(
-                format!("a compile-time branch on `{cond:?}` reached native lowering"),
-                None,
-            )),
-            // Concrete MIR carries none: the elaborator unrolls the loop.
-            MirTerm::ComptimeFor { binder, .. } => Err(self.unsupported(
-                format!("a compile-time loop over `{binder}` reached native lowering"),
-                None,
-            )),
             MirTerm::Return(value) => {
-                self.release_leaving_temps(ctx)?;
+                self.release_leaving_temps(ctx, 0, term)?;
                 self.lower_return_edge(ctx, value.as_ref().copied(), &[])
             }
             MirTerm::ReturnWithCleanup { value, cleanup } => {
-                self.release_leaving_temps(ctx)?;
+                self.release_leaving_temps(ctx, 0, term)?;
                 self.lower_return_edge(ctx, value.as_ref().copied(), cleanup)
             }
-            MirTerm::TryYield => {
-                let Some(target) = self.try_yield_target else {
-                    return Err(self.unsupported("`TryYield` outside a try region".into(), None));
-                };
-                self.release_leaving_temps(ctx)?;
-                let jump = BrOp::new(ctx, target, vec![]);
-                self.append(ctx, jump.get_operation(), None);
+            MirTerm::Yield(_) | MirTerm::ElifCond { .. } | MirTerm::TryYield => {
+                self.lower_region_end(ctx, term, end)
+            }
+            MirTerm::Break { values, .. }
+            | MirTerm::Continue { values, .. }
+            | MirTerm::MatchNext(values)
+            | MirTerm::MatchComplete(values) => self.lower_region_exit(ctx, term, values),
+            // `hlcf.unreachable`.
+            MirTerm::Unreachable => {
+                let unreachable = UnreachableOp::new(ctx);
+                self.append(ctx, unreachable.get_operation(), None);
                 Ok(())
             }
-            MirTerm::EscapeJump { target, cleanup } => {
-                self.release_leaving_temps(ctx)?;
-                self.lower_escape_edge(ctx, *target, cleanup)
-            }
-            // Concrete MIR carries none: `lower-control-flow` runs first.
-            MirTerm::Yield(_)
-            | MirTerm::ElifCond { .. }
-            | MirTerm::Break { .. }
-            | MirTerm::Continue { .. }
-            | MirTerm::ComptimeYield(_)
+            // Concrete MIR carries none: the elaborator decides every
+            // compile-time region.
+            MirTerm::ComptimeYield(_)
             | MirTerm::ComptimeBreak(_)
             | MirTerm::ComptimeContinue(_)
-            | MirTerm::MatchNext(_)
-            | MirTerm::MatchComplete(_)
-            | MirTerm::Unreachable => Err(self.unsupported(
+            // A lowered body (CFG blocks) is refused before lowering.
+            | MirTerm::Jump(_)
+            | MirTerm::Branch { .. }
+            | MirTerm::ComptimeBranch { .. }
+            | MirTerm::ComptimeFor { .. }
+            | MirTerm::EscapeJump { .. } => Err(self.unsupported(
                 format!(
-                    "the region terminator `{}` reached native lowering",
+                    "the terminator `{}` reached native lowering",
                     mojito_mir::mir::text::terminator_mnemonic(term)
                 ),
                 None,
@@ -115,42 +91,7 @@ impl FnLowering<'_> {
                 cleanup: cleanup.to_vec(),
             },
             overrides: self.finally_overrides.clone(),
-            terminal: None,
-        });
-        self.emit_exit_crossing(ctx, code)
-    }
-
-    /// A `break`/`continue` escaping to an enclosing-function block: the
-    /// edge's own cleanup runs first (the VM's `run_region`), then the exit
-    /// crosses enclosing frames — pending on finalbodies on the way — until
-    /// the function-level target. An escape inside a finalbody resolves the
-    /// overridden pending outcome at the site (the VM runs the pending
-    /// return's roots before propagating the jump).
-    pub(super) fn lower_escape_edge(
-        &mut self,
-        ctx: &mut Context,
-        target: usize,
-        cleanup: &[CleanupDrop],
-    ) -> Result<(), PlironError> {
-        self.lower_cleanup_drops(ctx, cleanup)?;
-        let crosses_finally = self.try_frames.iter().any(|frame| frame.finally.is_some());
-        if !crosses_finally && self.finally_overrides.is_empty() {
-            self.emit_scope_exit_cleanups(ctx, &[])?;
-            let Some(&block) = self.function_blocks.get(target) else {
-                return Err(self.unsupported(format!("escape to missing block bb{target}"), None));
-            };
-            let jump = BrOp::new(ctx, block, vec![]);
-            self.append(ctx, jump.get_operation(), None);
-            return Ok(());
-        }
-        let overrides = self.finally_overrides.clone();
-        for idx in overrides.into_iter().rev() {
-            self.emit_pending_resolution(ctx, idx)?;
-        }
-        let code = 2 + self.exit_sites.len() as u32;
-        self.exit_sites.push(ExitSiteInfo {
-            action: ExitAction::Escape { target },
-            overrides: Vec::new(),
+            depth: 0,
             terminal: None,
         });
         self.emit_exit_crossing(ctx, code)

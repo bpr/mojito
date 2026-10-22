@@ -2628,8 +2628,8 @@ pub enum MirInstr {
     /// values, so their arguments are empty. Regions share the function's
     /// registers and slots, with local block ids like a [`MirInstr::Try`]
     /// part's; the structured form holds each as one block. Concrete MIR
-    /// keeps it: the VM runs it, and Pliron lowers it at its entry
-    /// ([`super::lower_control_flow`]).
+    /// keeps it: the VM runs it, and Pliron lowers it to LLVM blocks as
+    /// upstream's `LowerControlFlow` does.
     If {
         results: Vec<Reg>,
         cond: Reg,
@@ -2708,7 +2708,7 @@ pub enum MirInstr {
     /// [`MirTerm::Yield`], whose values define `results` too. A
     /// `break`/`continue` in a case names the enclosing loop, as in any
     /// region. Concrete MIR keeps it: the VM runs it, and Pliron lowers it
-    /// at its entry ([`super::lower_control_flow`]).
+    /// to LLVM blocks as upstream's `LowerControlFlow` does.
     Match {
         results: Vec<Reg>,
         cases: Vec<MirCase>,

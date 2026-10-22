@@ -16,19 +16,23 @@ impl FnLowering<'_> {
             .expect("llvm.func has a body region");
         self.region = Some(region);
         self.entry = Some(entry);
-
-        // One pliron block per MIR block (entry stays separate so MIR block 0
-        // may have predecessors).
-        for _ in 0..self.func.blocks.len() {
-            let block = BasicBlock::new(ctx, None, vec![]);
-            block.insert_at_back(region, ctx);
-            self.blocks.push(block);
-        }
-        self.function_blocks = self.blocks.clone();
-        self.next_region_block = self.func.blocks.len();
+        let func = self.func;
+        let [body_block] = func.blocks.as_slice() else {
+            return Err(self.unsupported(
+                format!(
+                    "a lowered body of {} blocks reached native lowering",
+                    self.func.blocks.len()
+                ),
+                None,
+            ));
+        };
+        // The body lowers into a block of its own, after the entry block's
+        // storage.
+        let body = BasicBlock::new(ctx, None, vec![]);
+        body.insert_at_back(region, ctx);
 
         // Entry: one alloca per variable slot, parameter stores, then a jump
-        // to MIR block 0. An aggregate-returning function receives its sret
+        // to the body. An aggregate-returning function receives its sret
         // out-pointer as argument 0, shifting every parameter right by one;
         // aggregate parameter slots alias the incoming pointer directly
         // (write-through — `out`/`mut` receivers mutate caller storage), so
@@ -186,38 +190,13 @@ impl FnLowering<'_> {
                 .or_default()
                 .insert(position, alloca.get_result(ctx));
         }
-        let jump = BrOp::new(ctx, self.blocks[0], vec![]);
+        let jump = BrOp::new(ctx, body, vec![]);
         self.append(ctx, jump.get_operation(), None);
 
-        // Final operand appearances drive the owned-temporary releases. The
-        // walk recurses into `try` regions with synthetic block ids assigned
-        // in exactly the order region lowering assigns them.
-        let function_ids: Vec<usize> = (0..self.func.blocks.len()).collect();
-        let mut next_id = self.func.blocks.len();
-        record_last_uses(
-            &mut self.last_uses,
-            &mut self.position_lists,
-            self.func.blocks.as_slice(),
-            &function_ids,
-            &mut next_id,
-            true,
-        );
-
-        // Each block is lowered after the blocks that dominate it, so a
-        // register's definition is lowered before every read; the blocks
-        // the entry does not reach follow in list order.
-        for id in lowering_order(&self.func.blocks, true) {
-            let block = &self.func.blocks[id];
-            self.current = Some(self.blocks[id]);
-            for (index, instr) in block.instrs.iter().enumerate() {
-                self.position = (id, index);
-                self.lower_instr(ctx, instr)?;
-                self.flush_owned_temps(ctx)?;
-            }
-            self.position = (id, usize::MAX);
-            self.lower_term(ctx, &block.term)?;
-        }
-        Ok(())
+        // Final reads drive the owned-temporary releases.
+        record_last_uses(&mut self.last_uses, &func.blocks, &mut Vec::new());
+        self.current = Some(body);
+        self.lower_body_block(ctx, body_block)
     }
 
     #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
@@ -871,14 +850,31 @@ impl FnLowering<'_> {
                 }
             },
             MirInstr::Raise { src } => self.lower_raise(ctx, *src),
-            // `compile` lowers each body (`lower-control-flow`) first.
-            MirInstr::If { .. }
-            | MirInstr::Loop { .. }
-            | MirInstr::ComptimeIf { .. }
-            | MirInstr::ComptimeFor { .. }
-            | MirInstr::Match { .. } => Err(self.unsupported(
+            MirInstr::If {
+                results,
+                cond,
+                then,
+                elifs,
+                else_args,
+                orelse,
+            } => self.lower_if(ctx, results, *cond, (then, elifs), (else_args, orelse)),
+            MirInstr::Loop {
+                label,
+                operands,
+                args,
+                results,
+                body,
+            } => self.lower_loop(ctx, *label, (operands, args, results), body),
+            MirInstr::Match {
+                results,
+                cases,
+                else_args,
+                orelse,
+            } => self.lower_match(ctx, results, cases, (else_args, orelse)),
+            // Concrete MIR carries none: the elaborator decides each one.
+            MirInstr::ComptimeIf { .. } | MirInstr::ComptimeFor { .. } => Err(self.unsupported(
                 format!(
-                    "structured control flow `{}` reached native lowering",
+                    "the compile-time region op `{}` reached native lowering",
                     mojito_mir::mir::text::instruction_mnemonic(instr)
                 ),
                 None,

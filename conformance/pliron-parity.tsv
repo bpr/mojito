@@ -385,6 +385,7 @@ assets/ok/live_pointer_ref_argument.mojo	main	exe-differential	sanitized
 assets/ok/loan_carrying_instance_clone.mojo	main	exe-differential	sanitized
 assets/ok/local_comptime_float.mojo	main	exe-differential	sanitized
 assets/ok/loop_binding_consuming_copy.mojo	main	exe-differential	sanitized
+assets/ok/loop_result_two_breaks.mojo	main	exe-differential	sanitized
 assets/ok/mapping_key_iteration_reads.mojo	main	exe-differential	sanitized
 assets/ok/match_case_layouts.mojo	main	exe-differential	sanitized
 assets/ok/match_cluster_lifecycle.mojo	main	exe-differential	sanitized
@@ -1056,9 +1057,11 @@ assets/ok/transferred_carrier_keeps_source_alive.mojo	main	exe-differential	sani
 assets/ok/transferred_view_loan_stays_shared.mojo	main	exe-differential	sanitized
 assets/ok/trivial_register_passable_copy_forwarded.mojo	main	exe-differential	sanitized
 assets/ok/try_break_continue.mojo	main	exe-differential	sanitized
+assets/ok/try_finally_break_carries_value.mojo	main	exe-differential	sanitized
 assets/ok/try_finally_break_reads_loop_reference.mojo	main	exe-differential	sanitized
 assets/ok/try_handler_exit_raise_edge_drop.mojo	main	exe-differential	sanitized
 assets/ok/try_in_loop_temporary_drop_order.mojo	main	exe-differential	sanitized
+assets/ok/try_nested_loop_exit_crosses_finally.mojo	main	exe-differential	sanitized
 assets/ok/try_raise_edge_drop_order.mojo	main	exe-differential	sanitized
 assets/ok/try_reassign_outer.mojo	main	exe-differential	sanitized
 assets/ok/try_region_drop_timing.mojo	main	exe-differential	sanitized

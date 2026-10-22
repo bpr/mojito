@@ -606,6 +606,24 @@ drop and cleanup instructions remain executable behavior. Errors and
 unwinding stays out until it has its own semantic, ABI, and portability
 specification.
 
+Region ops lower as upstream's `LowerControlFlow` lowers `hlcf` and
+`lit.try` (`lower/regions.rs`, `lower/try_flow.rs`). Each region's single
+block becomes an LLVM block: `if` enters its regions with a conditional
+branch, `loop` and `match` with a plain one, and each region terminator
+becomes a branch carrying its values to the block it enters. A scalar value
+is a block argument; an aggregate is copied into the entered block's staging
+storage and out into storage of the block's own, so a `continue` permuting
+a loop's arguments stays a parallel copy. A `break`, `continue`,
+`match.next`, or `match.complete` resolves to the innermost region op it
+names (`mir::region_exit`, `RegionFrame::names`); one leaving a `try` part
+for an op outside it pends on each `finally` it crosses as a return does,
+its values staged at the site. `hlcf.unreachable` is `llvm.unreachable`.
+Concrete MIR reaches `compile` structured, and a lowered body (CFG blocks,
+as `mojito opt --pass lower-control-flow` writes) is refused. Owned register
+temporaries follow the region tree: one is released in the block defining
+it, after the instruction there that reads it last (a region op reads what
+its regions read), and on each terminator leaving that block before then.
+
 Variant storage lowering (the `__VariantStorage` primitive behind the
 self-hosted `std.utils.Variant`) uses the shared native tag/payload layout
 and dispatches owning operations and destruction from the runtime tag. Multi-lane SIMD is
@@ -3071,11 +3089,9 @@ lowers it to `Terminator::Break(label)` naming that loop, and
 the VM's region cursor resolves it to that loop: the part ends with
 `Flow::Leave`, which propagates out of each `try`, running its `finally`, until
 the cursor of a list inside the loop resolves it, so a loop inside an
-enclosing `try` part is reached too. For Pliron, `lower-control-flow`
-resolves it to `MirTerm::EscapeJump { target }`, where `target` is a block of
-the function's list, not the region's, and a `break` from a `try` part to a
-loop inside an enclosing `try` part reaches the unsupported boundary there
-(R905).
+enclosing `try` part is reached too. Pliron resolves it by the same rule
+while lowering region ops: the exit pends on each `finally` it crosses and
+then branches to the loop's exit block, wherever the loop sits.
 
 ## Stage 5: MIR Lowering
 
@@ -3433,7 +3449,8 @@ upstream's `CheckLifetimes` walks `hlcf`, and the loan check walks it backward
 for reference liveness and forward for loan generations. The body stays
 structured for drop elaboration and every pass after it, the elaborator
 and the post-elaboration pipeline included; the VM runs it as it stands,
-and Pliron lowers it (`lower-control-flow`) at its entry. A `try`
+and Pliron lowers its region ops to LLVM blocks as `LowerControlFlow` does.
+A `try`
 is one instruction to the loan
 check: it uses every variable its parts read, and no access or loan inside
 it is checked (upstream has no persistent-loan check, so the exemption
@@ -4083,10 +4100,11 @@ chains, and comprehensions as `If`/`Loop`, each region one block (a
 conditional expression whose condition the checker found a parameter value,
 `SemanticAdjustment::ComptimeConditional`, is a `ComptimeIf` with results,
 as upstream's `IfElseOpNode` emits `hlcf.comptime.if`), and
-`mir::lower_control_flow` (upstream's `LowerControlFlow`), which Pliron
-runs at its entry on the concrete MIR the elaborator and the
-post-elaboration pipeline leave structured (`compile`, on a clone of each
-reachable function; the VM runs region ops as they stand), lowers runtime region ops to blocks and the CFG terminators: a
+`mir::lower_control_flow`, a transitional MIR-to-MIR stand-in for upstream's
+`LowerControlFlow` that only the phase entry points, the slot-ends check,
+and `mojito opt` still run (both backends read concrete MIR structured:
+the VM runs region ops as they stand, and Pliron lowers them to LLVM blocks
+itself), lowers runtime region ops to blocks and the CFG terminators: a
 region's blocks are appended to its list, the rest of the block moves to a
 join, an op's results go through one slot each, stored at a `yield` or
 `break` and forwarded at the join, except that a loop left by one `break`
@@ -5257,7 +5275,7 @@ up to `lower-lit`: field drops, copy elision, destructor and constructor
 naming with `mir::lower_whole_drops`, and the copy/move lowering, and
 the pre-elaboration pipeline after them, the elaborator, and the
 post-elaboration pipeline; the VM runs the body as it stands, and Pliron
-lowers it (`lower-control-flow`) at its entry. Two walks of `analysis/region_walk.rs` give its
+lowers its region ops to LLVM blocks. Two walks of `analysis/region_walk.rs` give its
 facts: one forward walk (`DropFacts`, in `register_loans.rs`) records the loan
 generations reaching each instruction and block and the roots each instruction
 consumes through its operand registers (`RegisterUses`), and one backward walk
@@ -6470,9 +6488,9 @@ concrete verifier rejects a reference slot read as its handle.
   result and
   operand has one definition the walk has passed on the dominating path,
   since MIR does not verify that a definition dominates its reads. The
-  Pliron backend lowers each block list in `lowering_order` (reverse
-  postorder, then the unreached blocks), so a definition `cse` reuses in
-  a later-numbered block is lowered before its reads. The pre-elaboration
+  Pliron backend lowers the region tree in order, each op's regions before
+  the block after it, so a definition `cse` reuses is lowered before its
+  reads. The pre-elaboration
   pipeline's fourth round runs it on each generator too (R926), as
   upstream's does, over the structured body: a region sees what is
   available at its op and its own arguments, and what it defines does not

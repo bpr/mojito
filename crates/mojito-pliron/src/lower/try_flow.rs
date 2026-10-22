@@ -6,8 +6,8 @@ use super::*;
 use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
-    /// A structurally lowered `try`: flatten the region mini-CFGs into this
-    /// function's flat block list with explicit edges. The body lowers with a
+    /// `lit.try`, a control-flow node like `hlcf`'s: each part is a block of
+    /// its own, entered and left by explicit edges. The body lowers with a
     /// fresh landing block as its raise-edge target; the raise edge runs the
     /// flag-guarded `cleanup` drops exactly like the VM's `exec_try`; the
     /// handler binds the staged error; `orelse` runs only on normal
@@ -65,7 +65,7 @@ impl FnLowering<'_> {
             finally: finally_idx,
             pends_error: handler.is_none() && finally_idx.is_some(),
         });
-        let body_entry = self.lower_region(ctx, body, normal_exit)?;
+        let body_entry = self.lower_part(ctx, body, normal_exit)?;
         self.try_frames.pop();
         // Enter the try from the enclosing block.
         let enter = BrOp::new(ctx, body_entry, vec![]);
@@ -99,9 +99,7 @@ impl FnLowering<'_> {
         };
 
         // Raise edge: cleanup drops, then the handler (binding the staged
-        // error) or propagation. The handler region lowers before `orelse` —
-        // position-space region ids must follow the body → handler → orelse
-        // → finalbody order `record_last_uses` used.
+        // error) or propagation.
         self.current = Some(landing);
         self.lower_cleanup_drops(ctx, cleanup)?;
         match handler {
@@ -139,7 +137,7 @@ impl FnLowering<'_> {
                         pends_error: true,
                     });
                 }
-                let handler_entry = self.lower_region(ctx, handler_blocks, normal_entry)?;
+                let handler_entry = self.lower_part(ctx, handler_blocks, normal_entry)?;
                 if pseudo_frame.is_some() {
                     self.try_frames.pop();
                 }
@@ -170,7 +168,7 @@ impl FnLowering<'_> {
                         pends_error: true,
                     });
                 }
-                let entry = self.lower_region(ctx, orelse_blocks, normal_entry)?;
+                let entry = self.lower_part(ctx, orelse_blocks, normal_entry)?;
                 if pseudo_frame.is_some() {
                     self.try_frames.pop();
                 }
@@ -197,10 +195,11 @@ impl FnLowering<'_> {
             self.current = saved;
 
             // The finalbody lowers once, outside this try's raise protection
-            // (its own raise/return/escape overrides the pending outcome and
-            // resolves it on the way out).
+            // (its own raise, return, or region exit overrides the pending
+            // outcome and resolves it on the way out).
             self.finally_overrides.push(idx);
-            let fin_entry = self.lower_region(ctx, final_blocks, self.finally_states[idx].dispatch);
+            let dispatch = self.finally_states[idx].dispatch;
+            let fin_entry = self.lower_part(ctx, final_blocks, dispatch);
             self.finally_overrides.pop();
             let fin_entry = fin_entry?;
             let saved = self.current;
@@ -305,14 +304,22 @@ impl FnLowering<'_> {
     }
 
     /// Route exit-site `code` outward from the current frame context: the
-    /// innermost `finally`-bearing frame records the code as pending and
-    /// enters its finalbody; with none left, the site's terminal runs.
+    /// innermost `finally`-bearing frame the site leaves records the code as
+    /// pending and enters its finalbody; with none left, the site's terminal
+    /// runs.
     pub(super) fn emit_exit_crossing(
         &mut self,
         ctx: &mut Context,
         code: u32,
     ) -> Result<(), PlironError> {
-        let finally = self.try_frames.iter().rev().find_map(|frame| frame.finally);
+        let depth = self.exit_sites[(code - 2) as usize].depth;
+        let finally = self
+            .try_frames
+            .get(depth..)
+            .unwrap_or_default()
+            .iter()
+            .rev()
+            .find_map(|frame| frame.finally);
         if let Some(idx) = finally {
             if !self.finally_states[idx].codes.contains(&code) {
                 self.finally_states[idx].codes.push(code);
@@ -332,8 +339,8 @@ impl FnLowering<'_> {
 
     /// The terminal block of exit site `code - 2`: a return runs the site's
     /// carried cleanup roots, resolves any pending outcomes the site
-    /// overrode, and returns the staged value; an escape jumps to its
-    /// function-level target.
+    /// overrode, and returns the staged value; a region exit branches to its
+    /// target with the values it staged.
     pub(super) fn site_terminal(
         &mut self,
         ctx: &mut Context,
@@ -362,14 +369,16 @@ impl FnLowering<'_> {
                 }
                 self.emit_staged_return(ctx)?;
             }
-            ExitAction::Escape { target } => {
+            ExitAction::Leave { target, staged } => {
                 let target = *target;
-                let Some(&target_block) = self.function_blocks.get(target) else {
-                    return Err(
-                        self.unsupported(format!("escape to missing block bb{target}"), None)
-                    );
-                };
-                let jump = BrOp::new(ctx, target_block, vec![]);
+                let staged = staged.clone();
+                let mut operands = Vec::with_capacity(staged.len());
+                for (slot, handle) in staged {
+                    let load = LoadOp::new(ctx, slot, handle);
+                    self.append(ctx, load.get_operation(), None);
+                    operands.push(load.get_result(ctx));
+                }
+                let jump = BrOp::new(ctx, target, operands);
                 self.append(ctx, jump.get_operation(), None);
             }
         }
@@ -433,8 +442,8 @@ impl FnLowering<'_> {
         }
 
         for code in codes {
-            // Only pending returns carry roots to resolve; a pending escape
-            // resolved its overrides at its own site.
+            // Only pending returns carry roots to resolve; a pending region
+            // exit resolved its overrides at its own site.
             let site = (code - 2) as usize;
             let ExitAction::Return { cleanup } = &self.exit_sites[site].action else {
                 continue;
@@ -564,60 +573,22 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    /// Lower one `try` sub-region mini-CFG into fresh pliron blocks (the
-    /// region's local block ids swap in as `self.blocks`; its position-space
-    /// ids continue `next_region_block` exactly as `record_last_uses`
-    /// assigned them). `TryYield` jumps to `completed`. Returns the region's
-    /// entry block; `self.current` is restored.
-    pub(super) fn lower_region(
+    /// Lower the `try` part `blocks` into a block of its own, whose
+    /// `lit.try.yield` branches to `completed`; returns that block.
+    /// `self.current` is restored.
+    pub(super) fn lower_part(
         &mut self,
         ctx: &mut Context,
         blocks: &[MirBlock],
         completed: Ptr<BasicBlock>,
     ) -> Result<Ptr<BasicBlock>, PlironError> {
-        let region = self.region.expect("lowering is inside a function");
-        let ids_start = self.next_region_block;
-        self.next_region_block += blocks.len();
-        let mut locals = Vec::with_capacity(blocks.len());
-        for _ in blocks {
-            let block = BasicBlock::new(ctx, None, vec![]);
-            block.insert_at_back(region, ctx);
-            locals.push(block);
-        }
-        let entry = locals[0];
-        let saved_blocks = std::mem::replace(&mut self.blocks, locals);
-        let saved_try_yield = self.try_yield_target.replace(completed);
-        let saved_current = self.current;
-        let saved_position = self.position;
-        let mut result = Ok(());
-        'blocks: for i in lowering_order(blocks, false) {
-            let block = &blocks[i];
-            self.current = Some(self.blocks[i]);
-            for (index, instr) in block.instrs.iter().enumerate() {
-                self.position = (ids_start + i, index);
-                if let Err(error) = self
-                    .lower_instr(ctx, instr)
-                    .and_then(|()| self.flush_owned_temps(ctx))
-                {
-                    result = Err(error);
-                    break 'blocks;
-                }
-            }
-            self.position = (ids_start + i, usize::MAX);
-            if let Err(error) = self.lower_term(ctx, &block.term) {
-                result = Err(error);
-                break 'blocks;
-            }
-        }
-        self.blocks = saved_blocks;
-        self.try_yield_target = saved_try_yield;
-        self.current = saved_current;
-        self.position = saved_position;
-        result.map(|()| entry)
+        let entry = self.region_entry(ctx)?;
+        self.lower_region(ctx, blocks, entry, RegionEnd::TryPart(completed))?;
+        Ok(self.carrier_block(entry))
     }
 
-    /// Drops crossing a return or escape edge: the edge's own carried
-    /// cleanup roots, flag-guarded. A `try`'s own list runs on its raise
+    /// Drops crossing a return edge: the edge's own carried cleanup roots,
+    /// flag-guarded. A `try`'s own list runs on its raise
     /// edge alone.
     pub(super) fn emit_scope_exit_cleanups(
         &mut self,
@@ -653,8 +624,10 @@ impl FnLowering<'_> {
                 Ok(self.string_parts(ctx, ptr, dest))
             }
             // An error value displays as its bare message (the VM's
-            // `format_value` over `Value::Error`).
-            Some(TyKind::Error) => {
+            // `format_value` over `Value::Error`); a `StringLiteral` held in
+            // storage is its descriptor, whose data and length lead it as a
+            // String's do.
+            Some(TyKind::Error | TyKind::StringLiteral) => {
                 let ptr = self.reg_ptr(ctx, reg)?;
                 Ok(self.string_parts(ctx, ptr, dest))
             }

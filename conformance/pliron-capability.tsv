@@ -19,8 +19,11 @@ instruction	closure.make	partial	two-word `{invoke, env}` values over per-target
 instruction	lifetime.keep_alive	unsupported	`lower-lit` erases every lifetime marker; one that survives rejects
 instruction	const	partial	Int/Float/Bool/Str/DType/None (literals stay pending until materialization) and function references as two-word callable values
 instruction	layout.size_of	unsupported	the elaborator answers every layout query under the target; one that survives rejects
+instruction	param_list.address	supported	the address of the interned constant element array (`mjplist_<n>`)
+instruction	store_to_mem	unsupported	compile-time memory has no run-time form; only a lifted compile-time evaluation holds one
 instruction	type.name	unsupported	the elaborator spells every type name as a constant; one that survives rejects
 instruction	type.construct	unsupported	monomorphization leaves no type parameter to construct; one that survives rejects
+instruction	type.construct_expr	unsupported	monomorphization leaves no type expression to construct; one that survives rejects
 instruction	literal.materialize	partial	scalar and width-1 SIMD targets (wrapping, VM-exact) plus exact literal-typed storage; a constant exceeding i64/f64 storage rejects
 instruction	var.use	supported	copy/move/borrow
 instruction	var.declare	supported	a declaration marker; the slot is allocated at entry and it lowers to nothing
@@ -45,6 +48,7 @@ instruction	place.store	supported	whole-variable stores set the initialization f
 instruction	place.store_ref	supported	stores the reference handle
 instruction	place.load	partial	layoutable, typed places
 instruction	tuple.make	supported	typed element lists; variadic call sites build packs by relocation
+instruction	struct.create	supported	the struct's storage built from its field values
 instruction	variant.make	supported	tagged aggregate construction over the normative Variant layout
 instruction	variant.is	supported	checked tag comparison
 instruction	variant.get	supported	checked payload projection
@@ -58,12 +62,20 @@ instruction	simd.cast	partial	vector int rewrap and f64-mediated float conversio
 instruction	simd.bits	supported	each lane's bit pattern zero-extended into the unsigned target lane (floats through bitcast, bool as 0/1); a reinterpretation, not a conversion, so it is exact by construction and matches the VM's `simd_to_bits` on every lane
 instruction	simd.shuffle	supported	one shufflevector per compile-time mask (a one-lane mask extracts the scalar)
 instruction	raise	supported	tagged-outcome error edge
-instruction	try	supported	structural flattening with cleanup drops and finally dispatch
+instruction	try	supported	lowered to LLVM blocks as `LowerControlFlow` lowers `lit.try`, with cleanup drops and finally dispatch
+instruction	if	supported	lowered to LLVM blocks as `LowerControlFlow` lowers `hlcf.if`: a conditional branch into its regions, its results arguments of the block after it
+instruction	loop	supported	lowered to LLVM blocks as `LowerControlFlow` lowers `hlcf.loop`: its arguments and results block arguments, a break or continue crossing `finally` regions through the pending-outcome dispatch
+instruction	comptime.if	unsupported	the elaborator decides it; concrete MIR carries none
+instruction	comptime.for	unsupported	the elaborator decides it; concrete MIR carries none
+instruction	comptime.assert	unsupported	the elaborator judges it; concrete MIR carries none
+instruction	match	supported	lowered to LLVM blocks as `LowerControlFlow` lowers `hlcf.match`: each case a block entered with its arguments, its results arguments of the block after it
 instruction	drop.reg	unsupported	reserved for the future assembler VM; the VM rejects it too
 instruction	drop.var	partial	flag-guarded compiled destructors, including destructor-bearing structs with droppable fields; depth-1 partial moves drop surviving leaves under per-leaf presence flags (any tombstone suppresses `__deinit__`); deeper moves reject
 instruction	consume.var	supported	clears the initialization flag; surviving droppable struct fields destroy in reverse order under the per-leaf flags
 instruction	consume.place	partial	no droppable residual fields
 instruction	drop.place	supported	destroys one depth-1 struct field under its leaf flag and clears the flag
+instruction	ownership.mark_initialized	supported	a marker over storage that already exists; it lowers to nothing
+instruction	ownership.mark_destroyed	supported	clears the place's presence flag
 instruction	unsupported	unsupported	explicit lowering marker; rejects by definition
 instruction	iter.init	partial	concrete post-mono `__iter__` chains: aliased `ref`/`mut`, byte-copied `read`, and consuming `var` receivers; raising `__iter__` steps and stepless heap-owning splits reject
 instruction	iter.has_next	partial	compiler-private runtime-pack storage only: a shadow position against the static element count; an untyped iterator slot rejects

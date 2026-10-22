@@ -19,8 +19,7 @@ use mojito_types::types::TyKind;
 /// as its handle, or compile-time control flow: a `comptime if`, a `comptime
 /// for`, or a terminator of their regions. Runtime structured control flow
 /// is concrete, as upstream's elaborator emits `hlcf`: the VM runs it as it
-/// stands, and Pliron lowers it at its entry
-/// ([`super::super::lower_control_flow`]).
+/// stands, and Pliron lowers it to LLVM blocks as `LowerControlFlow` does.
 pub fn concrete_function_findings(name: &str, function: &MirFunction) -> Vec<String> {
     let mut errors = Vec::new();
     let head = format!("MIR function '{name}'");

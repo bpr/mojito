@@ -98,7 +98,7 @@ pub fn c_abi_type(ctx: &Context, ty: mojito_native::native::rt_abi::CAbiTy) -> T
 }
 
 /// Collect every `MovePlace` with a projection under `blocks`, recursing
-/// into `try` sub-regions — the pre-scan that decides which variables need
+/// into every region — the pre-scan that decides which variables need
 /// per-leaf presence flags in the entry block.
 pub fn collect_projected_move_places<'m>(
     blocks: &'m [mojito_mir::mir::MirBlock],
@@ -117,25 +117,10 @@ pub fn collect_projected_move_places<'m>(
                     recv_place: Some(place),
                     ..
                 } if !place.proj.is_empty() => out.push(place),
-                MirInstr::Try {
-                    body,
-                    handler,
-                    orelse,
-                    finalbody,
-                    ..
-                } => {
-                    collect_projected_move_places(body, out);
-                    if let Some((_, handler_blocks)) = handler {
-                        collect_projected_move_places(handler_blocks, out);
-                    }
-                    if let Some(orelse_blocks) = orelse {
-                        collect_projected_move_places(orelse_blocks, out);
-                    }
-                    if let Some(final_blocks) = finalbody {
-                        collect_projected_move_places(final_blocks, out);
-                    }
-                }
                 _ => {}
+            }
+            for region in mojito_mir::mir::instruction_regions(instr) {
+                collect_projected_move_places(region, out);
             }
         }
     }
@@ -173,27 +158,15 @@ pub fn collect_aliased_load_regs(
                         .map(|reg| reg.0)
                         .filter(|reg| !borrowed.contains(reg)),
                 );
-                if let MirInstr::Try {
-                    body,
-                    handler,
-                    orelse,
-                    finalbody,
-                    ..
-                } = instruction
-                {
-                    visit(body, declarations, owning);
-                    if let Some((_, blocks)) = handler {
-                        visit(blocks, declarations, owning);
-                    }
-                    if let Some(blocks) = orelse {
-                        visit(blocks, declarations, owning);
-                    }
-                    if let Some(blocks) = finalbody {
-                        visit(blocks, declarations, owning);
-                    }
+                for region in mojito_mir::mir::instruction_regions(instruction) {
+                    visit(region, declarations, owning);
                 }
             }
-            owning.extend(terminator_regs(&block.term).iter().map(|reg| reg.0));
+            owning.extend(
+                mojito_mir::mir::terminator_regs(&block.term)
+                    .iter()
+                    .map(|reg| reg.0),
+            );
         }
     }
 
@@ -216,29 +189,11 @@ pub fn collect_loaded_places(blocks: &[MirBlock]) -> HashMap<u32, MirPlace> {
     pub(super) fn visit(blocks: &[MirBlock], output: &mut HashMap<u32, MirPlace>) {
         for block in blocks {
             for instruction in &block.instrs {
-                match instruction {
-                    MirInstr::LoadPlace { dest, place } => {
-                        output.insert(dest.0, place.clone());
-                    }
-                    MirInstr::Try {
-                        body,
-                        handler,
-                        orelse,
-                        finalbody,
-                        ..
-                    } => {
-                        visit(body, output);
-                        if let Some((_, blocks)) = handler {
-                            visit(blocks, output);
-                        }
-                        if let Some(blocks) = orelse {
-                            visit(blocks, output);
-                        }
-                        if let Some(blocks) = finalbody {
-                            visit(blocks, output);
-                        }
-                    }
-                    _ => {}
+                if let MirInstr::LoadPlace { dest, place } = instruction {
+                    output.insert(dest.0, place.clone());
+                }
+                for region in mojito_mir::mir::instruction_regions(instruction) {
+                    visit(region, output);
                 }
             }
         }
@@ -343,195 +298,45 @@ pub const fn no_overflow_flags() -> IntegerOverflowFlagsAttr {
     }
 }
 
-/// Every register `instr` reads (operands, not destinations), for last-use
-/// bookkeeping. Instructions outside the supported subset reject before any
-/// owned temporary could reach them, so their operands may be approximate.
-/// Record final operand appearances over `blocks` (whose position-space ids
-/// are `ids`), in [`lowering_order`], recursing into `try` regions, and
-/// push each list visited onto `lists`. `function_level` says `blocks` is
-/// the function's own list. Each region's blocks take the next contiguous
-/// ids at the moment its `try` is reached, regions in body → handler →
-/// orelse → finalbody order — mirroring `lower_region`'s assignment exactly
-/// so positions agree.
-pub fn record_last_uses<'m>(
-    last_uses: &mut HashMap<u32, (usize, usize)>,
-    lists: &mut Vec<PositionList<'m>>,
-    blocks: &'m [MirBlock],
-    ids: &[usize],
-    next_id: &mut usize,
-    function_level: bool,
+/// Record each register's final read over `blocks`, in lowering order,
+/// as the chain of positions from the body block down to the read
+/// ([`FnLowering::last_uses`]): `chain` holds the positions of the region
+/// ops enclosing `blocks`.
+pub fn record_last_uses(
+    last_uses: &mut HashMap<u32, Vec<(BlockKey, usize)>>,
+    blocks: &[MirBlock],
+    chain: &mut Vec<(BlockKey, usize)>,
 ) {
-    pub(super) fn record_region<'m>(
-        last_uses: &mut HashMap<u32, (usize, usize)>,
-        lists: &mut Vec<PositionList<'m>>,
-        blocks: &'m [MirBlock],
-        next_id: &mut usize,
-    ) {
-        let ids: Vec<usize> = (*next_id..*next_id + blocks.len()).collect();
-        *next_id += blocks.len();
-        record_last_uses(last_uses, lists, blocks, &ids, next_id, false);
-    }
-    lists.push(PositionList {
-        start: ids.first().copied().unwrap_or(0),
-        blocks,
-        function_level,
-    });
-    for i in lowering_order(blocks, function_level) {
-        let block = &blocks[i];
+    for block in blocks {
+        let key = BlockKey::of(block);
         for (index, instr) in block.instrs.iter().enumerate() {
+            chain.push((key, index));
             for reg in operand_regs(instr) {
-                last_uses.insert(reg.0, (ids[i], index));
+                last_uses.insert(reg.0, chain.clone());
             }
-            if let MirInstr::Try {
-                body,
-                handler,
-                orelse,
-                finalbody,
-                ..
-            } = instr
-            {
-                record_region(last_uses, lists, body, next_id);
-                if let Some((_, handler_blocks)) = handler {
-                    record_region(last_uses, lists, handler_blocks, next_id);
-                }
-                if let Some(orelse_blocks) = orelse {
-                    record_region(last_uses, lists, orelse_blocks, next_id);
-                }
-                if let Some(final_blocks) = finalbody {
-                    record_region(last_uses, lists, final_blocks, next_id);
-                }
+            for region in mojito_mir::mir::instruction_regions(instr) {
+                record_last_uses(last_uses, region, chain);
             }
+            chain.pop();
         }
-        for reg in terminator_regs(&block.term) {
-            last_uses.insert(reg.0, (ids[i], usize::MAX));
+        chain.push((key, usize::MAX));
+        for reg in mojito_mir::mir::terminator_regs(&block.term) {
+            last_uses.insert(reg.0, chain.clone());
         }
+        chain.pop();
     }
 }
 
-/// A block list in the last-use position space: its block `i` has the id
-/// `start + i`. The function's own list comes first; each `try` region's
-/// follows in the order [`record_last_uses`] reaches it.
-pub struct PositionList<'m> {
-    pub start: usize,
-    pub blocks: &'m [MirBlock],
-    /// Whether this is the function's own list, whose regions' escapes are
-    /// edges too ([`lowering_order`]).
-    pub function_level: bool,
-}
+/// The identity of one MIR block during lowering: its address in the
+/// function being lowered, which every region's single block has for the
+/// whole lowering.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct BlockKey(*const MirBlock);
 
-impl PositionList<'_> {
-    /// Whether the position-space id `id` names one of this list's blocks.
-    pub fn contains(&self, id: usize) -> bool {
-        (self.start..self.start + self.blocks.len()).contains(&id)
+impl BlockKey {
+    pub const fn of(block: &MirBlock) -> Self {
+        Self(std::ptr::from_ref(block))
     }
-
-    /// The blocks an owned temporary `reg` defined in block `def` and last
-    /// read in block `last` (position-space ids) lives through: a mask over
-    /// the list's local indices of the blocks on a path from `def` to
-    /// `last`. `None` when a release cannot follow it: `def` does not
-    /// dominate `last`, a path from `def` returns to `def` without passing
-    /// `last` (a second definition before the first's release), or a block
-    /// off those paths reads the register (it would read released bytes).
-    pub fn crossing_span(&self, def: usize, last: usize, reg: Reg) -> Option<Vec<bool>> {
-        let (def, last) = (def - self.start, last - self.start);
-        if self.reach(&[0], Some(def))[last] || self.reach(&self.successors(def), Some(last))[def] {
-            return None;
-        }
-        let forward = self.reach(&[def], None);
-        let mut predecessors = vec![Vec::new(); self.blocks.len()];
-        for block in 0..self.blocks.len() {
-            for target in self.successors(block) {
-                if target < self.blocks.len() {
-                    predecessors[target].push(block);
-                }
-            }
-        }
-        let mut backward = vec![false; self.blocks.len()];
-        let mut stack = vec![last];
-        while let Some(block) = stack.pop() {
-            if !std::mem::replace(&mut backward[block], true) {
-                stack.extend(predecessors[block].iter().copied());
-            }
-        }
-        let live: Vec<bool> = forward
-            .iter()
-            .zip(&backward)
-            .map(|(forward, backward)| *forward && *backward)
-            .collect();
-        let stray_read = self
-            .blocks
-            .iter()
-            .zip(&live)
-            .any(|(block, live)| !live && reads_reg(block, reg));
-        (!stray_read).then_some(live)
-    }
-
-    /// The local indices reachable from `seeds` (themselves included)
-    /// without entering `avoid`.
-    fn reach(&self, seeds: &[usize], avoid: Option<usize>) -> Vec<bool> {
-        let mut reached = vec![false; self.blocks.len()];
-        let mut stack: Vec<usize> = seeds
-            .iter()
-            .copied()
-            .filter(|block| Some(*block) != avoid)
-            .collect();
-        while let Some(block) = stack.pop() {
-            if block < self.blocks.len() && !std::mem::replace(&mut reached[block], true) {
-                stack.extend(
-                    self.successors(block)
-                        .into_iter()
-                        .filter(|block| Some(*block) != avoid),
-                );
-            }
-        }
-        reached
-    }
-
-    /// The local indices block `block` hands control to within the list. A
-    /// block that raises never reaches its terminator, so it hands control
-    /// to none: its fall-through jump would otherwise make the raise's
-    /// block a second predecessor of the one its sibling path reaches.
-    fn successors(&self, block: usize) -> Vec<MirBlockId> {
-        if self.blocks[block]
-            .instrs
-            .iter()
-            .any(|instr| matches!(instr, MirInstr::Raise { .. }))
-        {
-            return Vec::new();
-        }
-        if self.function_level {
-            mojito_mir::mir::block_successors(&self.blocks[block])
-        } else {
-            mojito_mir::mir::terminator_targets(&self.blocks[block].term)
-        }
-    }
-}
-
-/// Whether `block` reads `reg`: in an instruction, its terminator, or a
-/// region it holds.
-fn reads_reg(block: &MirBlock, reg: Reg) -> bool {
-    terminator_regs(&block.term).contains(&reg)
-        || block.instrs.iter().any(|instr| {
-            operand_regs(instr).contains(&reg)
-                || mojito_mir::mir::instruction_regions(instr)
-                    .into_iter()
-                    .flatten()
-                    .any(|inner| reads_reg(inner, reg))
-        })
-}
-
-/// The order a block list's blocks are lowered in: those its entry reaches,
-/// each after every block that dominates it
-/// ([`mojito_mir::mir::reverse_postorder`]), then the rest in list order.
-/// `function_level` says `blocks` is a function's own list.
-pub fn lowering_order(blocks: &[MirBlock], function_level: bool) -> Vec<MirBlockId> {
-    let mut order = mojito_mir::mir::reverse_postorder(blocks, function_level);
-    let mut reached = vec![false; blocks.len()];
-    for &block in &order {
-        reached[block] = true;
-    }
-    order.extend((0..blocks.len()).filter(|&block| !reached[block]));
-    order
 }
 
 /// One already-lowered subscript actual: an index register (with its checked
@@ -554,6 +359,10 @@ pub fn slice_struct_name(ty: &Ty) -> Option<&str> {
     }
 }
 
+/// Every register `instr` reads (operands, not destinations), for last-use
+/// bookkeeping; a region op's regions are walked separately. Instructions
+/// outside the supported subset reject before any owned temporary could
+/// reach them, so their operands may be approximate.
 pub fn operand_regs(instr: &MirInstr) -> Vec<Reg> {
     pub(super) fn place_regs(place: &MirPlace, out: &mut Vec<Reg>) {
         for proj in &place.proj {
@@ -673,24 +482,11 @@ pub fn operand_regs(instr: &MirInstr) -> Vec<Reg> {
             variant, handler, ..
         } => out.extend([*variant, *handler]),
         MirInstr::MakeSimd { elems, .. } => out.extend(elems.iter().copied()),
+        MirInstr::If { cond, .. } => out.push(*cond),
+        MirInstr::Loop { operands, .. } => out.extend(operands.iter().copied()),
         _ => {}
     }
     out
-}
-
-/// Every register a terminator reads.
-pub fn terminator_regs(term: &MirTerm) -> Vec<Reg> {
-    match term {
-        MirTerm::Branch { cond, .. } => vec![*cond],
-        MirTerm::ComptimeBranch { .. } | MirTerm::ComptimeFor { .. } => Vec::new(),
-        MirTerm::Return(Some(reg))
-        | MirTerm::ReturnWithCleanup {
-            value: Some(reg), ..
-        } => {
-            vec![*reg]
-        }
-        _ => Vec::new(),
-    }
 }
 
 pub const fn instr_name(instr: &MirInstr) -> &'static str {

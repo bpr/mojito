@@ -1,9 +1,11 @@
 //! Per-function lowering of scalar MIR to pliron's LLVM dialect.
 //!
-//! Registers map to SSA values inside their block; cross-block dataflow
-//! arrives through variable slots, which lower to entry-block allocas with
-//! `load`/`store` at each `UseVar`/`DefVar` (pliron's mem2reg pass rebuilds
-//! SSA afterwards). Integer and float literals fold through their
+//! Registers map to SSA values; variable slots lower to entry-block allocas
+//! with `load`/`store` at each `UseVar`/`DefVar` (pliron's mem2reg pass
+//! rebuilds SSA afterwards). Region ops lower as upstream's
+//! `LowerControlFlow` lowers `hlcf`: each region's block becomes an LLVM
+//! block, and each value a region terminator carries becomes an argument of
+//! the block it enters (`regions.rs`). Integer and float literals fold through their
 //! `MaterializeLiteral` into single constants with the VM's exact wrapping
 //! semantics; `FloorDiv`/`Mod` expand to branch-free select sequences matching
 //! the VM's `floor_div`/`floor_mod` behind a division-by-zero trap guard, and
@@ -56,9 +58,9 @@ use mojito_checked::checked::CheckedConst;
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_common::token::SourceSpan;
 use mojito_mir::mir::{
-    CleanupDrop, Const as MirConst, MirBlock, MirBlockId, MirCaptureMode, MirClosureCapture,
-    MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace, MirStructDeclaration,
-    MirTerm, Proj, Reg, UseMode,
+    CleanupDrop, Const as MirConst, MirBlock, MirCaptureMode, MirClosureCapture, MirDeclarations,
+    MirFunction, MirFunctionDeclaration, MirInstr, MirPlace, MirStructDeclaration, MirTerm, Proj,
+    Reg, RegionFrame, UseMode,
 };
 use mojito_types::types::{Ty, TyArg, canonical_simd_ty, scalar_simd_dtype};
 
@@ -202,6 +204,7 @@ mod module_env;
 mod places;
 mod pointers;
 mod print;
+mod regions;
 mod release;
 mod simd;
 mod subscripts;
@@ -215,6 +218,9 @@ mod vars;
 pub use module_env::*;
 pub use support::*;
 pub use types::*;
+
+use regions::{Carrier, OpenBlock, RegionEnd, RegionTarget};
+use release::TempRelease;
 
 /// The module-wide read-only lowering environment shared by every function
 /// body: compiled signatures, call-binding declarations, and the span
@@ -260,9 +266,9 @@ pub fn lower_body(
         str_runtime: HashMap::new(),
         owned_temps: HashMap::new(),
         last_uses: HashMap::new(),
-        position_lists: Vec::new(),
-        crossing_temps: HashMap::new(),
-        position: (0, 0),
+        temp_releases: HashMap::new(),
+        open_blocks: Vec::new(),
+        lazy_values: Vec::new(),
         erased: HashSet::new(),
         print_sink: None,
         partially_moved: HashSet::new(),
@@ -276,15 +282,13 @@ pub fn lower_body(
         reference_places: HashMap::new(),
         drop_flags: HashMap::new(),
         var_slots: Vec::new(),
-        blocks: Vec::new(),
-        function_blocks: Vec::new(),
+        carriers: Vec::new(),
+        region_targets: Vec::new(),
         try_frames: Vec::new(),
         finally_states: Vec::new(),
         exit_sites: Vec::new(),
         finally_overrides: Vec::new(),
         pending_ret: None,
-        try_yield_target: None,
-        next_region_block: 0,
         trap_blocks: HashMap::new(),
         region: None,
         entry: None,
@@ -407,10 +411,11 @@ struct FinallyState {
     after: Ptr<BasicBlock>,
 }
 
-/// One function-exit site that may cross `finally` regions: a return
-/// terminator (its value staged at the site, its carried cleanup run at the
-/// terminal after every pending finalbody) or a `break`/`continue` escape to
-/// a function-level block.
+/// One exit site that may cross `finally` regions: a return terminator (its
+/// value staged at the site, its carried cleanup run at the terminal after
+/// every pending finalbody) or a region exit (`break`, `continue`,
+/// `match.next`, `match.complete`) leaving a `try` part for a region op
+/// outside it.
 struct ExitSiteInfo {
     action: ExitAction,
     /// `finally_states` indices whose pending outcome this site overrides
@@ -418,25 +423,23 @@ struct ExitSiteInfo {
     /// for returns — the VM merges the overridden return's cleanup roots
     /// into the overriding return's frame-end cleanup.
     overrides: Vec<usize>,
+    /// How many `try` frames enclose the site's destination: the crossing
+    /// stops at the frames outside it (0 for a return).
+    depth: usize,
     /// Lazily created terminal block (dispatch chains target it).
     terminal: Option<Ptr<BasicBlock>>,
 }
 
 enum ExitAction {
-    Return { cleanup: Vec<CleanupDrop> },
-    Escape { target: usize },
-}
-
-/// An owned temporary whose final read sits in a later block of its list
-/// ([`PositionList::crossing_span`]).
-struct CrossingTemp {
-    /// The index of its list in `position_lists`.
-    list: usize,
-    /// The list's blocks on a path from the definition to the final read,
-    /// by local index.
-    live: Vec<bool>,
-    /// The position-space id of the block holding the final read.
-    last: usize,
+    Return {
+        cleanup: Vec<CleanupDrop>,
+    },
+    /// Branch to `target`, passing the scalar values the site staged in
+    /// `staged` (its aggregates sit in the target's staging storage).
+    Leave {
+        target: Ptr<BasicBlock>,
+        staged: Vec<(Value, TypeHandle)>,
+    },
 }
 
 struct FnLowering<'a> {
@@ -475,17 +478,22 @@ struct FnLowering<'a> {
     /// heap buffers free directly after the temporary's last use, and no
     /// user destructor runs.
     owned_temps: HashMap<u32, Ty>,
-    /// `(block, instruction)` of each register's final operand appearance;
-    /// terminator uses record `usize::MAX`.
-    last_uses: HashMap<u32, (usize, usize)>,
-    /// The block lists in `last_uses`' position space: the function's own,
-    /// then each `try` region's as `record_last_uses` reaches it.
-    position_lists: Vec<PositionList<'a>>,
-    /// The owned temporaries whose final read sits in a later block of
-    /// their list, released on every edge leaving their path to it.
-    crossing_temps: HashMap<u32, CrossingTemp>,
-    /// The `(block, instruction)` currently being lowered.
-    position: (usize, usize),
+    /// Each register's final read, as the chain of `(block, instruction)`
+    /// positions from the body block down to the reading position: a read
+    /// inside a region is a read by the region op holding it at every
+    /// enclosing level. A terminator read is at `usize::MAX`.
+    last_uses: HashMap<u32, Vec<(BlockKey, usize)>>,
+    /// Where each owned temporary is released: its defining block, and the
+    /// position there of its final read.
+    temp_releases: HashMap<u32, TempRelease>,
+    /// The blocks being lowered, outermost first, each with the position of
+    /// the instruction being lowered in it.
+    open_blocks: Vec<OpenBlock>,
+    /// Registers whose value a read materialized on demand (a pending
+    /// literal, a string descriptor) at the position being lowered, in
+    /// order, each with the value it replaced: a region's own revert when
+    /// it ends, since its block does not dominate its siblings.
+    lazy_values: Vec<(u32, Option<Value>)>,
     /// Registers written by semantically erased instructions (analysis
     /// markers, void call results). Reading one is an internal invariant
     /// violation surfaced as a diagnostic, never a silent miscompile.
@@ -547,35 +555,28 @@ struct FnLowering<'a> {
     /// slots alias the incoming pointer (write-through), but an owned one of
     /// a register-passable trivial type, which the callee copies.
     var_slots: Vec<Value>,
-    /// Pliron block for each MIR block id — the enclosing function's blocks
-    /// outside `try` regions, a region's local mini-CFG blocks while one
-    /// lowers (regions share the register/variable space but have local
-    /// block ids).
-    blocks: Vec<Ptr<BasicBlock>>,
-    /// The function-level block map regardless of region nesting —
-    /// `EscapeJump` targets enclosing-function blocks.
-    function_blocks: Vec<Ptr<BasicBlock>>,
+    /// The blocks region values enter (arena — region targets and region
+    /// ends refer by index).
+    carriers: Vec<Carrier>,
+    /// The region ops enclosing the block being lowered that a `break`,
+    /// `continue`, `match.next`, or `match.complete` may leave, innermost
+    /// last.
+    region_targets: Vec<RegionTarget>,
     /// Enclosing `try` frames, innermost last: a raise edge jumps to the
     /// innermost landing block.
     try_frames: Vec<TryFrame>,
     /// Pending-outcome state of each `finally`-bearing try (arena — frames
     /// and sites refer by index).
     finally_states: Vec<FinallyState>,
-    /// Function-exit sites that cross `finally` regions.
+    /// Exit sites that cross `finally` regions.
     exit_sites: Vec<ExitSiteInfo>,
     /// `finally_states` indices whose finalbody is lexically being lowered,
-    /// innermost last: a raise/return/escape inside a finalbody overrides
-    /// that pending outcome and must resolve it (drop the pending return's
-    /// carried roots, free a pending error).
+    /// innermost last: a raise, return, or region exit leaving a finalbody
+    /// overrides that pending outcome and must resolve it (drop the pending
+    /// return's carried roots, free a pending error).
     finally_overrides: Vec<usize>,
     /// Staging slot for a scalar return value crossing `finally` regions.
     pending_ret: Option<Value>,
-    /// Where a region's `TryYield` terminator jumps.
-    try_yield_target: Option<Ptr<BasicBlock>>,
-    /// The next synthetic block id in the last-use position space; region
-    /// blocks take ids past the function's own, assigned in exactly the
-    /// order `record_last_uses` assigns them.
-    next_region_block: usize,
     /// Lazily created per-category trap blocks of this function.
     trap_blocks: HashMap<u8, Ptr<BasicBlock>>,
     /// The function's body region (for appending guard/trap blocks).

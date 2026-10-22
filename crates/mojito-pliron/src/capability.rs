@@ -135,6 +135,16 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "the elaborator answers every layout query under the target; one that survives rejects",
     ),
     (
+        "param_list.address",
+        CapabilityStatus::Supported,
+        "the address of the interned constant element array (`mjplist_<n>`)",
+    ),
+    (
+        "store_to_mem",
+        CapabilityStatus::Unsupported,
+        "compile-time memory has no run-time form; only a lifted compile-time evaluation holds one",
+    ),
+    (
         "type.name",
         CapabilityStatus::Unsupported,
         "the elaborator spells every type name as a constant; one that survives rejects",
@@ -143,6 +153,11 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "type.construct",
         CapabilityStatus::Unsupported,
         "monomorphization leaves no type parameter to construct; one that survives rejects",
+    ),
+    (
+        "type.construct_expr",
+        CapabilityStatus::Unsupported,
+        "monomorphization leaves no type expression to construct; one that survives rejects",
     ),
     (
         "literal.materialize",
@@ -261,6 +276,11 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "typed element lists; variadic call sites build packs by relocation",
     ),
     (
+        "struct.create",
+        CapabilityStatus::Supported,
+        "the struct's storage built from its field values",
+    ),
+    (
         "variant.make",
         CapabilityStatus::Supported,
         "tagged aggregate construction over the normative Variant layout",
@@ -328,17 +348,17 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "try",
         CapabilityStatus::Supported,
-        "structural flattening with cleanup drops and finally dispatch",
+        "lowered to LLVM blocks as `LowerControlFlow` lowers `lit.try`, with cleanup drops and finally dispatch",
     ),
     (
         "if",
-        CapabilityStatus::Unsupported,
-        "`compile` lowers it (`lower-control-flow`) before native lowering",
+        CapabilityStatus::Supported,
+        "lowered to LLVM blocks as `LowerControlFlow` lowers `hlcf.if`: a conditional branch into its regions, its results arguments of the block after it",
     ),
     (
         "loop",
-        CapabilityStatus::Unsupported,
-        "`compile` lowers it (`lower-control-flow`) before native lowering",
+        CapabilityStatus::Supported,
+        "lowered to LLVM blocks as `LowerControlFlow` lowers `hlcf.loop`: its arguments and results block arguments, a break or continue crossing `finally` regions through the pending-outcome dispatch",
     ),
     (
         "comptime.if",
@@ -349,6 +369,16 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "comptime.for",
         CapabilityStatus::Unsupported,
         "the elaborator decides it; concrete MIR carries none",
+    ),
+    (
+        "comptime.assert",
+        CapabilityStatus::Unsupported,
+        "the elaborator judges it; concrete MIR carries none",
+    ),
+    (
+        "match",
+        CapabilityStatus::Supported,
+        "lowered to LLVM blocks as `LowerControlFlow` lowers `hlcf.match`: each case a block entered with its arguments, its results arguments of the block after it",
     ),
     (
         "drop.reg",
@@ -374,6 +404,16 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "drop.place",
         CapabilityStatus::Supported,
         "destroys one depth-1 struct field under its leaf flag and clears the flag",
+    ),
+    (
+        "ownership.mark_initialized",
+        CapabilityStatus::Supported,
+        "a marker over storage that already exists; it lowers to nothing",
+    ),
+    (
+        "ownership.mark_destroyed",
+        CapabilityStatus::Supported,
+        "clears the place's presence flag",
     ),
     (
         "unsupported",

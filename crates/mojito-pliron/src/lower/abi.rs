@@ -117,7 +117,7 @@ impl FnLowering<'_> {
             len.get_result(ctx),
             dest,
         );
-        self.reg_values.insert(reg.0, storage);
+        self.cache_lazy(reg, storage);
         Ok(storage)
     }
 
@@ -139,7 +139,7 @@ impl FnLowering<'_> {
         self.mem_copy_dynamic(ctx, copy, data, len, dest);
         let storage = self.entry_alloca(ctx, 24, 8);
         self.store_string_fields(ctx, storage, copy, len, len, dest);
-        self.reg_values.insert(reg.0, storage);
+        self.cache_lazy(reg, storage);
         if !owned {
             self.mark_owned_temp(reg, string_ty.clone())?;
         }
@@ -401,7 +401,7 @@ impl FnLowering<'_> {
                     && let Some(literal) = self.pending_literals.get(&src.0).cloned()
                 {
                     let constant = self.exact_literal_storage(ctx, &literal, ty, src)?;
-                    self.reg_values.insert(src.0, constant);
+                    self.cache_lazy(src, constant);
                     constant
                 } else {
                     self.reg_value(ctx, src, scalar)?
@@ -451,7 +451,7 @@ impl FnLowering<'_> {
             let len = self.uint_constant(ctx, bytes.len() as u64);
             let store_len = StoreOp::new(ctx, len, len_address);
             self.append(ctx, store_len.get_operation(), Some(reg));
-            self.reg_values.insert(reg.0, storage);
+            self.cache_lazy(reg, storage);
             return Ok(storage);
         }
         // A runtime string's `(data, len)` pair passed as a `StringLiteral`
@@ -460,7 +460,7 @@ impl FnLowering<'_> {
         if let Some(descriptor) = self.str_runtime.get(&reg.0).copied() {
             let storage = self.entry_alloca(ctx, 16, 8);
             self.store_string_span_fields(ctx, storage, descriptor.data, descriptor.len, reg);
-            self.reg_values.insert(reg.0, storage);
+            self.cache_lazy(reg, storage);
             return Ok(storage);
         }
         Err(self.unsupported(

@@ -1074,8 +1074,8 @@ For `Try`, `body`, `handler`, `orelse`, and `finalbody` contain lists of local
 blocks, as every region of `if`, `loop`, `comptime.if`, and `comptime.for`
 does: a region's blocks are numbered `bb0..bbN` among themselves, entered at
 `bb0`. Parametric MIR, and so every artifact `emit-mir` writes, holds
-them, one block per region, and so does concrete MIR: each backend runs the
-`lower-control-flow` pass at its entry. Handler absence differs from a present empty handler. Its `cleanup`
+them, one block per region, and so does concrete MIR: the VM runs it as it
+stands, and Pliron lowers its region ops to LLVM blocks itself. Handler absence differs from a present empty handler. Its `cleanup`
 runs on the body's raise edge only, before the handler or the `finally`, and
 names the slots some raise in the body still holds (schema 1.53; before, it
 ran on every exit of the body). Each entry is a `drop { var: $vN,

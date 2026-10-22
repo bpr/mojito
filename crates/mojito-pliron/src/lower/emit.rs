@@ -159,7 +159,7 @@ impl FnLowering<'_> {
         }
         if let Some(literal) = self.pending_literals.get(&reg.0).cloned() {
             let value = self.materialize_pending(ctx, &literal, expected, reg)?;
-            self.reg_values.insert(reg.0, value);
+            self.cache_lazy(reg, value);
             return Ok(value);
         }
         let construct = if self.erased.contains(&reg.0) {
@@ -392,11 +392,12 @@ impl FnLowering<'_> {
         lower_ty(self.name, ty, &self.layout, None)
     }
 
-    pub(super) fn block(&self, id: MirBlockId) -> Result<Ptr<BasicBlock>, PlironError> {
-        self.blocks
-            .get(id)
-            .copied()
-            .ok_or_else(|| self.unsupported(format!("branch to missing block bb{id}"), None))
+    /// Record `value` as `reg`'s, materialized on demand at the position
+    /// being lowered: the region block it sits in forgets it when it ends
+    /// ([`FnLowering::lazy_values`]).
+    pub(super) fn cache_lazy(&mut self, reg: Reg, value: Value) {
+        let previous = self.reg_values.insert(reg.0, value);
+        self.lazy_values.push((reg.0, previous));
     }
 
     pub(super) fn reg_span(&self, reg: Reg) -> Option<SourceSpan> {

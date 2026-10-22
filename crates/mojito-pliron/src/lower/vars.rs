@@ -156,7 +156,7 @@ impl FnLowering<'_> {
             && let Some(literal) = self.pending_literals.get(&src.0).cloned()
         {
             let constant = self.exact_literal_storage(ctx, &literal, &ty, src)?;
-            self.reg_values.insert(src.0, constant);
+            self.cache_lazy(src, constant);
             return Ok(constant);
         }
         self.reg_value(ctx, src, expected)

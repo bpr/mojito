@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1273**.
+Next free ID: **R1275**.
 
 ## Ordered Work
 
@@ -140,40 +140,56 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R882.
   - Model: Opus, Not Planned.
 
-- [ ] **R883 Pliron lowers a MIR CFG where `LowerControlFlow` lowers
-  structured ops, so `lower-control-flow` and the CFG terminators survive**
+- [ ] **R1273 `lower-control-flow` survives as a MIR pass that the
+  slot-ends check, the phase entry points, and `mojito opt` still run, where
+  upstream's only `LowerControlFlow` is the LLVM lowering**
 
-  Upstream's first CFG is the one `LowerControlFlow` builds in LLVM, and
-  Mojito's backend still reads `Jump`/`Branch`.
-  - Stage 14 of `docs/structured-control-flow-plan.md`.
-  - `crates/mojito-pliron`'s `lower/term.rs` and `lower/try_flow.rs` lower
-    region ops to LLVM blocks.
-  - The transitional pass and `Jump`, `Branch`, `ComptimeBranch`, the
-    `ComptimeFor` terminator, `FallOff`, and `EscapeJump` are deleted.
-  - Until then an op result reached by several edges travels through a
-    `$yield` slot, since MIR blocks take no arguments, where
-    `LowerControlFlow` makes it an argument of the exit block: probes
-    `tests/mir_passes/lower-control-flow/loop_result_two_breaks.mir`,
-    `loop_result_break_in_try.mir`, and `if_results.mir`.
-  - Lever: delete `compile`'s per-function `lower_control_flow` clone
-    (`crates/mojito-pliron/src/lib.rs`), Pliron's lowering point since
-    R881.
-  - Then concrete verification can require structured shape
-    (`verify_structured_shape` in `verify_concrete_program`): every
-    elaborated body and CTFE fragment already has it, but a lowered
-    artifact (`mojito opt --pass lower-control-flow` output fed to `exec`)
-    is legal MIR text until the CFG terminators go.
-  - Other callers lower outside the backends and must move to Pliron or
-    go with the pass: the verifier's clone in `verify/drops.rs` (two
-    calls), `mir::lower_cfg`, `lower_checked_program_importing`, and
-    `lower_checked_program_units` (`mir.rs`, the last read by
-    `src/package.rs`'s `packaged_units` for names only),
-    `analysis::LOWER_CONTROL_FLOW` (for `opt`), `inline_parametric`'s
-    test `prices`, and `tests/mir_test.rs`'s `driver_mir`.
-  - The VM keeps its `Jump`/`Branch`/`EscapeJump` arms and `Flow::Jump`
-    (`backend/vm/regions.rs`, `exec.rs`) only for a lowered artifact;
-    they go with the terminators.
-  - Depends on R882.
+  Since R883 neither backend reads a lowered body, so the transitional pass
+  only serves callers that could read the structured body instead.
+  - Stage 14b of `docs/structured-control-flow-plan.md`.
+  - The slot-ends check and `cut_try_cleanups` (`verify/drops.rs`) lower a
+    clone. They should walk the structured body as a must-analysis, one
+    bit per slot joined by AND.
+  - In that walk an `if` or `match` joins its arms, a loop iterates to a
+    fixpoint with its break set as its live-out, and exits resolve through
+    `RegionFrame` and `region_exit`.
+  - `mir::lower_cfg`, `lower_checked_program`,
+    `lower_checked_program_importing`, and `lower_checked_program_units`
+    (`mir.rs`) stop calling `lower_control_flow_program`.
+  - The tests asserting lowered shapes follow: `tests/mir_test.rs`
+    (`driver_mir` included) and `tests/param_callable_value_test.rs`.
+  - Then `analysis::LOWER_CONTROL_FLOW`, `inline_parametric`'s `prices`
+    test, `mir/lower_control_flow.rs`, and the 21 cases under
+    `tests/mir_passes/lower-control-flow/` go.
+  - Probe: `rg 'lower_control_flow|lower-control-flow' crates src tests`
+    finds nothing, and `tests/mir_passes/elaborate-drops/double_drop.mir`
+    keeps its pinned report.
+  - Plan: slice B of `R883-pliron-lowers-a-mir-cfg-where-plan.md`.
+  - Depends on R883.
+  - Model: Opus, Planned.
+
+- [ ] **R1274 `MirTerm` keeps `Jump`, `Branch`, `ComptimeBranch`, a
+  `ComptimeFor` terminator, and `EscapeJump`, a CFG vocabulary Mojo never
+  has above LLVM**
+
+  Once R1273 deletes `lower-control-flow`, only the MIR text reader makes
+  these terminators, and a lowered artifact is still legal MIR text.
+  - Stage 14c of `docs/structured-control-flow-plan.md`.
+  - Delete the five variants (`crates/mojito-mir/src/mir/ir.rs`) and
+    follow every exhaustive match, `renumber_escapes` and `CleanupDrop`'s
+    escape role included.
+  - MIR text moves to 1.88: the five spellings leave the writer, the
+    reader, and `TERMINATOR_MNEMONICS`.
+  - The VM's arms for them (`backend/vm/regions.rs`, `exec.rs`) and
+    `Flow::Jump` (`frames.rs`) go.
+  - `verify_concrete_program` then requires `verify_structured_shape`.
+  - The lowered-body guards go with it: `is_structured_shape` in `sccp`,
+    `mem2reg`, `simplify_cf`, `opt.rs`, and Pliron's `compile`.
+  - The pass cases whose inputs hold CFG terminators are rewritten
+    structured, and the refusal cases `sccp/lowered_body` and
+    `elaborate-drops/lowered_body` are deleted.
+  - Plan: slice C of `R883-pliron-lowers-a-mir-cfg-where-plan.md`.
+  - Depends on R1273.
   - Model: Opus, Planned.
 
 - [ ] **R1271 The post-elaboration pipeline has no `AutomaticInline`, so
@@ -1028,20 +1044,27 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1113 Natively, an owned temporary is not released when a raise edge
-  or a `try` region separates it from its final read**
+- [ ] **R1113 Natively, an owned temporary is not released when a raising
+  call between its definition and its final read propagates**
 
-  The native release follows a temporary's final read into a later block of
-  its own list and frees it on every edge leaving that path, but two paths
-  still escape it.
-  - A raising call between the definition and the read propagates past the
-    temporary without freeing it, as it did within one block: a raise edge's
-    cleanup list names variables only.
-  - A final read inside a `try` region, or a definition there read after
-    the region, still rejects with "owned heap-carrying temporary used
-    across blocks", since the dominance walk covers one block list.
-  - The lever is `PositionList::crossing_span` and `leaving_temps` in
-    `crates/mojito-pliron/src/lower/support.rs` and `release.rs`.
+  The raise edge leaves past the temporary without freeing it, since a
+  raise edge's cleanup list names variables only.
+  - Since R883 the native release follows the region tree: a temporary is
+    released in its defining block after the instruction there that reads
+    it last (a region op reads what its regions read), and on each
+    terminator leaving that block before then.
+  - A raise is the one exit that releases nothing, as the propagate block
+    frees only variables' buffers.
+  - The lever is `FnLowering::raise_edge_target` and the propagate block
+    (`crates/mojito-pliron/src/lower/errors.rs`), which could release the
+    owned temporaries of the blocks a raise leaves, as
+    `release_leaving_temps` does for the other exits.
+  - No program reproduces it yet. A probe must hold a register
+    temporary, not a slot, across a raising call in one block.
+  - LeakSanitizer misses even a deliberate `unsafe_alloc` leak in the
+    `clang -fsanitize=address` recipe, so a probe reads
+    `MOJITO_PLIRON_DBG_TEMPS=1`, which lists each temporary's mark and
+    release.
   - Found while landing R1091 (2026-10-17).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -10262,30 +10285,6 @@ follow-ups the landed producer stages filed come last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R905 A `break`/`continue` from a `try` nested in another `try`'s
-  part, to a loop inside that outer part, is unsupported on Pliron**
-
-  The native build fails with "try with break/continue crossing the try
-  boundary", where the same Mojo program is valid and the VM runs it.
-  - The structured form is fine: the part ends in a labelled `break`
-    naming the loop (R874), and since R882 the VM's region cursor resolves
-    it, running each `finally`.
-  - The limit is in the lowered form: `lower-control-flow`'s
-    `Lowering::leave` can only aim an `EscapeJump` at a function-level
-    block, and this loop's blocks belong to the outer part.
-  - Probe: `def main() raises:` with `try:` around `for i in range(4):`,
-    whose body is `try:` holding `if i == 1: continue` and
-    `if i == 3: break` and `print("body", i)`, with
-    `finally: print("inner finally", i)`, and an outer
-    `finally: print("outer finally")`. The pin and the VM print
-    `body 0`, `inner finally 0`, `inner finally 1`, `body 2`,
-    `inner finally 2`, `inner finally 3`, `outer finally`.
-  - Once Pliron lowers region ops itself (R883), add that program as an
-    `assets/ok` fixture with its parity row.
-  - Found while landing R874 (2026-10-14).
-  - Depends on R883.
-  - Model: Opus, Not Planned.
-
 - [ ] **R906 A `raise` is a mid-block MIR instruction, where upstream's
   `raise` ends its block**
 
@@ -10295,9 +10294,10 @@ follow-ups the landed producer stages filed come last.
   - The special cases: `moves.rs` (two), `interior.rs`, `verify/drops.rs`,
     and `register_loans.rs`.
   - Lever: a `raise` region terminator in HIR (`Terminator`) and MIR
-    (`MirTerm`), lowered by `lower-control-flow`; the VM (`exec.rs`),
-    Pliron (`lower/instr.rs`), and the MIR text format (a version bump)
-    follow.
+    (`MirTerm`).
+  - The VM (`exec.rs`), Pliron (`lower/term.rs`, beside the other region
+    terminators), and the MIR text format (a version bump) follow, and so
+    does `lower-control-flow` unless R1273 deleted it first.
   - Dead statements after a `raise` are already erased
     (`CheckedTables::live_statements`).
   - Found while landing R889 (2026-10-14).

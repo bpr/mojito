@@ -155,9 +155,10 @@ accessed; the compact notation omits this analysis-only field.
 | `unsupported` | `Unsupported` | Report an explicitly unsupported operation |
 
 `if`, `loop`, `comptime.if`, and `comptime.for` (`If`, `Loop`, `ComptimeIf`,
-`ComptimeFor`) are the structured `hlcf` region ops. Concrete MIR carries
-none — the `lower-control-flow` pass lowers them to blocks before the VM runs
-a body — and the VM rejects one as unsupported.
+`ComptimeFor`) are the structured `hlcf` region ops, and `match` (`Match`)
+is one too. Concrete MIR keeps `if`, `loop`, and `match`, which the VM steps
+with each frame's region cursor; the elaborator decides every `comptime.if`
+and `comptime.for`, and the VM rejects one that survives as unsupported.
 
 ### Lifetime operations
 
