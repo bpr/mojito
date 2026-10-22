@@ -3251,8 +3251,8 @@ pub enum MirTerm {
         then_b: MirBlockId,
         else_b: MirBlockId,
     },
-    /// A `comptime if` arm test, as `lower-control-flow` lowers a
-    /// [`MirInstr::ComptimeIf`]: a branch whose condition is a parameter
+    /// A `comptime if` arm test in a lowered CFG body, which only older MIR
+    /// text holds, in place of a [`MirInstr::ComptimeIf`]: a branch whose condition is a parameter
     /// expression over the function's binders, decided by the elaborator, which keeps
     /// the taken arm. Ownership and drops treat it as `Branch` with the
     /// condition opaque; concrete MIR carries none.
@@ -3976,6 +3976,54 @@ mod tests {
             escape[0].term,
             MirTerm::EscapeJump { target: 1, .. }
         ));
+    }
+
+    #[test]
+    fn prune_unreachable_blocks_cuts_a_listed_slot_a_loop_ended() {
+        // A `try` in a loop body lists slot 0, which every path to its raise
+        // point has already dropped, so the list entry goes.
+        let body = vec![block(
+            vec![
+                MirInstr::DropVar {
+                    var: 0,
+                    destructor: None,
+                },
+                MirInstr::Raise { src: Reg(0) },
+            ],
+            MirTerm::TryYield,
+        )];
+        let listed = MirInstr::Try {
+            body,
+            handler: Some((None, vec![block(Vec::new(), MirTerm::TryYield)])),
+            orelse: None,
+            finalbody: None,
+            cleanup: vec![CleanupDrop::unnamed(0)],
+        };
+        let mut f = function(vec![block(
+            vec![MirInstr::Loop {
+                label: None,
+                operands: Vec::new(),
+                args: Vec::new(),
+                results: Vec::new(),
+                body: vec![block(
+                    vec![listed],
+                    MirTerm::Break {
+                        label: None,
+                        values: Vec::new(),
+                    },
+                )],
+            }],
+            MirTerm::Return(None),
+        )]);
+        f.n_vars = 1;
+        prune_unreachable_blocks(&mut f);
+        let MirInstr::Loop { body, .. } = &f.blocks[0].instrs[0] else {
+            panic!("the loop survives");
+        };
+        let MirInstr::Try { cleanup, .. } = &body[0].instrs[0] else {
+            panic!("the try survives");
+        };
+        assert!(cleanup.is_empty());
     }
 
     #[test]

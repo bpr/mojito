@@ -100,8 +100,8 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
   `try` is `HirInstr::Try` whose parts are regions of the same walk. No
   terminator jumps between blocks, and dead code after a sealed block is
   erased, so every region is one block.
-- **MIR** (`crates/mojito-mir/src/mir/ir.rs`) below `lower-control-flow`
-  is a CFG: `MirTerm` is `Jump`, `Branch`, `ComptimeBranch`, `ComptimeFor`,
+- **MIR** (`crates/mojito-mir/src/mir/ir.rs`) as a lowered artifact (older
+  MIR text) is a CFG: `MirTerm` is `Jump`, `Branch`, `ComptimeBranch`, `ComptimeFor`,
   `Return`, `ReturnWithCleanup`, `TryYield`, and `EscapeJump`.
   - The region ops are `MirInstr::Try` and, since stage 1, `If`, `Loop`,
     `ComptimeIf`, and `ComptimeFor`. Each
@@ -109,7 +109,7 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
     slots, walked by `instruction_regions`/`instruction_regions_mut` and
     `block_successors`. A structured `try` part completes by `TryYield`
     (`lit.try.yield`) and leaves to a loop by a labelled `Break`/`Continue`,
-    which `lower-control-flow` turns into `EscapeJump`.
+    where a lowered artifact (older MIR text) holds an `EscapeJump`.
   - `lower_expr/ctrl.rs` builds `short_circuit`, `ternary`, `compare_chain`,
     and `comprehension_clauses` as `If`/`Loop` region ops (stage 2), and MIR
     lowering builds HIR's region ops as the same ops (stage 3,
@@ -501,9 +501,15 @@ last producer. Every stage keeps program output unchanged; the
       crosses each `finally` on the way, so R905's shape runs natively.
       Owned temporaries release on the region tree. `compile` refuses a
       lowered body.
-    - **14b (R1273).** The transitional pass and every caller still
-      lowering go: the slot-ends check, the phase entry points, `opt`'s
-      registration, and the pass cases.
+    - **14b, landed (R1273).** The transitional `lower-control-flow` pass
+      went, with its `opt` registration and pass cases: the phase entry
+      points return the structured body (one `lower_checked_program`, one
+      `lower_cfg`), and the slot-ends check and `cut_try_cleanups` walk
+      regions as `CheckLifetimes` does, an `if` or `match` joining its
+      arms, a loop iterated to a fixpoint with its break set as live-out,
+      and region exits resolved through `RegionFrame` and `region_exit`
+      across each `finally` they cross. The block-list fixpoint and the
+      `EscapeJump` channel stay for older MIR text until 14c.
     - **14c (R1274).** The CFG terminators leave `MirTerm`, with the VM's
       arms for them, and concrete verification requires the structured
       shape.

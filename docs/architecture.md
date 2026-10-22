@@ -619,7 +619,7 @@ names (`mir::region_exit`, `RegionFrame::names`); one leaving a `try` part
 for an op outside it pends on each `finally` it crosses as a return does,
 its values staged at the site. `hlcf.unreachable` is `llvm.unreachable`.
 Concrete MIR reaches `compile` structured, and a lowered body (CFG blocks,
-as `mojito opt --pass lower-control-flow` writes) is refused. Owned register
+which only older MIR text holds) is refused. Owned register
 temporaries follow the region tree: one is released in the block defining
 it, after the instruction there that reads it last (a region op reads what
 its regions read), and on each terminator leaving that block before then.
@@ -874,10 +874,9 @@ keeps a `comptime if`, the checker types every arm with the binders symbolic
 and records each condition it compiles as a constraint
 (`SemanticAdjustment::ComptimeCondition`), HIR and MIR lower it as the
 `ComptimeIf` region op (`hlcf.comptime.if`), every condition first, then one
-region per arm, and `lower-control-flow` lowers that to a chain of
-`ComptimeBranch` terminators — branches whose condition is a
-`GenericConstraint` over the function's binders, not a register — and
-`native::mono` decides it under the instance's bindings after drop
+region per arm (older MIR text spells it as a chain of `ComptimeBranch`
+terminators — branches whose condition is a `GenericConstraint` over the
+function's binders, not a register), and `native::mono` decides it under the instance's bindings after drop
 elaboration (`select_comptime_branches`), keeping the taken arm and pruning
 the other (`mir::prune_unreachable_blocks`) before any call in it is
 enqueued. A condition the constraint compiler does not close (an
@@ -1086,8 +1085,8 @@ alias. A thunk reads a local `comptime` value bound before it (`comptime k
 = n + 1`) as the parameter expression it denotes
 (`EnclosingBinders::comptime_bindings`). HIR lowers the
 loop as an `HirInstr::ComptimeFor` region op, MIR lowering as the
-`ComptimeFor` region op and `lower-control-flow` as the `ComptimeFor`
-terminator — the binder, the slot the body reads it through, and the
+`ComptimeFor` region op (older MIR text as the `ComptimeFor` terminator) —
+the binder, the slot the body reads it through, and the
 sequence, as upstream's `hlcf.comptime.for` iterates a compile-time sequence —
 the ownership analysis and drop
 elaboration decide it as the loop of the same shape with its trip count
@@ -2689,9 +2688,9 @@ the statements after a `return`, `break`, `continue`, or `raise` are erased
 before they lower, as `LowerSemanticCF`'s `eraseOpToEndOfBlock` erases the
 ops after a terminator, so they reach no slot, block, or nested function
 (`find_nested_defs` reads the same rule). MIR lowering builds the matching
-MIR region ops (`Flatten::hir_region`); `lower_cfg` lowers them to blocks
-with `lower-control-flow` for phase tests, and the production pipeline only
-in the elaborator, as it fetches each template.
+MIR region ops (`Flatten::hir_region`), which every MIR phase reads; only
+Pliron lowers them to blocks (`lower/regions.rs`), as upstream's
+`LowerControlFlow` lowers `hlcf` on its way to LLVM.
 
 Each HIR block has:
 
@@ -3313,8 +3312,12 @@ a `break`/`continue` names an enclosing loop; a `comptime.for.break` or
 results or its body's arguments, whose operands and results agree as
 `ComptimeForOp::verify` requires; a `match.complete` and a `match`'s else
 `yield` carry its results (`verify/structure.rs`).
-The slot-ends check runs on a body's `lower-control-flow` lowering, and a
-structured body that ends no slot (no `drop.var`, `var.consume`, or
+The slot-ends check walks the structured body as upstream's
+`CheckLifetimes` walks `hlcf` (`verify/drops.rs`): an `if` or `match` joins
+its arms, a loop iterates its body to a fixpoint and leaves in the join of
+its `break`s, and a `break`, `continue`, or `match` exit resolves through
+`RegionFrame` and `region_exit`, running each `finally` it crosses. A body
+that ends no slot (no `drop.var`, `var.consume`, or
 cleanup list), as every pre-drop body is but for explicit destroys, has no
 finding without one. A third
 mode, `verify_structured_function_in`, adds upstream's structured form for
@@ -4099,46 +4102,10 @@ MIR lowering builds `and`/`or`, conditional expressions, comparison
 chains, and comprehensions as `If`/`Loop`, each region one block (a
 conditional expression whose condition the checker found a parameter value,
 `SemanticAdjustment::ComptimeConditional`, is a `ComptimeIf` with results,
-as upstream's `IfElseOpNode` emits `hlcf.comptime.if`), and
-`mir::lower_control_flow`, a transitional MIR-to-MIR stand-in for upstream's
-`LowerControlFlow` that only the phase entry points, the slot-ends check,
-and `mojito opt` still run (both backends read concrete MIR structured:
-the VM runs region ops as they stand, and Pliron lowers them to LLVM blocks
-itself), lowers runtime region ops to blocks and the CFG terminators: a
-region's blocks are appended to its list, the rest of the block moves to a
-join, an op's results go through one slot each, stored at a `yield` or
-`break` and forwarded at the join, except that a loop left by one `break`
-in its own list (no `try` part between them, since a break there escapes) has
-each result replaced by the value that break carries, as a block argument
-with one predecessor is its operand once upstream's `LowerControlFlow` has
-run (`tests/mir_passes/lower-control-flow/loop_result_*.mir`), a loop's
-arguments go through one slot each, its operands stored before the
-entering jump and each `continue`'s values before its jump to the header,
-forwarded at the body's entry, except that a loop no `continue` resumes
-has each argument replaced by its operand
-(`tests/mir_passes/lower-control-flow/loop_argument*.mir`), an elif's or a
-`match` region's arguments go through one slot each, stored at every
-`if.elifcond.yield` or `match.next` entering the region and forwarded at
-its entry, except that a region entered from one such terminator in the
-op's own list has each argument replaced by the value it carries
-(`tests/mir_passes/lower-control-flow/elif_arguments.mir`,
-`match_next_arguments.mir`), a `match`'s results go through one slot each,
-stored at every `match.complete` and at the else region's `yield`, except
-that a `match` whose join one such edge in its own list reaches has each
-result replaced by the value that edge carries
-(`match_results.mir`, `match_result_one_complete.mir`), a `comptime for`'s
-arguments go through one slot each as a loop's do, or are replaced by its
-operands when no `comptime.for.continue` resumes it, and its results go
-through one slot each, stored at every `comptime.for.break`, except that
-one `comptime.for.break` in the body's own list has each result replaced
-by the value it carries (`comptime_for_values.mir`; only a phase's
-lowering meets a `comptime for`, since the elaborator unrolls each on its
-region), a
-`break`/`continue` leaving a `try` part to a
-function-level loop is an `EscapeJump`, a `match` case's `match.next` and
-`match.complete` jump to the next case's entry and to the join through a
-frame like a loop's (`tests/mir_passes/lower-control-flow/match_cases.mir`),
-and `Unreachable` is `Return(None)`.
+as upstream's `IfElseOpNode` emits `hlcf.comptime.if`), and every MIR
+phase reads those region ops: the VM runs them as they stand, and Pliron's
+`lower/regions.rs` is the only lowering to blocks, as upstream's
+`LowerControlFlow` lowers `hlcf` on its way to LLVM.
 Register typing (`close_register_types`, which types an `If`'s or
 `ComptimeIf`'s results from the first arm yielding them typed), named-result
 materialization, and pre-drop verification read the structured body, and
@@ -4149,10 +4116,9 @@ its continue set stops changing, its break set being the live-out, and a
 `break`/`continue` joins its state into the loop it names, through any
 `finally` it crosses. The interior-origin check is part of that scan, and
 the loan check reads the same regions (`analysis/region_walk.rs`).
-Every analysis after the ownership check, the elaborator,
-the VM, and the Pliron backend sees only lowered MIR; `lower_checked_program`
-and its importing and per-unit forms return the lowered program for phase
-tests, and `lower_checked_program_structured` the structured one.
+Every analysis after the ownership check, the elaborator, and
+the VM read the same structured MIR; `lower_checked_program` and its
+importing and per-unit forms are the one lowering entry point.
 
 ### Spans
 
@@ -4771,9 +4737,9 @@ the states the body's raise points leave (through the raise edge's cleanup,
 its error slot bound whole), the `try` raising in any state inside it, the
 `else` as the body completes, the `finally` on every way out of them, and
 the op completing as its `else` (or body) and handler do. Region exits
-resolve by `lower-control-flow`'s rule (`mir::RegionFrame`,
+resolve by the rule the VM and Pliron share (`mir::RegionFrame`,
 `mir::region_exit`); one leaving a `try` part arrives as it leaves, or
-partial past a `finally`, as an escape from a lowered part does. A `var.store`, a
+partial past a `finally`. A `var.store`, a
 whole-slot `mark_initialized`, or a `for` loop's iterator fills the slot;
 a declaration, a drop, a consume, a moving use, or an owned `iter.init`
 consuming it into an iterator slot of its own empties it; a move,
@@ -5366,9 +5332,9 @@ order, the order of every shared death point — and both backends run it front
 to back, so a raise destroys the body's live values newest declaration first,
 as Mojo does.
 
-`lower-control-flow` turns a `break`/`continue` leaving a `try` part into an
-`EscapeJump`, whose `cleanup` stays empty: what dies on the escape died before
-it, in the part.
+A `break`/`continue` leaving a `try` part carries no cleanup list: what dies
+on the exit died before it, in the part. (An `EscapeJump` in older MIR text
+keeps its list, which the slot-ends check still reads.)
 
 Iterator-driven loops also place an explicit drop at their common exhaustion or
 `break` exit. A `return` cannot reach that block, so HIR lists its current
@@ -5514,9 +5480,8 @@ point where a slot declared in a loop is uninitialized again.
   (`mir::prune_unreachable_blocks`, MLIR's `eraseUnreachableBlocks`), and
   cuts each `try`'s raise-edge cleanup to the slots a remaining raise path
   still holds (`verify::cut_try_cleanups`, over the slot-ends walk of
-  `verify/drops.rs`; a structured body is walked through its
-  `lower-control-flow` lowering, which moves each list whole, so a list is
-  found again by its buffer), as erasing a raise point erases the
+  `verify/drops.rs`, which walks the structured body and finds each list
+  by its buffer), as erasing a raise point erases the
   destructors on its edge. It
   then folds each `value.copy` that is the identity to its operand (R780,
   `MirInstr::forwarded_operand`, MLIR's `fold` returning an operand): when
@@ -5577,9 +5542,7 @@ point where a slot declared in a loop is uninitialized again.
   copy or drop running no constructor or destructor, and a repeated
   constant are free, an `if` costs one plus one per `elif`, each reached
   `continue` four beyond its loop's test and body (the private
-  `structured_back_edges` counts them; the unit test pins that a body
-  prices the same as its `lower-control-flow` lowering, a `branch` and a
-  back edge priced alike), `iter.init` the whole
+  `structured_back_edges` counts them), `iter.init` the whole
   bound as the pin's `range` protocol does, and `print` the 28 its call
   site costs there; each other instruction costs one, a `try` with its
   parts free. Every body is placed as upstream's `inlineGeneratorCall`
@@ -6322,10 +6285,7 @@ point where a slot declared in a loop is uninitialized again.
   shape (`verify_structured_shape`).
 - **Pass tests.** `pass_named` looks a pass up by name, as MLIR's pass
   registry does: every `PIPELINE` pass, plus `ELABORATE_DROPS`
-  (`elaborate-drops`), drop elaboration run on request, and
-  `LOWER_CONTROL_FLOW` (`lower-control-flow`), the lowering of structured
-  region ops to blocks, which each backend runs at its entry and no seam
-  runs, and `SIMPLIFY_CF` (`simplify-cf`), which only the post-elaboration
+  (`elaborate-drops`), drop elaboration run on request, and `SIMPLIFY_CF` (`simplify-cf`), which only the post-elaboration
   pipeline runs. `elaborate-drops` output is structured, as
   every pipeline pass reads it. `analysis::opt`,
   the `mlir-opt` analogue behind `mojito opt [--pass NAME]… [FILE]`, loads a
@@ -6710,7 +6670,7 @@ pushes a level for the region it runs first and binds that region's
 arguments, and each region terminator (`yield`, `if.elifcond.yield`,
 `break`, `continue`, `match.next`, `match.complete`) moves the position,
 binding the values it carries all at once. A `break` or `continue` resolves
-by `mir::region_exit` and `RegionFrame::names`, `lower-control-flow`'s rule.
+by `mir::region_exit` and `RegionFrame::names`, the rule Pliron shares.
 A call in any region is a pushed frame, so neither nesting nor recursion grows
 the host stack. Reaching `hlcf.unreachable` is a runtime error.
 

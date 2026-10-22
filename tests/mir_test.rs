@@ -5,8 +5,8 @@
 use mojito::hir::Cfg;
 use mojito::mir::{
     LoopLabel, MirBlock, MirDeclarations, MirFunction, MirInstr, MirPlace, MirProgram,
-    MirSubscriptArg, MirTerm, Proj, Reg, SpanTable, UseMode, cleanup_drops,
-    has_structured_control_flow, lower_cfg, lower_cfg_structured, lower_program,
+    MirSubscriptArg, MirTerm, Proj, Reg, SpanTable, UseMode, cleanup_drops, lower_cfg,
+    lower_program, nested_instructions,
 };
 use mojito::types::TyKind;
 use mojito::{Compiler, SemanticAdjustment, Ty, parse};
@@ -55,10 +55,8 @@ fn value_binder_slot_is_typed_by_its_declaration() {
         matches!(binder_slot_ty(plain, "n"), Some(TyKind::Int)),
         "{plain:#?}"
     );
-    for var in plain
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
+    for var in nested_instructions(&plain.blocks)
+        .into_iter()
         .filter_map(|instr| match instr {
             MirInstr::UseVar { var, .. } | MirInstr::DropVar { var, .. } => Some(*var),
             _ => None,
@@ -417,10 +415,8 @@ fn split_iterator_slot_is_typed_by_its_iter_result() {
     let main = mir_function(&mir, "main");
     assert!(slot_ty(main, "$compiterobj").is_some(), "{main:#?}");
     for function in [total, first_or, main] {
-        for var in function
-            .blocks
-            .iter()
-            .flat_map(|block| &block.instrs)
+        for var in nested_instructions(&function.blocks)
+            .into_iter()
             .filter_map(|instr| match instr {
                 MirInstr::UseVar { var, .. } | MirInstr::DropVar { var, .. } => Some(*var),
                 _ => None,
@@ -461,10 +457,8 @@ fn owned_iteration_iterator_has_a_slot_of_its_own() {
         ),
         "{main:#?}"
     );
-    let consumed = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
+    let consumed = nested_instructions(&main.blocks)
+        .into_iter()
         .find_map(MirInstr::consumed_iteration_source);
     assert_eq!(consumed, Some(source_slot), "{main:#?}");
 }
@@ -474,34 +468,53 @@ fn try_next_yield_is_bound_past_the_exhaustion_test() {
     let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct I:\n    var current: Int\n    var end: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        if self.current >= self.end:\n            raise StopIteration(0)\n        var result = self.current\n        self.current += 1\n        return result\n\n@fieldwise_init\nstruct C:\n    var end: Int\n    def __iter__(self) -> I:\n        return I(0, self.end)\n\ndef main():\n    for value in C(2):\n        print(value)\n";
     let program = lower_program(&parse(source).expect("parse")).expect("checked lowering");
     let main = mir_function(&program, "main");
-    let (stepping, element) = main
-        .blocks
-        .iter()
-        .enumerate()
-        .find_map(|(index, block)| {
-            block
-                .instrs
-                .iter()
-                .find_map(|instruction| match instruction {
-                    MirInstr::TryNext { dest, .. } => Some((index, *dest)),
-                    _ => None,
-                })
+    let element = nested_instructions(&main.blocks)
+        .into_iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::TryNext { dest, .. } => Some(*dest),
+            _ => None,
         })
         .expect("typed TryNext");
-    let binding = main
-        .blocks
-        .iter()
-        .position(|block| {
-            block.instrs.iter().any(
-                |instruction| matches!(instruction, MirInstr::DefVar { src, .. } if *src == element),
-            )
-        })
-        .expect("bound element");
-    assert!(
-        matches!(main.blocks[stepping].term, MirTerm::Branch { .. }),
-        "{main:#?}"
+    let stepping = list_holding(&main.blocks, &|instruction| {
+        matches!(instruction, MirInstr::TryNext { .. })
+    })
+    .expect("the stepping region");
+    let instructions: Vec<_> = stepping.iter().flat_map(|block| &block.instrs).collect();
+    let position = |holds: &dyn Fn(&MirInstr) -> bool| {
+        instructions
+            .iter()
+            .position(|instruction| holds(instruction))
+            .unwrap_or_else(|| panic!("{main:#?}"))
+    };
+    // The element is bound past the `if` whose arm leaves the loop once the
+    // iterator is exhausted.
+    let step = position(&|instruction| matches!(instruction, MirInstr::TryNext { .. }));
+    let test = position(&|instruction| {
+        matches!(instruction, MirInstr::If { .. })
+            && mojito::mir::instruction_regions(instruction)
+                .into_iter()
+                .flatten()
+                .any(|block| matches!(block.term, MirTerm::Break { .. }))
+    });
+    let binding = position(
+        &|instruction| matches!(instruction, MirInstr::DefVar { src, .. } if *src == element),
     );
-    assert_ne!(stepping, binding, "{main:#?}");
+    assert!(step < test && test < binding, "{main:#?}");
+}
+
+/// The block list of `blocks`, at any depth, holding an instruction
+/// `holds` accepts.
+fn list_holding<'a>(
+    blocks: &'a [MirBlock],
+    holds: &dyn Fn(&MirInstr) -> bool,
+) -> Option<&'a [MirBlock]> {
+    let instructions = blocks.iter().flat_map(|block| &block.instrs);
+    if instructions.clone().any(holds) {
+        return Some(blocks);
+    }
+    instructions
+        .flat_map(mojito::mir::instruction_regions)
+        .find_map(|region| list_holding(region, holds))
 }
 
 #[test]
@@ -582,14 +595,13 @@ fn checked_program_mir(source: &str) -> mojito::mir::MirProgram {
 }
 
 /// Compile `source` and return the driver's verified MIR, which checks the
-/// program against the imported std package's declarations, its control
-/// flow lowered to blocks as drop elaboration leaves it.
+/// program against the imported std package's declarations, structured as
+/// drop elaboration leaves it.
 fn driver_mir(source: &str) -> mojito::mir::MirProgram {
     let compiled = Compiler::default()
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile");
-    let mut mir = compiled.mir().clone();
-    mojito::mir::lower_control_flow_program(&mut mir);
+    let mir = compiled.mir().clone();
     assert!(
         mir.invariant_errors.is_empty(),
         "{:?}",
@@ -641,7 +653,7 @@ def main() raises:
     print(f(1))
 "#;
     for name in ["f", "main"] {
-        let (_, mir) = checked_function_with(source, name, lower_cfg_structured);
+        let (_, mir) = checked_function(source, name);
         assert_eq!(
             mojito::mir::verify::verify_structured_shape(name, &mir),
             Vec::<String>::new()
@@ -688,7 +700,7 @@ def main():
     var ys = [x for x in xs if x > 0]
     print(both, n, s, chained, len(ys))
 "#;
-    let (cfg, mir) = checked_main_with(source, lower_cfg_structured);
+    let (cfg, mir) = checked_main(source);
     assert_eq!(
         mir.blocks.len(),
         cfg.root.blocks.len(),
@@ -705,8 +717,6 @@ def main():
             "if 1", "if 1", "if 0", "if 1", "if 1", "loop", "if 0", "if 0"
         ]
     );
-    let (_, lowered) = checked_main(source);
-    assert!(!has_structured_control_flow(&lowered));
 }
 
 #[test]
@@ -722,19 +732,11 @@ def main():
     else:
         print("small")
 "#;
-    let (_, mir) = checked_main_with(source, lower_cfg_structured);
+    let (_, mir) = checked_main(source);
     assert_eq!(mir.blocks.len(), 1, "a comptime if adds no block");
     let mut ops = Vec::new();
     region_ops(&mir.blocks, &mut ops);
     assert_eq!(ops, ["comptime.if 2"]);
-    let (_, lowered) = checked_main(source);
-    assert!(!has_structured_control_flow(&lowered));
-    assert!(
-        lowered
-            .blocks
-            .iter()
-            .any(|block| matches!(block.term, MirTerm::ComptimeBranch { .. }))
-    );
 }
 
 #[test]
@@ -754,7 +756,7 @@ def pick[flag: Bool, n: Int]() -> Int:
 def main():
     print(pick[True, 1]())
 "#;
-    let (_, mir) = checked_function_with(source, "pick", lower_cfg_structured);
+    let (_, mir) = checked_function(source, "pick");
     let mut ops = Vec::new();
     region_ops(&mir.blocks, &mut ops);
     // The two parameter-valued conditions select an arm per instance, the
@@ -818,21 +820,12 @@ fn region_ops(blocks: &[MirBlock], ops: &mut Vec<String>) {
 
 /// Compile `src` and lower its `main`'s checked CFG to MIR.
 fn checked_main(src: &str) -> (Cfg, MirFunction) {
-    checked_main_with(src, lower_cfg)
-}
-
-/// Compile `src` and lower its `main`'s checked CFG with `lower`.
-fn checked_main_with(src: &str, lower: fn(&Cfg) -> MirFunction) -> (Cfg, MirFunction) {
-    checked_function_with(src, "main", lower)
+    checked_function(src, "main")
 }
 
 /// Compile `src` and lower the checked CFG of its module function `name`
-/// with `lower`.
-fn checked_function_with(
-    src: &str,
-    name: &str,
-    lower: fn(&Cfg) -> MirFunction,
-) -> (Cfg, MirFunction) {
+/// to MIR.
+fn checked_function(src: &str, name: &str) -> (Cfg, MirFunction) {
     let compiled = Compiler::default()
         .compile_source(src, Path::new("mir_test.mojo"))
         .expect("compile");
@@ -853,7 +846,7 @@ fn checked_function_with(
         })
         .expect("the named function");
     let cfg = Cfg::build_checked_fn(checked, &params, &body);
-    let mir = lower(&cfg);
+    let mir = lower_cfg(&cfg);
     (cfg, mir)
 }
 
@@ -1388,7 +1381,7 @@ fn raising_iterator_lowers_to_typed_try_next() {
         .find(|(name, _)| name == "main")
         .map(|(_, function)| function)
         .expect("main MIR");
-    let instructions: Vec<_> = main.blocks.iter().flat_map(|block| &block.instrs).collect();
+    let instructions: Vec<_> = nested_instructions(&main.blocks).into_iter().collect();
     let (dest, call) = instructions
         .iter()
         .copied()
@@ -1469,10 +1462,8 @@ fn abstract_next_calls_retain_the_copyable_reference_adapter() {
         .find(|(name, _)| name == "take")
         .expect("generic take MIR")
         .1;
-    let direct = take
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
+    let direct = nested_instructions(&take.blocks)
+        .into_iter()
         .find_map(|instruction| match instruction {
             MirInstr::MethodCall {
                 method,
@@ -1505,10 +1496,8 @@ fn abstract_next_calls_retain_the_copyable_reference_adapter() {
         .find(|(name, _)| name == "first")
         .expect("generic first MIR")
         .1;
-    let loop_adapter = first
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
+    let loop_adapter = nested_instructions(&first.blocks)
+        .into_iter()
         .find_map(|instruction| match instruction {
             MirInstr::TryNext { call, .. } => Some(call.result_adapter),
             _ => None,
@@ -1530,10 +1519,8 @@ fn bounded_iterator_carries_its_checked_element_type_into_mir() {
         .find(|(name, _)| name == "main")
         .expect("main MIR")
         .1;
-    let element = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
+    let element = nested_instructions(&main.blocks)
+        .into_iter()
         .find_map(|instruction| match instruction {
             MirInstr::Next { dest, .. } => Some(*dest),
             _ => None,
@@ -1541,9 +1528,8 @@ fn bounded_iterator_carries_its_checked_element_type_into_mir() {
         .expect("bounded iterator Next");
     assert_eq!(main.reg_types.get(&element.0), Some(&Ty::int()));
     assert!(
-        main.blocks
-            .iter()
-            .flat_map(|block| &block.instrs)
+        nested_instructions(&main.blocks)
+            .into_iter()
             .any(|instruction| matches!(
                 instruction,
                 MirInstr::DefVar {
@@ -1641,15 +1627,12 @@ fn temps_carry_real_source_spans() {
 #[test]
 fn control_flow_block_count_matches_hir() {
     let source = "def main(a: Bool):\n    if a:\n        var x: Int = 1\n    else:\n        var y: Int = 2\n";
-    let (cfg, mir) = checked_main_with(source, lower_cfg_structured);
+    let (cfg, mir) = checked_main(source);
     assert_eq!(mir.blocks.len(), cfg.root.blocks.len());
     assert!(matches!(
         mir.blocks[0].instrs.last(),
         Some(MirInstr::If { .. })
     ));
-    // Lowered, the entry block ends in a Branch on the flattened condition.
-    let (_, mir) = checked_main(source);
-    assert!(matches!(mir.blocks[0].term, MirTerm::Branch { .. }));
 }
 
 #[test]
@@ -1670,7 +1653,7 @@ def main():
             pass
         print(i)
 ";
-    let (_, mir) = checked_main_with(source, lower_cfg_structured);
+    let (_, mir) = checked_main(source);
     assert_eq!(mir.blocks.len(), 1, "run-time control flow adds no block");
     let mut labels = Vec::new();
     let mut leaves = Vec::new();
@@ -1684,8 +1667,6 @@ def main():
             .all(|label| label.is_some_and(|l| labels.contains(&l))),
         "every break/continue names a loop of the function: {leaves:?}"
     );
-    let (_, lowered) = checked_main(source);
-    assert!(!has_structured_control_flow(&lowered));
 }
 
 /// Collect the label of each `loop` op in `blocks`, at any depth, and the
@@ -2247,10 +2228,8 @@ fn bounded_trait_calls_carry_the_requirement_error_contract_into_mir() {
         .1;
 
     assert!(
-        invoke
-            .blocks
-            .iter()
-            .flat_map(|block| &block.instrs)
+        nested_instructions(&invoke.blocks)
+            .into_iter()
             .any(|instruction| matches!(
                 instruction,
                 MirInstr::MethodCall {
@@ -2512,43 +2491,39 @@ fn partial_move_lowers_to_a_move_place() {
 }
 
 #[test]
-fn break_crossing_try_lowers_to_escape_jump() {
-    use mojito::mir::{MirInstr, MirTerm, lower_program};
-    // `break` inside a `try` in a `for` loop lowers to a `MirTerm::EscapeJump` in
-    // the try's body region — not a `MirInstr::Unsupported`.
+fn break_crossing_try_is_a_labelled_break_in_the_try_body() {
+    // `break` inside a `try` in a `for` loop stays a `break` naming the
+    // loop's label in the try's body region, not a `MirInstr::Unsupported`.
     let src = "def main():\n    for i in range(3):\n        try:\n            break\n        finally:\n            print(i)\n";
-    let prog = lower_program(&parse(src).expect("parse"));
-    let prog = prog.expect("type error");
-    let (_, main) = prog
-        .functions
+    let prog = lower_program(&parse(src).expect("parse")).expect("type error");
+    let main = mir_function(&prog, "main");
+    let instructions = nested_instructions(&main.blocks);
+    let (label, body) = instructions
         .iter()
-        .find(|(n, _)| n == "main")
-        .expect("main");
-
-    let mut found_escape = false;
-    let mut found_unsupported = false;
-    for b in &main.blocks {
-        for instr in &b.instrs {
-            match instr {
-                MirInstr::Unsupported(_) => found_unsupported = true,
-                MirInstr::Try { body, .. } => {
-                    for rb in body {
-                        if matches!(rb.term, MirTerm::EscapeJump { .. }) {
-                            found_escape = true;
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
+        .find_map(|instruction| match instruction {
+            MirInstr::Loop { label, body, .. } => Some((*label, body)),
+            _ => None,
+        })
+        .expect("the for loop");
+    assert!(label.is_some(), "{main:#?}");
+    let try_body = nested_instructions(body)
+        .into_iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::Try { body, .. } => Some(body),
+            _ => None,
+        })
+        .expect("the try in the loop");
     assert!(
-        found_escape,
-        "break in the try body should lower to an EscapeJump"
+        try_body.iter().any(
+            |block| matches!(block.term, MirTerm::Break { label: found, .. } if found == label)
+        ),
+        "{main:#?}"
     );
     assert!(
-        !found_unsupported,
-        "a function-level try escape must not be Unsupported"
+        !instructions
+            .iter()
+            .any(|instruction| matches!(instruction, MirInstr::Unsupported(_))),
+        "a try escape must not be Unsupported"
     );
 }
 
@@ -3744,10 +3719,8 @@ fn union_interior_return_keeps_every_possible_generation() {
         .find(|(name, _)| name == "main")
         .expect("main lowered");
 
-    let loans = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
+    let loans = nested_instructions(&main.blocks)
+        .into_iter()
         .find_map(|instruction| match instruction {
             MirInstr::EstablishLoans {
                 reference, loans, ..
@@ -4031,10 +4004,8 @@ fn same_named_block_defs_call_distinct_lifted_bodies() {
         .find(|(name, _)| name == "main")
         .expect("main lowered")
         .1;
-    let callees: std::collections::HashSet<_> = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
+    let callees: std::collections::HashSet<_> = nested_instructions(&main.blocks)
+        .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::Call { func, .. } if func.0.starts_with("main$choose") => Some(&func.0),
             _ => None,
@@ -4064,11 +4035,7 @@ fn nested_call_by_name_is_a_direct_call_passing_its_captures() {
             .position(|candidate| candidate == name)
             .unwrap_or_else(|| panic!("slot {name}")) as u32
     };
-    let instructions: Vec<_> = outer
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect();
+    let instructions: Vec<_> = nested_instructions(&outer.blocks).into_iter().collect();
     assert!(
         !instructions.iter().any(|instruction| matches!(
             instruction,
@@ -4999,10 +4966,8 @@ fn bound_comparison_names_its_requirement() {
     let mir = checked_program_mir(
         "def f[T: Comparable](a: T, b: T) -> Bool:\n    return a < b and a == b\n\ndef main():\n    print(f(1, 2))\n",
     );
-    let resolved = mir_function(&mir, "f")
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
+    let resolved = nested_instructions(&mir_function(&mir, "f").blocks)
+        .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::BinOp { resolved, .. } => Some(resolved.as_deref()),
             _ => None,

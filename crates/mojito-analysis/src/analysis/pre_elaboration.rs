@@ -201,24 +201,9 @@ pub const ELABORATE_DROPS: BodyPass = BodyPass {
     },
 };
 
-/// Structured control flow lowered to blocks: upstream's `LowerControlFlow`.
-///
-/// Upstream lowers `hlcf` as it reaches LLVM. No seam runs it: every
-/// [`PIPELINE`] pass, the elaborator, and the post-elaboration pipeline
-/// read structured bodies, the VM runs them as they stand, and Pliron
-/// lowers their region ops to LLVM blocks itself. It is registered for a
-/// pass test or `opt` to run on request.
-pub const LOWER_CONTROL_FLOW: BodyPass = BodyPass {
-    name: "lower-control-flow",
-    run: |_, function, _| {
-        mojito_mir::mir::lower_control_flow(function);
-        true
-    },
-};
-
 /// The pass registered under `name`: a [`PIPELINE`] pass, or one run only
-/// on request (drop elaboration, `lower-lit`, control-flow lowering, and
-/// the post-elaboration argument lowering).
+/// on request (drop elaboration, `lower-lit`, and the post-elaboration
+/// argument lowering).
 pub fn pass_named(name: &str) -> Option<&'static Pass> {
     PIPELINE
         .iter()
@@ -425,7 +410,6 @@ struct ProgramCallees<'a> {
 const REGISTERED: &[Pass] = &[
     Pass::Body(ELABORATE_DROPS),
     Pass::Body(LOWER_LIT),
-    Pass::Body(LOWER_CONTROL_FLOW),
     Pass::Body(LOWER_ARG_CONVENTIONS),
     Pass::Body(SIMPLIFY_CF),
     Pass::Program(ELIMINATE_DUPLICATE_FUNCTIONS),
@@ -648,7 +632,6 @@ mod tests {
         assert!(pass_named("sccp").is_some());
         assert!(pass_named("remove-unused-params").is_some());
         assert!(pass_named("inline-parametric").is_some());
-        assert!(pass_named("lower-control-flow").is_some());
         assert!(pass_named("sroa").is_some());
         assert!(pass_named("mem-2-reg").is_some());
         assert!(pass_named("lower-arg-conventions").is_some());

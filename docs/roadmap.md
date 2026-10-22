@@ -126,39 +126,11 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R882.
   - Model: Opus, Not Planned.
 
-- [ ] **R1273 `lower-control-flow` survives as a MIR pass that the
-  slot-ends check, the phase entry points, and `mojito opt` still run, where
-  upstream's only `LowerControlFlow` is the LLVM lowering**
-
-  Since R883 neither backend reads a lowered body, so the transitional pass
-  only serves callers that could read the structured body instead.
-  - Stage 14b of `docs/structured-control-flow-plan.md`.
-  - The slot-ends check and `cut_try_cleanups` (`verify/drops.rs`) lower a
-    clone. They should walk the structured body as a must-analysis, one
-    bit per slot joined by AND.
-  - In that walk an `if` or `match` joins its arms, a loop iterates to a
-    fixpoint with its break set as its live-out, and exits resolve through
-    `RegionFrame` and `region_exit`.
-  - `mir::lower_cfg`, `lower_checked_program`,
-    `lower_checked_program_importing`, and `lower_checked_program_units`
-    (`mir.rs`) stop calling `lower_control_flow_program`.
-  - The tests asserting lowered shapes follow: `tests/mir_test.rs`
-    (`driver_mir` included) and `tests/param_callable_value_test.rs`.
-  - Then `analysis::LOWER_CONTROL_FLOW`, `inline_parametric`'s `prices`
-    test, `mir/lower_control_flow.rs`, and the 21 cases under
-    `tests/mir_passes/lower-control-flow/` go.
-  - Probe: `rg 'lower_control_flow|lower-control-flow' crates src tests`
-    finds nothing, and `tests/mir_passes/elaborate-drops/double_drop.mir`
-    keeps its pinned report.
-  - Plan: slice B of `R883-pliron-lowers-a-mir-cfg-where-plan.md`.
-  - Depends on R883.
-  - Model: Opus, Planned.
-
 - [ ] **R1274 `MirTerm` keeps `Jump`, `Branch`, `ComptimeBranch`, a
   `ComptimeFor` terminator, and `EscapeJump`, a CFG vocabulary Mojo never
   has above LLVM**
 
-  Once R1273 deletes `lower-control-flow`, only the MIR text reader makes
+  Since R1273 deleted `lower-control-flow`, only the MIR text reader makes
   these terminators, and a lowered artifact is still legal MIR text.
   - Stage 14c of `docs/structured-control-flow-plan.md`.
   - Delete the five variants (`crates/mojito-mir/src/mir/ir.rs`) and
@@ -174,6 +146,8 @@ which names the upstream pass each one follows. Each is measured by the
   - The pass cases whose inputs hold CFG terminators are rewritten
     structured, and the refusal cases `sccp/lowered_body` and
     `elaborate-drops/lowered_body` are deleted.
+  - `verify/drops.rs`'s block-list fixpoint (`Walk::region`'s
+    predecessors, its `top` escape feed) and `EscapeJump` channel go.
   - Plan: slice C of `R883-pliron-lowers-a-mir-cfg-where-plan.md`.
   - Depends on R1273.
   - Model: Opus, Planned.
@@ -10267,8 +10241,7 @@ follow-ups the landed producer stages filed come last.
   - Lever: a `raise` region terminator in HIR (`Terminator`) and MIR
     (`MirTerm`).
   - The VM (`exec.rs`), Pliron (`lower/term.rs`, beside the other region
-    terminators), and the MIR text format (a version bump) follow, and so
-    does `lower-control-flow` unless R1273 deleted it first.
+    terminators), and the MIR text format (a version bump) follow.
   - Dead statements after a `raise` are already erased
     (`CheckedTables::live_statements`).
   - Found while landing R889 (2026-10-14).

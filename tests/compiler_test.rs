@@ -125,8 +125,9 @@ fn checked_hir_and_mir_retain_selected_trait_call_effects() {
 
     let mir = mojito::mir::lower_checked_program(program.checked());
     assert!(mir.functions.iter().any(|(_, function)| {
-        function.blocks.iter().any(|block| {
-            block.instrs.iter().any(|instruction| {
+        mojito::mir::nested_instructions(&function.blocks)
+            .into_iter()
+            .any(|instruction| {
                 matches!(
                     instruction,
                     mojito::mir::MirInstr::MethodCall {
@@ -136,7 +137,6 @@ fn checked_hir_and_mir_retain_selected_trait_call_effects() {
                     } if method == "run" && error.to_string() == "Error"
                 )
             })
-        })
     }));
 }
 

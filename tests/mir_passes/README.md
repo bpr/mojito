@@ -29,8 +29,8 @@ below. Labels are `<pass>/<case>.mir`, so the reports hold no machine path.
    already have run (`eliminate-dead-symbols` would have removed what its
    case is about). The CLI prints that form structured, every region one
    block, as every pipeline pass reads it. Only `canonicalize`'s generic
-   folds and erasures and `cse` take a lowered body (lower one with
-   `mojito opt --pass lower-control-flow`); `elaborate-drops`, `sccp`,
+   folds and erasures and `cse` take a lowered body, which only their
+   existing cases still hold; `elaborate-drops`, `sccp`,
    `mem-2-reg`, `lower-arg-conventions`, and `simplify-cf` refuse one,
    as Mojo has no `cf` dialect. This form is also past `lower-lit`, so it holds no
    `lifetime.keep_alive` or `interiors.invalidate`. `elaborate-drops` takes
@@ -39,7 +39,7 @@ below. Labels are `<pass>/<case>.mir`, so the reports hold no machine path.
    the CLI does not print, so for it emit with drop elaboration skipped in a
    scratch build, or rebuild the printed body's regions by hand (`if`,
    `loop`, `break`/`continue`/`yield`, as in
-   `lower-control-flow/*.mir`) and remove the `drop.*` lines (when no copy
+   `simplify-cf/*.mir`) and remove the `drop.*` lines (when no copy
    elision or deinit refinement is in play). Its output keeps the
    regions, as every pipeline pass reads them. A
    `lower-lit`

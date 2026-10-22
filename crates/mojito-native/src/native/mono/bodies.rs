@@ -5,8 +5,8 @@
 //!
 //! Every body arrives with its structured control flow, as upstream's
 //! generators keep `hlcf`, and the elaborator instantiates it as it is: an
-//! instance keeps its runtime regions until the elaboration's end lowers
-//! them (`lower-control-flow`).
+//! instance keeps its regions, which the VM runs and Pliron lowers to LLVM
+//! blocks.
 
 use mojito_mir::mir::text::package::PackageBodies;
 use mojito_mir::mir::{MirFunction, MirProgram};

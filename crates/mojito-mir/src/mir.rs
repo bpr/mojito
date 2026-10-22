@@ -75,10 +75,6 @@ mod drop_calls;
 pub use drop_calls::lower_whole_drops;
 mod facts;
 pub mod link;
-mod lower_control_flow;
-pub use lower_control_flow::{
-    has_structured_control_flow, lower_control_flow, lower_control_flow_program,
-};
 mod lower_expr;
 mod lower_stmt;
 mod node;
@@ -108,15 +104,9 @@ pub use unused_args::{
 /// Each HIR block becomes a MIR block (same order); a single [`Flatten`]
 /// threads the register counter, the variable interner (seeded from `cfg.vars`
 /// so IDs agree with the HIR), and the span table across the whole function.
+/// Expression and statement control flow are the structured region ops,
+/// upstream's `hlcf` form.
 pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
-    let mut mir = lower_cfg_structured(cfg);
-    lower_control_flow(&mut mir);
-    mir
-}
-
-/// [`lower_cfg`] before `lower-control-flow`: expression control flow is
-/// still the structured region ops lowering built.
-pub fn lower_cfg_structured(cfg: &Cfg) -> MirFunction {
     lower_cfg_body(
         cfg,
         HashMap::new(),
@@ -707,8 +697,11 @@ pub fn materialized_parameter_slots(
         .collect()
 }
 
-/// Lower `checked` to MIR whose bodies are blocks: the structured lowering
-/// ([`lower_checked_program_structured`]) followed by `lower-control-flow`.
+/// Lower `checked` to typed, verified MIR in upstream's structured `hlcf`
+/// form.
+///
+/// That is the form the ownership check (`analysis::check_ownership_program`)
+/// and every later phase read.
 ///
 /// # Panics
 ///
@@ -716,30 +709,6 @@ pub fn materialized_parameter_slots(
 /// signature, which `CheckedProgram` construction rules out.
 pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
     lower_checked_program_importing(checked, None)
-}
-
-/// Lower `checked` to MIR whose bodies keep their structured control flow,
-/// upstream's `hlcf` form, typed and verified: the form the ownership check
-/// (`analysis::check_ownership_program`) reads.
-///
-/// # Panics
-///
-/// As [`lower_checked_program`].
-pub fn lower_checked_program_structured(checked: &CheckedProgram) -> MirProgram {
-    lower_checked_program_structured_importing(checked, None)
-}
-
-/// [`lower_checked_program_structured`] for a program that imports a
-/// compiled package, as [`lower_checked_program_importing`].
-///
-/// # Panics
-///
-/// As [`lower_checked_program`].
-pub fn lower_checked_program_structured_importing(
-    checked: &CheckedProgram,
-    package: Option<&std::sync::Arc<text::package::PackageDeclarations>>,
-) -> MirProgram {
-    lower_program(checked, package).0
 }
 
 /// [`lower_checked_program`] for a program that imports a compiled package.
@@ -756,9 +725,7 @@ pub fn lower_checked_program_importing(
     checked: &CheckedProgram,
     package: Option<&std::sync::Arc<text::package::PackageDeclarations>>,
 ) -> MirProgram {
-    let mut program = lower_checked_program_structured_importing(checked, package);
-    lower_control_flow_program(&mut program);
-    program
+    lower_program(checked, package).0
 }
 
 /// [`lower_checked_program`], with the functions each lowering unit
@@ -771,9 +738,7 @@ pub fn lower_checked_program_importing(
 pub fn lower_checked_program_units(
     checked: &CheckedProgram,
 ) -> (MirProgram, Vec<std::ops::Range<usize>>) {
-    let (mut program, ranges) = lower_program(checked, None);
-    lower_control_flow_program(&mut program);
-    (program, ranges)
+    lower_program(checked, None)
 }
 
 /// Lower one lowering `unit` of `checked`, pushing the functions it lowers

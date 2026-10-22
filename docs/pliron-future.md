@@ -457,7 +457,7 @@ onto code Mojito already has:
 | `lit` | Origin algebra, lifetime checking | checker origins, ownership analysis, drop elaboration |
 | `kgen` | Elaboration, compile-time interpreter | comptime elaborator, VM-backed CTFE |
 | `pop` | Parametric type rules, lowering | SIMD and scalar rules, `mojito-pliron` lowering |
-| `hlcf` | Structured-to-CFG lowering | HIR CFG lowering today; the planned `lower-control-flow` pass (`docs/structured-control-flow-plan.md`) |
+| `hlcf` | Structured-to-CFG lowering | `mojito-pliron`'s `lower/regions.rs`, the only lowering of region ops to blocks (`docs/structured-control-flow-plan.md`) |
 
 ### Recommendation for dialect definitions
 

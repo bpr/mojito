@@ -15,8 +15,8 @@
 //! This is a distinct compiler stage after MIR lowering. The production
 //! [`Compiler`](crate::compiler::Compiler) always runs it before drop elaboration
 //! and VM execution. Backward liveness then builds on this move/init foundation
-//! to insert ASAP drops in the same structured regions, before
-//! `lower-control-flow` lowers them to blocks.
+//! to insert ASAP drops in the same structured regions, which every later
+//! phase reads until Pliron lowers them to LLVM blocks.
 
 pub use canonicalize::{CANONICALIZE, canonicalize};
 use copy_elision::elide_dying_copies;
@@ -55,8 +55,8 @@ pub use post_elaboration::{
     post_elaborate_program,
 };
 pub use pre_elaboration::{
-    BodyPass, CallGraphPass, Callees, ELABORATE_DROPS, LOWER_CONTROL_FLOW, PIPELINE, Pass,
-    ProgramPass, finish_package_body, finish_package_body_without_pipeline, pass_named, pass_names,
+    BodyPass, CallGraphPass, Callees, ELABORATE_DROPS, PIPELINE, Pass, ProgramPass,
+    finish_package_body, finish_package_body_without_pipeline, pass_named, pass_names,
     pre_elaborate_program, run_pipeline,
 };
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
@@ -76,7 +76,7 @@ pub use unused_params::{REMOVE_UNUSED_PARAMS, remove_unused_params};
 pub fn check_ownership_checked(
     program: &mojito_checked::checked::CheckedProgram,
 ) -> Result<(), OwnershipError> {
-    check_ownership_program(&mojito_mir::mir::lower_checked_program_structured(program))
+    check_ownership_program(&mojito_mir::mir::lower_checked_program(program))
 }
 
 /// Run the ownership analysis over a lowered program.

@@ -621,6 +621,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The transitional `lower-control-flow` MIR pass is gone (R1273): as
+  upstream lowers `hlcf` only on its way to LLVM, Pliron's region lowering
+  is now the only lowering of control flow to blocks. `lower_cfg` and
+  `lower_checked_program` (with its importing and per-unit forms) return
+  the structured body, replacing their `_structured` twins, and `mojito opt
+  --pass lower-control-flow` is an unknown pass. The slot-ends check and
+  `cut_try_cleanups` walk the structured body as upstream's
+  `CheckLifetimes` does, an `if` or `match` joining its arms, a loop
+  iterated to a fixpoint with its `break`s as its live-out, and each
+  region exit resolved through every `finally` it crosses, so a `break`
+  crossing two `try`s is no longer checked as a fall-off.
+
 - `cse` now merges built-in operators (R1270), as MLIR's `CSE` merges
   upstream's built-in arithmetic and comparisons, which are free of
   memory effects: a `binary` or `unary` with no operator method and no

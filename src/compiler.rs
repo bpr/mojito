@@ -604,7 +604,7 @@ impl Compiler {
         let checked = checked.map_err(CompilerError::Type)?;
         let mir = {
             let _lower = timing::span("mir.lower");
-            crate::mir::lower_checked_program_structured_importing(
+            crate::mir::lower_checked_program_importing(
                 &checked,
                 package.as_deref().map(|package| &package.declarations),
             )

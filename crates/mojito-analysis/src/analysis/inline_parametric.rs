@@ -1943,8 +1943,8 @@ fn run_start(block: &MirBlock, index: usize) -> usize {
         .map_or(0, |op| op + 1)
 }
 
-/// Whether `lower-control-flow` splits a block at `instruction`: every
-/// region op but a `try`, which stays an instruction.
+/// Whether `instruction` ends a straight-line run of its block: every
+/// region op but a `try`, whose parts run in the block's order.
 const fn splits_runs(instruction: &MirInstr) -> bool {
     region_op(instruction) && !matches!(instruction, MirInstr::Try { .. })
 }
@@ -3494,70 +3494,6 @@ fn fold_parameter_constants(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mojito_mir::mir::{
-        MirBlockId, block_successors, has_structured_control_flow, lower_control_flow,
-    };
-
-    /// How many edges of `blocks` close a loop: the edges to a block still
-    /// on the stack of a depth-first walk from the entry.
-    fn back_edges(blocks: &[MirBlock]) -> usize {
-        #[derive(Clone, Copy, PartialEq)]
-        enum Visit {
-            Unseen,
-            Open,
-            Done,
-        }
-        let mut state = vec![Visit::Unseen; blocks.len()];
-        let mut stack: Vec<(MirBlockId, Vec<MirBlockId>)> = Vec::new();
-        let mut back = 0;
-        if blocks.is_empty() {
-            return 0;
-        }
-        state[0] = Visit::Open;
-        stack.push((0, block_successors(&blocks[0])));
-        while let Some((block, successors)) = stack.last_mut() {
-            let Some(next) = successors.pop() else {
-                state[*block] = Visit::Done;
-                stack.pop();
-                continue;
-            };
-            match state[next] {
-                Visit::Open => back += 1,
-                Visit::Done => {}
-                Visit::Unseen => {
-                    state[next] = Visit::Open;
-                    stack.push((next, block_successors(&blocks[next])));
-                }
-            }
-        }
-        back
-    }
-
-    /// How many blocks of `blocks` and their regions end in a `branch`.
-    fn branches(blocks: &[MirBlock]) -> usize {
-        blocks
-            .iter()
-            .map(|block| {
-                usize::from(matches!(block.term, MirTerm::Branch { .. }))
-                    + block
-                        .instrs
-                        .iter()
-                        .flat_map(instruction_regions)
-                        .map(|region| branches(region))
-                        .sum::<usize>()
-            })
-            .sum()
-    }
-
-    /// The price of a lowered body, the reference [`inline_cost`] is
-    /// calibrated against: its operations, each `branch` one, and each
-    /// back edge a loop's.
-    fn lowered_price(function: &MirFunction) -> usize {
-        let mut constants = BTreeSet::new();
-        blocks_cost(&function.blocks, &mut constants)
-            + branches(&function.blocks)
-            + LOOP_COST * back_edges(&function.blocks)
-    }
 
     fn one(instrs: Vec<MirInstr>, term: MirTerm) -> Vec<MirBlock> {
         vec![MirBlock { instrs, term }]
@@ -3573,55 +3509,10 @@ mod tests {
         }
     }
 
-    fn holds_try(blocks: &[MirBlock]) -> bool {
-        blocks
-            .iter()
-            .flat_map(|block| &block.instrs)
-            .any(|instruction| {
-                matches!(instruction, MirInstr::Try { .. })
-                    || instruction_regions(instruction)
-                        .into_iter()
-                        .any(|region| holds_try(region))
-            })
-    }
-
-    /// The price of `function` and the reference price of its lowered
-    /// clone.
-    fn prices(function: &MirFunction) -> (usize, usize) {
-        let mut lowered = function.clone();
-        lower_control_flow(&mut lowered);
-        (inline_cost(function), lowered_price(&lowered))
-    }
-
+    /// A structured body prices each loop its `continue`s resume as one
+    /// back edge, as upstream prices `hlcf` directly.
     #[test]
-    fn structured_price_matches_lowered() {
-        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/mir_passes");
-        let mut checked = 0;
-        for pass in std::fs::read_dir(root).expect("pass cases") {
-            let Ok(cases) = std::fs::read_dir(pass.expect("pass dir").path()) else {
-                continue;
-            };
-            for case in cases {
-                let path = case.expect("case").path();
-                if path.extension().is_none_or(|extension| extension != "mir") {
-                    continue;
-                }
-                let input = std::fs::read(&path).expect("case input");
-                let Ok(artifact) = mojito_mir::mir::text::parse_artifact(&input, "case") else {
-                    continue;
-                };
-                for (name, function) in &artifact.program.functions {
-                    if !has_structured_control_flow(function) || holds_try(&function.blocks) {
-                        continue;
-                    }
-                    let (structured, lowered) = prices(function);
-                    assert_eq!(structured, lowered, "{} `{name}`", path.display());
-                    checked += 1;
-                }
-            }
-        }
-        assert!(checked > 0);
-
+    fn structured_back_edges_count_resumed_loops() {
         let raise = MirInstr::Raise { src: Reg(0) };
         let continue_after_raise = one(
             vec![MirInstr::Loop {
@@ -3757,8 +3648,6 @@ mod tests {
         ] {
             let function = body(blocks);
             assert_eq!(structured_back_edges(&function.blocks), edges);
-            let (structured, lowered) = prices(&function);
-            assert_eq!(structured, lowered);
         }
     }
 }

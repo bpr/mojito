@@ -10,8 +10,8 @@
 //! break set, a `continue` its continue set, a loop is dry-run until
 //! stable, then replayed once, and a `try` walks its parts from its
 //! `finally` back to its body (`checkTryOp`), a raising instruction keeping
-//! live what its handler reads. A lowered block list (MIR text, or a `try`
-//! part below `lower-control-flow`) reaches its per-block fixpoint first.
+//! live what its handler reads. A lowered block list (older MIR text)
+//! reaches its per-block fixpoint first.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;

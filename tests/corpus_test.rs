@@ -24,7 +24,7 @@
 //!   included. An `input()` fixture runs through the built binary with piped
 //!   stdin and `MOJITO_PRE_ELABORATION`.
 //! - `verify::<category>::<name>` — raw phase functions (link → elaborate →
-//!   `check_program` → `lower_checked_program_structured` →
+//!   `check_program` → `lower_checked_program` →
 //!   `elaborate_drops_program` → verify) over every executable fixture
 //!   category.
 //! - `roundtrip::<category>::<name>` — canonical-text round trips over the
@@ -47,7 +47,7 @@
 use libtest_mimic::{Arguments, Failed, Trial};
 use mojito::analysis::elaborate_drops_program;
 use mojito::backend::VmBackend;
-use mojito::mir::lower_checked_program_structured;
+use mojito::mir::lower_checked_program;
 use mojito::mir::text::{disassemble, parse_artifact};
 use mojito::mir::verify::verify;
 use mojito::{
@@ -536,7 +536,7 @@ fn verify_trials(trials: &mut Vec<Trial>) {
                     elaborate(program).map_err(|error| fail(format!("elaborate: {error}")))?;
                 let checked =
                     check_program(&program).map_err(|error| fail(format!("check: {error:?}")))?;
-                let mir = lower_checked_program_structured(&checked);
+                let mir = lower_checked_program(&checked);
                 if !mir.invariant_errors.is_empty() {
                     return Err(fail(format!(
                         "invariant errors: {:?}",
@@ -577,7 +577,7 @@ fn roundtrip_text(path: &Path) -> Result<String, Failed> {
     let program = link(path).map_err(|error| fail(format!("link: {error}")))?;
     let program = elaborate(program).map_err(|error| fail(format!("elaborate: {error}")))?;
     let checked = check_program(&program).map_err(|error| fail(format!("check: {error:?}")))?;
-    let mir = lower_checked_program_structured(&checked);
+    let mir = lower_checked_program(&checked);
     if !mir.invariant_errors.is_empty() {
         return Err(fail(format!(
             "invariant errors: {:?}",

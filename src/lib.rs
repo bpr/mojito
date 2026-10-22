@@ -45,7 +45,7 @@ pub use mojito_analysis::analysis;
 pub fn check_ownership(program: &[ast::Stmt]) -> Result<(), error::OwnershipError> {
     let checked = checker::check_program(program)
         .map_err(|error| error::OwnershipError::InvalidInput(error.to_string()))?;
-    check_ownership_program(&mir::lower_checked_program_structured(&checked))
+    check_ownership_program(&mir::lower_checked_program(&checked))
 }
 pub use artifact::{ArtifactRunError, run_artifact};
 pub use ast::{

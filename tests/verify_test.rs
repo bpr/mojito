@@ -14,9 +14,9 @@ use std::path::Path;
 // --- Negative coverage: hand-built malformed MIR per verifier check class ---
 
 use mojito::mir::{
-    CleanupDrop, Const, FuncRef, MirBlock, MirDeclarations, MirFunction, MirInstr,
-    MirInteriorOrigin, MirIntrinsicSubscript, MirLoan, MirParamArg, MirPlace, MirProgram, MirTerm,
-    Proj, Reg, SpanTable, UseMode,
+    CleanupDrop, Const, FuncRef, LoopLabel, MirBlock, MirCase, MirDeclarations, MirFunction,
+    MirInstr, MirInteriorOrigin, MirIntrinsicSubscript, MirLoan, MirParamArg, MirPlace, MirProgram,
+    MirTerm, Proj, Reg, SpanTable, UseMode,
 };
 use mojito::param_expr::{MetaTy, ParamContext, ParamId};
 use mojito::types::DependentType;
@@ -107,12 +107,27 @@ fn tracked_pointer_ty(element: Ty, mutable: bool) -> Ty {
     .into()
 }
 
+/// Every instruction of `blocks` that holds no region, at any depth, in
+/// order.
+fn leaf_instructions_mut(blocks: &mut [MirBlock]) -> Vec<&mut MirInstr> {
+    let mut leaves = Vec::new();
+    for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+        if mojito::mir::instruction_regions(instruction).is_empty() {
+            leaves.push(instruction);
+        } else {
+            for region in mojito::mir::instruction_regions_mut(instruction) {
+                leaves.extend(leaf_instructions_mut(region));
+            }
+        }
+    }
+    leaves
+}
+
 fn first_index_call(program: &mut MirProgram) -> &mut mojito::mir::MirSubscriptCall {
     program
         .functions
         .iter_mut()
-        .flat_map(|(_, function)| function.blocks.iter_mut())
-        .flat_map(|block| block.instrs.iter_mut())
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
         .find_map(|instruction| match instruction {
             MirInstr::Index {
                 call: Some(call), ..
@@ -126,12 +141,8 @@ fn projected_reference_loan_place(program: &mut MirProgram) -> &mut MirPlace {
     program
         .functions
         .iter_mut()
-        .find(|(name, _)| name == "main")
-        .expect("main lowered")
-        .1
-        .blocks
-        .iter_mut()
-        .flat_map(|block| block.instrs.iter_mut())
+        .filter(|(name, _)| name == "main")
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
         .find_map(|instruction| match instruction {
             MirInstr::EstablishLoans { loans, .. } => loans.iter_mut().find_map(|loan| {
                 (loan.place.through.is_some()
@@ -723,8 +734,7 @@ fn verifier_rejects_missing_nominal_subscript_contracts() {
     for instruction in mir
         .functions
         .iter_mut()
-        .flat_map(|(_, function)| function.blocks.iter_mut())
-        .flat_map(|block| block.instrs.iter_mut())
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
     {
         match instruction {
             MirInstr::Index { call, .. }
@@ -783,8 +793,7 @@ fn verifier_rejects_missing_conflicting_and_mistyped_intrinsic_subscripts() {
     let intrinsic = mistyped
         .functions
         .iter_mut()
-        .flat_map(|(_, function)| function.blocks.iter_mut())
-        .flat_map(|block| block.instrs.iter_mut())
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
         .find_map(|instruction| match instruction {
             MirInstr::Index { intrinsic, .. } => Some(intrinsic),
             _ => None,
@@ -799,8 +808,7 @@ fn verifier_rejects_missing_conflicting_and_mistyped_intrinsic_subscripts() {
     conflicting
         .functions
         .iter_mut()
-        .flat_map(|(_, function)| function.blocks.iter_mut())
-        .flat_map(|block| block.instrs.iter_mut())
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
         .find_map(|instruction| match instruction {
             MirInstr::Index { intrinsic, .. } => Some(intrinsic),
             _ => None,
@@ -1737,12 +1745,8 @@ fn verifier_rejects_missing_or_value_step_iterator_result_adapters() {
     let call = missing
         .functions
         .iter_mut()
-        .find(|(name, _)| name == "first")
-        .expect("generic first MIR")
-        .1
-        .blocks
-        .iter_mut()
-        .flat_map(|block| block.instrs.iter_mut())
+        .filter(|(name, _)| name == "first")
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
         .find_map(|instruction| match instruction {
             MirInstr::TryNext { call, .. } => Some(call),
             _ => None,
@@ -1758,12 +1762,8 @@ fn verifier_rejects_missing_or_value_step_iterator_result_adapters() {
     let call = concrete
         .functions
         .iter_mut()
-        .find(|(name, _)| name == "first")
-        .expect("generic first MIR")
-        .1
-        .blocks
-        .iter_mut()
-        .flat_map(|block| block.instrs.iter_mut())
+        .filter(|(name, _)| name == "first")
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
         .find_map(|instruction| match instruction {
             MirInstr::TryNext { call, .. } => Some(call),
             _ => None,
@@ -1786,12 +1786,8 @@ fn verifier_rejects_a_missing_abstract_next_method_adapter() {
     let adapter = prog
         .functions
         .iter_mut()
-        .find(|(name, _)| name == "take")
-        .expect("generic take MIR")
-        .1
-        .blocks
-        .iter_mut()
-        .flat_map(|block| block.instrs.iter_mut())
+        .filter(|(name, _)| name == "take")
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
         .find_map(|instruction| match instruction {
             MirInstr::MethodCall {
                 method,
@@ -1876,8 +1872,7 @@ fn verifier_rejects_corrupt_concrete_method_result_abis() {
     let reference_result = erased
         .functions
         .iter_mut()
-        .flat_map(|(_, function)| function.blocks.iter_mut())
-        .flat_map(|block| block.instrs.iter_mut())
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
         .find_map(|instruction| match instruction {
             MirInstr::MethodCall {
                 method,
@@ -1895,8 +1890,7 @@ fn verifier_rejects_corrupt_concrete_method_result_abis() {
     let reference_result = fabricated
         .functions
         .iter_mut()
-        .flat_map(|(_, function)| function.blocks.iter_mut())
-        .flat_map(|block| block.instrs.iter_mut())
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
         .find_map(|instruction| match instruction {
             MirInstr::MethodCall {
                 method,
@@ -1925,12 +1919,8 @@ fn verifier_rejects_a_loan_destination_domain_with_a_foreign_root() {
     let domain = prog
         .functions
         .iter_mut()
-        .find(|(name, _)| name == "main")
-        .expect("main lowered")
-        .1
-        .blocks
-        .iter_mut()
-        .flat_map(|block| block.instrs.iter_mut())
+        .filter(|(name, _)| name == "main")
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
         .find_map(|instruction| match instruction {
             MirInstr::EstablishLoans {
                 dest_interior: Some(domain),
@@ -2391,4 +2381,159 @@ fn verifier_accepts_a_drop_of_a_slot_some_path_left_live() {
         MirTerm::Return(None),
     )];
     assert_eq!(slot_end_findings(raising), Vec::<String>::new());
+}
+
+const LOOP: Option<LoopLabel> = Some(LoopLabel(0));
+
+/// An `if` on r1 with `then` and `orelse` as its arms.
+const fn if_region(then: Vec<MirBlock>, orelse: Vec<MirBlock>) -> MirInstr {
+    MirInstr::If {
+        results: Vec::new(),
+        cond: Reg(1),
+        then,
+        elifs: Vec::new(),
+        else_args: Vec::new(),
+        orelse,
+    }
+}
+
+/// A loop labelled [`LOOP`] around `body`.
+const fn loop_region(body: Vec<MirBlock>) -> MirInstr {
+    MirInstr::Loop {
+        label: LOOP,
+        operands: Vec::new(),
+        args: Vec::new(),
+        results: Vec::new(),
+        body,
+    }
+}
+
+/// One block running `instrs` and ending in `term`, as a region.
+fn region(instrs: Vec<MirInstr>, term: MirTerm) -> Vec<MirBlock> {
+    vec![block(instrs, term)]
+}
+
+fn yields(instrs: Vec<MirInstr>) -> Vec<MirBlock> {
+    region(instrs, MirTerm::Yield(Vec::new()))
+}
+
+fn breaks(instrs: Vec<MirInstr>) -> Vec<MirBlock> {
+    region(
+        instrs,
+        MirTerm::Break {
+            label: LOOP,
+            values: Vec::new(),
+        },
+    )
+}
+
+/// `main`'s body: define `x`, run `ops`, then drop `x`.
+fn defined_then_dropped(ops: Vec<MirInstr>) -> Vec<MirBlock> {
+    vec![block(
+        [define_x(), ops, vec![DROP_X]].concat(),
+        MirTerm::Return(None),
+    )]
+}
+
+/// A slot every path through a region op ends is ended after it: an `if`
+/// whose arms both move it, a loop whose every `break` follows a move, one
+/// leaving through a `try`'s `finally`, and a `match` whose completing case
+/// and else region both move it. A `try` in an arm whose list names a slot
+/// ended before its raise point is the same finding.
+#[test]
+fn verifier_rejects_a_drop_of_a_slot_a_region_op_ended() {
+    let both_arms = if_region(yields(vec![move_x()]), yields(vec![move_x()]));
+    assert_eq!(
+        slot_end_findings(defined_then_dropped(vec![both_arms])),
+        [
+            "MIR function 'test' block 0: drop.var of slot $v0 ('x') that every path has already ended"
+        ]
+    );
+    let looped = loop_region(breaks(vec![move_x()]));
+    assert_eq!(
+        slot_end_findings(defined_then_dropped(vec![looped])).len(),
+        1
+    );
+    let finally = region(Vec::new(), MirTerm::TryYield);
+    let crossing = loop_region(region(
+        vec![try_region_finally(breaks(vec![move_x()]), finally)],
+        MirTerm::Unreachable,
+    ));
+    assert_eq!(
+        slot_end_findings(defined_then_dropped(vec![crossing])).len(),
+        1
+    );
+    let matched = MirInstr::Match {
+        results: Vec::new(),
+        cases: vec![MirCase {
+            args: Vec::new(),
+            body: region(vec![move_x()], MirTerm::MatchComplete(Vec::new())),
+        }],
+        else_args: Vec::new(),
+        orelse: yields(vec![move_x()]),
+    };
+    assert_eq!(
+        slot_end_findings(defined_then_dropped(vec![matched])).len(),
+        1
+    );
+    let listed = listed_try(
+        region(vec![DROP_X, raising_call()], MirTerm::TryYield),
+        Some(Vec::new()),
+        None,
+    );
+    let in_arm = if_region(yields(vec![listed]), yields(Vec::new()));
+    let findings = slot_end_findings(vec![block(
+        [define_x(), vec![in_arm]].concat(),
+        MirTerm::Return(None),
+    )]);
+    assert_eq!(
+        findings,
+        [
+            "MIR function 'test' block 0: try.cleanup of slot $v0 ('x') that every path has already ended"
+        ]
+    );
+}
+
+/// A slot some path through a region op leaves live is not ended after it:
+/// an `if` with one arm moving it, a loop whose body drops it and continues
+/// once a store before the loop filled it, and a `match` whose `match.next`
+/// path leaves it for the else region.
+#[test]
+fn verifier_accepts_a_drop_of_a_slot_a_region_op_left_live() {
+    let one_arm = if_region(yields(vec![move_x()]), yields(Vec::new()));
+    assert_eq!(
+        slot_end_findings(defined_then_dropped(vec![one_arm])),
+        Vec::<String>::new()
+    );
+    let leave = if_region(yields(Vec::new()), breaks(Vec::new()));
+    let looped = loop_region(region(
+        vec![leave, DROP_X],
+        MirTerm::Continue {
+            label: LOOP,
+            values: Vec::new(),
+        },
+    ));
+    let filled = vec![block(
+        [define_x(), vec![looped]].concat(),
+        MirTerm::Return(None),
+    )];
+    assert_eq!(slot_end_findings(filled), Vec::<String>::new());
+    let test = if_region(
+        region(vec![move_x()], MirTerm::MatchComplete(Vec::new())),
+        region(Vec::new(), MirTerm::MatchNext(Vec::new())),
+    );
+    let matched = MirInstr::Match {
+        results: Vec::new(),
+        cases: vec![MirCase {
+            args: Vec::new(),
+            body: region(vec![test], MirTerm::Unreachable),
+        }],
+        else_args: Vec::new(),
+        orelse: yields(vec![DROP_X]),
+    };
+    let next = vec![block(
+        [define_x(), vec![matched]].concat(),
+        MirTerm::Return(None),
+    )];
+    assert_eq!(slot_end_findings(next), Vec::<String>::new());
 }

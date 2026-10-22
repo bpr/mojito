@@ -74,9 +74,8 @@ This gap blocks about 14 entries across four tracks (`pmir`,
   - R829 is very likely the `return` case of R884.
 - **Cost**: generators grow by one `if` per raising call. That is
   upstream's shape. Expect the instruction counters to rise slightly.
-- **Order**: R1273 → R1274 first. R906 says it must also update
-  `lower-control-flow` unless R1273 has deleted it, and R1274 deletes
-  `CleanupDrop`'s escape role. Then R906 → R831 → R20 → R884. Plan this as
+- **Order**: R1274 first (R1273 deleted `lower-control-flow` on
+  2026-10-22), since it deletes `CleanupDrop`'s escape role. Then R906 → R831 → R20 → R884. Plan this as
   one arc with a plan file, as the region chain was: R831, R20, and R884
   are Fable, Planned.
 

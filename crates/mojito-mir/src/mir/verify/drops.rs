@@ -4,18 +4,25 @@
 //! a live path; this check holds the elaborated MIR there.
 //!
 //! The analysis is a must-analysis over one bit per slot ("ended on every
-//! path"), joined by AND, over the function's blocks, its `try` regions
-//! (walked as the ownership analysis walks them), and the escape edges a
-//! region's `break`/`continue` takes to the function's blocks. Anything that
-//! names a slot revives it: over-reviving hides a finding, never invents one.
+//! path"), joined by AND, over the function's structured body, as
+//! upstream's `CheckLifetimes` walks `hlcf`: an `if` or `match` joins its
+//! arms, a loop or `comptime for` iterates its body to a fixpoint and
+//! leaves in the join of its `break`s, a `match` case enters the next as
+//! its `match.next`s join, and a `try` is walked as the ownership analysis
+//! walks it. A `break`, `continue`, or `match` exit resolves to its region
+//! op through [`RegionFrame`] and [`region_exit`], running each `finally`
+//! it crosses. Older MIR text whose block lists branch, and whose regions
+//! escape to the function's blocks, is walked the same way, each list to
+//! a fixpoint. Anything that names a slot revives it: over-reviving hides
+//! a finding, never invents one.
 //!
 //! The three cleanup lists end what they name where they run, and a listed
 //! slot every path has already ended is the same finding. A `try`'s list
 //! runs on its body's raise edge, before the handler or the `finally`; an
-//! escape's runs at the `break`/`continue`, before the `finally` blocks it
-//! crosses; a return's runs after the last `finally` it crosses, as the
-//! function is left. A `finally` that returns itself overrides a pending
-//! return, whose list it then runs unchecked here.
+//! escape's runs at the escape, before the `finally` blocks it crosses; a
+//! return's runs after the last `finally` it crosses, as the function is
+//! left. A `finally` that returns itself overrides a pending return, whose
+//! list it then runs unchecked here.
 //!
 //! The same walk cuts a `try`'s list once its body's raise points change
 //! ([`cut_try_cleanups`]): an entry every raise path has already ended is
@@ -23,7 +30,8 @@
 
 use super::{MirBlock, MirFunction, MirInstr, MirTerm};
 use crate::mir::{
-    CleanupDrop, MirBlockId, MirCaptureMode, VarId, cleanup_slots, instruction_slots,
+    CleanupDrop, MirBlockId, MirCaptureMode, RegionFrame, VarId, cleanup_slots,
+    instruction_regions, instruction_regions_mut, instruction_slots, region_exit,
     terminator_targets,
 };
 use std::collections::HashMap;
@@ -31,10 +39,6 @@ use std::collections::HashMap;
 /// Remove from each `try`'s raise-edge cleanup in `function` the slots
 /// every path to its body's raise points has already ended, as erasing a
 /// raise point erases the destructors on its edge.
-///
-/// A structured body is walked through its `lower-control-flow` lowering,
-/// which moves each `try`'s list whole, so a list keeps its buffer and
-/// names its `try` in either form.
 pub fn cut_try_cleanups(function: &mut MirFunction) {
     if !function
         .blocks
@@ -43,54 +47,20 @@ pub fn cut_try_cleanups(function: &mut MirFunction) {
     {
         return;
     }
-    if !crate::mir::has_structured_control_flow(function) {
-        let ended = ended_cleanups(function);
-        if !ended.is_empty() {
-            cut_listed(&mut function.blocks, &ended);
-        }
-        return;
-    }
-    let mut lowered = function.clone();
-    let mut lowered_lists = Vec::new();
-    cleanup_lists(&lowered.blocks, &mut lowered_lists);
-    crate::mir::lower_control_flow(&mut lowered);
-    let mut lists = Vec::new();
-    cleanup_lists(&function.blocks, &mut lists);
-    let ended: Vec<_> = ended_cleanups(&lowered)
-        .into_iter()
-        .filter_map(|(list, var)| {
-            let position = lowered_lists.iter().position(|&found| found == list)?;
-            Some((lists[position], var))
-        })
-        .collect();
+    let ended = Walk::new("", function).ended_cleanups();
     if !ended.is_empty() {
         cut_listed(&mut function.blocks, &ended);
     }
 }
 
 /// Report every `drop.var` or `var.consume` in `function` whose slot every
-/// path reaching it has already ended. A structured body is checked through
-/// its `lower-control-flow` lowering, so a finding names a lowered block;
-/// one that ends no slot has none.
+/// path reaching it has already ended. A finding names the block of the
+/// block list holding it: the function's, or a region's.
 pub(super) fn verify_slot_ends(name: &str, function: &MirFunction, errors: &mut Vec<String>) {
-    if crate::mir::has_structured_control_flow(function) {
-        if !ends_slots(&function.blocks) {
-            return;
-        }
-        let mut lowered = function.clone();
-        crate::mir::lower_control_flow(&mut lowered);
-        verify_slot_ends(name, &lowered, errors);
+    if !ends_slots(&function.blocks) {
         return;
     }
-    let mut refills = HashMap::new();
-    collect_refills(&function.blocks, &mut refills);
-    let mut walk = Walk {
-        name,
-        function,
-        refills,
-        findings: Vec::new(),
-        ended_cleanups: Vec::new(),
-    };
+    let mut walk = Walk::new(name, function);
     let flow = walk.region(&vec![false; function.n_vars], &function.blocks, true, true);
     for (index, cleanup, state) in flow.returns {
         walk.end_listed(index, "return.cleanup", &mut state.clone(), cleanup, true);
@@ -98,35 +68,24 @@ pub(super) fn verify_slot_ends(name: &str, function: &MirFunction, errors: &mut 
     errors.extend(walk.findings);
 }
 
-/// The cleanup entries of the CFG body `function`, each by its list, that
-/// every path to their `try`'s raise edge has already ended.
-fn ended_cleanups(function: &MirFunction) -> Vec<(*const CleanupDrop, VarId)> {
-    let mut walk = Walk {
-        name: "",
-        function,
-        refills: HashMap::new(),
-        findings: Vec::new(),
-        ended_cleanups: Vec::new(),
-    };
-    collect_refills(&function.blocks, &mut walk.refills);
-    walk.region(&vec![false; function.n_vars], &function.blocks, true, true);
-    walk.ended_cleanups
-}
-
 /// One bit per slot: whether every path reaching this point ended it.
 type Ended = Vec<bool>;
 
 /// The states a region (or one block) leaves by: falling off, raising,
-/// leaving the function, and escaping to a function block.
-/// A return carrying a cleanup list is also kept apart, with its block and
-/// list, until it leaves the function.
-#[derive(Default)]
+/// leaving the function, escaping to a function block, and leaving or
+/// resuming an enclosing region op. A return carrying a cleanup list is
+/// also kept apart, with its block and list, until it leaves the function.
+#[derive(Default, Clone)]
 struct Flow<'a> {
     normal: Option<Ended>,
     raises: Option<Ended>,
     exits: Option<Ended>,
     escapes: Vec<(MirBlockId, Ended)>,
     returns: Vec<(usize, &'a [CleanupDrop], Ended)>,
+    /// The enclosing frames this flow leaves or resumes: the frame's depth
+    /// in [`Walk::frames`], whether it resumes it, and the states joined
+    /// there.
+    frame_exits: Vec<(usize, bool, Ended)>,
 }
 
 impl Flow<'_> {
@@ -136,8 +95,48 @@ impl Flow<'_> {
         meet(&mut self.exits, other.exits.as_ref());
         self.escapes.extend(other.escapes);
         self.returns.extend(other.returns);
+        for (depth, resume, state) in other.frame_exits {
+            self.leave(depth, resume, &state);
+        }
+    }
+
+    /// Join `state` into the exit to the frame at `depth`, resuming it
+    /// when `resume`.
+    fn leave(&mut self, depth: usize, resume: bool, state: &Ended) {
+        match self
+            .frame_exits
+            .iter_mut()
+            .find(|(at, resumes, _)| *at == depth && *resumes == resume)
+        {
+            Some((.., joined)) => {
+                for (ended, other) in joined.iter_mut().zip(state) {
+                    *ended &= *other;
+                }
+            }
+            None => self.frame_exits.push((depth, resume, state.clone())),
+        }
+    }
+
+    /// Take the exits to the frame at `depth`: the states joined where it
+    /// is left and where it is resumed.
+    fn take_frame(&mut self, depth: usize) -> (Option<Ended>, Option<Ended>) {
+        let mut leave = None;
+        let mut resume = None;
+        self.frame_exits.retain(|(at, resumes, state)| {
+            if *at != depth {
+                return true;
+            }
+            meet(if *resumes { &mut resume } else { &mut leave }, Some(state));
+            false
+        });
+        (leave, resume)
     }
 }
+
+/// The non-reporting flows of the region ops one walk computed, by op (its
+/// address in the body, which the walk does not change), entry state, and
+/// the depth of the frames around it.
+type Memo<'a> = HashMap<(*const MirInstr, Ended, usize), Flow<'a>>;
 
 struct Walk<'a> {
     name: &'a str,
@@ -149,9 +148,37 @@ struct Walk<'a> {
     /// Each `try`'s cleanup list, by its buffer, and a slot it lists that
     /// every path to its raise edge has already ended.
     ended_cleanups: Vec<(*const CleanupDrop, VarId)>,
+    /// The region ops enclosing the region being walked, innermost last.
+    frames: Vec<RegionFrame>,
+    /// A loop's fixpoint walks its body again, and each walk reaches the
+    /// region ops nested in it, so without the memo the walks multiply
+    /// with each loop of the nest.
+    memo: Memo<'a>,
 }
 
 impl<'a> Walk<'a> {
+    fn new(name: &'a str, function: &'a MirFunction) -> Self {
+        let mut refills = HashMap::new();
+        collect_refills(&function.blocks, &mut refills);
+        Self {
+            name,
+            function,
+            refills,
+            findings: Vec::new(),
+            ended_cleanups: Vec::new(),
+            frames: Vec::new(),
+            memo: HashMap::new(),
+        }
+    }
+
+    /// The cleanup entries of `function`, each by its list, that every path
+    /// to their `try`'s raise edge has already ended.
+    fn ended_cleanups(mut self) -> Vec<(*const CleanupDrop, VarId)> {
+        let function = self.function;
+        self.region(&vec![false; function.n_vars], &function.blocks, true, true);
+        self.ended_cleanups
+    }
+
     /// Iterate `blocks` to a fixpoint from `entry`, then, when `report`, make
     /// one reporting pass over the reached blocks. At the function's `top`
     /// level the escapes of its regions feed their target blocks.
@@ -210,7 +237,13 @@ impl<'a> Walk<'a> {
                 outputs[index].take().unwrap_or_default()
             };
             match (&block.term, out.normal.as_ref()) {
-                (MirTerm::TryYield, normal) => meet(&mut flow.normal, normal),
+                (
+                    MirTerm::TryYield
+                    | MirTerm::Yield(_)
+                    | MirTerm::ComptimeYield(_)
+                    | MirTerm::ElifCond { .. },
+                    normal,
+                ) => meet(&mut flow.normal, normal),
                 (MirTerm::ReturnWithCleanup { cleanup, .. }, Some(state))
                     if !cleanup.is_empty() =>
                 {
@@ -225,6 +258,14 @@ impl<'a> Walk<'a> {
                     self.end_listed(index, "escape cleanup", &mut state, cleanup, report);
                     flow.escapes.push((*target, state));
                 }
+                (term, Some(state)) => {
+                    if let Some((target, resume)) = region_exit(term)
+                        && let Some(depth) =
+                            self.frames.iter().rposition(|&frame| target.names(frame))
+                    {
+                        flow.leave(depth, resume, state);
+                    }
+                }
                 _ => {}
             }
             let escapes = if top { Vec::new() } else { out.escapes };
@@ -234,8 +275,8 @@ impl<'a> Walk<'a> {
     }
 
     /// One block from `state`: its normal channel is the state after its
-    /// terminator's own effect, and its raises, exits, and escapes are those
-    /// of its raise points and the regions it holds.
+    /// terminator's own effect, and its other channels are those of its
+    /// raise points and the regions it holds.
     fn block(
         &mut self,
         index: usize,
@@ -245,8 +286,8 @@ impl<'a> Walk<'a> {
     ) -> Flow<'a> {
         let mut flow = Flow::default();
         for instruction in &block.instrs {
-            if matches!(instruction, MirInstr::Try { .. }) {
-                let mut regions = self.try_regions(index, state, instruction, report);
+            if !instruction_regions(instruction).is_empty() {
+                let mut regions = self.region_op(index, state, instruction, report);
                 let normal = regions.normal.take();
                 flow.absorb(regions);
                 match normal {
@@ -267,11 +308,169 @@ impl<'a> Walk<'a> {
         flow
     }
 
+    /// [`Self::region_op_unmemoized`], computed once per op, entry state,
+    /// and frame depth while not reporting. A reporting walk is made once
+    /// per region, from the join of every state entering it.
+    fn region_op(
+        &mut self,
+        index: usize,
+        state: Ended,
+        instruction: &'a MirInstr,
+        report: bool,
+    ) -> Flow<'a> {
+        if report {
+            return self.region_op_unmemoized(index, state, instruction, true);
+        }
+        let key = (std::ptr::from_ref(instruction), state, self.frames.len());
+        if let Some(known) = self.memo.get(&key) {
+            return known.clone();
+        }
+        let flow = self.region_op_unmemoized(index, key.1.clone(), instruction, false);
+        self.memo.insert(key, flow.clone());
+        flow
+    }
+
+    /// The region op `instruction` from `state`, as upstream's
+    /// `CheckLifetimes` walks it: its normal channel is the state after
+    /// the op.
+    ///
+    /// - An `if` enters its then arm and its first condition as the op is,
+    ///   each arm after a condition and the next condition (or the else
+    ///   arm) as that condition yields, and completes as its arms join.
+    /// - A `comptime if` enters every arm and its else arm as the op is.
+    /// - A loop or `comptime for` enters its body as the op is, joined with
+    ///   the states its `continue`s carry, until that join is stable, and
+    ///   completes as its `break`s join; a `comptime for`'s else region is
+    ///   never entered.
+    /// - A `match` enters its first case as the op is, each later case and
+    ///   the else region as the previous case's `match.next`s join, and
+    ///   completes as its `match.complete`s and the else region join.
+    /// - A `try` is [`Self::try_regions`].
+    fn region_op_unmemoized(
+        &mut self,
+        index: usize,
+        state: Ended,
+        instruction: &'a MirInstr,
+        report: bool,
+    ) -> Flow<'a> {
+        let mut flow = Flow::default();
+        match instruction {
+            MirInstr::If {
+                then,
+                elifs,
+                orelse,
+                ..
+            } => {
+                let arm = self.enter(&mut flow, &state, then, report);
+                meet(&mut flow.normal, arm.as_ref());
+                let mut rest = Some(state);
+                for elif in elifs {
+                    let Some(start) = rest.take() else {
+                        break;
+                    };
+                    rest = self.enter(&mut flow, &start, &elif.cond, report);
+                    if let Some(cond) = &rest {
+                        let arm = self.enter(&mut flow, cond, &elif.then, report);
+                        meet(&mut flow.normal, arm.as_ref());
+                    }
+                }
+                if let Some(rest) = rest {
+                    let arm = self.enter(&mut flow, &rest, orelse, report);
+                    meet(&mut flow.normal, arm.as_ref());
+                }
+            }
+            MirInstr::ComptimeIf { arms, orelse, .. } => {
+                for arm in arms.iter().chain(std::iter::once(orelse)) {
+                    let arm = self.enter(&mut flow, &state, arm, report);
+                    meet(&mut flow.normal, arm.as_ref());
+                }
+            }
+            MirInstr::Loop { label, body, .. } => {
+                return self.loop_body(state, RegionFrame::Loop(*label), body, report);
+            }
+            MirInstr::ComptimeFor { body, .. } => {
+                return self.loop_body(state, RegionFrame::ComptimeFor, body, report);
+            }
+            MirInstr::Match { cases, orelse, .. } => {
+                let depth = self.frames.len();
+                let mut next = Some(state);
+                for case in cases {
+                    let Some(start) = next.take() else {
+                        break;
+                    };
+                    self.frames.push(RegionFrame::MatchCase);
+                    let mut case = self.region(&start, &case.body, false, report);
+                    self.frames.pop();
+                    let (complete, resume) = case.take_frame(depth);
+                    meet(&mut flow.normal, complete.as_ref());
+                    next = resume;
+                    case.normal = None;
+                    flow.absorb(case);
+                }
+                if let Some(next) = next {
+                    let arm = self.enter(&mut flow, &next, orelse, report);
+                    meet(&mut flow.normal, arm.as_ref());
+                }
+            }
+            MirInstr::Try { .. } => return self.try_regions(index, state, instruction, report),
+            _ => flow.normal = Some(state),
+        }
+        flow
+    }
+
+    /// Walk the region `blocks` from `entry`, joining its abnormal channels
+    /// into `flow`; the state it completes in.
+    fn enter(
+        &mut self,
+        flow: &mut Flow<'a>,
+        entry: &Ended,
+        blocks: &'a [MirBlock],
+        report: bool,
+    ) -> Option<Ended> {
+        let mut region = self.region(entry, blocks, false, report);
+        let normal = region.normal.take();
+        flow.absorb(region);
+        normal
+    }
+
+    /// A loop or `comptime for` whose body is `body`, entered in `state`:
+    /// the body is walked from the join of the entry and its `continue`s
+    /// until that join is stable, and once more to report, and the op
+    /// completes as its `break`s join.
+    fn loop_body(
+        &mut self,
+        state: Ended,
+        frame: RegionFrame,
+        body: &'a [MirBlock],
+        report: bool,
+    ) -> Flow<'a> {
+        let depth = self.frames.len();
+        self.frames.push(frame);
+        let mut resume = state;
+        let (mut flow, broken) = loop {
+            let mut flow = self.region(&resume, body, false, false);
+            let (broken, continued) = flow.take_frame(depth);
+            let mut next = Some(resume.clone());
+            meet(&mut next, continued.as_ref());
+            let next = next.unwrap_or_default();
+            if next == resume {
+                break (flow, broken);
+            }
+            resume = next;
+        };
+        if report {
+            flow = self.region(&resume, body, false, true);
+            flow.take_frame(depth);
+        }
+        self.frames.pop();
+        flow.normal = broken;
+        flow
+    }
     /// A `try` from `entry`, as the ownership analysis walks it: the handler
     /// starts from the body's raises past the raise-edge cleanup, `orelse`
     /// from its normal fall-off, and `finally` runs on every channel. An
-    /// escape or a return leaves through the normal fall-off of the
-    /// `finally` it crosses.
+    /// escape, a region exit, or a return leaves through the normal
+    /// fall-off of the `finally` it crosses.
     fn try_regions(
         &mut self,
         index: usize,
@@ -309,6 +508,7 @@ impl<'a> Walk<'a> {
             exits: body_flow.exits,
             escapes: body_flow.escapes,
             returns: body_flow.returns,
+            frame_exits: body_flow.frame_exits,
             ..Flow::default()
         };
         match orelse {
@@ -344,7 +544,8 @@ impl<'a> Walk<'a> {
             for (_, state) in &flow.escapes {
                 meet(&mut all, Some(state));
             }
-            for (_, _, state) in &flow.returns {
+            let returns = flow.returns.iter().map(|(.., state)| state);
+            for state in returns.chain(flow.frame_exits.iter().map(|(.., state)| state)) {
                 meet(&mut all, Some(state));
             }
             if let Some(all) = all {
@@ -373,11 +574,19 @@ impl<'a> Walk<'a> {
                 Some((block, cleanup, through(self, Some(state))?))
             })
             .collect();
+        let frame_exits: Vec<_> = flow
+            .frame_exits
+            .into_iter()
+            .filter_map(|(depth, resume, state)| Some((depth, resume, through(self, Some(state))?)))
+            .collect();
         out.normal = normal;
         meet(&mut out.raises, raises.as_ref());
         meet(&mut out.exits, exits.as_ref());
         out.escapes.extend(escapes);
         out.returns.extend(returns);
+        for (depth, resume, state) in frame_exits {
+            out.leave(depth, resume, &state);
+        }
         out
     }
 
@@ -483,8 +692,6 @@ fn set(state: &mut Ended, slot: VarId, ended: bool) {
     }
 }
 
-/// Whether `instructions` hold a `try` with a raise-edge cleanup, at any
-/// depth.
 /// Whether some block of `blocks`, at any depth, ends a slot: a `drop.var`,
 /// a `var.consume`, or a cleanup list naming one.
 fn ends_slots(blocks: &[MirBlock]) -> bool {
@@ -493,17 +700,19 @@ fn ends_slots(blocks: &[MirBlock]) -> bool {
             || block.instrs.iter().any(|instruction| {
                 matches!(instruction, MirInstr::DropVar { .. } | MirInstr::ConsumeVar { .. })
                     || matches!(instruction, MirInstr::Try { cleanup, .. } if !cleanup.is_empty())
-                    || crate::mir::instruction_regions(instruction)
+                    || instruction_regions(instruction)
                         .into_iter()
                         .any(|region| ends_slots(region))
             })
     })
 }
 
+/// Whether `instructions` hold a `try` with a raise-edge cleanup, at any
+/// depth.
 fn holds_cleanup(instructions: &[MirInstr]) -> bool {
     instructions.iter().any(|instruction| {
         matches!(instruction, MirInstr::Try { cleanup, .. } if !cleanup.is_empty())
-            || crate::mir::instruction_regions(instruction)
+            || instruction_regions(instruction)
                 .into_iter()
                 .flatten()
                 .any(|block| holds_cleanup(&block.instrs))
@@ -518,50 +727,21 @@ fn cut_listed(blocks: &mut [MirBlock], ended: &[(*const CleanupDrop, VarId)]) {
             let list = cleanup.as_ptr();
             cleanup.retain(|drop| !ended.contains(&(list, drop.var)));
         }
-        for region in crate::mir::instruction_regions_mut(instruction) {
+        for region in instruction_regions_mut(instruction) {
             cut_listed(region, ended);
         }
     }
 }
 
-/// Each `try`'s non-empty raise-edge cleanup list in `blocks`, in preorder.
-fn cleanup_lists(blocks: &[MirBlock], lists: &mut Vec<*const CleanupDrop>) {
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
-        if let MirInstr::Try { cleanup, .. } = instruction
-            && !cleanup.is_empty()
-        {
-            lists.push(cleanup.as_ptr());
-        }
-        for region in crate::mir::instruction_regions(instruction) {
-            cleanup_lists(region, lists);
-        }
-    }
-}
-
+/// The slot each reference register of `blocks`, at any depth, was made
+/// from.
 fn collect_refills(blocks: &[MirBlock], refills: &mut HashMap<u32, VarId>) {
-    for block in blocks {
-        for instruction in &block.instrs {
-            match instruction {
-                MirInstr::MakeRef { dest, place } => {
-                    refills.insert(dest.0, place.root);
-                }
-                MirInstr::Try {
-                    body,
-                    handler,
-                    orelse,
-                    finalbody,
-                    ..
-                } => {
-                    for region in std::iter::once(body)
-                        .chain(handler.iter().map(|(_, blocks)| blocks))
-                        .chain(orelse)
-                        .chain(finalbody)
-                    {
-                        collect_refills(region, refills);
-                    }
-                }
-                _ => {}
-            }
+    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+        if let MirInstr::MakeRef { dest, place } = instruction {
+            refills.insert(dest.0, place.root);
+        }
+        for region in instruction_regions(instruction) {
+            collect_refills(region, refills);
         }
     }
 }

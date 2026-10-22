@@ -1,4 +1,4 @@
-use mojito::mir::{MirInstr, lower_checked_program};
+use mojito::mir::{MirInstr, lower_checked_program, nested_instructions};
 use mojito::{BackendKind, Compiler, CompilerError, LinkOptions, OwnershipError, elaborate, parse};
 
 const PARAMETRIC_CAPTURE: &str = r"
@@ -58,12 +58,11 @@ fn callable_value_parameter_is_a_hidden_typed_mir_local() {
         "only `value` is an ordinary ABI parameter"
     );
     assert!(invoke.var_names.iter().any(|name| name == "callback"));
-    assert!(invoke.blocks.iter().any(|block| {
-        block
-            .instrs
-            .iter()
+    assert!(
+        nested_instructions(&invoke.blocks)
+            .into_iter()
             .any(|instruction| matches!(instruction, MirInstr::CallIndirect { .. }))
-    }));
+    );
 }
 
 #[test]
@@ -123,12 +122,14 @@ fn generic_callable_contract_defaults_override_implementation_defaults() {
         .find(|(name, _)| name == "invoke_contract_default")
         .map(|(_, function)| function)
         .expect("contract-default function");
-    assert!(function.blocks.iter().any(|block| {
-        block.instrs.iter().any(|instruction| {
-            matches!(instruction, MirInstr::CallIndirect { param_arg_regs, param_decls, .. }
-            if param_arg_regs.is_empty() && !param_decls.is_empty())
-        })
-    }));
+    assert!(
+        nested_instructions(&function.blocks)
+            .into_iter()
+            .any(|instruction| {
+                matches!(instruction, MirInstr::CallIndirect { param_arg_regs, param_decls, .. }
+                if param_arg_regs.is_empty() && !param_decls.is_empty())
+            })
+    );
 }
 
 #[test]
