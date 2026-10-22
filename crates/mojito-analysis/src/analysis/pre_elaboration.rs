@@ -162,8 +162,7 @@ impl Pass {
 /// the same with `SCCP` before the `Canonicalizer` in the second; an
 /// `InlineParametric`, then `SROA`, `Mem2Reg`, and `Canonicalizer` in the
 /// third; and `CSEPass` in the fourth. Mojito runs each of them, as `sroa`,
-/// `mem-2-reg`, `sccp`, and `canonicalize`, but its fourth round has no
-/// generator pipeline: its `cse` runs only after elaboration.
+/// `mem-2-reg`, `sccp`, `canonicalize`, and `cse`.
 pub const PIPELINE: &[Pass] = &[
     Pass::CallGraph(REMOVE_UNUSED_PARAMS),
     Pass::Program(ELIMINATE_DEAD_SYMBOLS),
@@ -185,6 +184,7 @@ pub const PIPELINE: &[Pass] = &[
     Pass::Body(CANONICALIZE),
     Pass::CallGraph(REMOVE_UNUSED_PARAMS),
     Pass::Program(ELIMINATE_DEAD_SYMBOLS),
+    Pass::Body(CSE),
 ];
 
 /// Drop elaboration as a named pass, so a pass test can run it over MIR
@@ -426,7 +426,6 @@ const REGISTERED: &[Pass] = &[
     Pass::Body(LOWER_LIT),
     Pass::Body(LOWER_CONTROL_FLOW),
     Pass::Body(LOWER_ARG_CONVENTIONS),
-    Pass::Body(CSE),
     Pass::Program(ELIMINATE_DUPLICATE_FUNCTIONS),
 ];
 

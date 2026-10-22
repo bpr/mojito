@@ -616,6 +616,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The pre-elaboration pipeline's fourth round now ends with `cse`, as the
+  pin's ends with a generator `CSEPass` (R926). `cse` walks a structured
+  body as MLIR's `CSE` walks regions: a region sees what is available at
+  its op and its own arguments, and sibling regions share nothing.
+  Generator instructions fall slightly; program output is unchanged, and
+  the MIR text and package formats are unchanged. This closes R926.
 - Adds upstream's `SROA` as the `sroa` pass (R928), before each
   `mem-2-reg` of the first three pre-elaboration rounds and in the
   post-elaboration pipeline's `'kgen.func'` block. A local slot of a

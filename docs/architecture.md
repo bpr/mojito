@@ -5368,8 +5368,7 @@ drop-elaborated parametric body, and a `CallGraphPass` rewrites each body
 after its callees, reading their finished bodies through `Callees`, as
 MLIR's inliner walks the call graph. `docs/pre-elaboration-optimization-plan.md`
 stages the passes that fill it. The list follows upstream's rounds as the
-pinned compiler's `--mlir-timing` report shows them, less the fourth
-round's generator `CSEPass` (R926). Each of four rounds runs
+pinned compiler's `--mlir-timing` report shows them. Each of four rounds runs
 `RemoveUnusedParams` and `EliminateDeadSymbols`, the second after an
 `InlineParametric`; the first then runs `SROA`, `Mem2Reg`, and a
 `Canonicalizer` on each generator, the second `SROA`, `Mem2Reg`, `SCCP`,
@@ -5380,7 +5379,7 @@ and a `Canonicalizer`, and the fourth only `CSEPass`. So `PIPELINE` is
 `eliminate-dead-symbols`, `sroa`, `mem-2-reg`, `sccp`, `canonicalize`;
 `remove-unused-params`, `eliminate-dead-symbols`, `inline-parametric`,
 `sroa`, `mem-2-reg`, `canonicalize`; and `remove-unused-params`,
-`eliminate-dead-symbols` (R869, R787, R928). `pass_names`
+`eliminate-dead-symbols`, `cse` (R869, R787, R928, R926). `pass_names`
 yields a pass that runs more than once once, and all of a pass's runs count
 into one `--timings` span.
 
@@ -6456,7 +6455,14 @@ concrete verifier rejects a reference slot read as its handle.
   since MIR does not verify that a definition dominates its reads. The
   Pliron backend lowers each block list in `lowering_order` (reverse
   postorder, then the unreached blocks), so a definition `cse` reuses in
-  a later-numbered block is lowered before its reads.
+  a later-numbered block is lowered before its reads. The pre-elaboration
+  pipeline's fourth round runs it on each generator too (R926), as
+  upstream's does, over the structured body: a region sees what is
+  available at its op and its own arguments, and what it defines does not
+  leave it, so sibling regions (an `if`'s arms, a `match`'s cases) never
+  share an instruction, as MLIR's region scoping has it. A generator's
+  register of a parameter type is never merged, since its value is not
+  known to be held in one register.
 - **The seam.** `analysis::post_elaborate_program` runs each pass over
   every concrete function but `__toplevel__`, on the driver thread after
   `native::mono` returns (timing counters are thread-local, and the

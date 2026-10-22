@@ -811,17 +811,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R926 Generators are not CSE'd before elaboration**
-
-  Upstream's last pre-elaboration round runs `CSEPass` on each generator,
-  after `RemoveUnusedParams` and `EliminateDeadSymbols`, and Mojito's
-  fourth `PIPELINE` round has no generator pass.
-  - It is a missing optimization, not a difference in semantics.
-  - R845's pass, registered as a `BodyPass`, is the one to list.
-  - Done when `PIPELINE` ends with it and the on/off differential is clean.
-  - Depends on R845.
-  - Model: Opus, Not Planned.
-
 - [ ] **R929 CSE does not merge reads of memory**
 
   MLIR's `CSE` merges two identical ops with only read effects when no op
@@ -850,6 +839,11 @@ which names the upstream pass each one follows. Each is measured by the
   - Done when a merged storage value's readers are proven non-consuming,
     or a consuming reader copies, and a pass test merges two identical
     `SIMD[DType.float32, 4]` constructions.
+  - Probe: in a generator, where the pre-elaboration `cse` runs (R926), a
+    result of a parameter type (`T`, `SIMD[dtype, width]` with a symbolic
+    width) is never merged, since `copy_is_identity` cannot say it is held
+    in one register: two `simd.make` splats of one operand at
+    `SIMD[dtype, width]` stay apart until each instance's `cse`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

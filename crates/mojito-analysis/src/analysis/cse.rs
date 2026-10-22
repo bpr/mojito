@@ -1,13 +1,16 @@
-//! `cse`: MLIR's `CSE` pass, which upstream's `'kgen.func'` pipeline runs
-//! last, after `Canonicalizer`, on every function `ElaborateGenerators`
-//! emits.
+//! `cse`: MLIR's `CSE` pass, which upstream runs on each generator in its
+//! last pre-elaboration round, after `RemoveUnusedParams` and
+//! `EliminateDeadSymbols`, and which its `'kgen.func'` pipeline runs last,
+//! after `Canonicalizer`, on every function `ElaborateGenerators` emits.
 //!
 //! As in MLIR, the pass walks each block list's dominator tree with a scoped
 //! table of the instructions available at each block: an instruction free
 //! of effects that matches one in the table, with the same mnemonic,
 //! attributes, operands, and result type, is erased and its result's reads
 //! name the dominating instruction's result. A region's blocks see what is
-//! available at its instruction, and what they define does not leave it.
+//! available at its instruction and the region's own arguments, and what
+//! they define does not leave it, so a structured body's sibling regions
+//! never share an instruction.
 //!
 //! An instruction is free of effects when it reads nothing but its
 //! operands: a constant, a literal materialization, a size or type-name
@@ -30,8 +33,8 @@ use super::pre_elaboration::BodyPass;
 use mojito_common::timing;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
-    MirBlock, MirBlockId, MirDeclarations, MirFunction, MirInstr, Reg, has_structured_control_flow,
-    immediate_dominators, instruction_regions, instruction_regs_mut,
+    MirBlock, MirBlockId, MirDeclarations, MirFunction, MirInstr, Reg, immediate_dominators,
+    instruction_regions, instruction_regs_mut,
 };
 use mojito_types::types::{Ty, TyKind, copy_is_identity};
 use std::collections::{HashMap, HashSet};
@@ -45,13 +48,7 @@ pub const CSE: BodyPass = BodyPass {
 /// Erase each instruction of `function` free of effects that a dominating
 /// instruction matches, its result's reads renamed to that instruction's
 /// result; returns whether any was.
-///
-/// A body that still holds structured control flow is left alone, as
-/// `mem-2-reg` leaves it.
 pub fn cse(_name: &str, function: &mut MirFunction, _declarations: &MirDeclarations) -> bool {
-    if has_structured_control_flow(function) {
-        return false;
-    }
     let definitions = definition_counts(&mut function.blocks, function.n_regs);
     let mut table = Table {
         reg_types: &function.reg_types,
@@ -118,11 +115,13 @@ impl Table<'_> {
     }
 
     /// Match or record each instruction of `block` in order, walking each
-    /// region in a scope of its own.
+    /// region in a scope of its own that its arguments are defined in.
     fn block(&mut self, block: &MirBlock) {
         for instruction in &block.instrs {
-            for region in instruction_regions(instruction) {
+            let arguments = region_arguments(instruction);
+            for (region, args) in instruction_regions(instruction).into_iter().zip(&arguments) {
                 let mark = self.scope.len();
+                self.define(args.iter().copied());
                 self.block_list(region, false);
                 self.leave(mark);
             }
@@ -136,10 +135,16 @@ impl Table<'_> {
             }
             let mut results = Vec::new();
             instruction_result_regs(instruction, &mut results);
-            for reg in results {
-                if self.defined.insert(reg.0) {
-                    self.scope.push(Added::Defined(reg.0));
-                }
+            results.retain(|reg| !arguments.iter().any(|args| args.contains(reg)));
+            self.define(results);
+        }
+    }
+
+    /// Add `regs` to the registers defined on the walk's path.
+    fn define(&mut self, regs: impl IntoIterator<Item = Reg>) {
+        for reg in regs {
+            if self.defined.insert(reg.0) {
+                self.scope.push(Added::Defined(reg.0));
             }
         }
     }
@@ -230,6 +235,33 @@ enum Added {
 enum Visit {
     Enter(MirBlockId),
     Leave(usize),
+}
+
+/// The arguments of each region of `instruction`, in
+/// [`instruction_regions`]' order.
+fn region_arguments(instruction: &MirInstr) -> Vec<&[Reg]> {
+    match instruction {
+        MirInstr::If {
+            elifs, else_args, ..
+        } => std::iter::once(&[][..])
+            .chain(
+                elifs
+                    .iter()
+                    .flat_map(|elif| [&elif.cond_args[..], &elif.then_args[..]]),
+            )
+            .chain(std::iter::once(&else_args[..]))
+            .collect(),
+        MirInstr::Loop { args, .. } => vec![args],
+        MirInstr::ComptimeFor { args, .. } => vec![args, &[]],
+        MirInstr::Match {
+            cases, else_args, ..
+        } => cases
+            .iter()
+            .map(|case| &case.args[..])
+            .chain(std::iter::once(&else_args[..]))
+            .collect(),
+        _ => vec![&[]; instruction_regions(instruction).len()],
+    }
 }
 
 /// Each block's children in the dominator tree of `blocks`, rooted at the

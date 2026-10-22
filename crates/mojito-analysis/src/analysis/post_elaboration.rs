@@ -5,7 +5,7 @@
 //! compile-time parameter read is a constant once the elaborator answers it.
 //!
 //! The passes are the pre-elaboration pipeline's own, but
-//! `lower-arg-conventions` and `cse`, which only this seam runs. Unlike that seam, no
+//! `lower-arg-conventions`, which only this seam runs. Unlike that seam, no
 //! body is verified after each pass: each pass reports whether it changed
 //! a body, and the caller re-admits the program as concrete once, verifying
 //! only the changed bodies (`mojito_mir::mir::ConcreteMir::rewrite_bodies`).

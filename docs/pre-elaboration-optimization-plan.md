@@ -329,6 +329,10 @@ folds the operators over it (R840);
       runs no code and whose fields are concrete and register-passable;
       generic field types (R1266), destructors (R1267), struct arguments
       (R1268), and pointer fields (R1269) still keep the slot.
+12. **Generator CSE** (`CSEPass`) *(done, R926)*. The fourth round ends
+    with the post-elaboration `cse`, which walks a structured body's
+    regions with MLIR's scoping, so `PIPELINE` now holds every pass of the
+    pin's four rounds.
 
 `ApplyInliner` has no counterpart: Mojito has no `apply` operator.
 
