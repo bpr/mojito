@@ -1,0 +1,68 @@
+mojito-mir 1.87
+artifact {
+  features: [],
+  files: [
+  ],
+  traits: [],
+  structs: [
+    struct { name: Q, fields: [field { name: a, type: Int }, field { name: b, type: Int }], mut_self_methods: [], fieldwise_init: false, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: TrivialRegisterPassable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [] }
+  ],
+  decls: [
+    decl { lowered_name: inlined, param_names: [a], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: inlined,
+        registers: 22,
+        vars: 7,
+        var_names: [a, "a$inline2", "b$inline2", "q.a", "q.b", "self$inline2.a", "self$inline2.b"],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: Int }, var_type { var: $v3, type: Int }, var_type { var: $v4, type: Int }, var_type { var: $v5, type: Int }, var_type { var: $v6, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: struct_type { name: Q, arguments: [] } }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: IntLiteral }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r10, type: IntLiteral }, reg_type { reg: %r11, type: Int }, reg_type { reg: %r12, type: Int }, reg_type { reg: %r13, type: Int }, reg_type { reg: %r14, type: Int }, reg_type { reg: %r15, type: Int }, reg_type { reg: %r16, type: Int }, reg_type { reg: %r18, type: Int }, reg_type { reg: %r19, type: Int }, reg_type { reg: %r20, type: Int }, reg_type { reg: %r21, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }, reg_loc { reg: %r10, location: absent }, reg_loc { reg: %r11, location: absent }, reg_loc { reg: %r12, location: absent }, reg_loc { reg: %r13, location: absent }, reg_loc { reg: %r14, location: absent }, reg_loc { reg: %r15, location: absent }, reg_loc { reg: %r16, location: absent }, reg_loc { reg: %r17, location: absent }, reg_loc { reg: %r18, location: absent }, reg_loc { reg: %r19, location: absent }, reg_loc { reg: %r20, location: absent }, reg_loc { reg: %r21, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r1, value: int_literal(3) },
+              literal.materialize { dest: %r2, value: %r1, target: Int },
+              var.use { dest: %r0, var: $v0, mode: copy },
+              ownership.mark_initialized { place: place { root: $v5, root_type: present(Int), projections: [], type: present(Int), through: absent } },
+              ownership.mark_initialized { place: place { root: $v6, root_type: present(Int), projections: [], type: present(Int), through: absent } },
+              var.store { var: $v1, src: %r0, binding_type: present(Int), in_place: false },
+              var.store { var: $v2, src: %r2, binding_type: present(Int), in_place: false },
+              loop { results: [], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [var.use { dest: %r15, var: $v1, mode: copy }, var.store { var: $v5, src: %r15, binding_type: present(Int), in_place: false }, var.use { dest: %r16, var: $v2, mode: copy }, var.store { var: $v6, src: %r16, binding_type: present(Int), in_place: false }], terminator: break { label: present(loop4294967295), values: [] } }] },
+              var.use { dest: %r18, var: $v5, mode: forward },
+              var.use { dest: %r19, var: $v6, mode: forward },
+              struct.create { dest: %r3, fields: [%r18, %r19] },
+              field.get { dest: %r20, base: %r3, field: a },
+              var.store { var: $v3, src: %r20, binding_type: present(Int), in_place: false },
+              field.get { dest: %r21, base: %r3, field: b },
+              var.store { var: $v4, src: %r21, binding_type: present(Int), in_place: false },
+              place.load { dest: %r4, place: place { root: $v4, root_type: present(Int), projections: [], type: present(Int), through: absent } },
+              const { dest: %r5, value: int_literal(1) },
+              literal.materialize { dest: %r6, value: %r5, target: Int },
+              binary { op: add, dest: %r7, a: %r4, b: %r6, resolved: absent, raises: absent },
+              var.store { var: $v4, src: %r7, binding_type: present(Int), in_place: false },
+              const { dest: %r10, value: int_literal(100) },
+              literal.materialize { dest: %r11, value: %r10, target: Int },
+              place.load { dest: %r9, place: place { root: $v3, root_type: present(Int), projections: [], type: present(Int), through: absent } },
+              binary { op: mul, dest: %r12, a: %r9, b: %r11, resolved: absent, raises: absent },
+              place.load { dest: %r13, place: place { root: $v4, root_type: present(Int), projections: [], type: present(Int), through: absent } },
+              drop.var { var: $v3 },
+              drop.var { var: $v4 },
+              binary { op: add, dest: %r14, a: %r12, b: %r13, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r14) }
+          }
+        ]
+      }
+  ]
+}

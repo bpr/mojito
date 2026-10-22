@@ -128,6 +128,17 @@ pub(super) fn construct(
             "struct '{name}' has no constructor"
         )));
     }
+    struct_value(def, name, args)
+}
+
+/// The struct value `name` of one value per field, in declaration order,
+/// each coerced to its field type, running no constructor: a fieldwise
+/// construction, or a `struct.create`.
+pub(super) fn struct_value(
+    def: &StructDef,
+    name: &str,
+    args: Vec<Value>,
+) -> Result<Value, RuntimeError> {
     if def.fields.len() != args.len() {
         return Err(RuntimeError::ArityMismatch {
             name: name.to_string(),

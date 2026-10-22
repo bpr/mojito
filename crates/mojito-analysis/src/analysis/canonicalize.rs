@@ -43,7 +43,7 @@ use mojito_mir::mir::{
     block_successors, count_register_reads, instruction_regions_mut, instruction_regs_mut,
     prune_unreachable_blocks, terminator_regs_mut, terminator_targets, terminator_targets_mut,
 };
-use mojito_types::types::copy_is_identity;
+use mojito_types::types::{Ty, TyKind, copy_is_identity};
 use std::collections::{HashMap, HashSet};
 
 /// The pass, under MLIR's flag spelling.
@@ -87,7 +87,16 @@ pub fn canonicalize(
     let blocks = block_count(&mut function.blocks);
     let mut edits = simplify_control_flow(&mut function.blocks, true);
     prune_unreachable_blocks(function);
-    let forwarded_copies = forward_copies(function, declarations);
+    // A fold can expose another, as a struct copy whose fields were copies
+    // does once they are forwarded: the greedy driver folds to a fixpoint.
+    let mut forwarded_copies = 0;
+    loop {
+        let forwarded = forward_copies(function, declarations);
+        if forwarded == 0 {
+            break;
+        }
+        forwarded_copies += forwarded;
+    }
     timing::count("forwarded_copies", forwarded_copies as u64);
     loop {
         let before = erased.len();
@@ -422,15 +431,35 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
     let mut reads = vec![0_u32; *n_regs as usize];
     count_register_reads(blocks, &mut reads);
     let mut closures = HashSet::new();
+    let mut creates = HashMap::new();
+    let mut extracts = HashMap::new();
     visit_blocks(blocks, &mut |block| {
         for instruction in &block.instrs {
-            if let MirInstr::MakeClosure { dest, .. } = instruction
-                && instruction.would_be_trivially_dead()
-            {
-                closures.insert(dest.0);
+            match instruction {
+                MirInstr::MakeClosure { dest, .. } if instruction.would_be_trivially_dead() => {
+                    closures.insert(dest.0);
+                }
+                MirInstr::MakeStruct { dest, fields } => {
+                    creates.insert(dest.0, fields.clone());
+                }
+                MirInstr::GetField {
+                    dest,
+                    base,
+                    field,
+                    constructors,
+                } if constructors.is_empty() => {
+                    extracts.insert(dest.0, (*base, field.clone()));
+                }
+                _ => {}
             }
         }
     });
+    let structs = StructFolds {
+        reg_types,
+        declarations,
+        creates,
+        extracts,
+    };
     // A copy of a closure of reference captures copies its pointers.
     let copied_closure = |instruction: &MirInstr| match instruction {
         MirInstr::CopyValue { dest, value, .. }
@@ -441,6 +470,7 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
         _ => None,
     };
     let mut folds = HashMap::new();
+    let mut copies = HashMap::new();
     visit_blocks(blocks, &mut |block| {
         for instruction in &block.instrs {
             let mut results = Vec::new();
@@ -448,10 +478,16 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
             if let (Some(operand), [dest]) = (
                 instruction
                     .forwarded_operand(reg_types, declarations)
-                    .or_else(|| copied_closure(instruction)),
+                    .or_else(|| copied_closure(instruction))
+                    .or_else(|| structs.extracted(instruction)),
                 results.as_slice(),
             ) {
                 folds.insert(dest.0, operand);
+            }
+            if let MirInstr::MakeStruct { dest, fields } = instruction
+                && let Some(container) = structs.trivial_copy(*dest, fields, &reads)
+            {
+                copies.insert(dest.0, container);
             }
         }
     });
@@ -466,6 +502,13 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
     folds.retain(|dest: &u32, operand: &mut Reg| {
         single(*dest, 1) && single(operand.0, 1) && (in_register(operand) || sole_reader(operand))
     });
+    // A trivial struct copy's container keeps the copy's readers alone: the
+    // extracts that were its only other readers go with the copy.
+    folds.extend(
+        copies
+            .into_iter()
+            .filter(|(dest, container)| single(*dest, 1) && single(container.0, 1)),
+    );
     let roots: HashMap<u32, Reg> = folds
         .keys()
         .filter_map(|dest| {
@@ -483,6 +526,69 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
     reg_types.retain(|reg, _| !roots.contains_key(reg));
     function.spans.0.retain(|reg, _| !roots.contains_key(reg));
     roots.len()
+}
+
+/// The struct values a body builds and takes apart, for upstream's
+/// `kgen.struct` folds.
+struct StructFolds<'a> {
+    reg_types: &'a HashMap<u32, Ty>,
+    declarations: &'a MirDeclarations,
+    /// Each `struct.create`'s field operands, by its result.
+    creates: HashMap<u32, Vec<Reg>>,
+    /// Each `field.get`'s container and field, by its result.
+    extracts: HashMap<u32, (Reg, String)>,
+}
+
+impl StructFolds<'_> {
+    /// The operand an extract of a created struct's field reads: upstream's
+    /// `StructExtractOp::fold`.
+    fn extracted(&self, instruction: &MirInstr) -> Option<Reg> {
+        let MirInstr::GetField {
+            base,
+            field,
+            constructors,
+            ..
+        } = instruction
+        else {
+            return None;
+        };
+        if !constructors.is_empty() {
+            return None;
+        }
+        let position = self.position(*base, field)?;
+        self.creates.get(&base.0)?.get(position).copied()
+    }
+
+    /// The container a `struct.create` of every field extracted from it in
+    /// order copies, when the extracts, each read once, are its only
+    /// readers: upstream's `foldTrivialStructCopy`.
+    fn trivial_copy(&self, dest: Reg, fields: &[Reg], reads: &[u32]) -> Option<Reg> {
+        let (container, _) = self.extracts.get(&fields.first()?.0)?;
+        let read_once =
+            |reg: &Reg, times: usize| reads.get(reg.0 as usize).map(|&n| n as usize) == Some(times);
+        (self.reg_types.get(&container.0) == self.reg_types.get(&dest.0)
+            && read_once(container, fields.len())
+            && fields.iter().enumerate().all(|(index, field)| {
+                read_once(field, 1)
+                    && self.extracts.get(&field.0).is_some_and(|(base, name)| {
+                        base.0 == container.0 && self.position(*base, name) == Some(index)
+                    })
+            }))
+        .then_some(*container)
+    }
+
+    /// The declaration position of the field `field` of the struct `base`
+    /// holds.
+    fn position(&self, base: Reg, field: &str) -> Option<usize> {
+        let TyKind::Struct(name, _) = self.reg_types.get(&base.0)?.kind() else {
+            return None;
+        };
+        self.declarations
+            .structure(name)?
+            .fields
+            .iter()
+            .position(|(candidate, _)| candidate == field)
+    }
 }
 
 /// Every block of `blocks` and of the `try` regions they hold.

@@ -481,6 +481,7 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         | MirInstr::Slice { call: None, .. }
         | MirInstr::MultiIndex { call: None, .. }
         | MirInstr::MakeTuple { .. }
+        | MirInstr::MakeStruct { .. }
         | MirInstr::MakeVariant { .. }
         | MirInstr::VariantIs { .. }
         | MirInstr::VariantGet { .. }

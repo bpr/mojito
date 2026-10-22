@@ -19,6 +19,7 @@ use super::inline_parametric::INLINE_PARAMETRIC;
 use super::lower_lit::{LOWER_LIT, lower_lit};
 use super::mem2reg::{LOWER_ARG_CONVENTIONS, MEM_2_REG};
 use super::sccp::SCCP;
+use super::sroa::SROA;
 use super::unused_params::REMOVE_UNUSED_PARAMS;
 use mojito_common::timing;
 use mojito_mir::mir::text::package::PackageBodies;
@@ -160,23 +161,26 @@ impl Pass {
 /// generator pipeline: `SROA`, `Mem2Reg`, and `Canonicalizer` in the first;
 /// the same with `SCCP` before the `Canonicalizer` in the second; an
 /// `InlineParametric`, then `SROA`, `Mem2Reg`, and `Canonicalizer` in the
-/// third; and `CSEPass` in the fourth. Mojito has `Mem2Reg` (as `mem-2-reg`)
-/// but neither `SROA` nor a CSE pass, so its fourth round has no generator
-/// pipeline.
+/// third; and `CSEPass` in the fourth. Mojito runs each of them, as `sroa`,
+/// `mem-2-reg`, `sccp`, and `canonicalize`, but its fourth round has no
+/// generator pipeline: its `cse` runs only after elaboration.
 pub const PIPELINE: &[Pass] = &[
     Pass::CallGraph(REMOVE_UNUSED_PARAMS),
     Pass::Program(ELIMINATE_DEAD_SYMBOLS),
+    Pass::Body(SROA),
     Pass::Body(MEM_2_REG),
     Pass::Body(CANONICALIZE),
     Pass::CallGraph(INLINE_PARAMETRIC),
     Pass::CallGraph(REMOVE_UNUSED_PARAMS),
     Pass::Program(ELIMINATE_DEAD_SYMBOLS),
+    Pass::Body(SROA),
     Pass::Body(MEM_2_REG),
     Pass::Body(SCCP),
     Pass::Body(CANONICALIZE),
     Pass::CallGraph(REMOVE_UNUSED_PARAMS),
     Pass::Program(ELIMINATE_DEAD_SYMBOLS),
     Pass::CallGraph(INLINE_PARAMETRIC),
+    Pass::Body(SROA),
     Pass::Body(MEM_2_REG),
     Pass::Body(CANONICALIZE),
     Pass::CallGraph(REMOVE_UNUSED_PARAMS),
@@ -644,6 +648,7 @@ mod tests {
         assert!(pass_named("remove-unused-params").is_some());
         assert!(pass_named("inline-parametric").is_some());
         assert!(pass_named("lower-control-flow").is_some());
+        assert!(pass_named("sroa").is_some());
         assert!(pass_named("mem-2-reg").is_some());
         assert!(pass_named("lower-arg-conventions").is_some());
         assert!(pass_named("cse").is_some());

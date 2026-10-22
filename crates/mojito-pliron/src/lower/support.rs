@@ -585,7 +585,9 @@ pub fn operand_regs(instr: &MirInstr) -> Vec<Reg> {
             out.push(*src);
         }
         MirInstr::GetField { base, .. } => out.push(*base),
-        MirInstr::MakeTuple { elems, .. } => out.extend(elems.iter().copied()),
+        MirInstr::MakeTuple { elems, .. } | MirInstr::MakeStruct { fields: elems, .. } => {
+            out.extend(elems.iter().copied());
+        }
         MirInstr::Index { base, index, .. } => out.extend([*base, *index]),
         MirInstr::Slice {
             object,
@@ -728,6 +730,7 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::StoreRef { .. } => "StoreRef",
         MirInstr::LoadPlace { .. } => "LoadPlace",
         MirInstr::MakeTuple { .. } => "MakeTuple",
+        MirInstr::MakeStruct { .. } => "MakeStruct",
         MirInstr::MakeVariant { .. } => "MakeVariant",
         MirInstr::VariantIs { .. } => "VariantIs",
         MirInstr::VariantGet { .. } => "VariantGet",

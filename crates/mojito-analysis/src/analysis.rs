@@ -66,6 +66,7 @@ use register_loans::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use scan::*;
 pub use sccp::{SCCP, sccp};
+pub use sroa::{SROA, sroa};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use store_drops::*;
@@ -291,6 +292,7 @@ mod region_walk;
 mod register_loans;
 mod scan;
 mod sccp;
+mod sroa;
 mod store_drops;
 mod unused_params;
 

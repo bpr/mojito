@@ -19,13 +19,14 @@ regions (R927, 2026-10-21), each generator shrinks by the passes upstream runs
 before elaboration. None of these has an open prerequisite today:
 
 ```sh
-scripts/claude_loop.py --only R928 --only R926 --only R929 --only R930 -n 0
+scripts/claude_loop.py --only R926 --only R929 --only R930 --only R1266 -n 0
 ```
 
-- R928 — `SROA`: aggregate slots split per element (`Fable, Planned`).
 - R926 — generators CSE'd before elaboration.
 - R929 — CSE merges reads of memory.
 - R930 — CSE merges values held in storage.
+- R1266 — `sroa` and `mem-2-reg` take slots of generic struct and field
+  types (`Fable, Planned`); `SROA` itself landed as `sroa` (R928).
 
 ## Then: the rest of the pipeline on regions
 
@@ -41,13 +42,19 @@ scripts/claude_loop.py --task R883 -n 0
 Corpus totals from `benchmarks/instantiation.tsv` (refreshed by
 `scripts/instantiation-report`; the overnight gate says when it is stale):
 
-| counter | 10-13 | 10-17 |
-|---|---|---|
-| concrete functions | 42,409 | 24,864 |
-| concrete instructions | 892,391 | 402,905 |
-| generators | 16,553 | 8,801 |
-| generator instances | 26,868 | 13,804 |
-| instances per generator | 1.62 | 1.57 |
+| counter | 10-13 | 10-17 | 10-21 |
+|---|---|---|---|
+| concrete functions | 42,409 | 24,864 | 25,859 |
+| concrete instructions | 892,391 | 402,905 | 386,579 |
+| generators | 16,553 | 8,801 | 9,213 |
+| generator instances | 26,868 | 13,804 | 13,989 |
+| instances per generator | 1.62 | 1.57 | 1.52 |
+
+The 10-21 column is after `sroa` (R928), over 97 more fixtures than
+10-17's. Over the fixtures elaborated both before and after it, `sroa`
+took concrete instructions from 388,659 to 386,462 (−0.57 %), generator
+instances from 14,037 to 13,988 (−0.35 %), and generator-instance
+instructions from 158,373 to 157,799 (−0.36 %).
 
 The program is less than half its 10-13 size, almost all of it from dead
 code removal, inlining, and the unused-argument removal that landed 10-17.

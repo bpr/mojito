@@ -616,6 +616,31 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Adds upstream's `SROA` as the `sroa` pass (R928), before each
+  `mem-2-reg` of the first three pre-elaboration rounds and in the
+  post-elaboration pipeline's `'kgen.func'` block. A local slot of a
+  declared struct whose drop runs no code and whose fields are concrete,
+  non-pointer, and register-passable (or such structs), read and written
+  through field places, splits into one slot per field: a whole store
+  becomes a `field.get` and a store per field, a whole read a read per
+  field and the new `struct.create` (MIR text 1.87, upstream's
+  `kgen.struct.create`), and nested structs split a level a round.
+  `mem-2-reg` reads a whole-slot `ownership.mark_initialized` as a lifetime
+  marker, so an inlined constructor's `out self` promotes, and
+  `canonicalize` folds a field read of a `struct.create` to its operand and
+  a `struct.create` of one value's fields back to that value, forwarding
+  until nothing forwards. `inline-parametric` binds a `read` parameter
+  passed a `struct.create`, or an owned temporary with no place whose
+  type's drop runs no code, as a value, so a call whose argument the split
+  no longer loads from a slot is still inlined. A generic field type (R1266), a
+  destructor (R1267), a struct argument (R1268), and a pointer field
+  (R1269) keep the slot. Program output is unchanged
+  (`assets/ok/struct_slot_fields_split.mojo`); over the fixtures both
+  instantiation reports elaborate, concrete instructions fall from 388,659
+  to 386,462 (−0.57 %), generator instances from 14,037 to 13,988
+  (−0.35 %), and generator-instance instructions from 158,373 to 157,799
+  (−0.36 %). MIR text 1.87; the package format is unchanged.
+  This closes R928.
 - `mem-2-reg` promotes a structured body as upstream's `processRegion`
   does: one scoped walk in which a slot allocated in the innermost region
   holding its mentions, and stored inside a region op, is carried through

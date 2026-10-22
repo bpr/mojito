@@ -1299,6 +1299,9 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ),
             ],
         ),
+        MirInstr::MakeStruct { dest, fields } => {
+            record(tag, &[("dest", reg_value(*dest)), ("fields", regs(fields))])
+        }
         MirInstr::MakeVariant {
             dest,
             alternatives,

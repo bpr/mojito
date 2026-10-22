@@ -819,7 +819,12 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             place_regs_mut(target, &mut out);
             out.push(reference);
         }
-        MirInstr::MakeTuple { dest, elems, .. } | MirInstr::MakeSimd { dest, elems, .. } => {
+        MirInstr::MakeTuple { dest, elems, .. }
+        | MirInstr::MakeSimd { dest, elems, .. }
+        | MirInstr::MakeStruct {
+            dest,
+            fields: elems,
+        } => {
             out.push(dest);
             out.extend(elems.iter_mut());
         }
@@ -2457,6 +2462,15 @@ pub enum MirInstr {
         /// construction uses these to materialize each argument precisely.
         element_types: Option<Vec<Ty>>,
     },
+    /// Build a struct value of `dest`'s type from one register per field,
+    /// in declaration order, running no constructor: upstream's
+    /// `kgen.struct.create`, which `sroa` emits for a whole read of a split
+    /// slot. It is pure, as upstream's is: `sroa` builds one only of a type
+    /// whose drop runs no code.
+    MakeStruct {
+        dest: Reg,
+        fields: Vec<Reg>,
+    },
     /// Construct a tagged union. Alternative order determines the runtime tag.
     /// The payload is a copy of `value`; `constructor` names the
     /// `__copyinit__` it runs, as on [`MirInstr::CopyValue`].
@@ -2891,6 +2905,7 @@ impl MirInstr {
             | Self::ReadRef { .. }
             | Self::VariantIs { .. }
             | Self::MakeSimd { .. }
+            | Self::MakeStruct { .. }
             | Self::SimdCast { .. }
             | Self::SimdBitcast { .. }
             | Self::SimdShuffle { .. } => true,

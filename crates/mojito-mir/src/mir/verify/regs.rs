@@ -37,6 +37,7 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::MultiIndex { dest, .. }
         | MirInstr::LoadPlace { dest, .. }
         | MirInstr::MakeTuple { dest, .. }
+        | MirInstr::MakeStruct { dest, .. }
         | MirInstr::MakeVariant { dest, .. }
         | MirInstr::MakeSimd { dest, .. }
         | MirInstr::SimdCast { dest, .. }
@@ -311,7 +312,9 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
                 );
             }
         }
-        MirInstr::MakeTuple { elems, .. } | MirInstr::MakeSimd { elems, .. } => {
+        MirInstr::MakeTuple { elems, .. }
+        | MirInstr::MakeSimd { elems, .. }
+        | MirInstr::MakeStruct { fields: elems, .. } => {
             out.extend(elems.iter().copied());
         }
         MirInstr::SimdCast { value, .. } | MirInstr::SimdBitcast { value, .. } => out.push(*value),

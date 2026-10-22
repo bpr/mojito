@@ -1457,6 +1457,7 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
             | MirInstr::StoreRef { .. }
             | MirInstr::LoadPlace { .. }
             | MirInstr::MakeTuple { .. }
+            | MirInstr::MakeStruct { .. }
             | MirInstr::MarkInitialized { .. }
             | MirInstr::MarkDestroyed { .. }
             | MirInstr::DropVar { .. }

@@ -697,6 +697,10 @@ impl Decoder {
                     Some(d.option_value(Some(v)).map(|v| d.types(v)))
                 })?,
             }),
+            "struct.create" => Some(MirInstr::MakeStruct {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+                fields: self.req(value, fields, "fields", |d, v| Some(d.regs(v)))?,
+            }),
             "variant.make" => Some(MirInstr::MakeVariant {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 alternatives: self.req(value, fields, "alternatives", |d, v| Some(d.types(v)))?,

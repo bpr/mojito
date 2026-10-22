@@ -17,6 +17,7 @@ use super::duplicate_functions::ELIMINATE_DUPLICATE_FUNCTIONS;
 use super::mem2reg::{LOWER_ARG_CONVENTIONS, MEM_2_REG};
 use super::pre_elaboration::{BodyPass, ProgramPass};
 use super::sccp::SCCP;
+use super::sroa::SROA;
 use mojito_common::timing;
 use mojito_mir::mir::{MirDeclarations, MirFunction, MirProgram};
 
@@ -26,10 +27,17 @@ use mojito_mir::mir::{MirDeclarations, MirFunction, MirProgram};
 /// It is upstream's `LowerArgConventions` (its callee half, which stores
 /// each register-passable argument into a temporary) and `Mem2Reg`, which
 /// its first optimization pipeline runs on every function, then its
-/// `'kgen.func'` pipeline without the pass Mojito does not have (`SROA`),
-/// ending with `CSEPass`.
-pub const POST_ELABORATION_PIPELINE: &[BodyPass] =
-    &[LOWER_ARG_CONVENTIONS, MEM_2_REG, SCCP, CANONICALIZE, CSE];
+/// `'kgen.func'` pipeline: `SROA`, `Mem2Reg`, `SCCP`, `Canonicalizer`, and
+/// `CSEPass`.
+pub const POST_ELABORATION_PIPELINE: &[BodyPass] = &[
+    LOWER_ARG_CONVENTIONS,
+    MEM_2_REG,
+    SROA,
+    MEM_2_REG,
+    SCCP,
+    CANONICALIZE,
+    CSE,
+];
 
 /// The symbol passes upstream runs over the elaborator's output before its
 /// function pipeline, in order: `EliminateDuplicateFunctions`, then

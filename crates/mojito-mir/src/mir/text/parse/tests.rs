@@ -1068,6 +1068,14 @@ fn instruction_families_reprint_byte_identically() {
             elems: Vec::new(),
             element_types: None,
         },
+        MirInstr::MakeStruct {
+            dest: Reg(26),
+            fields: vec![Reg(1), Reg(2)],
+        },
+        MirInstr::MakeStruct {
+            dest: Reg(26),
+            fields: Vec::new(),
+        },
         MirInstr::MakeVariant {
             dest: Reg(27),
             alternatives: vec![Ty::int(), Ty::none()],

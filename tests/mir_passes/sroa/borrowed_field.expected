@@ -1,0 +1,81 @@
+  functions: [
+      fn {
+        name: "Pt.sum",
+        registers: 3,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: Pt, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Pt, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [projection { op: field(x), type: Int }], type: present(Int), through: absent } },
+              place.load { dest: %r1, place: place { root: $v0, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [projection { op: field(y), type: Int }], type: present(Int), through: absent } },
+              binary { op: add, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      },
+      fn {
+        name: borrowed_field,
+        registers: 20,
+        vars: 4,
+        var_names: [a, "s.start", "s.end.x", "s.end.y"],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: struct_type { name: Pt, arguments: [] } }, var_type { var: $v2, type: Int }, var_type { var: $v3, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: struct_type { name: Pt, arguments: [] } }, reg_type { reg: %r4, type: IntLiteral }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: IntLiteral }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: struct_type { name: Pt, arguments: [] } }, reg_type { reg: %r9, type: struct_type { name: Seg, arguments: [] } }, reg_type { reg: %r10, type: Int }, reg_type { reg: %r12, type: struct_type { name: Pt, arguments: [] } }, reg_type { reg: %r13, type: Int }, reg_type { reg: %r14, type: Int }, reg_type { reg: %r15, type: Int }, reg_type { reg: %r16, type: struct_type { name: Pt, arguments: [] } }, reg_type { reg: %r17, type: struct_type { name: Pt, arguments: [] } }, reg_type { reg: %r18, type: Int }, reg_type { reg: %r19, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }, reg_loc { reg: %r10, location: absent }, reg_loc { reg: %r11, location: absent }, reg_loc { reg: %r12, location: absent }, reg_loc { reg: %r13, location: absent }, reg_loc { reg: %r14, location: absent }, reg_loc { reg: %r15, location: absent }, reg_loc { reg: %r16, location: absent }, reg_loc { reg: %r17, location: absent }, reg_loc { reg: %r18, location: absent }, reg_loc { reg: %r19, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r1, value: int_literal(1) },
+              literal.materialize { dest: %r2, value: %r1, target: Int },
+              var.use { dest: %r0, var: $v0, mode: copy },
+              call { dest: %r3, func: Pt, raises: absent, args: [%r0, %r2], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              const { dest: %r4, value: int_literal(2) },
+              literal.materialize { dest: %r5, value: %r4, target: Int },
+              const { dest: %r6, value: int_literal(3) },
+              literal.materialize { dest: %r7, value: %r6, target: Int },
+              call { dest: %r8, func: Pt, raises: absent, args: [%r5, %r7], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r9, func: Seg, raises: absent, args: [%r3, %r8], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              field.get { dest: %r16, base: %r9, field: start },
+              var.store { var: $v1, src: %r16, binding_type: present(struct_type { name: Pt, arguments: [] }), in_place: false },
+              field.get { dest: %r17, base: %r9, field: end },
+              field.get { dest: %r18, base: %r17, field: x },
+              var.store { var: $v2, src: %r18, binding_type: present(Int), in_place: false },
+              field.get { dest: %r19, base: %r17, field: y },
+              var.store { var: $v3, src: %r19, binding_type: present(Int), in_place: false },
+              var.use { dest: %r10, var: $v0, mode: copy },
+              var.store { var: $v2, src: %r10, binding_type: present(Int), in_place: false },
+              place.load { dest: %r12, place: place { root: $v1, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [], type: present(struct_type { name: Pt, arguments: [] }), through: absent } },
+              call.method { dest: %r13, recv: %r12, method: sum, resolved: present("Pt.sum"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v1, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [], type: present(struct_type { name: Pt, arguments: [] }), through: absent }), recv_writes: false, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              place.load { dest: %r14, place: place { root: $v2, root_type: present(Int), projections: [], type: present(Int), through: absent } },
+              drop.var { var: $v1 },
+              drop.var { var: $v2 },
+              drop.var { var: $v3 },
+              binary { op: add, dest: %r15, a: %r13, b: %r14, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r15) }
+          }
+        ]
+      }
+  ]

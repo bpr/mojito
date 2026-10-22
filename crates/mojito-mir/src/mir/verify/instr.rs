@@ -85,6 +85,7 @@ pub(super) fn verify_instruction(
         | MirInstr::CopyValue { .. }
         | MirInstr::Rebind { .. }
         | MirInstr::DefVar { .. }
+        | MirInstr::MakeStruct { .. }
         | MirInstr::MakeVariant { .. }
         | MirInstr::MakeClosure { .. } => verify_value_instruction(&cx, instruction, errors),
         MirInstr::GetIter { .. } | MirInstr::Next { .. } | MirInstr::TryNext { .. } => {
@@ -714,6 +715,7 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                 ));
             }
         }
+        MirInstr::MakeStruct { dest, fields } => verify_struct_creation(cx, *dest, fields, errors),
         MirInstr::MakeVariant {
             alternatives,
             index,
@@ -996,5 +998,46 @@ fn verify_simd_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mu
             }
         }
         _ => {}
+    }
+}
+
+/// A `struct.create` builds a declared struct of as many fields as it
+/// passes, each typed as declared. A generic struct's field types would
+/// need substitution the verifier does not re-derive, as a field
+/// projection's do.
+fn verify_struct_creation(cx: &InstrCx<'_>, dest: Reg, fields: &[Reg], errors: &mut Vec<String>) {
+    let prefix = cx.prefix;
+    let declared = cx.reg_ty(dest).and_then(|ty| match ty.kind() {
+        TyKind::Struct(name, arguments) => cx
+            .declarations
+            .structure(name)
+            .map(|declaration| (declaration, arguments.is_empty())),
+        _ => None,
+    });
+    let Some((declaration, concrete)) = declared else {
+        errors.push(format!(
+            "{prefix}: struct creation's result is no declared struct"
+        ));
+        return;
+    };
+    if declaration.fields.len() != fields.len() {
+        errors.push(format!(
+            "{prefix}: struct creation passes {} fields to a struct of {}",
+            fields.len(),
+            declaration.fields.len()
+        ));
+        return;
+    }
+    if !concrete {
+        return;
+    }
+    for ((field, expected), value) in declaration.fields.iter().zip(fields) {
+        if let Some(found) = cx.reg_ty(*value)
+            && !types_compatible(found, expected)
+        {
+            errors.push(format!(
+                "{prefix}: struct creation's field {field} is {found}, declared {expected}"
+            ));
+        }
     }
 }

@@ -323,7 +323,12 @@ folds the operators over it (R840);
     - A slot whose reads merge two stores is carried through region
       values on a structured body, as `processRegion` carries it (R927); a
       store inside a `try` part still keeps its slot (R1264).
-    - `SROA` waits on a value-level aggregate construction (R928).
+    - `SROA` landed as `sroa` (R928) before each `Mem2Reg`, at both seams,
+      with `struct.create` as its value-level construction and upstream's
+      `kgen.struct` folds in `canonicalize`. It splits a struct whose drop
+      runs no code and whose fields are concrete and register-passable;
+      generic field types (R1266), destructors (R1267), struct arguments
+      (R1268), and pointer fields (R1269) still keep the slot.
 
 `ApplyInliner` has no counterpart: Mojito has no `apply` operator.
 

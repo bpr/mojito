@@ -356,6 +356,7 @@ impl FnLowering<'_> {
                 elems,
                 element_types,
             } => self.lower_make_tuple(ctx, *dest, elems, element_types.as_deref()),
+            MirInstr::MakeStruct { dest, fields } => self.lower_struct_create(ctx, *dest, fields),
             MirInstr::MethodCall {
                 dest,
                 recv,

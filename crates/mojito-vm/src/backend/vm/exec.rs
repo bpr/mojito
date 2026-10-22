@@ -1261,6 +1261,17 @@ impl VmBackend {
                 };
                 regs[dest.0 as usize] = Value::Tuple(items);
             }
+            MirInstr::MakeStruct { dest, fields } => {
+                let name = prog
+                    .declared_struct(prog.mir.functions[function].1.reg_types.get(&dest.0))
+                    .ok_or_else(|| {
+                        RuntimeError::TypeError(
+                            "struct.create builds no declared struct".to_string(),
+                        )
+                    })?;
+                let values = fields.iter().map(|r| regs[r.0 as usize].clone()).collect();
+                regs[dest.0 as usize] = calls::struct_value(&prog.structs[name], name, values)?;
+            }
             MirInstr::MakeVariant {
                 dest,
                 alternatives,

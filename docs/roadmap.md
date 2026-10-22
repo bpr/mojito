@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1266**.
+Next free ID: **R1270**.
 
 ## Ordered Work
 
@@ -626,6 +626,10 @@ which names the upstream pass each one follows. Each is measured by the
     nested `inner`'s removed operand stays a call of `Arr` once the operand
     goes, and its type reads `n`. The plain nested analog
     (`inner(Arr[n](…), x)` outside a loop) keeps one per `n` the same way.
+  - Probe: `moved` in `assets/ok/struct_slot_fields_split.mojo` keeps
+    `call Pt` and two `field.get`s of its result after `sroa` and
+    `mem-2-reg`, where upstream's inlined fieldwise `__init__` leaves field
+    stores the split promotes to the arguments themselves.
   - Found while landing R1020 (2026-10-16).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -743,28 +747,69 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R928 Aggregate slots are not split, where upstream's `SROA` gives
-  each element its own allocation**
+- [ ] **R1266 A slot of a generic struct or field type stays in memory,
+  where upstream's `SROA` and `Mem2Reg` take any allocation**
 
-  A trivially register-passable struct or tuple slot that is read and
-  written through field places stays whole, so `mem-2-reg` never promotes
-  it.
-  - Upstream's `SROA` runs before each `Mem2Reg`, at both seams, and turns
-    a whole-value store into per-element extracts and stores
-    (`SROA.cpp`).
-  - MIR builds a struct by a constructor call and has no value-level
-    construction op for a whole-value read of split elements, so the pass
-    needs one, which bumps the MIR text format.
-  - Done when a pass test shows a field-accessed `TrivialRegisterPassable`
-    struct slot split and promoted, and the corpus effect is recorded.
+  `sroa` keeps a struct slot one of whose declared field types is
+  symbolic, and `mem-2-reg` keeps any slot of a symbolic type, while
+  upstream's `ReplaceStructs` and `canPromote` have no such type test.
+  - `sroa`'s `splittable_type` refuses an `is_symbolic` field, since a
+    field slot is typed by the declaration, not substituted at the slot
+    type's arguments.
+  - `mem2reg::promotable_type` refuses an `is_symbolic` slot, and
+    `MirDeclarations::copy_is_identity` refuses a symbolic field.
+  - Lever: a `mojito-types` helper that computes a struct's field types at
+    its arguments (over `struct_argument_substitution` and value
+    arguments); have `sroa` type field slots with it, have
+    `copy_is_identity` judge fields with it, and drop `promotable_type`'s
+    symbolic test.
   - Probe: `plain_nested[n]` passing `Arr[n](SIMD[DType.int64, n](1))` to a
     nested `inner`'s removed argument, where `Arr`'s `@always_inline`
     `__init__` stores `self.v`, keeps one instance per `n`, where the pin
     has one: the inlined constructor leaves the `Arr[n]` slot's field store
-    and whole load, which `mem-2-reg` cannot promote, so the dead
-    construction's type still reads `n` (found while landing R1039).
+    and whole load, which neither pass takes, so the dead construction's
+    type still reads `n` (found while landing R1039).
   - Depends on nothing.
   - Model: Fable, Planned.
+
+- [ ] **R1267 `sroa` keeps a struct slot whose drop runs code**
+
+  A struct slot read and written through its fields stays whole when the
+  struct or one of its fields has a destructor, where upstream's `SROA`
+  splits any struct allocation whose users are field addresses, loads, and
+  stores.
+  - Splitting would turn the slot's `drop.var` into one drop per remaining
+    field, each naming its field type's destructor
+    (`MirDeclarations::destructor`), in reverse declaration order.
+  - First establish whether upstream's destructor insertion destroys such a
+    struct through a whole `__del__` call that takes its address, which
+    keeps it whole on the pin too; if so, move this entry to
+    `docs/non-goals.md`. Read `CheckLifetimes.cpp` and
+    `DestructorInsertion`: the pin cannot print its IR.
+  - Probe: `var s = S(1, String("a")); s.n += 1; return s.n` over
+    `@fieldwise_init struct S(Movable): var n: Int; var t: String` keeps
+    `s` in memory.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1268 `lower-arg-conventions` stores only the arguments `mem-2-reg`
+  promotes whole, so `sroa` never splits a struct argument**
+
+  After elaboration, a `read` argument of a struct type is read through
+  field places on its parameter slot, where upstream's
+  `LowerArgConventions` stores every register-passable argument into a
+  stack allocation for the `'kgen.func'` pipeline's `SROA` and `Mem2Reg`.
+  - `lower_arg_conventions` stores a parameter only when `promotable_type`
+    admits it, and `sroa` splits locals only.
+  - Lever: admit a parameter `sroa` would split (expose its census from
+    `crates/mojito-analysis/src/analysis/sroa.rs`) in
+    `lower_arg_conventions`' eligible set.
+  - Probe: `def take(p: Pt) -> Int: return p.x * 10 + p.y` in
+    `assets/ok/struct_slot_fields_split.mojo` keeps two `place.load`s of
+    `p`'s fields in concrete `take` (upstream: `LowerArgConventions.cpp`,
+    then `SROA, Mem2Reg`).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R926 Generators are not CSE'd before elaboration**
 
@@ -8547,6 +8592,26 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1269 The VM reads a whole-slot place through a reference handle
+  the slot holds, so `sroa` keeps a struct with a pointer field**
+
+  The VM holds a `Pointer(to=x)` as a frame reference handle
+  (`Value::Ref`), and any place rooted at a slot holding one goes through
+  the handle (`place_handle`, `crates/mojito-vm/src/backend/vm/references.rs`),
+  so a pointer field moved into its own slot reads its pointee where the
+  field read the pointer.
+  - `sroa` refuses a struct with a pointer field for this reason
+    (`splittable_type`), where upstream's `SROA` splits it.
+  - A slot's place should read through a handle only when the slot is a
+    `ref` binding, which the place's `through` and the slot's type say,
+    not because of the value it holds.
+  - Probe: dropping the pointer test in `splittable_type` makes
+    `assets/ok/keyed_def_builds_loan_carrying_instance.mojo` fail with
+    "use of variable slot 0 after it was moved": the split `Box[Pointer]`
+    field's `drop.place` takes `xs` through the handle.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 - [ ] **R607 The bundled publics keep bare linked names the compiler
   recognizes by spelling**
 
@@ -8602,6 +8667,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     gives the intrinsic (`Slice(start=1, end=3, step=0, flags=3)`), where
     the VM and the pin write `Slice(1, 3, None)`.
   - Probe: `conformance/probes/slice_string_native.mojo`.
+  - Probe: `sroa` refuses a descriptor slot (`splittable_type`,
+    `crates/mojito-analysis/src/analysis/sroa.rs`), where upstream's `SROA`
+    splits a `Slice` like any struct; splitting one made
+    `assets/ok/template_method_tuple_element.mojo` fail on the VM with
+    "Slice bound access requires its declared Optional result".
   - Found while landing R192 (2026-10-19).
   - Depends on R1157, which ports the two kinds first.
   - Model: Fable, Planned.

@@ -1,0 +1,88 @@
+mojito-mir 1.87
+artifact {
+  features: [],
+  files: [
+  ],
+  traits: [],
+  structs: [
+    struct { name: Pt, fields: [field { name: x, type: Int }, field { name: y, type: Int }], mut_self_methods: [], fieldwise_init: true, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [] },
+    struct { name: Seg, fields: [field { name: start, type: struct_type { name: Pt, arguments: [] } }, field { name: end, type: struct_type { name: Pt, arguments: [] } }], mut_self_methods: [], fieldwise_init: true, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [] }
+  ],
+  decls: [
+    decl { lowered_name: "Pt.sum", param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: true, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: borrowed_field, param_names: [a], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: "Pt.sum",
+        registers: 3,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: Pt, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Pt, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [projection { op: field(x), type: Int }], type: present(Int), through: absent } },
+              place.load { dest: %r1, place: place { root: $v0, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [projection { op: field(y), type: Int }], type: present(Int), through: absent } },
+              binary { op: add, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      },
+      fn {
+        name: borrowed_field,
+        registers: 16,
+        vars: 2,
+        var_names: [a, s],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: struct_type { name: Seg, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: struct_type { name: Pt, arguments: [] } }, reg_type { reg: %r4, type: IntLiteral }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: IntLiteral }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: struct_type { name: Pt, arguments: [] } }, reg_type { reg: %r9, type: struct_type { name: Seg, arguments: [] } }, reg_type { reg: %r10, type: Int }, reg_type { reg: %r12, type: struct_type { name: Pt, arguments: [] } }, reg_type { reg: %r13, type: Int }, reg_type { reg: %r14, type: Int }, reg_type { reg: %r15, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }, reg_loc { reg: %r10, location: absent }, reg_loc { reg: %r11, location: absent }, reg_loc { reg: %r12, location: absent }, reg_loc { reg: %r13, location: absent }, reg_loc { reg: %r14, location: absent }, reg_loc { reg: %r15, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r1, value: int_literal(1) },
+              literal.materialize { dest: %r2, value: %r1, target: Int },
+              var.use { dest: %r0, var: $v0, mode: copy },
+              call { dest: %r3, func: Pt, raises: absent, args: [%r0, %r2], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              const { dest: %r4, value: int_literal(2) },
+              literal.materialize { dest: %r5, value: %r4, target: Int },
+              const { dest: %r6, value: int_literal(3) },
+              literal.materialize { dest: %r7, value: %r6, target: Int },
+              call { dest: %r8, func: Pt, raises: absent, args: [%r5, %r7], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r9, func: Seg, raises: absent, args: [%r3, %r8], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              var.store { var: $v1, src: %r9, binding_type: present(struct_type { name: Seg, arguments: [] }), in_place: true },
+              var.use { dest: %r10, var: $v0, mode: copy },
+              place.store { place: place { root: $v1, root_type: present(struct_type { name: Seg, arguments: [] }), projections: [projection { op: field(end), type: struct_type { name: Pt, arguments: [] } }, projection { op: field(x), type: Int }], type: present(Int), through: absent }, src: %r10 },
+              place.load { dest: %r12, place: place { root: $v1, root_type: present(struct_type { name: Seg, arguments: [] }), projections: [projection { op: field(start), type: struct_type { name: Pt, arguments: [] } }], type: present(struct_type { name: Pt, arguments: [] }), through: absent } },
+              call.method { dest: %r13, recv: %r12, method: sum, resolved: present("Pt.sum"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v1, root_type: present(struct_type { name: Seg, arguments: [] }), projections: [projection { op: field(start), type: struct_type { name: Pt, arguments: [] } }], type: present(struct_type { name: Pt, arguments: [] }), through: absent }), recv_writes: false, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              place.load { dest: %r14, place: place { root: $v1, root_type: present(struct_type { name: Seg, arguments: [] }), projections: [projection { op: field(end), type: struct_type { name: Pt, arguments: [] } }, projection { op: field(x), type: Int }], type: present(Int), through: absent } },
+              drop.var { var: $v1 },
+              binary { op: add, dest: %r15, a: %r13, b: %r14, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r15) }
+          }
+        ]
+      }
+  ]
+}

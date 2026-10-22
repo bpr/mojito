@@ -382,6 +382,7 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
             element_types: None,
             ..
         }
+        | I::MakeStruct { .. }
         | I::InvalidateInteriors { .. }
         | I::ReadRef { .. }
         | I::Rebind { .. }

@@ -1,0 +1,34 @@
+  functions: [
+      fn {
+        name: inlined,
+        registers: 24,
+        vars: 1,
+        var_names: [a],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r11, type: Int }, reg_type { reg: %r12, type: Int }, reg_type { reg: %r14, type: Int }, reg_type { reg: %r16, type: Int }, reg_type { reg: %r22, type: Int }, reg_type { reg: %r23, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }, reg_loc { reg: %r10, location: absent }, reg_loc { reg: %r11, location: absent }, reg_loc { reg: %r12, location: absent }, reg_loc { reg: %r13, location: absent }, reg_loc { reg: %r14, location: absent }, reg_loc { reg: %r15, location: absent }, reg_loc { reg: %r16, location: absent }, reg_loc { reg: %r17, location: absent }, reg_loc { reg: %r18, location: absent }, reg_loc { reg: %r19, location: absent }, reg_loc { reg: %r20, location: absent }, reg_loc { reg: %r21, location: absent }, reg_loc { reg: %r22, location: absent }, reg_loc { reg: %r23, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              loop { results: [%r22, %r23], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [const { dest: %r16, value: int(3) }], terminator: break { label: present(loop4294967295), values: [%r0, %r16] } }] },
+              const { dest: %r6, value: int(1) },
+              binary { op: add, dest: %r7, a: %r23, b: %r6, resolved: absent, raises: absent },
+              const { dest: %r11, value: int(100) },
+              binary { op: mul, dest: %r12, a: %r22, b: %r11, resolved: absent, raises: absent },
+              binary { op: add, dest: %r14, a: %r12, b: %r7, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r14) }
+          }
+        ]
+      }
+  ]

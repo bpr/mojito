@@ -1,0 +1,65 @@
+  functions: [
+      fn {
+        name: take,
+        registers: 6,
+        vars: 1,
+        var_names: [p],
+        params: 1,
+        param_types: [struct_type { name: Pt, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Pt, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r2, value: int(10) },
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [projection { op: field(x), type: Int }], type: present(Int), through: absent } },
+              binary { op: mul, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent },
+              place.load { dest: %r4, place: place { root: $v0, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [projection { op: field(y), type: Int }], type: present(Int), through: absent } },
+              binary { op: add, dest: %r5, a: %r3, b: %r4, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r5) }
+          }
+        ]
+      },
+      fn {
+        name: passed_kept,
+        registers: 12,
+        vars: 1,
+        var_names: [a],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: struct_type { name: Pt, arguments: [] } }, reg_type { reg: %r4, type: struct_type { name: Pt, arguments: [] } }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r9, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }, reg_loc { reg: %r10, location: absent }, reg_loc { reg: %r11, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r2, value: int(2) },
+              var.use { dest: %r0, var: $v0, mode: copy },
+              call { dest: %r3, func: Pt, raises: absent, args: [%r0, %r2], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              field.get { dest: %r8, base: %r3, field: x },
+              field.get { dest: %r9, base: %r3, field: y },
+              struct.create { dest: %r4, fields: [%r8, %r9] },
+              call { dest: %r5, func: take, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              binary { op: add, dest: %r7, a: %r5, b: %r8, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r7) }
+          }
+        ]
+      }
+  ]

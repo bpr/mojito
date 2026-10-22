@@ -136,17 +136,54 @@ impl FnLowering<'_> {
                 dest,
             ));
         }
-        let fields: Vec<(String, Ty)> = decl.fields.clone();
-        let field_tys: Vec<Ty> = fields.iter().map(|(_, t)| t.clone()).collect();
-        let composed = self.struct_layout_of(&field_tys, dest)?;
+        let field_tys: Vec<Ty> = decl.fields.iter().map(|(_, t)| t.clone()).collect();
+        self.store_fields(ctx, dest, layout, &field_tys, args)
+    }
+
+    /// A `struct.create`: fresh storage of `dest`'s struct type with each
+    /// field operand stored at its offset, as a fieldwise constructor
+    /// builds it.
+    pub(super) fn lower_struct_create(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        fields: &[Reg],
+    ) -> Result<(), PlironError> {
+        let Some(struct_ty) = self.func.reg_types.get(&dest.0).cloned() else {
+            return Err(self.unsupported_reg("untyped struct creation".into(), dest));
+        };
+        let TyKind::Struct(name, _) = struct_ty.kind() else {
+            return Err(self.unsupported_reg(format!("struct creation of `{struct_ty}`"), dest));
+        };
+        let lowered = lower_ty(self.name, &struct_ty, &self.layout, self.reg_span(dest))?;
+        let (LowerTy::Aggregate { layout, .. }, Some(decl)) =
+            (lowered, self.struct_decls.get(name.as_str()))
+        else {
+            return Err(self.unsupported_reg(format!("struct creation of `{name}`"), dest));
+        };
+        let field_tys: Vec<Ty> = decl.fields.iter().map(|(_, t)| t.clone()).collect();
+        self.store_fields(ctx, dest, layout, &field_tys, fields)
+    }
+
+    /// Fresh `layout` storage for `dest`, each of `values` stored at the
+    /// offset of its field of type `field_tys`.
+    fn store_fields(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        layout: Layout,
+        field_tys: &[Ty],
+        values: &[Reg],
+    ) -> Result<(), PlironError> {
+        let composed = self.struct_layout_of(field_tys, dest)?;
         let storage = self.entry_alloca(ctx, layout.size, layout.align);
-        for ((arg, field_ty), offset) in args.iter().zip(&field_tys).zip(&composed.offsets) {
+        for ((value, field_ty), offset) in values.iter().zip(field_tys).zip(&composed.offsets) {
             let address = if *offset == 0 {
                 storage
             } else {
                 self.gep_byte(ctx, storage, *offset, dest)
             };
-            self.store_to(ctx, address, field_ty, *arg)?;
+            self.store_to(ctx, address, field_ty, *value)?;
         }
         self.reg_values.insert(dest.0, storage);
         Ok(())

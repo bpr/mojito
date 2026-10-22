@@ -1258,8 +1258,19 @@ impl<'c> Inliner<'_, 'c> {
     ) -> Option<Vec<Binding>> {
         let mut bindings = Vec::with_capacity(callee.n_params);
         for param in 0..callee.n_params {
+            // A `read` argument with no place to bind, an owned temporary
+            // such as a call's result, is a value when its type's drop runs
+            // no code, as upstream substitutes a register-passable SSA value.
             let bind = |argument: Reg, place: Option<&MirPlace>| {
                 argument_binding(self.function, callee, block, index, param, argument, place)
+                    .or_else(|| {
+                        (!is_reference_parameter(callee, param)
+                            && callee
+                                .param_types
+                                .get(param)
+                                .is_some_and(|ty| self.declarations.drop_runs_no_code(ty)))
+                        .then_some(Binding::Value(argument))
+                    })
             };
             let binding = match declaration.slot_parameter(param) {
                 SlotParameter::Receiver => match site.receiver? {
@@ -1940,23 +1951,23 @@ const fn splits_runs(instruction: &MirInstr) -> bool {
 
 /// Whether the register `argument` is a copy of a slot of `caller` in
 /// `block` before the call at `index`, in its run ([`run_start`]), that runs no copy constructor, the
-/// slot's type closed so that none is named later: an owned value of a
-/// type with nothing to destroy, which a `read` parameter borrows whole.
+/// slot's type closed so that none is named later, or a `struct.create`,
+/// which `sroa` builds only of a type whose drop runs no code: an owned
+/// value of a type with nothing to destroy, which a `read` parameter
+/// borrows whole.
 fn trivially_copied(caller: &MirFunction, block: &MirBlock, index: usize, argument: Reg) -> bool {
     block.instrs[run_start(block, index)..index]
         .iter()
         .rev()
-        .any(|instruction| {
-            matches!(
-                instruction,
-                MirInstr::UseVar {
-                    dest,
-                    var,
-                    mode: UseMode::Copy,
-                    constructor: None,
-                } if *dest == argument
-                    && caller.var_tys.get(var).is_some_and(Ty::is_closed)
-            )
+        .any(|instruction| match instruction {
+            MirInstr::UseVar {
+                dest,
+                var,
+                mode: UseMode::Copy,
+                constructor: None,
+            } => *dest == argument && caller.var_tys.get(var).is_some_and(Ty::is_closed),
+            MirInstr::MakeStruct { dest, .. } => *dest == argument,
+            _ => false,
         })
 }
 

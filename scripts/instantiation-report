@@ -21,8 +21,9 @@ removed from the child environment, pinning the compiled std package.
 
 Status column: `elaborated` when the counters were reported (whatever the
 exit code: a runtime trap does not change the elaboration), `timeout` when
-the child was killed, `failed` otherwise; failures are also listed on stderr
-with their first diagnostic line. The exit status is 0 even with failed rows.
+the child was killed, `failed` otherwise; a row of either reads `-` for
+each counter. Failures are also listed on stderr with their first
+diagnostic line. The exit status is 0 even with failed rows.
 
 --check is the ratchet the overnight gate runs: it writes the fresh report to
 target/instantiation.tsv (unless --out says otherwise; never the baseline) and
@@ -275,7 +276,7 @@ def measure(binary, fixture, env):
 
 def format_row(row):
     fixture, status, counts, _cause = row
-    values = [str(counts[c]) for c in COUNTERS] if counts else [""] * len(COUNTERS)
+    values = [str(counts[c]) for c in COUNTERS] if counts else ["-"] * len(COUNTERS)
     return "\t".join([fixture, status] + values)
 
 

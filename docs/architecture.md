@@ -3482,6 +3482,7 @@ MultiSet
 Store
 LoadPlace
 MakeTuple
+MakeStruct
 MakeVariant
 VariantIs
 VariantGet
@@ -3516,7 +3517,11 @@ its raw list.
 Public collection displays and comprehensions use ordinary `Call` and
 `MethodCall` instructions. `MakeTuple` is reserved for the compiler-private
 heterogeneous pack behind `__RuntimeTuple`; constructing the public nominal
-`Tuple` uses an ordinary constructor call.
+`Tuple` uses an ordinary constructor call. `MakeStruct` (`struct.create`,
+upstream's `kgen.struct.create`) builds a declared struct's value from one
+register per field and runs no constructor: only `sroa` emits it, for a
+whole read of a slot it split, so its type's drop runs no code and it is
+free of effects.
 
 Every method-dispatched nominal subscript carries a `MirSubscriptCall`
 containing the exact target,
@@ -5363,18 +5368,19 @@ drop-elaborated parametric body, and a `CallGraphPass` rewrites each body
 after its callees, reading their finished bodies through `Callees`, as
 MLIR's inliner walks the call graph. `docs/pre-elaboration-optimization-plan.md`
 stages the passes that fill it. The list follows upstream's rounds as the
-pinned compiler's `--mlir-timing` report shows them, less the passes
-Mojito lacks (`SROA`, `CSEPass`). Each of four rounds runs
+pinned compiler's `--mlir-timing` report shows them, less the fourth
+round's generator `CSEPass` (R926). Each of four rounds runs
 `RemoveUnusedParams` and `EliminateDeadSymbols`, the second after an
-`InlineParametric`; the first then runs `Mem2Reg` and a `Canonicalizer` on
-each generator, the second `Mem2Reg`, `SCCP`, and a `Canonicalizer`, the
-third an `InlineParametric`, `Mem2Reg`, and a `Canonicalizer`, and the
-fourth only `CSEPass`. So `PIPELINE` is `remove-unused-params`,
-`eliminate-dead-symbols`, `mem-2-reg`, `canonicalize`; `inline-parametric`,
-`remove-unused-params`, `eliminate-dead-symbols`, `mem-2-reg`, `sccp`,
-`canonicalize`; `remove-unused-params`, `eliminate-dead-symbols`,
-`inline-parametric`, `mem-2-reg`, `canonicalize`; and
-`remove-unused-params`, `eliminate-dead-symbols` (R869, R787). `pass_names`
+`InlineParametric`; the first then runs `SROA`, `Mem2Reg`, and a
+`Canonicalizer` on each generator, the second `SROA`, `Mem2Reg`, `SCCP`,
+and a `Canonicalizer`, the third an `InlineParametric`, `SROA`, `Mem2Reg`,
+and a `Canonicalizer`, and the fourth only `CSEPass`. So `PIPELINE` is
+`remove-unused-params`, `eliminate-dead-symbols`, `sroa`, `mem-2-reg`,
+`canonicalize`; `inline-parametric`, `remove-unused-params`,
+`eliminate-dead-symbols`, `sroa`, `mem-2-reg`, `sccp`, `canonicalize`;
+`remove-unused-params`, `eliminate-dead-symbols`, `inline-parametric`,
+`sroa`, `mem-2-reg`, `canonicalize`; and `remove-unused-params`,
+`eliminate-dead-symbols` (R869, R787, R928). `pass_names`
 yields a pass that runs more than once once, and all of a pass's runs count
 into one `--timings` span.
 
@@ -5531,10 +5537,17 @@ point where a slot declared in a loop is uninitialized again.
   (`types::trivially_register_passable_leaf`: vector SIMD, `StringLiteral`),
   or a struct declaring it unconditionally with no `__copyinit__` or
   `__del__` and only such fields; a tuple is not one, as upstream's is not.
+  Upstream's `kgen.struct` folds join it: a `field.get` of a `struct.create`
+  result is its operand at the field's declaration position
+  (`StructExtractOp::fold`), and a `struct.create` whose operands are the
+  fields of one value of its type, read in order by extracts each read only
+  there and its only readers, is that value (`foldTrivialStructCopy`).
   Only a result with one definition whose source has at most one is
   forwarded, so the source's definition dominates every reader, and a copy
   of a value held in storage only when it is its source's sole reader, since
-  a reader may consume it. A `place.load` result is the place's value at the
+  a reader may consume it. The forwarding repeats until nothing forwards,
+  as the greedy driver folds to a fixpoint, so a struct copy whose fields
+  were copies folds once they are forwarded. A `place.load` result is the place's value at the
   read: a backend may alias it to the place (Pliron's
   `collect_aliased_load_regs`) only for a type whose copy is not the
   identity, while nothing writes the place before the register's last
@@ -5595,13 +5608,18 @@ point where a slot declared in a loop is uninitialized again.
   `$inline{n}`, so no binder name or `self` matches them. The call's block binds each owned
   parameter, each `read` parameter of a scalar type
   (`mir::has_no_destructor`), and each `read` parameter passed a trivial
-  copy of a closed-type slot (a `var.use copy` naming no constructor), with
-  a `var.store` of the argument into the parameter's fresh slot, and every
-  other `read` parameter is the caller's place the call retained for it or
-  the argument was `place.load`ed from, directly or through a `ref.read`
-  of a `ref.make` the same block made (the private `loaded_place`),
-  composed into each of the callee's places rooted at it, as upstream
-  substitutes the borrowed address. A whole-slot copy of a place-bound
+  copy of a closed-type slot (a `var.use copy` naming no constructor) or a
+  `struct.create`, with a `var.store` of the argument into the parameter's
+  fresh slot, and every other `read` parameter is the caller's place the
+  call retained for it or the argument was `place.load`ed from, directly or
+  through a `ref.read` of a `ref.make` the same block made (the private
+  `loaded_place`), composed into each of the callee's places rooted at it,
+  as upstream substitutes the borrowed address. A `read` argument with no
+  such place, an owned temporary such as a call's result, binds as a value
+  when its parameter type's drop runs no code
+  (`MirDeclarations::drop_runs_no_code`), as upstream substitutes a
+  register-passable SSA value; `sroa` leaves such arguments where it
+  splits the temporary they were loaded from. A whole-slot copy of a place-bound
   parameter becomes a `place.load` of the caller's place and a
   `value.copy` of the loaded register (the private
   `copy_bound_parameters`, taking a fresh callee register), which
@@ -5768,18 +5786,54 @@ point where a slot declared in a loop is uninitialized again.
   program's followed calls, and at the package seam `PackageBodies::on_cycle`
   decides one from lowered bodies, memoized by row, so a finishing hook
   never re-enters the body it finishes.
+- **`sroa` runs before each round's `mem-2-reg`** (`analysis::SROA`,
+  `analysis/sroa.rs`, R928), upstream's `SROA` (`ReplaceStructs`), which
+  replaces a struct allocation by one allocation per element when every
+  user is a constant `struct_gep`, a load, a store, or a lifetime marker.
+  A slot is split when it is a local of a declared struct whose drop runs
+  no code (`MirDeclarations::drop_runs_no_code`) and whose every declared
+  field type is concrete, not a pointer, and trivially register-passable
+  or itself such a struct, and every mention of it is a whole store
+  (`var.store`, or `place.store` of the whole slot), which becomes a
+  `field.get` and a `var.store` per field, as upstream's store becomes a
+  `kgen.struct.extract` and a store per element; a whole read that names
+  no constructor (`var.use` in copy, move, or forward mode, or a
+  whole-root `place.load`), which becomes a read per field and a
+  `struct.create` (`MirInstr::MakeStruct`, upstream's `kgen.struct.create`)
+  of them; a `var.declare`, `drop.var`, `var.consume`, or whole-root
+  `ownership.mark_initialized`, which marks each field's slot, but a field
+  some instruction ends whole (a field move), which the slot's drop or
+  consumption does not end again; or an instruction each of whose places
+  on the slot projects a declared field first, which is then rerooted at
+  that field's slot, as upstream replaces a `struct_gep` by its element's
+  allocation whatever its users, so a borrowed field keeps only its own
+  slot (a `place.store` left on a whole field slot becomes a
+  `var.store`). A borrow, capture, loan interior, `through` place, cleanup
+  list, or a whole read naming a constructor keeps the slot, as does a
+  slot nothing stores, declares, or marks, which is a compile-time
+  parameter's binding. The pass reads no control flow, so it splits
+  structured and lowered bodies alike, and repeats until nothing splits,
+  at most ten rounds (upstream's `loopLimit`), so a nested struct splits a
+  level a round. A generic field type keeps the slot, since a field slot
+  is typed by the declaration (R1266), as do a drop that runs code
+  (R1267), a pointer field, which the VM reads through when it is a
+  slot's whole value (R1269), and a slice descriptor, which both backends
+  build as their own value (R1158). The `--timings` counters are `split_slots`
+  and `split_field_slots`.
 - **`mem-2-reg` runs before each round's `canonicalize`**
   (`analysis::MEM_2_REG`, `analysis/mem2reg.rs`, R787), upstream's
   `Mem2Reg`, which promotes an allocation whose every user is a load, a
   store, or a lifetime marker. A slot is promoted when its type is
   trivially register-passable at a concrete size
-  (`MirDeclarations::copy_is_identity`, never symbolic: upstream promotes
-  only allocations of concrete size), it is no parameter, and every
+  (`MirDeclarations::copy_is_identity`, never symbolic, where upstream's
+  `canPromote` has no type test: R1266), it is no parameter, and every
   mention of it is a `var.store` of a register defined once and read by
   the store alone; a `var.use` (copy, move, or forward)
   or a whole-root `place.load` at the slot's type; or a `var.declare`,
-  `drop.var`, or `var.consume`, all of which do nothing to such a type
-  once drops are elaborated.
+  `drop.var`, `var.consume`, or whole-root `ownership.mark_initialized`,
+  all of which do nothing to such a type once drops are elaborated (the
+  mark binds nothing, as upstream's `LowerLIT` has erased it before
+  `Mem2Reg` runs).
   A destructor or copy constructor takes the slot's address, so its type is
   never one, as upstream's never is; a borrow, capture, loan, projection,
   iterator, or cleanup list keeps the slot. A slot every store of which is
@@ -6307,9 +6361,12 @@ Upstream nests a per-function `'kgen.func'` pipeline after
 `SROA`, `Mem2Reg`, `SCCP`, `Canonicalizer`, and `CSEPass` on each concrete
 function. Mojito's is `analysis::POST_ELABORATION_PIPELINE`
 (`crates/mojito-analysis/src/analysis/post_elaboration.rs`, R840):
-`lower-arg-conventions`, `mem-2-reg`, `sccp`, `canonicalize`, then `cse`,
-the pre-elaboration pipeline's own body passes but the first, then MLIR's
-CSE, without the upstream pass Mojito does not have (`SROA`). Upstream's first
+`lower-arg-conventions`, `mem-2-reg`, `sroa`, `mem-2-reg`, `sccp`,
+`canonicalize`, then `cse`: the pre-elaboration pipeline's own body passes
+but the first, then MLIR's CSE, which is upstream's first post-elaboration
+pipeline followed by its `'kgen.func'` one. `lower-arg-conventions` stores
+only an argument `mem-2-reg` promotes whole, so `sroa` splits no struct
+argument (R1268). Upstream's first
 optimization pipeline after elaboration runs `LowerArgConventions` and then
 `Mem2Reg` on every function: a register-passable `read` or owned argument
 is stored into a callee-side temporary, which `Mem2Reg` promotes, while a
