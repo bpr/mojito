@@ -1589,7 +1589,8 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     entry.
   - Lever: an explicit raise edge per raising instruction in a `try` body.
   - Found while landing R826 (2026-10-14).
-  - Depends on nothing.
+  - Depends on R906 (a `raise` ends its region, as each explicit raise
+    edge will).
   - Model: Fable, Planned.
 
 - [ ] **R718 A struct prefix operator's operand lives as long as its
@@ -1794,7 +1795,8 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     the native runtime both run, or drops elaborated on the raise edge.
   - Probe: `conformance/probes/raise_path_live_value_leaks.mojo`
     (`docs/notes/comptime-region-ownership.md`, `c7`).
-  - Depends on nothing.
+  - Depends on R831 (the explicit raise edges whose drops a raise out of
+    the function needs too).
   - Model: Fable, Planned.
 
 - [ ] **R956 A raising initializer's initialized fields are not destroyed
@@ -10187,7 +10189,8 @@ follow-ups the landed producer stages filed come last.
   - `simplify-cf` never elides a `try` with a `finally`, which upstream's
     `removeTrivialTry` never meets: probe a `try`/`except`/`finally` whose
     body cannot raise (`--timings`' `simplify-cf.erased_tries`).
-  - Depends on R874.
+  - Depends on R831 (the explicit raise edges a `finally` is copied
+    before).
   - Model: Fable, Planned.
 
 - [ ] **R1261 The MIR verifier never checks that a register's definition
@@ -10301,7 +10304,7 @@ follow-ups the landed producer stages filed come last.
   - Dead statements after a `raise` are already erased
     (`CheckedTables::live_statements`).
   - Found while landing R889 (2026-10-14).
-  - Depends on R889.
+  - Depends on R1274, so only structured bodies need the new terminator.
   - Model: Opus, Not Planned.
 
 - [ ] **R912 A removed parameter stays in its generator's signature and its
