@@ -1,0 +1,65 @@
+  functions: [
+      fn {
+        name: "G.__init__",
+        registers: 1,
+        vars: 2,
+        var_names: [self, v],
+        params: 2,
+        param_types: [struct_type { name: G, arguments: [] }, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: G, arguments: [] } }, var_type { var: $v1, type: Int }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 117, end: 118, origin: present($v1) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v1, mode: copy },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: G, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent }, src: %r0 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: mkg,
+        registers: 7,
+        vars: 4,
+        var_names: [n, "$tmp_field_r3", "self$inline2", "v$inline2"],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: struct_type { name: G, arguments: [value_arg(ct_expr(param_decl_ref { owner: "mkg", slot: 0, name: n, type: meta_value(Int) }))] } }, var_type { var: $v2, type: struct_type { name: G, arguments: [value_arg(ct_expr(param_decl_ref { owner: "mkg", slot: 0, name: n, type: meta_value(Int) }))] } }, var_type { var: $v3, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: struct_type { name: G, arguments: [value_arg(ct_expr(param_decl_ref { owner: "mkg", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 159, end: 160, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 162, end: 163, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 162, end: 163, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 157, end: 164, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 157, end: 166, origin: present($v1) }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 157, end: 166, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 157, end: 164, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              drop.var { var: $v0 },
+              const { dest: %r1, value: int_literal(5) },
+              literal.materialize { dest: %r2, value: %r1, target: Int },
+              ownership.mark_initialized { place: place { root: $v2, root_type: present(struct_type { name: G, arguments: [value_arg(ct_expr(param_decl_ref { owner: "mkg", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [], type: present(struct_type { name: G, arguments: [value_arg(ct_expr(param_decl_ref { owner: "mkg", slot: 0, name: n, type: meta_value(Int) }))] }), through: absent } },
+              var.store { var: $v3, src: %r2, binding_type: present(Int), in_place: false },
+              loop { results: [], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [var.use { dest: %r6, var: $v3, mode: copy }, place.store { place: place { root: $v2, root_type: present(struct_type { name: G, arguments: [value_arg(ct_expr(param_decl_ref { owner: "mkg", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent }, src: %r6 }], terminator: break { label: present(loop4294967295), values: [] } }] },
+              var.use { dest: %r3, var: $v2, mode: forward },
+              var.store { var: $v1, src: %r3, binding_type: present(struct_type { name: G, arguments: [value_arg(ct_expr(param_decl_ref { owner: "mkg", slot: 0, name: n, type: meta_value(Int) }))] }), in_place: false },
+              place.load { dest: %r4, place: place { root: $v1, root_type: present(struct_type { name: G, arguments: [value_arg(ct_expr(param_decl_ref { owner: "mkg", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
+              drop.var { var: $v1 },
+              value.copy { dest: %r5, value: %r4 }
+            ],
+            terminator: return { value: present(%r5) }
+          }
+        ]
+      }
+  ]

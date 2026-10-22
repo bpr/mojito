@@ -113,6 +113,7 @@ assets/ok/comptime_for_iterable_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_iteration_scope.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_iterator_aggregate_elements.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_named_collection.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_for_nested_inlined_constructor_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_nested_unread_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_nested_unused_argument_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_string_aggregates.mojo	-	ineligible	no-scalar-entry-shape
@@ -267,6 +268,8 @@ assets/ok/external_call_write_stdout.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/field_store_overwrite_drop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/field_store_overwrite_drop_shapes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/field_view_beside_field_store.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/fieldwise_constructor_instances.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/fieldwise_init_owned_arguments.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/fieldwise_init_with_spelled_copy_constructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/fieldwise_keyword_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/file_descriptor_stdout_order.mojo	-	ineligible	no-scalar-entry-shape
@@ -333,6 +336,7 @@ assets/ok/indexer_normalization.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/infer_only_parameter_by_keyword.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/init_out_self.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/initializer_list_contextual.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/inlined_constructor_unread_struct_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/inplace_field.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/inplace_raises_try.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/inplace_subscript_multi.mojo	-	ineligible	no-scalar-entry-shape
@@ -1193,6 +1197,7 @@ assets/extensions/ok/pointer_field_reference_yielding_iteration_named_source.moj
 assets/extensions/ok/pointer_field_reference_yielding_iteration_parametric_mut.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_adapter_from_reborrow.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_adapter_return_from_field.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/ref_field_argument_at_ref_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_chained_view_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_ctor_from_ref_field.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_ctor_owned_source.mojo	-	ineligible	no-scalar-entry-shape

@@ -290,8 +290,10 @@ struct Inliner<'f, 'c> {
     /// The inlined slots a raise leaving the block list being inlined into
     /// may hold, for the nearest enclosing `try`'s raise-edge cleanup.
     raise_held: Vec<VarId>,
-    /// Whether an inlined call passed an operand for a removed argument,
-    /// which the inlined generator does not take.
+    /// Whether an inlined call passed an operand its inlined body does not
+    /// take: one for a removed argument, or the run-time register of a
+    /// compile-time argument, which the instantiated body reads as a
+    /// value.
     dropped_operands: bool,
     /// The binders of the `comptime for` loops enclosing the block list
     /// being inlined into, outermost first.
@@ -307,7 +309,8 @@ struct CallSite {
 
 /// A call [`Inliner::inlinable`] inlines: the register it defines, its
 /// callee instantiated at it, the binding of each parameter, whether it
-/// passed an operand for a removed argument, and each callable binder's
+/// passed an operand its inlined body does not take
+/// ([`Inliner::dropped_operands`]), and each callable binder's
 /// slot of the callee bound to a caller's closure register.
 struct Inlinable<'c> {
     dest: Reg,
@@ -729,7 +732,8 @@ impl<'c> Inliner<'_, 'c> {
                                 .flatten()
                         })
                 {
-                    self.dropped_operands |= dropped;
+                    self.dropped_operands |=
+                        dropped || passes_value_arguments(&caller.instrs[index]);
                     if callee.raises {
                         self.raise_held.extend(raise_held(
                             &blocks,
@@ -3491,6 +3495,19 @@ fn fold_parameter_constants(
     }
 }
 
+/// Whether the call `instruction` passes a compile-time argument's run-time
+/// register, which its inlined body, instantiated at the argument, does not
+/// read.
+fn passes_value_arguments(instruction: &MirInstr) -> bool {
+    match instruction {
+        MirInstr::Call { param_arg_regs, .. }
+        | MirInstr::MethodCall { param_arg_regs, .. }
+        | MirInstr::CallIndirect { param_arg_regs, .. } => param_arg_regs
+            .iter()
+            .any(|argument| argument.value.is_some()),
+        _ => false,
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

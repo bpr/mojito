@@ -587,6 +587,20 @@ impl<'a> Flatten<'a> {
         // the caller place, so a `UseVar` lifecycle copy here would run a user
         // `__copyinit__` only to discard the result.
         if let Some(place) = self.simple_place(expression) {
+            // A `ref` field's place binds the parameter to the field's
+            // referent, which a load of the field reads through to.
+            if let Some(TyKind::Ref(reference)) = place.ty.as_ref().map(Ty::kind) {
+                let value = self.fresh_typed(
+                    expression.location(),
+                    Some(place.root),
+                    reference.referent.clone(),
+                );
+                self.emit(MirInstr::LoadPlace {
+                    dest: value,
+                    place: place.clone(),
+                });
+                return (value, Some(place));
+            }
             if let Some(register) = self.lower_borrowed_read_argument(expression) {
                 return (register, Some(place));
             }

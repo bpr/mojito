@@ -2164,6 +2164,17 @@ impl Checker {
             })
             .filter(|(_, members)| !members.is_empty())
             .collect();
+        let fieldwise_conventions = own
+            .iter()
+            .filter(|(_, info)| {
+                info.fieldwise_init
+                    && !info
+                        .fields
+                        .iter()
+                        .any(|(_, ty)| matches!(ty.kind(), TyKind::Ref(_)))
+            })
+            .map(|(name, info)| (name.clone(), self.fieldwise_conventions(&info.fields)))
+            .collect();
         mojito_checked::checked::ConformanceFacts {
             traits,
             structs,
@@ -2172,7 +2183,27 @@ impl Checker {
             parameterized_associated,
             associated_values,
             parameterized_values,
+            fieldwise_conventions,
         }
+    }
+
+    /// The parameter conventions of the fieldwise `__init__` synthesized
+    /// over `fields`, as upstream's `StructEmitter::synthesizeFieldwiseInit`
+    /// declares them from each field type's register passability: a read
+    /// for a register-passable-trivial field (`ImmReg`), whose copy is the
+    /// value itself, and `var` (`OwnedMem`) for any other, so a copy
+    /// happens in the caller, where a transfer or temporary elides it.
+    pub(super) fn fieldwise_conventions(
+        &self,
+        fields: &[(String, Ty)],
+    ) -> Vec<Option<mojito_ast::ast::ArgConvention>> {
+        fields
+            .iter()
+            .map(|(_, ty)| {
+                (!self.is_trivial_register_passable(ty))
+                    .then_some(mojito_ast::ast::ArgConvention::Var)
+            })
+            .collect()
     }
 
     /// The struct's declared conformances, in declaration order, each with

@@ -2564,6 +2564,10 @@ pub struct CheckedField {
     pub name: String,
     /// Absent where the check recorded none.
     pub ty: Option<Ty>,
+    /// The convention of the field's parameter in the struct's synthesized
+    /// fieldwise `__init__` ([`ConformanceFacts::fieldwise_conventions`]);
+    /// absent for a read, and for a struct with no such constructor.
+    pub fieldwise_convention: Option<ArgConvention>,
 }
 
 /// A struct's associated `comptime` member.
@@ -4221,6 +4225,14 @@ pub struct ConformanceFacts {
     /// [`crate::declaration::StructDeclaration::parameterized_associated_values`].
     pub parameterized_values:
         HashMap<String, Vec<crate::declaration::ParameterizedAssociatedValue>>,
+    /// Each own `@fieldwise_init` struct's synthesized `__init__`
+    /// parameter conventions, one per field in order, as upstream's
+    /// `StructEmitter::synthesizeFieldwiseInit` declares them from each
+    /// field type's register passability: a read (`None`, upstream's
+    /// `ImmReg`) for a register-passable-trivial field, and `var`
+    /// (`OwnedMem`) for any other. A struct with a `ref` field has none
+    /// ([`CheckedProgram::synthesizes_fieldwise_constructor`]).
+    pub fieldwise_conventions: HashMap<String, Vec<Option<ArgConvention>>>,
 }
 
 /// One struct's conformance to one trait: it holds for the instances whose
@@ -4578,6 +4590,7 @@ impl CheckedProgram {
             declaration_effects: &declaration_effects,
             overloads: &overloads,
             constants: &constants,
+            fieldwise_conventions: &conformances.fieldwise_conventions,
         };
         for wrapper in &mut default_wrappers {
             wrapper.signature = signatures.method(
@@ -4895,6 +4908,7 @@ pub(crate) struct Signatures<'a> {
     pub(crate) declaration_effects: &'a HashMap<AnnotationSite, DeclarationEffect>,
     pub(crate) overloads: &'a crate::package::ProgramOverloads,
     pub(crate) constants: &'a crate::package::ProgramConstants,
+    pub(crate) fieldwise_conventions: &'a HashMap<String, Vec<Option<ArgConvention>>>,
 }
 
 impl Signatures<'_> {
@@ -5843,11 +5857,14 @@ impl<'a> ArenaBuilder<'a> {
                         }
                     })
                     .collect();
+                let conventions = self.signatures.fieldwise_conventions.get(name);
                 let fields = fields
                     .iter()
                     .enumerate()
                     .map(|(field, declared)| CheckedField {
                         name: declared.name.clone(),
+                        fieldwise_convention: conventions
+                            .and_then(|conventions| conventions.get(field).copied().flatten()),
                         ty: self
                             .signatures
                             .checked_types

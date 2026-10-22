@@ -51,6 +51,10 @@ pub enum LoweringUnit<'a> {
     /// statement node is `root`, which declares none over fields whose
     /// destruction may run code ([`CheckedProgram::synthesizes_destructor`]).
     Destructor { root: CheckedStmtId },
+    /// The fieldwise `__init__` the compiler synthesizes for the
+    /// `@fieldwise_init` struct whose statement node is `root`
+    /// ([`CheckedProgram::synthesizes_fieldwise_constructor`]).
+    FieldwiseConstructor { root: CheckedStmtId },
     /// The copy constructor the compiler synthesizes for the struct whose
     /// statement node is `root`, which declares none over fields whose
     /// copy may run code ([`CheckedProgram::synthesizes_copy_constructor`]).
@@ -83,6 +87,28 @@ impl LoweringUnit<'_> {
 }
 
 impl CheckedProgram {
+    /// Whether the compiler synthesizes `declaration`'s fieldwise
+    /// `__init__`, as upstream's `StructEmitter::synthesizeFieldwiseInit`
+    /// declares one for every `@fieldwise_init` struct: one parameter per
+    /// field, named after it, with the convention the check recorded
+    /// ([`crate::checked::CheckedField::fieldwise_convention`]), storing
+    /// each argument into its field. A struct that also declares an
+    /// `__init__` gets none, and so does one with a `ref` field, which
+    /// upstream has no counterpart of: its construction builds the value.
+    pub fn synthesizes_fieldwise_constructor(&self, declaration: &CheckedStruct) -> bool {
+        declaration.fieldwise_init
+            && !declaration
+                .methods
+                .iter()
+                .any(|method| method.registered == "__init__")
+            && !declaration.fields.iter().any(|field| {
+                field
+                    .ty
+                    .as_ref()
+                    .is_some_and(|ty| matches!(ty.kind(), mojito_types::types::TyKind::Ref(_)))
+            })
+    }
+
     /// Whether the compiler synthesizes `declaration`'s destructor, as
     /// upstream synthesizes a `__del__` for every struct that declares
     /// none: the struct declares no `__deinit__`, and its synthesized
@@ -149,8 +175,9 @@ impl CheckedProgram {
 
     /// Every lowering unit of the program, in the order it lowers them: its
     /// statements' declarations in order, each struct's methods before its
-    /// wrappers and its synthesized copy constructor, move constructor, and
-    /// destructor, and every module constant last.
+    /// wrappers and its synthesized fieldwise constructor, copy
+    /// constructor, move constructor, and destructor, and every module
+    /// constant last.
     pub fn lowering_units(&self) -> Vec<LoweringUnit<'_>> {
         let mut units = Vec::new();
         let mut constants = Vec::new();
@@ -183,6 +210,9 @@ impl CheckedProgram {
                                 index,
                             }),
                     );
+                    if self.synthesizes_fieldwise_constructor(declaration) {
+                        units.push(LoweringUnit::FieldwiseConstructor { root });
+                    }
                     if self.synthesizes_copy_constructor(declaration) {
                         units.push(LoweringUnit::CopyConstructor { root });
                     }
@@ -306,6 +336,8 @@ pub enum UnitKind {
     CopyConstructor,
     /// A struct's synthesized move constructor.
     MoveConstructor,
+    /// A struct's synthesized fieldwise constructor.
+    FieldwiseConstructor,
 }
 
 /// One lowering unit's checked nodes and the facts of its declaration
@@ -352,6 +384,7 @@ impl CheckedUnit {
                 | UnitKind::Destructor
                 | UnitKind::CopyConstructor
                 | UnitKind::MoveConstructor
+                | UnitKind::FieldwiseConstructor
         ) && let Some(structure) = self
             .tables
             .roots()
@@ -473,6 +506,12 @@ impl CheckedUnit {
                 Some(StructShell::Synthesized),
                 &[][..],
             ),
+            LoweringUnit::FieldwiseConstructor { root } => (
+                UnitKind::FieldwiseConstructor,
+                *root,
+                Some(StructShell::Synthesized),
+                &[][..],
+            ),
         };
         Self {
             kind,
@@ -527,6 +566,7 @@ impl UnitProgram {
             UnitKind::Destructor => LoweringUnit::Destructor { root },
             UnitKind::CopyConstructor => LoweringUnit::CopyConstructor { root },
             UnitKind::MoveConstructor => LoweringUnit::MoveConstructor { root },
+            UnitKind::FieldwiseConstructor => LoweringUnit::FieldwiseConstructor { root },
         })
     }
 }

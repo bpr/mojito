@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1277**.
+Next free ID: **R1279**.
 
 ## Ordered Work
 
@@ -620,28 +620,28 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1049 A fieldwise construction calls its struct, not a
-  synthesized constructor**
+- [ ] **R1278 A fieldwise struct with a `ref` field gets no synthesized
+  `__init__`**
 
-  `mkf[n]()` returning `Fw[n](5).v` over `@fieldwise_init struct Fw[n: Int]`
-  keeps `n`, where upstream synthesizes `Fw.__init__` and calls it.
-  - The struct has no `__init__` to name, so the call stays
-    `call { func: Fw }`, an undeclared callee whose types
-    `mir::unread_parameters` reads whole.
-  - Synthesize the fieldwise `__init__` in MIR lowering, as R1044 did for
-    the copy and move constructors, and have the check name it.
-  - Probe: `looped[n]` and `keyword[n]` in
-    `assets/ok/comptime_for_nested_unused_argument_instances.mojo` keep one
-    instance per `n`, where the pin has one: the `Arr[n](…)` that built a
-    nested `inner`'s removed operand stays a call of `Arr` once the operand
-    goes, and its type reads `n`. The plain nested analog
-    (`inner(Arr[n](…), x)` outside a loop) keeps one per `n` the same way.
-  - Probe: `moved` in `assets/ok/struct_slot_fields_split.mojo` keeps
-    `call Pt` and two `field.get`s of its result after `sroa` and
-    `mem-2-reg`, where upstream's inlined fieldwise `__init__` leaves field
-    stores the split promotes to the arguments themselves.
-  - Found while landing R1020 (2026-10-16).
-  - Depends on nothing.
+  `@fieldwise_init struct View[o: …]: var src: ref[o] List[Int]` still
+  builds its value at a struct-named `call { func: View }`, where every
+  other fieldwise struct calls its synthesized `nodebug` `View.__init__`.
+  - `CheckedProgram::synthesizes_fieldwise_constructor` and the fieldwise
+    tail of `Checker::infer_construction` skip a struct with a `ref`
+    field, since a synthesized `ref` parameter would bind the argument's
+    place, as a written `ref [Self.o] src: List[Int]` constructor does,
+    and that path regresses three fixtures.
+  - `ref_field_chained_view_call.mojo` (`Pane.shifted` returning
+    `Pane(self.items, …)` on a chained temporary) faults: R1277.
+  - `returned_method_reference_loan.mojo` (`View(rx)`, then `ref a =
+    v.at(0)` while `rx` is used later) conflicts with `rx`: R1082.
+  - Once it lands, the struct-named construction path goes: VM
+    `construct` and the struct arm of `vm/dispatch.rs`, the fieldwise
+    path of Pliron's `lower/ctors.rs`, the elaborator's construct-arm
+    respell, and the struct-named callee mapping in `inline_parametric`
+    and `CalleeRefParams::retained_access`.
+  - Found while landing R1049 (2026-10-22).
+  - Depends on R1277, R1082.
   - Model: Fable, Not Planned.
 
 - [ ] **R1050 A copy constructor's declaration does not restate its
@@ -1932,6 +1932,11 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     10`, keeps the subject's anchor live past the match, so `print(r.n)`
     after it fails ("access to 'r' conflicts with live reference
     '$match<id>'"); the pin prints `5`.
+  - Probe: a view built from a `ref` binding by a written `ref [Self.o]`
+    constructor, `ref rx = xs; var v = View(rx); ref a = v.at(0);
+    print(a); print(len(rx))`, fails at `ref a` ("access to 'xs'
+    conflicts with live reference 'rx'"); a `@fieldwise_init` `View`
+    fails the same way at `View(rx)`. It blocks R1278.
   - Found while landing R1037 (2026-10-16).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -2672,6 +2677,32 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1277 A `ref` parameter bound to a `ref` field's place designates
+  the field's slot, not its referent**
+
+  Problem: a written `ref [Self.o] items: List[Int]` constructor called as
+  `Pane(self.items, …)` from a `shifted(self)` method faults on a chained
+  temporary, `b.pane().shifted().first()` ("invalid reference projection
+  Field(\"items\") on None"); the handle stored in the field is never
+  forwarded.
+  - The VM binds a `ref` parameter to `reference_to_place_parts` of the
+    argument's place, which ends at the field slot holding the handle,
+    and `canonical_reference_parts`
+    (`crates/mojito-vm/src/backend/vm/references.rs`) keeps a handle
+    reached at the final segment where it is, so the constructed view
+    roots in the temporary that dies.
+  - Pliron already binds the referent
+    (`FnLowering::reference_argument_address`), as a read of the field
+    reads through it.
+  - Probe: `struct Pane[m: Bool, //, o: Origin[mut=m]]` with a written
+    `@no_inline __init__(out self, ref [Self.o] items: List[Int], start:
+    Int)` and `assets/extensions/ok/ref_field_chained_view_call.mojo`'s
+    `Board`; `q = p.shifted()` over a named `p` runs.
+  - Related: R1214 stops at a pointer value in the same walk.
+  - Found while landing R1049 (2026-10-22).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1214 Assigning to a method's reference result over heap storage
   loses the write**
 
@@ -3327,6 +3358,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   `var s: S = 3` runs for a one-field struct.
   - The parser's `fieldwise_init` flag carries no implicit bit, and the
     synthesized `__init__` carries no `@implicit` decorator.
+  - The lever is the synthesized `S.__init__`
+    (`mir::lower_fieldwise_constructor`): mark it implicit, and let the
+    implicit-conversion lookup find it as it finds a written `@implicit`
+    constructor.
   - Probe: `conformance/probes/fieldwise_init_implicit.mojo`.
   - Found while landing R192 (2026-10-19).
   - Depends on nothing.
@@ -10837,6 +10872,14 @@ residue found inside a task moves to the task that owns its fix.
   Problem: a struct carrying both `@fieldwise_init` and a hand-written
   `__init__` rejects.
   - Workaround: spell every constructor by hand.
+  - Cause: the check resolves a fieldwise construction on its own path,
+    the fieldwise tail of `Checker::infer_construction`, not by overload
+    resolution over the struct's `__init__` set, where upstream declares
+    the synthesized `__init__` at declaration resolution as one overload
+    beside the written ones (`findFieldwiseInit` tests the conflict).
+  - The synthesized `S.__init__`
+    (`CheckedProgram::synthesizes_fieldwise_constructor`) is the overload
+    to add; its symbol must then be overload-qualified.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -4253,8 +4253,18 @@ fn comptime_for_nested_unread_binders_leave_the_instance_key() {
 
 #[test]
 fn comptime_for_nested_unused_arguments_leave_the_instance_key() {
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("assets/ok/comptime_for_nested_unused_argument_instances.mojo");
+    // `Arr` built by its fieldwise constructor, then by a written inlined
+    // one.
+    for fixture in [
+        "assets/ok/comptime_for_nested_unused_argument_instances.mojo",
+        "assets/ok/comptime_for_nested_inlined_constructor_instances.mojo",
+    ] {
+        comptime_for_nested_unused_arguments_leave(fixture);
+    }
+}
+
+fn comptime_for_nested_unused_arguments_leave(fixture: &str) {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(fixture);
     let program = Compiler::default()
         .compile_path(&path)
         .expect("compile the fixture");
@@ -4277,13 +4287,19 @@ fn comptime_for_nested_unused_arguments_leave_the_instance_key() {
             .map_or(0, |row| row.instances)
     };
     for (template, count) in [
+        ("looped", 1),
         ("looped$inner", 1),
         ("indexed$inner", 1),
         ("generic$inner", 1),
+        ("keyword", 1),
         ("keyword$inner", 1),
         ("reads_index$inner", 2),
     ] {
-        assert_eq!(instances(template), count, "instances of `{template}`");
+        assert_eq!(
+            instances(template),
+            count,
+            "{fixture}: instances of `{template}`"
+        );
     }
     let names: Vec<&str> = concrete
         .program
@@ -4296,7 +4312,40 @@ fn comptime_for_nested_unused_arguments_leave_the_instance_key() {
         "keyword$inner$REMOVED$ARG$mono",
         "valued$inner$REMOVED$ARG$mono",
     ] {
-        assert!(names.contains(&name), "no concrete `{name}`: {names:?}");
+        assert!(
+            names.contains(&name),
+            "{fixture}: no concrete `{name}`: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn fieldwise_constructions_leave_the_instance_key() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/fieldwise_constructor_instances.mojo");
+    let program = Compiler::default()
+        .compile_path(&path)
+        .expect("compile the fixture");
+    // The elaborator's own instances, before `eliminate-duplicate-functions`
+    // merges identical ones.
+    let mir = program.elaborated_mir();
+    let concrete = mojito::native::mono::specialize_importing(
+        mir,
+        program.imported_package().map(|package| &package.bodies),
+        &mojito::mir::entry_roots(mir),
+        None,
+    )
+    .expect("elaborate");
+    let instances = |template: &str| {
+        concrete
+            .counts
+            .generators
+            .iter()
+            .find(|row| row.template == template)
+            .map_or(0, |row| row.instances)
+    };
+    for (template, count) in [("mkf", 1), ("plain_nested", 1), ("plain_nested$inner", 1)] {
+        assert_eq!(instances(template), count, "instances of `{template}`");
     }
 }
 

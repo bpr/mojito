@@ -157,6 +157,8 @@ import (every compilation that links the bundled library):
   included. A lowering unit (`CheckedProgram::lowering_units`) is a module
   `def`, one struct method (with its struct's name and the symbol it
   lowers to), an inherited default's wrapper, a struct's synthesized
+  fieldwise constructor (`CheckedProgram::synthesizes_fieldwise_constructor`:
+  an `@fieldwise_init` struct declaring no `__init__` and no `ref` field),
   destructor, copy constructor, or move constructor
   (`CheckedProgram::{synthesizes_destructor, synthesizes_copy_constructor,
   synthesizes_move_constructor}`: a struct declaring no `__deinit__`,
@@ -4809,6 +4811,28 @@ payloads, reference-read results, and `T(copy=x)` still find their
 constructor from the type (`mir::relocated_structs`, which closes over the
 fields only of a struct recording no such member).
 
+An `@fieldwise_init` struct declaring no `__init__` gets a synthesized
+`S.__init__` (`mir::lower_fieldwise_constructor` for
+`LoweringUnit::FieldwiseConstructor`), as upstream's
+`StructEmitter::synthesizeFieldwiseInit` declares one: `nodebug` and
+`synthesized`, its declaration restating the struct's parameters as a
+written constructor's does, one parameter per field named after it, and
+an `out self` it stores each argument into. The check decides each
+parameter's convention once (`Checker::fieldwise_conventions`, recorded as
+`ConformanceFacts::fieldwise_conventions` and carried on each
+`CheckedField::fieldwise_convention` into the unit): a read for a
+register-passable-trivial field (upstream's `ImmReg`) and `var` for any
+other (`OwnedMem`), whose body moves the argument in. The fieldwise tail of
+`Checker::infer_construction` names `S.__init__` as the construction's
+`overload_target` and binds the arguments by those conventions
+(`record_argument_borrows`), so a copied place is copied in the caller and
+moved in, and a transfer or temporary is moved in once, as the pin runs
+them (`assets/ok/fieldwise_init_owned_arguments.mojo`). The constructor
+inlines like any `nodebug` one, so `sroa` and `mem-2-reg` see its field
+stores and an unread struct parameter leaves the caller's instance key
+(`assets/ok/fieldwise_constructor_instances.mojo`). A struct with a `ref`
+field gets none yet and builds its value at the struct-named call (R1278).
+
 A named copy or move is then the call upstream's copy/move insertion
 leaves (`mir::lower_copies_and_moves`, `mir/copy_calls.rs`): a `var.use
 copy` becomes a `place.load` of the slot and a `Call` of the named
@@ -6025,8 +6049,9 @@ point where a slot declared in a loop is uninitialized again.
   call carries it. The elaborator respells each to the instance it
   reaches, and also every call it makes itself that names a struct,
   `make[String]()`'s `T()` included, so no backend resolves an overload by
-  arity for it; only a fieldwise struct with no `__init__` and a
-  synthesized `T(copy=x)` keep the struct's name. A constructor that removed one of its
+  arity for it; a fieldwise construction calls the struct's synthesized
+  `S.__init__` the same way, and only a fieldwise struct with a `ref` field
+  (R1278) and a synthesized `T(copy=x)` keep the struct's name. A constructor that removed one of its
   struct's parameters is owner-less like any other method, and the VM builds the call's destination
   type through it (`Prog::lifecycle_constructor`, `CallTypes::constructed`),
   so `Box[1](1)` and `Box[2](2)` share one `Box.__init__$mono`. The two

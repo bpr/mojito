@@ -810,6 +810,20 @@ pub fn lower_unit(
                 invariant_errors,
             );
         }
+        LoweringUnit::FieldwiseConstructor { root } => {
+            let _struct = timing::span("struct");
+            if let Some(node) = checked.tables().statement(root)
+                && let CheckedStmtOp::Struct(declaration) = &node.op
+            {
+                let parameters = checked
+                    .generic_parameters_at(&GenericSite::Struct {
+                        module: node.module.clone(),
+                        declaration: declaration.name.clone(),
+                    })
+                    .unwrap_or(&[]);
+                lower_fieldwise_constructor(declaration, parameters, functions, declarations);
+            }
+        }
         // A trait's requirements have no body (`...`); each default is
         // the trait's member, lowered as the check checked it.
         LoweringUnit::TraitMember { root, .. } => {
@@ -1238,6 +1252,134 @@ fn lower_synthesized_member(
             ref_params: vec![false; n_params],
             var_tys: (0..n_params)
                 .map(|index| (index as VarId, receiver.clone()))
+                .collect(),
+            reg_types,
+            ret_ty: Some(Ty::none()),
+            ..MirFunction::default()
+        },
+    ));
+}
+
+/// Lower the fieldwise `__init__` the compiler synthesizes for the
+/// `@fieldwise_init` struct `declaration`
+/// ([`CheckedProgram::synthesizes_fieldwise_constructor`]), as upstream's
+/// `StructEmitter::synthesizeFieldwiseInit` does: marked `nodebug` and
+/// synthesized, its compile-time interface the struct's `parameters` as a
+/// written constructor's is, one positional-or-keyword parameter per field
+/// named after it, with the convention the check recorded, and an
+/// `out self` it stores each argument into. An owned (`var`) argument
+/// moves in by its type's move constructor, which [`name_constructors`]
+/// names, and a read one is copied as the value itself.
+fn lower_fieldwise_constructor(
+    declaration: &mojito_checked::checked::CheckedStruct,
+    parameters: &[ParamDecl],
+    functions: &mut Vec<(String, MirFunction)>,
+    declarations: &mut MirDeclarations,
+) {
+    let name = &declaration.name;
+    let receiver: Ty = TyKind::Struct(name.clone(), Vec::new()).into();
+    let fields: Vec<(&str, Ty, Option<ArgConvention>)> = declaration
+        .fields
+        .iter()
+        .filter_map(|field| {
+            Some((
+                field.name.as_str(),
+                field.ty.clone()?,
+                field.fieldwise_convention,
+            ))
+        })
+        .collect();
+    let param_types: Vec<Ty> = fields.iter().map(|(_, ty, _)| ty.clone()).collect();
+    let mut instrs = Vec::new();
+    let mut reg_types = HashMap::new();
+    for (position, (field, ty, convention)) in fields.iter().enumerate() {
+        let reg = Reg(position as u32);
+        reg_types.insert(reg.0, ty.clone());
+        instrs.push(MirInstr::UseVar {
+            dest: reg,
+            var: (position + 1) as VarId,
+            mode: if is_owned(convention) {
+                UseMode::Move
+            } else {
+                UseMode::Copy
+            },
+            constructor: None,
+        });
+        instrs.push(MirInstr::Store {
+            place: MirPlace {
+                root: 0,
+                root_ty: Some(receiver.clone()),
+                proj: vec![Proj::Field((*field).to_string())],
+                projection_tys: vec![ty.clone()],
+                ty: Some(ty.clone()),
+                through: None,
+            },
+            src: reg,
+        });
+    }
+    let symbol = format!("{name}.__init__");
+    let conventions: Vec<Option<ArgConvention>> = fields.iter().map(|field| field.2).collect();
+    let arity = fields.len();
+    declarations.functions.push(MirFunctionDeclaration {
+        lowered_name: symbol.clone(),
+        param_names: fields
+            .iter()
+            .map(|(field, ..)| (*field).to_string())
+            .collect(),
+        param_types: param_types.clone(),
+        defaults: vec![None; arity],
+        required: vec![true; arity],
+        variadic: None,
+        variadic_convention: None,
+        variadic_index: None,
+        kw_variadic: None,
+        kw_variadic_convention: None,
+        kw_variadic_index: None,
+        positional_only: None,
+        keyword_only: None,
+        param_decls: parameters.to_vec(),
+        has_receiver: true,
+        receiver_convention: Some(ArgConvention::Out),
+        param_conventions: conventions.clone(),
+        ret_ty: Ty::none(),
+        returns_reference: false,
+        raises: false,
+        error_ty: None,
+        ref_params: vec![false; arity],
+        param_writes: conventions.iter().map(is_owned).collect(),
+        availability: Vec::new(),
+        enclosing: None,
+        region_binders: Vec::new(),
+        inline: mojito_checked::declaration::InlineLevel::NoDebug,
+        provenance: mojito_checked::declaration::FunctionProvenance::Synthesized,
+    });
+    let n_params = 1 + arity;
+    let var_names: Vec<String> = std::iter::once("self")
+        .chain(fields.iter().map(|(field, ..)| *field))
+        .map(str::to_string)
+        .collect();
+    let var_types: Vec<Ty> = std::iter::once(receiver).chain(param_types).collect();
+    functions.push((
+        symbol,
+        MirFunction {
+            blocks: vec![MirBlock {
+                instrs,
+                term: MirTerm::Return(None),
+            }],
+            n_regs: reg_types.len() as u32,
+            n_vars: n_params,
+            var_names,
+            n_params,
+            param_types: var_types.clone(),
+            owned_params: std::iter::once(false)
+                .chain(conventions.iter().map(is_owned))
+                .collect(),
+            deinit_params: vec![false; n_params],
+            ref_params: vec![false; n_params],
+            var_tys: var_types
+                .into_iter()
+                .enumerate()
+                .map(|(index, ty)| (index as VarId, ty))
                 .collect(),
             reg_types,
             ret_ty: Some(Ty::none()),

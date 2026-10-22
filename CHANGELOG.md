@@ -487,6 +487,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An unrolled `comptime for` copy whose reduced call drops an operand built
+  by an inlined constructor sheds the dropped registers' types, so
+  `looped[n]` over a written `@always_inline` `Arr[n]` no longer fails
+  elaboration ("`Arr` lays out parameter `n`, which `looped` removed";
+  `assets/ok/comptime_for_nested_inlined_constructor_instances.mojo`).
+- `inline-parametric` erases the read of a compile-time argument that an
+  inlined call passed and its body does not take, so `G[n](5).v` over a
+  constructor that never reads `n` no longer fails verification
+  (`assets/ok/inlined_constructor_unread_struct_parameter.mojo`).
+- A `ref` field's read passed to a `mut` or `ref` parameter binds the
+  field's referent, on the VM and natively, where it failed verification
+  ("argument 0 … has type ref List[Int], declared List[Int]"), and a loan
+  through a `ref` binding of a `ref` field verifies
+  (`assets/extensions/ok/ref_field_argument_at_ref_parameter.mojo`).
 - `remove-unused-params` records a self-recursive callee's removed
   parameter once in `callee_removed_params` when the self-call both spells
   the parameter and infers it (`rec[n](k - 1)`), where it listed it twice
@@ -621,6 +635,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An `@fieldwise_init` struct's construction calls a synthesized `nodebug`
+  `S.__init__`, as upstream's `StructEmitter::synthesizeFieldwiseInit`
+  declares one, rather than naming the struct (R1049). Each field that is
+  not register-passable-trivial is an owned `var` parameter moved into its
+  field, so `W(c, 2)` copies `c` and then moves it, `W(C(5), 3)` moves the
+  temporary once, and `W(c^, 4)` moves once, as the pin prints
+  (`assets/ok/fieldwise_init_owned_arguments.mojo`); Mojito ran one move
+  fewer. The constructor inlines, so a generic function building a struct
+  over its parameter keeps one instance (`fieldwise_constructor_instances.mojo`),
+  and `sroa` splits a fieldwise-built slot through its stores. A struct
+  with a `ref` field keeps the struct-named call for now (R1278).
 - MIR has no CFG terminator (R1274): `Jump`, `Branch`, `ComptimeBranch`,
   the `ComptimeFor` terminator, and `EscapeJump` left `MirTerm`, as Mojo
   has no CFG above LLVM, and MIR text 1.88 withdraws their spellings

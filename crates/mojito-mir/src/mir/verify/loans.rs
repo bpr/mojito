@@ -176,6 +176,11 @@ fn through_designations(place: &MirPlace) -> Option<Vec<&Ty>> {
     let root = place.root_ty.as_ref()?;
     let mut designations =
         vec![reference_capability(root).map_or(root, |capability| capability.target)];
-    designations.extend(place.projection_tys.iter());
+    // A `ref` field designates its referent too, which a read of the field
+    // reaches through the handle it holds.
+    for ty in &place.projection_tys {
+        designations.push(ty);
+        designations.extend(reference_capability(ty).map(|capability| capability.target));
+    }
     Some(designations)
 }

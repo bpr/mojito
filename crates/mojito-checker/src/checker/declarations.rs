@@ -3168,6 +3168,21 @@ impl Checker {
         {
             return specialized;
         }
+        // The construction calls the synthesized fieldwise `__init__`
+        // (`CheckedProgram::synthesizes_fieldwise_constructor`), whose
+        // parameters bind the field-ordered arguments by its conventions: an
+        // owned one takes its argument as a written `var` parameter does.
+        // A struct with a `ref` field has none, and builds its value itself.
+        if !info
+            .fields
+            .iter()
+            .any(|(_, ty)| matches!(ty.kind(), TyKind::Ref(_)))
+        {
+            self.record_at(span.clone()).overload_target = Some(format!("{name}.__init__"));
+            let conventions = self.fieldwise_conventions(&info.fields);
+            let slots: Vec<ArgSlot> = (0..args.len()).map(ArgSlot::Positional).collect();
+            self.record_argument_borrows(&slots, &conventions, Gathered::NONE, args, &[], None);
+        }
         let field_names: Vec<String> = info.fields.iter().map(|(name, _)| name.clone()).collect();
         self.record_construction_instantiation(
             span,

@@ -204,7 +204,7 @@ impl FnLowering<'_> {
                             ));
                         };
                         let place = place.clone();
-                        self.place_address(ctx, &place, dest)?.0
+                        self.reference_argument_address(ctx, &place, dest)?
                     } else {
                         self.place_backed_arg_value(
                             ctx,
@@ -407,7 +407,7 @@ impl FnLowering<'_> {
                         dest,
                     ));
                 };
-                Ok(lowering.place_address(ctx, &place, dest)?.0)
+                lowering.reference_argument_address(ctx, &place, dest)
             };
             let value = match slot {
                 ArgSlot::Positional(p) if by_ref => {

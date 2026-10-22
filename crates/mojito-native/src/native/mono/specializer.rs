@@ -236,7 +236,8 @@ impl<'a> Specializer<'a> {
     /// argument leaves with its place, while an omitted one, whose default
     /// is never evaluated, leaves nothing. A method call's arguments follow
     /// its receiver, so a removed slot past the receiver binds the
-    /// declaration's position one lower.
+    /// declaration's position one lower. It gives the operand registers
+    /// the call no longer passes.
     pub(super) fn drop_removed_arguments(
         &self,
         owner: &str,
@@ -245,11 +246,11 @@ impl<'a> Specializer<'a> {
         arg_places: &mut Vec<Option<MirPlace>>,
         kwargs: &mut Vec<(String, Reg)>,
         kwarg_places: &mut Vec<Option<MirPlace>>,
-    ) -> Result<(), MonoError> {
+    ) -> Result<Vec<Reg>, MonoError> {
         let (Some(declaration), Some(function)) =
             (self.declarations.get(target), self.functions.get(target))
         else {
-            return Ok(());
+            return Ok(Vec::new());
         };
         let keywords: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
         let (positional, keyword) = mojito_mir::mir::removed_argument_operands(
@@ -264,19 +265,20 @@ impl<'a> Specializer<'a> {
                 format!("binding call to `{target}` during argument removal: {e:?}"),
             )
         })?;
+        let mut dropped = Vec::with_capacity(positional.len() + keyword.len());
         for &index in positional.iter().rev() {
-            args.remove(index);
+            dropped.push(args.remove(index));
             if index < arg_places.len() {
                 arg_places.remove(index);
             }
         }
         for &index in keyword.iter().rev() {
-            kwargs.remove(index);
+            dropped.push(kwargs.remove(index).1);
             if index < kwarg_places.len() {
                 kwarg_places.remove(index);
             }
         }
-        Ok(())
+        Ok(dropped)
     }
 
     /// [`Self::removed_params`] of `template` as binders, each with the

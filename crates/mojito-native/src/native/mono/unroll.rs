@@ -372,7 +372,12 @@ impl Specializer<'_> {
         let mut decided = Decided::default();
         self.select_comptime_ifs(template, blocks, iteration, &mut decided)?;
         decided.apply(blocks, tables.reg_types, tables.spans);
-        self.instantiate_region_references(template, blocks, iteration)?;
+        let mut dropped = Vec::new();
+        self.instantiate_region_references(template, blocks, iteration, &mut dropped)?;
+        // A dropped operand's defining chain was erased with the removed
+        // argument, so its fresh register is defined by nothing.
+        dropped.retain(|reg| tables.dangling.contains(&reg.0));
+        tables.forget(&dropped);
         Ok(clone)
     }
 
@@ -388,12 +393,14 @@ impl Specializer<'_> {
     /// nested body names the copy's generator instead, whose calls
     /// instantiate it with their own arguments beside the copy's. One inside
     /// a loop nested in this copy was pointed at its instance when that
-    /// loop's copies were.
+    /// loop's copies were. Each operand a reduced call stops passing joins
+    /// `dropped`.
     fn instantiate_region_references(
         &mut self,
         template: &str,
         blocks: &mut [MirBlock],
         iteration: &Bindings,
+        dropped: &mut Vec<Reg>,
     ) -> Result<(), MonoError> {
         for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
             let (target, call) = match instruction {
@@ -414,7 +421,7 @@ impl Specializer<'_> {
                 } => (target, Some((args, arg_places, kwargs, kwarg_places))),
                 instruction => {
                     for blocks in instruction_regions_mut(instruction) {
-                        self.instantiate_region_references(template, blocks, iteration)?;
+                        self.instantiate_region_references(template, blocks, iteration, dropped)?;
                     }
                     continue;
                 }
@@ -449,14 +456,14 @@ impl Specializer<'_> {
             let instance = self.enqueue(target, bindings, arguments)?;
             let generator = std::mem::replace(target, instance);
             if reduced && let Some((args, arg_places, kwargs, kwarg_places)) = call {
-                self.drop_removed_arguments(
+                dropped.extend(self.drop_removed_arguments(
                     template,
                     &generator,
                     args,
                     arg_places,
                     kwargs,
                     kwarg_places,
-                )?;
+                )?);
             }
         }
         Ok(())

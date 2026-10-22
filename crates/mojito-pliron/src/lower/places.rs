@@ -314,6 +314,26 @@ impl FnLowering<'_> {
         Ok((address, ty))
     }
 
+    /// The address a `mut`/`ref` parameter binds for its argument's
+    /// `place`: the storage the place designates, or, for a `ref` field,
+    /// the referent the handle stored there addresses, as a read of the
+    /// field reads through it.
+    pub(super) fn reference_argument_address(
+        &mut self,
+        ctx: &mut Context,
+        place: &MirPlace,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        let (mut address, mut ty) = self.place_address(ctx, place, dest)?;
+        while let TyKind::Ref(reference) = ty.kind() {
+            let load = LoadOp::new(ctx, address, ScalarTy::Ptr.handle(ctx));
+            self.append(ctx, load.get_operation(), Some(dest));
+            address = load.get_result(ctx);
+            ty = reference.referent.clone();
+        }
+        Ok(address)
+    }
+
     /// The byte offset and checked type of `field` within struct type `ty`.
     pub(super) fn field_offset(
         &self,
