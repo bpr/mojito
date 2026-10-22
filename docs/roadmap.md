@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1270**.
+Next free ID: **R1271**.
 
 ## Ordered Work
 
@@ -811,22 +811,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R929 CSE does not merge reads of memory**
-
-  MLIR's `CSE` merges two identical ops with only read effects when no op
-  between them writes memory, and Mojito's `cse` merges only instructions
-  free of effects.
-  - It is a missing optimization, not a difference in semantics.
-  - The unmerged reads are `place.load`, `ref.read`, `var.use` borrows,
-    `ref.make`, and a field read through a reference.
-  - MLIR checks the ops between the two in one block; a read in a
-    dominated block needs no write on any path between, which MLIR
-    approximates conservatively.
-  - Done when a pass test merges two loads with no write between and keeps
-    two with a store between.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R930 CSE leaves values held in storage unmerged**
 
   `cse` merges only a result held whole in one register, so two identical
@@ -844,6 +828,31 @@ which names the upstream pass each one follows. Each is measured by the
     width) is never merged, since `copy_is_identity` cannot say it is held
     in one register: two `simd.make` splats of one operand at
     `SIMD[dtype, width]` stay apart until each instance's `cse`.
+  - Probe: `cse` merges reads of memory only under the same guard, so
+    `def twin(p: Pt) -> Bool: return same(p, p)` over
+    `@fieldwise_init struct Pt(Copyable, Movable): var x: Int; var y: Int`
+    keeps two adjacent whole `place.load`s of `p` in concrete `twin`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1270 CSE does not merge built-in operators**
+
+  `cse` keeps every `binary` and `unary` apart, where MLIR's `CSE` merges
+  upstream's built-in arithmetic and comparisons, which are free of memory
+  effects.
+  - It is a missing optimization, not a difference in semantics.
+  - `free_of_effects` in `crates/mojito-analysis/src/analysis/cse.rs`
+    lists no operator, because a generic operand's operator becomes a
+    dunder call per instance and built-in division traps.
+  - `cse`'s `effect` already reads a built-in operator (no `resolved`
+    method, no `raises`, every operand a built-in scalar or SIMD type) as
+    writing nothing; the lever is to also key it as free of effects. A
+    trapping duplicate is dominated by the identical operation, which
+    traps first.
+  - Probe: `def f(a: Int, b: Int) -> Int: return (a * b) + (a * b)` keeps
+    two `binary { op: mul }` in concrete `f`.
+  - Done when a pass test merges two identical `binary` over `Int` and
+    keeps one whose operand is a type parameter.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

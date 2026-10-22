@@ -616,6 +616,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `cse` now merges reads of memory as MLIR's `CSE` merges an op whose
+  only effect is a read (R929): a `place.load`, `ref.make`, `ref.read`,
+  `var.use` borrow or one-register copy, or field read through a
+  reference is erased when an identical read earlier in its block
+  matches it with no instruction between that may write, a region op
+  counting through what its regions hold. `p.x + p.x` reads `p.x` once,
+  and a store between keeps both reads. Concrete instructions fall about
+  0.1 %; program output is unchanged, and the MIR text and package
+  formats are unchanged. This closes R929.
 - The pre-elaboration pipeline's fourth round now ends with `cse`, as the
   pin's ends with a generator `CSEPass` (R926). `cse` walks a structured
   body as MLIR's `CSE` walks regions: a region sees what is available at

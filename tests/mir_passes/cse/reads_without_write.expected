@@ -1,0 +1,36 @@
+  functions: [
+      fn {
+        name: fields,
+        registers: 10,
+        vars: 1,
+        var_names: [p],
+        params: 1,
+        param_types: [struct_type { name: Pt, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [true],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Pt, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r9, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [projection { op: field(x), type: Int }], type: present(Int), through: absent } },
+              binary { op: add, dest: %r2, a: %r0, b: %r0, resolved: absent, raises: absent },
+              const { dest: %r4, value: int(5) },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [projection { op: field(x), type: Int }], type: present(Int), through: absent }, src: %r4 },
+              place.load { dest: %r5, place: place { root: $v0, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [projection { op: field(x), type: Int }], type: present(Int), through: absent } },
+              place.load { dest: %r6, place: place { root: $v0, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [projection { op: field(y), type: Int }], type: present(Int), through: absent } },
+              binary { op: add, dest: %r7, a: %r2, b: %r0, resolved: absent, raises: absent },
+              binary { op: add, dest: %r8, a: %r7, b: %r5, resolved: absent, raises: absent },
+              binary { op: add, dest: %r9, a: %r8, b: %r6, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r9) }
+          }
+        ]
+      }
+  ]

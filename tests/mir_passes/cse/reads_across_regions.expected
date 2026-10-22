@@ -1,0 +1,34 @@
+  functions: [
+      fn {
+        name: regions,
+        registers: 10,
+        vars: 2,
+        var_names: [p, c],
+        params: 2,
+        param_types: [struct_type { name: Pt, arguments: [] }, Bool],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [true, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Pt, arguments: [] } }, var_type { var: $v1, type: Bool }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Bool }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r9, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [projection { op: field(x), type: Int }], type: present(Int), through: absent } },
+              place.load { dest: %r1, place: place { root: $v1, root_type: present(Bool), projections: [], type: present(Bool), through: absent } },
+              if { results: [], condition: %r1, then: [bb0 { instructions: [place.load { dest: %r2, place: place { root: $v0, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [projection { op: field(x), type: Int }], type: present(Int), through: absent } }, binary { op: add, dest: %r4, a: %r2, b: %r2, resolved: absent, raises: absent }], terminator: yield { values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
+              if { results: [], condition: %r1, then: [bb0 { instructions: [const { dest: %r6, value: int(7) }, place.store { place: place { root: $v0, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [projection { op: field(y), type: Int }], type: present(Int), through: absent }, src: %r6 }], terminator: yield { values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
+              place.load { dest: %r7, place: place { root: $v0, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [projection { op: field(x), type: Int }], type: present(Int), through: absent } },
+              binary { op: add, dest: %r8, a: %r0, b: %r0, resolved: absent, raises: absent },
+              binary { op: add, dest: %r9, a: %r8, b: %r7, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r9) }
+          }
+        ]
+      }
+  ]

@@ -16,13 +16,23 @@
 //! operands: a constant, a literal materialization, a size or type-name
 //! query, a parameter list's address, a field or variant-tag read of a
 //! value register, or a SIMD construction, cast, or shuffle. A read of
-//! storage or through a reference (`var.use` borrows, `place.load`,
-//! `ref.read`, a field read through a reference) has a read effect, which
-//! MLIR merges only with no write between; those stay.
+//! storage or through a reference (a `var.use` borrow, `place.load`,
+//! `ref.make`, `ref.read`, a field read through a reference) has only a read
+//! effect, as does a `var.use` copy of a slot held whole in one register,
+//! which upstream reads with a load. As in MLIR, a read matches only an
+//! instruction in its own block with no instruction between that may
+//! write: anything but an instruction free of effects, a read, a built-in
+//! operator, a declaration, or a copy or drop of a value held whole in one
+//! register that runs no constructor or destructor (which upstream does not
+//! emit), where an instruction holding regions writes when its own kind
+//! does (a `try`) or what its regions hold does, and a terminator writes
+//! when it runs a cleanup list. A read that misses becomes the one later
+//! reads match.
 //!
 //! Only a result held whole in one register
-//! ([`mojito_types::types::copy_is_identity`]) is merged, since a reader may
-//! consume a value held in storage. Each merged result and every operand of
+//! ([`mojito_types::types::copy_is_identity`]) or a reference handle is
+//! merged, since a reader may consume a value held in storage. Each merged
+//! result and every operand of
 //! the matched instructions has one definition, which the walk has passed
 //! on the dominating path: MIR does not verify that a definition dominates
 //! its reads, and an operand redefined between the two would hold another
@@ -31,12 +41,13 @@
 use super::canonicalize::{definition_counts, forward};
 use super::pre_elaboration::BodyPass;
 use mojito_common::timing;
+use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
-    MirBlock, MirBlockId, MirDeclarations, MirFunction, MirInstr, Reg, immediate_dominators,
-    instruction_regions, instruction_regs_mut,
+    MirBlock, MirBlockId, MirDeclarations, MirFunction, MirInstr, MirTerm, Reg, UseMode,
+    immediate_dominators, instruction_regions, instruction_regs_mut,
 };
-use mojito_types::types::{Ty, TyKind, copy_is_identity};
+use mojito_types::types::{Ty, TyKind, copy_is_identity, trivially_register_passable_leaf};
 use std::collections::{HashMap, HashSet};
 
 /// The pass, under MLIR's flag spelling.
@@ -45,18 +56,23 @@ pub const CSE: BodyPass = BodyPass {
     run: cse,
 };
 
-/// Erase each instruction of `function` free of effects that a dominating
-/// instruction matches, its result's reads renamed to that instruction's
-/// result; returns whether any was.
+/// Erase each duplicate instruction of `function`; returns whether any was.
+///
+/// A duplicate is an instruction free of effects that a dominating one
+/// matches, or a read that one earlier in its block matches with no write
+/// between; its result's reads are renamed to the matched one's result.
 pub fn cse(_name: &str, function: &mut MirFunction, _declarations: &MirDeclarations) -> bool {
     let definitions = definition_counts(&mut function.blocks, function.n_regs);
     let mut table = Table {
         reg_types: &function.reg_types,
+        var_types: &function.var_tys,
         definitions,
         available: HashMap::new(),
         defined: HashSet::new(),
         scope: Vec::new(),
         replaced: HashMap::new(),
+        blocks: 0,
+        writes: 0,
     };
     table.block_list(&function.blocks, true);
     let replaced = table.replaced;
@@ -78,10 +94,11 @@ pub fn cse(_name: &str, function: &mut MirFunction, _declarations: &MirDeclarati
 /// The scoped table of the instructions available on a dominator-tree walk.
 struct Table<'f> {
     reg_types: &'f HashMap<u32, Ty>,
+    var_types: &'f HashMap<VarId, Ty>,
     /// How many times the function defines each register.
     definitions: Vec<u32>,
-    /// The result of the available instruction under each key.
-    available: HashMap<String, Reg>,
+    /// The available instruction under each key.
+    available: HashMap<String, Available>,
     /// The registers defined on the path from the entry to the walk's
     /// position in the dominator tree.
     defined: HashSet<u32>,
@@ -90,6 +107,10 @@ struct Table<'f> {
     scope: Vec<Added>,
     /// Each erased instruction's result, to the result its reads now name.
     replaced: HashMap<u32, Reg>,
+    /// How many blocks the walk has entered, each block's number.
+    blocks: usize,
+    /// How many instructions that may write the walk has passed.
+    writes: u64,
 }
 
 impl Table<'_> {
@@ -115,8 +136,11 @@ impl Table<'_> {
     }
 
     /// Match or record each instruction of `block` in order, walking each
-    /// region in a scope of its own that its arguments are defined in.
+    /// region in a scope of its own that its arguments are defined in, and
+    /// count each instruction or terminator that may write.
     fn block(&mut self, block: &MirBlock) {
+        let number = self.blocks;
+        self.blocks += 1;
         for instruction in &block.instrs {
             let arguments = region_arguments(instruction);
             for (region, args) in instruction_regions(instruction).into_iter().zip(&arguments) {
@@ -125,18 +149,42 @@ impl Table<'_> {
                 self.block_list(region, false);
                 self.leave(mark);
             }
-            if let Some((dest, key)) = self.key(instruction) {
-                if let Some(&dominating) = self.available.get(&key) {
-                    self.replaced.insert(dest.0, dominating);
-                } else {
-                    self.available.insert(key.clone(), dest);
-                    self.scope.push(Added::Key(key));
-                }
+            match self.effect(instruction) {
+                Effect::Free => self.match_or_record(instruction, None),
+                Effect::Read => self.match_or_record(instruction, Some((number, self.writes))),
+                Effect::Write => self.writes += 1,
+                Effect::Nested => {}
             }
             let mut results = Vec::new();
             instruction_result_regs(instruction, &mut results);
             results.retain(|reg| !arguments.iter().any(|args| args.contains(reg)));
             self.define(results);
+        }
+        if matches!(
+            block.term,
+            MirTerm::ReturnWithCleanup { .. } | MirTerm::EscapeJump { .. }
+        ) {
+            self.writes += 1;
+        }
+    }
+
+    /// Erase `instruction` when an available instruction matches it, or make
+    /// it the available one under its key; `read` is the block number and
+    /// write count a read is recorded at, which a read it matches must share.
+    fn match_or_record(&mut self, instruction: &MirInstr, read: Option<(usize, u64)>) {
+        let Some((dest, key)) = self.key(instruction) else {
+            return;
+        };
+        match self.available.get(&key) {
+            Some(available) if available.read == read => {
+                self.replaced.insert(dest.0, available.result);
+            }
+            _ => {
+                let shadowed = self
+                    .available
+                    .insert(key.clone(), Available { result: dest, read });
+                self.scope.push(Added::Key(key, shadowed));
+            }
         }
     }
 
@@ -153,8 +201,11 @@ impl Table<'_> {
     fn leave(&mut self, mark: usize) {
         for added in self.scope.drain(mark..) {
             match added {
-                Added::Key(key) => {
-                    self.available.remove(&key);
+                Added::Key(key, shadowed) => {
+                    match shadowed {
+                        Some(shadowed) => self.available.insert(key, shadowed),
+                        None => self.available.remove(&key),
+                    };
                 }
                 Added::Defined(reg) => {
                     self.defined.remove(&reg);
@@ -163,24 +214,23 @@ impl Table<'_> {
         }
     }
 
-    /// The result of `instruction` and the key it matches under, when it is
-    /// free of effects and its result and operands qualify.
+    /// The result of `instruction` and the key it matches under, when its
+    /// result and operands qualify.
     ///
     /// The key spells the instruction with its result blanked and each
     /// operand an erased instruction defined renamed, then the result's
     /// type, as MLIR's `OperationEquivalence` compares the name, the
     /// attributes, the operands, and the result types.
     fn key(&self, instruction: &MirInstr) -> Option<(Reg, String)> {
-        if !self.free_of_effects(instruction) {
-            return None;
-        }
         let mut results = Vec::new();
         instruction_result_regs(instruction, &mut results);
         let [dest] = results[..] else {
             return None;
         };
         let ty = self.reg_types.get(&dest.0)?;
-        if !copy_is_identity(ty.kind()) || self.definitions(dest) != 1 {
+        if !(copy_is_identity(ty.kind()) || matches!(ty.kind(), TyKind::Ref(_)))
+            || self.definitions(dest) != 1
+        {
             return None;
         }
         let mut spelled = instruction.clone();
@@ -194,6 +244,57 @@ impl Table<'_> {
             }
         }
         Some((dest, format!("{spelled:?} : {ty:?}")))
+    }
+
+    /// What `instruction` may do to memory, as MLIR's
+    /// `MemoryEffectOpInterface` declares it.
+    fn effect(&self, instruction: &MirInstr) -> Effect {
+        let built_in = |regs: &[Reg]| {
+            regs.iter().all(|reg| {
+                self.reg_types
+                    .get(&reg.0)
+                    .is_some_and(|ty| trivially_register_passable_leaf(ty.kind()))
+            })
+        };
+        let one_register = |ty: Option<&Ty>| ty.is_some_and(|ty| copy_is_identity(ty.kind()));
+        if self.free_of_effects(instruction) {
+            return Effect::Free;
+        }
+        match instruction {
+            MirInstr::If { .. }
+            | MirInstr::Loop { .. }
+            | MirInstr::ComptimeIf { .. }
+            | MirInstr::ComptimeFor { .. }
+            | MirInstr::Match { .. }
+            | MirInstr::DeclareVar { .. } => Effect::Nested,
+            MirInstr::BinOp {
+                a,
+                b,
+                resolved: None,
+                raises: None,
+                ..
+            } if built_in(&[*a, *b]) => Effect::Nested,
+            MirInstr::UnOp {
+                a, raises: None, ..
+            } if built_in(&[*a]) => Effect::Nested,
+            MirInstr::CopyValue {
+                dest,
+                constructor: None,
+                ..
+            } if one_register(self.reg_types.get(&dest.0)) => Effect::Nested,
+            MirInstr::DropVar {
+                var,
+                destructor: None,
+            } if one_register(self.var_types.get(var)) => Effect::Nested,
+            MirInstr::UseVar {
+                var,
+                mode: UseMode::Copy,
+                constructor: None,
+                ..
+            } if one_register(self.var_types.get(var)) => Effect::Read,
+            _ if instruction.would_be_trivially_dead() => Effect::Read,
+            _ => Effect::Write,
+        }
     }
 
     /// Whether `instruction` reads nothing but its operands.
@@ -223,11 +324,33 @@ impl Table<'_> {
     }
 }
 
-/// An entry of a scope of the walk: a key made available, or a register
-/// defined.
+/// An entry of a scope of the walk: a key made available, with the entry it
+/// shadows, or a register defined.
 enum Added {
-    Key(String),
+    Key(String, Option<Available>),
     Defined(u32),
+}
+
+/// An instruction available under its key: its result, and for a read the
+/// number of its block and the write count when the walk passed it.
+#[derive(Clone, Copy)]
+struct Available {
+    result: Reg,
+    read: Option<(usize, u64)>,
+}
+
+/// What an instruction may do to memory.
+enum Effect {
+    /// Nothing: it reads only its operands.
+    Free,
+    /// It reads storage or through a reference, and writes nothing.
+    Read,
+    /// It may write.
+    Write,
+    /// Nothing of its own, besides what any region it holds does, which the
+    /// walk counts: a structured control-flow op, a built-in operator, a
+    /// declaration, or a copy or drop that runs no code.
+    Nested,
 }
 
 /// A step of the dominator-tree walk: a block to enter, or the scope length

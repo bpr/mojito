@@ -19,11 +19,11 @@ With bodies structured, `Mem2Reg` carrying values through their regions
 generator shrinks by the passes upstream runs before elaboration. None of these has an open prerequisite today:
 
 ```sh
-scripts/claude_loop.py --only R929 --only R930 --only R1266 -n 0
+scripts/claude_loop.py --only R930 --only R1270 --only R1266 -n 0
 ```
 
-- R929 — CSE merges reads of memory.
 - R930 — CSE merges values held in storage.
+- R1270 — CSE merges built-in operators.
 - R1266 — `sroa` and `mem-2-reg` take slots of generic struct and field
   types (`Fable, Planned`); `SROA` itself landed as `sroa` (R928).
 

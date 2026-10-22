@@ -6447,10 +6447,22 @@ concrete verifier rejects a reference slot read as its handle.
   `MirInstr::would_be_trivially_dead`: a constant, a literal
   materialization, a size or type-name query, a parameter list's address,
   a field or variant-tag read of a value register, or a SIMD construction,
-  cast, or shuffle; a read of storage or through a reference is a read
-  effect MLIR merges only with no write between, which `cse` does not do
-  yet (R929). Only a result held whole in one register is merged, since a
-  reader may consume a value held in storage, and each merged result and
+  cast, or shuffle. A read of storage or through a reference (a
+  `var.use` borrow, or a copy of a slot held whole in one register that
+  runs no constructor, `place.load`, `ref.make`, `ref.read`, a field read
+  through a reference) has only a read effect, and as MLIR's `CSE` does
+  for an op whose only effect is a read (R929), `cse` erases it only
+  when an identical read earlier in the same block matches it with no
+  instruction between that may write: the walk counts writes, every
+  instruction counting but those free of effects, reads, built-in
+  operators, declarations, and copies and drops of a one-register value
+  that run no code (which upstream does not emit), a region op counting
+  through what its regions hold, as MLIR's recursive memory effects do, a
+  `try` always, and a terminator when it runs a cleanup list; a read that
+  misses shadows the entry it matched for the rest of its scope. Only a
+  result held whole in one register, or a reference handle, is merged,
+  since a reader may consume a value held in storage, and each merged
+  result and
   operand has one definition the walk has passed on the dominating path,
   since MIR does not verify that a definition dominates its reads. The
   Pliron backend lowers each block list in `lowering_order` (reverse
