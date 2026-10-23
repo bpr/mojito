@@ -1646,7 +1646,11 @@ straight back to the local a temporary view argument borrows
 (`head = f(head[byte=1:4])`) is an ownership conflict, as upstream rejects it.
 Upstream keys that rejection on the argument's owned-interior origin rather
 than on temporary lifetime, so it also rejects a named view and accepts a
-plain-origin one (`s = f(StringSpan(s))`); the roadmap tracks both gaps. A tuple unpack
+plain-origin one (`s = f(StringSpan(s))`); the roadmap tracks both gaps. An
+argument anchored inside an expression region (an `or`/`and` operand, a
+ternary arm, a comparison chain link, a comprehension body) ends in that
+region (`Flatten::region`), as upstream's temporary dies in the region that
+makes it. A tuple unpack
 gives every loan-carrying element (`CheckedTupleUnpackElement::carries_loans`)
 the unpacked value's loans, as binding the whole value would. A discarded
 reference result (an expression statement, `_ = e`) is
@@ -4848,57 +4852,37 @@ type, names none; the elaborator names the instance's
 (`Specializer::name_lifecycle_calls`), and the verifier reports a drop that
 names another symbol than its struct's `__deinit__`, or none where the
 struct has one. Neither backend traces a synthesized destructor's drop or
-consume. A named drop whose slot holds a whole value on every path to it
-is then the call upstream leaves (`mir::lower_whole_drops`, `mir/drop_calls.rs`,
-run by `name_destructors` and again by the elaborator once
-`name_lifecycle_calls` has named an instance's): a forwarding `UseVar` of
-the slot, which ends it and hands its storage to the callee as Mojo's
-owned-argument convention does, and a `MethodCall` of the destructor on
-it as the `deinit self` receiver, the shape an explicit `x^.finish()`
-lowers to, which both backends run as any such call. A named `drop.place`
-of an owned part (fields and tuple elements, no reference on the way)
-whose slot holds that part whole on every path to it is the call too, on
-the part's storage, as upstream calls `__del__` on a field's address: a
-`LoadPlace` of the part, the `MethodCall` with the part as its receiver's
-place, and a `ConsumePlace` ending it, the shape `x.f^.finish()` lowers
-to. This covers a synthesized or written destructor's field ends, a
-`deinit self`'s remaining fields, and a store's overwritten field, through
-a `mut self` too. An owned, `deinit`, `mut`, or `ref` parameter enters
-whole. A destructor available only under a `where` clause stays a drop
-before elaboration, for the elaborator to name per instance (R302). The
-test is a
-definite-initialization state per slot (`Held`: whole, whole but for
-missing owned parts, empty, or partial), joined over a list's blocks and
-followed through each region op as upstream's `CheckLifetimes` walks it: an
-`if` entering each arm as its condition leaves the state and completing as
-its arms' yields join; a loop (or `comptime for`) entering its body joined
-with its `continue` states until stable and completing as its `break`s
-join; a `match` entering each case as the previous case's `match.next`s
-leave it; and a `try` with the body entered as the op is under the frame
-its raises name, the handler in the states those raises leave (its error
-slot bound whole), the `else` as the body completes, and the op completing
-as its `else` (or body) and handler do. Region exits resolve by the rule
-the VM and Pliron share (`mir::RegionFrame`, `mir::region_exit`). A
-`var.store`, a
-whole-slot `mark_initialized`, or a `for` loop's iterator fills the slot;
-a declaration, a drop, a consume, a moving use, or an owned `iter.init`
-consuming it into an iterator slot of its own empties it; a move,
-drop, or consume of a field or tuple-element path marks that part missing,
-a consume subsuming the parts inside it already missing, and a store into
-it fills it again; reads, borrows, calls, iterator
-advances, and lifetime markers keep it; compiler-private iterator storage
-normalized in place leaves it partial. A `for` loop stores what its
-`__next__` call returns into its `$yield` slot inside the stepping `try`'s
-body, so the slot is never filled on the exhausted edge, which raises
-before the store. A named drop of a slot
-empty on every path to it is erased, since nothing dies there. Every other
-named drop stays a `drop.var`, whose runtime partial-aggregate rule,
-Pliron's drop and leaf flags, and an owned pack's reverse order carry
-the states upstream's lifetime checker makes definite; the move and
-initialization scan walks regions, but its state is pre-drop and
-per-template. The walk that places a drop decides its shape, the whole
-value or a laid-out part, but this fold still decides whether the value is
-held whole there, where upstream's walk leaves no undecided drop (R1306).
+consume. Every named drop is then the call upstream leaves
+(`mir::lower_drops`, `mir/drop_calls.rs`, run by `name_destructors` and
+again by the elaborator once `name_lifecycle_calls` has named an
+instance's): drop elaboration decides each drop where it places it, since a
+value live at a point is initialized there, the move scan rejecting every
+use of one only some paths initialize, so the drop destroys
+unconditionally, as upstream's `DestructorInsertion` destroys. A
+`drop.var` becomes a forwarding `UseVar` of the slot, which ends it and
+hands its storage to the callee as Mojo's owned-argument convention does,
+and a `MethodCall` of the destructor on it as the `deinit self` receiver,
+the shape an explicit `x^.finish()` lowers to, which both backends run as
+any such call. A `drop.place` is the call too, on the place's storage, as
+upstream calls `__del__` on a field's address: a `LoadPlace` of the place,
+the `MethodCall` with the place as its receiver's place, and a
+`ConsumePlace` ending it, the shape `x.f^.finish()` lowers to. This covers
+a synthesized or written destructor's field ends, a `deinit self`'s
+remaining fields, a store's overwritten field, through a `mut self` too,
+and a whole value a store through a reference replaces. A destructor
+available only under a `where` clause stays a drop before elaboration, for
+the elaborator to name per instance (R302); the concrete verifier refuses
+a named drop, so a backend sees a `drop.var` or `drop.place` only for a
+type with no `__deinit__` of its own. Since no drop is tested, every
+producer emits only decided drops: a store's overwrite drop only where the
+move scan's replay says the replaced value is initialized on every path
+(`analysis/store_drops.rs`), so module scope, which has no drop walk,
+rejects a refill of a field only some paths moved out
+(`module_scope_maybe_moved_refill`; upstream rejects every file-scope
+statement). A temporary an expression region's argument makes dies in
+that region: `Flatten::region` ends its anchors' `lifetime.keep_alive`s
+inside the region (`mir/lower_expr/ctrl.rs`), so an `or`'s operand
+temporary is not kept live past the join where only one arm defined it.
 A storage destroy, a variant store (one
 `destructors` entry per alternative, the `__deinit__` the replaced payload
 runs under that tag, as upstream's `Variant.__del__` names each under its
@@ -5008,7 +4992,7 @@ constructor restating a pack takes none, since a type argument spreading
 a pack, `Tuple[*Ts.reverse()]`, is a list of types, and its owner's type
 binds them); a
 constructor taking anything else, or raising, or a value type applying
-fewer arguments than it restates, keeps the use. It runs where `lower_whole_drops`
+fewer arguments than it restates, keeps the use. It runs where `lower_drops`
 runs: at the end of drop elaboration, after `name_constructors`; in
 `inline-parametric` after a splice names the copies it substitutes; and
 in the elaborator once `name_lifecycle_calls` has named an instance's
@@ -5467,7 +5451,7 @@ ordinary residual fields of an incomplete linear aggregate.
 Drop elaboration (`analysis/drops.rs`) reads the structured body, as
 upstream's `DestructorInsertion` reads `hlcf`, and so do the passes after it
 up to `lower-lit`: field drops, copy elision, destructor and constructor
-naming with `mir::lower_whole_drops`, and the copy/move lowering, and
+naming with `mir::lower_drops`, and the copy/move lowering, and
 the pre-elaboration pipeline after them, the elaborator, and the
 post-elaboration pipeline; the VM runs the body as it stands, and Pliron
 lowers its region ops to LLVM blocks. Two walks of `analysis/region_walk.rs` give its
@@ -5927,7 +5911,7 @@ point where a slot declared in a loop is uninitialized again.
   callee's locals, as its frame does at the pin. A body raising another
   value of another type than the call's error keeps the call. A
   destructor's call at a whole slot's drop (the `MethodCall`
-  `mir::lower_whole_drops` left, or the one the dropped default's slot
+  `mir::lower_drops` left, or the one the dropped default's slot
   gets) is an ordinary call of the pass: its `deinit self` binds the
   slot the receiver register forwards (`forwarded_slot`, `Binding::Slot`,
   the slot renumbered to the caller's, the forwarding `var.use` removed

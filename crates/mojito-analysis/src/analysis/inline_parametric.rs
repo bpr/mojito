@@ -143,10 +143,8 @@
 //! it too, its `deinit self` the field's place, which the caller's consume
 //! after it ends: a synthesized destructor's fields, a `deinit self`'s
 //! remaining ones, and a field a store overwrites, through a `mut self`
-//! too. Only a drop whose slot holds the value whole on every path to it,
-//! an `except` handler's entered from the body's raise points, is so
-//! expanded (`mir::lower_whole_drops`), since a drop of any other tests at
-//! run time what the slot still holds.
+//! too. Every named drop is so expanded (`mir::lower_drops`): drop
+//! elaboration decides each where it places it.
 
 use super::pre_elaboration::{CallGraphPass, Callees};
 use super::region_walk::region_op;

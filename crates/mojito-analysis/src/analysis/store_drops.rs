@@ -9,6 +9,9 @@
 //! `__toplevel__`'s, which has no walk), and a whole place written *through
 //! a reference*, whose old value lives in the caller's storage or another
 //! slot, as upstream's indirect `checkDef` destroys it before the write.
+//! Each is emitted only where the move scan's replay says the replaced value
+//! is initialized on every path, so every drop it places is decided, as
+//! upstream's `DestructorInsertion` places it.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -29,13 +32,11 @@ pub(super) fn elaborate_store_drops(
     declarations: &MirDeclarations,
     walked: &dyn Fn(&MirPlace) -> bool,
 ) {
-    let receiver = initializer_receiver_entry(f, name, declarations);
-    let uninitialized_receiver = receiver.is_some();
-    let entry = entry_move_states(f, receiver);
+    let entry = entry_move_states(f, initializer_receiver_entry(f, name, declarations));
     let handles = make_ref_places(&f.blocks);
     let mut overwrites: HashMap<*const MirInstr, MirPlace> = HashMap::new();
     let observed = observe_move_states(f, entry, &mut |state, instr| {
-        if let Some(place) = replaced_place(instr, state, f, &handles, uninitialized_receiver)
+        if let Some(place) = replaced_place(instr, state, f, &handles)
             && !walked(place)
         {
             overwrites.insert(std::ptr::from_ref(instr), place.clone());
@@ -44,6 +45,30 @@ pub(super) fn elaborate_store_drops(
     if observed.is_ok() && !overwrites.is_empty() {
         splice_blocks(&mut f.blocks, &overwrites);
     }
+}
+
+/// The first store in the module-scope body `f` that refills a droppable
+/// static field or element only some paths to it have moved out, as a
+/// conditional-move error.
+///
+/// Such a store replaces a value initialized on some paths only, which no
+/// decided drop can destroy, and module scope has no drop walk to destroy it
+/// on the paths that hold it. Upstream rejects every executable statement at
+/// file scope.
+pub(super) fn module_scope_maybe_moved_refill(f: &MirFunction) -> Result<(), OwnershipError> {
+    let mut refill = None;
+    observe_move_states(f, entry_move_states(f, None), &mut |state, instr| {
+        if let MirInstr::Store { place, src } = instr
+            && refill.is_none()
+            && refills_maybe_moved(state, place)
+        {
+            refill = Some(OwnershipError::ConditionallyMoved {
+                var: place_display(&f.var_names[place.root as usize], &place_path(place)),
+                span: use_span(f, *src),
+            });
+        }
+    })?;
+    refill.map_or(Ok(()), Err)
 }
 
 /// The entry state of an initializer's `out self` receiver (parameter 0 of a
@@ -101,14 +126,11 @@ fn replaced_place<'a>(
     state: &[Node],
     f: &MirFunction,
     handles: &'a HashMap<u32, MirPlace>,
-    uninitialized_receiver: bool,
 ) -> Option<&'a MirPlace> {
     match instr {
-        MirInstr::Store { place, .. } => {
-            (overwrites_initialized(state, place, uninitialized_receiver)
-                || overwrites_through_reference(state, place, f))
-            .then_some(place)
-        }
+        MirInstr::Store { place, .. } => (overwrites_initialized(state, place)
+            || overwrites_through_reference(state, place, f))
+        .then_some(place),
         MirInstr::WriteRef { reference, .. } => handles
             .get(&reference.0)
             .filter(|place| overwrites_through_reference(state, place, f)),
@@ -118,11 +140,25 @@ fn replaced_place<'a>(
 
 /// Whether a store into `place` replaces a value that must be destroyed: a
 /// static field or element of droppable type whose whole subtree is
-/// initialized. A depth-1 place of a local root that is only maybe moved also
-/// qualifies — the VM's tombstone and the native leaf flag decide at run time
-/// — except below an initializer's receiver, whose leaf flags start present
-/// over uninitialized storage.
-fn overwrites_initialized(state: &[Node], place: &MirPlace, uninitialized_receiver: bool) -> bool {
+/// initialized on every path to it.
+fn overwrites_initialized(state: &[Node], place: &MirPlace) -> bool {
+    droppable_static_subplace(place)
+        && state[place.root as usize].read(&place_path(place)).0 == Own::Owned
+}
+
+/// Whether a store into `place` refills a droppable static field or element
+/// of a local root some paths to it have moved out, and others not.
+fn refills_maybe_moved(state: &[Node], place: &MirPlace) -> bool {
+    let path = place_path(place);
+    let node = &state[place.root as usize];
+    droppable_static_subplace(place)
+        && place.through.is_none()
+        && node.read(&path).0 == Own::MaybeMoved
+        && node.base_at(&path).0 == Own::MaybeMoved
+}
+
+/// Whether `place` is a static field or element of droppable type.
+fn droppable_static_subplace(place: &MirPlace) -> bool {
     let static_subplace = matches!(
         place.steps().next_back(),
         Some(Proj::Field(_) | Proj::ConstIndex(_))
@@ -133,21 +169,7 @@ fn overwrites_initialized(state: &[Node], place: &MirPlace, uninitialized_receiv
         .ty
         .as_ref()
         .is_some_and(|ty| !matches!(ty.kind(), TyKind::Ref(_)) && field_needs_drop(ty));
-    if !static_subplace || !droppable {
-        return false;
-    }
-    let path = place_path(place);
-    let node = &state[place.root as usize];
-    match node.read(&path).0 {
-        Own::Owned => true,
-        Own::MaybeMoved => {
-            path.len() == 1
-                && place.through.is_none()
-                && !(uninitialized_receiver && place.root == 0)
-                && node.base_at(&path).0 == Own::MaybeMoved
-        }
-        Own::Moved => false,
-    }
+    static_subplace && droppable
 }
 
 /// Whether a whole-place write through a reference replaces a value that must

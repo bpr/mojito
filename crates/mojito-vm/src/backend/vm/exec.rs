@@ -1971,22 +1971,15 @@ impl VmBackend {
                     *nav_mut(vars, regs, place)? = Value::Moved;
                 }
             }
-            // A field's whole-value destruction, leaving a tombstone: a
-            // `deinit` parameter's field dying at its own last use (the
-            // receiver's later `ConsumeVar` skips it), or the value a store
-            // is about to overwrite. A `mut` receiver or parameter root is a
-            // reference into the caller's storage, and so is a handle the
-            // place reaches below its root (the value `p.src[].v = …`
-            // replaces lives wherever `p.src` points).
+            // The end of a part a named destructor consumed, called on the
+            // place or inlined there: the destructor destroyed what it held,
+            // so the place holds no value from here and nothing is destroyed.
+            // A `mut` receiver or parameter root is a reference into the
+            // caller's storage, and so is a handle the place reaches below
+            // its root (the value `p.src[].v = …` replaces lives wherever
+            // `p.src` points).
             MirInstr::ConsumePlace { place, .. } => {
-                let value = self.take_place(frame_id, place, regs, vars)?;
-                let value = match &place.ty {
-                    Some(ty) => dispatch::erased_instance_value(prog, value, ty),
-                    None => value,
-                };
-                if let Value::Struct { fields, .. } = value {
-                    self.drop_struct_fields(prog, fields)?;
-                }
+                self.take_place(frame_id, place, regs, vars)?;
             }
             MirInstr::DropPlace { place, destructor } => {
                 let value = self.take_place(frame_id, place, regs, vars)?;
@@ -2076,9 +2069,8 @@ impl VmBackend {
 /// ([`VmBackend::uninitialized_value`]) where an instruction first uses the
 /// slot as storage: stores into it, reads or moves out of it, addresses it,
 /// or passes it by address. A drop, consumption, or mark is no such use,
-/// so a tested drop of a slot never written still finds nothing to
-/// destroy. A place reached through a reference addresses storage some
-/// other frame owns.
+/// so it builds no storage. A place reached through a reference addresses
+/// storage some other frame owns.
 fn give_storage(prog: &Prog, function: usize, instruction: &MirInstr, vars: &mut [Value]) {
     let mut give = |root: VarId| {
         let slot = &mut vars[root as usize];

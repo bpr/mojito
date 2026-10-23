@@ -795,6 +795,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Every drop is decided where drop elaboration places it, as upstream's
+  `DestructorInsertion` leaves an unconditional destroy, so
+  `mir::lower_drops` (formerly `lower_whole_drops`) lowers every named
+  `drop.var` and `drop.place` to its destructor's call, and concrete
+  verification refuses a named drop (R1306). The per-slot
+  definite-initialization fold that left about 600 drops per corpus pass
+  tested at run time is gone. Two producers stop leaving undecided drops: a
+  temporary an expression region's argument makes now dies in that region,
+  so an `or` operand's `$arg_loan` temporary is no longer destroyed at the
+  other arm's entry before its definition; and a store refilling a field
+  only some paths moved out no longer gets a tested drop, the one place
+  that reached (snippet-mode module scope) rejecting it instead. The VM's
+  `consume.place` destroys nothing, as Pliron's, so a destructor inlined on
+  a `mut` parameter's whole value no longer runs twice. Output is unchanged
+  on both backends; the MIR text and package formats are unchanged.
 - `lower-lit` erases every `ownership.mark_initialized` too, as upstream's
   `LowerLIT` erases `lit.ownership.mark_initialized`, so concrete MIR holds
   none (about 300 per fixture before) and concrete verification, the VM,

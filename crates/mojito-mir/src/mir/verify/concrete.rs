@@ -290,6 +290,17 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
                 instruction_mnemonic(instruction)
             ));
         }
+        MirInstr::DropVar {
+            destructor: Some(destructor),
+            ..
+        }
+        | MirInstr::DropPlace {
+            destructor: Some(destructor),
+            ..
+        } => errors.push(format!(
+            "{head} keeps the drop `{}` naming `{destructor}` in elaborated MIR",
+            instruction_mnemonic(instruction)
+        )),
         MirInstr::ConstructTypeParam { param, .. } => errors.push(format!(
             "{head} constructs compile-time parameter `{}` in elaborated MIR",
             param.name

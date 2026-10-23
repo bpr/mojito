@@ -1,4 +1,4 @@
-mojito-mir 1.81
+mojito-mir 1.96
 artifact {
   features: [],
   files: [
@@ -11,7 +11,7 @@ artifact {
   decls: [
     decl { lowered_name: "D.__deinit__", param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: true, receiver_convention: present(deinit), param_conventions: [], return_type: None, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [], inline: nodebug },
     decl { lowered_name: "D.__init__", param_names: [v], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "D", slot: 0, name: k, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: true, receiver_convention: present(out), param_conventions: [absent], return_type: None, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
-    decl { lowered_name: destructor_moved_kept, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "destructor_moved_kept", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: destructor_arm_entry, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "destructor_arm_entry", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
     decl { lowered_name: note, param_names: [k, v], param_types: [Int, Int], defaults: [absent, absent], required: [true, true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent, absent], return_type: None, returns_reference: false, raises: false, error_type: absent, ref_params: [false, false], param_writes: [false, false], availability: [], enclosing: absent, region_binders: [] }
   ],
   functions: [
@@ -72,8 +72,8 @@ artifact {
         ]
       },
       fn {
-        name: destructor_moved_kept,
-        registers: 7,
+        name: destructor_arm_entry,
+        registers: 9,
         vars: 3,
         var_names: [x, d, n],
         params: 1,
@@ -82,25 +82,24 @@ artifact {
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "destructor_moved_kept", slot: 0, name: n, type: meta_value(Int) }))] } }, var_type { var: $v2, type: Int }],
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "destructor_arm_entry", slot: 0, name: n, type: meta_value(Int) }))] } }, var_type { var: $v2, type: Int }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "destructor_moved_kept", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Bool }, reg_type { reg: %r6, type: struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "destructor_moved_kept", slot: 0, name: n, type: meta_value(Int) }))] } }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 291, end: 292, origin: present($v2) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 294, end: 295, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 289, end: 296, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 308, end: 311, origin: present($v1) }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 308, end: 311, origin: present($v1) }) }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }],
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "destructor_arm_entry", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Bool }, reg_type { reg: %r6, type: struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "destructor_arm_entry", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r7, type: struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "destructor_arm_entry", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r8, type: None }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 291, end: 292, origin: present($v2) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 294, end: 295, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 289, end: 296, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 308, end: 311, origin: present($v1) }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 308, end: 311, origin: present($v1) }) }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }],
         blocks: [
           bb0 {
             instructions: [
               var.use { dest: %r0, var: $v2, mode: copy },
               drop.var { var: $v2 },
               var.use { dest: %r1, var: $v0, mode: copy },
-              call { dest: %r2, func: D, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: present(%r0), expr: present(param_decl_ref { owner: "destructor_moved_kept", slot: 0, name: n, type: meta_value(Int) }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "destructor_moved_kept", slot: 0, name: n, type: meta_value(Int) }))], spread: absent },
-              var.store { var: $v1, src: %r2, binding_type: present(struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "destructor_moved_kept", slot: 0, name: n, type: meta_value(Int) }))] }), in_place: true },
-              place.load { dest: %r3, place: place { root: $v1, root_type: present(struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "destructor_moved_kept", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
+              call { dest: %r2, func: D, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: present(%r0), expr: present(param_decl_ref { owner: "destructor_arm_entry", slot: 0, name: n, type: meta_value(Int) }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "destructor_arm_entry", slot: 0, name: n, type: meta_value(Int) }))], spread: absent },
+              var.store { var: $v1, src: %r2, binding_type: present(struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "destructor_arm_entry", slot: 0, name: n, type: meta_value(Int) }))] }), in_place: true },
+              place.load { dest: %r3, place: place { root: $v1, root_type: present(struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "destructor_arm_entry", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
               value.copy { dest: %r4, value: %r3 },
               const { dest: %r5, value: bool(true) },
-              if { results: [], condition: %r5, then: [bb0 { instructions: [var.use { dest: %r6, var: $v1, mode: move }], terminator: yield { values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
-              drop.var { var: $v1, destructor: "D.__deinit__" }
+              if { results: [], condition: %r5, then: [bb0 { instructions: [var.use { dest: %r6, var: $v1, mode: move }], terminator: yield { values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [var.use { dest: %r7, var: $v1, mode: forward }, call.method { dest: %r8, recv: %r7, method: __deinit__, resolved: present("D.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }], terminator: yield { values: [] } }] }
             ],
             terminator: return { value: present(%r4) }
           }

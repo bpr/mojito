@@ -41,7 +41,7 @@ disappear. Four such gaps were found, and one of them reaches far outside
 | A. Raises are implicit | every raise point ends a region | none left (R906, R831, R20, and R884 landed) | R890 (R733, R833, R1129, R1106, R829, R1272, R1264, R1113, R1290, and R956 closed; R832 waits on gap D) |
 | B. Construction and witnesses are not calls | a synthesized `__init__`; the witness folded at substitution | R1049, R1050, R1052, R988 (landed) | R1278, R1283 (closed), R1021 (closed), R1075 (closed), R1287 |
 | C. Packs are built by the backends | the call builds a library pack value | R743, R1102, R1103, R1073 (landed) | R1304 (R1070 and R1090 closed) |
-| D. Drops are decided after the fact | `DestructorInsertion` decides statically, per field | R1251, R931, R1306 | R1310, R832, R1311, R1309 (R1252, R1267, and R932 closed) |
+| D. Drops are decided after the fact | `DestructorInsertion` decides statically, per field | R1251, R931, R1306 (landed) | R1310, R832, R1311, R1309 (R1252, R1267, and R932 closed) |
 
 Each gap's fix also removes a place where a backend looks something up by
 type instead of reading a name from MIR: the struct-named construction
@@ -100,8 +100,8 @@ This gap blocks about 14 entries across four tracks (`pmir`,
   - R890 closed 10-23: a `for` loop calls a raising `__next__` as a
     `call.method` with its error region inside a `try` whose handler runs
     the loop's `else` and breaks, and `TryNext` is gone.
-  - R832 needs no flag for raise edges any more; its remaining flags go
-    with gap D, so it now depends on R1306.
+  - R832 needs no flag for raise edges any more; its remaining flags went
+    with gap D's R1306, so it depends on nothing now.
   - R829 closed with R884: its probe matched the pin by then, and the
     return cleanup list it named is gone.
 - **Cost**: generators grow by one `if` per raising call. That is
@@ -160,7 +160,10 @@ entry's probe is "one instance per `n` where the pin has one".
   `ownership.mark_initialized`. The last two markers, `consume.place`
   and `ownership.mark_destroyed`, are R1311. It needs `consume.var` to stop
   destroying residual fields at run time (R1310), and Pliron's return
-  sweep to go (R832, after R1306 decides drops statically).
+  sweep to go (R832).
+- R1306 closed 10-23: every drop is decided where drop elaboration places
+  it, and `mir::lower_drops` writes its call; the fold that tested what a
+  slot held is gone.
 - R1309 waits on R1311: once no backend tracks an owned temporary, a
   `field.get` of a forwarded struct moves its field out, as upstream's
   `kgen.struct.extract` does, and `sroa` drops its rule for a slot stored
@@ -191,11 +194,11 @@ entry's probe is "one instance per `n` where the pin has one".
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1304 -n 0
    ```
 
-4. **Gap D**. R1251, R1252, R931, and R932 landed. What remains runs
-   R1306 → R832 and R1310 → R1311 → R1309:
+4. **Gap D**. R1251, R1252, R931, R932, and R1306 landed. What remains
+   runs R832 and R1310 → R1311 → R1309:
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1306 --task R1310 --task R832 --task R1311 --task R1309 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1310 --task R832 --task R1311 --task R1309 -n 0
    ```
 
 ## Entries outside the gaps

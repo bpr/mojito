@@ -80,33 +80,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1306 `mir::lower_whole_drops` still decides after drop
-  elaboration whether a drop's value is held whole there, by a forward
-  fold of its own**
-
-  Drop elaboration decides each drop's shape, a whole value or a laid-out
-  part, in its field-sensitive backward walk, but whether the slot holds
-  that value on every path is decided afterwards, by `drop_calls.rs`'s
-  per-slot definite-initialization fold (`Held`, `Flow`, `region_flow`,
-  `held_after`).
-  - Upstream's `DestructorInsertion` leaves no undecided drop: the forward
-    `UninitializedValueScan` rejects every maybe-initialized use and hands
-    the walk annotations only (`unusedMarkDestroyName`,
-    `selfPartiallyInitializedAttrName`, ...).
-  - What the fold leaves as a runtime-tested drop today: `$iter` slots an
-    `iter.init` with `source == dest` normalizes in place (about 550 over
-    the corpus, R664's shape), `$arg_loan_r*` temporaries defined on one
-    path, owned closure captures, and stores through a whole place.
-  - Lever: a `tested` flag on `drop.var`/`drop.place` (a MIR format
-    bump), set by the walk for those slots alone, from what the move scan
-    knows is maybe moved there; `drop_calls.rs` then shrinks to a
-    mechanical lowering, as `lower_copies_and_moves` lowers copies, for
-    its callers `name_destructors` (and so `inline-parametric`) and the
-    specializer (`mono/specializer.rs`).
-  - Related to R1311 (runtime drop flags).
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R1291 A method call returning no reference runs its callee on the
   host stack, so recursion through a method overflows where upstream's
   interpreter pushes a frame for every call**
@@ -170,8 +143,7 @@ which names the upstream pass each one follows. Each is measured by the
     always 0.
   - Probe: Pliron's `BlockKey` bookkeeping (`lower/regions.rs`,
     `lower/release.rs`) keys blocks of one-block lists.
-  - Probe: `mir/drop_calls.rs`'s `Flow::before` and `DropSite::block`,
-    and `verify/drops.rs`'s `Walk::block` index, index block 0 only.
+  - Probe: `verify/drops.rs`'s `Walk::block` index names block 0 only.
   - Probe: the `block N` finding prefix and `verify_artifact`'s block
     locator name block 0 only.
   - The MIR text may keep its `[bb0 { … }]` region spelling: MLIR prints a
@@ -713,7 +685,7 @@ which names the upstream pass each one follows. Each is measured by the
   - Upstream: `lowerLITOps` (`LowerLIT.cpp`) erases `mark_destroyed` and
     `mark_consumed` with `mark_initialized`, and a call's `deinit` operand
     consumes the part (`memConsume`).
-  - Producers that must stop: `lower_whole_drops` (`mir/drop_calls.rs`),
+  - Producers that must stop: `lower_drops` (`mir/drop_calls.rs`),
     whose lowered drop of a part ends with the call, since the callee's
     `deinit` consumes it; `refine_pack_drops` (`mir/pack_drops.rs`);
     `sroa`'s `consume.place` → `consume.var` rewrite; and
@@ -721,12 +693,19 @@ which names the upstream pass each one follows. Each is measured by the
   - `inline_parametric::argument_binding` decides `Binding::Part` from
     the `deinit` parameter and the argument's loaded place, not from the
     trailing `consume.place`, as upstream substitutes the field's address.
+  - Probe: a destructor inlined at `reset(mut p: Pair): p = Pair(...)`'s
+    overwrite drop binds `deinit self` by value, a `place.load` of the
+    whole `p` through its handle into a fresh slot, since
+    `argument_binding` refuses a loaded place reached through a reference
+    (`assets/ok/mut_parameter_reassignment_drop.mojo`, found landing
+    R1306).
   - Then `lower-lit` erases both, the VM and Pliron arms refuse them, and
     Pliron's `end_presence` and `ended_inside` go.
-  - Evidence from R932's plan: `consume.place`'s own residual drop is dead
-    on the corpus; dropping it and the part tombstone double-frees
-    (`nominal_string_codepoint_from_byte`, `consume.place $v0._text` then
-    `consume.var $v0`) until `consume.var` destroys nothing (R1310).
+  - Since R1306 the VM's `consume.place` destroys nothing, as Pliron's
+    does, and only tombstones the part. Dropping the tombstone
+    double-frees (`nominal_string_codepoint_from_byte`, `consume.place
+    $v0._text` then `consume.var $v0`) until `consume.var` destroys
+    nothing (R1310).
   - A whole-slot `mark_destroyed` (an owned `VariadicList`'s element
     temporaries) is the only thing clearing that slot's flag before
     Pliron's return sweep (R832).
@@ -1076,7 +1055,11 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Once `lower-lit` erases a whole-slot `ownership.mark_destroyed`
     (R1311), this sweep would drop an owned `VariadicList`'s element
     temporaries a second time, so it must go first.
-  - Depends on R1306 (drops decided statically).
+  - Since R1306 every named drop is its destructor's call, decided where
+    drop elaboration places it, and the concrete verifier refuses a named
+    drop. So a flag guards only an unnamed `drop.var` or `drop.place` (a
+    type with no `__deinit__` of its own) and the return sweep.
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R987 Native code drops every function's inline level**
@@ -1638,6 +1621,8 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     `prepare`), its slot the backend's cursor, where every nominal
     `__iter__` makes an iterator slot of its own type.
   - Pinned by `conformance/probes/variadic_pack_owned_iteration.mojo`.
+  - Since R1306 the in-place slot's drop is the library
+    `VariadicList.__deinit__` call on the narrowed list.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -8506,7 +8491,7 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Probe: a struct whose `__deinit__` declares `raises`, dropped in
     `main`.
   - The checker's method rules say nothing about a destructor's effect;
-    `mir::lower_whole_drops` writes the destructor's call with no raise
+    `mir::lower_drops` writes the destructor's call with no raise
     contract, and Pliron rejects a raising destructor at the drop.
   - Reject the declaration at the check, with the pin's message.
   - Found while landing R1043 (2026-10-16).

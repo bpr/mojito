@@ -72,7 +72,7 @@ pub use teardown_calls::name_teardown_destructors;
 mod destroys;
 pub use destroys::{Destroyed, StructFields, destroyed_structs};
 mod drop_calls;
-pub use drop_calls::lower_whole_drops;
+pub use drop_calls::lower_drops;
 mod facts;
 pub mod link;
 mod lower_expr;

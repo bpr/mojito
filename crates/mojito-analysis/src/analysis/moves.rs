@@ -662,6 +662,15 @@ pub(super) fn observe_move_states(
     walk_forward(&scan, entry, &f.blocks, &mut observe).map(|_| ())
 }
 
+/// The span recorded for a use's register, or an empty span when the
+/// instruction has none.
+pub(super) fn use_span(f: &MirFunction, reg: Reg) -> mojito_common::token::SourceSpan {
+    f.spans.0.get(&reg.0).map_or_else(
+        || mojito_common::token::SourceSpan::new(None, (0, 0)),
+        |(span, _)| span.clone(),
+    )
+}
+
 /// The state one program point carries in the lifetime scan.
 #[derive(Clone, PartialEq)]
 struct LifetimeState {
@@ -822,15 +831,6 @@ fn check_reference_parameter_refilled(
             span,
         }
     })
-}
-
-/// The span recorded for a use's register, or an empty span when the
-/// instruction has none.
-fn use_span(f: &MirFunction, reg: Reg) -> mojito_common::token::SourceSpan {
-    f.spans.0.get(&reg.0).map_or_else(
-        || mojito_common::token::SourceSpan::new(None, (0, 0)),
-        |(span, _)| span.clone(),
-    )
 }
 
 /// Whether `var` is a `deinit` parameter, whose direct fields are independent

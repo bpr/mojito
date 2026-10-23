@@ -980,3 +980,16 @@ fn stored_span_iterator_keeps_the_span_alive() {
     );
     assert_eq!(out, "3\n1\n2\n3\n");
 }
+
+#[test]
+fn module_scope_conditionally_moved_field_refill_rejected() {
+    // Module scope has no drop walk, so a field moved out on some paths
+    // cannot be refilled: no decided drop destroys the value the other
+    // paths still hold. The pin rejects every file-scope statement.
+    let src = "@fieldwise_init\nstruct Inner(Movable):\n    var id: Int\n    def __deinit__(deinit self):\n        print(\"del\", self.id)\n\n@fieldwise_init\nstruct Pair(Movable):\n    var a: Inner\n    var b: Inner\n\ndef take(var x: Inner):\n    print(\"took\", x.id)\n\ndef flag() -> Bool:\n    return True\n\nvar p = Pair(Inner(1), Inner(2))\nif flag():\n    take(p.b^)\np.b = Inner(3)\nprint(p.b.id)\n";
+    let error = compile_error(src);
+    assert!(
+        error.contains("use of uninitialized value 'p.b'"),
+        "{error}"
+    );
+}

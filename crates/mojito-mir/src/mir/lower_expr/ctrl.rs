@@ -663,7 +663,9 @@ impl<'a> Flatten<'a> {
     /// Lower `build` as a region of its own: one block, ended by the
     /// terminator `build` returns, sharing this frame's registers and slots.
     /// An enclosing operand's pending setup read is set aside while it
-    /// builds, so a read never starts inside the region.
+    /// builds, so a read never starts inside the region. A temporary an
+    /// argument of the region makes dies in the region, as upstream's does:
+    /// its anchor's `lifetime.keep_alive` ends the region's block.
     fn region(&mut self, build: impl FnOnce(&mut Self) -> MirTerm) -> Vec<MirBlock> {
         let outer = std::mem::replace(
             &mut self.f.blocks,
@@ -674,9 +676,12 @@ impl<'a> Flatten<'a> {
         );
         let cur = std::mem::replace(&mut self.cur, 0);
         let reference = self.setup_reference.take();
+        let anchors = std::mem::take(&mut self.pending_argument_anchors);
         let setups = self.call_setups.len();
         let term = build(self);
         debug_assert_eq!(self.call_setups.len(), setups);
+        self.flush_argument_anchors();
+        self.pending_argument_anchors = anchors;
         self.f.blocks[self.cur].term = term;
         self.setup_reference = reference;
         self.cur = cur;

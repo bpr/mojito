@@ -2568,9 +2568,9 @@ pub enum MirInstr {
     /// before a `Store` that overwrites an initialized droppable sub-place,
     /// so the replaced value is destroyed at the assignment. `destructor`
     /// names the place value's own `__deinit__`, as on [`MirInstr::DropVar`].
-    /// One whose root holds the place whole on every path to it is lowered
-    /// to the call of its destructor on the place (`lower_whole_drops`), so
-    /// a `drop.place` stays only where that state is not definite.
+    /// A named one is lowered to the call of its destructor on the place
+    /// (`lower_drops`), so a `drop.place` stays only where no destructor is
+    /// named yet.
     DropPlace {
         place: MirPlace,
         #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]

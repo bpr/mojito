@@ -11,27 +11,26 @@
 //! no consumer looks the destructor up from the value's type again. A drop
 //! of a type the member table names no `__deinit__` for, a symbolic one
 //! included, keeps `None`: the elaborator names an instance's destructor
-//! once its type is concrete. A named drop whose slot holds a whole value
-//! on every path to it, or a named field drop whose slot holds the field
-//! whole, then becomes the call upstream leaves (`mir::lower_whole_drops`),
-//! the elaborator doing the same once it has named an instance's; one whose
-//! destructor is available only under a `where` clause waits for that.
+//! once its type is concrete. Every named drop, decided where drop
+//! elaboration placed it, then becomes the call upstream leaves
+//! (`mir::lower_drops`), the elaborator doing the same once it has named an
+//! instance's; one whose destructor is available only under a `where`
+//! clause waits for that.
 
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
-    MirBlock, MirDeclarations, MirFunction, MirInstr, instruction_regions_mut, lower_whole_drops,
+    MirBlock, MirDeclarations, MirFunction, MirInstr, instruction_regions_mut, lower_drops,
     name_teardown_destructors,
 };
 use mojito_types::types::Ty;
 use std::collections::HashMap;
 
 /// Name the destructor of every drop in `function`, regions included, and
-/// lower each named drop of a whole slot to the call
-/// of its destructor.
+/// lower each named drop to the call of its destructor.
 pub fn name_destructors(function: &mut MirFunction, declarations: &MirDeclarations) {
     name_in_blocks(&mut function.blocks, &function.var_tys, declarations);
     name_teardown_destructors(function, declarations);
-    lower_whole_drops(function, &|destructor| {
+    lower_drops(function, &|destructor| {
         declarations
             .function(destructor)
             .is_none_or(|declaration| declaration.availability.is_empty())

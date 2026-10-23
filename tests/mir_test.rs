@@ -2970,6 +2970,56 @@ fn method_call_temporary_view_argument_anchors_its_source_loan() {
 }
 
 #[test]
+fn short_circuit_argument_anchor_dies_in_its_arm() {
+    // A temporary an `or`'s right operand makes for a call argument is
+    // defined in the `or`'s else region and dies there, as upstream's
+    // does: its anchor's `KeepAlive` ends that region, and none follows
+    // the `or`, where the temporary is defined on one path only.
+    let source = r#"
+def check(p: String, n: Int) -> Bool:
+    var separator = String("/")
+    if n < 1 or String(p[byte=:1]) != separator:
+        return True
+    return False
+
+def main():
+    print(check(String("/a"), 2))
+"#;
+    let (_, check) = checked_function(source, "check");
+    let anchors: Vec<u32> = check
+        .var_names
+        .iter()
+        .enumerate()
+        .filter(|(_, name)| name.starts_with("$arg_loan"))
+        .map(|(var, _)| var as u32)
+        .collect();
+    assert!(!anchors.is_empty(), "the `or` operand anchors a temporary");
+    let keep_alives = |instructions: Vec<&MirInstr>| {
+        instructions
+            .into_iter()
+            .filter(|instruction| {
+                matches!(instruction, MirInstr::KeepAlive { var } if anchors.contains(var))
+            })
+            .count()
+    };
+    let in_arm: usize = nested_instructions(&check.blocks)
+        .into_iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::If {
+                results, orelse, ..
+            } if !results.is_empty() => Some(keep_alives(nested_instructions(orelse))),
+            _ => None,
+        })
+        .sum();
+    assert_eq!(in_arm, anchors.len(), "each anchor ends in the `or`'s arm");
+    assert_eq!(
+        keep_alives(nested_instructions(&check.blocks)),
+        in_arm,
+        "no anchor's KeepAlive follows the `or`"
+    );
+}
+
+#[test]
 fn parameterized_static_temporary_view_arguments_anchor_their_source_loans() {
     // A loan-carrying temporary built inline as a parameterized-static
     // argument anchors in a hidden `$arg_loan_r` slot for BOTH

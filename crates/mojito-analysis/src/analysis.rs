@@ -127,10 +127,13 @@ pub fn check_ownership_program(prog: &MirProgram) -> Result<(), OwnershipError> 
         imported: declarations.imported.as_ref(),
     };
     timing::count("functions", functions.len() as u64);
-    for (_name, f) in functions {
+    for (name, f) in functions {
         {
             let _lifetimes = timing::span("lifetimes");
             analyze_lifetimes(f)?;
+            if name == "__toplevel__" {
+                module_scope_maybe_moved_refill(f)?;
+            }
         }
         {
             let _loans = timing::span("loans");

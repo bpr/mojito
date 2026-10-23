@@ -394,7 +394,8 @@ last producer. Every stage keeps program output unchanged; the
      exits by the rule `lower-control-flow` uses (`mir::RegionFrame`,
      `mir::region_exit`). A region exit leaving a `try` part arrives as it
      leaves, or past a `finally` holding no whole value, as an escape
-     from a lowered part does.
+     from a lowered part does. (R1306 removed the fold: every drop is
+     decided where drop elaboration places it.)
    - Copy elision counts a region terminator's registers
      (`mir::terminator_regs`), and its forward scans stop at a region op
      other than `try`, where lowering would have ended the block.
@@ -452,7 +453,7 @@ last producer. Every stage keeps program output unchanged; the
       nothing in a list holding a lowered `comptime for`.
     - `lower_whole_drops` memoizes each region op's flow within one
       list's walk, since a structured instance's loops nest as deep as
-      its inlined bodies.
+      its inlined bodies. (The fold is gone since R1306.)
 12. **Post-elaboration pipeline.** *Landed (R881).* The elaborator emits
     structured instances, and the post-elaboration pipeline reads them.
     - The lowering point was each backend's entry: the VM's
