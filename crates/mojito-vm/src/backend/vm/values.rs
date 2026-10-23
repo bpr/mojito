@@ -61,6 +61,10 @@ impl VmBackend {
                     offset,
                 });
             }
+            (Value::Ref { .. }, Value::Int(delta), InfixOp::Add | InfixOp::Sub) => {
+                let delta = if op == InfixOp::Sub { -delta } else { *delta };
+                return super::references::offset_place_handle(l, delta);
+            }
             (
                 Value::Pointer {
                     allocation: left_allocation,

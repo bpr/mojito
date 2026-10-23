@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1304**.
+Next free ID: **R1306**.
 
 ## Ordered Work
 
@@ -1629,9 +1629,13 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - The bundled `List`, `Set`, and `Array` literal initializers use this
     spelling; upstream's consume the pack with `consume_elements`.
   - The builtin owned protocol it keeps runs over the bundled
-    `VariadicList`: `checker/iteration.rs::iteration_protocol`, the VM's
-    `pack_storage`, and Pliron's `runtime_pack_element`; upstream's
+    `VariadicList`, narrowing its span past each element it moves out:
+    `checker/iteration.rs::iteration_protocol`, the VM's
+    `variadic_list_span`, and Pliron's `advance_variadic_list`; upstream's
     `consume_elements(deinit self, elt_handler)` is not declared yet.
+  - Probe: the owned loop normalizes the list in place (`iter.init` with no
+    `prepare`), its slot the backend's cursor, where every nominal
+    `__iter__` makes an iterator slot of its own type.
   - Pinned by `conformance/probes/variadic_pack_owned_iteration.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -2380,10 +2384,28 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     reference names; a constant index into compiler-private storage
     (`Tuple`'s `self[i]`) is the only shape that works.
   - Probe: `conformance/probes/pointer_to_runtime_subscript.mojo`.
-  - Probe: the bundled `VariadicList.__deinit__` reaches each element as
-    `self._value[i]` where upstream writes `Pointer(to=self[i])`.
+  - Probe: the bundled `VariadicList.__deinit__` reaches each element
+    pointer through its span (`elements[unsafe_offset=i]`) where upstream
+    writes `Pointer(to=self[i])`.
   - Related: R1221 (a `ref` binding over an owned subscript result).
   - Found while landing R743 (2026-10-23).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1305 A reference returned through a pointer a call yields fails
+  MIR verification**
+
+  Problem: `return self.ptr()[unsafe_offset=i]` from a `-> ref[...] Int`
+  method fails with "register has no checked type" for the reference's
+  `ref.make`, whose place is rooted at an untyped slot holding the call's
+  result, where the pin prints the element.
+  - The same pointer bound to a local first (`var p = self.ptr(); return
+    p[unsafe_offset=i]`) runs.
+  - Probe: `conformance/probes/reference_through_call_result_pointer.mojo`.
+  - Probe: the bundled `VariadicList.__getitem__` binds its span's pointer
+    before indexing it, where upstream returns
+    `self._value.unsafe_ptr()[unsafe_offset=idx][]`.
+  - Found while landing R1073 (2026-10-23).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6993,9 +7015,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   mutates the caller's values (`mutate(a, b)` prints `2 3`).
   - `docs/grammar.md` spells `[convention] '*' NAME`, which the parser
     does not take for `mut`.
-  - The collector would be a `read`-shaped `VariadicList` whose elements
-    are the caller's places, which needs R1073's element pointers to write
-    back natively.
+  - The collector would be a `read`-shaped `VariadicList` whose element
+    pointers address the caller's places, as a `read` collector's already
+    do (`mir/call_defaults.rs::borrowed_element`), but mutable.
   - Found while planning R743 (2026-10-23).
   - Depends on R1073.
   - Model: Opus, Not Planned.
@@ -8901,39 +8923,26 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R743.
   - Model: Opus, Not Planned.
 
-- [ ] **R1073 A `VariadicList` holds its elements' images in private
-  storage, where upstream's holds a `Span` of element pointers**
+- [ ] **R1304 The call builds a `VariadicList`'s span itself, where
+  upstream calls the list's `@implicit` constructor from the `!pop.array`**
 
-  The bundled `VariadicList`'s field is the compiler-private
-  `__VariadicStorage[T]` (`TyKind::VariadicPack`), where upstream's is
-  `Span[Pointer[element_type, origin], ImmUntrackedOrigin]` built by its
-  `@implicit` constructor from the call's `!pop.array` of element pointers.
-  - The call would build the element-pointer array (`_MLIR.POPArrayType`)
-    and call that constructor, replacing the `struct.create` over a
-    `tuple.make` in `mir/call_defaults.rs::build_collector` and the
-    elaborator's `array_literal_construction`.
-  - `__len__`/`__getitem__` would then read the span, `__deinit__` would
-    need no `lit.ownership.mark_destroyed`, and the storage paths go:
-    `pack_length`, `pack_element_address`, `advance_variadic_list`
-    (`crates/mojito-pliron/src/lower/iter.rs`), `build_variadic_list`
-    (`lower/places.rs`), and the `VariadicPack` layout and index arms.
-  - Probe: a `read` collector the call builds holds bitwise images of the
-    caller's values (natively too: `collect_pack_elements` copies each
-    element), where upstream's `VariadicList[is_owned=False]` holds
-    references, so Pliron's frame-exit backstop (`lower_return`) skips
-    pack-storage slots.
-  - Probe: an owned `for v in xs^` over a run-time pack normalizes the
-    list in place (`iter.init` with no `prepare`), its slot holding a
-    backend cursor, where every nominal `__iter__` makes an iterator slot
-    of its own type (R1088).
-  - Probe: the read of a collector a call spreads (`show(*args)`) is a
-    `var.use copy` of the collector's slot, which `lower_copies_and_moves`
-    keeps a use the call passes whole, so the VM copies the collector's
-    image, where upstream passes the `VariadicList` by reference and
-    copies nothing (found while landing R1046).
-  - May need its own split when planned: the call side and the library
-    side can land apart.
-  - Found while landing R1040 (2026-10-16).
+  Every call of a `*xs: T` callee builds the element pointers, a
+  `tuple.make` of them bound to a caller slot, and the `Span` and the list
+  over it as two `struct.create`s
+  (`mir::variadic_list::build_variadic_list`), where upstream's call builds
+  a `!pop.array<n, !lit.ref<T>>` and calls `VariadicList.__init__[size,
+  container_origin](value: Pointer[_MLIR.POPArrayType[...],
+  ...]._mlir_lit_ref)`, inlined.
+  - The gap is the vocabulary that constructor is written in: no
+    `_MLIR.POPArrayType` (`!pop.array`), no `__mlir_type.index` parameter,
+    no `pop.array.gep`, and no `Pointer(_mlir_value=)` over a `!lit.ref`.
+  - Probe: the bundled `VariadicList` declares no constructor, and
+    `_MLIR` no `POPArrayType` (`stdlib/std/builtin/variadics.mojo`'s header
+    lists both).
+  - Probe: the elaborator's `Array` display construction
+    (`mono/substitute.rs::array_literal_construction`) builds the same
+    `struct.create`s.
+  - Found while landing R1073 (2026-10-23).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

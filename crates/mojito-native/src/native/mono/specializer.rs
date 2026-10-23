@@ -974,19 +974,27 @@ impl<'a> Specializer<'a> {
         })?;
         self.discharge_instantiation_failures(&key.template, &function)?;
         self.discharge_rebinds(&key.template, &mut function)?;
-        self.answer_param_constants(
+        let mut blocks = std::mem::take(&mut function.blocks);
+        let answered = self.answer_param_constants(
             &key.template,
-            &mut function.blocks,
+            &mut blocks,
             bindings,
-            &mut function.n_regs,
-            &mut function.reg_types,
+            &mut FrameSlots {
+                n_regs: &mut function.n_regs,
+                reg_types: &mut function.reg_types,
+                n_vars: &mut function.n_vars,
+                var_names: &mut function.var_names,
+                var_tys: &mut function.var_tys,
+            },
             true,
-        )
-        .and_then(|()| failure::reached_failure(&function.blocks, unreached_failures))
-        .map_err(|mut error| {
-            error.function.get_or_insert_with(|| key.template.clone());
-            error
-        })?;
+        );
+        function.blocks = blocks;
+        answered
+            .and_then(|()| failure::reached_failure(&function.blocks, unreached_failures))
+            .map_err(|mut error| {
+                error.function.get_or_insert_with(|| key.template.clone());
+                error
+            })?;
         self.close_lane_masks(&key.template, &mut function)?;
         self.folded_slots = self
             .folded_parameter_values(&key.template, &function, bindings)
@@ -1794,7 +1802,7 @@ impl<'a> Specializer<'a> {
     /// application built; a reflected field-name list read at an `Array` is
     /// constructed at the read's register type instead
     /// ([`array_display_construction`]), minting
-    /// its parts' registers in `n_regs` and `reg_types`. A failure in blocks
+    /// its parts' registers and slots in `frame`. A failure in blocks
     /// the instance has not yet `reached` (an unrolled iteration, before
     /// its branches are decided) is held in `unreached_failures` and
     /// reported only if the instance reaches the read.
@@ -1803,8 +1811,7 @@ impl<'a> Specializer<'a> {
         template: &str,
         blocks: &mut [MirBlock],
         bindings: &Bindings,
-        n_regs: &mut u32,
-        reg_types: &mut HashMap<u32, Ty>,
+        frame: &mut FrameSlots<'_>,
         reached: bool,
     ) -> Result<(), MonoError> {
         for block in blocks {
@@ -1813,9 +1820,7 @@ impl<'a> Specializer<'a> {
                 let regions = mojito_mir::mir::instruction_regions_mut(&mut instruction);
                 if !regions.is_empty() {
                     for region in regions {
-                        self.answer_param_constants(
-                            template, region, bindings, n_regs, reg_types, reached,
-                        )?;
+                        self.answer_param_constants(template, region, bindings, frame, reached)?;
                     }
                     instrs.push(instruction);
                     continue;
@@ -1861,7 +1866,7 @@ impl<'a> Specializer<'a> {
                     continue;
                 };
                 let dest = *dest;
-                let ty = reg_types.get(&dest.0).cloned();
+                let ty = frame.reg_types.get(&dest.0).cloned();
                 let constant = match self
                     .applied(template, value, bindings)
                     .and_then(|value| self.param_constant(&value, bindings, ty.as_ref()))
@@ -1891,8 +1896,7 @@ impl<'a> Specializer<'a> {
                             dest,
                             &owned,
                             ty,
-                            n_regs,
-                            reg_types,
+                            frame,
                             self.construction_decls(),
                         )?);
                     }

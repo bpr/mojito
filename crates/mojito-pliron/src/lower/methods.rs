@@ -173,7 +173,6 @@ impl FnLowering<'_> {
                 Some(
                     TyKind::Tuple(_)
                         | TyKind::RuntimePack(_)
-                        | TyKind::VariadicPack(_)
                         | TyKind::Int
                         | TyKind::UInt
                         | TyKind::Float64

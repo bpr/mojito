@@ -15,14 +15,17 @@
 //!
 //! The same binding builds the positional collector a callee's `*xs`
 //! takes, as upstream's call builds the `VariadicPack` or `VariadicList` it
-//! passes: a `tuple.make` of the call's overflow operands, a homogeneous
-//! collector's wrapped in its `VariadicList` by a `struct.create`, passed as
-//! one operand. It
+//! passes: a `tuple.make` of the call's overflow operands, or a homogeneous
+//! collector's `VariadicList` over pointers to them
+//! ([`crate::mir::variadic_list`]), passed as one operand. It
 //! builds the keyword collector a callee's `**kwargs` takes as upstream's
 //! call builds the dictionary: the collector's empty constructor, one
 //! `_insert` per collected keyword, and the filled collector passed as the
 //! call's one `**` operand.
 
+use crate::mir::variadic_list::{
+    FrameTables, ListElement, build_variadic_list, element_pointer_type,
+};
 use crate::mir::verify::instruction_result_regs;
 use crate::mir::{
     Const, FORWARDED_ARGUMENT_SLOT, FuncRef, LoweredCall, MirBlock, MirDeclarations, MirFunction,
@@ -203,12 +206,30 @@ fn fill_blocks(
     for block in blocks {
         let instructions = std::mem::take(&mut block.instrs);
         let mut filled = Vec::with_capacity(instructions.len());
+        // What follows a call goes after the in-place binding of its result,
+        // which must follow the call itself.
+        let mut deferred: Option<(Reg, Vec<MirInstr>)> = None;
         for mut instruction in instructions {
+            if let Some((result, mut postlude)) = deferred.take() {
+                if matches!(instruction, MirInstr::DefVar { src, in_place: true, .. } if src == result)
+                {
+                    filled.push(instruction);
+                    filled.append(&mut postlude);
+                    continue;
+                }
+                filled.append(&mut postlude);
+            }
             for region in instruction_regions_mut(&mut instruction) {
                 fill_blocks(region, function, caller, pending, invariant_errors);
             }
+            let mut postlude = Vec::new();
             if matches!(instruction, MirInstr::MultiSet { .. }) {
-                collect_subscript_store(&mut instruction, function, caller, &mut filled);
+                collect_subscript_store(
+                    &mut instruction,
+                    function,
+                    caller,
+                    (&mut filled, &mut postlude),
+                );
             }
             if let Some(record) =
                 result_register(&instruction).and_then(|dest| pending.remove(&dest.0))
@@ -218,13 +239,21 @@ fn fill_blocks(
                     &record,
                     function,
                     caller,
-                    &mut filled,
+                    (&mut filled, &mut postlude),
                     invariant_errors,
                 );
             } else {
                 collect_through_contract(&mut instruction, function, &mut filled);
             }
+            let result = result_register(&instruction);
             filled.push(instruction);
+            match result {
+                Some(result) if !postlude.is_empty() => deferred = Some((result, postlude)),
+                _ => filled.append(&mut postlude),
+            }
+        }
+        if let Some((_, mut postlude)) = deferred {
+            filled.append(&mut postlude);
         }
         block.instrs = filled;
     }
@@ -244,15 +273,16 @@ const fn result_register(instruction: &MirInstr) -> Option<Reg> {
 }
 
 /// Fill `instruction`'s omitted arguments as `record` binds it, emitting
-/// each default's evaluation onto `prelude`, and build the positional
-/// collector it passes ([`build_collector`]); return the instruction,
-/// rewritten when its kind cannot carry the filled operands.
+/// each default's evaluation onto the prelude of `around`, and build the
+/// positional collector it passes ([`build_collector`]), what follows the
+/// call onto its postlude; return the instruction, rewritten when its kind
+/// cannot carry the filled operands.
 fn fill_call(
     mut instruction: MirInstr,
     record: &LoweredCall,
     function: &mut MirFunction,
     caller: &Caller<'_>,
-    prelude: &mut Vec<MirInstr>,
+    (prelude, postlude): (&mut Vec<MirInstr>, &mut Vec<MirInstr>),
     invariant_errors: &mut Vec<String>,
 ) -> MirInstr {
     if let MirInstr::Index { .. } = &instruction {
@@ -269,7 +299,7 @@ fn fill_call(
         instruction = widen_index(instruction);
     }
     let Some(mut site) = Site::of(&instruction, record, function, caller) else {
-        collect_through_requirement(&mut instruction, function, caller, prelude);
+        collect_through_requirement(&mut instruction, function, caller, (prelude, postlude));
         collect_through_contract(&mut instruction, function, prelude);
         return instruction;
     };
@@ -351,6 +381,7 @@ fn fill_call(
             function,
             location.as_ref(),
             prelude,
+            postlude,
         );
     }
     if let (
@@ -374,7 +405,7 @@ fn collect_subscript_store(
     instruction: &mut MirInstr,
     function: &mut MirFunction,
     caller: &Caller<'_>,
-    prelude: &mut Vec<MirInstr>,
+    (prelude, postlude): (&mut Vec<MirInstr>, &mut Vec<MirInstr>),
 ) {
     let MirInstr::MultiSet {
         receiver,
@@ -429,6 +460,7 @@ fn collect_subscript_store(
         function,
         location.as_ref(),
         prelude,
+        postlude,
     );
     let Some(position) = site.spread else {
         return;
@@ -507,7 +539,7 @@ fn collect_through_requirement(
     instruction: &mut MirInstr,
     function: &mut MirFunction,
     caller: &Caller<'_>,
-    prelude: &mut Vec<MirInstr>,
+    (prelude, postlude): (&mut Vec<MirInstr>, &mut Vec<MirInstr>),
 ) {
     let MirInstr::MethodCall {
         dest,
@@ -564,7 +596,14 @@ fn collect_through_requirement(
     let collected =
         build_keyword_collector(&mut site, &shape, function, location.as_ref(), prelude)
             .is_ok_and(|built| built);
-    build_collector(&mut site, &shape, function, location.as_ref(), prelude);
+    build_collector(
+        &mut site,
+        &shape,
+        function,
+        location.as_ref(),
+        prelude,
+        postlude,
+    );
     if collected || site.spread.is_some() {
         site.store(instruction, &[]);
     }
@@ -812,16 +851,16 @@ fn keyword_collector_type(
 
 /// Pass the positional collector a call's `shape` declares as the one
 /// operand the call builds, as upstream's call builds the `VariadicPack` or
-/// `VariadicList` its callee's `*xs` takes: a `tuple.make` of the overflow
-/// operands, typed the collector's storage under the call's bindings
-/// ([`collector_type`]), a homogeneous one's then wrapped in its
-/// `VariadicList[T, is_owned]` by a `struct.create`, which stands for
-/// upstream's constructor from the `!pop.array` of element pointers and,
-/// being no call, keeps the loans of the reads it holds, all emitted onto
-/// `prelude` and passed after every regular positional
-/// operand, its position the call's `spread`. A regular slot before the
-/// collector that a keyword fills moves to its position, so the shared
-/// matcher binds the collector operand alone
+/// `VariadicList` its callee's `*xs` takes, emitted onto `prelude` and
+/// passed after every regular positional operand, its position the call's
+/// `spread`. A heterogeneous collector is a `tuple.make` of the overflow
+/// operands, typed under the call's bindings ([`collector_type`]); a
+/// homogeneous one is the `VariadicList[T, is_owned]` over pointers to
+/// them ([`build_variadic_list`]), a `read` collector's element a place
+/// the caller reads borrowed where it lies ([`borrowed_element`]), and what
+/// keeps its elements live through the call goes onto `postlude`, after
+/// it. A regular slot before the collector that a keyword fills moves to
+/// its position, so the shared matcher binds the collector operand alone
 /// ([`mojito_ast::call::bind_spread`]). A call that leaves such a slot out,
 /// or whose collector type the call's operands do not determine, keeps its
 /// operands; a subscript carries no collector operand.
@@ -831,6 +870,7 @@ fn build_collector(
     function: &mut MirFunction,
     location: Option<&SourceSpan>,
     prelude: &mut Vec<MirInstr>,
+    postlude: &mut Vec<MirInstr>,
 ) {
     let Some(element) = shape.variadic else {
         return;
@@ -884,44 +924,50 @@ fn build_collector(
     let Some(ty) = collector_type(shape.param_decls, element, &elements, site, function) else {
         return;
     };
-    // A collector over the caller's own pack leaves its elements' types to
-    // the elaborator.
-    let element_types = match ty.kind() {
-        TyKind::Tuple(types) => Some(types.clone()),
-        TyKind::VariadicPack(element)
-            if mojito_types::types::pack_spread(std::slice::from_ref(element)).is_some() =>
-        {
-            None
-        }
-        TyKind::VariadicPack(element) => Some(vec![element.clone(); elements.len()]),
-        _ => return,
-    };
     let homogeneous = match ty.kind() {
         TyKind::VariadicPack(element)
             if mojito_types::types::pack_spread(std::slice::from_ref(element)).is_none() =>
         {
             Some(element.clone())
         }
-        _ => None,
+        TyKind::Tuple(_) | TyKind::VariadicPack(_) => None,
+        _ => return,
     };
-    let storage = fresh_register(function, ty, location);
-    prelude.push(MirInstr::MakeTuple {
-        dest: storage,
-        elems: elements,
-        element_types,
-    });
-    let collector = homogeneous.map_or(storage, |element| {
-        let list = mojito_types::types::variadic_list_type(
-            element,
-            shape.variadic_convention == Some(ArgConvention::Var),
+    let collector = if let Some(element) = homogeneous {
+        let owned = shape.variadic_convention == Some(ArgConvention::Var);
+        let elements = elements
+            .into_iter()
+            .map(|register| {
+                (!owned)
+                    .then(|| borrowed_element(prelude, register, &element, function, location))
+                    .flatten()
+                    .unwrap_or(ListElement::Value(register))
+            })
+            .collect();
+        let built = build_variadic_list(
+            &mut CallFrame { function, location },
+            &element,
+            owned,
+            elements,
         );
-        let collector = fresh_register(function, list, location);
-        prelude.push(MirInstr::MakeStruct {
-            dest: collector,
-            fields: vec![storage],
+        prelude.extend(built.before);
+        postlude.extend(built.after);
+        built.list
+    } else {
+        // A collector over the caller's own pack leaves its elements' types
+        // to the elaborator.
+        let element_types = match ty.kind() {
+            TyKind::Tuple(types) => Some(types.clone()),
+            _ => None,
+        };
+        let storage = fresh_register(function, ty, location);
+        prelude.push(MirInstr::MakeTuple {
+            dest: storage,
+            elems: elements,
+            element_types,
         });
-        collector
-    });
+        storage
+    };
     site.spread = Some(args.len());
     args.push(collector);
     arg_places.push(None);
@@ -939,10 +985,69 @@ fn build_collector(
     });
 }
 
-/// The type of the collector storage a call of a callee collecting
-/// `element`s builds from `elements`, in the caller's binder scope:
+/// The element of a `read` collector the call borrows where it lies: the
+/// place `register` loads, its `place.load` in `prelude` (no other
+/// instruction there reading it) becoming the `ref.make` of the element
+/// pointer, as upstream's call addresses a borrowed argument rather than
+/// reading it. `None` for a register no such load of an `element`-typed
+/// place defines.
+fn borrowed_element(
+    prelude: &mut [MirInstr],
+    register: Reg,
+    element: &Ty,
+    function: &mut MirFunction,
+    location: Option<&SourceSpan>,
+) -> Option<ListElement> {
+    let at = prelude.iter().rposition(|instruction| {
+        matches!(instruction, MirInstr::LoadPlace { dest, place }
+            if *dest == register && place.ty.as_ref() == Some(element))
+    })?;
+    let mut operands = Vec::new();
+    for instruction in prelude.iter() {
+        crate::mir::verify::instruction_operand_regs(instruction, &mut operands);
+    }
+    if operands.contains(&register) {
+        return None;
+    }
+    let MirInstr::LoadPlace { place, .. } = &prelude[at] else {
+        return None;
+    };
+    let place = place.clone();
+    let roots = std::iter::once(place.root).chain(place.through).collect();
+    let pointer = fresh_register(function, element_pointer_type(element, false), location);
+    prelude[at] = MirInstr::MakeRef {
+        dest: pointer,
+        place,
+    };
+    Some(ListElement::Borrowed { pointer, roots })
+}
+
+/// The caller's tables, which a `VariadicList` a call builds extends, its
+/// registers located at the call.
+struct CallFrame<'a, 'b> {
+    function: &'a mut MirFunction,
+    location: Option<&'b SourceSpan>,
+}
+
+impl FrameTables for CallFrame<'_, '_> {
+    fn fresh_register(&mut self, ty: Ty) -> Reg {
+        fresh_register(self.function, ty, self.location)
+    }
+
+    fn fresh_slot(&mut self, name: String, ty: Ty) -> VarId {
+        let slot = u32::try_from(self.function.n_vars).expect("variable count fits a VarId");
+        self.function.n_vars += 1;
+        self.function.var_names.push(name);
+        self.function.var_tys.insert(slot, ty);
+        slot
+    }
+}
+
+/// The type of the collector a call of a callee collecting `element`s
+/// builds from `elements`, in the caller's binder scope:
 /// `VariadicPack(element)` under the call's bindings, which a bound
-/// type pack turns into its elements' tuple. A binder of the callee's own
+/// type pack turns into its elements' tuple, and whose closed element is a
+/// homogeneous collector's `VariadicList`'s. A binder of the callee's own
 /// `param_decls` the call binds no argument for, or one of the trait a
 /// requirement is spelled over, is read off the operands instead, as the
 /// elaborator infers it: a type pack is the tuple of their types, a

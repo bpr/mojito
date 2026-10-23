@@ -94,6 +94,20 @@ impl VmBackend {
                     regs[dest.0 as usize] = Value::Pointer { allocation, offset };
                     return Ok(());
                 }
+                let mut segments = super::references::place_projection_segments(place, regs)?;
+                // An element index into a pointer the root holds moves the
+                // place pointer the root holds (`elements[unsafe_offset=i]`).
+                let root = match (root, place.root_ty.as_ref().map(Ty::kind), segments.first()) {
+                    (
+                        root @ Value::Ref { .. },
+                        Some(TyKind::Pointer { .. }),
+                        Some(&RefProjection::Index(index)),
+                    ) => {
+                        segments.remove(0);
+                        super::references::offset_place_handle(root, index as i64)?
+                    }
+                    (root, ..) => root,
+                };
                 let (frame, slot, mut projection) = match root {
                     Value::Ref {
                         frame,
@@ -102,7 +116,7 @@ impl VmBackend {
                     } => (frame, slot, projection),
                     _ => (frame_id.0, place.root as usize, Vec::new()),
                 };
-                projection.extend(super::references::place_projection_segments(place, regs)?);
+                projection.extend(segments);
                 let handle = Value::Ref {
                     frame,
                     slot,
@@ -1007,13 +1021,7 @@ impl VmBackend {
                         // pointee; the handle designates one value.
                         (MirIntrinsicSubscript::Pointer, handle @ Value::Ref { .. }) => {
                             let off = self.normalize_index(prog, &regs[index.0 as usize])?;
-                            if off != 0 {
-                                return Err(RuntimeError::TypeError(
-                                    "vm: a place pointer designates a single value; only \
-                                     offset 0 can be dereferenced"
-                                        .to_string(),
-                                ));
-                            }
+                            let handle = super::references::offset_place_handle(handle, off)?;
                             self.read_reference(&handle, frame_id, vars)?
                         }
                         // `ptr[i]` loads the pointee at `base + i` from the heap arena.
@@ -1860,14 +1868,19 @@ impl VmBackend {
             }
             MirInstr::HasNext { dest, iter } => {
                 // Only compiler-private runtime-pack storage (a method-free
-                // tuple, or an owned `VariadicList`'s, which `for var v in
-                // xs^` consumes) and a CTFE compile-time list iterate without
-                // a nominal `__next__`; public Tuple values are nominal structs
+                // tuple), an owned `VariadicList`, which `for var v in xs^`
+                // consumes, and a CTFE compile-time list iterate without a
+                // nominal `__next__`; public Tuple values are nominal structs
                 // and cannot reach this fallback.
+                if let Some((_, length)) = variadic_list_span(&vars[*iter as usize]) {
+                    regs[dest.0 as usize] = Value::Bool(length > 0);
+                    return Ok(());
+                }
                 let value = &mut vars[*iter as usize];
                 let items = match value {
                     Value::ComptimeList(items) if self.ctfe_fuel.is_some() => Some(items),
-                    _ => pack_storage(value),
+                    Value::Tuple(items) => Some(items),
+                    _ => None,
                 };
                 let Some(items) = items else {
                     return Err(RuntimeError::Unsupported(format!(
@@ -1878,10 +1891,24 @@ impl VmBackend {
                 regs[dest.0 as usize] = Value::Bool(!items.is_empty());
             }
             MirInstr::Next { dest, iter } => {
+                // An owned `VariadicList` hands on its first element and
+                // narrows its span past it, so its destructor reaches only
+                // the elements the loop has not taken.
+                if let Some((elements, length)) = variadic_list_span(&vars[*iter as usize]) {
+                    let element = self.read_reference(&elements, frame_id, vars)?;
+                    regs[dest.0 as usize] = self.read_reference(&element, frame_id, vars)?;
+                    let rest = (
+                        super::references::offset_place_handle(elements, 1)?,
+                        Value::Int(length - 1),
+                    );
+                    set_variadic_list_span(&mut vars[*iter as usize], rest);
+                    return Ok(());
+                }
                 let value = &mut vars[*iter as usize];
                 let items = match value {
                     Value::ComptimeList(items) if self.ctfe_fuel.is_some() => Some(items),
-                    _ => pack_storage(value),
+                    Value::Tuple(items) => Some(items),
+                    _ => None,
                 };
                 let Some(items) = items else {
                     return Err(RuntimeError::Unsupported(format!(
@@ -1925,8 +1952,13 @@ impl VmBackend {
             }
             // The place's value was moved out through pointers: what its
             // storage still holds is a stale image no destructor may see.
+            // A whole slot keeps its storage: its value lives on behind the
+            // pointer it was handed on through (an owned `VariadicList`'s
+            // element), and no drop of the slot follows.
             MirInstr::MarkDestroyed { place } => {
-                *nav_mut(vars, regs, place)? = Value::Moved;
+                if !place.is_whole_root() {
+                    *nav_mut(vars, regs, place)? = Value::Moved;
+                }
             }
             MirInstr::ConsumePlace { place, .. } => {
                 let value = self.take_place(frame_id, place, regs, vars)?;
@@ -2062,18 +2094,36 @@ fn concrete_simd_slots(
     }
 }
 
-/// The elements of compiler-private pack storage the builtin `HasNext`/
-/// `Next` step: a method-free tuple, or the storage field of the
-/// `VariadicList` an owned loop over a `var` collector consumes.
-fn pack_storage(value: &mut Value) -> Option<&mut Vec<Value>> {
+/// The span of the `VariadicList` an owned loop over a `var` collector
+/// consumes, which the builtin `HasNext`/`Next` step: the pointer to its
+/// first element pointer and its length.
+fn variadic_list_span(value: &Value) -> Option<(Value, i64)> {
+    match variadic_list_span_fields(value)? {
+        [(_, elements), (_, Value::Int(length))] => Some((elements.clone(), *length)),
+        _ => None,
+    }
+}
+
+/// Narrow the span of the `VariadicList` `value` to `(elements, length)`.
+fn set_variadic_list_span(value: &mut Value, (elements, length): (Value, Value)) {
+    if let Value::Struct { fields, .. } = value
+        && let [(_, Value::Struct { fields: span, .. })] = fields.as_mut_slice()
+        && let [(_, data), (_, size)] = span.as_mut_slice()
+    {
+        *data = elements;
+        *size = length;
+    }
+}
+
+/// The fields of a `VariadicList`'s span.
+fn variadic_list_span_fields(value: &Value) -> Option<&[(String, Value)]> {
     match value {
-        Value::Tuple(items) => Some(items),
         Value::Struct { name, fields }
             if mojito_types::types::struct_template(name)
                 == mojito_types::types::VARIADIC_LIST_TYPE_NAME =>
         {
-            match fields.as_mut_slice() {
-                [(_, Value::Tuple(items))] => Some(items),
+            match fields.as_slice() {
+                [(_, Value::Struct { fields: span, .. })] => Some(span),
                 _ => None,
             }
         }

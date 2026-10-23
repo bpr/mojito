@@ -5,7 +5,9 @@
 use super::*;
 use mojito_checked::checked::ComptimeSequence;
 use mojito_checked::declaration::AssociatedParameter;
+use mojito_hir::hir::VarId;
 use mojito_mir::mir::MirParamArg;
+use mojito_mir::mir::variadic_list::FrameTables;
 use mojito_mir::mir::visit::{
     MutTypeVisitor, ParamArgSite, ParamDeclSite, TySite, walk_blocks_mut, walk_function_mut,
     walk_instruction_mut,
@@ -36,6 +38,30 @@ impl<'a> ConstructionDecls<'_, 'a> {
                     )
                 })
         })
+    }
+}
+
+/// The register and slot tables of the function an instance's
+/// construction of a parameter value extends.
+pub(super) struct FrameSlots<'a> {
+    pub(super) n_regs: &'a mut u32,
+    pub(super) reg_types: &'a mut HashMap<u32, Ty>,
+    pub(super) n_vars: &'a mut usize,
+    pub(super) var_names: &'a mut Vec<String>,
+    pub(super) var_tys: &'a mut HashMap<VarId, Ty>,
+}
+
+impl FrameTables for FrameSlots<'_> {
+    fn fresh_register(&mut self, ty: Ty) -> Reg {
+        fresh_register(ty, self.n_regs, self.reg_types)
+    }
+
+    fn fresh_slot(&mut self, name: String, ty: Ty) -> VarId {
+        let slot = VarId::try_from(*self.n_vars).expect("variable count fits a VarId");
+        *self.n_vars += 1;
+        self.var_names.push(name);
+        self.var_tys.insert(slot, ty);
+        slot
     }
 }
 
@@ -799,8 +825,7 @@ pub(super) fn array_display_construction(
     dest: Reg,
     value: &CtValue,
     ty: &Ty,
-    n_regs: &mut u32,
-    reg_types: &mut HashMap<u32, Ty>,
+    frame: &mut FrameSlots<'_>,
     decls: ConstructionDecls,
 ) -> Result<Vec<MirInstr>, MonoError> {
     let unsupported = || MonoError {
@@ -820,15 +845,14 @@ pub(super) fn array_display_construction(
                 declaration.variadic_convention == Some(mojito_ast::ast::ArgConvention::Var)
             });
             let parts = elements.iter().map(|value| (value, element.clone()));
-            let (mut instrs, args) = constructed_parts(parts, n_regs, reg_types, decls)?;
+            let (mut instrs, args) = constructed_parts(parts, frame, decls)?;
             instrs.extend(array_literal_construction(
                 dest,
                 (constructor, owned),
                 element,
                 args,
                 length,
-                n_regs,
-                reg_types,
+                frame,
             ));
             Ok(instrs)
         }
@@ -1165,16 +1189,15 @@ fn declared_associated_type(
 /// register: the instructions, and the registers in order.
 fn constructed_parts<'v>(
     parts: impl IntoIterator<Item = (&'v CtValue, Ty)>,
-    n_regs: &mut u32,
-    reg_types: &mut HashMap<u32, Ty>,
+    frame: &mut FrameSlots<'_>,
     decls: ConstructionDecls,
 ) -> Result<(Vec<MirInstr>, Vec<Reg>), MonoError> {
     let mut instrs = Vec::new();
     let mut args = Vec::new();
     for (part, part_ty) in parts {
-        let arg = fresh_register(part_ty.clone(), n_regs, reg_types);
+        let arg = frame.fresh_register(part_ty.clone());
         instrs.extend(array_display_construction(
-            arg, part, &part_ty, n_regs, reg_types, decls,
+            arg, part, &part_ty, frame, decls,
         )?);
         args.push(arg);
     }
@@ -1197,47 +1220,38 @@ fn array_instance_parts(ty: &Ty) -> Option<(&Ty, i64)> {
 }
 
 /// The list-literal initializer call over `elements` of type `element`, as
-/// MIR lowers a display: the call builds the collector of the elements (a
-/// `VariadicList` over their storage, `owned` for the initializer's `var`
-/// collector) and passes it, `__list_literal__` selects the overload, and the `length`
-/// parameter argument reifies the constructed value's length.
+/// MIR lowers a display: the call builds the `VariadicList` over the
+/// elements (`owned` for the initializer's `var` collector, each element
+/// then the list's) and passes it, `__list_literal__` selects the overload,
+/// and the `length` parameter argument reifies the constructed value's
+/// length. Concrete MIR holds no `KeepAlive`, so what the list's
+/// construction keeps live past the call goes unsaid.
 fn array_literal_construction(
     dest: Reg,
     (constructor, owned): (&str, bool),
     element: &Ty,
     elements: Vec<Reg>,
     length: i64,
-    n_regs: &mut u32,
-    reg_types: &mut HashMap<u32, Ty>,
+    frame: &mut FrameSlots<'_>,
 ) -> Vec<MirInstr> {
-    let storage = fresh_register(
-        TyKind::VariadicPack(element.clone()).into(),
-        n_regs,
-        reg_types,
+    let built = mojito_mir::mir::variadic_list::build_variadic_list(
+        frame,
+        element,
+        owned,
+        elements
+            .into_iter()
+            .map(mojito_mir::mir::variadic_list::ListElement::Value)
+            .collect(),
     );
-    let collector = fresh_register(
-        mojito_types::types::variadic_list_type(element.clone(), owned),
-        n_regs,
-        reg_types,
-    );
-    let element_types = vec![element.clone(); elements.len()];
-    let none = fresh_register(Ty::none(), n_regs, reg_types);
-    let length_reg = fresh_register(Ty::int(), n_regs, reg_types);
+    let none = frame.fresh_register(Ty::none());
+    let length_reg = frame.fresh_register(Ty::int());
     let unbound = || mojito_mir::mir::MirParamArg {
         name: None,
         value: None,
         expr: None,
     };
-    vec![
-        MirInstr::MakeTuple {
-            dest: storage,
-            elems: elements,
-            element_types: Some(element_types),
-        },
-        MirInstr::MakeStruct {
-            dest: collector,
-            fields: vec![storage],
-        },
+    let mut instrs = built.before;
+    instrs.extend([
         MirInstr::Const {
             dest: none,
             k: Const::None,
@@ -1251,7 +1265,7 @@ fn array_literal_construction(
             func: mojito_mir::mir::FuncRef::named(constructor),
             raises: None,
             arg_places: vec![None],
-            args: vec![collector],
+            args: vec![built.list],
             kwargs: vec![("__list_literal__".to_string(), none)],
             kwarg_places: vec![None],
             capture_accesses: Vec::new(),
@@ -1266,7 +1280,8 @@ fn array_literal_construction(
             instantiated_args: Vec::new(),
             spread: Some(0),
         },
-    ]
+    ]);
+    instrs
 }
 
 fn fresh_register(ty: Ty, n_regs: &mut u32, reg_types: &mut HashMap<u32, Ty>) -> Reg {

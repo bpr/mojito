@@ -268,9 +268,17 @@ pub(super) fn reference_capability(ty: &Ty) -> Option<ReferenceCapability<'_>> {
                 | PointerOrigin::SelfPlace { mutability, .. } => {
                     ReferencePermission::from_mutability(*mutability)
                 }
-                PointerOrigin::Static
-                | PointerOrigin::Untracked { .. }
-                | PointerOrigin::UnsafeAny { .. } => return None,
+                // An untracked pointer addresses its pointee with the
+                // permission it is declared with, a `VariadicList`'s element
+                // pointer among them.
+                PointerOrigin::Untracked { mutable } => {
+                    if *mutable {
+                        ReferencePermission::Mutable
+                    } else {
+                        ReferencePermission::Immutable
+                    }
+                }
+                PointerOrigin::Static | PointerOrigin::UnsafeAny { .. } => return None,
             };
             Some(ReferenceCapability {
                 target: element,

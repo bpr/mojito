@@ -544,9 +544,15 @@ impl FnLowering<'_> {
             // the marked storage is filled by the writes that follow.
             MirInstr::MarkInitialized { .. } => Ok(()),
             // The marked place holds no value from here: its presence flag
-            // clears, as a move out of it would clear it.
+            // clears, as a move out of it would clear it. A whole slot's
+            // value lives on behind the pointer it was handed on through
+            // (an owned `VariadicList`'s element), which ends it.
             MirInstr::MarkDestroyed { place } => {
-                self.end_presence(ctx, place);
+                if place.is_whole_root() {
+                    self.set_drop_flag(ctx, place.root, false);
+                } else {
+                    self.end_presence(ctx, place);
+                }
                 Ok(())
             }
             MirInstr::ConsumePlace { place, marker } => {

@@ -1118,13 +1118,6 @@ pub const UNINIT_STORAGE_TYPE_NAME: &str = "__UninitStorage";
 /// only (`var _storage: __VariantStorage[*Ts]`).
 pub const VARIANT_STORAGE_TYPE_NAME: &str = "__VariantStorage";
 
-/// Compiler-private homogeneous pack storage, the field type of the bundled
-/// `VariadicList`.
-///
-/// The intrinsic `TyKind::VariadicPack` spelled from bundled standard-library
-/// sources only (`var _value: __VariadicStorage[Self.element_type]`).
-pub const VARIADIC_STORAGE_TYPE_NAME: &str = "__VariadicStorage";
-
 /// Construct a nominal standard-library type from ordinary type arguments.
 pub fn nominal_type(name: impl Into<String>, arguments: Vec<Ty>) -> Ty {
     TyKind::Struct(name.into(), arguments.into_iter().map(TyArg::Ty).collect()).into()
@@ -1220,6 +1213,10 @@ pub fn uninit_storage_element(ty: &Ty) -> Option<&Ty> {
 /// The bundled `VariadicList`, the struct a run-time homogeneous collector
 /// (`*xs: T`) is, as upstream's.
 pub const VARIADIC_LIST_TYPE_NAME: &str = "VariadicList";
+
+/// The bundled `Span`, the struct a `VariadicList` holds its element
+/// pointers in, as upstream's.
+pub const SPAN_TYPE_NAME: &str = "Span";
 
 /// `VariadicList[element, is_owned]`, the type a `*xs: element` collector
 /// has in its callee's body: owned for a `var` collector.

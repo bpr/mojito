@@ -24,23 +24,22 @@
 #
 # `VariadicList`, the run-time homogeneous collector a `*xs: T` parameter is
 # in its body, and its `_VariadicListIter` are upstream's, except:
-# - its field is the compiler-private pack storage `__VariadicStorage[T]`,
-#   where upstream's is a `Span` of element pointers, so its `__len__` and
-#   `__getitem__` read that storage and its `__deinit__` ends it
-#   (`lit.ownership.mark_destroyed`), and `__getitem__` returns
-#   `ref[origin_of(self)]` rather than upstream's union of the elements' and
-#   the list's origins;
-# - the call builds it over the storage (`struct.create`), standing for
-#   upstream's `@implicit` constructor from the compiler-built array of
-#   element pointers, so `_MLIR` declares no `POPArrayType`, that
-#   constructor's one use;
+# - the call builds the list itself, the element pointers, their array in a
+#   slot of the caller's, and the `Span` over it and the list over the span
+#   (`struct.create`s), standing for upstream's `@implicit` constructor from
+#   the compiler-built `!pop.array` of element pointers, so neither that
+#   constructor nor `_MLIR.POPArrayType`, its one use, is declared;
+# - `__getitem__` returns `ref[origin_of(self)]` rather than upstream's union
+#   of the elements' and the list's origins, and binds the span's pointer
+#   before indexing it;
+# - `__deinit__` reaches each element pointer through the span where
+#   upstream's takes `Pointer(to=self[i])`, and `__del__is_trivial` is not
+#   declared;
 # - `_VariadicListIter` writes its constructor out (no `@fieldwise_init`
 #   beside it), its `variadic_list_type` names no `origin` (an alias's
 #   keyword argument for an infer-only parameter does not resolve yet), and
 #   `__iter__` takes `ref self` and names the iterator's origin arguments,
 #   which a positional origin argument before a value one cannot be yet;
-# - `__deinit__` reaches each element through the storage (`self._value[i]`)
-#   where upstream's goes through `self[i]`;
 # - `consume_elements`, `_annihilate`, `write_to`, and `write_repr_to` are
 #   not declared yet.
 # `get_span` addresses the elements through the compiler-private
@@ -373,7 +372,9 @@ struct VariadicList[
                   passed as an 'var' argument.
     """
 
-    var _value: __VariadicStorage[Self.element_type]
+    comptime _EltPointerType = Pointer[Self.element_type, Self.origin]
+    # FIXME: This should be the origin of the container, not UntrackedOrigin.
+    var _value: Span[Self._EltPointerType, ImmUntrackedOrigin]
 
     # ===-------------------------------------------------------------------===#
     # Life cycle methods
@@ -391,12 +392,9 @@ struct VariadicList[
 
             for i in reversed(range(len(self))):
                 # Safety: We own the elements in this list.
-                Pointer(to=self._value[i]).unsafe_mut_cast[
+                self._value.unsafe_ptr()[unsafe_offset=i].unsafe_mut_cast[
                     True
                 ]().unsafe_deinit_pointee()
-        __mlir_op.`lit.ownership.mark_destroyed`(
-            __get_mvalue_as_litref(self._value)
-        )
 
     # ===-------------------------------------------------------------------===#
     # Trait implementations
@@ -426,7 +424,8 @@ struct VariadicList[
             A low-level pointer to the element on the list corresponding to the
             given index.
         """
-        return self._value[idx]
+        var elements = self._value.unsafe_ptr()
+        return elements[unsafe_offset=idx][]
 
     def __iter__(
         ref self,

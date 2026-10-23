@@ -371,8 +371,13 @@ impl Specializer<'_> {
             template,
             blocks,
             iteration,
-            tables.n_regs,
-            tables.reg_types,
+            &mut FrameSlots {
+                n_regs: tables.n_regs,
+                reg_types: tables.reg_types,
+                n_vars: tables.n_vars,
+                var_names: tables.var_names,
+                var_tys: tables.var_tys,
+            },
             false,
         )?;
         let mut decided = Decided::default();

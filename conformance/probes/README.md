@@ -150,6 +150,7 @@ template; a field type under a symbolic index is opaque until a
 | `method_calls_later_generic_def.mojo` | May a method call a generic `def` declared after its struct? | **differs**: the pin prints `1`, Mojito stops with "Undefined variable 'tally'" — `docs/roadmap.md` R127. |
 | `pointer_to_runtime_subscript.mojo` | Does `Pointer(to=l[i])` point at the element a struct's `__getitem__` reference names? | **differs**: the pin prints `2` twice, Mojito fails MIR verification ("dynamic element projection requires checked indexed storage") — `docs/roadmap.md` R1298 |
 | `variadic_list_getitem_origin.mojo` | Does upstream's `VariadicList.__getitem__` result origin (`origin_of(Self.origin, self_origin).unsafe_mut_cast[Self.mut]()`) check? | **differs**: the pin prints `3`, Mojito rejects ("unsupported origin contract") — `docs/roadmap.md` R1299 |
+| `reference_through_call_result_pointer.mojo` | Does a reference returned through a pointer a call yields (`return self.ptr()[unsafe_offset=i]`) name the pointee? | **differs**: the pin prints `2`, Mojito fails MIR verification ("register has no checked type") — `docs/roadmap.md` R1305 |
 
 ## Re-probes of enforced claims
 

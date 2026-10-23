@@ -1165,25 +1165,6 @@ impl Checker {
             }
             return self.variant_type(args).map(Some);
         }
-        // Compiler-private homogeneous pack storage (the bundled
-        // `VariadicList`'s field), reachable only from bundled sources.
-        if name == mojito_types::types::VARIADIC_STORAGE_TYPE_NAME {
-            if !self.bundled_stdlib_declaration {
-                return Err(TypeError::Unsupported(format!(
-                    "'{name}' is compiler-private storage; a `*xs: T` collector is a VariadicList"
-                )));
-            }
-            if args.len() != 1 {
-                return Err(TypeError::WrongTypeArgCount {
-                    name: name.to_string(),
-                    expected: 1,
-                    got: args.len(),
-                });
-            }
-            let (mut elements, attributes) = self.tuple_element_types(args)?;
-            let element = elements.remove(0);
-            return Ok(Some((TyKind::VariadicPack(element).into(), attributes)));
-        }
         // Compiler-private inline uninit storage (`MaybeUninit`'s
         // field), reachable only from the bundled crossing module.
         if name == mojito_types::types::UNINIT_STORAGE_TYPE_NAME {

@@ -766,6 +766,23 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `VariadicList`'s field is upstream's `Span[Pointer[T, origin],
+  ImmUntrackedOrigin]` over an array of element pointers, which every call
+  builds in MIR as upstream's call builds its `!pop.array`
+  (`mir::variadic_list::build_variadic_list`, shared with the elaborator's
+  `Array` display construction), replacing the compiler-private
+  `__VariadicStorage[T]` (R1073). A `read` collector's elements are the
+  caller's own places, borrowed where they lie, rather than bitwise images;
+  an owned collector's are caller slots its list then owns, marked
+  destroyed once the list is built. `__len__`, `__getitem__`, and
+  `__deinit__` are library code over the span, so the VM's pack storage and
+  Pliron's `build_variadic_list`, pack-descriptor layout, and `VariadicPack`
+  index, length, and projection arms are gone; the VM moves a place pointer
+  along the array it points into, and an owned `for v in xs^` narrows the
+  span on both backends. The call still builds the span itself where
+  upstream runs the list's constructor (R1304), and the bundled
+  `__getitem__` binds the span's pointer before indexing it (R1305).
+
 - A homogeneous collector (`*xs: T`, `var *xs: T`) is the bundled
   `VariadicList[T, is_owned]` in its callee's body, declared beside
   `ParameterList` in `stdlib/std/builtin/variadics.mojo` with upstream's

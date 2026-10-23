@@ -21,16 +21,13 @@ impl FnLowering<'_> {
         dest: u32,
         prepare: &[String],
     ) -> Result<(), PlironError> {
-        // The compiler-private pack fallback (the VM's `remove(0)` loop):
-        // the split slot keeps the pack layout; a backend-side shadow slot
-        // holds the advance position. Handled before the identity check —
-        // in-place normalization still zeroes the position.
+        // An owned `VariadicList` iterates itself, narrowing its span past
+        // each element it hands on. Handled before the identity check.
         if prepare.is_empty()
-            && self.runtime_pack_element(dest).is_some()
-            && (source == dest || self.runtime_pack_element(source).is_some())
+            && self.owned_list_element(dest).is_some()
+            && (source == dest || self.owned_list_element(source).is_some())
         {
-            self.lower_variadic_list_iter_init(ctx, source, dest);
-            return Ok(());
+            return self.lower_variadic_list_iter_init(ctx, source, dest);
         }
         if prepare.is_empty()
             && let Some(elements) = self.pack_iter_elements(dest)
@@ -197,15 +194,14 @@ impl FnLowering<'_> {
         }
     }
 
-    /// The element type of `var`, when it holds a run-time homogeneous pack
-    /// descriptor: the storage itself, or the owned `VariadicList` whose one
-    /// field it is, at offset zero, which `for var v in xs^` consumes.
-    pub(super) fn runtime_pack_element(&self, var: u32) -> Option<Ty> {
-        match self.func.var_tys.get(&var).map(Ty::kind) {
-            Some(TyKind::VariadicPack(element)) => Some(element.clone()),
-            Some(list) => mojito_types::types::variadic_list_element(list).cloned(),
-            None => None,
-        }
+    /// The element type of `var`, when it holds the owned `VariadicList`
+    /// `for var v in xs^` consumes.
+    pub(super) fn owned_list_element(&self, var: u32) -> Option<Ty> {
+        self.func
+            .var_tys
+            .get(&var)
+            .and_then(|ty| mojito_types::types::variadic_list_element(ty.kind()))
+            .cloned()
     }
 
     /// The byte stride between the elements of homogeneous pack storage
@@ -227,49 +223,16 @@ impl FnLowering<'_> {
         })
     }
 
-    /// The run-time element count of the homogeneous pack descriptor at
-    /// `descriptor` (the pin's `VariadicList.__len__`).
-    pub(super) fn pack_length(&mut self, ctx: &mut Context, descriptor: Value, dest: Reg) -> Value {
-        let offset = self.layout.variadic_pack_layout().offsets[1];
-        let address = self.gep_byte(ctx, descriptor, offset, dest);
-        let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
-        let length = LoadOp::new(ctx, address, i64_handle);
-        self.append(ctx, length.get_operation(), Some(dest));
-        length.get_result(ctx)
-    }
-
-    /// The address of element `index` of the homogeneous pack descriptor at
-    /// `descriptor`, after trapping on an index outside `0..len` (the pin's
-    /// inlined `VariadicList.__getitem__`).
-    pub(super) fn pack_element_address(
-        &mut self,
-        ctx: &mut Context,
-        descriptor: Value,
-        index: Value,
-        dest: Reg,
-    ) -> Result<Value, PlironError> {
-        let length = self.pack_length(ctx, descriptor, dest);
-        self.emit_bound_guard(ctx, index, length, dest)?;
-        Ok(self.pack_element_pointer(ctx, descriptor, index, dest))
-    }
-
-    /// `elements[index]` of the pack descriptor at `descriptor`, unguarded.
-    pub(super) fn pack_element_pointer(
-        &mut self,
-        ctx: &mut Context,
-        descriptor: Value,
-        index: Value,
-        dest: Reg,
-    ) -> Value {
-        let ptr_handle = ScalarTy::Ptr.handle(ctx);
-        let elements = LoadOp::new(ctx, descriptor, ptr_handle);
-        self.append(ctx, elements.get_operation(), Some(dest));
-        let pointer_size = self.layout.target.triple.pointer_size();
-        let slot =
-            self.strided_element_address(ctx, elements.get_result(ctx), index, pointer_size, dest);
-        let element = LoadOp::new(ctx, slot, ptr_handle);
-        self.append(ctx, element.get_operation(), Some(dest));
-        element.get_result(ctx)
+    /// The offsets, within the `VariadicList` `var` holds, of its span's
+    /// pointer to the first element pointer and of its length.
+    fn variadic_list_span(&self, var: u32, dest: Reg) -> Result<(u64, u64), PlironError> {
+        let list = self.func.var_tys.get(&var).cloned().ok_or_else(|| {
+            self.unsupported_reg("an untyped `VariadicList` slot".to_string(), dest)
+        })?;
+        let (span_offset, span) = self.field_offset(&list, "_value", dest)?;
+        let (data, _) = self.field_offset(&span, "_data", dest)?;
+        let (size, _) = self.field_offset(&span, "_size", dest)?;
+        Ok((span_offset + data, span_offset + size))
     }
 
     /// `base + position * stride` bytes: the address of element `position`
@@ -376,8 +339,13 @@ impl FnLowering<'_> {
         dest: Reg,
         iter: u32,
     ) -> Result<(), PlironError> {
-        if self.runtime_pack_element(iter).is_some() {
-            let length = self.pack_length(ctx, self.var_slots[iter as usize], dest);
+        if self.owned_list_element(iter).is_some() {
+            let (_, size) = self.variadic_list_span(iter, dest)?;
+            let length_slot = self.offset_address(ctx, self.var_slots[iter as usize], size);
+            let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+            let length = LoadOp::new(ctx, length_slot, i64_handle);
+            self.append(ctx, length.get_operation(), Some(dest));
+            let length = length.get_result(ctx);
             let zero = self.int_constant(ctx, 0);
             let more = ICmpOp::new(ctx, ICmpPredicateAttr::SGT, length, zero);
             return self.define(ctx, dest, more.get_operation(), more.get_result(ctx));
@@ -403,8 +371,8 @@ impl FnLowering<'_> {
         dest: Reg,
         iter: u32,
     ) -> Result<(), PlironError> {
-        if let Some(element) = self.runtime_pack_element(iter) {
-            let source = self.advance_variadic_list(ctx, iter, dest);
+        if let Some(element) = self.owned_list_element(iter) {
+            let source = self.advance_variadic_list(ctx, iter, dest)?;
             return self.move_pack_element_out(ctx, dest, source, &element);
         }
         {
@@ -440,46 +408,62 @@ impl FnLowering<'_> {
         Err(self.unsupported_reg("method-free iterator advance".into(), dest))
     }
 
-    /// Initialize a run-time pack iterator: for a distinct destination slot,
-    /// relocate the descriptor (its elements stay in the caller's storage,
-    /// now owned through the iterator).
-    fn lower_variadic_list_iter_init(&mut self, ctx: &mut Context, source: u32, dest: u32) {
+    /// Initialize an owned `VariadicList`'s loop: for a distinct
+    /// destination slot, relocate the list (its elements stay in the
+    /// caller's storage, now owned through the iterator).
+    fn lower_variadic_list_iter_init(
+        &mut self,
+        ctx: &mut Context,
+        source: u32,
+        dest: u32,
+    ) -> Result<(), PlironError> {
         if source != dest {
-            let size = self.layout.variadic_pack_layout().layout.size;
+            let LowerTy::Aggregate { layout, .. } = self.var_lower_ty(dest)? else {
+                return Err(self.unsupported("a non-aggregate `VariadicList`".into(), None));
+            };
             let from = self.var_slots[source as usize];
             let to = self.var_slots[dest as usize];
-            self.mem_copy(ctx, to, from, size, Reg(u32::MAX));
+            self.mem_copy(ctx, to, from, layout.size, Reg(u32::MAX));
             self.set_drop_flag(ctx, source, false);
             self.set_drop_flag(ctx, dest, true);
         }
+        Ok(())
     }
 
-    /// Pop the first element of the run-time pack iterator `iter`: return
-    /// its address and narrow the iterator's descriptor past it, so the
-    /// descriptor always spans exactly the elements not yet consumed.
-    fn advance_variadic_list(&mut self, ctx: &mut Context, iter: u32, dest: Reg) -> Value {
-        let descriptor = self.var_slots[iter as usize];
-        let zero = self.int_constant(ctx, 0);
-        let source = self.pack_element_pointer(ctx, descriptor, zero, dest);
+    /// Pop the first element of the owned `VariadicList` `iter`: return its
+    /// address and narrow the list's span past it, so the span always
+    /// covers exactly the elements not yet consumed, which its destructor
+    /// destroys.
+    fn advance_variadic_list(
+        &mut self,
+        ctx: &mut Context,
+        iter: u32,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        let (data, size) = self.variadic_list_span(iter, dest)?;
+        let list = self.var_slots[iter as usize];
+        let data_slot = self.offset_address(ctx, list, data);
         let ptr_handle = ScalarTy::Ptr.handle(ctx);
-        let elements = LoadOp::new(ctx, descriptor, ptr_handle);
+        let elements = LoadOp::new(ctx, data_slot, ptr_handle);
         self.append(ctx, elements.get_operation(), Some(dest));
+        let elements = elements.get_result(ctx);
+        let source = LoadOp::new(ctx, elements, ptr_handle);
+        self.append(ctx, source.get_operation(), Some(dest));
         let pointer_size = self.layout.target.triple.pointer_size();
-        let rest = self.gep_byte(ctx, elements.get_result(ctx), pointer_size, dest);
-        let store = StoreOp::new(ctx, rest, descriptor);
+        let rest = self.gep_byte(ctx, elements, pointer_size, dest);
+        let store = StoreOp::new(ctx, rest, data_slot);
         self.append(ctx, store.get_operation(), Some(dest));
-        let length = self.pack_length(ctx, descriptor, dest);
+        let length_slot = self.offset_address(ctx, list, size);
+        let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+        let length = LoadOp::new(ctx, length_slot, i64_handle);
+        self.append(ctx, length.get_operation(), Some(dest));
         let one = self.int_constant(ctx, 1);
-        let remaining = SubOp::new_with_overflow_flag(ctx, length, one, no_overflow_flags());
+        let remaining =
+            SubOp::new_with_overflow_flag(ctx, length.get_result(ctx), one, no_overflow_flags());
         self.append(ctx, remaining.get_operation(), Some(dest));
-        let length_slot = self.offset_address(
-            ctx,
-            descriptor,
-            self.layout.variadic_pack_layout().offsets[1],
-        );
         let store = StoreOp::new(ctx, remaining.get_result(ctx), length_slot);
         self.append(ctx, store.get_operation(), Some(dest));
-        source
+        Ok(source.get_result(ctx))
     }
 
     /// Move the pack element at `source` out into `dest`, leaving the

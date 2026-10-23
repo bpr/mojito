@@ -1887,15 +1887,27 @@ its body does. The checker rejects a default naming runtime storage, as the
 pin does.
 
 The same pass builds every call's positional collector, as upstream's call
-builds the `VariadicPack` its callee's `*xs` takes (R1102): once the
-omitted arguments are written, a call of a callee declaring one passes a
-`tuple.make` of its overflow operands, typed the collector's storage under
-the call's bindings (`VariadicPack(T)`, or a bound type pack's elements'
-tuple; a binder the call records no argument for is read off the operands),
-a homogeneous one wrapped in its `VariadicList[T, is_owned]` by a
-`struct.create`, as its last positional operand, and `spread` names that
-operand's position
-(`mir/call_defaults.rs`'s private `build_collector`). A regular slot before
+builds the `VariadicPack` or `VariadicList` its callee's `*xs` takes
+(R1102): once the omitted arguments are written, a call of a callee
+declaring one passes, as its last positional operand, a heterogeneous
+collector's `tuple.make` of its overflow operands, typed a bound type
+pack's elements' tuple under the call's bindings (a binder the call records
+no argument for is read off the operands), or a homogeneous collector's
+`VariadicList[T, is_owned]` over pointers to them, and `spread` names that
+operand's position (`mir/call_defaults.rs`'s private `build_collector`).
+The list is built as upstream's call and inlined constructor build it
+(`mir::variadic_list::build_variadic_list`, which the elaborator's
+display construction shares): a `ref.make` per element, a `tuple.make` of
+those pointers bound to a caller slot (upstream's `!pop.array`), and a
+`struct.create` of the `Span` over its first element and one of the list
+over the span. A `read` collector's element is the caller's own place, its
+read load turned into the `ref.make` (the private `borrowed_element`), kept
+live past the call by a `KeepAlive` per place, last to first; any other
+element, and every element of an owned collector, is moved into a fresh
+caller slot (`$list_element_r`), which an owned list then owns: the slot is
+`ownership.mark_destroyed` once the list is built, so neither the caller's
+normal nor its raise path destroys it, and the callee's
+`VariadicList.__deinit__` destroys the element through its pointer. A regular slot before
 the collector that a keyword fills moves to its position, so the shared
 matcher binds the collector operand alone (`call::bind_spread`). A tuple
 display names its variadic `__init__`, which the checker records on its
@@ -1908,13 +1920,11 @@ positional_only, keyword_only, variadic, kw_variadic, variadic_convention}`,
 MIR text 1.96), and the verifier
 rejects a call of a declared collecting callee that passes none
 (`verify_collector_passed`). The VM binds the collector operand whole
-(`bind_args`) and Pliron passes the pointer the `tuple.make` lowers to,
-storage or the `{ elements, len }` descriptor (`lower_make_tuple`), the
-`VariadicList` holding the descriptor at offset zero; neither collects. A
-`read` collector's elements are bitwise images of the caller's values,
-never destroyed through the list, whose `struct.create` keeps the loans of
-the reads it holds, where upstream's `VariadicList[is_owned=False]` holds
-references (R1073). A spread
+(`bind_args`) and Pliron passes the pointer to the storage the
+`tuple.make` or the list's `struct.create` lowers to; neither collects. On
+the VM an element pointer is a place handle into the caller's frame and
+the span's pointer one to the array slot's first element, which pointer
+arithmetic moves along that array (`offset_place_handle`). A spread
 (`show(*args)`, `take(*args^)`) passes the caller's pack itself: Pliron
 binds a `read` collector to the caller's storage in place and an owning one
 to the moved pack (`place_backed_arg_value`). The elaborator passes the
@@ -2892,15 +2902,11 @@ body it is the bundled `VariadicList[T, is_owned]`
 (`stdlib/std/builtin/variadics.mojo`, owned for a `var` collector), as at
 the pin; `len`, indexing, and a borrowed loop are its library `__len__`,
 `__getitem__`, and `__iter__`/`_VariadicListIter.__next__`. Its one field is
-the compiler-private storage `__VariadicStorage[T]` (`VariadicPack(T)`),
-where upstream's is a `Span` of element pointers (R1073). The call builds
-the storage (`tuple.make`) and the list over it (`struct.create`, standing
-for upstream's constructor from the `!pop.array` of element pointers); the
-VM carries the storage as a private `Value::Tuple`; native code passes
-upstream's element-pointer descriptor (`docs/native-abi.md`). An owned list,
+upstream's `Span[Pointer[T, origin], ImmUntrackedOrigin]`, over the array
+of element pointers the call builds (`docs/native-abi.md`). An owned list,
 held by its parameter or by a consuming iterator over its rest, is destroyed
-by `VariadicList.__deinit__`, last to first; a `read` list's destroys
-nothing.
+by `VariadicList.__deinit__`, last to first, through the element pointers;
+a `read` list's destroys nothing.
 Each unrolled static index substitutes its concrete element type while retaining
 the declared common bound for operations that are not specialized to one index.
 Pack expansion necessarily runs before checked `OwnerId`s exist, so it owns a
@@ -5847,12 +5853,12 @@ point where a slot declared in a loop is uninitialized again.
   as the VM lays out the frame; a call it does not bind stays a call. A
   positional collector (`*xs: Int`, `*args: *Ts`) binds a fresh slot to
   the `tuple.make` the call builds and passes, or to the `struct.create`
-  of a homogeneous one's `VariadicList` over it (the private
+  of a homogeneous one's `VariadicList` (the private
   `builds_collector`); a heterogeneous `read` collector's slot is never
   dropped, its elements being the caller's, and an owned one's drop is the
-  body's own, so Pliron's frame-exit backstop skips pack-storage slots
-  (R1073), while a `read` `VariadicList`'s backstop drop runs its
-  `__deinit__`, which destroys nothing. A
+  body's own, so Pliron's frame-exit backstop skips pack-storage slots,
+  while a `read` `VariadicList`'s backstop drop runs its `__deinit__`,
+  which destroys nothing. A
   `deinit` argument a transfer loads before an inlined call's region that
   evaluates a later argument still binds the caller's slot when no
   instruction of the region names it (the private

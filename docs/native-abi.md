@@ -151,15 +151,16 @@ Rules:
 - `Tuple`/`RuntimePack`/nominal structs are ordinary aggregates of their
   element/field types.
 - A homogeneous run-time collector is the bundled `VariadicList[T,
-  is_owned]`, whose one field, at offset zero, is the compiler-private
-  storage (`VariadicPack(T)`): `{ elements: ptr to [len x ptr], len: Int }`
-  (16/8), passed as an aggregate parameter. Each element lives in its own
-  caller slot; `elements` points at an array of their addresses, a non-null
-  dangling slot when `len == 0`. An index traps outside `0..len`. An owned
-  list's callee owns the elements: a consuming iterator narrows its copy of
-  the descriptor past each element it moves out, and the list's
-  `__deinit__` destroys the elements the descriptor still spans, last to
-  first, through the storage's element addresses.
+  is_owned]`, an ordinary struct whose one field is upstream's
+  `Span[Pointer[T, origin], ImmUntrackedOrigin]`: `{ data: ptr to [len x
+  ptr], size: Int }` (16/8), passed as an aggregate parameter. The call
+  builds it in MIR: each element is the caller's own place for a `read`
+  collector, or a caller slot the element is moved into, and `data` points
+  at a caller slot holding the array of their addresses (one unread slot
+  when `len == 0`). An owned list's callee owns the elements: a consuming
+  iterator narrows its copy of the span past each element it moves out,
+  and the list's `__deinit__` destroys the elements the span still covers,
+  last to first, through their addresses.
 - `Variant[T1..Tn]` is a `u32` tag at offset 0 (the alternative's index in
   the type — the ordering is part of the type) with every payload overlaid at
   the first offset aligned to the widest alternative; size pads to

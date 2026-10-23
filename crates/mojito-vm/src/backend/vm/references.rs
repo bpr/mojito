@@ -808,6 +808,42 @@ impl VmBackend {
     }
 }
 
+/// The place pointer `handle` moved `delta` elements along the aggregate
+/// its last index projection selects within (the call's array of a
+/// `VariadicList`'s element pointers), as pointer arithmetic within one
+/// array moves a native address. A handle selecting no element designates
+/// one value, which only offset 0 reaches.
+pub(super) fn offset_place_handle(handle: Value, delta: i64) -> Result<Value, RuntimeError> {
+    if delta == 0 {
+        return Ok(handle);
+    }
+    let Value::Ref {
+        frame,
+        slot,
+        mut projection,
+    } = handle
+    else {
+        return Err(RuntimeError::TypeError(
+            "vm: pointer arithmetic expects a place handle".to_string(),
+        ));
+    };
+    let Some(RefProjection::Index(index)) = projection.last_mut() else {
+        return Err(RuntimeError::TypeError(
+            "vm: a place pointer designates a single value; only offset 0 can be \
+             dereferenced"
+                .to_string(),
+        ));
+    };
+    *index = usize::try_from(*index as i64 + delta).map_err(|_| {
+        RuntimeError::TypeError("vm: place pointer offset before its array".to_string())
+    })?;
+    Ok(Value::Ref {
+        frame,
+        slot,
+        projection,
+    })
+}
+
 /// The element a place rooted at a slot holding the heap pointer `pointer`
 /// projects (`q[i]._size`, a `Span` member's `self._size` inlined at the
 /// pointee place `q[i]`): the pointer offset by the leading element index

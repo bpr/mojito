@@ -2230,18 +2230,30 @@ fn is_reference_parameter(callee: &MirFunction, param: usize) -> bool {
 /// made to a place-bound parameter's place, or any reference when every
 /// parameter is place-bound, since one to a local of its own the checker
 /// rejects. A reference to a fresh slot an argument initializes keeps the
-/// call, as the caller's loan names the argument's place, not that slot.
+/// call, as the caller's loan names the argument's place, not that slot. A
+/// reference to a pointee, an element a pointer the body holds addresses
+/// (`elements[unsafe_offset=i][]`), names no slot of the body at all.
 fn returns_bound_place(callee: &MirFunction, bindings: &[Binding]) -> bool {
     let place_bound = |var: VarId| matches!(bindings.get(var as usize), Some(Binding::Place(_)));
     if (0..callee.n_params as VarId).all(place_bound) {
         return true;
     }
+    let pointee = |place: &MirPlace| {
+        matches!(
+            place.proj.first(),
+            Some(Proj::Index(_) | Proj::ConstIndex(_))
+        ) && matches!(
+            place.root_ty.as_ref().map(Ty::kind),
+            Some(TyKind::Pointer { .. })
+        )
+    };
     let mut made = HashMap::new();
     let mut returned = Vec::new();
     references_and_returns(&callee.blocks, &mut made, &mut returned);
     returned.iter().all(|value| {
         made.get(&value.0).is_some_and(|place: &&MirPlace| {
-            place.through.is_none_or(|var| var == place.root) && place_bound(place.root)
+            pointee(place)
+                || place.through.is_none_or(|var| var == place.root) && place_bound(place.root)
         })
     })
 }

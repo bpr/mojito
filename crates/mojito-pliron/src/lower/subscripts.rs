@@ -286,13 +286,6 @@ impl FnLowering<'_> {
         }
         let elements = match self.func.reg_types.get(&base.0).map(Ty::kind) {
             Some(TyKind::Tuple(elements) | TyKind::RuntimePack(elements)) => elements.clone(),
-            Some(TyKind::VariadicPack(element)) => {
-                let element = element.clone();
-                let descriptor = self.reg_ptr(ctx, base)?;
-                let position = self.reg_value(ctx, index, ScalarTy::Int)?;
-                let address = self.pack_element_address(ctx, descriptor, position, dest)?;
-                return self.load_from(ctx, address, &element, dest);
-            }
             other => {
                 return Err(self.unsupported_reg(
                     format!(

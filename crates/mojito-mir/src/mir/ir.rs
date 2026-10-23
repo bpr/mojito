@@ -2213,11 +2213,10 @@ pub enum MirInstr {
     /// Construct the compiler-private heterogeneous pack-storage primitive.
     /// Source Tuple/List/Set/Dict values are nominal structs and therefore use
     /// ordinary `Call`/`MethodCall` instructions instead of aggregate opcodes.
-    /// One whose register is typed `VariadicPack(T)` is the storage of the
-    /// homogeneous collector a call builds for its callee's `*xs: T`, which
-    /// a `struct.create` makes the `VariadicList`; one
-    /// typed the elements' tuple is a heterogeneous collector bound to a
-    /// list, or a typed `Tuple[T, ...]` construction.
+    /// One typed the elements' tuple is a heterogeneous collector bound to a
+    /// list, a typed `Tuple[T, ...]` construction, or the array of element
+    /// pointers a call builds for its callee's `*xs: T`, which upstream
+    /// builds as a `!pop.array` ([`crate::mir::variadic_list`]).
     MakeTuple {
         dest: Reg,
         elems: Vec<Reg>,
@@ -2229,10 +2228,10 @@ pub enum MirInstr {
     /// in declaration order, running no constructor: upstream's
     /// `kgen.struct.create`, which `sroa` emits for a whole read of a split
     /// slot. It is pure, as upstream's is: `sroa` builds one only of a type
-    /// whose drop runs no code. One typed `VariadicList` is the homogeneous
-    /// collector a call builds over the `tuple.make` of its elements, which
-    /// stands for upstream's constructor from the `!pop.array` of element
-    /// pointers.
+    /// whose drop runs no code. The `Span` over a call's array of element
+    /// pointers and the `VariadicList` over that span, which a call builds
+    /// for its callee's `*xs: T`, are two, standing for upstream's
+    /// constructor from the `!pop.array` of element pointers.
     MakeStruct {
         dest: Reg,
         fields: Vec<Reg>,
@@ -2529,7 +2528,9 @@ pub enum MirInstr {
     },
     /// End `place`'s value without destroying it (upstream's
     /// `lit.ownership.mark_destroyed`): ownership treats the place as moved
-    /// from here, its storage having been moved out through pointers, so no
+    /// from here, its storage having been moved out through pointers, or,
+    /// for a whole slot, handed on through a pointer to it (an owned
+    /// `VariadicList`'s element, which the list's destructor ends), so no
     /// destructor runs on it.
     MarkDestroyed {
         place: MirPlace,

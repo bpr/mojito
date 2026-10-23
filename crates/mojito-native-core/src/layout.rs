@@ -120,10 +120,6 @@ impl LayoutCx<'_> {
             TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => {
                 Ok(self.struct_layout(elements)?.layout)
             }
-            // A homogeneous run-time collector is the pin's `VariadicList`:
-            // `{ elements: ptr to [len x ptr], len: Int }`, each element
-            // living in its caller's storage.
-            TyKind::VariadicPack(_) => Ok(self.variadic_pack_layout().layout),
             TyKind::Variant(alternatives) => Ok(self.variant_layout(alternatives)?.layout),
             TyKind::Pointer { .. } | TyKind::Ref(_) => Ok(self.pointer()),
             // A retained callable is the two-word `{ invoke: ptr, env: ptr }`
@@ -183,12 +179,6 @@ impl LayoutCx<'_> {
             layout: Layout::new(align_up(payload_offset + payload.size, align), align),
             payload_offset,
         })
-    }
-
-    /// A run-time homogeneous pack, `{ elements: ptr, len: Int }`: offsets
-    /// `[elements, len]`.
-    pub fn variadic_pack_layout(&self) -> StructLayout {
-        compose(&[self.pointer(), Layout::new(8, 8)])
     }
 
     /// The runtime's `MjString { data: ptr, size: i64, cap: i64 }`.
@@ -545,14 +535,14 @@ mod tests {
     }
 
     #[test]
-    fn a_runtime_variadic_pack_is_an_element_pointer_span() {
-        let pack = Ty::new(TyKind::VariadicPack(Ty::int()));
-        assert_eq!(layout_of(&pack), Ok(Layout::new(16, 8)));
-    }
-
-    #[test]
     fn unrepresentable_types_reject_loudly() {
-        for ty in [TyKind::Never, TyKind::ComptimeList(Ty::int())].map(Ty::new) {
+        for ty in [
+            TyKind::Never,
+            TyKind::ComptimeList(Ty::int()),
+            TyKind::VariadicPack(Ty::int()),
+        ]
+        .map(Ty::new)
+        {
             assert!(
                 matches!(layout_of(&ty), Err(LayoutError::Unsupported(_))),
                 "{ty} should have no layout"

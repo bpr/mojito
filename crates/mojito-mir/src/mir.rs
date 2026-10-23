@@ -105,6 +105,7 @@ pub use unused_args::{
     with_removed_argument_forwards_erased, without_removed_argument_forwards,
     without_removed_arguments,
 };
+pub mod variadic_list;
 
 /// Lower a whole HIR control-flow graph (one function body) into a
 /// `MirFunction`.

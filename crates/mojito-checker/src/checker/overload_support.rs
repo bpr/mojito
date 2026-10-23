@@ -528,9 +528,7 @@ pub(super) fn bundled_struct_source<'a>(
 /// compiler-private `__UninitStorage`; `owned_pointer.mojo`) are the bundled
 /// crossing; every other module — stdlib included — allocates through
 /// `std.memory.alloc`. `std/utils/variant.mojo` is the second crossing: the
-/// self-hosted `Variant` names the compiler-private `__VariantStorage`, and
-/// `std/builtin/variadics.mojo` the third: `VariadicList` names the
-/// compiler-private `__VariadicStorage`.
+/// self-hosted `Variant` names the compiler-private `__VariantStorage`.
 /// A specialization's source tag still belongs to its crossing module.
 pub(super) fn is_bundled_stdlib_source(source: Option<&str>) -> bool {
     let (Some(root), Some(source)) = (mojito_module::module::bundled_root(), source) else {
@@ -539,17 +537,18 @@ pub(super) fn is_bundled_stdlib_source(source: Option<&str>) -> bool {
     let stdlib = root.join("stdlib");
     let source = Path::new(stamped_source_module(source));
     source == stdlib.join("std/memory/alloc.mojo")
-        || source == stdlib.join("std/builtin/variadics.mojo")
         || source == stdlib.join("std/memory/maybe_uninit.mojo")
         || source == stdlib.join("std/memory/owned_pointer.mojo")
         || source == stdlib.join("std/utils/variant.mojo")
 }
 
 /// The bundled modules whose `ref[self]` accessors read a compiler-private
-/// storage field (`Tuple`'s `__RuntimeTuple`, `VariadicList`'s
-/// `__VariadicStorage`, `MaybeUninit`'s `__UninitStorage`, `Variant`'s
-/// `__VariantStorage`) where upstream reaches the same storage through a raw
-/// pointer carrying `self`'s origin. Their returns keep the owner's origin.
+/// storage field (`Tuple`'s `__RuntimeTuple`, `MaybeUninit`'s
+/// `__UninitStorage`, `Variant`'s `__VariantStorage`) where upstream reaches
+/// the same storage through a raw pointer carrying `self`'s origin, or, as
+/// `VariadicList`'s does, an element through an untracked pointer where
+/// upstream's result names the elements' origin. Their returns keep the
+/// owner's origin.
 pub(super) fn is_bundled_private_storage_source(source: Option<&str>) -> bool {
     let (Some(root), Some(source)) = (mojito_module::module::bundled_root(), source) else {
         return false;
