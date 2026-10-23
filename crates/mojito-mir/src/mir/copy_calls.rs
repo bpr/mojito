@@ -27,7 +27,7 @@ use super::{
     VarId, binder_scope, fresh_register, instruction_regions_mut, materialized_parameter_slots,
 };
 use mojito_ast::ast::ArgConvention;
-use mojito_types::types::{Ty, TyArg, TyKind};
+use mojito_types::types::{ParamDecl, Ty, TyArg, TyKind};
 use std::collections::HashSet;
 
 /// A function's declaration, by the function's name.
@@ -172,21 +172,43 @@ fn constructor_argument(
     let [name] = declaration.param_names.as_slice() else {
         return None;
     };
-    let restated = declaration.param_decls.len();
-    let struct_arguments = match ty.kind() {
-        TyKind::Struct(_, arguments) => arguments
-            .iter()
-            .take_while(|argument| !matches!(argument, TyArg::Origin(_)))
-            .take(restated)
-            .cloned()
-            .collect::<Vec<_>>(),
-        _ => Vec::new(),
-    };
-    (initializer && struct_arguments.len() == restated).then(|| ConstructorArgument {
+    let struct_arguments = restated_arguments(&declaration.param_decls, ty)?;
+    initializer.then(|| ConstructorArgument {
         name: name.clone(),
         keyword: declaration.keyword_only == Some(0),
         struct_arguments,
     })
+}
+
+/// The arguments of the value type `ty` for the struct parameters `decls`
+/// a constructor restates, one per parameter. A type argument spreading a
+/// pack (`Tuple[*Ts.reverse()]`) is a list of types, not one: a constructor
+/// restating a pack takes none, its owner's type binding them, unless it
+/// also restates a value parameter the call must then carry. `None` when
+/// `ty` applies too few.
+fn restated_arguments(decls: &[ParamDecl], ty: &Ty) -> Option<Vec<TyArg>> {
+    let variadic = |decl: &ParamDecl| {
+        matches!(
+            decl,
+            ParamDecl::Type { variadic: true, .. } | ParamDecl::Value { variadic: true, .. }
+        )
+    };
+    if decls.iter().any(variadic) {
+        return decls
+            .iter()
+            .all(|decl| variadic(decl) || matches!(decl, ParamDecl::Type { .. }))
+            .then(Vec::new);
+    }
+    let arguments: Vec<TyArg> = match ty.kind() {
+        TyKind::Struct(_, arguments) => arguments
+            .iter()
+            .take_while(|argument| !matches!(argument, TyArg::Origin(_)))
+            .take(decls.len())
+            .cloned()
+            .collect(),
+        _ => Vec::new(),
+    };
+    (arguments.len() == decls.len()).then_some(arguments)
 }
 
 /// A fresh register of the slot `var`'s type holding what the use `dest`

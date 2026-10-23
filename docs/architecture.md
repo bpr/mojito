@@ -4847,7 +4847,10 @@ the call alone over its register. The constructor's declaration decides
 whether the one parameter after `out self` passes positionally or by
 keyword (`__init__(out self, *, copy: Self)`), and the call passes the
 value type's arguments for the struct parameters the declaration
-restates as its instantiated arguments, as a construction does; a
+restates as its instantiated arguments, as a construction does (a
+constructor restating a pack takes none, since a type argument spreading
+a pack, `Tuple[*Ts.reverse()]`, is a list of types, and its owner's type
+binds them); a
 constructor taking anything else, or raising, or a value type applying
 fewer arguments than it restates, keeps the use. It runs where `lower_whole_drops`
 runs: at the end of drop elaboration, after `name_constructors`; in
