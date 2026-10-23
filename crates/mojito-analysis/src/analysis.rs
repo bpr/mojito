@@ -269,6 +269,13 @@ pub fn elaborate_drops_function(
     refine_receiver_drops(&mut elaborated, name, declarations);
     elide_dying_copies(&mut elaborated);
     refine_deinit_fields(&mut elaborated, declarations);
+    mojito_mir::mir::refine_pack_drops(
+        &mut elaborated,
+        declarations
+            .function(name)
+            .and_then(mojito_mir::mir::owned_pack_slot),
+        &|ty| declarations.drop_runs_no_code(ty),
+    );
     name_destructors(&mut elaborated, declarations);
     mojito_mir::mir::name_constructors(&mut elaborated, declarations);
     lower_copies_and_moves(name, &mut elaborated, &|name| declarations.function(name));

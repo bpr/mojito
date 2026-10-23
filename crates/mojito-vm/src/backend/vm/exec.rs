@@ -1892,20 +1892,17 @@ impl VmBackend {
             // running the destructor the drop names.
             MirInstr::DropVar { var, destructor } => {
                 let v = std::mem::replace(&mut vars[*var as usize], Value::None);
-                let (name, body) = &prog.mir.functions[function];
-                // A run-time collector, the owned pack or an iterator over
-                // its remainder, destroys last to first, as the pin's
-                // `VariadicList.__deinit__` does.
+                let body = &prog.mir.functions[function].1;
+                // A homogeneous run-time collector, the owned pack or an
+                // iterator over its remainder, destroys last to first, as
+                // the pin's `VariadicList.__deinit__` does; elaboration
+                // refines a heterogeneous one's drop per element.
                 match v {
                     Value::Tuple(items)
-                        if prog
-                            .sigs
-                            .get(name)
-                            .is_some_and(|sig| sig.owned_pack_slot == Some(*var))
-                            || matches!(
-                                body.var_tys.get(var).map(Ty::kind),
-                                Some(TyKind::VariadicPack(_))
-                            ) =>
+                        if matches!(
+                            body.var_tys.get(var).map(Ty::kind),
+                            Some(TyKind::VariadicPack(_))
+                        ) =>
                     {
                         self.drop_owned_pack(prog, items)?;
                     }

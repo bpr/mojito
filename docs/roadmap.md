@@ -119,6 +119,12 @@ which names the upstream pass each one follows. Each is measured by the
     field and variable drops together.
   - No output difference is known: R878's probes (a field read in a
     handler, in one `if` arm, in a loop) match the pin.
+  - Probe: a field the body borrows (`var p = Pointer(to=self.a)` in
+    `W.__deinit__`) is pinned, so no named `DropPlace` destroys it and the
+    receiver's `consume.var` tears it down by type (the VM's
+    `drop_struct_fields`, Pliron's `emit_surviving_leaf_drops`), where
+    upstream's walk names its `__del__` after the borrow's last use; the
+    output matches the pin (found while landing R1090).
   - Depends on R1251, whose field-sensitive drop state this walk needs.
   - Model: Fable, Not Planned.
 
@@ -194,27 +200,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Large but mechanical: each of the ~200 `instruction_regions` callers
     loses a loop over a list.
   - Depends on R1274.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1090 A drop of a tuple's storage names no destructor per element;
-  the backends find each element's from the type**
-
-  A `drop.place` or `drop.var` of a pack aggregate (`TyKind::Tuple`,
-  `RuntimePack`) names no destructor, since the type has none of its own,
-  and the VM's `drop_value` and Pliron's `emit_drop` tear its elements
-  down by type (`mir::destroyed_structs`), where upstream's
-  `Tuple.__del__` is a `@parameter for` of `destroy_pointee` in which
-  destructor insertion names each element's `__del__`.
-  - Probe: a `Tuple[String, Int]` dropped (its synthesized destructor's
-    `drop.place` of `storage`); a heterogeneous `*args: *Ts` runtime pack
-    dropped at the callee.
-  - Refine the drop of a pack-typed place into one named `drop.place` per
-    element, as `refine_deinit_fields` refines a `deinit` receiver's
-    fields, so each element's `__deinit__` is named and respelled as a
-    field's is since R1041.
-  - An owned `VariadicPack`'s destruction is R1073's.
-  - Found while landing R1085 (2026-10-16).
-  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1102 Each backend builds a positional collector at binding, where

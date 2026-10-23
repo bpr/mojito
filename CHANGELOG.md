@@ -756,6 +756,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A drop of a pack aggregate, a `Tuple`'s storage or a heterogeneous
+  `var *args: *Ts` collector, names each element's `__deinit__` (R1090),
+  as upstream's `Tuple.__del__` and `VariadicPack.__deinit__` unroll a
+  `comptime for` of `destroy_pointee` over the elements:
+  `mir::refine_pack_drops` refines it into one `drop.place` per element
+  whose destruction runs code, a tuple's first to last and a collector's
+  last to first, then ends the pack with a `consume.var` or
+  `consume.place`, at the end of drop elaboration for a concrete pack and
+  in the elaborator for an instance's. Each element's drop is then named,
+  respelled, and lowered to its destructor's call as a field's is, so the
+  VM and the native backend no longer tear a dropped pack down by type,
+  and their owning-collector branches for a heterogeneous pack are gone
+  (`assets/ok/pack_drop_names_element_destructors.mojo`).
+
 - A `for` loop or comprehension over a raising iterator calls its
   `__next__` as an ordinary raising method call inside a `try` whose
   handler runs the loop's `else` body and breaks, as upstream's

@@ -265,9 +265,10 @@ impl VmBackend {
                     self.drop_value(prog, item)?;
                 }
             }
-            // `Tuple`'s private backing storage is destroyed left to right;
-            // the nominal wrapper reaches it through the struct branch above.
-            // An owning collector goes through `drop_owned_pack` instead.
+            // Pack storage a teardown reaches by type, left to right: a
+            // drop of it names each element's destructor instead
+            // (`mir::refine_pack_drops`), and a homogeneous owning
+            // collector goes through `drop_owned_pack`.
             Value::Tuple(items) => {
                 for item in items {
                     self.drop_value(prog, item)?;

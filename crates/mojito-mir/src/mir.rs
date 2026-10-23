@@ -78,6 +78,8 @@ pub mod link;
 mod lower_expr;
 mod lower_stmt;
 mod node;
+mod pack_drops;
+pub use pack_drops::refine_pack_drops;
 mod param_uses;
 pub use param_uses::{
     Removals, UnreadParameters, has_no_destructor, lifecycle_callees, member_receiver_ty,

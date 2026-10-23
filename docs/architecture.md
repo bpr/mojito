@@ -4858,11 +4858,20 @@ name theirs the same way, from MIR lowering on
 (`mir::name_teardown_destructors`, `mir/teardown_calls.rs`, rerun by
 `name_destructors` and by a pass that retypes one), respelled by the same
 `name_lifecycle_calls`, so the VM's `drop_named` and Pliron's `emit_drop`
-call them; a consumed residue's fields and a drop of a pack aggregate's
-elements (R1090) still find their destructor from the type
-(`mir::destroyed_structs`), as does Pliron's frame-exit sweep of
-still-flagged slots (R832); a named drop's fields are its destructor's to
-name.
+call them. A pack aggregate (a `Tuple`'s storage, a heterogeneous owning
+collector) has no destructor of its own: a `drop.var` or `drop.place` of
+one becomes one `drop.place` per element whose drop runs code, then a
+`consume.var` of its slot or a `consume.place` of the place
+(`mir::refine_pack_drops`, `mir/pack_drops.rs`), as upstream's
+`Tuple.__del__` and `VariadicPack.__deinit__` unroll a `comptime for` of
+`destroy_pointee`, a tuple's first to last and a collector's last to
+first. Drop elaboration refines a concrete pack's before
+`name_destructors`, and the elaborator an instance's before
+`name_lifecycle_calls`, so each element's drop names its destructor as a
+field's does. A consumed residue's fields still find their destructor
+from the type (`mir::destroyed_structs`), as does Pliron's frame-exit
+sweep of still-flagged slots (R832); a named drop's fields are its
+destructor's to name.
 
 Copies and moves name their constructor the same way, from MIR lowering on:
 `mir::name_constructors` (`mir/constructor_calls.rs`) sets each copying or

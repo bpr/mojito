@@ -1073,6 +1073,7 @@ impl<'a> Specializer<'a> {
         retire_forwarded_packs(&mut function);
         erase_specialized_generic_callable_storage(&mut function);
 
+        let mut owned_pack = None;
         if let Some(declaration) = reduced
             .map(|(_, declaration)| declaration)
             .or_else(|| self.declarations.get(key.template.as_str()).cloned())
@@ -1101,9 +1102,14 @@ impl<'a> Specializer<'a> {
             }
             self.instantiate_constructed_defaults(&key.template, &mut declaration)?;
             self.enqueue_keyword_collector(&key.template, &declaration)?;
+            owned_pack = mojito_mir::mir::owned_pack_slot(&declaration);
             self.output_function_decls.push(declaration);
         }
         self.discover_structs(&key.template, &function)?;
+        // The `comptime for` of a pack's library destructor, unrolled.
+        mojito_mir::mir::refine_pack_drops(&mut function, owned_pack, &|ty| {
+            self.source.declarations.drop_runs_no_code(ty)
+        });
         self.name_lifecycle_calls(&key.template, &mut function)?;
         // An instance's destructor names only a member available in it.
         mojito_mir::mir::lower_whole_drops(&mut function, &|_| true);

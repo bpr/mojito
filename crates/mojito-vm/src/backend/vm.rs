@@ -996,8 +996,6 @@ struct FnSig {
     variadic_index: Option<usize>,
     kw_variadic: Option<Ty>,
     kw_variadic_index: Option<usize>,
-    /// The frame slot of an owning positional collector.
-    owned_pack_slot: Option<mojito_hir::hir::VarId>,
     /// Indexes into the regular-parameter list.
     positional_only: Option<usize>,
     keyword_only: Option<usize>,
@@ -1309,7 +1307,6 @@ fn build_sigs(declarations: &mojito_mir::mir::MirDeclarations) -> HashMap<String
                     variadic_index: declaration.variadic_index,
                     kw_variadic: declaration.kw_variadic.clone(),
                     kw_variadic_index: declaration.kw_variadic_index,
-                    owned_pack_slot: mojito_mir::mir::owned_pack_slot(declaration),
                     positional_only: declaration.positional_only,
                     keyword_only: declaration.keyword_only,
                     has_receiver: declaration.has_receiver,

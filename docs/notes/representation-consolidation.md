@@ -40,13 +40,13 @@ disappear. Four such gaps were found, and one of them reaches far outside
 |---|---|---|---|
 | A. Raises are implicit | every raise point ends a region | none left (R906, R831, R20, and R884 landed) | R890 (R733, R833, R1129, R1106, R829, R1272, R1264, R1113, R1290, and R956 closed; R832 waits on gap D) |
 | B. Construction and witnesses are not calls | a synthesized `__init__`; the witness folded at substitution | R1049, R1050, R1052, R988 (landed) | R1278, R1283 (closed), R1021 (closed), R1075 (closed), R1287 |
-| C. Packs are built by the backends | the call builds a library pack value | R743, R1102 | R1103, R1070, R1073, R1090 |
+| C. Packs are built by the backends | the call builds a library pack value | R743, R1102 | R1103, R1070, R1073 (R1090 closed) |
 | D. Drops are decided after the fact | `DestructorInsertion` decides statically, per field | R1251, R931 | R1252, R932, R832, R1267 |
 
 Each gap's fix also removes a place where a backend looks something up by
 type instead of reading a name from MIR: the struct-named construction
-(R1278; R1029 removed the by-arity lookup and R1283 the struct-named copy), the collector at binding (R1102, R1070), each tuple element's destructor
-(R1090), and the flag sweep at return (R832). R1031 → R1109 is the one
+(R1278; R1029 removed the by-arity lookup and R1283 the struct-named copy), the collector at binding (R1102, R1070), and the flag sweep at
+return (R832); R1090 had each pack element's drop name its destructor. R1031 → R1109 is the one
 remaining lookup of that kind outside the four gaps.
 
 ### A. Raises are implicit: the biggest lever
@@ -143,8 +143,7 @@ entry's probe is "one instance per `n` where the pin has one".
   goes.
 - R1070 applies the same fix to the keyword collector.
 - R743 makes the runtime pack the library's `VariadicListMem`. R1073's
-  native element code and R1090's destructor lookup by type then become
-  library code.
+  native element code then becomes library code.
 
 ### D. Drops are decided after the fact
 
@@ -176,7 +175,7 @@ entry's probe is "one instance per `n` where the pin has one".
 3. **Gap C**. R1103 brings in R1102, and R1073 brings in R743:
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1103 --task R1070 --task R1073 --task R1090 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1103 --task R1070 --task R1073 -n 0
    ```
 
 4. **Gap D**. R1252 brings in R1251, and R932 brings in R931:
