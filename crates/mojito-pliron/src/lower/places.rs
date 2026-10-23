@@ -544,7 +544,9 @@ impl FnLowering<'_> {
     }
 
     /// `MakeTuple`: fresh storage with each element stored at its composed
-    /// offset (compiler-private heterogeneous pack storage).
+    /// offset (compiler-private heterogeneous pack storage), or, for a
+    /// homogeneous collector a call builds, the run-time pack descriptor the
+    /// call passes.
     pub(super) fn lower_make_tuple(
         &mut self,
         ctx: &mut Context,
@@ -557,12 +559,9 @@ impl FnLowering<'_> {
             element_types,
         ) {
             (Some(TyKind::Tuple(es) | TyKind::RuntimePack(es)), _) => es.clone(),
-            // The homogeneous collector a call builds for an inlined callee
-            // is the run-time pack descriptor the call would have passed.
             (Some(TyKind::VariadicPack(element)), _) => {
                 let element = element.clone();
-                let overflow: Vec<usize> = (0..elems.len()).collect();
-                let descriptor = self.build_variadic_list(ctx, &element, &overflow, elems, dest)?;
+                let descriptor = self.build_variadic_list(ctx, &element, elems, dest)?;
                 self.reg_values.insert(dest.0, descriptor);
                 return Ok(());
             }
@@ -571,16 +570,7 @@ impl FnLowering<'_> {
                 return Err(self.unsupported_reg("untyped tuple construction".into(), dest));
             }
         };
-        let composed = self.struct_layout_of(&elements, dest)?;
-        let storage = self.entry_alloca(ctx, composed.layout.size, composed.layout.align);
-        for ((elem, elem_ty), offset) in elems.iter().zip(&elements).zip(&composed.offsets) {
-            let address = if *offset == 0 {
-                storage
-            } else {
-                self.gep_byte(ctx, storage, *offset, dest)
-            };
-            self.store_to(ctx, address, elem_ty, *elem)?;
-        }
+        let (storage, _) = self.collect_pack_elements(ctx, &elements, elems, dest)?;
         self.reg_values.insert(dest.0, storage);
         Ok(())
     }
@@ -599,6 +589,76 @@ impl FnLowering<'_> {
         let flushed = self.gep_byte(ctx, address, *offset, dest);
         *offset = 0;
         flushed
+    }
+
+    /// Relocate the registers `elems` into fresh pack storage laid out as
+    /// `elements` (the VM's `Tuple(*args)`): `store_to` transfers owned
+    /// temporaries and stores the rest as the MIR left them. Returns the
+    /// storage and each element's address.
+    fn collect_pack_elements(
+        &mut self,
+        ctx: &mut Context,
+        elements: &[Ty],
+        elems: &[Reg],
+        dest: Reg,
+    ) -> Result<(Value, Vec<Value>), PlironError> {
+        let composed = self.struct_layout_of(elements, dest)?;
+        let storage = self.entry_alloca(
+            ctx,
+            composed.layout.size.max(1),
+            composed.layout.align.max(1),
+        );
+        let mut addresses = Vec::with_capacity(elements.len());
+        for ((elem, element), offset) in elems.iter().zip(elements).zip(&composed.offsets) {
+            let address = if *offset == 0 {
+                storage
+            } else {
+                self.gep_byte(ctx, storage, *offset, dest)
+            };
+            self.store_to(ctx, address, element, *elem)?;
+            addresses.push(address);
+        }
+        Ok((storage, addresses))
+    }
+
+    /// The run-time pack descriptor `{ elements, len }` over `elems`, as
+    /// the pin passes a `VariadicList`: each element in its own caller
+    /// slot, an array of their addresses, and the descriptor pointing at it.
+    /// An empty pack's array is a non-null dangling slot.
+    fn build_variadic_list(
+        &mut self,
+        ctx: &mut Context,
+        element: &Ty,
+        elems: &[Reg],
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        let elements = vec![element.clone(); elems.len()];
+        let (_, addresses) = self.collect_pack_elements(ctx, &elements, elems, dest)?;
+        let pointer_size = self.layout.target.triple.pointer_size();
+        let pointer_align = self.layout.target.triple.pointer_align();
+        let array = self.entry_alloca(
+            ctx,
+            pointer_size * (addresses.len() as u64).max(1),
+            pointer_align,
+        );
+        for (position, address) in addresses.into_iter().enumerate() {
+            let slot = self.offset_address(ctx, array, pointer_size * position as u64);
+            let store = StoreOp::new(ctx, address, slot);
+            self.append(ctx, store.get_operation(), Some(dest));
+        }
+        let descriptor_layout = self.layout.variadic_pack_layout();
+        let descriptor = self.entry_alloca(
+            ctx,
+            descriptor_layout.layout.size,
+            descriptor_layout.layout.align,
+        );
+        let store = StoreOp::new(ctx, array, descriptor);
+        self.append(ctx, store.get_operation(), Some(dest));
+        let length = self.int_constant(ctx, elems.len() as i64);
+        let length_slot = self.offset_address(ctx, descriptor, descriptor_layout.offsets[1]);
+        let store = StoreOp::new(ctx, length, length_slot);
+        self.append(ctx, store.get_operation(), Some(dest));
+        Ok(descriptor)
     }
 }
 

@@ -423,8 +423,18 @@ impl Specializer<'_> {
                     kwargs,
                     arg_places,
                     kwarg_places,
+                    spread,
                     ..
-                } => (target, Some((args, arg_places, kwargs, kwarg_places))),
+                } => (
+                    target,
+                    Some(mojito_mir::mir::CallOperands {
+                        args,
+                        arg_places,
+                        kwargs,
+                        kwarg_places,
+                        spread,
+                    }),
+                ),
                 instruction => {
                     for blocks in instruction_regions_mut(instruction) {
                         self.instantiate_region_references(template, blocks, iteration, dropped)?;
@@ -461,15 +471,8 @@ impl Specializer<'_> {
             let (bindings, arguments) = self.nested_bindings(target, iteration, reduced)?;
             let instance = self.enqueue(target, bindings, arguments)?;
             let generator = std::mem::replace(target, instance);
-            if reduced && let Some((args, arg_places, kwargs, kwarg_places)) = call {
-                dropped.extend(self.drop_removed_arguments(
-                    template,
-                    &generator,
-                    args,
-                    arg_places,
-                    kwargs,
-                    kwarg_places,
-                )?);
+            if reduced && let Some(operands) = call {
+                dropped.extend(self.drop_removed_arguments(template, &generator, operands)?);
             }
         }
         Ok(())

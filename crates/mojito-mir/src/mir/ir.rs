@@ -1954,12 +1954,15 @@ pub enum MirInstr {
         /// (`bytes[Int]()`) is bound from here by the elaborator; a resolved
         /// call keeps none.
         instantiated_args: Vec<TyArg>,
-        /// The position in `args` of a whole type pack spread into the
-        /// callee's collector (`show(*args)`): the register holds the
-        /// caller's collector, a `VariadicPack` over a pack still a
-        /// parameter, and `arg_places` retains the collector's place when
-        /// the pack is read. The elaborator replaces the argument with the
-        /// bound pack's element places; concrete MIR carries none.
+        /// The position in `args` of the operand the callee's positional
+        /// collector takes whole, the last positional one: the pack the
+        /// call builds of its overflow (`total(1, 2)`, a `tuple.make`, as
+        /// upstream's call builds the `VariadicPack`), or the caller's own
+        /// collector spread (`show(*args)`), a `VariadicPack` over a pack
+        /// still a parameter, whose place `arg_places` retains when the
+        /// pack is read. The elaborator reads a spread's elements from
+        /// that place and builds the call's pack of them; a call of the
+        /// builtin `print` takes the elements as its arguments instead.
         spread: Option<usize>,
     },
     /// A call through a runtime function value. Callable parameters use this
@@ -2002,10 +2005,11 @@ pub enum MirInstr {
         /// `instantiated_contract` without inspecting the instructions which
         /// materialized compile-time argument registers.
         instantiated_args: Vec<TyArg>,
-        /// Like `Call::spread`: the position in `args` of a whole type pack
-        /// spread into a generic nested `def`'s collector
-        /// (`count(*args^)`). The elaborator expands it before it names the
-        /// lifted body's instance; concrete MIR carries none.
+        /// Like `Call::spread`: the position in `args` of the operand a
+        /// nested `def`'s or function value's positional collector takes
+        /// whole, the pack the call builds or the caller's spread
+        /// (`count(*args^)`), which the elaborator expands before it names
+        /// the lifted body's instance.
         spread: Option<usize>,
     },
     /// A method call `recv.method(args)`. `recv_place` is `Some` when the receiver
@@ -2062,12 +2066,11 @@ pub enum MirInstr {
         /// argument spells (`s.name[Int]()`) is bound from here by the
         /// elaborator; a resolved call keeps none.
         instantiated_args: Vec<TyArg>,
-        /// Like `Call::spread`: the position in `args` of a whole type pack
-        /// spread into the method's collector (`Sink().take(*args)`), whose
-        /// register holds the caller's collector and whose `arg_places`
-        /// entry retains the collector's place when the pack is read. The
-        /// elaborator replaces it with the bound pack's element places;
-        /// concrete MIR carries none.
+        /// Like `Call::spread`: the position in `args` of the operand the
+        /// method's positional collector takes whole, the pack the call
+        /// builds or the caller's spread (`Sink().take(*args)`). A call the
+        /// builtin its receiver is answers (`write` on the builtin-string
+        /// writer) takes the pack's elements as its arguments instead.
         spread: Option<usize>,
     },
     /// Move an initialized element from compiler-private `UnsafePointer`
@@ -2211,11 +2214,10 @@ pub enum MirInstr {
     /// Source Tuple/List/Set/Dict values are nominal structs and therefore use
     /// ordinary `Call`/`MethodCall` instructions instead of aggregate opcodes.
     /// One whose register is typed `VariadicPack(T)` is the homogeneous
-    /// collector an inlined call builds for its callee's `*xs: T`,
-    /// upstream's `pop.variadic.create` beside the pack's
-    /// `kgen.pack.create`; one typed the elements' tuple is a
-    /// heterogeneous collector bound to a list, or a typed
-    /// `Tuple[T, ...]` construction.
+    /// collector a call builds for its callee's `*xs: T`, upstream's
+    /// `pop.variadic.create` beside the pack's `kgen.pack.create`; one
+    /// typed the elements' tuple is a heterogeneous collector bound to a
+    /// list, or a typed `Tuple[T, ...]` construction.
     MakeTuple {
         dest: Reg,
         elems: Vec<Reg>,

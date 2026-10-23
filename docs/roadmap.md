@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1297**.
+Next free ID: **R1298**.
 
 ## Ordered Work
 
@@ -202,47 +202,25 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1274.
   - Model: Opus, Not Planned.
 
-- [ ] **R1102 Each backend builds a positional collector at binding, where
-  upstream's call builds it**
+- [ ] **R1103 A whole-pack spread is read element by element into a fresh
+  collector, where upstream passes the pack itself**
 
-  A call to a `*xs: T` callee passes its overflow registers as plain
-  arguments, and the VM's `bind_args` packs them into a `Value::Tuple`
-  while Pliron's `build_variadic_list` builds the `VariadicList`
-  descriptor at the call, so MIR holds no collector before the callee's
-  slot, where upstream's call builds the pack and passes one value.
-  - `inline-parametric` therefore builds the collector itself at an
-    inlined call (`Binding::Collector`, a `tuple.make` typed the
-    collector's slot, R1079).
-  - Probe: a `read` collector's slot holds copies of the caller's
-    elements, so Pliron's frame-exit backstop (`lower_return`) skips
-    pack-storage slots (`VariadicPack`, `Tuple`, `RuntimePack`) rather
-    than free them twice; a collector that is a pack of references, as
-    upstream's `VariadicPack[is_owned=False]` is, would need no exclusion.
-  - Fix by having MIR lowering emit the `tuple.make` per positional
-    collector and pass it as one operand, so `bind_args` stops
-    collecting and `build_variadic_list` becomes the `tuple.make`
-    lowering alone.
-  - Done when `total(1, 2, 3)` over `def total(*xs: Int)` lowers to a
-    `tuple.make` and a one-operand call, with a clean differential on
-    both backends.
-  - Found while landing R1079 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1103 A whole-pack spread is a call position the elaborator
-  expands, where upstream passes the pack**
-
-  `show(*args)` keeps `MirInstr::Call::spread` naming the collector's
-  position until `expand_pack_spreads` replaces it with one element read
-  per bound element, where upstream's call passes the pack value whole.
+  `show(*args)` passes the caller's collector at the call's `spread`
+  position until `expand_pack_spreads` reads each bound element from its
+  place and builds the call's collector of them (`tuple.make`), where
+  upstream's call passes the caller's pack value whole.
+  - A `read` spread copies each element's image into a new pack, and a
+    moved one (`take(*args^)`) moves each element out and in again.
   - Probe: `verify_pack_spread` admits a `Tuple`-typed spread argument
-    only because `inline-parametric` leaves one in an inlined body, its
+    because `inline-parametric` leaves one in an inlined body, its
     collector bound to its elements' tuple, for the elaborator to expand.
   - Probe: R1071's `inner(*xs)` over a homogeneous collector is rejected
     because the checker accepts a spread of a type pack alone.
-  - Once the call builds the collector (R1102), a spread is a plain
-    operand: delete `spread` from the three call instructions,
-    `expand_pack_spreads`, and `verify_pack_spread`.
+  - Probe: a spread into the builtin `print` is passed as its elements
+    (R1287), which stays until `print` is the library function.
+  - Every call now passes its collector as one operand (R1102), so the fix
+    passes the spread register itself: delete the element reads from
+    `expand_pack_spreads` and keep its pack-binding check.
   - Found while landing R1079 (2026-10-16).
   - Depends on R1102.
   - Model: Opus, Not Planned.
@@ -8905,6 +8883,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Upstream's `_MLIR.POPArrayType` (`!pop.array<size, T>`) is not in the
     bundled `_MLIR`: its one upstream use is the compiler-built
     constructor of that nominal pack.
+  - Probe: a `read` collector the call builds holds bitwise images of the
+    caller's values, where upstream's `VariadicPack[is_owned=False]` holds
+    references, so Pliron's frame-exit backstop (`lower_return`) skips
+    pack-storage slots (`VariadicPack`, `Tuple`, `RuntimePack`) rather
+    than free an inlined collector's images twice.
   - Found while landing R734 (2026-10-13).
   - Depends on nothing.
   - Model: Fable, Planned.
@@ -9955,6 +9938,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     (`lower/methods.rs`).
   - A writer that overrides `write` is never the accumulator, so the texts
     match the pin; the shape does not.
+  - Probe: the accumulator's `write` takes its values one by one, so the
+    elaborator passes it the elements of the collector the call builds
+    (`unpack_builtin_collectors`, `native/mono/spread.rs`).
   - Found while landing R414 (2026-10-06).
   - Depends on nothing.
   - Model: Fable, Planned.
@@ -9995,6 +9981,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The pin prices `print()` at 24 and `print(s, x)` at 31.
   - Done when `print` is the library function, the caller's MIR holds its
     pack and defaults, and `PRINT_COST` is gone.
+  - Probe: a spread into the builtin `print` (`print(*args)`) is passed as
+    its elements (`expand_pack_spreads`), where every other call passes
+    the collector it builds.
   - Found while landing R1075 (2026-10-22).
   - Depends on R424, R422, R1102.
   - Model: Fable, Not Planned.
@@ -11249,6 +11238,22 @@ Track: `tooling`.
     run.
   - Refresh them and pin them through `expect_test::expect_file!`, so
     `UPDATE_EXPECT=1` blesses them, as `tests/mir_pass_test.rs` does.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1297 The MIR text reader hangs on an unbalanced type**
+
+  `mojito opt` on an artifact whose register type reads
+  `variadic_pack(struct_type { name: Token) }` (a `)` where the record's
+  `}` belongs) never returns, where it should report the malformed type.
+  - Reproduce by truncating a `reg_type` in any
+    `tests/mir_passes/*/*.mir` case that way and running `mojito opt` on it.
+  - Where it loops is not yet located.
+  - The type grammar is read in
+    `crates/mojito-mir/src/mir/text/parse/types.rs`.
+  - Done when that input fails with a located diagnostic, pinned as an
+    error case in `tests/mir_passes/`.
+  - Found while landing R1102 (2026-10-23).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

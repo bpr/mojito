@@ -298,6 +298,82 @@ pub fn erase_removed_operands(
     erase_forward_chains(function, declarations, &HashSet::new(), before);
 }
 
+/// The runtime operands of one call, with their places and the position of
+/// the positional collector it passes.
+pub struct CallOperands<'c> {
+    pub args: &'c mut Vec<Reg>,
+    pub arg_places: &'c mut Vec<Option<MirPlace>>,
+    pub kwargs: &'c mut Vec<(String, Reg)>,
+    pub kwarg_places: &'c mut Vec<Option<MirPlace>>,
+    pub spread: &'c mut Option<usize>,
+}
+
+impl CallOperands<'_> {
+    /// Remove the operands at the `positional` and `keyword` indexes with
+    /// their places, the collector's position following its operand, or
+    /// leaving with it; gives the registers removed.
+    pub fn remove(&mut self, positional: &BTreeSet<usize>, keyword: &BTreeSet<usize>) -> Vec<Reg> {
+        *self.spread = self.spread.and_then(|spread| {
+            (!positional.contains(&spread)).then(|| spread - positional.range(..spread).count())
+        });
+        let mut removed = Vec::with_capacity(positional.len() + keyword.len());
+        for &index in positional.iter().rev() {
+            removed.push(self.args.remove(index));
+            if index < self.arg_places.len() {
+                self.arg_places.remove(index);
+            }
+        }
+        for &index in keyword.iter().rev() {
+            removed.push(self.kwargs.remove(index).1);
+            if index < self.kwarg_places.len() {
+                self.kwarg_places.remove(index);
+            }
+        }
+        removed
+    }
+
+    /// Drop the operands that bind the removed `slots` of the function
+    /// `declaration` declares or, by `operands`, only their places, adding
+    /// their registers to `dropped`; returns whether it dropped one. A call
+    /// whose arguments do not bind is left whole.
+    fn drop(
+        mut self,
+        declaration: &MirFunctionDeclaration,
+        slots: &[VarId],
+        operands: Operands,
+        dropped: &mut BTreeSet<u32>,
+    ) -> bool {
+        let keywords: Vec<&str> = self.kwargs.iter().map(|(name, _)| name.as_str()).collect();
+        let Ok((positional, keyword)) =
+            removed_argument_operands(declaration, slots, self.args.len(), &keywords)
+        else {
+            return false;
+        };
+        match operands {
+            Operands::Drop => dropped.extend(
+                self.remove(&positional, &keyword)
+                    .into_iter()
+                    .map(|reg| reg.0),
+            ),
+            Operands::Keep => {
+                dropped.extend(positional.iter().map(|&index| self.args[index].0));
+                dropped.extend(keyword.iter().map(|&index| self.kwargs[index].1.0));
+                for &index in &positional {
+                    if let Some(place) = self.arg_places.get_mut(index) {
+                        *place = None;
+                    }
+                }
+                for &index in &keyword {
+                    if let Some(place) = self.kwarg_places.get_mut(index) {
+                        *place = None;
+                    }
+                }
+            }
+        }
+        !positional.is_empty() || !keyword.is_empty()
+    }
+}
+
 /// The members a backend runs from a value's type with every argument its
 /// protocol passes, beside the member table's ([`table_member`]): an
 /// iteration's `__iter__` and `__next__`, and the conversions and
@@ -503,9 +579,7 @@ fn calls_removing<'a>(blocks: &[MirBlock], removed: &dyn Fn(&str) -> Option<&'a 
         .flat_map(|block| &block.instrs)
         .any(|instruction| {
             let target = match instruction {
-                MirInstr::Call {
-                    func, spread: None, ..
-                } => Some(func.0.as_str()),
+                MirInstr::Call { func, .. } => Some(func.0.as_str()),
                 MirInstr::MethodCall { resolved, .. } => resolved.as_deref(),
                 _ => None,
             };
@@ -574,7 +648,7 @@ fn drop_removed_operands<'a>(
                 kwargs,
                 arg_places,
                 kwarg_places,
-                spread: None,
+                spread,
                 ..
             } => {
                 let call = CallOperands {
@@ -582,6 +656,7 @@ fn drop_removed_operands<'a>(
                     arg_places,
                     kwargs,
                     kwarg_places,
+                    spread,
                 };
                 if let Some((slots, declaration)) = callee(&func.0)
                     && call.drop(declaration, slots, operands, dropped)
@@ -604,16 +679,16 @@ fn drop_removed_operands<'a>(
                     continue;
                 };
                 let name = target.clone();
+                // A collector spread whole binds its slot alone, as the
+                // collector a call builds does.
                 let call = CallOperands {
                     args,
                     arg_places,
                     kwargs,
                     kwarg_places,
+                    spread,
                 };
-                // A spread operand binds as many slots as its pack holds,
-                // which only the elaborator's expansion knows.
-                let mut changed =
-                    spread.is_none() && call.drop(declaration, slots, operands, dropped);
+                let mut changed = call.drop(declaration, slots, operands, dropped);
                 if declaration.has_receiver && slots.contains(&0) {
                     changed = true;
                     // The rewritten call passes no receiver, but still
@@ -630,61 +705,6 @@ fn drop_removed_operands<'a>(
             }
             _ => {}
         }
-    }
-}
-
-/// The runtime operands of one call, with their places.
-struct CallOperands<'c> {
-    args: &'c mut Vec<Reg>,
-    arg_places: &'c mut Vec<Option<MirPlace>>,
-    kwargs: &'c mut Vec<(String, Reg)>,
-    kwarg_places: &'c mut Vec<Option<MirPlace>>,
-}
-
-impl CallOperands<'_> {
-    /// Drop the operands that bind the removed `slots` of the function
-    /// `declaration` declares or, by `operands`, only their places, adding
-    /// their registers to `dropped`; returns whether it dropped one. A call
-    /// whose arguments do not bind is left whole.
-    fn drop(
-        self,
-        declaration: &MirFunctionDeclaration,
-        slots: &[VarId],
-        operands: Operands,
-        dropped: &mut BTreeSet<u32>,
-    ) -> bool {
-        let keywords: Vec<&str> = self.kwargs.iter().map(|(name, _)| name.as_str()).collect();
-        let Ok((positional, keyword)) =
-            removed_argument_operands(declaration, slots, self.args.len(), &keywords)
-        else {
-            return false;
-        };
-        dropped.extend(positional.iter().map(|&index| self.args[index].0));
-        dropped.extend(keyword.iter().map(|&index| self.kwargs[index].1.0));
-        let drop = |indexes: &BTreeSet<usize>, places: &mut Vec<Option<MirPlace>>| {
-            for &index in indexes.iter().rev() {
-                if index >= places.len() {
-                    continue;
-                }
-                match operands {
-                    Operands::Drop => {
-                        places.remove(index);
-                    }
-                    Operands::Keep => places[index] = None,
-                }
-            }
-        };
-        drop(&positional, self.arg_places);
-        drop(&keyword, self.kwarg_places);
-        if operands == Operands::Drop {
-            for &index in positional.iter().rev() {
-                self.args.remove(index);
-            }
-            for &index in keyword.iter().rev() {
-                self.kwargs.remove(index);
-            }
-        }
-        !positional.is_empty() || !keyword.is_empty()
     }
 }
 

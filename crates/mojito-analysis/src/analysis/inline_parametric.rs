@@ -369,10 +369,6 @@ enum Binding {
     /// materialized at the call, and dropped after the body when the
     /// parameter only borrows it.
     Default { value: DefaultValue, dropped: bool },
-    /// A positional collector the call builds, as upstream's call builds
-    /// the `VariadicPack` it passes: a fresh slot of the collector's type
-    /// `ty`, initialized from the pack of the overflow registers `elements`.
-    Collector { elements: Vec<Reg>, ty: Ty },
 }
 
 /// The runtime arguments a call passes, positionally and by keyword, with
@@ -1300,27 +1296,21 @@ impl<'c> Inliner<'_, 'c> {
                         }
                     }
                 }
-                // A spread passes the caller's collector whole, as any
-                // argument; otherwise the call builds the collector.
-                SlotParameter::Variadic => match site.spread {
-                    Some(position) => bind(
-                        site.call.args[position],
-                        site.call.arg_places.get(position).and_then(Option::as_ref),
-                    )?,
-                    None => Binding::Collector {
-                        elements: site
-                            .matched
-                            .positional_overflow
-                            .iter()
-                            .map(|&source| site.call.args[source])
-                            .collect(),
-                        ty: callee
-                            .var_tys
-                            .get(&(param as VarId))
-                            .or_else(|| callee.param_types.get(param))
-                            .cloned()?,
-                    },
-                },
+                // The collector the call builds is the slot's value, its
+                // elements a `read` collector's borrows; a spread passes
+                // the caller's collector whole, as any argument.
+                SlotParameter::Variadic => {
+                    let position = site.spread?;
+                    let collector = site.call.args[position];
+                    if builds_collector(block, index, collector) {
+                        Binding::Value(collector)
+                    } else {
+                        bind(
+                            collector,
+                            site.call.arg_places.get(position).and_then(Option::as_ref),
+                        )?
+                    }
+                }
                 SlotParameter::KwVariadic => Binding::Value(site.forwarded?),
             };
             bindings.push(binding);
@@ -1425,11 +1415,7 @@ impl<'c> Inliner<'_, 'c> {
         });
         let bound = |var: VarId| match bindings.get(var.checked_sub(base)? as usize)? {
             Binding::Place(place) | Binding::Part { place, .. } => Some(place),
-            Binding::Value(_)
-            | Binding::Default { .. }
-            | Binding::Out
-            | Binding::Slot(_)
-            | Binding::Collector { .. } => None,
+            Binding::Value(_) | Binding::Default { .. } | Binding::Out | Binding::Slot(_) => None,
         };
         // The caller's consumption of a part-bound parameter's place after
         // the call is the body's end of it.
@@ -1621,20 +1607,6 @@ impl<'c> Inliner<'_, 'c> {
                         var: var + var_base,
                         src,
                         binding_ty: ty,
-                        in_place: false,
-                    });
-                }
-                Binding::Collector { elements, ty } => {
-                    let src = fresh_register(function, ty.clone(), call_span.as_ref());
-                    caller.instrs.push(MirInstr::MakeTuple {
-                        dest: src,
-                        elems: elements.clone(),
-                        element_types: collector_element_types(ty, elements.len()),
-                    });
-                    caller.instrs.push(MirInstr::DefVar {
-                        var: var + var_base,
-                        src,
-                        binding_ty: Some(ty.clone()),
                         in_place: false,
                     });
                 }
@@ -2044,7 +2016,9 @@ fn argument_binding(
         if let Some(slot) = forwarded_slot(block, index, argument) {
             return Some(Binding::Slot(slot));
         }
-        let loaded = loaded_place(block, index, argument).filter(|place| place.through.is_none());
+        let loaded = loaded_place(block, index, argument)
+            .or_else(|| loaded_slot_across_regions(block, index, argument))
+            .filter(|place| place.through.is_none());
         return Some(match loaded {
             Some(place) if place.is_whole_root() => Binding::Slot(place.root),
             Some(place)
@@ -2198,20 +2172,44 @@ fn forwarded_slot(block: &MirBlock, index: usize, argument: Reg) -> Option<VarId
         .then_some(slot)
 }
 
-/// The types a collector's `tuple.make` materializes its `count` elements
-/// at: a heterogeneous collector's elements, a homogeneous one's element
-/// repeated; none for a collector over the caller's own pack, whose
-/// elements the elaborator types.
-fn collector_element_types(ty: &Ty, count: usize) -> Option<Vec<Ty>> {
-    match ty.kind() {
-        TyKind::Tuple(elements) | TyKind::RuntimePack(elements) if elements.len() == count => {
-            Some(elements.clone())
-        }
-        TyKind::VariadicPack(element) if pack_spread(std::slice::from_ref(element)).is_none() => {
-            Some(vec![element.clone(); count])
-        }
-        _ => None,
-    }
+/// The whole slot the register `argument` is a load of before the call at
+/// `index` of `block`, past the region ops between them (an inlined call
+/// evaluating a later argument), none of which names the slot at any
+/// depth: a `deinit` argument a transfer loads ahead of the call's other
+/// arguments, which upstream passes by address.
+fn loaded_slot_across_regions(block: &MirBlock, index: usize, argument: Reg) -> Option<MirPlace> {
+    let (load, place) =
+        block.instrs[..index]
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(position, instruction)| match instruction {
+                MirInstr::LoadPlace { dest, place } if *dest == argument => Some((position, place)),
+                _ => None,
+            })?;
+    (place.is_whole_root()
+        && !block.instrs[load + 1..index]
+            .iter()
+            .any(|instruction| names_slot(instruction, place.root)))
+    .then(|| place.clone())
+}
+
+/// Whether `instruction` or, at any depth, its regions name the slot `slot`.
+fn names_slot(instruction: &MirInstr, slot: VarId) -> bool {
+    instruction_slots(instruction).contains(&slot)
+        || mojito_mir::mir::instruction_regions(instruction)
+            .into_iter()
+            .flatten()
+            .flat_map(|block| &block.instrs)
+            .any(|instruction| names_slot(instruction, slot))
+}
+
+/// Whether `collector` is the positional collector the call at `index` of
+/// `block` builds: a `tuple.make` in the straight-line run before it.
+fn builds_collector(block: &MirBlock, index: usize, collector: Reg) -> bool {
+    block.instrs[run_start(block, index)..index].iter().any(
+        |instruction| matches!(instruction, MirInstr::MakeTuple { dest, .. } if *dest == collector),
+    )
 }
 
 /// Whether the callee's parameter `param` is a `mut` or `ref` one, whose

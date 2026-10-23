@@ -1886,6 +1886,36 @@ default reading an enclosing value parameter reads it as a parameter, as
 its body does. The checker rejects a default naming runtime storage, as the
 pin does.
 
+The same pass builds every call's positional collector, as upstream's call
+builds the `VariadicPack` its callee's `*xs` takes (R1102): once the
+omitted arguments are written, a call of a callee declaring one passes a
+`tuple.make` of its overflow operands, typed the collector's slot under the
+call's bindings (`VariadicPack(T)`, or a bound type pack's elements' tuple;
+a binder the call records no argument for is read off the operands), as
+its last positional operand, and `spread` names that operand's position
+(`mir/call_defaults.rs`'s private `build_collector`). A regular slot before
+the collector that a keyword fills moves to its position, so the shared
+matcher binds the collector operand alone (`call::bind_spread`). A tuple
+display names its variadic `__init__`, which the checker records on its
+`ConstructCollection`, and a list display's literal constructor, an
+array literal's, and a subscript (`index.multi` and `index.multi_set`,
+whose contract names the collector as one argument) build theirs the same
+way; a call through a bound whose requirement has no body builds its
+collector from the requirement's call shape (`TraitRequirement::{required,
+positional_only, keyword_only, variadic, kw_variadic}`), and the verifier
+rejects a call of a declared collecting callee that passes none
+(`verify_collector_passed`). The VM binds the collector operand whole
+(`bind_args`) and Pliron passes the pointer the `tuple.make` lowers to,
+storage or the `{ elements, len }` descriptor (`lower_make_tuple`); neither
+collects. A `read` collector's elements are bitwise images of the caller's
+values, never destroyed through the pack, where upstream's
+`VariadicPack[is_owned=False]` holds references (R743). The elaborator
+expands a spread (`show(*args)`) into reads of the bound pack's elements
+and builds the call's collector of them (`expand_pack_spreads`, R1103),
+and passes the elements of a collector as the arguments of a call the
+builtin `print` or the builtin-string writer answers
+(`unpack_builtin_collectors`, R1287, R422).
+
 Current Mojo reflection enters through the zero-sized `reflect[T]` compile-time
 handle. Mojito implements `is_struct`, `field_count`, `field_names`,
 `field_types`, and `field_index`. The type-valued aliases `.field[name]` and
@@ -2852,9 +2882,9 @@ still runs on the elaborated program.
 A homogeneous collector (`*args: T`) is never specialized by arity: the
 elaborator unifies each overflow argument against the element type only, so
 one instance per element type takes every call's pack at run time as
-`VariadicPack(T)`, as the pin's `VariadicList` does. The VM carries it as a
-private `Value::Tuple`; native code passes upstream's element-pointer
-descriptor (`docs/native-abi.md`). A run-time pack held by its owned
+`VariadicPack(T)`, as the pin's `VariadicList` does. The call builds it
+(`tuple.make`); the VM carries it as a private `Value::Tuple`; native code
+passes upstream's element-pointer descriptor (`docs/native-abi.md`). A run-time pack held by its owned
 parameter or by a consuming iterator over its rest destroys its elements
 last to first, as `VariadicList.__deinit__` does.
 Each unrolled static index substitutes its concrete element type while retaining
@@ -5804,17 +5834,15 @@ point where a slot declared in a loop is uninitialized again.
   `mojito_ast::call::match_call_slots`, the matcher the VM's `bind_args`
   applies, the bindings laid out by `FunctionDeclaration::slot_parameter`
   as the VM lays out the frame; a call it does not bind stays a call. A
-  positional collector (`*xs: Int`, `*args: *Ts`) is a fresh slot of the
-  collector's instantiated type that the call's block initializes from a
-  `tuple.make` of the overflow registers (`Binding::Collector`), typed
-  `$variadic[T]` for a homogeneous collector and the elements' tuple for a
-  heterogeneous one bound to a list (`types::replace_parameters` turns
-  `VariadicPack(*Ts)` into `Tuple(elements)` as `expand_packs` does in an
-  instance), which the VM runs as the `Value::Tuple` its binding would
-  build and Pliron lowers to the pack descriptor (`lower_make_tuple`); a
-  `read` collector's slot is never dropped, its elements being the
-  caller's, and an owned one's drop is the body's own, so Pliron's
-  frame-exit backstop skips pack-storage slots (R1102). A spread
+  positional collector (`*xs: Int`, `*args: *Ts`) binds a fresh slot to
+  the `tuple.make` the call builds and passes (the private
+  `builds_collector`); a `read` collector's slot is never dropped, its
+  elements being the caller's, and an owned one's drop is the body's own,
+  so Pliron's frame-exit backstop skips pack-storage slots (R743). A
+  `deinit` argument a transfer loads before an inlined call's region that
+  evaluates a later argument still binds the caller's slot when no
+  instruction of the region names it (the private
+  `loaded_slot_across_regions`). A spread
   (`show(*args)`, `take(*args^)`) binds the collector as the one argument
   `mojito_ast::call::bind_spread` checks it is: the caller's place for a
   `read` collector, the moved register for an owned one; a spread the

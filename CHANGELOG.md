@@ -756,6 +756,30 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Every call builds the positional collector its callee's `*xs` takes, as
+  upstream's call builds the `VariadicPack` (R1102). MIR's
+  `fill_omitted_arguments` pass emits a `tuple.make` of the overflow
+  operands, typed the collector's slot, and passes it as one operand at the
+  call's `spread` position, a keyword-filled slot before it moving to its
+  position. Tuple displays name `Tuple`'s variadic `__init__` (recorded on
+  the checker's `ConstructCollection`), list displays and array literals
+  their literal constructors, a call through a bound whose requirement has
+  no body builds from the requirement's call shape (`TraitRequirement`
+  gains `required`, `positional_only`, `keyword_only`, `variadic`, and
+  `kw_variadic`), and variadic subscripts build theirs too, which now run
+  natively as well (`assets/ok/variadic_subscript_collector.mojo`). The VM's
+  `bind_args` and Pliron's `bind_call_slots` take the collector whole,
+  `build_variadic_list` is the `tuple.make` lowering alone, and
+  `inline-parametric` binds the built collector rather than building its
+  own. The elaborator reads a spread's elements and builds the call's
+  collector of them (`print` and the builtin-string writer still take the
+  elements one by one). The verifier rejects a call of a declared
+  collecting callee that passes none. A `deinit` argument transferred
+  ahead of an inlined call's region now binds the caller's slot, which
+  fixes the double destruction of `v^.concat(Tuple(x))`'s receiver
+  elements. MIR text is 1.95 and the package format 85. R1297 files a MIR
+  reader hang found on the way.
+
 - A drop of a pack aggregate, a `Tuple`'s storage or a heterogeneous
   `var *args: *Ts` collector, names each element's `__deinit__` (R1090),
   as upstream's `Tuple.__del__` and `VariadicPack.__deinit__` unroll a

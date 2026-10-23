@@ -365,6 +365,7 @@ impl<'a> Flatten<'a> {
                 k: Const::Int(length),
             });
             let d = self.fresh_typed(node.location(), None, target);
+            self.record_call(d, Some(constructor.clone()), 0);
             self.emit(MirInstr::Call {
                 dest: d,
                 func: FuncRef::named(&constructor),
@@ -448,9 +449,13 @@ impl<'a> Flatten<'a> {
             let elements: Vec<Node<'a>> = node.operands().collect();
             let regs = self.display_elements(node, &elements);
             let dest = self.fresh_typed(node.location(), None, target.clone());
+            let constructor = tuple_constructor(node.checked);
+            if let Some(constructor) = constructor {
+                self.record_call(dest, Some(constructor.to_string()), 0);
+            }
             self.emit(MirInstr::Call {
                 dest,
-                func: FuncRef::named(name),
+                func: FuncRef::named(constructor.unwrap_or(name)),
                 raises: None,
                 args: regs.clone(),
                 kwargs: Vec::new(),
@@ -913,6 +918,7 @@ impl<'a> Flatten<'a> {
         });
         kwargs.push((marker.to_string(), none));
         let dest = self.fresh_typed(node.location(), None, ty);
+        self.record_call(dest, Some(func.to_string()), 0);
         self.emit(MirInstr::Call {
             dest,
             func: FuncRef::named(func),

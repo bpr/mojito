@@ -149,7 +149,7 @@ impl Specializer<'_> {
                 &target,
                 Some(receiver),
                 dest.unwrap_or(receiver),
-                operands.registers,
+                (operands.registers, None),
                 &[],
                 &call.param_arg_regs,
                 &[],
@@ -250,7 +250,7 @@ impl Specializer<'_> {
         target: &str,
         receiver: Option<Reg>,
         dest: Reg,
-        args: &[Reg],
+        (args, collector): (&[Reg], Option<usize>),
         kwargs: &[(String, Reg)],
         param_args: &[mojito_mir::mir::MirParamArg],
         instantiated: &[TyArg],
@@ -431,6 +431,33 @@ impl Specializer<'_> {
         // there is one instance for every element type, never one per arity.
         // A concrete `RuntimePack`/`Tuple` spelling means the checker
         // already specialized the pack.
+        // The call passes the collector it builds as one operand: its
+        // elements are the collector type's.
+        let overflow = match collector {
+            Some(position) => {
+                mojito_ast::call::bind_spread(&slots, position).map_err(|e| {
+                    self.error(
+                        Some(owner),
+                        format!("binding the collector of `{target}`: {e:?}"),
+                    )
+                })?;
+                match reg_ty(caller, args[position], owner)?.kind() {
+                    TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => elements.clone(),
+                    TyKind::VariadicPack(element) => vec![element.clone()],
+                    _ => {
+                        return Err(self.error(
+                            Some(owner),
+                            format!("the collector a call of `{target}` passes is not a pack"),
+                        ));
+                    }
+                }
+            }
+            None => slots
+                .positional_overflow
+                .iter()
+                .map(|index| reg_ty(caller, args[*index], owner).cloned())
+                .collect::<Result<Vec<Ty>, _>>()?,
+        };
         match &declaration.variadic {
             Some(element)
                 if let Some(TyKind::Param { binder, .. }) =
@@ -438,21 +465,14 @@ impl Specializer<'_> {
                         .map(Ty::kind) =>
             {
                 if !bindings.types.contains_key(binder) {
-                    let elements = slots
-                        .positional_overflow
-                        .iter()
-                        .map(|index| {
-                            reg_ty(caller, args[*index], owner).map(materialize_nested_literals)
-                        })
-                        .collect::<Result<Vec<Ty>, _>>()?;
+                    let elements = overflow.iter().map(materialize_nested_literals).collect();
                     bind_pack(binder, elements, &mut bindings);
                 }
             }
             Some(element)
                 if !matches!(element.kind(), TyKind::RuntimePack(_) | TyKind::Tuple(_)) =>
             {
-                for index in &slots.positional_overflow {
-                    let actual = reg_ty(caller, args[*index], owner)?;
+                for actual in &overflow {
                     unify(element, actual, &mut bindings).map_err(|e| {
                         self.error(Some(owner), format!("monomorphizing `{target}` pack: {e}"))
                     })?;
@@ -990,11 +1010,29 @@ impl Specializer<'_> {
     }
 }
 
-/// Each of a method's parameter `patterns` beside the checked parameter it
-/// binds. A homogeneous variadic (`*indices: Int`) binds every parameter
-/// between the ones before it and the ones after it (a keyword-only
-/// `value`), each at its element type.
+/// Each of a method's parameter `patterns`, in slot order, beside the
+/// checked parameter it binds. The checked parameters list the declared
+/// ones first, then the collector the call builds, which binds the
+/// collector's slot (`*indices: Int`) whole; one per element instead binds
+/// every parameter between the ones before it and the ones after it (a
+/// keyword-only `value`), each at its element type.
 fn parameter_patterns<'a>(patterns: &[&'a Ty], parameters: &[&'a Ty]) -> Vec<(&'a Ty, &'a Ty)> {
+    let collector = patterns
+        .iter()
+        .position(|pattern| matches!(pattern.kind(), TyKind::VariadicPack(_)));
+    if let Some(collector) = collector
+        && patterns.len() == parameters.len()
+    {
+        let (declared, built) = parameters.split_at(parameters.len() - 1);
+        return patterns
+            .iter()
+            .enumerate()
+            .filter(|(position, _)| *position != collector)
+            .map(|(_, pattern)| *pattern)
+            .zip(declared.iter().copied())
+            .chain(std::iter::once((patterns[collector], built[0])))
+            .collect();
+    }
     let Some((variadic, element)) =
         patterns
             .iter()

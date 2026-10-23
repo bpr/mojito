@@ -279,51 +279,25 @@ impl FnLowering<'_> {
         })?;
         let defaults = decl.defaults.clone();
         // The physical parameter list is the named parameters with the
-        // collected pack inserted at `variadic_index` (the VM's `bind_args`
-        // packs positional overflow into one tuple-shaped argument).
+        // collector inserted at `variadic_index`: the call's one overflow
+        // operand, the pack it builds (`tuple.make`), as upstream's call
+        // passes the `VariadicPack`.
         let pack = match variadic {
             None => None,
-            Some((pack_ty, index)) => {
+            Some((_, index)) => {
                 let Some(index) = index else {
                     return Err(self.unsupported_reg(
                         format!("variadic call to `{name}` without a recorded pack position"),
                         dest,
                     ));
                 };
-                let storage = match pack_ty.kind() {
-                    TyKind::RuntimePack(elements) | TyKind::Tuple(elements) => {
-                        if matched.positional_overflow.len() != elements.len() {
-                            return Err(self.unsupported_reg(
-                                format!(
-                                    "variadic call to `{name}`: {} overflow arguments against \
-                                     a {}-element pack",
-                                    matched.positional_overflow.len(),
-                                    elements.len()
-                                ),
-                                dest,
-                            ));
-                        }
-                        let elements = elements.clone();
-                        self.collect_pack_elements(
-                            ctx,
-                            &elements,
-                            &matched.positional_overflow,
-                            args,
-                            dest,
-                        )?
-                        .0
-                    }
-                    // An unspecialized homogeneous collector is a run-time
-                    // pack of any arity: the pin's `VariadicList`.
-                    _ => self.build_variadic_list(
-                        ctx,
-                        &pack_ty,
-                        &matched.positional_overflow,
-                        args,
+                let [collector] = matched.positional_overflow.as_slice() else {
+                    return Err(self.unsupported_reg(
+                        format!("a call of `{name}` passes no positional collector"),
                         dest,
-                    )?,
+                    ));
                 };
-                Some((index, storage))
+                Some((index, self.reg_value(ctx, args[*collector], ScalarTy::Ptr)?))
             }
         };
         let kw_pack = match kw_variadic {
@@ -885,78 +859,6 @@ impl FnLowering<'_> {
             }
         }
         Ok(())
-    }
-
-    /// Relocate the overflow arguments `overflow` into fresh pack storage
-    /// laid out as `elements` (the VM's `Tuple(*args)`): `store_to`
-    /// transfers owned temporaries and stores the rest as the MIR left them.
-    /// Returns the storage and each element's address.
-    fn collect_pack_elements(
-        &mut self,
-        ctx: &mut Context,
-        elements: &[Ty],
-        overflow: &[usize],
-        args: &[Reg],
-        dest: Reg,
-    ) -> Result<(Value, Vec<Value>), PlironError> {
-        let composed = self.struct_layout_of(elements, dest)?;
-        let storage = self.entry_alloca(
-            ctx,
-            composed.layout.size.max(1),
-            composed.layout.align.max(1),
-        );
-        let mut addresses = Vec::with_capacity(elements.len());
-        for ((arg, element), offset) in overflow.iter().zip(elements).zip(&composed.offsets) {
-            let address = if *offset == 0 {
-                storage
-            } else {
-                self.gep_byte(ctx, storage, *offset, dest)
-            };
-            self.store_to(ctx, address, element, args[*arg])?;
-            addresses.push(address);
-        }
-        Ok((storage, addresses))
-    }
-
-    /// The run-time pack descriptor `{ elements, len }` over the overflow
-    /// arguments, as the pin passes a `VariadicList`: each element in its
-    /// own caller slot, an array of their addresses, and the descriptor
-    /// pointing at it. An empty pack's array is a non-null dangling slot.
-    pub(super) fn build_variadic_list(
-        &mut self,
-        ctx: &mut Context,
-        element: &Ty,
-        overflow: &[usize],
-        args: &[Reg],
-        dest: Reg,
-    ) -> Result<Value, PlironError> {
-        let elements = vec![element.clone(); overflow.len()];
-        let (_, addresses) = self.collect_pack_elements(ctx, &elements, overflow, args, dest)?;
-        let pointer_size = self.layout.target.triple.pointer_size();
-        let pointer_align = self.layout.target.triple.pointer_align();
-        let array = self.entry_alloca(
-            ctx,
-            pointer_size * (addresses.len() as u64).max(1),
-            pointer_align,
-        );
-        for (position, address) in addresses.into_iter().enumerate() {
-            let slot = self.offset_address(ctx, array, pointer_size * position as u64);
-            let store = StoreOp::new(ctx, address, slot);
-            self.append(ctx, store.get_operation(), Some(dest));
-        }
-        let descriptor_layout = self.layout.variadic_pack_layout();
-        let descriptor = self.entry_alloca(
-            ctx,
-            descriptor_layout.layout.size,
-            descriptor_layout.layout.align,
-        );
-        let store = StoreOp::new(ctx, array, descriptor);
-        self.append(ctx, store.get_operation(), Some(dest));
-        let length = self.int_constant(ctx, overflow.len() as i64);
-        let length_slot = self.offset_address(ctx, descriptor, descriptor_layout.offsets[1]);
-        let store = StoreOp::new(ctx, length, length_slot);
-        self.append(ctx, store.get_operation(), Some(dest));
-        Ok(descriptor)
     }
 }
 

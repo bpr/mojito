@@ -101,7 +101,7 @@ pub use type_construction::{
 };
 mod unused_args;
 pub use unused_args::{
-    erase_removed_operands, removed_argument_operands, unused_arguments, used_slots,
+    CallOperands, erase_removed_operands, removed_argument_operands, unused_arguments, used_slots,
     with_removed_argument_forwards_erased, without_removed_argument_forwards,
     without_removed_arguments,
 };
@@ -368,6 +368,19 @@ impl MirDeclarations {
     pub fn trait_declaration(&self, name: &str) -> Option<&TraitDeclaration> {
         self.own_trait(name)
             .or_else(|| self.imported.as_ref()?.trait_declaration(name))
+    }
+
+    /// Every trait declaration: the program's own, then each of its
+    /// package's the program does not declare, decoded on first use.
+    pub fn trait_declarations(&self) -> impl Iterator<Item = &TraitDeclaration> {
+        let imported = self.imported.iter().flat_map(move |imported| {
+            imported
+                .package()
+                .traits()
+                .filter(|name| self.own_trait(name).is_none())
+                .filter_map(|name| imported.trait_declaration(name))
+        });
+        self.traits.iter().chain(imported)
     }
 
     /// Whether the declared trait `candidate` refines `required`, directly

@@ -134,6 +134,26 @@ fn write_artifact_head(
                                         "variadic_index",
                                         option(requirement.variadic_index.map(|v| v.to_string())),
                                     ),
+                                    (
+                                        "required",
+                                        list(requirement.required.iter().map(bool::to_string)),
+                                    ),
+                                    (
+                                        "positional_only",
+                                        option(requirement.positional_only.map(|v| v.to_string())),
+                                    ),
+                                    (
+                                        "keyword_only",
+                                        option(requirement.keyword_only.map(|v| v.to_string())),
+                                    ),
+                                    (
+                                        "variadic",
+                                        option(requirement.variadic.as_ref().map(ty_value)),
+                                    ),
+                                    (
+                                        "kw_variadic",
+                                        option(requirement.kw_variadic.as_ref().map(ty_value)),
+                                    ),
                                 ],
                             )
                         })),

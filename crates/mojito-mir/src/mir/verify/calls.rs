@@ -70,6 +70,7 @@ pub(super) fn verify_call_instruction(
                 );
             }
             if let Some(declaration) = declared(cx.declarations, callee) {
+                verify_collector_passed(prefix, declaration, *spread, errors);
                 verify_direct_call(
                     prefix,
                     cx.function,
@@ -154,6 +155,7 @@ pub(super) fn verify_call_instruction(
                 None => {}
             }
             if let Some(declaration) = declared(cx.declarations, callee) {
+                verify_collector_passed(prefix, declaration, *spread, errors);
                 verify_direct_call(
                     prefix,
                     cx.function,
@@ -217,13 +219,13 @@ pub(super) fn verify_call_instruction(
     }
 }
 
-/// A whole pack spread into the callee's collector (`show(*args)`,
-/// `Sink().take(*args)`): the position names an argument whose register
-/// holds a `VariadicPack` over a pack still a parameter, which only a
-/// template holds, or the tuple of a bound pack's elements, which
-/// `inline-parametric` leaves for the elaborator's expansion, and a
-/// declared callee collects a positional pack. `print` is undeclared and
-/// collects.
+/// The operand a call passes its callee's positional collector as: the
+/// pack the call builds for it (`total(1, 2)`, a `tuple.make` of the
+/// overflow), or the caller's collector spread whole (`show(*args)`,
+/// `Sink().take(*args)`). The position names an argument whose register
+/// holds a `VariadicPack`, homogeneous or over a pack still a parameter, or
+/// the tuple of a bound pack's elements, and a declared callee collects a
+/// positional pack. `print` is undeclared and collects.
 fn verify_pack_spread(
     prefix: &str,
     function: &MirFunction,
@@ -239,13 +241,8 @@ fn verify_pack_spread(
         ));
         return;
     };
-    // A collector bound to its element list, in a body inlined into a
-    // caller that bound the pack, is the tuple of them, which the
-    // elaborator expands into the call's arguments as it expands a pack.
     match function.reg_types.get(&argument.0).map(Ty::kind) {
-        Some(TyKind::VariadicPack(element))
-            if mojito_types::types::pack_spread(std::slice::from_ref(element)).is_some() => {}
-        Some(TyKind::Tuple(_)) => {}
+        Some(TyKind::VariadicPack(_) | TyKind::Tuple(_) | TyKind::RuntimePack(_)) => {}
         Some(found) => errors.push(format!(
             "{prefix}: spread argument {position} has type {found}, not a pack collector"
         )),
@@ -256,6 +253,23 @@ fn verify_pack_spread(
     {
         errors.push(format!(
             "{prefix}: a pack is spread into '{}', which collects no positional pack",
+            declaration.lowered_name
+        ));
+    }
+}
+
+/// A call of a declared callee that collects a positional pack passes it
+/// as one operand ([`verify_pack_spread`]), as upstream's call passes the
+/// pack it builds; no backend collects the overflow itself.
+fn verify_collector_passed(
+    prefix: &str,
+    declaration: &MirFunctionDeclaration,
+    spread: Option<usize>,
+    errors: &mut Vec<String>,
+) {
+    if declaration.variadic.is_some() && spread.is_none() {
+        errors.push(format!(
+            "{prefix}: a call of '{}' passes no positional collector",
             declaration.lowered_name
         ));
     }

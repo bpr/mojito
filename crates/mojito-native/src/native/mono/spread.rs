@@ -1,7 +1,9 @@
 //! Expanding a whole-pack spread: an instance replaces the collector a call,
 //! a method call, or a nested `def`'s call spreads (`show(*args)`,
-//! `Sink().take(*args)`, `count(*args^)`) with the bound pack's element places, and retires a value pack spread into a
-//! bracket (`f[*vs]()`) once the call names its instance.
+//! `Sink().take(*args)`, `count(*args^)`) with the bound pack's element
+//! places, and retires a value pack spread into a bracket (`f[*vs]()`) once
+//! the call names its instance. The collector a call builds (`tuple.make`)
+//! stays the one operand it passes.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -10,11 +12,13 @@ use mojito_types::types::TyKind;
 
 /// Expand every whole-pack spread of the instance, as the elaborator does for
 /// upstream's pack expansion: the spread argument's register, typed the
-/// collector's tuple once the pack is bound, becomes one register per
-/// element, each read from the collector's element place (or moved out of
-/// it, when the caller transferred the pack), and the call's `spread` is
-/// cleared. The collector's own read goes with it. A spread whose pack the
-/// bindings leave open is the instance's unsupported boundary.
+/// collector's tuple once the pack is bound, is read one element at a time,
+/// each from the collector's element place (or moved out of it, when the
+/// caller transferred the pack), and the call builds its collector of those
+/// elements into the same register (`tuple.make`); a spread into the
+/// builtin `print` passes them as its arguments instead, and clears the
+/// call's `spread`. The collector's own read goes with it. A spread whose
+/// pack the bindings leave open is the instance's unsupported boundary.
 pub(super) fn expand_pack_spreads(
     template: &str,
     function: &mut MirFunction,
@@ -37,21 +41,6 @@ pub(super) fn expand_pack_spreads(
     expand_in_blocks(blocks, &mut tables)
 }
 
-struct SpreadTables<'a> {
-    template: &'a str,
-    n_regs: &'a mut u32,
-    var_tys: &'a HashMap<mojito_hir::hir::VarId, Ty>,
-    reg_types: &'a mut HashMap<u32, Ty>,
-    spans: &'a mut mojito_mir::mir::SpanTable,
-}
-
-/// The collector a spread register reads: its place and whether the read
-/// moved the pack out of its slot.
-struct Collector {
-    place: MirPlace,
-    moved: bool,
-}
-
 /// Retire the bound list of a value pack spread into a bracket
 /// (`f[*vs]()`, `PL[*vs]()`): the call it fed names its instance, whose key
 /// holds the list, and no register reads it.
@@ -70,6 +59,33 @@ pub(super) fn retire_forwarded_packs(function: &mut MirFunction) {
     function
         .reg_types
         .retain(|register, _| !retired.contains(register));
+}
+
+/// Pass the elements of the collector a method call builds as its
+/// arguments when the builtin its receiver is answers the call (`write`
+/// on the builtin-string writer), which takes its values one by one, as
+/// the builtin `print` does.
+pub(super) fn unpack_builtin_collectors(blocks: &mut [MirBlock], reg_types: &mut HashMap<u32, Ty>) {
+    let mut retired = Vec::new();
+    unpack_in_blocks(blocks, reg_types, &mut retired);
+    for register in retired {
+        reg_types.remove(&register);
+    }
+}
+
+struct SpreadTables<'a> {
+    template: &'a str,
+    n_regs: &'a mut u32,
+    var_tys: &'a HashMap<mojito_hir::hir::VarId, Ty>,
+    reg_types: &'a mut HashMap<u32, Ty>,
+    spans: &'a mut mojito_mir::mir::SpanTable,
+}
+
+/// The collector a spread register reads: its place and whether the read
+/// moved the pack out of its slot.
+struct Collector {
+    place: MirPlace,
+    moved: bool,
 }
 
 fn expand_in_blocks(
@@ -106,20 +122,27 @@ fn expand_in_block(
             index += 1;
             continue;
         };
-        let (read_block, read) = (0..=at)
-            .rev()
-            .find_map(|block| {
-                let end = if block == at {
-                    index
-                } else {
-                    blocks[block].instrs.len()
-                };
-                blocks[block].instrs[..end]
-                    .iter()
-                    .rposition(|instruction| defines(instruction, pack))
-                    .map(|read| (block, read))
-            })
-            .ok_or_else(|| tables.error("a spread reads no collector"))?;
+        // A collector the callee no longer takes (an unused argument whose
+        // read the removal erased) is dropped with the call's rewrite.
+        let Some((read_block, read)) = (0..=at).rev().find_map(|block| {
+            let end = if block == at {
+                index
+            } else {
+                blocks[block].instrs.len()
+            };
+            blocks[block].instrs[..end]
+                .iter()
+                .rposition(|instruction| defines(instruction, pack))
+                .map(|read| (block, read))
+        }) else {
+            index += 1;
+            continue;
+        };
+        // The collector the call builds is the one operand it passes.
+        if matches!(blocks[read_block].instrs[read], MirInstr::MakeTuple { .. }) {
+            index += 1;
+            continue;
+        }
         let collector = collector_read(&blocks[read_block].instrs[read], pack, tables.var_tys)
             .ok_or_else(|| tables.error("a spread reads no collector"))?;
         let block = &mut blocks[at];
@@ -146,19 +169,39 @@ fn expand_in_block(
             });
             registers.push(dest);
         }
-        let call =
-            spread_operands(&mut block.instrs[index]).expect("the spread call was matched above");
-        let count = registers.len();
-        call.args.splice(position..=position, registers);
-        call.arg_places
-            .splice(position..=position, std::iter::repeat_n(None, count));
-        *call.spread = None;
-        let inserted = loads.len();
+        // The builtin `print` takes its values one by one; any other callee
+        // takes the collector the call builds of the elements.
+        let prints =
+            matches!(&block.instrs[index], MirInstr::Call { func, .. } if func.0 == "print");
+        let mut inserted = loads.len();
+        if prints {
+            let call = spread_operands(&mut block.instrs[index])
+                .expect("the spread call was matched above");
+            let count = registers.len();
+            call.args.splice(position..=position, registers);
+            call.arg_places
+                .splice(position..=position, std::iter::repeat_n(None, count));
+            *call.spread = None;
+            tables.reg_types.remove(&pack.0);
+            tables.spans.0.remove(&pack.0);
+        } else {
+            let element_types = registers
+                .iter()
+                .map(|register| tables.reg_types.get(&register.0).cloned())
+                .collect();
+            loads.push(MirInstr::MakeTuple {
+                dest: pack,
+                elems: registers,
+                element_types,
+            });
+            inserted += 1;
+            if let Some(call) = spread_operands(&mut block.instrs[index]) {
+                call.arg_places[position] = None;
+            }
+        }
         block.instrs.splice(index..index, loads);
         // The collector's whole read is dead once the elements are read.
         blocks[read_block].instrs.remove(read);
-        tables.reg_types.remove(&pack.0);
-        tables.spans.0.remove(&pack.0);
         index += inserted;
         if read_block == at {
             index -= 1;
@@ -234,7 +277,10 @@ fn collector_read(
 fn defines(instruction: &MirInstr, register: Reg) -> bool {
     matches!(
         instruction,
-        MirInstr::LoadPlace { dest, .. } | MirInstr::MovePlace { dest, .. } | MirInstr::UseVar { dest, .. }
+        MirInstr::LoadPlace { dest, .. }
+            | MirInstr::MovePlace { dest, .. }
+            | MirInstr::UseVar { dest, .. }
+            | MirInstr::MakeTuple { dest, .. }
             if *dest == register
     )
 }
@@ -266,5 +312,54 @@ fn retire_in_blocks(blocks: &mut [MirBlock], forwarded: &HashSet<u32>, retired: 
                 true
             }
         });
+    }
+}
+
+fn unpack_in_blocks(blocks: &mut [MirBlock], reg_types: &HashMap<u32, Ty>, retired: &mut Vec<u32>) {
+    for block in blocks {
+        let mut index = 0;
+        while index < block.instrs.len() {
+            for region in mojito_mir::mir::instruction_regions_mut(&mut block.instrs[index]) {
+                unpack_in_blocks(region, reg_types, retired);
+            }
+            let collector = match &block.instrs[index] {
+                MirInstr::MethodCall {
+                    recv,
+                    spread: Some(position),
+                    args,
+                    ..
+                } if !matches!(
+                    reg_types.get(&recv.0).map(|ty| peel_refs(ty).kind()),
+                    Some(TyKind::Struct(..))
+                ) =>
+                {
+                    args.get(*position).map(|register| (*position, *register))
+                }
+                _ => None,
+            };
+            let built = collector.and_then(|(position, register)| {
+                block.instrs[..index]
+                    .iter()
+                    .rposition(|instruction| {
+                        matches!(instruction, MirInstr::MakeTuple { dest, .. } if *dest == register)
+                    })
+                    .map(|at| (position, register, at))
+            });
+            let Some((position, register, at)) = built else {
+                index += 1;
+                continue;
+            };
+            let MirInstr::MakeTuple { elems, .. } = block.instrs.remove(at) else {
+                unreachable!("the collector's tuple.make was matched above");
+            };
+            if let Some(call) = spread_operands(&mut block.instrs[index - 1]) {
+                let count = elems.len();
+                call.args.splice(position..=position, elems);
+                call.arg_places
+                    .splice(position..=position, std::iter::repeat_n(None, count));
+                *call.spread = None;
+            }
+            retired.push(register.0);
+        }
     }
 }

@@ -2495,6 +2495,23 @@ impl Checker {
         } else {
             None
         };
+        let constructor = insert
+            .is_none()
+            .then(|| {
+                self.structs
+                    .get(name)
+                    .and_then(|info| info.methods.get("__init__"))
+                    .and_then(|sigs| sigs.iter().find(|sig| sig.variadic.is_some()))
+                    .map(|sig| {
+                        method_lowered_name(
+                            name,
+                            "__init__",
+                            sig,
+                            self.self_instance_ty(name).as_ref(),
+                        )
+                    })
+            })
+            .flatten();
         // A re-inference of the same display keeps the owner a
         // temporary-receiver materialization already minted on it.
         let mut record = self.record_at(span);
@@ -2509,6 +2526,7 @@ impl Checker {
             mojito_checked::checked::SemanticAdjustment::ConstructCollection {
                 target: target.clone(),
                 insert,
+                constructor,
                 materialized,
                 literal: None,
             },

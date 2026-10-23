@@ -235,27 +235,29 @@ impl<'a> Specializer<'a> {
     /// argument leaves with its place, while an omitted one, whose default
     /// is never evaluated, leaves nothing. A method call's arguments follow
     /// its receiver, so a removed slot past the receiver binds the
-    /// declaration's position one lower. It gives the operand registers
-    /// the call no longer passes.
+    /// declaration's position one lower, and the call's collector
+    /// position follows the collector's operand ([`mojito_mir::mir::CallOperands::remove`]).
+    /// It gives the operand registers the call no longer passes.
     pub(super) fn drop_removed_arguments(
         &self,
         owner: &str,
         target: &str,
-        args: &mut Vec<Reg>,
-        arg_places: &mut Vec<Option<MirPlace>>,
-        kwargs: &mut Vec<(String, Reg)>,
-        kwarg_places: &mut Vec<Option<MirPlace>>,
+        mut operands: mojito_mir::mir::CallOperands<'_>,
     ) -> Result<Vec<Reg>, MonoError> {
         let (Some(declaration), Some(function)) =
             (self.declarations.get(target), self.functions.get(target))
         else {
             return Ok(Vec::new());
         };
-        let keywords: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
+        let keywords: Vec<&str> = operands
+            .kwargs
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
         let (positional, keyword) = mojito_mir::mir::removed_argument_operands(
             declaration,
             &function.removed_args,
-            args.len(),
+            operands.args.len(),
             &keywords,
         )
         .map_err(|e| {
@@ -264,20 +266,7 @@ impl<'a> Specializer<'a> {
                 format!("binding call to `{target}` during argument removal: {e:?}"),
             )
         })?;
-        let mut dropped = Vec::with_capacity(positional.len() + keyword.len());
-        for &index in positional.iter().rev() {
-            dropped.push(args.remove(index));
-            if index < arg_places.len() {
-                arg_places.remove(index);
-            }
-        }
-        for &index in keyword.iter().rev() {
-            dropped.push(kwargs.remove(index).1);
-            if index < kwarg_places.len() {
-                kwarg_places.remove(index);
-            }
-        }
-        Ok(dropped)
+        Ok(operands.remove(&positional, &keyword))
     }
 
     /// [`Self::removed_params`] of `template` as binders, each with the
@@ -1063,6 +1052,7 @@ impl<'a> Specializer<'a> {
         // `HasNext`/`Next` need the iterator slot types this pass
         // records.
         self.rewrite_iterator_inits(&key.template, &mut function, &mut blocks)?;
+        unpack_builtin_collectors(&mut blocks, &mut function.reg_types);
         let arguments = parameter_argument_regs(&mut blocks);
         self.rewrite_blocks(&key.template, &mut function, &mut blocks)?;
         function.blocks = blocks;
@@ -2484,6 +2474,7 @@ impl<'a> Specializer<'a> {
                         param_arg_regs,
                         receiver: static_receiver,
                         instantiated_args,
+                        spread,
                         ..
                     } => {
                         // A body nested in an unrolled region is named as
@@ -2544,7 +2535,7 @@ impl<'a> Specializer<'a> {
                                         &init,
                                         Some(*dest),
                                         *dest,
-                                        args,
+                                        (args, *spread),
                                         kwargs,
                                         param_arg_regs,
                                         instantiated_args,
@@ -2561,10 +2552,13 @@ impl<'a> Specializer<'a> {
                                         self.drop_removed_arguments(
                                             owner,
                                             &target,
-                                            args,
-                                            arg_places,
-                                            kwargs,
-                                            kwarg_places,
+                                            mojito_mir::mir::CallOperands {
+                                                args,
+                                                arg_places,
+                                                kwargs,
+                                                kwarg_places,
+                                                spread,
+                                            },
                                         )?;
                                     }
                                     param_arg_regs.clear();
@@ -2602,7 +2596,7 @@ impl<'a> Specializer<'a> {
                             &func.0,
                             receiver,
                             *dest,
-                            args,
+                            (args, *spread),
                             kwargs,
                             param_arg_regs,
                             instantiated_args,
@@ -2647,10 +2641,13 @@ impl<'a> Specializer<'a> {
                             self.drop_removed_arguments(
                                 owner,
                                 &target,
-                                args,
-                                arg_places,
-                                kwargs,
-                                kwarg_places,
+                                mojito_mir::mir::CallOperands {
+                                    args,
+                                    arg_places,
+                                    kwargs,
+                                    kwarg_places,
+                                    spread,
+                                },
                             )?;
                         }
                         param_arg_regs.clear();
@@ -2677,6 +2674,7 @@ impl<'a> Specializer<'a> {
                         param_arg_regs,
                         param_decls,
                         instantiated_args,
+                        spread,
                         ..
                     } => {
                         let receiver = function.reg_types.get(&recv.0).ok_or_else(|| {
@@ -2797,7 +2795,7 @@ impl<'a> Specializer<'a> {
                             &target,
                             Some(*recv),
                             *dest,
-                            args,
+                            (args, *spread),
                             kwargs,
                             param_arg_regs,
                             instantiated_args,
@@ -2808,10 +2806,13 @@ impl<'a> Specializer<'a> {
                             self.drop_removed_arguments(
                                 owner,
                                 &target,
-                                args,
-                                arg_places,
-                                kwargs,
-                                kwarg_places,
+                                mojito_mir::mir::CallOperands {
+                                    args,
+                                    arg_places,
+                                    kwargs,
+                                    kwarg_places,
+                                    spread,
+                                },
                             )?;
                         }
                         // A generator without its receiver takes none: the
@@ -2830,7 +2831,7 @@ impl<'a> Specializer<'a> {
                                 param_arg_regs: Vec::new(),
                                 receiver: None,
                                 instantiated_args: Vec::new(),
-                                spread: None,
+                                spread: spread.take(),
                             };
                             continue;
                         }
@@ -2862,6 +2863,7 @@ impl<'a> Specializer<'a> {
                         param_decls: contract,
                         resolved,
                         instantiated_args,
+                        spread,
                         ..
                     } => {
                         let dependent_callable =
@@ -2925,7 +2927,7 @@ impl<'a> Specializer<'a> {
                                     &target,
                                     None,
                                     *dest,
-                                    args,
+                                    (args, *spread),
                                     kwargs,
                                     param_arg_regs,
                                     &contract_values,
@@ -2959,10 +2961,13 @@ impl<'a> Specializer<'a> {
                                     self.drop_removed_arguments(
                                         owner,
                                         &target,
-                                        args,
-                                        arg_places,
-                                        kwargs,
-                                        kwarg_places,
+                                        mojito_mir::mir::CallOperands {
+                                            args,
+                                            arg_places,
+                                            kwargs,
+                                            kwarg_places,
+                                            spread,
+                                        },
                                     )?;
                                 }
                                 pass_capturing_arguments(
@@ -2988,7 +2993,7 @@ impl<'a> Specializer<'a> {
                                 param_arg_regs: Vec::new(),
                                 receiver: None,
                                 instantiated_args: Vec::new(),
-                                spread: None,
+                                spread: spread.take(),
                             };
                             continue;
                         }
@@ -3024,7 +3029,7 @@ impl<'a> Specializer<'a> {
                             &target,
                             Some(*callee),
                             *dest,
-                            args,
+                            (args, *spread),
                             kwargs,
                             param_arg_regs,
                             &[],
@@ -3058,7 +3063,7 @@ impl<'a> Specializer<'a> {
                             param_arg_regs: Vec::new(),
                             param_decls: Vec::new(),
                             instantiated_args: Vec::new(),
-                            spread: None,
+                            spread: spread.take(),
                         };
                     }
                     // A retained callable names its lifted body on the

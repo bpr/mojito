@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.94
+# Mojito Textual MIR Format, Version 1.95
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.94 is implemented end to end for inspection and loading: canonical
+Version 1.95 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.94
+mojito-mir 1.95
 ```
 
-The writer emits 1.94. The reader accepts 1.0 through 1.94; *Schema 1.0*
+The writer emits 1.95. The reader accepts 1.0 through 1.95; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -423,6 +423,23 @@ inside a `try` whose handler leaves the loop, as upstream's `emitForStmt`
 calls it inside a `lit.try` (R890), and the `iterator_call` record goes
 with it. The reader still accepts an older minor that spells no
 `iter.try_next`, and names one it meets as an unknown instruction.
+
+Minor version 95 has every call build the positional collector it passes,
+as upstream's call builds the `VariadicPack` (R1102): a `call`,
+`call.method`, or `call.indirect` of a callee declaring `*xs` passes a
+`tuple.make` of its overflow operands, typed the collector's slot, as its
+last positional operand, its `spread` that operand's position, and a
+subscript (`index.multi`, `index.multi_set`) passes it as one index
+operand its contract names. `spread` therefore no longer marks only a
+whole pack a caller spreads, and elaborated MIR keeps it; the verifier
+rejects a call of a declared collecting callee that records none, so an
+older artifact's call passing the overflow one operand at a time is
+refused. Each trait requirement also spells its call shape after
+`variadic_index`: `required`, `positional_only`, `keyword_only`,
+`variadic`, and `kw_variadic`, as a `decl` record spells them, from which
+a call through a bound whose requirement has no body builds its
+collector. An older requirement reads as requiring every parameter and
+collecting nothing.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -1114,7 +1131,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `UseVar` / `DefVar` | `var.use` / `var.store` (schema 1.49: `var.store` adds `in_place`, true when the slot is the preceding non-raising call's result storage; schema 1.68: a copying or moving `var.use` carries `constructor: "<symbol>"` after its `mode` when it names the `__copyinit__` or `__moveinit__` it runs, as upstream's copy/move insertion names the constructor at each site: the template member in a parametric body, its instance in concrete MIR; the writer omits the field when the use names none, the reader takes an absent field as none, and the verifier reports a use naming an undeclared function, a borrow or forward naming any, or a copy or move naming other than the constructor its struct's member table records) |
 | `MovePlace` / `LoadPlace` | `place.move` / `place.load` |
 | `UnOp` / `BinOp` | `unary` / `binary` (schema 1.53: both add `raises: option<type>`, the error type of the operator method's call, as a call's `raises`; schema 1.91: `raises` is `option<raises { type, flag, error }>`, as a call's) |
-| `Call` / `CallIndirect` / `MethodCall` | `call` / `call.indirect` / `call.method` (schema 1.71: a `call.method` with a `result_adapter` carries `adapter_constructor: "<symbol>"` after its operands when the adapter's copy of the referent names the `__copyinit__` it runs, as `value.copy` does; schema 1.91: `raises` is `absent` or `present(raises { type, flag: %rN, error: %rM })`, the error type and the instruction's error flag and error, which its error region tests and raises) |
+| `Call` / `CallIndirect` / `MethodCall` | `call` / `call.indirect` / `call.method` (schema 1.95: `spread` is the position of the collector operand the call passes, the `tuple.make` it builds or a caller's spread pack; schema 1.71: a `call.method` with a `result_adapter` carries `adapter_constructor: "<symbol>"` after its operands when the adapter's copy of the referent names the `__copyinit__` it runs, as `value.copy` does; schema 1.91: `raises` is `absent` or `present(raises { type, flag: %rN, error: %rM })`, the error type and the instruction's error flag and error, which its error region tests and raises) |
 | `PointerStorageTake` / `PointerStorageDestroy` | `pointer.take` / `pointer.destroy` — a `pointer.destroy` carries `destructor: "<symbol>"` after `element` when it names the element's `__deinit__`, as `drop.var` does (schema 1.73) |
 | `UninitStorage` / `UninitStorageTake` / `UninitStorageDestroy` | `uninit.make` / `uninit.take` / `uninit.destroy` — an `uninit.destroy` carries `destructor: "<symbol>"` after `element` when it names the payload's `__deinit__`, as `drop.var` does (schema 1.73) |
 | `MarkInitialized` | `ownership.mark_initialized` (schema 1.28: `{ place }`, upstream's `lit.ownership.mark_initialized`) |
@@ -1123,7 +1140,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `Index` / `Slice` / `MultiIndex` / `MultiSet` | `index.get` / `slice.get` / `index.multi` / `index.multi_set` |
 | `Store` / `StoreRef` | `place.store` / `place.store_ref` |
 | `MakeStruct` | `struct.create { dest, fields: [%rA, …] }` (schema 1.87: upstream's `kgen.struct.create`, a struct value of `dest`'s register type built from one register per declared field, in declaration order, running no constructor; `sroa` emits it for a whole read of a split slot, and the verifier checks the result is a declared struct, the operand count, and, for a non-generic struct, each operand's type) |
-| `MakeTuple` | `tuple.make` — one whose `dest` register is typed `$variadic[T]` is the homogeneous collector an inlined call builds for its callee's `*xs: T`, and one typed a tuple with `element_types` the elements a heterogeneous collector's or a typed `Tuple[T, ...]` construction's (no schema change) |
+| `MakeTuple` | `tuple.make` — one whose `dest` register is typed `$variadic[T]` is the homogeneous collector a call builds for its callee's `*xs: T`, and one typed a tuple with `element_types` the elements a heterogeneous collector's or a typed `Tuple[T, ...]` construction's (schema 1.95: every call builds its callee's collector so, not only an inlined one) |
 | `MakeVariant` / `VariantIs` / `VariantGet` / `VariantSet` | `variant.make` / `variant.is` / `variant.get` / `variant.set` (schema 1.71: `variant.make` and `variant.set` carry `constructor: "<symbol>"` after their operands when the payload copy names the `__copyinit__` it runs, as `value.copy` does; schema 1.73: `variant.set` carries `destructors: [present("<symbol>") | absent, ...]`, one entry per alternative, naming the `__deinit__` the replaced payload runs under that tag, omitted while it names none) |
 | `VariantTake` / `VariantSetInitWith` / `VariantDeinitWith` / `VariantReplace` | `variant.take` / `variant.set_init_with` / `variant.deinit_with` / `variant.replace` (schema 1.71: `variant.replace` carries `constructor: "<symbol>"` as `variant.make` does; schema 1.73: `variant.set_init_with` carries `destructors` as `variant.set` does) |
 | `MakeSimd` / `SimdCast` / `SimdBitcast` / `SimdShuffle` | `simd.make` / `simd.cast` / `simd.bits` / `simd.shuffle` — `dtype` is a dtype name or `ct_expr(...)`, `width` a lane count or `ct_expr(...)` (schema 1.18); a shuffle's `mask` is a list of lane indices, or a template's `lane_shuffle { lanes: [<param_expr>, ...] }`, `lane_slice { offset: <param_expr>, width: <width> }`, or `lane_join {}`, which elaboration closes (schema 1.26) |

@@ -45,11 +45,15 @@ impl FnLowering<'_> {
                 anchor,
             ));
         };
-        if decl.variadic.is_some() || decl.kw_variadic.is_some() {
-            return Err(
-                self.unsupported_reg(format!("variadic subscript call to `{resolved}`"), anchor)
-            );
+        if decl.kw_variadic.is_some() {
+            return Err(self.unsupported_reg(
+                format!("keyword-variadic subscript call to `{resolved}`"),
+                anchor,
+            ));
         }
+        // A positional collector's slot takes the pack the subscript builds
+        // (`tuple.make`), its one overflow operand.
+        let collector = decl.variadic.as_ref().and(decl.variadic_index);
         let kw_names: Vec<&str> = keywords.iter().map(|(name, _)| *name).collect();
         let matched = match_call_slots(
             &decl.param_names,
@@ -59,7 +63,7 @@ impl FnLowering<'_> {
             positional.len(),
             &kw_names,
             CallVariadics {
-                positional: false,
+                positional: collector.is_some(),
                 keyword: false,
             },
         )
@@ -90,20 +94,47 @@ impl FnLowering<'_> {
         } else {
             &[]
         };
-        if matched.slots.len() != rest.len() {
+        if matched.slots.len() + usize::from(collector.is_some()) != rest.len() {
             return Err(self.unsupported_reg(
                 format!("subscript binding for `{resolved}` disagrees with its compiled arity"),
                 anchor,
             ));
         }
+        let collector_value = match (collector, matched.positional_overflow.as_slice()) {
+            (None, _) => None,
+            (Some(_), [built]) => match &positional[*built] {
+                SubscriptActual::Reg(reg, _) => Some(self.reg_value(ctx, *reg, ScalarTy::Ptr)?),
+                SubscriptActual::Descriptor(_) => None,
+            },
+            (Some(_), _) => None,
+        };
+        if collector.is_some() && collector_value.is_none() {
+            return Err(self.unsupported_reg(
+                format!("a subscript call of `{resolved}` passes no positional collector"),
+                anchor,
+            ));
+        }
         let mut operands = vec![recv_value];
-        for (i, slot) in matched.slots.iter().enumerate() {
-            let expected = rest[i].clone();
+        let mut slots = matched.slots.iter().enumerate();
+        for (param, expected) in rest.iter().enumerate() {
+            if Some(param) == collector
+                && let Some(value) = collector_value
+            {
+                operands.push(value);
+                continue;
+            }
+            let Some((i, slot)) = slots.next() else {
+                return Err(self.unsupported_reg(
+                    format!("subscript binding for `{resolved}` disagrees with its compiled arity"),
+                    anchor,
+                ));
+            };
+            let expected = expected.clone();
             if matches!(expected, LowerTy::ZeroSized) {
                 continue;
             }
-            let owned = rest_owned.get(i).copied().unwrap_or(false);
-            let by_ref = rest_by_reference.get(i).copied().unwrap_or(false);
+            let owned = rest_owned.get(param).copied().unwrap_or(false);
+            let by_ref = rest_by_reference.get(param).copied().unwrap_or(false);
             let actual = match slot {
                 ArgSlot::Positional(p) => Some(&positional[*p]),
                 ArgSlot::Keyword(k) => Some(&keywords[*k].1),

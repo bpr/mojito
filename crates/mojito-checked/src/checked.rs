@@ -989,6 +989,11 @@ pub enum SemanticAdjustment {
     ConstructCollection {
         target: Ty,
         insert: Option<String>,
+        /// A tuple display's constructor: the exact lowered `__init__`
+        /// overload collecting its elements (`var *args: *Ts`), which MIR
+        /// lowers the display as one call of, as upstream's parser emits
+        /// `Tuple(…)`.
+        constructor: Option<String>,
         /// The same display as a temporary receiver of a `ref self` method
         /// (`(1, 2)[0]`): it is also a materialized borrow source (see
         /// `MaterializeBorrowSource`), and one span carries one adjustment.

@@ -427,12 +427,10 @@ impl VmBackend {
                 arg_places,
                 kwarg_places,
                 instantiated_args,
-                spread,
                 ..
             } => {
                 let mut argv: Vec<Value> =
                     args.iter().map(|r| regs[r.0 as usize].clone()).collect();
-                refuse_pack_spread(*spread)?;
                 let mut kw: Vec<(String, Value)> = kwargs
                     .iter()
                     .map(|(n, r)| (n.clone(), regs[r.0 as usize].clone()))
@@ -751,7 +749,6 @@ impl VmBackend {
                 recv_place,
                 arg_places,
                 kwarg_places,
-                spread,
                 ..
             } => {
                 let recv_val = regs[recv.0 as usize].clone();
@@ -770,7 +767,6 @@ impl VmBackend {
                 } else {
                     let argv: Vec<Value> =
                         args.iter().map(|r| regs[r.0 as usize].clone()).collect();
-                    refuse_pack_spread(*spread)?;
                     let kw: Vec<(String, Value)> = kwargs
                         .iter()
                         .map(|(name, reg)| (name.clone(), regs[reg.0 as usize].clone()))

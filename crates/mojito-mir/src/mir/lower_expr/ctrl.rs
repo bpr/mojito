@@ -22,6 +22,18 @@ pub(super) fn collection_plan(node: &CheckedExpr) -> Option<(Ty, Option<String>)
     })
 }
 
+/// The `__init__` overload the checker selected for tuple display `node`,
+/// which collects its elements.
+pub(super) fn tuple_constructor(node: &CheckedExpr) -> Option<&str> {
+    display_adjustments(node).find_map(|adjustment| match adjustment {
+        SemanticAdjustment::ConstructCollection {
+            constructor: Some(constructor),
+            ..
+        } => Some(constructor.as_str()),
+        _ => None,
+    })
+}
+
 /// Return the literal constructors the checker selected for dictionary
 /// display `node`, when it is upstream's `__dict_literal__` construction.
 pub(super) fn dict_literal_plan(node: &CheckedExpr) -> Option<&DictLiteral> {

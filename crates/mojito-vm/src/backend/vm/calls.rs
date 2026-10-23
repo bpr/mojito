@@ -22,18 +22,10 @@ pub(super) fn checked_const_value(value: &CheckedConst) -> Value {
     }
 }
 
-/// Refuse a call or a method call that still spreads a collector whole
-/// (`show(*args)`): the elaborator expands every spread, so concrete MIR
-/// carries none.
-pub(super) fn refuse_pack_spread(spread: Option<usize>) -> Result<(), RuntimeError> {
-    spread.map_or(Ok(()), |_| {
-        Err(parametric_instruction("a whole pack spread"))
-    })
-}
-
 /// Match positional + keyword arguments to a function's parameter slots, producing
-/// the ordered argument values the frame binds — filling defaults and collecting a
-/// trailing `*args` into a `List` according to the shared call contract.
+/// the ordered argument values the frame binds — filling defaults and binding the
+/// positional collector the call passes whole, according to the shared call
+/// contract.
 pub(super) fn bind_args(
     name: &str,
     sig: &FnSig,
@@ -66,35 +58,25 @@ pub(super) fn bind_args(
         };
         regular_values.push(crate::runtime::coerce_checked(value, &sig.param_types[i]));
     }
-    // Collect overflow positional args into internal tuple storage. Source List
-    // is nominal and is never part of the call ABI. A specialized heterogeneous
-    // checked `RuntimePack[T0, ...]` ABI and must remain a Tuple: treating it as
-    // a List makes `Tuple(*args^)` copy indexed elements instead of relocating
-    // the pack, which can destroy a non-Copyable element twice.
+    // The call passes the collector it builds (`tuple.make`) as its one
+    // overflow operand, as upstream's call passes the pack.
     let (out, frame_slots) = if let Some(elem_ty) = &sig.variadic {
-        let packed = match elem_ty.kind() {
-            TyKind::RuntimePack(element_types) if element_types.len() == overflow.len() => {
-                Value::Tuple(
-                    overflow
-                        .iter()
-                        .zip(element_types)
-                        .map(|(&idx, ty)| crate::runtime::coerce_checked(argv[idx].clone(), ty))
-                        .collect(),
-                )
+        let packed = match (overflow.as_slice(), elem_ty.kind()) {
+            ([collector], TyKind::RuntimePack(element_types)) => match &argv[*collector] {
+                Value::Tuple(elements) if elements.len() != element_types.len() => {
+                    return Err(RuntimeError::ArityMismatch {
+                        name: name.to_string(),
+                        expected: element_types.len(),
+                        got: elements.len(),
+                    });
+                }
+                collected @ Value::Tuple(_) => collected.clone(),
+                _ => return Err(no_collector(name)),
+            },
+            ([collector], _) if matches!(argv[*collector], Value::Tuple(_)) => {
+                argv[*collector].clone()
             }
-            TyKind::RuntimePack(element_types) => {
-                return Err(RuntimeError::ArityMismatch {
-                    name: name.to_string(),
-                    expected: element_types.len(),
-                    got: overflow.len(),
-                });
-            }
-            _ => Value::Tuple(
-                overflow
-                    .iter()
-                    .map(|&idx| crate::runtime::coerce_checked(argv[idx].clone(), elem_ty))
-                    .collect(),
-            ),
+            _ => return Err(no_collector(name)),
         };
         let idx = sig.variadic_index.unwrap_or(regular_values.len());
         let mut out = Vec::with_capacity(regular_values.len() + 1);
@@ -156,6 +138,14 @@ pub(super) fn struct_value(
         name: name.to_string(),
         fields,
     })
+}
+
+/// A call of `function`, which collects a positional pack, that passes no
+/// collector: MIR lowering builds one at every call.
+fn no_collector(function: &str) -> RuntimeError {
+    RuntimeError::TypeError(format!(
+        "a call of '{function}' passes no positional collector"
+    ))
 }
 
 fn runtime_match_error(error: mojito_ast::call::MatchError, function: &str) -> RuntimeError {

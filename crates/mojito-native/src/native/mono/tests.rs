@@ -1632,7 +1632,7 @@ fn reflected_field_type_construction_closes_per_unrolled_copy() {
 }
 
 #[test]
-fn method_call_spread_expands_into_the_bound_pack_elements() {
+fn method_call_spread_builds_its_collector_of_the_bound_pack_elements() {
     let pack = Ty::new(TyKind::Tuple(vec![Ty::int(), Ty::bool()]));
     let collector = MirPlace::root(0, Some(pack.clone()));
     let mut call = dunder_method_call(
@@ -1698,6 +1698,15 @@ fn method_call_spread_expands_into_the_bound_pack_elements() {
         })
         .collect();
     assert_eq!(loaded.len(), 2);
+    let built = instrs.iter().find_map(|instruction| match instruction {
+        MirInstr::MakeTuple { dest, elems, .. } if *dest == Reg(0) => Some(elems.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        built,
+        Some(vec![loaded[0].0, loaded[1].0]),
+        "the call builds its collector of the elements read"
+    );
     let Some(MirInstr::MethodCall {
         args,
         arg_places,
@@ -1707,9 +1716,8 @@ fn method_call_spread_expands_into_the_bound_pack_elements() {
     else {
         panic!("the method call must stay last");
     };
-    assert_eq!(*spread, None);
-    assert_eq!(args, &vec![Reg(2), loaded[0].0, loaded[1].0]);
-    assert_eq!(arg_places.len(), 3);
+    assert_eq!(*spread, Some(1));
+    assert_eq!(args, &vec![Reg(2), Reg(0)]);
     assert!(arg_places.iter().all(Option::is_none));
     assert_eq!(function.reg_types.get(&loaded[1].0.0), Some(&Ty::bool()));
 }

@@ -285,6 +285,11 @@ pub fn compiler_trait_declaration(name: &str) -> Option<&'static TraitDeclaratio
                             param_types: param_types.clone(),
                             param_conventions: vec![None; param_types.len()],
                             variadic_index: None,
+                            required: vec![true; param_types.len()],
+                            positional_only: None,
+                            keyword_only: None,
+                            variadic: None,
+                            kw_variadic: None,
                         })
                         .collect(),
                 }
@@ -324,6 +329,15 @@ pub struct TraitRequirement {
     pub param_types: Vec<Ty>,
     pub param_conventions: Vec<Option<ArgConvention>>,
     pub variadic_index: Option<usize>,
+    /// Its call shape beside the parameters: which of them a call must
+    /// pass, where positional and keyword-only ones start, and its
+    /// positional and keyword collectors' element types, by which a call
+    /// through a bound binds its arguments and builds its collector.
+    pub required: Vec<bool>,
+    pub positional_only: Option<usize>,
+    pub keyword_only: Option<usize>,
+    pub variadic: Option<Ty>,
+    pub kw_variadic: Option<Ty>,
 }
 
 /// A struct's explicit-destruction obligation, apart from its destructors,

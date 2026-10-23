@@ -630,35 +630,27 @@ pub(super) fn verify_subscript_call(
                     )
                 })
                 .collect::<Vec<_>>();
-            let expected_positional = match declaration.variadic.as_ref().map(Ty::kind) {
-                Some(TyKind::RuntimePack(elements)) => {
-                    if elements.len() != positional_overflow.len() {
-                        errors.push(format!(
-                            "{prefix}: selected subscript has {} positional overflow argument(s), but '{}' requires RuntimePack arity {}",
-                            positional_overflow.len(),
-                            call.target,
-                            elements.len()
-                        ));
-                    }
-                    Some(elements.as_slice())
-                }
-                _ => None,
-            };
-            let mut positional_index = 0;
+            // The overflow's positional part is the one collector the call
+            // builds: the declared collector's slot type, a bound pack's
+            // elements' tuple.
+            if positional_overflow.len() > 1 {
+                errors.push(format!(
+                    "{prefix}: selected subscript passes {} positional overflow arguments to '{}', not one collector",
+                    positional_overflow.len(),
+                    call.target
+                ));
+            }
+            let collector = declaration
+                .variadic
+                .as_ref()
+                .map(|variadic| match variadic.kind() {
+                    TyKind::RuntimePack(elements) => Ty::new(TyKind::Tuple(elements.clone())),
+                    _ => Ty::new(TyKind::VariadicPack(variadic.clone())),
+                });
             for argument in overflow {
                 let expected = match argument.source {
                     mojito_checked::checked::CheckedCallArgumentSource::Positional(_) => {
-                        let expected = match (declaration.variadic.as_ref(), expected_positional) {
-                            (Some(variadic), Some(elements))
-                                if matches!(variadic.kind(), TyKind::RuntimePack(_)) =>
-                            {
-                                elements.get(positional_index)
-                            }
-                            (Some(element), _) => Some(element),
-                            (None, _) => None,
-                        };
-                        positional_index += 1;
-                        expected
+                        collector.as_ref()
                     }
                     mojito_checked::checked::CheckedCallArgumentSource::Keyword(_) => {
                         declaration.kw_variadic.as_ref()

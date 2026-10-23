@@ -12,6 +12,10 @@
 //! it. A call of a generator without the argument passes none, so the view
 //! of a body with its calls so rewritten evaluates no default for it
 //! ([`erase_unpassed_defaults`]).
+//!
+//! The same binding builds the positional collector a callee's `*xs`
+//! takes, as upstream's call builds the `VariadicPack` it passes: a
+//! `tuple.make` of the call's overflow operands, passed as one operand.
 
 use crate::mir::verify::instruction_result_regs;
 use crate::mir::{
@@ -29,13 +33,17 @@ use mojito_hir::hir::VarId;
 use mojito_symbol::symbol::{LiftedOwner, lifted_owner};
 use mojito_types::param_expr::{ParamBindings, ParamContext};
 use mojito_types::types::{
-    ParamDecl, Ty, TyArg, TyKind, names_binder, replace_argument_parameters, replace_parameters,
+    ParamDecl, Ty, TyArg, TyKind, default_literal, names_binder, replace_argument_parameters,
+    replace_parameters,
 };
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// Fill, at every call `functions` lowered from a checked call
 /// ([`MirFunction::lowered_calls`]), each argument it leaves out of a
 /// callee `declarations` declares, and clear the records.
+///
+/// Each such call also builds the positional collector it passes
+/// (the private `build_collector`).
 ///
 /// The slot takes the callee's default under the arguments the call binds
 /// the callee's binders to: its own `instantiated_args`, for a method its
@@ -164,6 +172,9 @@ struct Site {
     /// The call's bindings of the callee's binders and those in scope
     /// around it.
     bound: Vec<(ParamDecl, TyArg)>,
+    /// The position in `args` of the positional collector the call builds
+    /// ([`build_collector`]).
+    spread: Option<usize>,
 }
 
 /// One omitted argument, bound: the parameter it fills and the value its
@@ -189,6 +200,9 @@ fn fill_blocks(
         for mut instruction in instructions {
             for region in instruction_regions_mut(&mut instruction) {
                 fill_blocks(region, function, caller, pending, invariant_errors);
+            }
+            if matches!(instruction, MirInstr::MultiSet { .. }) {
+                collect_subscript_store(&mut instruction, function, caller, &mut filled);
             }
             if let Some(record) =
                 result_register(&instruction).and_then(|dest| pending.remove(&dest.0))
@@ -222,7 +236,8 @@ const fn result_register(instruction: &MirInstr) -> Option<Reg> {
 }
 
 /// Fill `instruction`'s omitted arguments as `record` binds it, emitting
-/// each default's evaluation onto `prelude`, and return the instruction,
+/// each default's evaluation onto `prelude`, and build the positional
+/// collector it passes ([`build_collector`]); return the instruction,
 /// rewritten when its kind cannot carry the filled operands.
 fn fill_call(
     mut instruction: MirInstr,
@@ -240,12 +255,13 @@ fn fill_call(
         else {
             return instruction;
         };
-        if !omits_any(callee, 1, &[]) {
+        if !omits_any(callee, 1, &[]) && callee.variadic.is_none() {
             return instruction;
         }
         instruction = widen_index(instruction);
     }
     let Some(mut site) = Site::of(&instruction, record, function, caller) else {
+        collect_through_requirement(&mut instruction, function, caller, prelude);
         return instruction;
     };
     let declarations = caller.declarations;
@@ -303,8 +319,373 @@ fn fill_call(
             site.kwarg_places.push(None);
         }
     }
+    // A subscript's contract names each operand by its source, which a
+    // keyword's move to its position would rename.
+    if !matches!(instruction, MirInstr::MultiIndex { .. }) || site.kwargs.is_empty() {
+        build_collector(
+            &mut site,
+            &CallShape::from(callee),
+            function,
+            location.as_ref(),
+            prelude,
+        );
+    }
+    if let (
+        Some(position),
+        MirInstr::MultiIndex {
+            call: Some(call), ..
+        },
+    ) = (site.spread, &mut instruction)
+    {
+        collect_contract_arguments(call, position, callee, function, site.args[position]);
+    }
     site.store(&mut instruction, &sources);
     instruction
+}
+
+/// Build the positional collector of a subscript store (`g[1, 2] = v`) of
+/// a `__setitem__` declaring one, as [`build_collector`] builds a call's:
+/// its index operands are the overflow, its value the keyword-only `value`.
+/// A store indexing by a slice keeps its operands.
+fn collect_subscript_store(
+    instruction: &mut MirInstr,
+    function: &mut MirFunction,
+    caller: &Caller<'_>,
+    prelude: &mut Vec<MirInstr>,
+) {
+    let MirInstr::MultiSet {
+        receiver,
+        receiver_place,
+        args,
+        arg_places,
+        value,
+        value_place,
+        value_keyword: true,
+        call,
+    } = instruction
+    else {
+        return;
+    };
+    let Some(callee) = caller
+        .declarations
+        .function(&call.target)
+        .filter(|callee| callee.variadic.is_some())
+    else {
+        return;
+    };
+    let Some(registers) = args
+        .iter()
+        .map(|argument| match argument {
+            MirSubscriptArg::Index(register) => Some(*register),
+            MirSubscriptArg::Slice { .. } => None,
+        })
+        .collect::<Option<Vec<_>>>()
+    else {
+        return;
+    };
+    let receiver_ty = function
+        .reg_types
+        .get(&receiver.0)
+        .or_else(|| receiver_place.as_ref()?.ty.as_ref())
+        .cloned();
+    let mut site = Site {
+        dest: *value,
+        callee: call.target.clone(),
+        leading: 0,
+        args: registers,
+        kwargs: vec![("value".to_string(), *value)],
+        arg_places: arg_places.clone(),
+        kwarg_places: vec![value_place.as_deref().cloned()],
+        bound: bindings_of(&call.target, callee, &[], receiver_ty.as_ref(), caller),
+        spread: None,
+    };
+    let location = function.spans.0.get(&value.0).map(|(span, _)| span.clone());
+    build_collector(
+        &mut site,
+        &CallShape::from(callee),
+        function,
+        location.as_ref(),
+        prelude,
+    );
+    let Some(position) = site.spread else {
+        return;
+    };
+    let collector = site.args[position];
+    *args = site.args.into_iter().map(MirSubscriptArg::Index).collect();
+    *arg_places = site.arg_places;
+    collect_contract_arguments(call, position, callee, function, collector);
+}
+
+/// Name the collector a subscript builds at `position` in its contract
+/// `call`, in place of the overflow operands it holds: one argument of the
+/// collector's type past the declared parameters', under `callee`'s
+/// collector convention.
+fn collect_contract_arguments(
+    call: &mut crate::mir::MirSubscriptCall,
+    position: usize,
+    callee: &MirFunctionDeclaration,
+    function: &MirFunction,
+    collector: Reg,
+) {
+    let Some(ty) = function.reg_types.get(&collector.0) else {
+        return;
+    };
+    call.arguments.retain(|argument| {
+        !matches!(argument.source, CheckedCallArgumentSource::Positional(index) if index >= position)
+    });
+    let at = callee.param_types.len().min(call.arguments.len());
+    call.arguments.insert(
+        at,
+        mojito_checked::checked::CheckedCallArgument {
+            source: CheckedCallArgumentSource::Positional(position),
+            parameter_ty: ty.clone(),
+            requires_place: false,
+            convention: callee.variadic_convention,
+        },
+    );
+}
+
+/// What a call binds its arguments by: its callee's declared parameters
+/// and collectors, or, for a call through a bound whose requirement has no
+/// body, the requirement's.
+struct CallShape<'a> {
+    param_names: &'a [String],
+    required: &'a [bool],
+    positional_only: Option<usize>,
+    keyword_only: Option<usize>,
+    variadic: Option<&'a Ty>,
+    kw_variadic: bool,
+    /// The callee's own compile-time parameters.
+    param_decls: &'a [ParamDecl],
+}
+
+impl<'a> From<&'a MirFunctionDeclaration> for CallShape<'a> {
+    fn from(declaration: &'a MirFunctionDeclaration) -> Self {
+        Self {
+            param_names: &declaration.param_names,
+            required: &declaration.required,
+            positional_only: declaration.positional_only,
+            keyword_only: declaration.keyword_only,
+            variadic: declaration.variadic.as_ref(),
+            kw_variadic: declaration.kw_variadic.is_some(),
+            param_decls: &declaration.param_decls,
+        }
+    }
+}
+
+/// Build the positional collector of a method call through a bound whose
+/// requirement has no body, which no declaration describes, from the
+/// requirement's call shape
+/// ([`mojito_checked::declaration::TraitRequirement`]), as [`build_collector`]
+/// builds a declared callee's.
+fn collect_through_requirement(
+    instruction: &mut MirInstr,
+    function: &mut MirFunction,
+    caller: &Caller<'_>,
+    prelude: &mut Vec<MirInstr>,
+) {
+    let MirInstr::MethodCall {
+        dest,
+        resolved: Some(dispatch),
+        args,
+        kwargs,
+        arg_places,
+        kwarg_places,
+        param_decls,
+        instantiated_args,
+        spread: None,
+        ..
+    } = &*instruction
+    else {
+        return;
+    };
+    let Some(requirement) = caller
+        .declarations
+        .trait_declarations()
+        .flat_map(|declaration| &declaration.requirements)
+        .find(|requirement| requirement.dispatch == *dispatch)
+    else {
+        return;
+    };
+    let Some(variadic) = requirement.variadic.as_ref() else {
+        return;
+    };
+    let shape = CallShape {
+        param_names: &requirement.param_names,
+        required: &requirement.required,
+        positional_only: requirement.positional_only,
+        keyword_only: requirement.keyword_only,
+        variadic: Some(variadic),
+        kw_variadic: requirement.kw_variadic.is_some(),
+        param_decls,
+    };
+    let mut site = Site {
+        dest: *dest,
+        callee: dispatch.clone(),
+        leading: 0,
+        args: args.clone(),
+        kwargs: kwargs.clone(),
+        arg_places: arg_places.clone(),
+        kwarg_places: kwarg_places.clone(),
+        bound: param_decls
+            .iter()
+            .cloned()
+            .zip(instantiated_args.iter().cloned())
+            .collect(),
+        spread: None,
+    };
+    let location = function.spans.0.get(&dest.0).map(|(span, _)| span.clone());
+    build_collector(&mut site, &shape, function, location.as_ref(), prelude);
+    if site.spread.is_some() {
+        site.store(instruction, &[]);
+    }
+}
+
+/// Pass the positional collector a call's `shape` declares as the one
+/// operand the call builds, as upstream's call builds the `VariadicPack`
+/// its callee's `*xs` takes: a `tuple.make` of the overflow operands, typed
+/// the collector's slot under the call's bindings ([`collector_type`]),
+/// emitted onto `prelude` and passed after every regular positional
+/// operand, its position the call's `spread`. A regular slot before the
+/// collector that a keyword fills moves to its position, so the shared
+/// matcher binds the collector operand alone
+/// ([`mojito_ast::call::bind_spread`]). A call that leaves such a slot out,
+/// or whose collector type the call's operands do not determine, keeps its
+/// operands; a subscript carries no collector operand.
+fn build_collector(
+    site: &mut Site,
+    shape: &CallShape<'_>,
+    function: &mut MirFunction,
+    location: Option<&SourceSpan>,
+    prelude: &mut Vec<MirInstr>,
+) {
+    let Some(element) = shape.variadic else {
+        return;
+    };
+    let skip = site.leading;
+    let names = shape.param_names.get(skip..).unwrap_or_default();
+    let keywords: Vec<&str> = site.kwargs.iter().map(|(name, _)| name.as_str()).collect();
+    let Ok(matched) = match_call_slots(
+        names,
+        shape.required.get(skip..).unwrap_or_default(),
+        shape
+            .positional_only
+            .and_then(|limit| limit.checked_sub(skip)),
+        shape.keyword_only.and_then(|limit| limit.checked_sub(skip)),
+        site.args.len(),
+        &keywords,
+        CallVariadics {
+            positional: true,
+            keyword: shape.kw_variadic,
+        },
+    ) else {
+        return;
+    };
+    let limit = shape
+        .keyword_only
+        .and_then(|limit| limit.checked_sub(skip))
+        .unwrap_or(names.len())
+        .min(names.len());
+    let mut args = Vec::with_capacity(limit + 1);
+    let mut arg_places = Vec::with_capacity(limit + 1);
+    let mut moved = HashSet::new();
+    for slot in &matched.slots[..limit] {
+        match *slot {
+            ArgSlot::Positional(index) => {
+                args.push(site.args[index]);
+                arg_places.push(site.arg_places.get(index).cloned().flatten());
+            }
+            ArgSlot::Keyword(index) => {
+                args.push(site.kwargs[index].1);
+                arg_places.push(site.kwarg_places.get(index).cloned().flatten());
+                moved.insert(index);
+            }
+            ArgSlot::Default => return,
+        }
+    }
+    let elements: Vec<Reg> = matched
+        .positional_overflow
+        .iter()
+        .map(|&index| site.args[index])
+        .collect();
+    let Some(ty) = collector_type(shape.param_decls, element, &elements, site, function) else {
+        return;
+    };
+    // A collector over the caller's own pack leaves its elements' types to
+    // the elaborator.
+    let element_types = match ty.kind() {
+        TyKind::Tuple(types) => Some(types.clone()),
+        TyKind::VariadicPack(element)
+            if mojito_types::types::pack_spread(std::slice::from_ref(element)).is_some() =>
+        {
+            None
+        }
+        TyKind::VariadicPack(element) => Some(vec![element.clone(); elements.len()]),
+        _ => return,
+    };
+    let collector = fresh_register(function, ty, location);
+    prelude.push(MirInstr::MakeTuple {
+        dest: collector,
+        elems: elements,
+        element_types,
+    });
+    site.spread = Some(args.len());
+    args.push(collector);
+    arg_places.push(None);
+    site.args = args;
+    site.arg_places = arg_places;
+    let mut index = 0;
+    site.kwargs.retain(|_| {
+        index += 1;
+        !moved.contains(&(index - 1))
+    });
+    let mut index = 0;
+    site.kwarg_places.retain(|_| {
+        index += 1;
+        !moved.contains(&(index - 1))
+    });
+}
+
+/// The type of the collector a call of a callee collecting `element`s
+/// builds from `elements`, in the caller's binder scope: the callee's slot
+/// type, `VariadicPack(element)`, under the call's bindings, which a bound
+/// type pack turns into its elements' tuple. A binder of the callee's own
+/// `param_decls` the call binds no argument for, or one of the trait a
+/// requirement is spelled over, is read off the operands instead, as the
+/// elaborator infers it: a type pack is the tuple of their types, a
+/// homogeneous element the first one's, each literal materialized.
+fn collector_type(
+    param_decls: &[ParamDecl],
+    element: &Ty,
+    elements: &[Reg],
+    site: &Site,
+    function: &MirFunction,
+) -> Option<Ty> {
+    let slot = Ty::new(TyKind::VariadicPack(element.clone()));
+    let unbound = |closed: &Ty| {
+        mojito_types::types::mentions(closed, &|ty| matches!(ty.kind(), TyKind::SelfType))
+            || param_decls.iter().any(|decl| {
+                !site.bound.iter().any(|(own, _)| own.id() == decl.id())
+                    && names_binder(closed, &decl.binder())
+            })
+    };
+    if let Some(closed) = close_parameter_type(&slot, &site.bound)
+        && !unbound(&closed)
+    {
+        return Some(closed);
+    }
+    let types = elements
+        .iter()
+        .map(|register| function.reg_types.get(&register.0).map(default_literal))
+        .collect::<Option<Vec<_>>>()?;
+    if mojito_types::types::pack_spread(std::slice::from_ref(element)).is_some() {
+        Some(Ty::new(TyKind::Tuple(types)))
+    } else {
+        types
+            .into_iter()
+            .next()
+            .map(|first| Ty::new(TyKind::VariadicPack(first)))
+    }
 }
 
 /// Whether a call of `callee` passing `positional` arguments and the
@@ -503,6 +884,7 @@ impl Site {
                         arg_places: arg_places.clone(),
                         kwarg_places: kwarg_places.clone(),
                         bound,
+                        spread: None,
                     });
                 }
                 _ => return None,
@@ -524,6 +906,7 @@ impl Site {
             arg_places,
             kwarg_places,
             bound,
+            spread: None,
         })
     }
 
@@ -537,6 +920,7 @@ impl Site {
                 kwargs,
                 arg_places,
                 kwarg_places,
+                spread,
                 ..
             }
             | MirInstr::MethodCall {
@@ -544,6 +928,7 @@ impl Site {
                 kwargs,
                 arg_places,
                 kwarg_places,
+                spread,
                 ..
             }
             | MirInstr::CallIndirect {
@@ -551,12 +936,14 @@ impl Site {
                 kwargs,
                 arg_places,
                 kwarg_places,
+                spread,
                 ..
             } => {
                 *args = self.args;
                 *kwargs = self.kwargs;
                 *arg_places = self.arg_places;
                 *kwarg_places = self.kwarg_places;
+                *spread = self.spread;
             }
             MirInstr::MultiIndex {
                 args,
@@ -591,7 +978,7 @@ impl Site {
 /// `dispatch` (`__trait_dispatch.f$…`), when the member has one: the
 /// function `Trait.member`, whose first parameter is `self`.
 fn requirement_member(dispatch: &str, declarations: &MirDeclarations) -> Option<String> {
-    declarations.traits.iter().find_map(|declaration| {
+    declarations.trait_declarations().find_map(|declaration| {
         declaration
             .requirements
             .iter()

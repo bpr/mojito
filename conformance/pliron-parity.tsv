@@ -1161,6 +1161,7 @@ assets/ok/variadic_overload_collector_position.mojo	main	exe-differential	saniti
 assets/ok/variadic_pack_forwarding_generic_def.mojo	main	exe-differential	sanitized
 assets/ok/variadic_pack_upstream_spellings.mojo	main	exe-differential	sanitized
 assets/ok/variadic_struct_over_variant_method.mojo	main	exe-differential	sanitized
+assets/ok/variadic_subscript_collector.mojo	main	exe-differential	sanitized
 assets/ok/variadic_var_collector_transfer.mojo	main	exe-differential	sanitized
 assets/ok/variant_deinit_with_linear_payload.mojo	main	exe-differential	sanitized
 assets/ok/variant_duplicate_alternatives.mojo	main	exe-differential	sanitized

@@ -2153,6 +2153,11 @@ impl Checker {
                                 param_types: sig.params.clone(),
                                 param_conventions: sig.conventions.clone(),
                                 variadic_index: sig.variadic_index,
+                                required: sig.required.clone(),
+                                positional_only: sig.positional_only,
+                                keyword_only: sig.keyword_only,
+                                variadic: sig.variadic.clone(),
+                                kw_variadic: sig.kw_variadic.clone(),
                             }
                         })
                         .collect(),

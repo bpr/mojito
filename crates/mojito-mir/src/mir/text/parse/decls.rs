@@ -740,6 +740,29 @@ impl Decoder {
                             .field(row_fields, "variadic_index")
                             .ok()
                             .and_then(|value| self.option_uint(value));
+                        // A record before schema 1.95 spells no call
+                        // shape: every parameter is required, and it
+                        // collects nothing.
+                        let required = self.field(row_fields, "required").map_or_else(
+                            |()| vec![true; param_names.len()],
+                            |value| self.bools(value),
+                        );
+                        let positional_only = self
+                            .field(row_fields, "positional_only")
+                            .ok()
+                            .and_then(|value| self.option_uint(value));
+                        let keyword_only = self
+                            .field(row_fields, "keyword_only")
+                            .ok()
+                            .and_then(|value| self.option_uint(value));
+                        let variadic = self
+                            .field(row_fields, "variadic")
+                            .ok()
+                            .and_then(|value| self.option_ty(Some(value)));
+                        let kw_variadic = self
+                            .field(row_fields, "kw_variadic")
+                            .ok()
+                            .and_then(|value| self.option_ty(Some(value)));
                         self.unknown(
                             row_fields,
                             &[
@@ -750,6 +773,11 @@ impl Decoder {
                                 "param_types",
                                 "param_conventions",
                                 "variadic_index",
+                                "required",
+                                "positional_only",
+                                "keyword_only",
+                                "variadic",
+                                "kw_variadic",
                             ],
                         );
                         Some(TraitRequirement {
@@ -760,6 +788,11 @@ impl Decoder {
                             param_types,
                             param_conventions,
                             variadic_index,
+                            required,
+                            positional_only,
+                            keyword_only,
+                            variadic,
+                            kw_variadic,
                         })
                     })
                     .collect()

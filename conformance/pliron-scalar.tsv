@@ -1161,6 +1161,7 @@ assets/ok/variadic_overload_collector_position.mojo	-	ineligible	no-scalar-entry
 assets/ok/variadic_pack_forwarding_generic_def.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variadic_pack_upstream_spellings.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variadic_struct_over_variant_method.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/variadic_subscript_collector.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variadic_var_collector_transfer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variant_deinit_with_linear_payload.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variant_duplicate_alternatives.mojo	-	ineligible	no-scalar-entry-shape

@@ -453,7 +453,6 @@ impl VmBackend {
             recv_place,
             arg_places,
             kwarg_places,
-            spread,
             ..
         } = instruction
             && let Value::Struct { name, .. } = &caller.registers[recv.0 as usize]
@@ -462,7 +461,6 @@ impl VmBackend {
                 .iter()
                 .map(|register| caller.registers[register.0 as usize].clone())
                 .collect();
-            refuse_pack_spread(*spread)?;
             let Some((function_name, index)) = prog
                 .runtime_method_name(name, method, resolved.as_deref(), positional.len())
                 .and_then(|function_name| {
@@ -559,7 +557,6 @@ impl VmBackend {
             kwargs,
             arg_places,
             kwarg_places,
-            spread,
             ..
         } = instruction
         else {
@@ -581,7 +578,6 @@ impl VmBackend {
             .iter()
             .map(|reg| caller.registers[reg.0 as usize].clone())
             .collect();
-        refuse_pack_spread(*spread)?;
         let keywords: Vec<(String, Value)> = kwargs
             .iter()
             .map(|(name, reg)| (name.clone(), caller.registers[reg.0 as usize].clone()))

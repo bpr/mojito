@@ -1,4 +1,4 @@
-mojito-mir 1.73
+mojito-mir 1.95
 artifact {
   features: [],
   files: [
@@ -98,7 +98,7 @@ artifact {
       },
       fn {
         name: two,
-        registers: 7,
+        registers: 8,
         vars: 4,
         var_names: [a, b, "$fwd_arg_r1", "$fwd_arg_r4"],
         params: 2,
@@ -111,8 +111,8 @@ artifact {
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: Token, arguments: [] } }, reg_type { reg: %r2, type: struct_type { name: Token, arguments: [] } }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: struct_type { name: Token, arguments: [] } }, reg_type { reg: %r5, type: struct_type { name: Token, arguments: [] } }, reg_type { reg: %r6, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 272, end: 273, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 266, end: 274, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 266, end: 274, origin: present($v2) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 282, end: 283, origin: present($v1) }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 276, end: 284, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 276, end: 284, origin: present($v3) }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 260, end: 285, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: Token, arguments: [] } }, reg_type { reg: %r2, type: struct_type { name: Token, arguments: [] } }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: struct_type { name: Token, arguments: [] } }, reg_type { reg: %r5, type: struct_type { name: Token, arguments: [] } }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: variadic_pack(struct_type { name: Token, arguments: [] }) }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 272, end: 273, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 266, end: 274, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 266, end: 274, origin: present($v2) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 282, end: 283, origin: present($v1) }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 276, end: 284, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 276, end: 284, origin: present($v3) }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 260, end: 285, origin: absent }) }, reg_loc { reg: %r7, location: absent }],
         blocks: [
           bb0 {
             instructions: [
@@ -124,7 +124,8 @@ artifact {
               var.store { var: $v3, src: %r4, binding_type: present(struct_type { name: Token, arguments: [] }), in_place: true },
               var.use { dest: %r2, var: $v2, mode: forward },
               var.use { dest: %r5, var: $v3, mode: forward },
-              call { dest: %r6, func: owned, raises: absent, args: [%r2, %r5], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              tuple.make { dest: %r7, elems: [%r2, %r5], element_types: present([struct_type { name: Token, arguments: [] }, struct_type { name: Token, arguments: [] }]) },
+              call { dest: %r6, func: owned, raises: absent, args: [%r7], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: present(0) }
             ],
             terminator: return { value: present(%r6) }
           }

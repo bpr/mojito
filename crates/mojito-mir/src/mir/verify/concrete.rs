@@ -344,7 +344,6 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
             param_arg_regs,
             receiver,
             instantiated_args,
-            spread,
             ..
         } => {
             for ty in raises
@@ -360,11 +359,6 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
                 }
             }
             require_no_parameter_slots(head, param_arg_regs, errors);
-            if spread.is_some() {
-                errors.push(format!(
-                    "{head} keeps a whole pack spread in elaborated MIR"
-                ));
-            }
         }
         MirInstr::MakeTuple { element_types, .. } => {
             for ty in element_types.iter().flatten() {
@@ -404,7 +398,6 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
             param_arg_regs,
             param_decls,
             instantiated_args,
-            spread,
             ..
         } => {
             if let Some(raises) = raises {
@@ -417,11 +410,6 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
             }
             require_no_parameters(head, param_decls, errors);
             require_no_parameter_slots(head, param_arg_regs, errors);
-            if spread.is_some() {
-                errors.push(format!(
-                    "{head} keeps a whole pack spread in elaborated MIR"
-                ));
-            }
         }
         MirInstr::Index {
             call: Some(call), ..

@@ -1,4 +1,4 @@
-mojito-mir 1.81
+mojito-mir 1.95
 artifact {
   features: [],
   files: [
@@ -57,7 +57,7 @@ artifact {
       },
       fn {
         name: sum_three,
-        registers: 6,
+        registers: 8,
         vars: 3,
         var_names: [a, b, c],
         params: 3,
@@ -70,16 +70,18 @@ artifact {
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file1, start: 177, end: 178, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file1, start: 180, end: 181, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file1, start: 183, end: 184, origin: present($v2) }) }, reg_loc { reg: %r3, location: present(loc { file: file1, start: 171, end: 185, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file1, start: 188, end: 195, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file1, start: 171, end: 195, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: variadic_pack(Int) }, reg_type { reg: %r7, type: variadic_pack(Int) }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file1, start: 177, end: 178, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file1, start: 180, end: 181, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file1, start: 183, end: 184, origin: present($v2) }) }, reg_loc { reg: %r3, location: present(loc { file: file1, start: 171, end: 185, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file1, start: 188, end: 195, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file1, start: 171, end: 195, origin: absent }) }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }],
         blocks: [
           bb0 {
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
               var.use { dest: %r1, var: $v1, mode: copy },
               var.use { dest: %r2, var: $v2, mode: copy },
-              call { dest: %r3, func: total, raises: absent, args: [%r0, %r1, %r2], kwargs: [], arg_places: [absent, absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
-              call { dest: %r4, func: total, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              tuple.make { dest: %r6, elems: [%r0, %r1, %r2], element_types: present([Int, Int, Int]) },
+              call { dest: %r3, func: total, raises: absent, args: [%r6], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: present(0) },
+              tuple.make { dest: %r7, elems: [], element_types: present([]) },
+              call { dest: %r4, func: total, raises: absent, args: [%r7], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: present(0) },
               binary { op: add, dest: %r5, a: %r3, b: %r4, resolved: absent, raises: absent }
             ],
             terminator: return { value: present(%r5) }

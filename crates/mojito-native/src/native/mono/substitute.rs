@@ -821,6 +821,7 @@ pub(super) fn array_display_construction(
             instrs.extend(array_literal_construction(
                 dest,
                 constructor,
+                element,
                 args,
                 length,
                 n_regs,
@@ -1192,17 +1193,25 @@ fn array_instance_parts(ty: &Ty) -> Option<(&Ty, i64)> {
     }
 }
 
-/// The list-literal initializer call over `elements`, as MIR lowers a
-/// display: `__list_literal__` selects the overload, and the `length`
+/// The list-literal initializer call over `elements` of type `element`, as
+/// MIR lowers a display: the call builds the collector of the elements and
+/// passes it, `__list_literal__` selects the overload, and the `length`
 /// parameter argument reifies the constructed value's length.
 fn array_literal_construction(
     dest: Reg,
     constructor: &str,
+    element: &Ty,
     elements: Vec<Reg>,
     length: i64,
     n_regs: &mut u32,
     reg_types: &mut HashMap<u32, Ty>,
 ) -> Vec<MirInstr> {
+    let collector = fresh_register(
+        TyKind::VariadicPack(element.clone()).into(),
+        n_regs,
+        reg_types,
+    );
+    let element_types = vec![element.clone(); elements.len()];
     let none = fresh_register(Ty::none(), n_regs, reg_types);
     let length_reg = fresh_register(Ty::int(), n_regs, reg_types);
     let unbound = || mojito_mir::mir::MirParamArg {
@@ -1211,6 +1220,11 @@ fn array_literal_construction(
         expr: None,
     };
     vec![
+        MirInstr::MakeTuple {
+            dest: collector,
+            elems: elements,
+            element_types: Some(element_types),
+        },
         MirInstr::Const {
             dest: none,
             k: Const::None,
@@ -1223,8 +1237,8 @@ fn array_literal_construction(
             dest,
             func: mojito_mir::mir::FuncRef::named(constructor),
             raises: None,
-            arg_places: vec![None; elements.len()],
-            args: elements,
+            arg_places: vec![None],
+            args: vec![collector],
             kwargs: vec![("__list_literal__".to_string(), none)],
             kwarg_places: vec![None],
             capture_accesses: Vec::new(),
@@ -1237,7 +1251,7 @@ fn array_literal_construction(
             ],
             receiver: None,
             instantiated_args: Vec::new(),
-            spread: None,
+            spread: Some(0),
         },
     ]
 }
